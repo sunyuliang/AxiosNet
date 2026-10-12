@@ -427,18 +427,6 @@ dotnet build AxiosNet.slnx -c Release
 5. `IDictionary` 请求体默认按表单编码（对齐 `URLSearchParams`），普通对象/`ExpandoObject` 按 JSON 编码；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现。
 
-## 发布到 GitHub
-
-```bash
-git init
-git add .
-git commit -m "feat: AxiosNet - axios-style HTTP client with connection pooling"
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/AxiosNet.git
-git push -u origin main
-```
-
-建议后续补充 GitHub Actions（`dotnet test`）、NuGet 打包（`dotnet pack src/AxiosNet -c Release`）与版本标签。
 
 ## License
 
