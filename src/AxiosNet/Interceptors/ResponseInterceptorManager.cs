@@ -1,0 +1,76 @@
+namespace AxiosNet.Interceptors;
+
+internal sealed record ResponseInterceptor(
+    int Id,
+    Func<AxiosResponse, Task<AxiosResponse>> OnFulfilled,
+    Func<Exception, Task<AxiosResponse>>? OnRejected);
+
+/// <summary>
+/// 响应拦截器管理器，对应 axios.interceptors.response，按注册顺序执行。
+/// </summary>
+public sealed class ResponseInterceptorManager
+{
+    private readonly List<ResponseInterceptor> _interceptors = new();
+    private int _nextId;
+
+    /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
+    public int Use(
+        Func<AxiosResponse, Task<AxiosResponse>> onFulfilled,
+        Func<Exception, Task<AxiosResponse>>? onRejected = null)
+    {
+        ArgumentNullException.ThrowIfNull(onFulfilled);
+        lock (_interceptors)
+        {
+            var id = ++_nextId;
+            _interceptors.Add(new ResponseInterceptor(id, onFulfilled, onRejected));
+            return id;
+        }
+    }
+
+    /// <summary>注册同步拦截器。</summary>
+    public int Use(
+        Func<AxiosResponse, AxiosResponse> onFulfilled,
+        Func<Exception, AxiosResponse>? onRejected = null)
+    {
+        ArgumentNullException.ThrowIfNull(onFulfilled);
+        return Use(
+            response => Task.FromResult(onFulfilled(response)),
+            onRejected is null ? null : ex => Task.FromResult(onRejected(ex)));
+    }
+
+    /// <summary>移除指定拦截器（对应 axios eject）。</summary>
+    public bool Eject(int id)
+    {
+        lock (_interceptors)
+        {
+            return _interceptors.RemoveAll(i => i.Id == id) > 0;
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_interceptors)
+        {
+            _interceptors.Clear();
+        }
+    }
+
+    public int Count
+    {
+        get
+        {
+            lock (_interceptors)
+            {
+                return _interceptors.Count;
+            }
+        }
+    }
+
+    internal IReadOnlyList<ResponseInterceptor> Snapshot()
+    {
+        lock (_interceptors)
+        {
+            return new List<ResponseInterceptor>(_interceptors);
+        }
+    }
+}

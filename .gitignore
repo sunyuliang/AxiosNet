@@ -1,0 +1,51 @@
+# ---- .NET 构建产物 ----
+[Bb]in/
+[Oo]bj/
+[Aa]rtifacts/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.dll
+*.exe
+*.pdb
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ---- 测试结果 ----
+[Tt]est[Rr]esult*/
+TestResults/
+coverage/
+*.coverage
+*.trx
+*.coveragexml
+coverage.opencover.xml
+coverage.cobertura.xml
+
+# ---- Visual Studio ----
+.vs/
+*.userprefs
+*.vspscc
+*.vssscc
+*.VC.db
+*.VC.VC.opendb
+
+# ---- Rider / VS Code ----
+.idea/
+*.sln.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# ---- 其他 ----
+*.log
+*.tmp
+*.cache
+.DS_Store
+Thumbs.db
