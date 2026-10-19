@@ -362,10 +362,25 @@ public sealed partial class AxiosClient : IDisposable
             {
                 // 注入 Handler 的实例：固定 HttpClient，所有 origin 共用；
                 // 默认实例：按 origin 从连接池租用（连接复用 + 并发上限）。
+                // 租用也走异步入口并把链接后的令牌传进去：已取消/已超时的请求在租用前就会被截断，
+                // 抛出的 OperationCanceledException 与发送阶段同规则翻译成统一的错误模型。
                 var httpClient = _customClient;
                 if (httpClient is null)
                 {
-                    lease = _pool!.Lease(uri);
+                    try
+                    {
+                        lease = await _pool!.LeaseAsync(uri, linkedCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        if (!externalToken.IsCancellationRequested && linkedCts.IsCancellationRequested)
+                        {
+                            throw AxiosException.Timeout(config, request);
+                        }
+
+                        throw AxiosException.Canceled(config, request);
+                    }
+
                     httpClient = lease.Client;
                 }
 

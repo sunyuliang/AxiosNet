@@ -24,6 +24,8 @@ internal sealed class ProgressHttpContent : HttpContent
         }
     }
 
+    // 注意：net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，
+    // 必须实现；委托到带令牌版本（无令牌可用时传 None）。
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         => SerializeToStreamAsync(stream, context, CancellationToken.None);
 

@@ -99,6 +99,70 @@ public sealed class ProgressAndRateTests
             $"限速未生效：{stopwatch.ElapsedMilliseconds}ms 就读完了 {size} 字节（目标 {rate} B/s）");
     }
 
+    /// <summary>
+    /// 同步 Read 也必须走异步核心（阻塞等待）并保持进度上报：
+    /// ProgressReadStream 的同步入口不允许对内层流做同步 I/O。
+    /// </summary>
+    [Fact]
+    public async Task StreamResponse_ProgressFiresWhileSyncReading()
+    {
+        const int size = 128 * 1024;
+        await using var server = TestHttpServer.Start(_ => Binary(size));
+        using var client = new AxiosClient();
+
+        var events = new List<AxiosProgressEvent>();
+        var response = await client.GetAsync<Stream>(server.Url + "file", c =>
+            c.OnDownloadProgress = events.Add);
+
+        await using var stream = response.Data!;
+        using var buffer = new MemoryStream();
+        var chunk = new byte[16 * 1024];
+        int read;
+        while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            buffer.Write(chunk, 0, read);
+        }
+
+        Assert.Equal(size, buffer.ToArray().Length);
+        Assert.NotEmpty(events);
+        Assert.Equal(size, events[^1].Loaded);
+        Assert.Equal(size, events[^1].Total);
+        Assert.Equal(1d, events[^1].Progress);
+    }
+
+    /// <summary>
+    /// 限速 + 同步读：限速等待由同步分支的 Thread.Sleep 改为异步核心的 Task.Delay 后，
+    /// 阻塞时长与限速语义都必须保持不变。
+    /// </summary>
+    [Fact]
+    public async Task MaxRate_ThrottlesSyncStreamReading()
+    {
+        const int size = 64 * 1024;
+        const long rate = 256 * 1024; // 256 KB/s -> 约 250ms
+
+        await using var server = TestHttpServer.Start(_ => Binary(size));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Stream>(server.Url + "file", c => c.MaxRate = rate);
+
+        var stopwatch = Stopwatch.StartNew();
+        await using var stream = response.Data!;
+        using var buffer = new MemoryStream();
+        var chunk = new byte[16 * 1024];
+        int read;
+        while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            buffer.Write(chunk, 0, read);
+        }
+
+        stopwatch.Stop();
+
+        Assert.Equal(size, buffer.ToArray().Length);
+        Assert.True(
+            stopwatch.ElapsedMilliseconds >= 120,
+            $"同步读限速未生效：{stopwatch.ElapsedMilliseconds}ms 就读完了 {size} 字节（目标 {rate} B/s）");
+    }
+
     [Fact]
     public async Task MaxRate_ThrottlesUpload()
     {

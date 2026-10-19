@@ -85,7 +85,11 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    /// <summary>异步租用（当前获取为轻量操作，保留异步签名以备扩展）。</summary>
+    /// <summary>
+    /// 异步租用：租用本身是轻量同步操作（字典查找 + 计数），
+    /// 但会先检查 <paramref name="cancellationToken"/>——已取消的请求在租用前直接抛
+    /// <see cref="OperationCanceledException"/>，不会占用池节点。
+    /// </summary>
     public ValueTask<PoolLease> LeaseAsync(Uri requestUri, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
