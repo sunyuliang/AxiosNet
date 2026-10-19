@@ -6,7 +6,7 @@
 [![tests](https://img.shields.io/badge/tests-168%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
+用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。适合替代手写的 `HttpClient` 封装，覆盖 API 调用、文件上传下载、表单提交等网络请求场景。
 
 - 零第三方依赖，仅使用 .NET BCL
 - 运行时支持：**.NET 6 及以上**（单目标 `net6.0`，详见[目标框架与运行时支持](#目标框架与运行时支持)）
