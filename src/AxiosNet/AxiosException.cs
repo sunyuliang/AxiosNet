@@ -40,7 +40,8 @@ public sealed class AxiosException : Exception
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
     public int? Status => Response?.Status;
 
-    internal Exception? Cause => InnerException;
+    /// <summary>底层异常（例如网络错误的 <see cref="System.Net.Http.HttpRequestException"/>、JSON 解析异常）。</summary>
+    public Exception? Cause => InnerException;
 
     private AxiosException(
         string message,
@@ -118,9 +119,12 @@ public sealed class AxiosException : Exception
     }
 
     internal static AxiosException BadResponse(AxiosConfig config, HttpRequestMessage request, Type targetType, Exception inner)
+        => BadResponse(config, request, targetType.Name, inner);
+
+    internal static AxiosException BadResponse(AxiosConfig config, HttpRequestMessage request, string targetName, Exception inner)
     {
         return new AxiosException(
-            $"Response body could not be deserialized to '{targetType.Name}'",
+            $"Response body could not be deserialized to '{targetName}'",
             ErrBadResponse,
             config,
             request,

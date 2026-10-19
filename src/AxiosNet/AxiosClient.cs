@@ -379,9 +379,11 @@ public sealed class AxiosClient : IDisposable
 
     private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)
     {
-        config.Url = url;
-        config.Method = method;
-        return config;
+        // 不能就地修改调用方传入的 config：同一个 config 并发复用时 Url/Method 会互相覆盖。
+        var copy = config.Clone();
+        copy.Url = url;
+        copy.Method = method;
+        return copy;
     }
 
     // ------------------------------------------------------------------
@@ -475,6 +477,9 @@ public sealed class AxiosClient : IDisposable
 
         var streamResponse = config.ResponseType == ResponseType.Stream;
 
+        // 流式响应的 timeout 需要延续到正文读取结束，这里记录请求起点用于计算剩余时间。
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
         // 4) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
         Func<Task<AxiosResponse>> invoker = async () =>
         {
@@ -510,6 +515,10 @@ public sealed class AxiosClient : IDisposable
                 {
                     throw AxiosException.Network(config, request, ex);
                 }
+                catch (IOException ex)
+                {
+                    throw AxiosException.Network(config, request, ex);
+                }
 
                 AxiosResponse response;
                 try
@@ -527,6 +536,12 @@ public sealed class AxiosClient : IDisposable
 
                     throw AxiosException.Canceled(config, request);
                 }
+                catch (IOException ex)
+                {
+                    // 连接中途断开 / 响应体被截断（HttpIOException）：统一成 ERR_NETWORK，而不是裸 IOException。
+                    responseMessage.Dispose();
+                    throw AxiosException.Network(config, request, ex);
+                }
                 catch
                 {
                     // 读取/解析失败（含 maxContentLength 超限、反序列化失败）：先释放响应，避免连接泄漏
@@ -543,7 +558,41 @@ public sealed class AxiosClient : IDisposable
                 var validate = config.ValidateStatus ?? DefaultValidateStatus;
                 if (!validate(response.Status))
                 {
+                    if (streamResponse)
+                    {
+                        // 失败响应没有人会去读正文：立即释放内容把连接还回池里，
+                        // 否则这条连接会被一个永远不会被读取的流一直占住（重试几次就能打满连接池）。
+                        (response.Data as IDisposable)?.Dispose();
+                        response.Data = null;
+                        responseMessage.Dispose();
+                    }
+
                     throw AxiosException.FromResponse(config, request, response);
+                }
+
+                if (streamResponse && response.Data is Stream body)
+                {
+                    Stream wrapped = body;
+
+                    // 超时延续到正文读取结束（非流式响应在库内读完，linkedCts 已覆盖）。
+                    if (config.Timeout > TimeSpan.Zero)
+                    {
+                        wrapped = new TimeoutStream(
+                            wrapped,
+                            config.Timeout - clock.Elapsed,
+                            externalToken,
+                            config,
+                            request);
+                    }
+
+                    // 租约转移给响应流：下载期间该 origin 仍被视为活跃，避免空闲驱逐把连接回收。
+                    if (lease is not null)
+                    {
+                        wrapped = new LeaseHoldingStream(wrapped, lease);
+                        lease = null;
+                    }
+
+                    response.Data = wrapped;
                 }
 
                 return response;
@@ -657,14 +706,20 @@ public sealed class AxiosClient : IDisposable
         Stream stream,
         AxiosConfig config,
         HttpRequestMessage request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? declaredLength)
     {
         const int chunkSize = 81920;
+
+        // 声明了长度时按声明值预分配，避免 MemoryStream 反复扩容（大响应在 LOH 上抖动明显）。
+        // 上限 8MB：防止恶意 Content-Length 直接触发一次超大分配。
+        const long maxPreallocated = 8 * 1024 * 1024;
+        var capacity = declaredLength is > 0 and <= maxPreallocated ? (int)declaredLength.Value : 0;
         var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
 
         try
         {
-            using var body = new MemoryStream();
+            using var body = capacity > 0 ? new MemoryStream(capacity) : new MemoryStream();
             int read;
             while ((read = await stream.ReadAsync(buffer.AsMemory(0, chunkSize), cancellationToken).ConfigureAwait(false)) > 0)
             {
@@ -711,15 +766,20 @@ public sealed class AxiosClient : IDisposable
         }
         else
         {
-            // 原始内容优先：一律先取原始字节，再解码为文本，最后按返回类型转换。
+            // 原始内容优先：一律先取原始字节，再按需解码为文本，最后按返回类型转换。
             Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             var downloadStream = WrapDownloadStream(responseStream, message, request, config);
-            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken).ConfigureAwait(false);
+            var declared = message.Content.Headers.ContentLength;
+            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared)
+                .ConfigureAwait(false);
 
-            var text = ResponseTextDecoder.Decode(
-                bytes,
-                message.Content.Headers.ContentType?.CharSet,
-                config.ResponseEncoding);
+            // 只要字节的调用（arraybuffer / byte[]）不做文本解码：大二进制响应解码成 string 是纯浪费。
+            var text = NeedsText(config, dataType)
+                ? ResponseTextDecoder.Decode(
+                    bytes,
+                    message.Content.Headers.ContentType?.CharSet,
+                    config.ResponseEncoding)
+                : string.Empty;
             data = ConvertData(config, request, dataType, bytes, text);
 
             // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）
@@ -742,6 +802,18 @@ public sealed class AxiosClient : IDisposable
     }
 
     /// <summary>
+    /// 是否真的需要把响应字节解码成文本。
+    /// arraybuffer / byte[] 只给原始字节；text / dynamic 必然需要；json 下除 byte[] 外都要。
+    /// </summary>
+    private static bool NeedsText(AxiosConfig config, Type? dataType) => config.ResponseType switch
+    {
+        ResponseType.ArrayBuffer => false,
+        ResponseType.Stream => false,
+        ResponseType.Text or ResponseType.Dynamic => true,
+        _ => dataType != typeof(byte[])
+    };
+
+    /// <summary>
     /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
     /// </summary>
     private static object? ConvertData(AxiosConfig config, HttpRequestMessage request, Type? dataType, byte[] bytes, string text)
@@ -761,7 +833,20 @@ public sealed class AxiosClient : IDisposable
         // 3) dynamic 展开为动态对象图（空 body 为 null，对齐 axios）。
         if (config.ResponseType == ResponseType.Dynamic)
         {
-            return text.Length == 0 ? null : DynamicJson.Parse(text);
+            if (text.Length == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return DynamicJson.Parse(text);
+            }
+            catch (JsonException ex)
+            {
+                // 非 JSON 响应（HTML 错误页、纯文本等）也必须走统一错误模型，而不是裸 JsonException。
+                throw AxiosException.BadResponse(config, request, "dynamic JSON", ex);
+            }
         }
 
         // 4) 目标类型就是原始内容本身：string 原样返回（支持纯文本），byte[] 直接给字节。
@@ -843,7 +928,8 @@ public sealed class AxiosClient : IDisposable
 
         merged.ContentType = perCall.ContentTypeSet ? perCall.ContentType : merged.ContentType;
 
-        if (perCall.Timeout > TimeSpan.Zero)
+        // 用 *Set 标记判断「显式设置」：Timeout=0 / Max*=null 也能按请求覆盖实例默认值。
+        if (perCall.TimeoutSet)
         {
             merged.Timeout = perCall.Timeout;
         }
@@ -861,9 +947,20 @@ public sealed class AxiosClient : IDisposable
 
         // 以下为后加的配置：Proxy/Credentials 已在 ValidatePerRequestOptions 里拦掉「按请求设置」，
         // WithCredentials/MaxRedirects 属实例级，不做合并。
-        merged.MaxContentLength = perCall.MaxContentLength ?? merged.MaxContentLength;
-        merged.MaxBodyLength = perCall.MaxBodyLength ?? merged.MaxBodyLength;
-        merged.MaxRate = perCall.MaxRate ?? merged.MaxRate;
+        if (perCall.MaxContentLengthSet)
+        {
+            merged.MaxContentLength = perCall.MaxContentLength;
+        }
+
+        if (perCall.MaxBodyLengthSet)
+        {
+            merged.MaxBodyLength = perCall.MaxBodyLength;
+        }
+
+        if (perCall.MaxRateSet)
+        {
+            merged.MaxRate = perCall.MaxRate;
+        }
         merged.TimeoutMessage = perCall.TimeoutMessage ?? merged.TimeoutMessage;
         merged.OnUploadProgress = perCall.OnUploadProgress ?? merged.OnUploadProgress;
         merged.OnDownloadProgress = perCall.OnDownloadProgress ?? merged.OnDownloadProgress;

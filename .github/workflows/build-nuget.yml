@@ -1,4 +1,5 @@
 # 打 tag（v1.2.3 / v1.2.3-rc.1）时自动构建、测试、打包并发布到 nuget.org。
+# 普通 push / PR 只做构建 + 测试（不发布），避免回归只能等到打 tag 才暴露。
 # 认证方式：NuGet Trusted Publishing（OIDC），不需要长期 API Key，也不需要 NUGET_API_KEY 密钥。
 #
 # 与 nuget.org「Trusted Publishing」策略必须逐项一致（大小写不敏感，但内容要相同）：
@@ -12,8 +13,12 @@ name: build-nuget
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v[0-9]*'
+  pull_request:
 
 permissions:
   contents: read
@@ -23,8 +28,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build-test:
+    name: build & test
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      TEST_PROJECT: test/AxiosNet.Tests/AxiosNet.Tests.csproj
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 还原依赖
+        run: dotnet restore "$TEST_PROJECT"
+
+      - name: 构建
+        run: dotnet build "$TEST_PROJECT" --configuration Release --no-restore
+
+      - name: 运行单元测试
+        run: dotnet test "$TEST_PROJECT" --configuration Release --no-build --no-restore --logger "console;verbosity=normal"
+
   publish:
     name: pack & push
+    # 只有 tag 推送才发布；普通 push / PR 由上面的 build-test 覆盖
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # 必须与 nuget.org 策略里填的 Environment 完全一致（策略填了就必须匹配）
     environment: build-nuget

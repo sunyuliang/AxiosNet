@@ -22,7 +22,9 @@ public sealed record TestResponse(
     byte[]? Body = null,
     string ContentType = "application/json; charset=utf-8",
     IReadOnlyDictionary<string, string>? Headers = null,
-    bool CloseConnection = false);
+    bool CloseConnection = false,
+    long? ContentLengthOverride = null,
+    TimeSpan? BodyDelay = null);
 
 /// <summary>
 /// 基于 TcpListener 的极简 HTTP/1.1 测试服务器：
@@ -323,12 +325,13 @@ public sealed class TestHttpServer : IAsyncDisposable
     private static async Task WriteResponseAsync(NetworkStream stream, string requestMethod, TestResponse response)
     {
         var body = response.Body ?? Array.Empty<byte>();
+        var declaredLength = response.ContentLengthOverride ?? body.Length;
         var reason = response.ReasonPhrase
             ?? (ReasonPhrases.TryGetValue(response.StatusCode, out var phrase) ? phrase : "OK");
 
         var sb = new StringBuilder();
         sb.Append("HTTP/1.1 ").Append(response.StatusCode).Append(' ').Append(reason).Append("\r\n");
-        sb.Append("Content-Length: ").Append(body.Length).Append("\r\n");
+        sb.Append("Content-Length: ").Append(declaredLength).Append("\r\n");
         sb.Append("Content-Type: ").Append(response.ContentType).Append("\r\n");
 
         if (response.Headers is not null)
@@ -344,6 +347,13 @@ public sealed class TestHttpServer : IAsyncDisposable
 
         var headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
         await stream.WriteAsync(headerBytes);
+        await stream.FlushAsync();
+
+        // 先发响应头再延迟正文：用于验证流式响应的超时是否覆盖正文读取阶段。
+        if (response.BodyDelay is TimeSpan delay && delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay);
+        }
 
         // HEAD / 204 响应不能携带消息体（避免残留字节破坏 Keep-Alive 上的下一次请求解析）
         if (body.Length > 0

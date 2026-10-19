@@ -84,8 +84,27 @@ public sealed class AxiosConfig
     /// </summary>
     public object? Data { get; set; }
 
-    /// <summary>对应 axios timeout，零表示不超时。</summary>
-    public TimeSpan Timeout { get; set; } = TimeSpan.Zero;
+    private TimeSpan _timeout;
+
+    /// <summary>
+    /// 对应 axios timeout，零表示不超时。
+    /// <para>
+    /// 按请求设置时<b>显式赋值即可覆盖实例默认值</b>，包括用 <see cref="TimeSpan.Zero"/>
+    /// 关闭实例级超时（未赋值则沿用实例默认）。
+    /// </para>
+    /// </summary>
+    public TimeSpan Timeout
+    {
+        get => _timeout;
+        set
+        {
+            _timeout = value;
+            TimeoutSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool TimeoutSet { get; private set; }
 
     /// <summary>对应 axios auth（HTTP Basic）。</summary>
     public AxiosAuth? Auth { get; set; }
@@ -180,24 +199,66 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
     internal bool MaxRedirectsSet { get; private set; }
 
+    private long? _maxContentLength;
+
     /// <summary>
     /// 对应 axios maxContentLength：响应体最大字节数，null 表示不限。
     /// 超出时抛 <see cref="AxiosException"/>（<see cref="AxiosException.ErrBadResponse"/>）；
     /// 服务端声明了 Content-Length 时在读取正文前就拒绝，否则边读边计数。
+    /// 按请求显式设为 null 可清除实例默认上限。
     /// </summary>
-    public long? MaxContentLength { get; set; }
+    public long? MaxContentLength
+    {
+        get => _maxContentLength;
+        set
+        {
+            _maxContentLength = value;
+            MaxContentLengthSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool MaxContentLengthSet { get; private set; }
+
+    private long? _maxBodyLength;
 
     /// <summary>
     /// 对应 axios maxBodyLength：请求体最大字节数，null 表示不限。
     /// 仅在长度可确定时校验（对象/字符串/byte[] 等；未知长度的 Stream 不校验），
     /// 超出时抛 <see cref="AxiosException"/>（<see cref="AxiosException.ErrBadRequest"/>）。
+    /// 按请求显式设为 null 可清除实例默认上限。
     /// </summary>
-    public long? MaxBodyLength { get; set; }
+    public long? MaxBodyLength
+    {
+        get => _maxBodyLength;
+        set
+        {
+            _maxBodyLength = value;
+            MaxBodyLengthSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool MaxBodyLengthSet { get; private set; }
+
+    private long? _maxRate;
 
     /// <summary>
     /// 限速（字节/秒），null 表示不限速。同时作用于上传与下载（与进度回调共用同一套流量包装）。
+    /// 按请求显式设为 null 可清除实例默认限速。
     /// </summary>
-    public long? MaxRate { get; set; }
+    public long? MaxRate
+    {
+        get => _maxRate;
+        set
+        {
+            _maxRate = value;
+            MaxRateSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool MaxRateSet { get; private set; }
 
     /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
     public string? TimeoutMessage { get; set; }
@@ -306,6 +367,10 @@ public sealed class AxiosConfig
         clone.ContentTypeSet = ContentTypeSet;
         clone.WithCredentialsSet = WithCredentialsSet;
         clone.MaxRedirectsSet = MaxRedirectsSet;
+        clone.TimeoutSet = TimeoutSet;
+        clone.MaxContentLengthSet = MaxContentLengthSet;
+        clone.MaxBodyLengthSet = MaxBodyLengthSet;
+        clone.MaxRateSet = MaxRateSet;
         return clone;
     }
 }

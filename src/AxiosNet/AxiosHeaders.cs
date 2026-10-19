@@ -4,11 +4,18 @@ namespace AxiosNet;
 
 /// <summary>
 /// 类似 axios 的 AxiosHeaders：大小写不敏感、支持多值、支持链式调用。
+/// <para>
+/// 所有读写都在内部锁内完成，因此实例默认值（<see cref="Axios.Defaults"/> 等）可以在
+/// 请求进行中安全地增删请求头（例如运行期刷新 Token），不会让并发的配置合并看到半成品集合。
+/// 枚举与 <see cref="Clone"/> 返回快照，不持有实时视图。
+/// </para>
 /// </summary>
 public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 {
     private readonly Dictionary<string, string> _store
         = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly object _sync = new();
 
     public AxiosHeaders()
     {
@@ -28,13 +35,16 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         var key = NormalizeName(name);
-        if (value is null)
+        lock (_sync)
         {
-            _store.Remove(key);
-        }
-        else
-        {
-            _store[key] = value;
+            if (value is null)
+            {
+                _store.Remove(key);
+            }
+            else
+            {
+                _store[key] = value;
+            }
         }
 
         return this;
@@ -53,13 +63,36 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     }
 
     public string? Get(string name)
-        => _store.TryGetValue(NormalizeName(name), out var value) ? value : null;
+    {
+        lock (_sync)
+        {
+            return _store.TryGetValue(NormalizeName(name), out var value) ? value : null;
+        }
+    }
 
-    public bool Has(string name) => _store.ContainsKey(NormalizeName(name));
+    public bool Has(string name)
+    {
+        lock (_sync)
+        {
+            return _store.ContainsKey(NormalizeName(name));
+        }
+    }
 
-    public bool Delete(string name) => _store.Remove(NormalizeName(name));
+    public bool Delete(string name)
+    {
+        lock (_sync)
+        {
+            return _store.Remove(NormalizeName(name));
+        }
+    }
 
-    public void Clear() => _store.Clear();
+    public void Clear()
+    {
+        lock (_sync)
+        {
+            _store.Clear();
+        }
+    }
 
     public string? this[string name]
     {
@@ -67,9 +100,18 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         set => Set(name, value);
     }
 
-    public int Count => _store.Count;
+    public int Count
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _store.Count;
+            }
+        }
+    }
 
-    public AxiosHeaders Clone() => new(this);
+    public AxiosHeaders Clone() => new(Snapshot());
 
     /// <summary>用另一个 headers 覆盖合并当前对象（另一个对象优先）。</summary>
     internal void MergeFrom(AxiosHeaders? other)
@@ -79,15 +121,28 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return;
         }
 
-        foreach (var kv in other._store)
+        // 先取快照，避免两个实例互相合并时持锁顺序相反造成死锁。
+        var snapshot = other.Snapshot();
+        lock (_sync)
         {
-            _store[kv.Key] = kv.Value;
+            foreach (var kv in snapshot)
+            {
+                _store[kv.Key] = kv.Value;
+            }
         }
     }
 
     private static string NormalizeName(string name) => name.Trim();
 
-    public IEnumerator<KeyValuePair<string, string>> GetEnumerator() => _store.GetEnumerator();
+    private List<KeyValuePair<string, string>> Snapshot()
+    {
+        lock (_sync)
+        {
+            return new List<KeyValuePair<string, string>>(_store);
+        }
+    }
+
+    public IEnumerator<KeyValuePair<string, string>> GetEnumerator() => Snapshot().GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }

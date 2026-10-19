@@ -114,7 +114,8 @@ internal static class ParamsSerializer
         {
             foreach (var property in paramsObj.GetType().GetProperties())
             {
-                if (!property.CanRead)
+                // 索引器不能直接取值（会抛 TargetParameterCountException），与嵌套分支保持一致直接跳过。
+                if (!property.CanRead || property.GetIndexParameters().Length > 0)
                 {
                     continue;
                 }

@@ -41,8 +41,10 @@
     <None Include="..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
-  <!-- SourceLink：snupkg 可反查 GitHub 源码；PrivateAssets=all，不会成为包的依赖 -->
-  <ItemGroup>
+  <!-- SourceLink：snupkg 可反查 GitHub 源码；PrivateAssets=all，不会成为包的依赖。
+       仅在 GitHub Actions（镜像仓库）里启用：主仓是 Gitee，本地构建拿不到 GitHub 的 origin 映射，
+       启用只会产生「源链接为空」的告警。 -->
+  <ItemGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
   </ItemGroup>
 

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-153%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-162%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -11,6 +11,8 @@
 - 零第三方依赖，仅使用 .NET BCL
 - 目标框架：`net8.0`
 - 异步优先（`Task` / `CancellationToken` / `ConfigureAwait(false)`）
+
+> 仓库：**Gitee（[itsm/axios-net](https://gitee.com/itsm/axios-net)）是提交主仓**，Issue / PR / tag 以 Gitee 为准；[GitHub](https://github.com/sunyuliang/AxiosNet) 为只读镜像（CI 自动发布 NuGet 也由镜像侧执行）。
 
 ---
 
@@ -423,7 +425,9 @@ var fileName = (disposition.FileNameStar ?? disposition.FileName)?.Trim('"') ?? 
 
 - `ResponseType.Stream`（或 `GetAsync<Stream>`）走 `HttpCompletionOption.ResponseHeadersRead`：响应头一到就返回，正文边读边给，不会把整包读进内存。
 - **必须释放流**（`using` / `await using`）：流读完或释放后连接才回到连接池。只读一部分就释放，该 TCP 连接会被丢弃而不是复用。
-- 下载超时/取消与普通请求一致：`c.Timeout` / `c.CancellationToken`，分别抛 `ECONNABORTED` / `ERR_CANCELED`；并发下载量大时注意连接池 `MaxConnectionsPerServer`。
+- 下载超时/取消与普通请求一致：`c.Timeout` 覆盖到**正文读取结束**（超时抛 `ECONNABORTED`，外部取消抛 `ERR_CANCELED`）；并发下载量大时注意连接池 `MaxConnectionsPerServer`。
+- 流式请求遇到非 2xx 时，库会**立即丢弃响应体并归还连接**（`ex.Response.Data` 为 `null`，`Status` / `Headers` 仍可用）——否则一个没人读的错误响应流会长期占住连接。
+- 下载期间该 origin 的租约保持占用（`GetStatistics()` 的 `ActiveLeases` 会反映正在下载的数量），因此空闲驱逐不会中断长下载；流释放后租约才归还。
 - 下载进度用 `c.OnDownloadProgress`，下载限速用 `c.MaxRate`，大小上限用 `c.MaxContentLength`（详见下一节）。
 - 需要把响应流直接存盘的场景，`OnDownloadProgress` 的报告节流为 50 ms，不会因为回调过频拖慢拷贝。
 - `ResponseType.Stream` 时响应体不做任何解码，`response.Status/Headers` 照常可用（先校验状态码再落盘）。
@@ -713,9 +717,9 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | Code | 触发场景 | 对应 axios |
 | --- | --- | --- |
 | `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `MaxBodyLength` | ✅ |
-| `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型；响应体超过 `MaxContentLength` | ✅ |
+| `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型（含 `dynamic` 拿到非 JSON）；响应体超过 `MaxContentLength` | ✅ |
 | `ECONNABORTED` | 请求超过 `Timeout`（消息可用 `TimeoutMessage` 覆盖） | ✅ |
-| `ERR_NETWORK` | 连接被拒绝/DNS 失败等网络层异常 | ✅ |
+| `ERR_NETWORK` | 连接被拒绝/DNS 失败/连接中途断开/响应体被截断等网络层异常（底层异常见 `ex.Cause`） | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
 | `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`） | ✅ |
 | `ERR_BAD_OPTION_VALUE` | 在单次请求上设置了仅实例级生效的项（`proxy` / `credentials` / `withCredentials` / `maxRedirects`） | ✅（同码） |
@@ -726,11 +730,16 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 // 单次请求超时
 await client.GetAsync("slow", c => c.Timeout = TimeSpan.FromMilliseconds(500));
 
+// 关闭实例级默认超时（显式 Timeout = 0 即覆盖；未赋值才沿用实例默认）
+await client.GetAsync("slow-but-wanted", c => c.Timeout = TimeSpan.Zero);
+
 // 外部取消（等同 AbortController）
 using var cts = new CancellationTokenSource();
 var task = client.GetAsync("slow", cancellationToken: cts.Token);
 cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
+
+> 流式响应（`ResponseType.Stream`）的超时覆盖到正文读取结束：请求返回后，在流上继续读超过 `Timeout` 同样抛 `ECONNABORTED`。
 
 ## 网络连接池
 
@@ -879,7 +888,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 153 个 xUnit 单元测试
+# 运行全部 162 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -901,6 +910,7 @@ dotnet build AxiosNet.slnx -c Release
 - dynamic 响应图与 dynamic 请求（9 个专项测试，覆盖 GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt; / 静态门面 / 显式 responseType 优先）
 - 连接池：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义
 - 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null、与 pool/poolOptions 及实例级选项的 fail-fast
+- 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 
 ## 项目结构
 
@@ -924,7 +934,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 18 类集成调用示例（内置演示服务器 + multipart 精确解析）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（153 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（162 个）
 ```
 
 ## 与 axios 的差异说明
