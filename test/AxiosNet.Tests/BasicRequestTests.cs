@@ -94,6 +94,114 @@ public sealed class BasicRequestTests
         Assert.Equal(payload, server.Received[0].Body);
     }
 
+    [Fact]
+    public async Task ResponseType_ArrayBuffer_NonGeneric_ReturnsBytes()
+    {
+        var payload = new byte[] { 1, 2, 3, 254, 255 };
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: payload, ContentType: "application/octet-stream"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.ArrayBuffer);
+
+        Assert.Equal(payload, Assert.IsType<byte[]>(response.Data));
+    }
+
+    [Fact]
+    public async Task GetAsync_OfString_PlainText_ReturnsRawText()
+    {
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.UTF8.GetBytes("hello world"), ContentType: "text/plain; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<string>(server.Url + "ping");
+
+        Assert.Equal("hello world", response.Data);
+    }
+
+    [Fact]
+    public async Task GetAsync_OfString_JsonString_ReturnsRawText()
+    {
+        // 原始内容优先：即使是 JSON 字符串也原样返回（含引号），不再自动剥离
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.UTF8.GetBytes("\"hello\""), ContentType: "application/json; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<string>(server.Url);
+
+        Assert.Equal("\"hello\"", response.Data);
+    }
+
+    [Fact]
+    public async Task GetAsync_OfInt_BareNumberText_IsParsed()
+    {
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.UTF8.GetBytes("42"), ContentType: "text/plain; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<int>(server.Url);
+
+        Assert.Equal(42, response.Data);
+    }
+
+    [Fact]
+    public async Task GetAsync_OfDateTime_BareDateText_IsParsed()
+    {
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.UTF8.GetBytes("2024-01-02"), ContentType: "text/plain"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<DateTime>(server.Url);
+
+        Assert.Equal(new DateTime(2024, 1, 2), response.Data);
+    }
+
+    [Fact]
+    public async Task Response_CharsetInContentType_IsAutoDetected()
+    {
+        var body = Encoding.Unicode.GetBytes("你好"); // UTF-16LE
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: body, ContentType: "text/plain; charset=utf-16"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Text);
+
+        Assert.Equal("你好", response.Data);
+    }
+
+    [Fact]
+    public async Task Response_Bom_IsAutoDetected_WhenNoCharset()
+    {
+        var body = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("你好")).ToArray();
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: body, ContentType: "text/plain"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Text);
+
+        Assert.Equal("你好", response.Data);
+    }
+
+    [Fact]
+    public async Task ResponseEncoding_OverridesAutoDetection()
+    {
+        // 服务端未声明 charset、字节为 Latin1：默认按 UTF-8 解码会乱码，强制 Latin1 后正确
+        var body = Encoding.Latin1.GetBytes("café");
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: body, ContentType: "text/plain"));
+        using var client = new AxiosClient();
+
+        var auto = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Text);
+        Assert.NotEqual("café", auto.Data);
+
+        var forced = await client.GetAsync(server.Url, c =>
+        {
+            c.ResponseType = ResponseType.Text;
+            c.ResponseEncoding = Encoding.Latin1;
+        });
+        Assert.Equal("café", forced.Data);
+    }
+
     [Theory]
     [InlineData("PUT")]
     [InlineData("PATCH")]

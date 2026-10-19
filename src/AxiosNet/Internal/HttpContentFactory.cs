@@ -13,6 +13,9 @@ internal static class HttpContentFactory
 {
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
+        // 请求体文本编码：默认 UTF-8（axios 行为），可用 config.RequestEncoding 覆盖。
+        var encoding = config.RequestEncoding ?? Encoding.UTF8;
+
         switch (data)
         {
             case null:
@@ -24,7 +27,7 @@ internal static class HttpContentFactory
 
             case string text:
                 // axios 对字符串 body 不做转换；默认方法头是 application/json
-                return new StringContent(text, Encoding.UTF8, "application/json");
+                return new StringContent(text, encoding, "application/json");
 
             case byte[] bytes:
                 return new ByteArrayContent(bytes);
@@ -36,18 +39,18 @@ internal static class HttpContentFactory
                 return new StreamContent(stream);
 
             case IDictionary dictionary:
-                return CreateFormContent(dictionary);
+                return CreateFormContent(dictionary, encoding, config.RequestEncoding is not null);
 
             default:
                 // 与 axios transformRequest 一致：对象先序列化为 JSON 字符串。
                 // 直接构造 StringContent 可保证携带 Content-Length，避免分块传输带来的兼容性问题。
                 var options = config.JsonSerializerOptions ?? JsonOptions.Web;
                 var json = JsonSerializer.Serialize(data, data.GetType(), options);
-                return new StringContent(json, Encoding.UTF8, "application/json");
+                return new StringContent(json, encoding, "application/json");
         }
     }
 
-    private static HttpContent CreateFormContent(IDictionary dictionary)
+    private static HttpContent CreateFormContent(IDictionary dictionary, Encoding encoding, bool explicitEncoding)
     {
         var pairs = new List<KeyValuePair<string, string>>(dictionary.Count);
         foreach (DictionaryEntry entry in dictionary)
@@ -74,8 +77,60 @@ internal static class HttpContentFactory
             }
         }
 
-        return new FormUrlEncodedContent(pairs);
+        if (pairs.Count == 0)
+        {
+            return new FormUrlEncodedContent(pairs);
+        }
+
+        // 表单体按「已转义的 ASCII 串」写入，因此编码只影响转义映射（默认 UTF-8 百分号编码，与 axios 一致）。
+        var body = string.Join(
+            '&',
+            pairs.Select(pair => $"{PercentEncode(pair.Key, encoding)}={PercentEncode(pair.Value, encoding)}"));
+
+        var content = new ByteArrayContent(encoding.GetBytes(body));
+        var mediaType = explicitEncoding
+            ? $"application/x-www-form-urlencoded; charset={encoding.WebName}"
+            : "application/x-www-form-urlencoded";
+        content.Headers.TryAddWithoutValidation("Content-Type", mediaType);
+        return content;
     }
+
+    private static string PercentEncode(string value, Encoding encoding)
+    {
+        if (encoding.CodePage == Encoding.UTF8.CodePage)
+        {
+            // 与 FormUrlEncodedContent 完全一致：空格转义为 '+'。
+            return Uri.EscapeDataString(value).Replace("%20", "+");
+        }
+
+        var bytes = encoding.GetBytes(value);
+        var builder = new StringBuilder(bytes.Length);
+        foreach (var b in bytes)
+        {
+            if (b == (byte)' ')
+            {
+                builder.Append('+');
+            }
+            else if (IsUnreserved(b))
+            {
+                builder.Append((char)b);
+            }
+            else
+            {
+                builder.Append('%').Append(HexUpper(b >> 4)).Append(HexUpper(b & 0xF));
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool IsUnreserved(byte b) =>
+        (b >= (byte)'A' && b <= (byte)'Z')
+        || (b >= (byte)'a' && b <= (byte)'z')
+        || (b >= (byte)'0' && b <= (byte)'9')
+        || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~';
+
+    private static char HexUpper(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
 
     private static string ScalarToString(object value) => value switch
     {

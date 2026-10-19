@@ -64,6 +64,18 @@ public sealed class AxiosConfig
     public JsonSerializerOptions? JsonSerializerOptions { get; set; }
 
     /// <summary>
+    /// 请求体文本编码（string / 对象 JSON / 表单），决定写入 socket 的字节与 Content-Type 中的 charset。
+    /// null 时使用 UTF-8（axios 的默认行为）。byte[] / Stream 原样透传，不受该项影响。
+    /// </summary>
+    public Encoding? RequestEncoding { get; set; }
+
+    /// <summary>
+    /// 响应体文本编码。null 时自动识别（Content-Type charset → BOM → UTF-8）；
+    /// 设置后强制按指定编码解码原始字节（用于服务端 charset 缺失/错误的情况）。
+    /// </summary>
+    public Encoding? ResponseEncoding { get; set; }
+
+    /// <summary>
     /// 连接池选项。仅在 AxiosClient 自建连接池时生效；
     /// 也可以在构造 AxiosClient 时直接传入共享的 <see cref="HttpConnectionPool"/>。
     /// </summary>
@@ -91,6 +103,8 @@ public sealed class AxiosConfig
             Credentials = Credentials,
             MaxRedirects = MaxRedirects,
             JsonSerializerOptions = JsonSerializerOptions,
+            RequestEncoding = RequestEncoding,
+            ResponseEncoding = ResponseEncoding,
             PoolOptions = PoolOptions
         };
     }

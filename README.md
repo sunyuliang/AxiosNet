@@ -113,6 +113,7 @@ await http.PostAsync("users", new CreateUserRequest("bob", 30));
 | `config.data`（对象→JSON） | `c.Data`（对象→JSON，字典→form） |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
 | —（JS 天然动态） | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
+| —（无对应配置） | `RequestEncoding` / `ResponseEncoding`（请求/响应文本编码） |
 | `validateStatus` | `c.ValidateStatus = status => ...` |
 | `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
 | `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
@@ -138,6 +139,8 @@ var config = new AxiosConfig
     CancellationToken = cancellationToken,
     MaxRedirects = 5,
     WithCredentials = false,
+    RequestEncoding = null,                   // 请求体文本编码，null = UTF-8
+    ResponseEncoding = null,                  // 响应体文本编码，null = 自动识别
     // Proxy / Credentials / HttpVersion / JsonSerializerOptions / PoolOptions ...
 };
 ```
@@ -195,6 +198,37 @@ Console.WriteLine($"{data.name}, {data.address.city}, {data.roles[0]}");
 ```
 
 所有快捷方法都支持 `<dynamic>`：`GetAsync<dynamic>` / `PostAsync<dynamic>` / `PutAsync<dynamic>` / `PatchAsync<dynamic>` / `DeleteAsync<dynamic>`（含 `RequestAsync<dynamic>` 与静态门面 `Axios.GetAsync<dynamic>`）；也可以在非泛型请求上显式设置 `c.ResponseType = ResponseType.Dynamic`。显式指定 `ResponseType.Text/ArrayBuffer/Stream` 时优先于 `<dynamic>` 的默认动态展开。
+
+### 原始内容优先与基础数据类型
+
+响应统一**先读取原始字节，再解码为文本，最后按返回类型转换**，因此可以直接返回基础数据类型：
+
+```csharp
+var s = (await http.GetAsync<string>("ping")).Data;        // 纯文本原样返回（body 即使是 JSON 字符串也保留引号）
+var n = (await http.GetAsync<int>("count")).Data;          // 裸数字 "42" -> 42
+var d = (await http.GetAsync<DateTime>("today")).Data;     // 裸日期 "2024-01-02" -> DateTime
+var raw = (await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayBuffer)).Data; // byte[]
+```
+
+- `GetAsync<string>` / `ResponseType.Text`：返回原始文本，不做 JSON 解析；
+- 数值 / 日期 / 布尔 / GUID / 枚举 / `TimeSpan` 等：body 是 JSON 标量时直接反序列化，是裸标量文本时按类型解析；
+- 复杂类型：按 JSON 反序列化；
+- 非泛型：合法 JSON 为 `JsonElement`，非法 JSON 原样返回文本（对齐 axios `transformResponse`）。
+
+### 内容编码
+
+- **请求体**：`RequestEncoding` 决定写入的字节以及 `Content-Type` 的 `charset`（默认 UTF-8；`string` / 对象 JSON / 表单都适用，`byte[]` / `Stream` 原样透传）。
+- **响应体**：默认自动识别 —— `Content-Type` 的 `charset` → BOM → UTF-8；`ResponseEncoding` 可强制指定，用于服务端 charset 缺失或错误的情况。
+
+```csharp
+// 请求按 GBK 发送
+await http.PostAsync("legacy", "中文", c => c.RequestEncoding = Encoding.GetEncoding("gbk"));
+
+// 响应强制按 GBK 解码
+await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gbk"));
+```
+
+> .NET Core 上使用 GBK 等代码页编码需先注册 `CodePagesEncodingProvider`，否则 `Encoding.GetEncoding("gbk")` 会抛异常；此时自动识别会静默回退到 BOM/UTF-8。
 
 JSON 到 CLR 的映射规则：
 
@@ -425,7 +459,8 @@ dotnet build AxiosNet.slnx -c Release
 3. 非泛型 JSON 响应的 `Data` 是 `JsonElement`（需要 JS 式动态访问时使用泛型 `GetAsync<dynamic>`）；
 4. 取消使用 `CancellationToken`（语义等同 `AbortController`）；
 5. `IDictionary` 请求体默认按表单编码（对齐 `URLSearchParams`），普通对象/`ExpandoObject` 按 JSON 编码；
-6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现。
+6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
+7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）。
 
 
 ## License

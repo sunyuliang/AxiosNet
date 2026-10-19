@@ -110,6 +110,37 @@ public sealed class ParamsAndContentTests
     }
 
     [Fact]
+    public async Task Post_String_WithRequestEncoding_UsesEncodingAndCharsetHeader()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: "text/plain"));
+        using var client = new AxiosClient();
+
+        await client.PostAsync(server.Url + "raw", "你好", c => c.RequestEncoding = Encoding.Unicode);
+
+        var sent = server.Received[0];
+        Assert.Equal("你好", Encoding.Unicode.GetString(sent.Body));
+        Assert.Contains("charset=utf-16", sent.Headers.GetValueOrDefault("content-type"));
+    }
+
+    [Fact]
+    public async Task Post_Dictionary_WithRequestEncoding_PercentEncodesWithThatEncoding()
+    {
+        await using var server = TestHttpServer.Start(req
+            => TestJson.Echo(req, contentType: "application/x-www-form-urlencoded"));
+        using var client = new AxiosClient();
+
+        await client.PostAsync(
+            server.Url + "form",
+            new Dictionary<string, object?> { ["name"] = "é" },
+            c => c.RequestEncoding = Encoding.Latin1);
+
+        var sent = server.Received[0];
+        // Latin1 下 'é' 为单字节 0xE9 -> %E9（默认 UTF-8 会是 %C3%A9）
+        Assert.Equal("name=%E9", Encoding.ASCII.GetString(sent.Body));
+        Assert.Contains("charset=iso-8859-1", sent.Headers.GetValueOrDefault("content-type"));
+    }
+
+    [Fact]
     public async Task Post_MultipartFormDataContent_PassesThroughUntouched()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: req.Headers.GetValueOrDefault("content-type") ?? "application/json"));

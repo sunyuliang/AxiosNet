@@ -377,56 +377,19 @@ public sealed class AxiosClient : IDisposable
         }
 
         object? data;
-        switch (config.ResponseType)
+        if (config.ResponseType == ResponseType.Stream)
         {
-            case ResponseType.Stream:
-                data = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-                break;
-
-            case ResponseType.ArrayBuffer:
-                data = await message.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-                break;
-
-            case ResponseType.Text:
-                data = await message.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                break;
-
-            case ResponseType.Dynamic:
-            {
-                var dynamicText = await message.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                // 与 axios 在 JS 中的行为一致：空 body 为 null
-                data = dynamicText.Length == 0 ? null : DynamicJson.Parse(dynamicText);
-                break;
-            }
-
-            default:
-                var text = await message.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                if (text.Length == 0)
-                {
-                    data = null;
-                }
-                else if (dataType is null || dataType == typeof(object))
-                {
-                    // 对齐 axios transformResponse：JSON 解析失败时原样返回文本
-                    try
-                    {
-                        using var document = JsonDocument.Parse(text);
-                        data = document.RootElement.Clone();
-                    }
-                    catch (JsonException)
-                    {
-                        data = text;
-                    }
-                }
-                else
-                {
-                    data = JsonSerializer.Deserialize(
-                        text,
-                        dataType,
-                        config.JsonSerializerOptions ?? JsonOptions.Web);
-                }
-
-                break;
+            data = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // 原始内容优先：一律先取原始字节，再解码为文本，最后按返回类型转换。
+            var bytes = await message.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            var text = ResponseTextDecoder.Decode(
+                bytes,
+                message.Content.Headers.ContentType?.CharSet,
+                config.ResponseEncoding);
+            data = ConvertData(config, dataType, bytes, text);
         }
 
         var status = (int)message.StatusCode;
@@ -439,6 +402,79 @@ public sealed class AxiosClient : IDisposable
             Config = config,
             Request = request
         };
+    }
+
+    /// <summary>
+    /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
+    /// </summary>
+    private static object? ConvertData(AxiosConfig config, Type? dataType, byte[] bytes, string text)
+    {
+        // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
+        if (config.ResponseType == ResponseType.ArrayBuffer)
+        {
+            return bytes;
+        }
+
+        // 2) text 直接给原始文本（不做任何 JSON 解析）。
+        if (config.ResponseType == ResponseType.Text)
+        {
+            return text;
+        }
+
+        // 3) dynamic 展开为动态对象图（空 body 为 null，对齐 axios）。
+        if (config.ResponseType == ResponseType.Dynamic)
+        {
+            return text.Length == 0 ? null : DynamicJson.Parse(text);
+        }
+
+        // 4) 目标类型就是原始内容本身：string 原样返回（支持纯文本），byte[] 直接给字节。
+        if (dataType == typeof(string))
+        {
+            return text;
+        }
+
+        if (dataType == typeof(byte[]))
+        {
+            return bytes;
+        }
+
+        // 5) Json（默认）：空 body 视为 null。
+        if (text.Length == 0)
+        {
+            return null;
+        }
+
+        if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
+        {
+            // 对齐 axios transformResponse：JSON 解析失败时原样返回文本。
+            try
+            {
+                using var document = JsonDocument.Parse(text);
+                return document.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                return text;
+            }
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize(
+                text,
+                dataType,
+                config.JsonSerializerOptions ?? JsonOptions.Web);
+        }
+        catch (JsonException)
+        {
+            // 非 JSON 的裸标量（42 / 2024-01-01 / true …）：按目标类型解析原始文本。
+            if (ScalarParser.TryParse(text, dataType, out var scalar))
+            {
+                return scalar;
+            }
+
+            throw;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -482,6 +518,8 @@ public sealed class AxiosClient : IDisposable
         merged.Credentials = perCall.Credentials ?? merged.Credentials;
         merged.MaxRedirects = perCall.MaxRedirects;
         merged.JsonSerializerOptions = perCall.JsonSerializerOptions ?? merged.JsonSerializerOptions;
+        merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
+        merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;
         merged.PoolOptions = perCall.PoolOptions ?? merged.PoolOptions;
         return merged;
     }
