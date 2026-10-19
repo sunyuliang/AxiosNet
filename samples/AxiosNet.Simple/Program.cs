@@ -32,7 +32,8 @@ IExample[] examples =
     new ProgressAndRateExample(),
     new CustomHandlerExample(),
     new SingleFileUploadExample(),
-    new NewtonsoftJsonExample()
+    new NewtonsoftJsonExample(),
+    new DnsRefreshExample()
 };
 
 try

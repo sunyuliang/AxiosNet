@@ -139,7 +139,7 @@ public sealed class DemoServer : IDisposable
         }
     }
 
-    private static (int Status, byte[] Body, string ContentType, string? ContentDisposition, string? Location) Route(
+    private (int Status, byte[] Body, string ContentType, string? ContentDisposition, string? Location) Route(
         string method,
         string path,
         string query,
@@ -155,6 +155,10 @@ public sealed class DemoServer : IDisposable
         {
             case "GET" when path == "/":
                 return Json(200, """{"ok":true,"service":"AxiosNet.Simple.DemoServer"}""");
+
+            case "GET" when path == "/whoami":
+                // 回报当前实例的端口：DNS 切换示例靠它判断这条请求落在了哪个「IP」上
+                return Json(200, $"{{\"port\":{Port}}}");
 
             case "GET" when path == "/users":
                 return Json(200, """

@@ -868,6 +868,21 @@ sharedPool.EvictIdleEndpoints();
 
 > 性能要点：顺序/并发请求都会复用已建立的 TCP 连接（仓库测试与示例实测：5 个顺序请求只建立 1 条 TCP；6 个并发慢请求在 `MaxConnectionsPerServer=2` 下峰值并发恰好为 2）。应用关闭时 `Dispose()` 池即可释放全部连接；共享池不会因为单个 client 释放而被销毁（仅池拥有者负责释放）。
 
+### DNS 变更与连接过期
+
+连接池里存的是 Handler，不是 IP；IP 绑在 Handler 内部的 TCP 连接上。所以 DNS 切换后的收敛窗口由「连接还能复用多久」决定：
+
+| 控制项 | 作用 |
+| --- | --- |
+| `PooledConnectionLifetime` | 一条连接最多可被复用的时长。到期后**下一次取用**时才换新连接（不打断在途请求），新连接会重新解析 DNS。默认 10 分钟，快速切流场景可调到 30–60 秒；设为 `Timeout.InfiniteTimeSpan` 表示永不轮换 |
+| `PooledConnectionIdleTimeout` | 空闲连接直接关闭（默认 2 分钟），低流量 origin 因此更快收敛 |
+| `IdleHandlerLifetime` | 整个 origin 的 Handler 空闲后驱逐，等于彻底重置该站点的连接状态 |
+| `HttpConnectionPool.Clear()` | 立即释放所有 origin 节点，**会打断在途请求**，只适合运维手动触发或进程关闭 |
+
+现网经验：连接健康时连接池不会因为 DNS 变了就主动断开——这是 keep-alive 的收益，也意味着必须接受「最多一个 `PooledConnectionLifetime` 的不新鲜窗口」。需要服务发现（Consul / Nacos / SRV / 权重）时，用 `HandlerFactory` + `ctx.CreateDefaultHandler()` 拿到 Handler 后设置 `ConnectCallback` 自行决定目标地址；它按「每条新 TCP 连接」调用一次，天然跟着生命周期刷新。
+
+完整可运行演示见示例第 20 项（`Examples/DnsRefreshExample.cs`）：两个本地服务器模拟同一域名的旧/新地址，几秒内就能看到「切 DNS 后请求仍命中旧地址 → 生命周期到期后落到新地址」，以及 `Clear()` 的立即收敛。
+
 ## 自定义 Handler 注入
 
 连接层有两个可插拔点，按「是否保留连接池」选择：
@@ -932,7 +947,7 @@ using var client3 = Axios.Create(
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 19 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 20 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -953,6 +968,7 @@ using var client3 = Axios.Create(
 17. **HttpMethod 直用 + 自定义 Handler 注入**（`PROPFIND` 自定义谓词、`DelegatingHandler` 直接注入、连接池 `HandlerFactory`）
 18. **单文件上传**：裸流直传（`/upload/raw`）与 multipart 单文件（`/upload/single`），服务端精确回报字节数 + SHA256
 19. **自定义 JSON 序列化**：实现 `IAxiosJsonSerializer`，用 **Newtonsoft.Json** 替换 System.Text.Json（请求体 / 强类型响应 / dynamic 三条路径统一走同一引擎）
+20. **DNS 变更与连接过期**：两个本地服务器模拟同一域名的旧/新地址，演示 `PooledConnectionLifetime` 到期的自然收敛，以及 `pool.Clear()` 的立即失效
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1035,7 +1051,7 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ Internal/               # URL/params、请求体工厂、流量计量、动态 JSON、反射缓存、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 19 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器）
+│  └─ AxiosNet.Simple/           # 20 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器 + DNS 刷新）
 └─ test/
    └─ AxiosNet.Tests/            # xUnit 单元测试（168 个用例 × net6.0 / net8.0 双目标 = 336 次执行）
 ```
