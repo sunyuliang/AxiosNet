@@ -278,12 +278,17 @@ public sealed class StreamCancellationTests
     [Fact]
     public async Task StreamRead_Sync_HonorsTimeout_DuringBodyRead()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[4096],
-            ContentType: "application/octet-stream",
-            BodyDelay: TimeSpan.FromSeconds(3)));
+        await using var server = TestHttpServer.Start(request => request.Path == "/warmup"
+            ? TestJson.Response(new { ok = true })
+            : new TestResponse(
+                Body: new byte[4096],
+                ContentType: "application/octet-stream",
+                BodyDelay: TimeSpan.FromSeconds(3)));
 
         using var client = new AxiosClient();
+
+        // 先预热同源连接：ShortTimeout 是整条请求的预算，不能被建连/建 Handler 吃掉
+        await client.WarmUpAsync(server.Url + "warmup");
 
         var response = await client.GetAsync<Stream>(
             server.Url + "slow.bin",

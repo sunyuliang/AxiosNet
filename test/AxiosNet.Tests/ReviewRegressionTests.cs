@@ -175,16 +175,14 @@ public sealed class ReviewRegressionTests
     [Fact]
     public async Task StreamTimeout_AppliesToBodyRead()
     {
-        var payload = Encoding.UTF8.GetBytes("{\"ok\":true}");
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            BodyDelay: TimeSpan.FromMilliseconds(600)));
+        await using var server = StartSlowBodyServer(TimeSpan.FromSeconds(3));
 
         using var client = new AxiosClient();
+        await client.WarmUpAsync(server.Url + "warmup");
 
         var response = await client.GetAsync<Stream>(
             server.Url + "slow-body",
-            c => c.Timeout = TimeSpan.FromMilliseconds(150));
+            c => c.Timeout = BodyReadTimeout);
 
         await using var stream = response.Data!;
 
@@ -199,16 +197,14 @@ public sealed class ReviewRegressionTests
     [Fact]
     public async Task StreamTimeout_InterruptsBlockedSyncRead()
     {
-        var payload = Encoding.UTF8.GetBytes("{\"ok\":true}");
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            BodyDelay: TimeSpan.FromMilliseconds(600)));
+        await using var server = StartSlowBodyServer(TimeSpan.FromSeconds(3));
 
         using var client = new AxiosClient();
+        await client.WarmUpAsync(server.Url + "warmup");
 
         var response = await client.GetAsync<Stream>(
             server.Url + "slow-body",
-            c => c.Timeout = TimeSpan.FromMilliseconds(150));
+            c => c.Timeout = BodyReadTimeout);
 
         await using var stream = response.Data!;
 
@@ -279,6 +275,22 @@ public sealed class ReviewRegressionTests
     // ---------------------------------------------------------------
     // 辅助
     // ---------------------------------------------------------------
+
+    /// <summary>
+    /// 正文读取阶段的超时预算：500ms 是「连接已预热」下的宽裕值（本地往返只有微秒级），
+    /// 又远小于正文延迟（3 秒），保证超时一定落在正文阶段而不是响应头阶段。
+    /// </summary>
+    private static readonly TimeSpan BodyReadTimeout = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// 「先发响应头、再延迟正文」的测试服务器，并为预热留一个立即返回的 <c>/warmup</c>。
+    /// </summary>
+    private static TestHttpServer StartSlowBodyServer(TimeSpan bodyDelay)
+        => TestHttpServer.Start(request => request.Path == "/warmup"
+            ? TestJson.Response(new { ok = true })
+            : new TestResponse(
+                Body: Encoding.UTF8.GetBytes("{\"ok\":true}"),
+                BodyDelay: bodyDelay));
 
     private sealed class WithIndexer
     {
