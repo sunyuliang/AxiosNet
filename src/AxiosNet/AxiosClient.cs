@@ -35,7 +35,13 @@ public sealed partial class AxiosClient : IDisposable
     public bool UsesConnectionPool => _pool is not null;
 
     /// <param name="defaults">实例默认配置（对应 axios instance.defaults）。</param>
-    /// <param name="pool">共享连接池；与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥。</param>
+    /// <param name="pool">
+    /// 共享连接池；与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// 池的连接行为（重定向 / 代理 / 凭据 / Cookie / 池选项）在创建池时已固定，
+    /// 因此 defaults 上的 <c>MaxRedirects</c> / <c>WithCredentials</c> / <c>Proxy</c> / <c>Credentials</c> /
+    /// <c>PoolOptions</c> 同样抛 <c>ERR_BAD_OPTION_VALUE</c>（与注入 handler 的策略一致），
+    /// 请在创建池的 <see cref="ConnectionPoolOptions"/> 上配置，或不传 pool 让本实例自建池。
+    /// </param>
     /// <param name="poolOptions">本实例自建连接池的选项。</param>
     /// <param name="handler">
     /// 直接注入的 <see cref="HttpMessageHandler"/>（如自定义 <see cref="DelegatingHandler"/> 链、
@@ -82,6 +88,17 @@ public sealed partial class AxiosClient : IDisposable
 
         if (pool is not null)
         {
+            if (poolOptions is not null || Defaults.PoolOptions is not null)
+            {
+                throw AxiosException.InvalidOption(
+                    "不能同时传入 pool 和 poolOptions / defaults.PoolOptions："
+                    + "共享池已按自己的 ConnectionPoolOptions 创建，请在创建池时配置，或改为只传 poolOptions 让本实例自建池。");
+            }
+
+            // 池的连接行为（重定向 / 代理 / 凭据 / Cookie）在各 origin 的 Handler 创建时已固定，
+            // defaults 上的同类选项无从生效 —— 与其静默忽略，不如明确报错（与注入 handler 的策略一致）。
+            ValidateSharedPoolLevelOptions(defaults);
+
             _pool = pool;
             _ownsPool = false;
         }
@@ -138,6 +155,41 @@ public sealed partial class AxiosClient : IDisposable
         {
             throw AxiosException.InvalidOption(
                 "注入自定义 handler 时 Proxy / Credentials 由 handler 决定，请在 handler 上配置。");
+        }
+    }
+
+    /// <summary>
+    /// 共享连接池时，池已按自己的 <see cref="ConnectionPoolOptions"/> 创建完成，
+    /// defaults 上的连接级配置（重定向 / 凭据 / 代理 / Cookie）与 PoolOptions 都无法生效 —— 直接报错。
+    /// </summary>
+    private static void ValidateSharedPoolLevelOptions(AxiosConfig? defaults)
+    {
+        if (defaults is null)
+        {
+            return;
+        }
+
+        if (defaults.MaxRedirectsSet)
+        {
+            throw AxiosException.InvalidOption(
+                "共享连接池时 MaxRedirects 由池决定（重定向由各 origin 的 Handler 处理），"
+                + "请在创建 ConnectionPoolOptions 时设置 AllowAutoRedirect / MaxAutomaticRedirections，"
+                + "或不传 pool 让本实例自建池。");
+        }
+
+        if (defaults.WithCredentialsSet)
+        {
+            throw AxiosException.InvalidOption(
+                "共享连接池时 WithCredentials 由池决定（Cookie 容器在连接层），"
+                + "请在创建 ConnectionPoolOptions 时设置 UseCookies / Credentials，"
+                + "或不传 pool 让本实例自建池。");
+        }
+
+        if (defaults.Proxy is not null || defaults.Credentials is not null)
+        {
+            throw AxiosException.InvalidOption(
+                "共享连接池时 Proxy / Credentials 由池决定，"
+                + "请在 ConnectionPoolOptions.Proxy / Credentials 上设置，或不传 pool 让本实例自建池。");
         }
     }
 

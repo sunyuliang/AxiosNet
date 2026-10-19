@@ -218,6 +218,8 @@ var config = new AxiosConfig
 
 > `withCredentials` / `proxy` / `credentials` / `maxRedirects` 属于**实例级**配置：连接池 Handler 在构造 `AxiosClient` 时创建，因此这些项只在实例默认值上生效。为避免"设了却没生效"的静默错误，在**单次请求**上显式设置这四项会立即抛出 `AxiosException`（`ERR_BAD_OPTION_VALUE`），提示改为在 `Axios.Create(...)` 的实例 defaults 中设置。
 >
+> 共享连接池的 `AxiosClient(pool: ...)` 同理：这四项与 `PoolOptions` 作用于**池**而非单个实例，在共享池 client 的 defaults 上设置同样立即抛 `ERR_BAD_OPTION_VALUE`，应改为在创建池的 `ConnectionPoolOptions` 上配置（详见[网络连接池](#网络连接池)）。
+>
 > 需要按请求生效的项（`timeout`、`headers`、`params`、`responseType`、`maxContentLength`、`maxRate`、`onUploadProgress`/`onDownloadProgress`、`transformRequest`/`transformResponse`、`validateStatus`、`auth`、`cancellationToken`、`RequestEncoding`/`ResponseEncoding` 等）不受此限制；其中 `cancellationToken` 既可设在实例默认，也可按请求传入，按请求传入时以后者为准。
 
 ## 请求体 data 与查询参数 params
@@ -799,7 +801,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_NETWORK` | 连接被拒绝/DNS 失败/连接中途断开/响应体被截断等网络层异常（底层异常见 `ex.Cause`） | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
 | `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`） | ✅ |
-| `ERR_BAD_OPTION_VALUE` | 在单次请求上设置了仅实例级生效的项（`proxy` / `credentials` / `withCredentials` / `maxRedirects`） | ✅（同码） |
+| `ERR_BAD_OPTION_VALUE` | 在单次请求上设置了仅实例级生效的项（`proxy` / `credentials` / `withCredentials` / `maxRedirects`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions` | ✅（同码） |
 
 ## 超时与取消
 
@@ -865,6 +867,8 @@ ConnectionPoolStatistics stats = sharedPool.GetStatistics();
 // 手动驱逐空闲 origin（也会由后台定时器自动执行）
 sharedPool.EvictIdleEndpoints();
 ```
+
+> fail-fast：共享池的连接行为（重定向 / 代理 / 凭据 / Cookie / 池选项）在创建池时已固定。在共享池 client 的 defaults 上设置 `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` / `PoolOptions`，或给 `AxiosClient` 同时传 `pool` 与 `poolOptions`，都会抛 `ERR_BAD_OPTION_VALUE` 而不是静默忽略——这些项请在创建池的 `ConnectionPoolOptions` 上配置，或让该 client 自建池（不传 `pool`）。
 
 > 性能要点：顺序/并发请求都会复用已建立的 TCP 连接（仓库测试与示例实测：5 个顺序请求只建立 1 条 TCP；6 个并发慢请求在 `MaxConnectionsPerServer=2` 下峰值并发恰好为 2）。应用关闭时 `Dispose()` 池即可释放全部连接；共享池不会因为单个 client 释放而被销毁（仅池拥有者负责释放）。
 
@@ -1022,7 +1026,7 @@ dotnet build AxiosNet.slnx -c Release
 - `paramsSerializer` / `formFieldNameSelector` / `transformRequest` / `transformResponse` / `PostForm*` 快捷方法
 - 文件下载：`GetAsync<Stream>` 落盘、`ResponseType.ArrayBuffer`、流释放后连接复用、Content-Disposition 文件名、下载超时
 - dynamic 响应图与 dynamic 请求（9 个专项测试，覆盖 GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt; / 静态门面 / 显式 responseType 优先）
-- 连接池：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义
+- 连接池：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义、共享池 fail-fast（连接级 defaults 与 `pool`/`poolOptions` 互斥）
 - 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null、与 pool/poolOptions 及实例级选项的 fail-fast
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 - JSON 可插拔（`JsonCustomizationTests`）：自定义 `IAxiosJsonSerializer` 驱动请求/响应/dynamic/表单展平、实例级 `JsonSerializerOptions`、transform 列表并发增删
@@ -1067,7 +1071,7 @@ dotnet build AxiosNet.slnx -c Release
 5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
 7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
-8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；
+8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`。

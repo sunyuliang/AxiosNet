@@ -36,10 +36,13 @@ internal static class UrlBuilder
         try
         {
             var uri = new Uri(combined, UriKind.RelativeOrAbsolute);
-            if (!uri.IsAbsoluteUri)
+
+            // 连接池必须使用绝对地址；相对 URL 且未提供 baseURL 时统一抛 ERR_INVALID_URL，
+            // 而不是等到连接池抛出 InvalidOperationException。
+            // IsFile：Unix 下 "/items" 这类根相对地址会被 Uri 解析成 file:///items（隐式文件路径），
+            // 不在这里拦住的话，会一路走到 Handler 才报「不支持的 scheme」。
+            if (!uri.IsAbsoluteUri || uri.IsFile)
             {
-                // 连接池必须使用绝对地址；相对 URL 且未提供 baseURL 时统一抛 ERR_INVALID_URL，
-                // 而不是等到连接池抛出 InvalidOperationException。
                 throw AxiosException.InvalidUrl(combined);
             }
 
@@ -66,8 +69,42 @@ internal static class UrlBuilder
         return baseAddress.TrimEnd('/') + "/" + url.TrimStart('/');
     }
 
+    /// <summary>
+    /// 是否为绝对地址（形如 <c>scheme:</c>）。
+    /// <para>
+    /// 不用 <see cref="Uri.TryCreate(string, UriKind, out Uri)"/> 判断：Unix 下以 <c>/</c> 开头的路径
+    /// 会被 Uri 当成绝对文件路径（<c>file:///items</c>），从而把根相对地址误判为绝对地址
+    /// （dotnet/runtime#76816，官方明确为 by design）。显式的 <c>file://</c> 仍按绝对地址处理，
+    /// 由 <see cref="Build"/> 统一拒绝。
+    /// </para>
+    /// </summary>
     private static bool IsAbsoluteUrl(string url)
-        => Uri.TryCreate(url, UriKind.Absolute, out _);
+    {
+        if (url.Length == 0 || !IsAsciiLetter(url[0]))
+        {
+            return false;
+        }
+
+        for (var i = 1; i < url.Length; i++)
+        {
+            var c = url[i];
+            if (c == ':')
+            {
+                return true;
+            }
+
+            // RFC 3986 scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+            if (!IsAsciiLetter(c) && (c < '0' || c > '9') && c != '+' && c != '-' && c != '.')
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsAsciiLetter(char c)
+        => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 
     private static string NormalizeQuery(string? query)
     {

@@ -66,6 +66,18 @@ public sealed class GetUriTests
     }
 
     [Fact]
+    public void GetUri_FileUri_ThrowsInvalidUrl()
+    {
+        // 显式 file:// 不是 HTTP 目标：不能拼到 baseURL 后面，也不能交给连接池。
+        // 这条同时覆盖了 Unix 下 Uri 把 "/items" 解析成 file:///items 的兜底分支。
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://api.example.com/v1/" });
+
+        var ex = Assert.Throws<AxiosException>(() => client.GetUri(c => c.Url = "file:///etc/passwd"));
+
+        Assert.Equal(AxiosException.ErrInvalidUrl, ex.Code);
+    }
+
+    [Fact]
     public void StaticAxios_GetUri_WorksLikeFacade()
     {
         var uri = Axios.GetUri(c =>

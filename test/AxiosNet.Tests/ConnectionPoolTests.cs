@@ -176,4 +176,101 @@ public sealed class ConnectionPoolTests
         var response = await anotherClient.GetAsync<JsonElement>(server.Url);
         Assert.Equal(200, response.Status);
     }
+
+    // ---------------------------------------------------------------
+    // 共享池的 fail-fast：连接级实例配置不能静默忽略
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void SharedPool_WithInstanceLevelConnectionOptions_Throws()
+    {
+        using var pool = new HttpConnectionPool();
+
+        Assert.Throws<AxiosException>(() =>
+            new AxiosClient(new AxiosConfig { MaxRedirects = 0 }, pool: pool));
+        Assert.Throws<AxiosException>(() =>
+            new AxiosClient(new AxiosConfig { WithCredentials = true }, pool: pool));
+        Assert.Throws<AxiosException>(() =>
+            new AxiosClient(new AxiosConfig { Proxy = new System.Net.WebProxy("http://127.0.0.1:9") }, pool: pool));
+        Assert.Throws<AxiosException>(() =>
+            new AxiosClient(new AxiosConfig { Credentials = System.Net.CredentialCache.DefaultCredentials }, pool: pool));
+        Assert.Throws<AxiosException>(() =>
+            new AxiosClient(new AxiosConfig { PoolOptions = new ConnectionPoolOptions() }, pool: pool));
+    }
+
+    [Fact]
+    public void SharedPool_WithPoolOptionsParameter_ThrowsBadOptionValue()
+    {
+        using var pool = new HttpConnectionPool();
+
+        var ex = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(pool: pool, poolOptions: new ConnectionPoolOptions()));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("poolOptions", ex.Message);
+    }
+
+    [Fact]
+    public void SharedPool_MaxRedirectsError_MentionsPoolOptionsGuidance()
+    {
+        using var pool = new HttpConnectionPool();
+
+        var ex = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(new AxiosConfig { MaxRedirects = 0 }, pool: pool));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("MaxRedirects", ex.Message);
+        Assert.Contains("ConnectionPoolOptions", ex.Message);
+    }
+
+    [Fact]
+    public void SharedPool_WithCleanDefaults_Works()
+    {
+        using var pool = new HttpConnectionPool();
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:1" }, pool: pool);
+
+        Assert.Same(pool, client.Pool);
+        Assert.True(client.UsesConnectionPool);
+    }
+
+    [Fact]
+    public async Task SharedPool_RedirectBehaviorComesFromPoolOptions()
+    {
+        await using var server = StartRedirectServer();
+
+        // 池上 AllowAutoRedirect=false：共享该池的 client 不跟随重定向 —— 连接行为由池决定
+        using var noFollowPool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            AllowAutoRedirect = false,
+            IdleHandlerLifetime = TimeSpan.FromMinutes(30)
+        });
+        using var noFollowClient = new AxiosClient(pool: noFollowPool);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => noFollowClient.GetAsync(server.Url + "redir"));
+        Assert.Equal(302, ex.Status);
+        Assert.DoesNotContain(server.Received, r => r.Path == "/final");
+
+        // 默认共享池跟随重定向，且共享 client 的 defaults 保持干净
+        using var sharedPool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            IdleHandlerLifetime = TimeSpan.FromMinutes(30)
+        });
+        using var client = new AxiosClient(pool: sharedPool);
+
+        var response = await client.GetAsync(server.Url + "redir");
+        Assert.Equal(200, response.Status);
+        Assert.Contains(server.Received, r => r.Path == "/final");
+    }
+
+    private static TestHttpServer StartRedirectServer()
+        => TestHttpServer.Start(req => req.Path switch
+        {
+            "/redir" => new TestResponse(
+                302,
+                Headers: new Dictionary<string, string> { ["Location"] = "/final" },
+                Body: Array.Empty<byte>()),
+            "/final" => TestJson.Response(new { ok = true }),
+            _ => new TestResponse(404)
+        });
 }

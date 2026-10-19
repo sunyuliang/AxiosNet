@@ -304,12 +304,16 @@ public sealed class BasicRequestTests
         Assert.IsType<string>((await client.GetAsync("any", c => c.ResponseType = ResponseType.Text)).Data);
     }
 
-    [Fact]
-    public async Task RelativeUrl_WithoutBaseAddress_ThrowsInvalidUrl()
+    [Theory]
+    [InlineData("users")]
+    // Linux 下 Uri 会把 "/items" 解析成 file:///items 的绝对文件路径（Windows 下是相对地址），
+    // 必须仍然按「缺少 baseURL」处理，而不是把 file URI 交给连接池。
+    [InlineData("/items")]
+    public async Task RelativeUrl_WithoutBaseAddress_ThrowsInvalidUrl(string url)
     {
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("users"));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(url));
 
         Assert.Equal("ERR_INVALID_URL", ex.Code);
     }
