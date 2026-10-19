@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-56%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-72%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -117,7 +117,7 @@ await http.PostAsync("users", new CreateUserRequest("bob", 30));
 | `validateStatus` | `c.ValidateStatus = status => ...` |
 | `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
 | `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
-| `withCredentials` / `proxy` / `maxRedirects` | 同名属性 |
+| `withCredentials` / `proxy` / `maxRedirects` | 同名属性（**仅实例级**生效，见下） |
 | `AxiosError.code` | `AxiosException.Code`（同名字符串） |
 | （无内置） | `HttpConnectionPool` / `ConnectionPoolOptions` |
 
@@ -146,6 +146,8 @@ var config = new AxiosConfig
 ```
 
 默认 JSON 选项为 **Web 风格**（输出 camelCase、输入大小写不敏感），与 JS/axios 生态习惯一致；可用 `c.JsonSerializerOptions` 覆盖。
+
+> `withCredentials` / `proxy` / `credentials` / `maxRedirects` 属于**实例级**配置：连接池 Handler 在构造 `AxiosClient` 时创建，因此这些项只在实例默认值上生效，按请求设置不会改变已建立的连接池行为。需要按请求生效的项（`timeout`、`headers`、`params`、`responseType`、`validateStatus`、`auth`、`cancellationToken`、`RequestEncoding`/`ResponseEncoding` 等）不受此限制；其中 `cancellationToken` 既可设在实例默认，也可按请求传入，按请求传入时以后者为准。
 
 ## 请求体 data 与查询参数 params
 
@@ -316,11 +318,11 @@ catch (AxiosException ex)
 | Code | 触发场景 | 对应 axios |
 | --- | --- | --- |
 | `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败） | ✅ |
-| `ERR_BAD_RESPONSE` | 响应状态码为 5xx | ✅ |
+| `ERR_BAD_RESPONSE` | 响应状态码为 5xx，或响应体无法反序列化为目标类型 | ✅ |
 | `ECONNABORTED` | 请求超过 `Timeout` | ✅ |
 | `ERR_NETWORK` | 连接被拒绝/DNS 失败等网络层异常 | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
-| `ERR_INVALID_URL` | URL 非法 | ✅ |
+| `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`） | ✅ |
 
 ## 超时与取消
 
@@ -411,7 +413,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 56 个 xUnit 单元测试
+# 运行全部 72 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -447,7 +449,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 12 类集成调用示例（内置演示服务器）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（56 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（72 个）
 ```
 
 ## 与 axios 的差异说明

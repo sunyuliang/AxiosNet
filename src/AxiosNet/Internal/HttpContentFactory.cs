@@ -87,7 +87,9 @@ internal static class HttpContentFactory
             '&',
             pairs.Select(pair => $"{PercentEncode(pair.Key, encoding)}={PercentEncode(pair.Value, encoding)}"));
 
-        var content = new ByteArrayContent(encoding.GetBytes(body));
+        // 转义结果恒为 ASCII，因此 wire 上的字节一律按 ASCII 写出（charset 仅用于告知服务端转义所用的编码），
+        // 避免 RequestEncoding 为 UTF-16/UTF-32 时把 ASCII 串编成多字节而破坏 form-urlencoded 格式。
+        var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
         var mediaType = explicitEncoding
             ? $"application/x-www-form-urlencoded; charset={encoding.WebName}"
             : "application/x-www-form-urlencoded";

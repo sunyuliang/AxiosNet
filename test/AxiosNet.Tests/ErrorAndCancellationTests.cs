@@ -120,4 +120,50 @@ public sealed class ErrorAndCancellationTests
         Assert.Equal("ERR_NETWORK", ex.Code);
         Assert.NotNull(ex.InnerException);
     }
+
+    [Fact]
+    public async Task InstanceDefaultToken_IsRespected_WhenNoPerRequestTokenIsGiven()
+    {
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await Task.Delay(2_000);
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            CancellationToken = cts.Token
+        });
+
+        // 不按请求传 token，应沿用实例默认；旧实现会被 per-call 的 None 覆盖，2 秒后正常返回
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("slow"));
+
+        Assert.Equal("ERR_CANCELED", ex.Code);
+    }
+
+    [Fact]
+    public async Task PerRequestToken_TakesPrecedenceOverInstanceDefault()
+    {
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await Task.Delay(2_000);
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var defaultCts = new CancellationTokenSource(); // 永不取消
+        using var perRequestCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            CancellationToken = defaultCts.Token
+        });
+
+        // 若实例默认生效，请求会在 2 秒后成功；这里应被按请求的 token 取消
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync("slow", cancellationToken: perRequestCts.Token));
+
+        Assert.Equal("ERR_CANCELED", ex.Code);
+    }
 }

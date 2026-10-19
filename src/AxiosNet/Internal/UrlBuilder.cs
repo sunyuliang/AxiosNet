@@ -28,7 +28,15 @@ internal static class UrlBuilder
 
         try
         {
-            return new Uri(combined, UriKind.RelativeOrAbsolute);
+            var uri = new Uri(combined, UriKind.RelativeOrAbsolute);
+            if (!uri.IsAbsoluteUri)
+            {
+                // 连接池必须使用绝对地址；相对 URL 且未提供 baseURL 时统一抛 ERR_INVALID_URL，
+                // 而不是等到连接池抛出 InvalidOperationException。
+                throw AxiosException.InvalidUrl(combined);
+            }
+
+            return uri;
         }
         catch (UriFormatException ex)
         {

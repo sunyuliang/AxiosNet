@@ -70,4 +70,15 @@ public sealed class AxiosException : Exception
             response,
             null);
     }
+
+    internal static AxiosException BadResponse(AxiosConfig config, HttpRequestMessage request, Type targetType, Exception inner)
+    {
+        return new AxiosException(
+            $"Response body could not be deserialized to '{targetType.Name}'",
+            "ERR_BAD_RESPONSE",
+            config,
+            request,
+            null,
+            inner);
+    }
 }

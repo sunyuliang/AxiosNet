@@ -1,3 +1,4 @@
+using System.Dynamic;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
@@ -282,6 +283,47 @@ public sealed class BasicRequestTests
         Assert.Equal("/base/users", server.Received[0].Path);
         Assert.Equal("/base/items", server.Received[1].Path);
         Assert.Equal("/other", server.Received[2].Path);
+    }
+
+    [Fact]
+    public async Task InstanceDefaults_ResponseTypeDynamic_IsRespectedUnlessOverridden()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            ResponseType = ResponseType.Dynamic
+        });
+
+        // 快捷方法/新建 config 都没显式指定 responseType，应沿用实例默认（旧实现会被 Json 默认值吞掉）
+        Assert.IsType<ExpandoObject>((await client.GetAsync("any")).Data);
+        Assert.IsType<ExpandoObject>((await client.RequestAsync(c => c.Url = "any")).Data);
+        Assert.IsType<ExpandoObject>((await client.RequestAsync(new AxiosConfig { Url = "any" })).Data);
+
+        // 显式指定时仍然按其覆盖
+        Assert.IsType<string>((await client.GetAsync("any", c => c.ResponseType = ResponseType.Text)).Data);
+    }
+
+    [Fact]
+    public async Task RelativeUrl_WithoutBaseAddress_ThrowsInvalidUrl()
+    {
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("users"));
+
+        Assert.Equal("ERR_INVALID_URL", ex.Code);
+    }
+
+    [Fact]
+    public async Task InvalidJson_ForComplexType_ThrowsAxiosException()
+    {
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.UTF8.GetBytes("not-json"), ContentType: "text/plain; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Person>(server.Url));
+
+        Assert.Equal("ERR_BAD_RESPONSE", ex.Code);
     }
 
     [Fact]

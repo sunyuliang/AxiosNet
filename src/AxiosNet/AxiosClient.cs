@@ -174,9 +174,14 @@ public sealed class AxiosClient : IDisposable
         var config = new AxiosConfig
         {
             Url = url,
-            Method = method,
-            CancellationToken = cancellationToken
+            Method = method
         };
+
+        // 仅在调用方传入可取消的令牌时才写入，避免用 CancellationToken.None 覆盖掉实例默认令牌
+        if (cancellationToken.CanBeCanceled)
+        {
+            config.CancellationToken = cancellationToken;
+        }
         if (data is not null)
         {
             config.Data = data;
@@ -389,7 +394,7 @@ public sealed class AxiosClient : IDisposable
                 bytes,
                 message.Content.Headers.ContentType?.CharSet,
                 config.ResponseEncoding);
-            data = ConvertData(config, dataType, bytes, text);
+            data = ConvertData(config, request, dataType, bytes, text);
         }
 
         var status = (int)message.StatusCode;
@@ -407,7 +412,7 @@ public sealed class AxiosClient : IDisposable
     /// <summary>
     /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
     /// </summary>
-    private static object? ConvertData(AxiosConfig config, Type? dataType, byte[] bytes, string text)
+    private static object? ConvertData(AxiosConfig config, HttpRequestMessage request, Type? dataType, byte[] bytes, string text)
     {
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
         if (config.ResponseType == ResponseType.ArrayBuffer)
@@ -465,7 +470,7 @@ public sealed class AxiosClient : IDisposable
                 dataType,
                 config.JsonSerializerOptions ?? JsonOptions.Web);
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
             // 非 JSON 的裸标量（42 / 2024-01-01 / true …）：按目标类型解析原始文本。
             if (ScalarParser.TryParse(text, dataType, out var scalar))
@@ -473,7 +478,8 @@ public sealed class AxiosClient : IDisposable
                 return scalar;
             }
 
-            throw;
+            // 兜底失败：包装成 AxiosException，保持统一的错误模型（而不是裸抛 JsonException）。
+            throw AxiosException.BadResponse(config, request, dataType!, ex);
         }
     }
 
@@ -491,7 +497,7 @@ public sealed class AxiosClient : IDisposable
 
         merged.Url = perCall.Url ?? merged.Url;
         merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
-        merged.Method = perCall.Method;
+        merged.Method = perCall.MethodSet ? perCall.Method : merged.Method;
         merged.Headers.MergeFrom(perCall.Headers);
         if (perCall.Params is not null)
         {
@@ -509,14 +515,15 @@ public sealed class AxiosClient : IDisposable
         }
 
         merged.Auth = perCall.Auth ?? merged.Auth;
-        merged.ResponseType = perCall.ResponseType;
+        // 只在显式设置时覆盖，否则沿用实例默认（否则 new AxiosConfig() 的默认值会把实例默认吞掉）
+        merged.ResponseType = perCall.ResponseTypeSet ? perCall.ResponseType : merged.ResponseType;
         merged.ValidateStatus = perCall.ValidateStatus ?? merged.ValidateStatus;
-        merged.CancellationToken = perCall.CancellationToken;
+        merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
         merged.HttpVersion = perCall.HttpVersion ?? merged.HttpVersion;
-        merged.WithCredentials = perCall.WithCredentials;
         merged.Proxy = perCall.Proxy ?? merged.Proxy;
         merged.Credentials = perCall.Credentials ?? merged.Credentials;
-        merged.MaxRedirects = perCall.MaxRedirects;
+        // WithCredentials / MaxRedirects 属于实例级配置（构造 AxiosClient 时应用到连接池 Handler），
+        // 无法按请求生效，因此这里不做合并，避免出现「设置了却无效果」的假象。
         merged.JsonSerializerOptions = perCall.JsonSerializerOptions ?? merged.JsonSerializerOptions;
         merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
         merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;

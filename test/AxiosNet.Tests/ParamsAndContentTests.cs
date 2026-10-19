@@ -141,6 +141,27 @@ public sealed class ParamsAndContentTests
     }
 
     [Fact]
+    public async Task Post_Dictionary_WithNonUtf8RequestEncoding_WritesAsciiEscapedBytes()
+    {
+        await using var server = TestHttpServer.Start(req
+            => TestJson.Echo(req, contentType: "application/x-www-form-urlencoded"));
+        using var client = new AxiosClient();
+
+        await client.PostAsync(
+            server.Url + "form",
+            new Dictionary<string, object?> { ["k"] = "é" },
+            c => c.RequestEncoding = Encoding.Unicode);
+
+        var sent = server.Received[0];
+        // UTF-16LE 下 'k' -> 6B 00、'é' -> E9 00，故转义为 "k%00=%E9%00"（服务端按 charset 反转义可还原）。
+        // 关键点：转义结果恒为 ASCII，wire 上应是「每字符 1 字节」；
+        // 修复前会被再按 UTF-16 编成双字节流（22 字节），破坏 form-urlencoded 格式。
+        Assert.Equal("k%00=%E9%00", Encoding.ASCII.GetString(sent.Body));
+        Assert.Equal(11, sent.Body.Length);
+        Assert.Contains("charset=utf-16", sent.Headers.GetValueOrDefault("content-type"));
+    }
+
+    [Fact]
     public async Task Post_MultipartFormDataContent_PassesThroughUntouched()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: req.Headers.GetValueOrDefault("content-type") ?? "application/json"));

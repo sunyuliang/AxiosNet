@@ -15,8 +15,21 @@ public sealed class AxiosConfig
     /// <summary>对应 axios url（相对或绝对地址）。</summary>
     public string? Url { get; set; }
 
+    private AxiosMethod _method = AxiosMethod.Get;
+
     /// <summary>对应 axios method，默认 GET。</summary>
-    public AxiosMethod Method { get; set; } = AxiosMethod.Get;
+    public AxiosMethod Method
+    {
+        get => _method;
+        set
+        {
+            _method = value;
+            MethodSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool MethodSet { get; private set; }
 
     /// <summary>对应 axios headers（大小写不敏感）。</summary>
     public AxiosHeaders Headers { get; set; } = new();
@@ -36,19 +49,45 @@ public sealed class AxiosConfig
     /// <summary>对应 axios auth（HTTP Basic）。</summary>
     public AxiosAuth? Auth { get; set; }
 
+    private ResponseType _responseType = ResponseType.Json;
+
     /// <summary>对应 axios responseType，默认 Json。</summary>
-    public ResponseType ResponseType { get; set; } = ResponseType.Json;
+    public ResponseType ResponseType
+    {
+        get => _responseType;
+        set
+        {
+            _responseType = value;
+            ResponseTypeSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool ResponseTypeSet { get; private set; }
 
     /// <summary>对应 axios validateStatus，返回 false 时抛出异常；null 表示默认（2xx 合法）。</summary>
     public Func<int, bool>? ValidateStatus { get; set; }
 
-    /// <summary>外部取消令牌。</summary>
-    public CancellationToken CancellationToken { get; set; }
+    private CancellationToken _cancellationToken;
+
+    /// <summary>外部取消令牌。未显式设置时沿用实例默认（与 timeout 共同构成取消来源）。</summary>
+    public CancellationToken CancellationToken
+    {
+        get => _cancellationToken;
+        set
+        {
+            _cancellationToken = value;
+            CancellationTokenSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool CancellationTokenSet { get; private set; }
 
     /// <summary>HTTP 版本，默认 1.1。</summary>
     public Version? HttpVersion { get; set; }
 
-    /// <summary>对应 axios withCredentials（使用系统默认凭据/Cookie）。</summary>
+    /// <summary>对应 axios withCredentials（使用系统默认凭据/Cookie）。仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler。</summary>
     public bool WithCredentials { get; set; }
 
     /// <summary>代理设置。</summary>
@@ -57,7 +96,7 @@ public sealed class AxiosConfig
     /// <summary>显式凭据。</summary>
     public ICredentials? Credentials { get; set; }
 
-    /// <summary>最大自动重定向次数（在连接池 Handler 上生效），默认 5。</summary>
+    /// <summary>最大自动重定向次数。仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler，默认 5。</summary>
     public int MaxRedirects { get; set; } = 5;
 
     /// <summary>JSON 序列化选项（请求体序列化 / 响应体反序列化共用）。</summary>
