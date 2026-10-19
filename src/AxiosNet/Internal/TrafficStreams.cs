@@ -3,29 +3,102 @@ using System.Diagnostics;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.OnDownloadProgress"/> 回报进度，
-/// 并按 <see cref="AxiosConfig.MaxRate"/> 限速（读满配额后按速率等待）。
+/// 上传/下载共用的流量计量与进度上报：
+/// 累计字节、按 50ms 节流回调、按 <see cref="AxiosConfig.MaxRate"/> 反算应等待的时间。
 /// </summary>
-internal sealed class ProgressReadStream : Stream
+internal sealed class TrafficMeter
 {
     private const int ReportIntervalMs = 50;
 
-    private readonly Stream _inner;
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly long? _total;
     private readonly Action<AxiosProgressEvent>? _callback;
     private readonly long? _maxRate;
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
 
     private long _loaded;
     private long _lastReportMs = -ReportIntervalMs;
     private bool _completed;
 
-    public ProgressReadStream(Stream inner, long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
+    public TrafficMeter(long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
     {
-        _inner = inner;
         _total = total;
         _callback = callback;
         _maxRate = maxRate;
+    }
+
+    public long Loaded => _loaded;
+
+    public void Add(int count) => _loaded += count;
+
+    /// <summary>按平均速率反算「当前应耗时 - 实际耗时」；不限速时返回零。</summary>
+    public TimeSpan ComputeDelay()
+    {
+        if (_maxRate is not long rate || rate <= 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var expected = TimeSpan.FromSeconds((double)_loaded / rate);
+        var delta = expected - _clock.Elapsed;
+        return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
+    }
+
+    public void Report(bool force, bool upload)
+    {
+        if (_callback is null || _completed)
+        {
+            return;
+        }
+
+        var elapsedMs = (long)_clock.Elapsed.TotalMilliseconds;
+        if (!force && elapsedMs - _lastReportMs < ReportIntervalMs)
+        {
+            return;
+        }
+
+        if (force)
+        {
+            _completed = true;
+        }
+
+        _lastReportMs = elapsedMs;
+        _callback(BuildEvent(upload));
+
+        // 已经传满声明长度：后续 EOF / Complete 不再重复报一次 100%
+        if (_total is long total && _loaded >= total)
+        {
+            _completed = true;
+        }
+    }
+
+    /// <summary>完成时强制上报一次（loaded == total）。</summary>
+    public void Complete(bool upload) => Report(force: true, upload);
+
+    private AxiosProgressEvent BuildEvent(bool upload)
+    {
+        var seconds = _clock.Elapsed.TotalSeconds;
+        double? rate = seconds > 0 && _loaded > 0 ? _loaded / seconds : null;
+        TimeSpan? estimated = rate is > 0 && _total is long total && total > _loaded
+            ? TimeSpan.FromSeconds((total - _loaded) / rate.Value)
+            : null;
+
+        return new AxiosProgressEvent(_loaded, _total, rate, estimated, upload);
+    }
+}
+
+/// <summary>
+/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.OnDownloadProgress"/> 回报进度，
+/// 并按 <see cref="AxiosConfig.MaxRate"/> 限速（读满配额后按速率等待）。
+/// </summary>
+internal sealed class ProgressReadStream : Stream
+{
+    private readonly Stream _inner;
+    private readonly TrafficMeter _meter;
+
+    public ProgressReadStream(Stream inner, long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
+    {
+        _inner = inner;
+        _meter = new TrafficMeter(total, callback, maxRate);
     }
 
     public override bool CanRead => true;
@@ -74,95 +147,38 @@ internal sealed class ProgressReadStream : Stream
     {
         if (read <= 0)
         {
-            Report(force: true);
+            _meter.Report(force: true, upload: false);
             return;
         }
 
-        _loaded += read;
-        ThrottleSync();
-        Report(force: false);
+        _meter.Add(read);
+
+        var delay = _meter.ComputeDelay();
+        if (delay > TimeSpan.Zero)
+        {
+            Thread.Sleep(delay);
+        }
+
+        _meter.Report(force: false, upload: false);
     }
 
     private async ValueTask TrackAsync(int read, CancellationToken cancellationToken)
     {
         if (read <= 0)
         {
-            Report(force: true);
+            _meter.Report(force: true, upload: false);
             return;
         }
 
-        _loaded += read;
-        await ThrottleAsync(cancellationToken).ConfigureAwait(false);
-        Report(force: false);
-    }
+        _meter.Add(read);
 
-    private void ThrottleSync()
-    {
-        var delay = ComputeDelay();
-        if (delay > TimeSpan.Zero)
-        {
-            Thread.Sleep(delay);
-        }
-    }
-
-    private async ValueTask ThrottleAsync(CancellationToken cancellationToken)
-    {
-        var delay = ComputeDelay();
+        var delay = _meter.ComputeDelay();
         if (delay > TimeSpan.Zero)
         {
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
-    }
 
-    private TimeSpan ComputeDelay()
-    {
-        if (_maxRate is not long rate || rate <= 0)
-        {
-            return TimeSpan.Zero;
-        }
-
-        var expected = TimeSpan.FromSeconds((double)_loaded / rate);
-        var delta = expected - _clock.Elapsed;
-        return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
-    }
-
-    private void Report(bool force)
-    {
-        if (_callback is null || _completed)
-        {
-            return;
-        }
-
-        var elapsedMs = (long)_clock.Elapsed.TotalMilliseconds;
-        if (!force && elapsedMs - _lastReportMs < ReportIntervalMs)
-        {
-            return;
-        }
-
-        if (force)
-        {
-            _completed = true;
-        }
-
-        _lastReportMs = elapsedMs;
-        _callback(BuildEvent(upload: false));
-
-        // 已经读满声明长度：后续 EOF 不再重复报一次 100%
-        if (_total is long total && _loaded >= total)
-        {
-            _completed = true;
-        }
-    }
-
-    private AxiosProgressEvent BuildEvent(bool upload)
-    {
-        var seconds = _clock.Elapsed.TotalSeconds;
-        double? rate = seconds > 0 && _loaded > 0 ? _loaded / seconds : null;
-        TimeSpan? estimated = rate is > 0 && _total is long total && total > _loaded
-            ? TimeSpan.FromSeconds((total - _loaded) / rate.Value)
-            : null;
-
-        return new AxiosProgressEvent(_loaded, _total, rate, estimated, upload);
+        _meter.Report(force: false, upload: false);
     }
 
     public override void Flush() => _inner.Flush();
@@ -192,24 +208,13 @@ internal sealed class ProgressReadStream : Stream
 /// </summary>
 internal sealed class ProgressWriteStream : Stream
 {
-    private const int ReportIntervalMs = 50;
-
     private readonly Stream _inner;
-    private readonly long? _total;
-    private readonly Action<AxiosProgressEvent>? _callback;
-    private readonly long? _maxRate;
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
-
-    private long _loaded;
-    private long _lastReportMs = -ReportIntervalMs;
-    private bool _completed;
+    private readonly TrafficMeter _meter;
 
     public ProgressWriteStream(Stream inner, long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
     {
         _inner = inner;
-        _total = total;
-        _callback = callback;
-        _maxRate = maxRate;
+        _meter = new TrafficMeter(total, callback, maxRate);
     }
 
     public override bool CanRead => false;
@@ -222,7 +227,7 @@ internal sealed class ProgressWriteStream : Stream
 
     public override long Position
     {
-        get => _loaded;
+        get => _meter.Loaded;
         set => throw new NotSupportedException();
     }
 
@@ -251,7 +256,7 @@ internal sealed class ProgressWriteStream : Stream
     }
 
     /// <summary>所有内容写完时调用，保证最后一次回调一定报告（loaded == total）。</summary>
-    public void Complete() => Report(force: true);
+    public void Complete() => _meter.Complete(upload: true);
 
     private void Track(int count)
     {
@@ -260,14 +265,15 @@ internal sealed class ProgressWriteStream : Stream
             return;
         }
 
-        _loaded += count;
-        var delay = ComputeDelay();
+        _meter.Add(count);
+
+        var delay = _meter.ComputeDelay();
         if (delay > TimeSpan.Zero)
         {
             Thread.Sleep(delay);
         }
 
-        Report(force: false);
+        _meter.Report(force: false, upload: true);
     }
 
     private async ValueTask TrackAsync(int count, CancellationToken cancellationToken)
@@ -277,61 +283,15 @@ internal sealed class ProgressWriteStream : Stream
             return;
         }
 
-        _loaded += count;
-        var delay = ComputeDelay();
+        _meter.Add(count);
+
+        var delay = _meter.ComputeDelay();
         if (delay > TimeSpan.Zero)
         {
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
 
-        Report(force: false);
-    }
-
-    private TimeSpan ComputeDelay()
-    {
-        if (_maxRate is not long rate || rate <= 0)
-        {
-            return TimeSpan.Zero;
-        }
-
-        var expected = TimeSpan.FromSeconds((double)_loaded / rate);
-        var delta = expected - _clock.Elapsed;
-        return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
-    }
-
-    private void Report(bool force)
-    {
-        if (_callback is null || _completed)
-        {
-            return;
-        }
-
-        var elapsedMs = (long)_clock.Elapsed.TotalMilliseconds;
-        if (!force && elapsedMs - _lastReportMs < ReportIntervalMs)
-        {
-            return;
-        }
-
-        if (force)
-        {
-            _completed = true;
-        }
-
-        _lastReportMs = elapsedMs;
-
-        var seconds = _clock.Elapsed.TotalSeconds;
-        double? rate = seconds > 0 && _loaded > 0 ? _loaded / seconds : null;
-        TimeSpan? estimated = rate is > 0 && _total is long total && total > _loaded
-            ? TimeSpan.FromSeconds((total - _loaded) / rate.Value)
-            : null;
-
-        _callback(new AxiosProgressEvent(_loaded, _total, rate, estimated, upload: true));
-
-        // 已经写满声明长度：Complete() 不再重复报一次 100%
-        if (_total is { } declared && _loaded >= declared)
-        {
-            _completed = true;
-        }
+        _meter.Report(force: false, upload: true);
     }
 
     public override void Flush() => _inner.Flush();

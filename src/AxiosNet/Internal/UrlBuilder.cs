@@ -112,14 +112,8 @@ internal static class ParamsSerializer
         }
         else
         {
-            foreach (var property in paramsObj.GetType().GetProperties())
+            foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
             {
-                // 索引器不能直接取值（会抛 TargetParameterCountException），与嵌套分支保持一致直接跳过。
-                if (!property.CanRead || property.GetIndexParameters().Length > 0)
-                {
-                    continue;
-                }
-
                 Append(EscapeKey(property.Name), property.GetValue(paramsObj), pairs);
             }
         }
@@ -178,12 +172,9 @@ internal static class ParamsSerializer
         }
 
         // 嵌套对象（匿名类型 / record / POCO）：反射公共属性，序列化为 prefix[prop]=value
-        foreach (var property in value.GetType().GetProperties())
+        foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
         {
-            if (property.CanRead && property.GetIndexParameters().Length == 0)
-            {
-                Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs);
-            }
+            Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs);
         }
     }
 

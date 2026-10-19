@@ -11,7 +11,7 @@ namespace AxiosNet;
 /// 支持 baseURL / method / headers / params / data / timeout / auth / responseType /
 /// validateStatus / 取消令牌 / 请求与响应拦截器，默认连接复用并由连接池统一管理。
 /// </summary>
-public sealed class AxiosClient : IDisposable
+public sealed partial class AxiosClient : IDisposable
 {
     private readonly HttpConnectionPool? _pool;
     private readonly HttpClient? _customClient;
@@ -202,188 +202,6 @@ public sealed class AxiosClient : IDisposable
         configure(config);
         var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
         return response.AsTyped<T>();
-    }
-
-    // ------------------------------------------------------------------
-    // 快捷方法（与 axios.get/post/put/patch/delete/head/options 对齐）
-    // ------------------------------------------------------------------
-
-    public Task<AxiosResponse> GetAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Get, configure, cancellationToken), null);
-
-    public Task<AxiosResponse<T>> GetAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, configure, cancellationToken));
-
-    /// <summary>GET 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse> GetAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Get, configure, cancellationToken, data), null);
-
-    /// <summary>GET 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse<T>> GetAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, configure, cancellationToken, data));
-
-    public Task<AxiosResponse> GetAsync(string url, AxiosConfig config)
-        => SendAsync(WithUrl(config, url, HttpMethod.Get), null);
-
-    public Task<AxiosResponse<T>> GetAsync<T>(string url, AxiosConfig config)
-        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Get));
-
-    public Task<AxiosResponse> DeleteAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Delete, configure, cancellationToken), null);
-
-    public Task<AxiosResponse<T>> DeleteAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, configure, cancellationToken));
-
-    /// <summary>DELETE 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse> DeleteAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Delete, configure, cancellationToken, data), null);
-
-    /// <summary>DELETE 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, configure, cancellationToken, data));
-
-    public Task<AxiosResponse> DeleteAsync(string url, AxiosConfig config)
-        => SendAsync(WithUrl(config, url, HttpMethod.Delete), null);
-
-    public Task<AxiosResponse<T>> DeleteAsync<T>(string url, AxiosConfig config)
-        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Delete));
-
-    public Task<AxiosResponse> HeadAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken), null);
-
-    public Task<AxiosResponse<T>> HeadAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken));
-
-    /// <summary>HEAD 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse> HeadAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data), null);
-
-    /// <summary>HEAD 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data));
-
-    public Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken), null);
-
-    public Task<AxiosResponse<T>> OptionsAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken));
-
-    /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse> OptionsAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data), null);
-
-    /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
-    public Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data));
-
-    public Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data), null);
-
-    public Task<AxiosResponse<T>> PostAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data));
-
-    public Task<AxiosResponse> PostAsync(string url, AxiosConfig config)
-        => SendAsync(WithUrl(config, url, HttpMethod.Post), null);
-
-    public Task<AxiosResponse<T>> PostAsync<T>(string url, AxiosConfig config)
-        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Post));
-
-    public Task<AxiosResponse> PutAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data), null);
-
-    public Task<AxiosResponse<T>> PutAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data));
-
-    public Task<AxiosResponse> PatchAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data), null);
-
-    public Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
-
-    // ------------------------------------------------------------------
-    // 表单快捷方法（对应 axios postForm / putForm / patchForm）
-    // ------------------------------------------------------------------
-
-    /// <summary>对应 axios postForm：默认按 multipart/form-data 发送（字段 + FormFile 文件部件）。</summary>
-    public Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Post, configure, cancellationToken, data), null);
-
-    /// <summary>对应 axios postForm。</summary>
-    public Task<AxiosResponse<T>> PostFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Post, configure, cancellationToken, data));
-
-    /// <summary>对应 axios putForm。</summary>
-    public Task<AxiosResponse> PutFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Put, configure, cancellationToken, data), null);
-
-    /// <summary>对应 axios putForm。</summary>
-    public Task<AxiosResponse<T>> PutFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Put, configure, cancellationToken, data));
-
-    /// <summary>对应 axios patchForm。</summary>
-    public Task<AxiosResponse> PatchFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data), null);
-
-    /// <summary>对应 axios patchForm。</summary>
-    public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
-
-    private static AxiosConfig FormShortcut(
-        string url,
-        HttpMethod method,
-        Action<AxiosConfig>? configure,
-        CancellationToken cancellationToken,
-        object? data)
-    {
-        var config = Shortcut(url, method, configure, cancellationToken, data);
-        if (!config.ContentTypeSet)
-        {
-            config.ContentType = "multipart/form-data";
-        }
-
-        return config;
-    }
-
-    private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
-    {
-        var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
-        return response.AsTyped<T>();
-    }
-
-    private static AxiosConfig Shortcut(
-        string url,
-        HttpMethod method,
-        Action<AxiosConfig>? configure,
-        CancellationToken cancellationToken,
-        object? data = null)
-    {
-        var config = new AxiosConfig
-        {
-            Url = url,
-            Method = method
-        };
-
-        // 仅在调用方传入可取消的令牌时才写入，避免用 CancellationToken.None 覆盖掉实例默认令牌
-        if (cancellationToken.CanBeCanceled)
-        {
-            config.CancellationToken = cancellationToken;
-        }
-        if (data is not null)
-        {
-            config.Data = data;
-        }
-
-        configure?.Invoke(config);
-        return config;
-    }
-
-    private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)
-    {
-        // 不能就地修改调用方传入的 config：同一个 config 并发复用时 Url/Method 会互相覆盖。
-        var copy = config.Clone();
-        copy.Url = url;
-        copy.Method = method;
-        return copy;
     }
 
     // ------------------------------------------------------------------
@@ -840,9 +658,9 @@ public sealed class AxiosClient : IDisposable
 
             try
             {
-                return DynamicJson.Parse(text);
+                return AxiosJson.Get(config).ParseDynamic(text, config);
             }
-            catch (JsonException ex)
+            catch (Exception ex) when (ex is not AxiosException)
             {
                 // 非 JSON 响应（HTML 错误页、纯文本等）也必须走统一错误模型，而不是裸 JsonException。
                 throw AxiosException.BadResponse(config, request, "dynamic JSON", ex);
@@ -871,10 +689,9 @@ public sealed class AxiosClient : IDisposable
             // 对齐 axios transformResponse：JSON 解析失败时原样返回文本。
             try
             {
-                using var document = JsonDocument.Parse(text);
-                return document.RootElement.Clone();
+                return AxiosJson.Get(config).ParseDocument(text, config);
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is not AxiosException)
             {
                 return text;
             }
@@ -882,12 +699,9 @@ public sealed class AxiosClient : IDisposable
 
         try
         {
-            return JsonSerializer.Deserialize(
-                text,
-                dataType,
-                config.JsonSerializerOptions ?? JsonOptions.Web);
+            return AxiosJson.Get(config).Deserialize(text, dataType, config);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is not AxiosException)
         {
             // 非 JSON 的裸标量（42 / 2024-01-01 / true …）：按目标类型解析原始文本。
             if (ScalarParser.TryParse(text, dataType, out var scalar))
@@ -897,132 +711,6 @@ public sealed class AxiosClient : IDisposable
 
             // 兜底失败：包装成 AxiosException，保持统一的错误模型（而不是裸抛 JsonException）。
             throw AxiosException.BadResponse(config, request, dataType!, ex);
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 配置合并 / Header 处理
-    // ------------------------------------------------------------------
-
-    private AxiosConfig MergeConfig(AxiosConfig? perCall)
-    {
-        var merged = Defaults.Clone();
-        if (perCall is null)
-        {
-            return merged;
-        }
-
-        merged.Url = perCall.Url ?? merged.Url;
-        merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
-        merged.Method = perCall.MethodSet ? perCall.Method : merged.Method;
-        merged.Headers.MergeFrom(perCall.Headers);
-        if (perCall.Params is not null)
-        {
-            merged.Params = perCall.Params;
-        }
-
-        if (perCall.Data is not null)
-        {
-            merged.Data = perCall.Data;
-        }
-
-        merged.ContentType = perCall.ContentTypeSet ? perCall.ContentType : merged.ContentType;
-
-        // 用 *Set 标记判断「显式设置」：Timeout=0 / Max*=null 也能按请求覆盖实例默认值。
-        if (perCall.TimeoutSet)
-        {
-            merged.Timeout = perCall.Timeout;
-        }
-
-        merged.Auth = perCall.Auth ?? merged.Auth;
-        // 只在显式设置时覆盖，否则沿用实例默认（否则 new AxiosConfig() 的默认值会把实例默认吞掉）
-        merged.ResponseType = perCall.ResponseTypeSet ? perCall.ResponseType : merged.ResponseType;
-        merged.ValidateStatus = perCall.ValidateStatus ?? merged.ValidateStatus;
-        merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
-        merged.HttpVersion = perCall.HttpVersion ?? merged.HttpVersion;
-        merged.JsonSerializerOptions = perCall.JsonSerializerOptions ?? merged.JsonSerializerOptions;
-        merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
-        merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;
-        merged.PoolOptions = perCall.PoolOptions ?? merged.PoolOptions;
-
-        // 以下为后加的配置：Proxy/Credentials 已在 ValidatePerRequestOptions 里拦掉「按请求设置」，
-        // WithCredentials/MaxRedirects 属实例级，不做合并。
-        if (perCall.MaxContentLengthSet)
-        {
-            merged.MaxContentLength = perCall.MaxContentLength;
-        }
-
-        if (perCall.MaxBodyLengthSet)
-        {
-            merged.MaxBodyLength = perCall.MaxBodyLength;
-        }
-
-        if (perCall.MaxRateSet)
-        {
-            merged.MaxRate = perCall.MaxRate;
-        }
-        merged.TimeoutMessage = perCall.TimeoutMessage ?? merged.TimeoutMessage;
-        merged.OnUploadProgress = perCall.OnUploadProgress ?? merged.OnUploadProgress;
-        merged.OnDownloadProgress = perCall.OnDownloadProgress ?? merged.OnDownloadProgress;
-        merged.ParamsSerializer = perCall.ParamsSerializer ?? merged.ParamsSerializer;
-        merged.FormFieldNameSelector = perCall.FormFieldNameSelector ?? merged.FormFieldNameSelector;
-
-        // transform 链按「实例默认 + 本次追加」组合，顺序稳定
-        foreach (var transform in perCall.TransformRequest)
-        {
-            merged.TransformRequest.Add(transform);
-        }
-
-        foreach (var transform in perCall.TransformResponse)
-        {
-            merged.TransformResponse.Add(transform);
-        }
-
-        return merged;
-    }
-
-    private static readonly HashSet<string> ContentHeaderNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Allow",
-        "Content-Disposition",
-        "Content-Encoding",
-        "Content-Language",
-        "Content-Length",
-        "Content-Location",
-        "Content-MD5",
-        "Content-Range",
-        "Content-Type",
-        "Expires",
-        "Last-Modified"
-    };
-
-    private static void ApplyHeaders(HttpRequestMessage request, AxiosConfig config)
-    {
-        var content = request.Content;
-        foreach (var header in config.Headers)
-        {
-            if (string.IsNullOrEmpty(header.Value))
-            {
-                continue;
-            }
-
-            if (content is not null && ContentHeaderNames.Contains(header.Key))
-            {
-                // Content-Type 允许用户显式覆盖工厂默认值
-                content.Headers.Remove(header.Key);
-                content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            }
-            else if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value) && content is not null)
-            {
-                content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            }
-        }
-
-        if (config.Auth is not null
-            && !config.Headers.Has("Authorization")
-            && !request.Headers.Contains("Authorization"))
-        {
-            request.Headers.TryAddWithoutValidation("Authorization", config.Auth.ToBasicHeaderValue());
         }
     }
 

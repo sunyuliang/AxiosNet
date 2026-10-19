@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-162%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-168%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -62,7 +62,8 @@
 - `onUploadProgress` / `onDownloadProgress`：进度事件（已传/总量/百分比/平均速率/预估剩余），上传与下载双向
 - `maxRate`：上传、下载单向限速（字节/秒）
 - `paramsSerializer` / `formFieldNameSelector`：自定义查询串与表单字段名（对应 axios `formSerializer` 的字段名定制）
-- `transformRequest` / `transformResponse`：请求前、响应后数据变换链
+- `transformRequest` / `transformResponse`：请求前、响应后数据变换链（线程安全，可在运行期增删）
+- 🔧 **可插拔 JSON 序列化**：默认 System.Text.Json，`JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；也可实现 `IAxiosJsonSerializer` 整体替换（如 Newtonsoft.Json）
 - `postForm` / `putForm` / `patchForm`：一行发 `multipart/form-data` 或表单
 - 完整响应结构：`Data / Status / StatusText / Headers / Config / Request`
 
@@ -200,6 +201,8 @@ var config = new AxiosConfig
     OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
 
     // —— 序列化与转换 ——
+    JsonSerializerOptions = myJsonOptions,    // 本次/本实例的 System.Text.Json 选项
+    JsonSerializer = mySerializer,            // 自定义 IAxiosJsonSerializer（null = 全局默认）
     ParamsSerializer = p => MyQuery(p),       // Func<object?, string>：自定义 ?a=1&b=2
     FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     // TransformRequest / TransformResponse：IList<Func<object?, AxiosConfig, object?>>
@@ -210,7 +213,7 @@ var config = new AxiosConfig
 
 > 进度与限速的小节见 [进度回调、限速与大小限制](#进度回调限速与大小限制)。
 
-默认 JSON 选项为 **Web 风格**（输出 camelCase、输入大小写不敏感），与 JS/axios 生态习惯一致；可用 `c.JsonSerializerOptions` 覆盖。
+默认 JSON 选项为 **Web 风格**（输出 camelCase、输入大小写不敏感），与 JS/axios 生态习惯一致；优先级是「单次请求 → 实例 defaults → 全局 `AxiosJson.Options`」，自定义序列化器的接入方式见 [自定义 JSON 序列化](#自定义-json-序列化)。
 
 > `withCredentials` / `proxy` / `credentials` / `maxRedirects` 属于**实例级**配置：连接池 Handler 在构造 `AxiosClient` 时创建，因此这些项只在实例默认值上生效。为避免"设了却没生效"的静默错误，在**单次请求**上显式设置这四项会立即抛出 `AxiosException`（`ERR_BAD_OPTION_VALUE`），提示改为在 `Axios.Create(...)` 的实例 defaults 中设置。
 >
@@ -584,6 +587,79 @@ await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 
 ## 自定义序列化与数据转换
 
+### 自定义 JSON 序列化
+
+JSON 行为分三层，后者覆盖前者：
+
+| 层级 | 入口 | 典型用途 |
+| --- | --- | --- |
+| 全局 | `AxiosJson.Options` / `AxiosJson.Serializer` | 整个应用统一命名策略、数字/日期处理 |
+| 实例 | `Axios.Create(c => c.JsonSerializerOptions = ...)`、`c.JsonSerializer = ...` | 某个后端对接 PascalCase / snake_case |
+| 单次请求 | `c => c.JsonSerializerOptions = ...` | 个别接口的特殊契约 |
+
+```csharp
+// 1) 全局：不再 camelCase（例如后端字段就是 PascalCase），并允许字符串化的数字
+AxiosJson.Options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+{
+    PropertyNamingPolicy = null,
+    NumberHandling = JsonNumberHandling.AllowReadingFromString
+};
+
+// 2) 实例：只影响这个 client
+var http = Axios.Create(c =>
+{
+    c.BaseAddress = "https://api.example.com/";
+    c.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
+});
+
+// 3) 单次请求：优先级最高
+await http.PostAsync("users", user, c => c.JsonSerializerOptions = specialOptions);
+```
+
+> 替换 `AxiosJson.Options` 时请给一个**新实例**；System.Text.Json 会冻结已使用过的选项实例，之后再修改会抛 `InvalidOperationException`。建议在启动期设置一次。
+
+需要换掉整个序列化引擎（Newtonsoft.Json、源生成序列化器等）时，实现 `IAxiosJsonSerializer` 即可：
+
+```csharp
+using AxiosNet.Serialization;
+
+public sealed class NewtonsoftJsonSerializer : IAxiosJsonSerializer
+{
+    private static readonly JsonSerializerSettings Settings = new()
+    {
+        ContractResolver = new CamelCasePropertyNamesContractResolver()
+    };
+
+    public string Serialize(object? value, Type type, AxiosConfig config) =>
+        JsonConvert.SerializeObject(value, type, Settings);
+
+    public object? Deserialize(string json, Type type, AxiosConfig config) =>
+        JsonConvert.DeserializeObject(json, type, Settings);
+
+    // dynamic 展开成 JObject/JArray（支持 data.user.name、data.items[0].id）
+    public object? ParseDynamic(string json, AxiosConfig config) =>
+        JsonConvert.DeserializeObject<JToken>(json, Settings);
+
+    // 非泛型响应的 Data：用什么文档形态由你决定（默认实现是 JsonElement）
+    public object ParseDocument(string json, AxiosConfig config) =>
+        JToken.Parse(json);
+}
+
+AxiosJson.Serializer = new NewtonsoftJsonSerializer();            // 全局
+// 或：new AxiosClient(new AxiosConfig { JsonSerializer = ... })   // 仅实例
+```
+
+约定与边界：
+
+- 序列化器会被并发请求共享，实现需无状态或线程安全；抛出的异常会被统一包装成 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`。
+- 只影响 **JSON 请求体**、**JSON 响应反序列化**、**dynamic 展开**、**非泛型响应的文档解析**。
+- 表单 / multipart 的字段命名仍取 `JsonSerializerOptions`；使用自定义序列化器时，库会先把对象序列化成 JSON 再解析成树来展平，命名策略依然一致。
+
+> 完整可运行的版本见 [`samples/AxiosNet.Simple/NewtonsoftJsonSerializer.cs`](samples/AxiosNet.Simple/NewtonsoftJsonSerializer.cs) 与 `Examples/NewtonsoftJsonExample.cs`（示例第 19 项）：同一份数据分别用 Newtonsoft 与 System.Text.Json 序列化后对比请求体，并演示 PascalCase 强类型响应与 `dynamic`（`JObject`）两条响应路径。
+
 ### paramsSerializer
 
 `ParamsSerializer` 收到**整个 `Params` 对象**，返回编码好的查询串（前导 `?` / `&` 会被自动去掉）：
@@ -855,7 +931,7 @@ using var client3 = Axios.Create(
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 18 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 19 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -875,12 +951,15 @@ using var client3 = Axios.Create(
 16. **上传下载进度回调 + maxRate 限速**
 17. **HttpMethod 直用 + 自定义 Handler 注入**（`PROPFIND` 自定义谓词、`DelegatingHandler` 直接注入、连接池 `HandlerFactory`）
 18. **单文件上传**：裸流直传（`/upload/raw`）与 multipart 单文件（`/upload/single`），服务端精确回报字节数 + SHA256
+19. **自定义 JSON 序列化**：实现 `IAxiosJsonSerializer`，用 **Newtonsoft.Json** 替换 System.Text.Json（请求体 / 强类型响应 / dynamic 三条路径统一走同一引擎）
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
 
 > 上面的第 13 项与第 18 项覆盖了上传：`DemoServer` 用 `MultipartReader` **按字节精确解析** multipart，回报每个部件的字段名、文件名、Content-Type、字节数与 SHA256；单文件场景还提供 `/upload/raw`（裸流）与 `/upload/single`（multipart 单文件）两个端点。
+>
+> 第 19 项是唯一需要额外 NuGet 包（`Newtonsoft.Json`）的示例，仅用于演示**引擎替换**——类库本身仍然零第三方运行时依赖；不需要自定义序列化时可以把 `Newtonsoft.Json` 从示例项目里删掉。
 
 ## 构建与测试
 
@@ -888,7 +967,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 162 个 xUnit 单元测试
+# 运行全部 168 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -911,6 +990,7 @@ dotnet build AxiosNet.slnx -c Release
 - 连接池：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义
 - 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null、与 pool/poolOptions 及实例级选项的 fail-fast
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
+- JSON 可插拔（`JsonCustomizationTests`）：自定义 `IAxiosJsonSerializer` 驱动请求/响应/dynamic/表单展平、实例级 `JsonSerializerOptions`、transform 列表并发增删
 
 ## 项目结构
 
@@ -920,7 +1000,10 @@ dotnet build AxiosNet.slnx -c Release
 ├─ src/
 │  └─ AxiosNet/                  # 类库
 │     ├─ Axios.cs                # 静态门面（对应全局 axios）
-│     ├─ AxiosClient.cs          # 实例 + 请求管线 + 快捷方法
+│     ├─ AxiosClient.cs          # 实例 + 请求管线 + 响应读取
+│     ├─ AxiosClient.Shortcuts.cs# 全部快捷方法重载（get/post/... + form）
+│     ├─ AxiosClient.Config.cs   # 配置合并与请求头应用
+│     ├─ AxiosJson.cs            # JSON 全局默认（选项 / 可插拔序列化器）
 │     ├─ AxiosConfig.cs          # 请求/实例配置
 │     ├─ AxiosHeaders.cs         # 大小写不敏感请求头
 │     ├─ AxiosResponse.cs        # 响应（泛型/非泛型）
@@ -929,12 +1012,13 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ FormFile.cs             # multipart 文件部件
 │     ├─ ResponseType.cs / AxiosAuth.cs          # 响应形态 / Basic 认证
 │     ├─ Interceptors/           # 请求/响应拦截器管理
-│     ├─ Internal/               # URL/params、请求体工厂、进度与限速流、dynamic JSON、状态码文本
+│     ├─ Serialization/          # IAxiosJsonSerializer + System.Text.Json 默认实现
+│     ├─ Internal/               # URL/params、请求体工厂、流量计量、动态 JSON、反射缓存、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 18 类集成调用示例（内置演示服务器 + multipart 精确解析）
+│  └─ AxiosNet.Simple/           # 19 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（162 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（168 个）
 ```
 
 ## 与 axios 的差异说明

@@ -31,7 +31,8 @@ IExample[] examples =
     new GetUriAndLimitsExample(),
     new ProgressAndRateExample(),
     new CustomHandlerExample(),
-    new SingleFileUploadExample()
+    new SingleFileUploadExample(),
+    new NewtonsoftJsonExample()
 };
 
 try

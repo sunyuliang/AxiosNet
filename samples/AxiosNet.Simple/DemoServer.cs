@@ -164,6 +164,13 @@ public sealed class DemoServer : IDisposable
             case "GET" when path == "/users/1":
                 return Json(200, UserJson());
 
+            case "GET" when path == "/users/1/pascal":
+                // PascalCase 契约：用于演示自定义 JSON 序列化器（Newtonsoft 默认保留属性名，
+                // 而 System.Text.Json 的 Web 默认会输出 camelCase）
+                return Json(200, """
+                    {"UserName":"bob","Age":30,"Address":{"City":"Shanghai","Zip":"200000"},"Roles":["admin","user"]}
+                    """);
+
             case "GET" when path == "/search":
                 return Json(200, $"{{\"query\":\"{Escape(query)}\"}}");
 

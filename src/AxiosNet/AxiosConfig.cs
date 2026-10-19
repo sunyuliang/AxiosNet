@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
+using AxiosNet.Serialization;
 
 namespace AxiosNet;
 
@@ -290,19 +292,31 @@ public sealed class AxiosConfig
     /// <summary>
     /// 对应 axios transformRequest：在拦截器之后、请求体编码之前依次作用于 <see cref="Data"/>，
     /// 每个函数返回新的数据（可返回 string/byte[]/Stream/HttpContent 等）。
+    /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
     /// </summary>
     public IList<Func<object?, AxiosConfig, object?>> TransformRequest { get; set; }
-        = new List<Func<object?, AxiosConfig, object?>>();
+        = new SynchronizedList<Func<object?, AxiosConfig, object?>>();
 
     /// <summary>
     /// 对应 axios transformResponse：在响应体转换/反序列化之后依次作用于 Data
     /// （例如统一拆包 <c>{code,data}</c>）。流式响应不适用。
+    /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
     /// </summary>
     public IList<Func<object?, AxiosConfig, object?>> TransformResponse { get; set; }
-        = new List<Func<object?, AxiosConfig, object?>>();
+        = new SynchronizedList<Func<object?, AxiosConfig, object?>>();
 
     /// <summary>JSON 序列化选项（请求体序列化 / 响应体反序列化共用）。</summary>
     public JsonSerializerOptions? JsonSerializerOptions { get; set; }
+
+    /// <summary>
+    /// 自定义 JSON 序列化器（例如 Newtonsoft.Json 适配器）。
+    /// <para>
+    /// null 表示使用 <see cref="AxiosJson.Serializer"/> 的全局默认（System.Text.Json）。
+    /// 设置后，请求体 JSON 序列化、响应体反序列化、<c>dynamic</c> 展开与非泛型响应的文档解析都由它负责；
+    /// <see cref="JsonSerializerOptions"/> 仍用于表单/multipart 的字段命名与展平（需要 JSON 树语义）。
+    /// </para>
+    /// </summary>
+    public IAxiosJsonSerializer? JsonSerializer { get; set; }
 
     /// <summary>
     /// 请求体文本编码（string / 对象 JSON / 表单），决定写入 socket 的字节与 Content-Type 中的 charset。
@@ -345,6 +359,7 @@ public sealed class AxiosConfig
             Credentials = Credentials,
             MaxRedirects = MaxRedirects,
             JsonSerializerOptions = JsonSerializerOptions,
+            JsonSerializer = JsonSerializer,
             RequestEncoding = RequestEncoding,
             ResponseEncoding = ResponseEncoding,
             PoolOptions = PoolOptions,
@@ -356,8 +371,8 @@ public sealed class AxiosConfig
             OnDownloadProgress = OnDownloadProgress,
             ParamsSerializer = ParamsSerializer,
             FormFieldNameSelector = FormFieldNameSelector,
-            TransformRequest = new List<Func<object?, AxiosConfig, object?>>(TransformRequest),
-            TransformResponse = new List<Func<object?, AxiosConfig, object?>>(TransformResponse)
+            TransformRequest = new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformRequest),
+            TransformResponse = new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformResponse)
         };
 
         // 属性赋值会把「已显式设置」置为 true，这里还原真实状态，保证合并语义正确。

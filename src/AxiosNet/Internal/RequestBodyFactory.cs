@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AxiosNet.Serialization;
 
 namespace AxiosNet.Internal;
 
@@ -86,11 +87,9 @@ internal static class RequestBodyFactory
         Encoding encoding,
         bool appendCharset)
     {
-        var options = config.JsonSerializerOptions ?? JsonOptions.Web;
-
         if (IsMediaType(mediaType, AxiosConfig.FormUrlEncodedContentType))
         {
-            return CreateFormContent(data, options, mediaType, encoding, appendCharset, config.FormFieldNameSelector);
+            return CreateFormContent(data, config, mediaType, encoding, appendCharset);
         }
 
         if (IsMediaType(mediaType, MultipartMediaType))
@@ -98,24 +97,41 @@ internal static class RequestBodyFactory
             return CreateMultipartContent(data, mediaType, encoding, config);
         }
 
-        var json = JsonSerializer.Serialize(data, data.GetType(), options);
+        // JSON 请求体走可插拔序列化器（默认 System.Text.Json，可换成 Newtonsoft 等）。
+        var json = AxiosJson.Get(config).Serialize(data, data.GetType(), config);
         return CreateText(json, mediaType, encoding, appendCharset);
+    }
+
+    /// <summary>
+    /// 表单/multipart 展平需要 JSON 树语义：默认实现直接 SerializeToElement（零额外解析），
+    /// 自定义序列化器则先序列化为 JSON 文本再解析，保证命名策略与转换器仍然生效。
+    /// </summary>
+    private static JsonElement ToJsonElement(object data, AxiosConfig config)
+    {
+        var serializer = AxiosJson.Get(config);
+        if (serializer is SystemTextJsonSerializer systemTextJson)
+        {
+            return systemTextJson.ToElement(data, data.GetType(), config);
+        }
+
+        var json = serializer.Serialize(data, data.GetType(), config);
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
     }
 
     private static HttpContent CreateFormContent(
         object data,
-        JsonSerializerOptions options,
+        AxiosConfig config,
         string mediaType,
         Encoding encoding,
-        bool appendCharset,
-        Func<string?, string, string>? nameSelector)
+        bool appendCharset)
     {
         // 先按当前 JSON 选项序列化为 JSON 树，再展平成键值对：
         // 这样命名策略、[JsonPropertyName]、自定义转换器、忽略规则都与 JSON 请求体保持一致。
-        var element = JsonSerializer.SerializeToElement(data, data.GetType(), options);
+        var element = ToJsonElement(data, config);
 
         var pairs = new List<KeyValuePair<string, string>>(8);
-        Flatten(null, element, pairs, encoding, nameSelector);
+        Flatten(null, element, pairs, encoding, config.FormFieldNameSelector);
 
         // 表单体按「已转义的 ASCII 串」写入，因此编码只影响转义映射（默认 UTF-8 百分号编码，与 axios 一致）。
         var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
@@ -144,7 +160,7 @@ internal static class RequestBodyFactory
 
         try
         {
-            var policy = (config.JsonSerializerOptions ?? JsonOptions.Web).PropertyNamingPolicy;
+            var policy = AxiosJson.GetOptions(config).PropertyNamingPolicy;
             CollectParts(null, data, content, encoding, policy, config.FormFieldNameSelector);
             return content;
         }
@@ -255,9 +271,9 @@ internal static class RequestBodyFactory
         }
 
         // 嵌套 POCO：public 可读属性，命名策略 / [JsonPropertyName] / [JsonIgnore] 与 JSON 请求体保持一致。
-        foreach (var property in type.GetProperties())
+        foreach (var property in ReflectionCache.GetReadableProperties(type))
         {
-            if (!property.CanRead || property.GetIndexParameters().Length > 0 || IsIgnored(property))
+            if (IsIgnored(property))
             {
                 continue;
             }

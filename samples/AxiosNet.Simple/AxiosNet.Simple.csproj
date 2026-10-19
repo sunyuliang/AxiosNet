@@ -13,4 +13,9 @@
     <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
   </ItemGroup>
 
+  <!-- 仅示例项目引用：演示把 AxiosNet 的 JSON 引擎替换成 Newtonsoft.Json（库本身仍零第三方依赖） -->
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
 </Project>
