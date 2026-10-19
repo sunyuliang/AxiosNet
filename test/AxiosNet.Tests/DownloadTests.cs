@@ -116,6 +116,27 @@ public sealed class DownloadTests
     }
 
     [Fact]
+    public async Task ResponseTypeStream_SyncRead_ReturnsWholePayload()
+    {
+        await using var server = TestHttpServer.Start(Binary);
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Stream>(server.Url + "files/report.bin");
+        await using var stream = response.Data!;
+
+        // 同步 Read 内部是「带令牌的异步核心 + 阻塞等待」，正文仍然要一个字节不差
+        using var buffer = new MemoryStream();
+        var chunk = new byte[512];
+        int read;
+        while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            buffer.Write(chunk, 0, read);
+        }
+
+        Assert.Equal(Payload, buffer.ToArray());
+    }
+
+    [Fact]
     public async Task ResponseTypeArrayBuffer_ReturnsWholeBytes()
     {
         await using var server = TestHttpServer.Start(Binary);

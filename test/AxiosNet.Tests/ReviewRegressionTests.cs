@@ -192,6 +192,60 @@ public sealed class ReviewRegressionTests
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
     }
 
+    /// <summary>
+    /// 同步 Read 也必须能在等待中被超时打断：令牌交给底层那一次 I/O，
+    /// 而不是发起前预检一次（否则读卡在 socket 上时超时形同虚设）。
+    /// </summary>
+    [Fact]
+    public async Task StreamTimeout_InterruptsBlockedSyncRead()
+    {
+        var payload = Encoding.UTF8.GetBytes("{\"ok\":true}");
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: payload,
+            BodyDelay: TimeSpan.FromMilliseconds(600)));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Stream>(
+            server.Url + "slow-body",
+            c => c.Timeout = TimeSpan.FromMilliseconds(150));
+
+        await using var stream = response.Data!;
+
+        // 放到后台线程阻塞，避免 xunit 的同步上下文被同步读占住
+        var ex = await Task.Run(() => Assert.Throws<AxiosException>(
+            () => stream.Read(new byte[16], 0, 16)));
+
+        Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
+    }
+
+    /// <summary>
+    /// 同步 Read 上调用方自己传的令牌语义不变：外部取消 → ERR_CANCELED（这里验证外部令牌中途取消）。
+    /// </summary>
+    [Fact]
+    public async Task StreamExternalCancel_InterruptsBlockedSyncRead()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("{\"ok\":true}"),
+            BodyDelay: TimeSpan.FromMilliseconds(800)));
+
+        using var client = new AxiosClient();
+        using var cts = new CancellationTokenSource();
+
+        var response = await client.GetAsync<Stream>(
+            server.Url + "slow-body",
+            c => c.Timeout = TimeSpan.FromSeconds(30),
+            cts.Token);
+
+        await using var stream = response.Data!;
+        cts.CancelAfter(TimeSpan.FromMilliseconds(150));
+
+        var ex = await Task.Run(() => Assert.Throws<AxiosException>(
+            () => stream.Read(new byte[16], 0, 16)));
+
+        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+    }
+
     [Fact]
     public async Task StreamingResponse_HoldsLeaseUntilStreamDisposed()
     {

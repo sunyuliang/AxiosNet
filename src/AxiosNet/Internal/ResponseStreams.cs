@@ -7,9 +7,18 @@ namespace AxiosNet.Internal;
 /// <para>
 /// 非流式响应在库内部就把正文读完，<see cref="AxiosConfig.Timeout"/> 天然覆盖；
 /// 流式响应把正文交给调用方读取，若不额外包一层，超时在拿到响应头后就失效了。
-/// 这里用剩余的 timeout 建一个 CTS，并在每次异步读取时与外部取消令牌一起使用：
-/// 超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>，调用方自己的 token 取消则原样抛
-/// <see cref="OperationCanceledException"/>。
+/// 这里用剩余的 timeout 建一个 CTS，并把「外部取消 + 超时 + 本次调用传入的令牌」链接后
+/// 交给底层的每一次读写/Flush：超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>，
+/// 调用方自己的 token 取消则原样抛 <see cref="OperationCanceledException"/>。
+/// </para>
+/// <para>
+/// 关键点：令牌必须交给**底层那一次 I/O**，而不是在发起前判断一次。
+/// 同步入口（<see cref="Read(byte[], int, int)"/>、<see cref="Write(byte[], int, int)"/>、
+/// <see cref="Flush"/>）本身没有令牌可用，因此统一实现为「对异步核心的阻塞等待」——
+/// 令牌在等待期间照样生效，不会出现「已经超时了，但同步读还卡在 socket 上」这种洞。
+/// 阻塞等待不会捕获同步上下文（链路内部全程 <c>ConfigureAwait(false)</c>），
+/// 所以在 UI 线程上同步读也不会死锁——除非注入的自定义 Handler 提供的流自己捕获上下文。
+/// 它终究占住一个线程，能用 async 就用 async。
 /// </para>
 /// </summary>
 internal sealed class TimeoutStream : Stream
@@ -54,74 +63,118 @@ internal sealed class TimeoutStream : Stream
     }
 
     /// <summary>
-    /// 同步读无法在等待中被打断（超时/取消只在实际发起读取前检查），
-    /// 需要可中断的读取请用 <see cref="ReadAsync(byte[], int, int, CancellationToken)"/>。
+    /// 同步读：阻塞等待异步核心。为了不出现「读前预检一次、读中就断不掉」的洞，
+    /// 这里不再走 <c>_inner.Read</c>，而是把同一条带令牌的异步路径同步等待掉。
     /// </summary>
     public override int Read(byte[] buffer, int offset, int count)
-    {
-        EnsureNotCanceled();
-        return _inner.Read(buffer, offset, count);
-    }
+        => Wait(ReadCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
 
-    public override int ReadByte()
-    {
-        EnsureNotCanceled();
-        return _inner.ReadByte();
-    }
+    // ReadByte / Read(Span<byte>) 不覆写：基类实现会各自换算成 Read(byte[], int, int)，
+    // 于是同样落到上面这条路径，不需要再维护第二套同步语义。
 
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        => ReadCoreAsync(
-            token => _inner.ReadAsync(buffer, offset, count, token),
-            cancellationToken);
+        => ReadCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        => new(ReadCoreAsync(token => _inner.ReadAsync(buffer, token).AsTask(), cancellationToken));
+        => ReadCoreAsync(buffer, cancellationToken);
 
-    private async Task<int> ReadCoreAsync(
-        Func<CancellationToken, Task<int>> read,
-        CancellationToken callerToken)
+    private async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
-        CancellationTokenSource? perReadCts = null;
+        var (token, perCallCts) = Link(callerToken);
         try
         {
-            var token = _linkedCts.Token;
-            if (callerToken.CanBeCanceled)
-            {
-                perReadCts = CancellationTokenSource.CreateLinkedTokenSource(callerToken, token);
-                token = perReadCts.Token;
-            }
-
-            return await read(token).ConfigureAwait(false);
+            return await _inner.ReadAsync(buffer, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            if (callerToken.IsCancellationRequested)
-            {
-                throw;
-            }
-
-            if (_externalToken.IsCancellationRequested)
-            {
-                throw AxiosException.Canceled(_config, _request);
-            }
-
-            if (_timeoutCts.IsCancellationRequested)
-            {
-                throw AxiosException.Timeout(_config, _request);
-            }
-
+            ThrowIfTimedOutOrCanceled(callerToken);
             throw;
         }
         finally
         {
-            perReadCts?.Dispose();
+            perCallCts?.Dispose();
         }
     }
 
-    /// <summary>同步读路径的取消/超时预检：已取消时直接抛对应的 AxiosException。</summary>
-    private void EnsureNotCanceled()
+    /// <summary>同步写：与同步读同理，阻塞等待带令牌的异步写。</summary>
+    public override void Write(byte[] buffer, int offset, int count)
+        => Wait(WriteCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
+
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => WriteCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        => WriteCoreAsync(buffer, cancellationToken);
+
+    private async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken callerToken)
     {
-        if (!_linkedCts.IsCancellationRequested)
+        var (token, perCallCts) = Link(callerToken);
+        try
+        {
+            await _inner.WriteAsync(buffer, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            ThrowIfTimedOutOrCanceled(callerToken);
+            throw;
+        }
+        finally
+        {
+            perCallCts?.Dispose();
+        }
+    }
+
+    public override void Flush() => Wait(FlushCoreAsync(CancellationToken.None));
+
+    public override Task FlushAsync(CancellationToken cancellationToken) => FlushCoreAsync(cancellationToken).AsTask();
+
+    private async ValueTask FlushCoreAsync(CancellationToken callerToken)
+    {
+        var (token, perCallCts) = Link(callerToken);
+        try
+        {
+            await _inner.FlushAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            ThrowIfTimedOutOrCanceled(callerToken);
+            throw;
+        }
+        finally
+        {
+            perCallCts?.Dispose();
+        }
+    }
+
+    public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+
+    public override void SetLength(long value) => _inner.SetLength(value);
+
+    /// <summary>
+    /// 把本次调用传入的令牌链接到「外部取消 + 超时」上。
+    /// 调用方没传令牌、或传进来的就是已知的那两个源时直接复用预建的链接源，
+    /// 避免每一次读写都新建一个 CTS（大文件下载时这是按缓冲区数量级的分配）。
+    /// </summary>
+    private (CancellationToken Token, CancellationTokenSource? Cts) Link(CancellationToken callerToken)
+    {
+        var linked = _linkedCts.Token;
+        if (!callerToken.CanBeCanceled || callerToken == linked || callerToken == _externalToken)
+        {
+            return (linked, null);
+        }
+
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken, linked);
+        return (cts.Token, cts);
+    }
+
+    /// <summary>
+    /// 把取消翻译成库的错误码：超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>。
+    /// 调用方自己的令牌取消时什么也不做，由调用处的 <c>throw;</c> 原样抛出
+    /// <see cref="OperationCanceledException"/>（保留原始堆栈）。
+    /// </summary>
+    private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken)
+    {
+        if (callerToken.IsCancellationRequested)
         {
             return;
         }
@@ -137,15 +190,19 @@ internal sealed class TimeoutStream : Stream
         }
     }
 
-    public override void Flush() => _inner.Flush();
+    /// <summary>
+    /// 同步入口的阻塞等待。已完成（内存流 / 数据已到达）时直接取结果，不为一次快速返回白建 Task。
+    /// </summary>
+    private static T Wait<T>(ValueTask<T> task)
+        => task.IsCompletedSuccessfully ? task.Result : task.AsTask().GetAwaiter().GetResult();
 
-    public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
-
-    public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
-
-    public override void SetLength(long value) => _inner.SetLength(value);
-
-    public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+    private static void Wait(ValueTask task)
+    {
+        if (!task.IsCompletedSuccessfully)
+        {
+            task.AsTask().GetAwaiter().GetResult();
+        }
+    }
 
     protected override void Dispose(bool disposing)
     {

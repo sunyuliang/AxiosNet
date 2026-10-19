@@ -819,7 +819,7 @@ var task = client.GetAsync("slow", cancellationToken: cts.Token);
 cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
-> 流式响应（`ResponseType.Stream`）的超时覆盖到正文读取结束：请求返回后，在流上继续读超过 `Timeout` 同样抛 `ECONNABORTED`。注意这是**全程总预算**（建连 + 等响应头 + 读正文一起算），不是单次读写的空闲超时——响应头阶段耗时也会从正文剩余预算里扣除；需要"长连接式"的空闲超时请自行用 `CancellationToken` 控制。另外同步读无法在等待中被打断，可中断的读取请用 `ReadAsync`。
+> 流式响应（`ResponseType.Stream`）的超时覆盖到正文读取结束：请求返回后，在流上继续读超过 `Timeout` 同样抛 `ECONNABORTED`。注意这是**全程总预算**（建连 + 等响应头 + 读正文一起算），不是单次读写的空闲超时——响应头阶段耗时也会从正文剩余预算里扣除；需要"长连接式"的空闲超时请自行用 `CancellationToken` 控制。令牌是交给每一次底层读写的，同步 `Read`/`Write`/`Flush` 同样生效（内部实现为对异步核心的阻塞等待，读取过程中触发超时/取消会立刻打断），只是它会占住当前线程，能用 `ReadAsync` 的场景优先用 `ReadAsync`。
 
 ## 网络连接池
 
