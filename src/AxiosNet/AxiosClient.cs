@@ -247,6 +247,13 @@ public sealed class AxiosClient : IDisposable
             config.ResponseType = ResponseType.Dynamic;
         }
 
+        // 泛型调用 XxxAsync<Stream> 时自动切换为流式响应（对标 axios responseType: 'stream'），
+        // 下载大文件直接用，不必再手动设置 ResponseType。显式配置的 responseType 仍然优先。
+        if (dataType == typeof(Stream) && config.ResponseType == ResponseType.Json)
+        {
+            config.ResponseType = ResponseType.Stream;
+        }
+
         // 1) 请求拦截器：与 axios 一致，按注册逆序执行
         foreach (var interceptor in Interceptors.Request.SnapshotReversed())
         {

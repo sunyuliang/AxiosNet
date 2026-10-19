@@ -122,8 +122,8 @@ public sealed class DemoServer : IDisposable
                     UpdatePeak(active);
                     try
                     {
-                        var (status, payload, contentType) = Route(method, path, query, headers, body);
-                        await WriteResponseAsync(stream, status, payload, contentType);
+                        var (status, payload, contentType, contentDisposition) = Route(method, path, query, headers, body);
+                        await WriteResponseAsync(stream, status, payload, contentType, contentDisposition);
                     }
                     finally
                     {
@@ -138,7 +138,7 @@ public sealed class DemoServer : IDisposable
         }
     }
 
-    private static (int Status, byte[] Body, string ContentType) Route(
+    private static (int Status, byte[] Body, string ContentType, string? ContentDisposition) Route(
         string method,
         string path,
         string query,
@@ -169,7 +169,7 @@ public sealed class DemoServer : IDisposable
             case "GET" when path == "/secure":
                 return headers.TryGetValue("authorization", out var auth)
                     ? Json(200, $"{{\"authenticated\":true,\"authorization\":\"{Escape(auth)}\"}}")
-                    : (401, Encoding.UTF8.GetBytes("""{"message":"unauthorized"}"""), "application/json; charset=utf-8");
+                    : (401, Encoding.UTF8.GetBytes("""{"message":"unauthorized"}"""), "application/json; charset=utf-8", null);
 
             case "GET" when path == "/not-found":
                 return Json(404, """{"message":"resource not found"}""");
@@ -187,7 +187,19 @@ public sealed class DemoServer : IDisposable
 
             case "POST" when path == "/echo":
                 var contentType = headers.GetValueOrDefault("content-type", "application/json");
-                return (200, body, contentType);
+                return (200, body, contentType, null);
+
+            case "GET" when path == "/download":
+            {
+                // 1 MB 二进制内容，并由服务端通过 Content-Disposition 指定保存文件名
+                var file = new byte[1024 * 1024];
+                for (var i = 0; i < file.Length; i++)
+                {
+                    file[i] = (byte)(i % 251);
+                }
+
+                return (200, file, "application/octet-stream", "attachment; filename=\"sample-report.bin\"");
+            }
 
             case "POST" when path == "/form":
                 var pairs = Encoding.UTF8.GetString(body)
@@ -208,8 +220,8 @@ public sealed class DemoServer : IDisposable
         }
     }
 
-    private static (int, byte[], string) Json(int status, string json)
-        => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8");
+    private static (int, byte[], string, string?) Json(int status, string json)
+        => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8", null);
 
     private static int CountOccurrences(string text, string value)
     {
@@ -226,7 +238,12 @@ public sealed class DemoServer : IDisposable
 
     private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
-    private static async Task WriteResponseAsync(NetworkStream stream, int status, byte[] body, string contentType)
+    private static async Task WriteResponseAsync(
+        NetworkStream stream,
+        int status,
+        byte[] body,
+        string contentType,
+        string? contentDisposition)
     {
         var reason = status switch
         {
@@ -241,6 +258,7 @@ public sealed class DemoServer : IDisposable
             $"HTTP/1.1 {status} {reason}\r\n" +
             $"Content-Type: {contentType}\r\n" +
             $"Content-Length: {body.Length}\r\n" +
+            (contentDisposition is null ? string.Empty : $"Content-Disposition: {contentDisposition}\r\n") +
             "Connection: keep-alive\r\n\r\n";
 
         await stream.WriteAsync(Encoding.ASCII.GetBytes(header));

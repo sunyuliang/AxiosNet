@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-92%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-98%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -56,6 +56,7 @@
 - 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
 - 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）
 - 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
+- ⬇️ **文件下载**：`GetAsync<Stream>` 流式落盘（内存占用恒定）、`GetAsync<byte[]>` 一次性字节；流读完自动归还连接（可复验连接复用）
 
 ## 安装
 
@@ -244,7 +245,39 @@ dynamic data = dyn.Data!;
 Console.WriteLine($"{data.name}, {data.address.city}, {data.roles[0]}");
 ```
 
+### 下载文件
+
+按文件大小选形态：
+
+```csharp
+// 1) 大文件：流式落盘，内存占用恒定（推荐）
+var response = await http.GetAsync<Stream>("files/report.zip");   // <Stream> 自动切到 ResponseType.Stream
+await using (var source = response.Data!)
+await using (var target = File.Create(@"D:\downloads\report.zip"))
+{
+    await source.CopyToAsync(target, cancellationToken);
+}
+
+// 2) 小文件：一次性拿 byte[]
+var bytes = (await http.GetAsync<byte[]>("files/icon.png")).Data!;
+await File.WriteAllBytesAsync(@"D:\downloads\icon.png", bytes);
+
+// 3) 用服务端给的文件名（Content-Disposition: attachment; filename=...）
+var disposition = ContentDispositionHeaderValue.Parse(response.GetHeader("Content-Disposition")!);
+var fileName = (disposition.FileNameStar ?? disposition.FileName)?.Trim('"') ?? "download.bin";
+```
+
+要点：
+
+- `ResponseType.Stream`（或 `GetAsync<Stream>`）走 `HttpCompletionOption.ResponseHeadersRead`：响应头一到就返回，正文边读边给，不会把整包读进内存。
+- **必须释放流**（`using` / `await using`）：流读完或释放后连接才回到连接池。只读一部分就释放，该 TCP 连接会被丢弃而不是复用。
+- 下载超时/取消与普通请求一致：`c.Timeout` / `c.CancellationToken`，分别抛 `ECONNABORTED` / `ERR_CANCELED`；并发下载量大时注意连接池 `MaxConnectionsPerServer`。
+- 库不提供下载进度回调（`HttpClient` 本身没有）；需要进度可在 `CopyToAsync` 外用计数流包一层。
+- `ResponseType.Stream` 时响应体不做任何解码，`response.Status/Headers` 照常可用（先校验状态码再落盘）。
+
 所有快捷方法都支持 `<dynamic>`：`GetAsync<dynamic>` / `PostAsync<dynamic>` / `PutAsync<dynamic>` / `PatchAsync<dynamic>` / `DeleteAsync<dynamic>`（含 `RequestAsync<dynamic>` 与静态门面 `Axios.GetAsync<dynamic>`）；也可以在非泛型请求上显式设置 `c.ResponseType = ResponseType.Dynamic`。显式指定 `ResponseType.Text/ArrayBuffer/Stream` 时优先于 `<dynamic>` 的默认动态展开。
+
+`<Stream>` / `<byte[]>` 也会自动匹配响应形态：`GetAsync<Stream>` 等价于 `ResponseType.Stream`，`GetAsync<byte[]>` 等价于 `ResponseType.ArrayBuffer`，无需再手写 `c.ResponseType = ...`。
 
 ### 原始内容优先与基础数据类型
 
@@ -433,7 +466,7 @@ sharedPool.EvictIdleEndpoints();
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 13 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 14 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -448,6 +481,7 @@ sharedPool.EvictIdleEndpoints();
 11. 错误码、超时、取消、validateStatus
 12. 连接池（连接复用、并发上限、多客户端共享）
 13. **multipart/form-data**：字段 + 一堆文件（内存文件与本地文件）
+14. **文件下载**：`GetAsync<Stream>` 流式落盘（1 MB 演示）、`GetAsync<byte[]>`、`Content-Disposition` 取文件名
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -459,7 +493,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 92 个 xUnit 单元测试
+# 运行全部 98 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -472,6 +506,7 @@ dotnet build AxiosNet.slnx -c Release
 - params 序列化、请求体编码（`ContentType` 决定 JSON/表单/multipart/透传）、全方法携带 body、Basic Auth、默认头
 - 请求/响应拦截器（顺序、Eject、异步、错误恢复）
 - 4xx/5xx/超时/取消/网络错误/validateStatus
+- 文件下载：`GetAsync<Stream>` 落盘、`ResponseType.ArrayBuffer`、流释放后连接复用、Content-Disposition 文件名、下载超时
 - dynamic 响应图与 dynamic 请求（9 个专项测试，覆盖 GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt; / 静态门面 / 显式 responseType 优先）
 - 连接池：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义
 
@@ -493,9 +528,9 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ Internal/               # URL/params、请求体工厂、dynamic JSON、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 13 类集成调用示例（内置演示服务器）
+│  └─ AxiosNet.Simple/           # 14 类集成调用示例（内置演示服务器）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（92 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（98 个）
 ```
 
 ## 与 axios 的差异说明

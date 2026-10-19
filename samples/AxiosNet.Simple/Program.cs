@@ -26,7 +26,8 @@ IExample[] examples =
     new InterceptorsExample(),
     new ErrorHandlingExample(),
     new ConnectionPoolExample(),
-    new MultipartExample()
+    new MultipartExample(),
+    new DownloadExample()
 };
 
 try
