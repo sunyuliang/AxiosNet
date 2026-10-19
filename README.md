@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-72%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-87%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -42,7 +42,8 @@
 - `axios.create(config)` → `Axios.Create(config)`，静态门面 `Axios.GetAsync(...)`
 - 快捷方法：`Get / Post / Put / Patch / Delete / Head / Options`
 - `baseURL + url` 合并、`params` 默认序列化（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过）
-- `data` 自动转换：对象 → JSON，字典 → `x-www-form-urlencoded`，`string/byte[]/Stream/MultipartFormDataContent` 透传
+- `data` 编码由 `config.ContentType` 决定（默认 `application/json`，与数据类型无关）：对象/字典/dynamic/集合统一 JSON；显式设为 `application/x-www-form-urlencoded` 时转键值对表单；`string/byte[]/Stream/MultipartFormDataContent` 原样透传
+- 所有快捷方法（`Get/Post/Put/Patch/Delete/Head/Options`）都可携带任意类型的 `data`
 - 请求/响应拦截器（同步 & 异步、`Eject`、请求拦截器逆序执行、响应拦截器顺序执行、错误分支可恢复）
 - `validateStatus` 自定义合法状态码
 - `timeout`（`ECONNABORTED`）、外部取消（`ERR_CANCELED`）、网络错误（`ERR_NETWORK`）
@@ -110,7 +111,8 @@ await http.PostAsync("users", new CreateUserRequest("bob", 30));
 | `interceptors.response.use(...)` | `Interceptors.Response.Use(...)` |
 | `interceptors.x.eject(id)` | `Eject(id)` |
 | `config.params` | `c.Params`（对象/字典/数组/嵌套） |
-| `config.data`（对象→JSON） | `c.Data`（对象→JSON，字典→form） |
+| `config.data`（对象→JSON） | `c.Data`（任意类型；编码方式由 `c.ContentType` 决定，默认 JSON） |
+| `config.ContentType` | 请求体媒体类型（默认 `application/json`，可传含 charset 的完整值；决定 data 的编码格式） |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
 | —（JS 天然动态） | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
 | —（无对应配置） | `RequestEncoding` / `ResponseEncoding`（请求/响应文本编码） |
@@ -131,7 +133,8 @@ var config = new AxiosConfig
     Method = AxiosMethod.Post,                // 默认 Get
     Headers = new AxiosHeaders(),             // 大小写不敏感
     Params = new { page = 1 },                // -> ?page=1
-    Data = new { name = "bob" },              // 对象自动 JSON
+    Data = new { name = "bob" },              // 请求体（按 ContentType 编码）
+    ContentType = "application/json",         // 默认；可设为 application/x-www-form-urlencoded 等
     Timeout = TimeSpan.FromSeconds(10),       // 0/Zero = 不超时
     Auth = new AxiosAuth("user", "pass"),     // Basic
     ResponseType = ResponseType.Json,         // Json/Text/ArrayBuffer/Stream/Dynamic
@@ -151,23 +154,40 @@ var config = new AxiosConfig
 
 ## 请求体 data 与查询参数 params
 
-```csharp
-// 1) 对象 -> application/json
-await http.PostAsync("users", new { name = "bob", age = 30 });
+请求体的编码格式**只由 `ContentType` 决定，与 `data` 的运行时类型无关**：字典不会被自动当成表单，对象也不会因为实现了某个接口而改变编码方式。
 
-// 2) 字典 -> application/x-www-form-urlencoded
+| `ContentType` | 结构化数据（对象 / 字典 / dynamic / 集合） | `string` / `byte[]` / `Stream` / `HttpContent` |
+| --- | --- | --- |
+| `application/json`（默认） | JSON 文本 | 原样发送 |
+| `application/x-www-form-urlencoded` | 键值对表单（嵌套 `a[b]=v`、数组 `a[]=v`、null 跳过） | 原样发送（视为已编码好的表单串） |
+| `multipart/form-data` | 抛出 `NotSupportedException`（部件边界需由调用方决定） | 原样发送（请传 `MultipartFormDataContent`） |
+| 其他（`text/plain`、`application/xml` …） | 仍写 JSON 文本，只有头部不同 | 原样发送 |
+
+```csharp
+// 1) 默认 application/json：对象、字典、dynamic、集合一律 JSON
+await http.PostAsync("users", new { name = "bob", age = 30 });                            // {"name":"bob","age":30}
+await http.PostAsync("users", new Dictionary<string, object?> { ["name"] = "bob" });       // 同一份 JSON
+await http.PostAsync("users", expandoPayload);                                             // 同一份 JSON
+
+// 2) 需要表单编码时显式声明（实例 defaults 与按请求设置均可）
 await http.PostAsync("login", new Dictionary<string, object?>
 {
     ["username"] = "alice",
-    ["tags"] = new[] { "a", "b" }   // tags=a&tags=b
-});
+    ["tags"] = new[] { "a", "b" }        // -> tags[]=a&tags[]=b
+}, c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
-// 3) 透传：string / byte[] / Stream / MultipartFormDataContent
+// 3) 原样透传
 using var multipart = new MultipartFormDataContent("boundary");
 multipart.Add(new StringContent("alice"), "name");
-await http.PostAsync("upload", multipart);
+await http.PostAsync("upload", multipart);                       // 保留 multipart 自带头部
 
-// 4) params：数组/嵌套对象（与 axios 默认 paramsSerializer 对齐）
+await http.PostAsync("bin", bytes, c => c.ContentType = "application/octet-stream");
+
+// 4) 每个方法都能携带任意类型的 body（GET / DELETE / HEAD / OPTIONS 同样支持）
+await http.GetAsync("reports/query", new { from = "2024-01-01", to = "2024-02-01" });
+await http.DeleteAsync("users/1", new { reason = "duplicated" });
+
+// 5) params：数组/嵌套对象（与 axios 默认 paramsSerializer 对齐）
 await http.GetAsync("search", c =>
     c.Params = new
     {
@@ -176,6 +196,8 @@ await http.GetAsync("search", c =>
         filter = new { kind = "book" }   // filter[kind]=book
     });
 ```
+
+> 默认媒体类型是 JSON，因此发送二进制载荷时请显式设置 `c.ContentType = "application/octet-stream"`（库不会根据 `byte[]`/`Stream` 猜测类型）。
 
 ## 响应类型 responseType（含 dynamic）
 
@@ -219,7 +241,7 @@ var raw = (await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayB
 
 ### 内容编码
 
-- **请求体**：`RequestEncoding` 决定写入的字节以及 `Content-Type` 的 `charset`（默认 UTF-8；`string` / 对象 JSON / 表单都适用，`byte[]` / `Stream` 原样透传）。
+- **请求体**：`RequestEncoding` 决定写入的字节（默认 UTF-8），显式设置时同时写入 `Content-Type` 的 `charset`；`byte[]` / `Stream` / `HttpContent` 原样透传，不受该项影响。
 - **响应体**：默认自动识别 —— `Content-Type` 的 `charset` → BOM → UTF-8；`ResponseEncoding` 可强制指定，用于服务端 charset 缺失或错误的情况。
 
 ```csharp
@@ -413,7 +435,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 72 个 xUnit 单元测试
+# 运行全部 87 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -423,7 +445,7 @@ dotnet build AxiosNet.slnx -c Release
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
 - 基础请求/全方法/重定向/HEAD/BaseAddress/静态门面
-- params 与 data 转换、multipart、Basic Auth、默认头
+- params 序列化、请求体编码（`ContentType` 决定 JSON/表单/透传）、全方法携带 body、multipart、Basic Auth、默认头
 - 请求/响应拦截器（顺序、Eject、异步、错误恢复）
 - 4xx/5xx/超时/取消/网络错误/validateStatus
 - dynamic 响应图与 dynamic 请求（9 个专项测试，覆盖 GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt; / 静态门面 / 显式 responseType 优先）
@@ -444,12 +466,12 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ AxiosException.cs       # AxiosError 对齐
 │     ├─ AxiosMethod.cs / ResponseType.cs / AxiosAuth.cs
 │     ├─ Interceptors/           # 请求/响应拦截器管理
-│     ├─ Internal/               # URL/params、Content 工厂、dynamic JSON、状态码文本
+│     ├─ Internal/               # URL/params、请求体工厂、dynamic JSON、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 12 类集成调用示例（内置演示服务器）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（72 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（87 个）
 ```
 
 ## 与 axios 的差异说明
@@ -460,7 +482,7 @@ dotnet build AxiosNet.slnx -c Release
 2. `timeout` 使用 `TimeSpan` 而非毫秒数；
 3. 非泛型 JSON 响应的 `Data` 是 `JsonElement`（需要 JS 式动态访问时使用泛型 `GetAsync<dynamic>`）；
 4. 取消使用 `CancellationToken`（语义等同 `AbortController`）；
-5. `IDictionary` 请求体默认按表单编码（对齐 `URLSearchParams`），普通对象/`ExpandoObject` 按 JSON 编码；
+5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
 7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）。
 

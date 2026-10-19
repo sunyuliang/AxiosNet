@@ -73,7 +73,7 @@ public sealed class ParamsAndContentTests
     }
 
     [Fact]
-    public async Task Post_Dictionary_SendsFormUrlEncoded()
+    public async Task Post_Dictionary_WithFormContentType_SendsFormUrlEncoded()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: "application/x-www-form-urlencoded"));
         using var client = new AxiosClient();
@@ -84,7 +84,11 @@ public sealed class ParamsAndContentTests
             ["role"] = "admin"
         };
 
-        await client.PostAsync(server.Url + "form", form);
+        // 表单编码由 config.ContentType 显式指定，不再由「字典类型」推断
+        await client.PostAsync(
+            server.Url + "form",
+            form,
+            c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
         var sent = server.Received[0];
         Assert.StartsWith(
@@ -132,7 +136,11 @@ public sealed class ParamsAndContentTests
         await client.PostAsync(
             server.Url + "form",
             new Dictionary<string, object?> { ["name"] = "é" },
-            c => c.RequestEncoding = Encoding.Latin1);
+            c =>
+            {
+                c.ContentType = AxiosConfig.FormUrlEncodedContentType;
+                c.RequestEncoding = Encoding.Latin1;
+            });
 
         var sent = server.Received[0];
         // Latin1 下 'é' 为单字节 0xE9 -> %E9（默认 UTF-8 会是 %C3%A9）
@@ -150,7 +158,11 @@ public sealed class ParamsAndContentTests
         await client.PostAsync(
             server.Url + "form",
             new Dictionary<string, object?> { ["k"] = "é" },
-            c => c.RequestEncoding = Encoding.Unicode);
+            c =>
+            {
+                c.ContentType = AxiosConfig.FormUrlEncodedContentType;
+                c.RequestEncoding = Encoding.Unicode;
+            });
 
         var sent = server.Received[0];
         // UTF-16LE 下 'k' -> 6B 00、'é' -> E9 00，故转义为 "k%00=%E9%00"（服务端按 charset 反转义可还原）。

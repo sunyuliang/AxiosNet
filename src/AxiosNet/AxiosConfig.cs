@@ -37,9 +37,44 @@ public sealed class AxiosConfig
     /// <summary>对应 axios params，会被序列化为 query string，支持对象/字典/数组/嵌套。</summary>
     public object? Params { get; set; }
 
+    /// <summary>库默认的请求体媒体类型。</summary>
+    public const string JsonContentType = "application/json";
+
+    /// <summary>表单编码媒体类型常量（配合 <see cref="ContentType"/> 使用）。</summary>
+    public const string FormUrlEncodedContentType = "application/x-www-form-urlencoded";
+
+    private string _contentType = JsonContentType;
+
     /// <summary>
-    /// 对应 axios data：对象默认 JSON 序列化，字典默认表单编码，
-    /// 也可直接传 string / byte[] / Stream / HttpContent。
+    /// 请求体媒体类型（Content-Type），默认 <c>application/json</c>。
+    /// <para>
+    /// 请求体的编码格式由本项决定，<b>与 <see cref="Data"/> 的运行时类型无关</b>：
+    /// 对象、字典、dynamic、集合等结构化数据在 json 下都会序列化为 JSON；
+    /// 设为 <c>application/x-www-form-urlencoded</c> 时转为键值对表单（嵌套用 <c>a[b]=v</c>、数组用 <c>a[]=v</c>）；
+    /// 其他媒体类型（text/plain、application/xml 等）下结构化数据仍按 JSON 文本写入，仅头部不同。
+    /// </para>
+    /// <para>
+    /// 传入 string / byte[] / Stream / HttpContent 时本项只影响头部：内容原样发送。
+    /// 注意默认值是 json，二进制载荷（byte[]/Stream）请显式设为 <c>application/octet-stream</c>。
+    /// </para>
+    /// </summary>
+    public string ContentType
+    {
+        get => _contentType;
+        set
+        {
+            _contentType = string.IsNullOrWhiteSpace(value) ? JsonContentType : value.Trim();
+            ContentTypeSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool ContentTypeSet { get; private set; }
+
+    /// <summary>
+    /// 对应 axios data：请求体原始数据，支持任意类型 ——
+    /// 对象/字典/dynamic/集合（按 <see cref="ContentType"/> 序列化），
+    /// 以及 string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent（原样发送）。
     /// </summary>
     public object? Data { get; set; }
 
@@ -123,7 +158,7 @@ public sealed class AxiosConfig
     /// <summary>深拷贝（Headers 独立，引用类型成员如 Params/Data 按引用共享）。</summary>
     public AxiosConfig Clone()
     {
-        return new AxiosConfig
+        var clone = new AxiosConfig
         {
             BaseAddress = BaseAddress,
             Url = Url,
@@ -131,6 +166,7 @@ public sealed class AxiosConfig
             Headers = Headers.Clone(),
             Params = Params,
             Data = Data,
+            ContentType = ContentType,
             Timeout = Timeout,
             Auth = Auth,
             ResponseType = ResponseType,
@@ -146,5 +182,12 @@ public sealed class AxiosConfig
             ResponseEncoding = ResponseEncoding,
             PoolOptions = PoolOptions
         };
+
+        // 属性赋值会把「已显式设置」置为 true，这里还原真实状态，保证合并语义正确。
+        clone.MethodSet = MethodSet;
+        clone.ResponseTypeSet = ResponseTypeSet;
+        clone.CancellationTokenSet = CancellationTokenSet;
+        clone.ContentTypeSet = ContentTypeSet;
+        return clone;
     }
 }

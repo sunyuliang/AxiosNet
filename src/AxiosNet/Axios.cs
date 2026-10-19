@@ -52,11 +52,23 @@ public static class Axios
     public static Task<AxiosResponse<T>> GetAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync<T>(url, configure, cancellationToken);
 
+    public static Task<AxiosResponse> GetAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.GetAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> GetAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.GetAsync<T>(url, data, configure, cancellationToken);
+
     public static Task<AxiosResponse> DeleteAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync(url, configure, cancellationToken);
 
     public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync<T>(url, configure, cancellationToken);
+
+    public static Task<AxiosResponse> DeleteAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.DeleteAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.DeleteAsync<T>(url, data, configure, cancellationToken);
 
     public static Task<AxiosResponse> HeadAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync(url, configure, cancellationToken);
@@ -64,11 +76,23 @@ public static class Axios
     public static Task<AxiosResponse<T>> HeadAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync<T>(url, configure, cancellationToken);
 
+    public static Task<AxiosResponse> HeadAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.HeadAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.HeadAsync<T>(url, data, configure, cancellationToken);
+
     public static Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync(url, configure, cancellationToken);
 
     public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync<T>(url, configure, cancellationToken);
+
+    public static Task<AxiosResponse> OptionsAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.OptionsAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.OptionsAsync<T>(url, data, configure, cancellationToken);
 
     public static Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PostAsync(url, data, configure, cancellationToken);

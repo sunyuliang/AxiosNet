@@ -1,0 +1,271 @@
+using System.Text;
+using System.Text.Json;
+
+namespace AxiosNet.Internal;
+
+/// <summary>
+/// 把 <see cref="AxiosConfig.Data"/> 转成 <see cref="HttpContent"/>。
+/// <para>
+/// 唯一约定：<b>请求体格式由 <see cref="AxiosConfig.ContentType"/> 决定，与 data 的运行时类型无关</b>。
+/// 传入字典不会再被「猜」成表单，对象也不会因为实现了 IEnumerable 而改变编码方式。
+/// </para>
+/// <list type="bullet">
+/// <item>string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent：内容原样发送，只应用配置的 Content-Type（HttpContent 自带时保留）。</item>
+/// <item>结构化数据（对象、字典、dynamic、集合）：json → JSON 文本；x-www-form-urlencoded → 键值对表单；其余类型仍以 JSON 文本写入。</item>
+/// </list>
+/// </summary>
+internal static class RequestBodyFactory
+{
+    public static HttpContent? Create(object? data, AxiosConfig config)
+    {
+        // 请求体文本编码：默认 UTF-8（axios 行为），可用 config.RequestEncoding 覆盖。
+        // charset 只在显式设置 RequestEncoding 时写入，避免给 json 强加 charset 参数。
+        var encoding = config.RequestEncoding ?? Encoding.UTF8;
+        var appendCharset = config.RequestEncoding is not null;
+        var mediaType = config.ContentType;
+
+        switch (data)
+        {
+            case null:
+                return null;
+
+            case HttpContent existing:
+                // 已构造好的内容（含 MultipartFormDataContent）原样透传；
+                // 仅当内容自身没有 Content-Type 且用户显式配置过时才补头部。
+                if (config.ContentTypeSet && existing.Headers.ContentType is null)
+                {
+                    SetContentType(existing, mediaType);
+                }
+
+                return existing;
+
+            case string text:
+                return CreateText(text, mediaType, encoding, appendCharset);
+
+            case byte[] bytes:
+                return CreateBinary(bytes, mediaType);
+
+            case ReadOnlyMemory<byte> memory:
+                return CreateBinary(memory.ToArray(), mediaType);
+
+            case Stream stream:
+                var streamContent = new StreamContent(stream);
+                SetContentType(streamContent, mediaType);
+                return streamContent;
+        }
+
+        return CreateStructured(data, config, mediaType, encoding, appendCharset);
+    }
+
+    private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset)
+    {
+        // 直接构造 ByteArrayContent 可保证携带 Content-Length，避免分块传输带来的兼容性问题。
+        var content = new ByteArrayContent(encoding.GetBytes(text));
+        SetContentType(content, ComposeMediaType(mediaType, encoding, appendCharset));
+        return content;
+    }
+
+    private static HttpContent CreateBinary(byte[] bytes, string mediaType)
+    {
+        var content = new ByteArrayContent(bytes);
+        SetContentType(content, mediaType);
+        return content;
+    }
+
+    private static HttpContent CreateStructured(
+        object data,
+        AxiosConfig config,
+        string mediaType,
+        Encoding encoding,
+        bool appendCharset)
+    {
+        var options = config.JsonSerializerOptions ?? JsonOptions.Web;
+
+        if (IsMediaType(mediaType, AxiosConfig.FormUrlEncodedContentType))
+        {
+            return CreateFormContent(data, options, mediaType, encoding, appendCharset);
+        }
+
+        if (IsMediaType(mediaType, "multipart/form-data"))
+        {
+            // 边界与部件头必须由调用方决定（文件名、每部件 Content-Type），不做隐式推断。
+            throw new NotSupportedException(
+                "multipart/form-data 的部件边界与部件头无法由库隐式推断，请使用 MultipartFormDataContent 作为 Data 传入。");
+        }
+
+        var json = JsonSerializer.Serialize(data, data.GetType(), options);
+        return CreateText(json, mediaType, encoding, appendCharset);
+    }
+
+    private static HttpContent CreateFormContent(
+        object data,
+        JsonSerializerOptions options,
+        string mediaType,
+        Encoding encoding,
+        bool appendCharset)
+    {
+        // 先按当前 JSON 选项序列化为 JSON 树，再展平成键值对：
+        // 这样命名策略、[JsonPropertyName]、自定义转换器、忽略规则都与 JSON 请求体保持一致。
+        var element = JsonSerializer.SerializeToElement(data, data.GetType(), options);
+
+        var pairs = new List<KeyValuePair<string, string>>(8);
+        Flatten(null, element, pairs, encoding);
+
+        // 表单体按「已转义的 ASCII 串」写入，因此编码只影响转义映射（默认 UTF-8 百分号编码，与 axios 一致）。
+        var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
+
+        var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
+        var declared = ComposeMediaType(mediaType, encoding, appendCharset);
+        SetContentType(content, declared);
+        return content;
+    }
+
+    /// <summary>
+    /// 把 JSON 树展平为表单键值对：
+    /// 嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、
+    /// null 跳过、标量取原始文本。
+    /// </summary>
+    private static void Flatten(string? prefix, JsonElement element, List<KeyValuePair<string, string>> pairs, Encoding encoding)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    Flatten(
+                        prefix is null ? property.Name : prefix + "[" + property.Name + "]",
+                        property.Value,
+                        pairs,
+                        encoding);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+            {
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
+                    Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, encoding);
+                    index++;
+                }
+
+                break;
+            }
+
+            case JsonValueKind.String:
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                if (prefix is null)
+                {
+                    // 根标量在表单里没有可表达的键名，忽略（不伪造 key）。
+                    break;
+                }
+
+                pairs.Add(new KeyValuePair<string, string>(
+                    EncodeKey(prefix, encoding),
+                    EncodeValue(ScalarText(element), encoding)));
+                break;
+
+            default:
+                // null / undefined：与 axios 一致，直接跳过。
+                break;
+        }
+    }
+
+    private static string ScalarText(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString() ?? string.Empty,
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => element.GetRawText()
+    };
+
+    /// <summary>取媒体类型主值（忽略参数），用于判定编码方式。</summary>
+    private static bool IsMediaType(string mediaType, string expected)
+    {
+        var end = mediaType.IndexOf(';');
+        var main = (end < 0 ? mediaType : mediaType[..end]).Trim();
+        return string.Equals(main, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 组合实际写入的 Content-Type：媒体类型已自带 charset 时尊重用户；
+    /// 文本类媒体类型在显式设置 RequestEncoding 时补 charset，二进制类型不补。
+    /// </summary>
+    private static string ComposeMediaType(string mediaType, Encoding encoding, bool appendCharset)
+    {
+        if (!appendCharset
+            || mediaType.Contains("charset=", StringComparison.OrdinalIgnoreCase)
+            || !IsTextual(mediaType))
+        {
+            return mediaType;
+        }
+
+        return mediaType + "; charset=" + encoding.WebName;
+    }
+
+    private static bool IsTextual(string mediaType)
+    {
+        var end = mediaType.IndexOf(';');
+        var main = (end < 0 ? mediaType : mediaType[..end]).Trim();
+
+        return main.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+            || main.EndsWith("+json", StringComparison.OrdinalIgnoreCase)
+            || main.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
+            || main.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+            || main.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
+            || main.Equals(AxiosConfig.FormUrlEncodedContentType, StringComparison.OrdinalIgnoreCase)
+            || main.Equals("application/javascript", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void SetContentType(HttpContent content, string mediaType)
+    {
+        content.Headers.Remove("Content-Type");
+        content.Headers.TryAddWithoutValidation("Content-Type", mediaType);
+    }
+
+    private static string EncodeKey(string value, Encoding encoding)
+        => PercentEncode(value, encoding).Replace("%5B", "[").Replace("%5D", "]");
+
+    private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding);
+
+    private static string PercentEncode(string value, Encoding encoding)
+    {
+        if (encoding.CodePage == Encoding.UTF8.CodePage)
+        {
+            // 与 FormUrlEncodedContent 完全一致：空格转义为 '+'。
+            return Uri.EscapeDataString(value).Replace("%20", "+");
+        }
+
+        var bytes = encoding.GetBytes(value);
+        var builder = new StringBuilder(bytes.Length);
+        foreach (var b in bytes)
+        {
+            if (b == (byte)' ')
+            {
+                builder.Append('+');
+            }
+            else if (IsUnreserved(b))
+            {
+                builder.Append((char)b);
+            }
+            else
+            {
+                builder.Append('%').Append(HexUpper(b >> 4)).Append(HexUpper(b & 0xF));
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool IsUnreserved(byte b) =>
+        (b >= (byte)'A' && b <= (byte)'Z')
+        || (b >= (byte)'a' && b <= (byte)'z')
+        || (b >= (byte)'0' && b <= (byte)'9')
+        || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~';
+
+    private static char HexUpper(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
+}

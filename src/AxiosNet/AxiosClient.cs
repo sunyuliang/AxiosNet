@@ -104,6 +104,14 @@ public sealed class AxiosClient : IDisposable
     public Task<AxiosResponse<T>> GetAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Get, configure, cancellationToken));
 
+    /// <summary>GET 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse> GetAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(Shortcut(url, AxiosMethod.Get, configure, cancellationToken, data), null);
+
+    /// <summary>GET 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse<T>> GetAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Get, configure, cancellationToken, data));
+
     public Task<AxiosResponse> GetAsync(string url, AxiosConfig config)
         => SendAsync(WithUrl(config, url, AxiosMethod.Get), null);
 
@@ -115,6 +123,14 @@ public sealed class AxiosClient : IDisposable
 
     public Task<AxiosResponse<T>> DeleteAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Delete, configure, cancellationToken));
+
+    /// <summary>DELETE 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse> DeleteAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(Shortcut(url, AxiosMethod.Delete, configure, cancellationToken, data), null);
+
+    /// <summary>DELETE 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Delete, configure, cancellationToken, data));
 
     public Task<AxiosResponse> DeleteAsync(string url, AxiosConfig config)
         => SendAsync(WithUrl(config, url, AxiosMethod.Delete), null);
@@ -128,11 +144,27 @@ public sealed class AxiosClient : IDisposable
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Head, configure, cancellationToken));
 
+    /// <summary>HEAD 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse> HeadAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(Shortcut(url, AxiosMethod.Head, configure, cancellationToken, data), null);
+
+    /// <summary>HEAD 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Head, configure, cancellationToken, data));
+
     public Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendAsync(Shortcut(url, AxiosMethod.Options, configure, cancellationToken), null);
 
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Options, configure, cancellationToken));
+
+    /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse> OptionsAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(Shortcut(url, AxiosMethod.Options, configure, cancellationToken, data), null);
+
+    /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
+    public Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Options, configure, cancellationToken, data));
 
     public Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendAsync(Shortcut(url, AxiosMethod.Post, configure, cancellationToken, data), null);
@@ -240,7 +272,7 @@ public sealed class AxiosClient : IDisposable
             Version = config.HttpVersion ?? HttpVersion.Version11
         };
 
-        var content = HttpContentFactory.Create(config.Data, config);
+        var content = RequestBodyFactory.Create(config.Data, config);
         if (content is not null)
         {
             request.Content = content;
@@ -508,6 +540,8 @@ public sealed class AxiosClient : IDisposable
         {
             merged.Data = perCall.Data;
         }
+
+        merged.ContentType = perCall.ContentTypeSet ? perCall.ContentType : merged.ContentType;
 
         if (perCall.Timeout > TimeSpan.Zero)
         {
