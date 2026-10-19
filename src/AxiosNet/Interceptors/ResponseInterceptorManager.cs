@@ -13,6 +13,9 @@ public sealed class ResponseInterceptorManager
     private readonly List<ResponseInterceptor> _interceptors = new();
     private int _nextId;
 
+    // 快照缓存：注册/弹出/清空才失效。请求热路径上避免每请求重建 List。
+    private IReadOnlyList<ResponseInterceptor>? _snapshot;
+
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
     public int Use(
         Func<AxiosResponse, Task<AxiosResponse>> onFulfilled,
@@ -23,6 +26,7 @@ public sealed class ResponseInterceptorManager
         {
             var id = ++_nextId;
             _interceptors.Add(new ResponseInterceptor(id, onFulfilled, onRejected));
+            _snapshot = null;
             return id;
         }
     }
@@ -43,7 +47,13 @@ public sealed class ResponseInterceptorManager
     {
         lock (_interceptors)
         {
-            return _interceptors.RemoveAll(i => i.Id == id) > 0;
+            var removed = _interceptors.RemoveAll(i => i.Id == id) > 0;
+            if (removed)
+            {
+                _snapshot = null;
+            }
+
+            return removed;
         }
     }
 
@@ -52,6 +62,7 @@ public sealed class ResponseInterceptorManager
         lock (_interceptors)
         {
             _interceptors.Clear();
+            _snapshot = null;
         }
     }
 
@@ -70,7 +81,12 @@ public sealed class ResponseInterceptorManager
     {
         lock (_interceptors)
         {
-            return new List<ResponseInterceptor>(_interceptors);
+            if (_snapshot is null)
+            {
+                _snapshot = new List<ResponseInterceptor>(_interceptors);
+            }
+
+            return _snapshot;
         }
     }
 }

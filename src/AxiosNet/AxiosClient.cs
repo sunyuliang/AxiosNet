@@ -605,7 +605,16 @@ public sealed partial class AxiosClient : IDisposable
                 body.Write(buffer, 0, read);
             }
 
-            return body.ToArray();
+            // 「精确预分配且刚好写满」时底层数组没有多余空间，直接交出，省掉 ToArray 的第二次拷贝
+            // （大响应在 LOH 上每少一次整段复制都很可观）。注意必须同时确认底层数组长度 == 已读字节：
+            // ArraySegment.Array 是完整底层数组（容量可能大于 Count），只比 Count == Length 会把
+            // 扩容路径（未声明长度等）的零填充一起交出去。任何一项不吻合就退回拷贝。
+            return body.TryGetBuffer(out var segment)
+                && segment.Count == body.Length
+                && segment.Array is { Length: var arrayLength }
+                && arrayLength == segment.Count
+                ? segment.Array
+                : body.ToArray();
         }
         finally
         {

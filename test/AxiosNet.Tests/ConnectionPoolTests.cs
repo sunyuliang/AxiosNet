@@ -273,4 +273,81 @@ public sealed class ConnectionPoolTests
             "/final" => TestJson.Response(new { ok = true }),
             _ => new TestResponse(404)
         });
+
+    // ---------------------------------------------------------------
+    // origin key 规范化：IDNA 归一化，但不合并 scheme/port 不同的目标
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void OriginKey_NormalizesUnicodeHostToPunycode()
+    {
+        // münchen.de 与 xn--mnchen-3ya.de 是同一个主机名的两种书写：
+        // HTTP Host 头只能是 ASCII，发送前 unicode 形式会被规范化成 punycode，
+        // 服务端看到的两者字节完全相同 —— 池 key 也必须归一，否则同一站点分裂成两个节点。
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            IdleHandlerLifetime = TimeSpan.FromMinutes(30)
+        });
+
+        using var lease1 = pool.Lease(new Uri("http://münchen.de/ping"));
+        using var lease2 = pool.Lease(new Uri("http://xn--mnchen-3ya.de/ping"));
+
+        Assert.Equal("http://xn--mnchen-3ya.de:80", lease1.Origin);
+        Assert.Equal(1, pool.GetStatistics().EndpointCount);
+        Assert.Equal(2, pool.GetStatistics().TotalLeases);
+    }
+
+    [Fact]
+    public void OriginKey_KeepsIpv6BracketsAndSeparatesSchemeAndPort()
+    {
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            IdleHandlerLifetime = TimeSpan.FromMinutes(30)
+        });
+
+        using var ipv6 = pool.Lease(new Uri("http://[::1]:8080/ping"));
+        Assert.Equal("http://[::1]:8080", ipv6.Origin);
+
+        // IPv4、不同端口、不同 scheme 仍是不同的 origin（按 scheme://host:port 隔离）
+        using var ipv4 = pool.Lease(new Uri("http://127.0.0.1:80/ping"));
+        Assert.Equal("http://127.0.0.1:80", ipv4.Origin);
+
+        using var otherPort = pool.Lease(new Uri("http://127.0.0.1:81/ping"));
+        Assert.Equal("http://127.0.0.1:81", otherPort.Origin);
+
+        using var tls = pool.Lease(new Uri("https://127.0.0.1:443/ping"));
+        Assert.Equal("https://127.0.0.1:443", tls.Origin);
+
+        Assert.Equal(4, pool.GetStatistics().EndpointCount);
+    }
+
+    // ---------------------------------------------------------------
+    // 选项隔离：池构造时克隆，调用方事后改动不影响池；Options 返回副本
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void PoolOptions_AreIsolatedFromCallerMutation()
+    {
+        var options = new ConnectionPoolOptions
+        {
+            MaxConnectionsPerServer = 32,
+            IdleHandlerLifetime = TimeSpan.FromMinutes(30),
+            Proxy = new System.Net.WebProxy("http://127.0.0.1:8888")
+        };
+
+        using var pool = new HttpConnectionPool(options);
+
+        // 1) 调用方事后修改自己持有的 options 对象，不影响已建成的池
+        options.MaxConnectionsPerServer = 1;
+        options.IdleHandlerLifetime = TimeSpan.Zero;
+        options.Proxy = null;
+
+        Assert.Equal(32, pool.Options.MaxConnectionsPerServer);
+        Assert.Equal(TimeSpan.FromMinutes(30), pool.Options.IdleHandlerLifetime);
+        Assert.NotNull(pool.Options.Proxy);
+
+        // 2) 修改 Options 返回的副本，同样不影响池
+        pool.Options.MaxConnectionsPerServer = 7;
+        Assert.Equal(32, pool.Options.MaxConnectionsPerServer);
+    }
 }

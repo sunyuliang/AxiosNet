@@ -26,10 +26,19 @@ public sealed class ConnectionPoolOptions
     /// <summary>建立 TCP/TLS 连接的超时时间（默认 15 秒）。</summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
-    /// <summary>某个 origin 的 Handler 空闲多久后从池中驱逐并释放（默认 5 分钟）。</summary>
+    /// <summary>
+    /// 某个 origin 的 Handler 空闲多久后从池中驱逐并释放（默认 5 分钟）。
+    /// 设为 <see cref="TimeSpan.Zero"/> 表示任何空闲节点立即可被驱逐（手动或后台）。
+    /// </summary>
     public TimeSpan IdleHandlerLifetime { get; set; } = TimeSpan.FromMinutes(5);
 
-    /// <summary>空闲 Handler 驱逐扫描间隔（默认 30 秒）。</summary>
+    /// <summary>
+    /// 空闲 Handler 驱逐扫描间隔（默认 30 秒）。
+    /// <para>
+    /// ≤ 0 时**不启动**后台驱逐定时器（只能手动调 <c>HttpConnectionPool.EvictIdleEndpoints()</c>）——
+    /// 测试里常把 <see cref="IdleHandlerLifetime"/> 与本项同时设为 0 来彻底关闭后台线程。
+    /// </para>
+    /// </summary>
     public TimeSpan EvictionInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>是否自动跟随重定向（默认 true）。</summary>
@@ -44,7 +53,11 @@ public sealed class ConnectionPoolOptions
     /// <summary>是否自动解压 gzip/deflate/br（默认 true）。</summary>
     public bool AutomaticDecompression { get; set; } = true;
 
-    /// <summary>代理。</summary>
+    /// <summary>
+    /// 代理。为 null 时池化为 <c>UseProxy = false</c>，即**不使用系统/环境代理**
+    /// （与 Node axios 默认读 HTTP_PROXY 不同，避免环境变量带来的意外路由）；
+    /// 需要显式走系统代理时设为 <see cref="System.Net.Http.HttpClient.DefaultProxy"/>。
+    /// </summary>
     public IWebProxy? Proxy { get; set; }
 
     /// <summary>凭据（WithCredentials 时使用系统默认凭据）。</summary>

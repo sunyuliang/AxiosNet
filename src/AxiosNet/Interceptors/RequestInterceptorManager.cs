@@ -14,6 +14,9 @@ public sealed class RequestInterceptorManager
     private readonly List<RequestInterceptor> _interceptors = new();
     private int _nextId;
 
+    // 快照缓存：注册/弹出/清空才失效。请求热路径上避免每请求重建 List（含逆序副本）。
+    private IReadOnlyList<RequestInterceptor>? _snapshot;
+
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
     public int Use(
         Func<AxiosConfig, Task<AxiosConfig>> onFulfilled,
@@ -24,6 +27,7 @@ public sealed class RequestInterceptorManager
         {
             var id = ++_nextId;
             _interceptors.Add(new RequestInterceptor(id, onFulfilled, onRejected));
+            _snapshot = null;
             return id;
         }
     }
@@ -44,7 +48,13 @@ public sealed class RequestInterceptorManager
     {
         lock (_interceptors)
         {
-            return _interceptors.RemoveAll(i => i.Id == id) > 0;
+            var removed = _interceptors.RemoveAll(i => i.Id == id) > 0;
+            if (removed)
+            {
+                _snapshot = null;
+            }
+
+            return removed;
         }
     }
 
@@ -53,6 +63,7 @@ public sealed class RequestInterceptorManager
         lock (_interceptors)
         {
             _interceptors.Clear();
+            _snapshot = null;
         }
     }
 
@@ -67,14 +78,19 @@ public sealed class RequestInterceptorManager
         }
     }
 
-    /// <summary>快照并按 axios 规则逆序（后注册的先执行）。</summary>
+    /// <summary>快照并按 axios 规则逆序（后注册的先执行）；无变更时复用缓存。</summary>
     internal IReadOnlyList<RequestInterceptor> SnapshotReversed()
     {
         lock (_interceptors)
         {
-            var copy = new List<RequestInterceptor>(_interceptors);
-            copy.Reverse();
-            return copy;
+            if (_snapshot is null)
+            {
+                var copy = new List<RequestInterceptor>(_interceptors);
+                copy.Reverse();
+                _snapshot = copy;
+            }
+
+            return _snapshot;
         }
     }
 }

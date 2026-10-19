@@ -33,6 +33,14 @@ public sealed class AxiosException : Exception
 
     public AxiosConfig? Config { get; }
 
+    /// <summary>
+    /// 触发本次错误的 <see cref="System.Net.Http.HttpRequestMessage"/>。
+    /// <para>
+    /// 注意：请求结束后该对象已随响应释放——<see cref="System.Net.Http.HttpRequestMessage.Method"/>、
+    /// RequestUri、Headers 等内存态属性可安全读取，但 <c>Content</c> 已释放，访问会抛
+    /// <see cref="ObjectDisposedException"/>；需要落日志的结构化快照请用 <see cref="ToJson"/>。
+    /// </para>
+    /// </summary>
     public HttpRequestMessage? Request { get; }
 
     public AxiosResponse? Response { get; }
@@ -118,10 +126,10 @@ public sealed class AxiosException : Exception
             null);
     }
 
-    internal static AxiosException BadResponse(AxiosConfig config, HttpRequestMessage request, Type targetType, Exception inner)
+    internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, Type targetType, Exception inner)
         => BadResponse(config, request, targetType.Name, inner);
 
-    internal static AxiosException BadResponse(AxiosConfig config, HttpRequestMessage request, string targetName, Exception inner)
+    internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
     {
         return new AxiosException(
             $"Response body could not be deserialized to '{targetName}'",

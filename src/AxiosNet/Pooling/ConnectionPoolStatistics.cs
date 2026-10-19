@@ -1,6 +1,9 @@
 namespace AxiosNet.Pooling;
 
 /// <summary>连接池快照统计。</summary>
+/// <param name="EndpointCount">当前池内 origin 节点数（scheme://host:port 维度）。</param>
+/// <param name="TotalLeases">自池创建以来<b>累计</b>租约次数（单调递增，不是当前活跃数；当前活跃数见 <see cref="EndpointStatistics.ActiveLeases"/>）。</param>
+/// <param name="Endpoints">各 origin 节点的明细快照。</param>
 public sealed record ConnectionPoolStatistics(
     int EndpointCount,
     long TotalLeases,

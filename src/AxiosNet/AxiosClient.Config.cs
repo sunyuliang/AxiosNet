@@ -19,7 +19,14 @@ public sealed partial class AxiosClient
         merged.Url = perCall.Url ?? merged.Url;
         merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
         merged.Method = perCall.MethodSet ? perCall.Method : merged.Method;
-        merged.Headers.MergeFrom(perCall.Headers);
+
+        // 空集合时跳过：快捷方法（Shortcut）每请求新建的 config 大概率没有自定义头/transform，
+        // 省掉快照枚举与空列表合并的分配（热路径上每请求 3 个小对象）。
+        if (perCall.Headers.Count > 0)
+        {
+            merged.Headers.MergeFrom(perCall.Headers);
+        }
+
         if (perCall.Params is not null)
         {
             merged.Params = perCall.Params;
@@ -73,14 +80,20 @@ public sealed partial class AxiosClient
         merged.FormFieldNameSelector = perCall.FormFieldNameSelector ?? merged.FormFieldNameSelector;
 
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定
-        foreach (var transform in perCall.TransformRequest)
+        if (perCall.TransformRequest.Count > 0)
         {
-            merged.TransformRequest.Add(transform);
+            foreach (var transform in perCall.TransformRequest)
+            {
+                merged.TransformRequest.Add(transform);
+            }
         }
 
-        foreach (var transform in perCall.TransformResponse)
+        if (perCall.TransformResponse.Count > 0)
         {
-            merged.TransformResponse.Add(transform);
+            foreach (var transform in perCall.TransformResponse)
+            {
+                merged.TransformResponse.Add(transform);
+            }
         }
 
         return merged;

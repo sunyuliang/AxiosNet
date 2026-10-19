@@ -170,4 +170,58 @@ public sealed class InterceptorTests
         await client.GetAsync<JsonElement>(server.Url);
         Assert.Equal(200, seenStatus);
     }
+
+    // ---------------------------------------------------------------
+    // 快照缓存：无变更时复用，但 Use / Eject / Clear 必须立即可见
+    // （回归：缓存若不在这些操作上失效，运行期增删拦截器会静默不生效）
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task InterceptorSnapshotCache_InvalidatedOnEjectAndClear()
+    {
+        await using var server = TestHttpServer.Start(req
+            => TestJson.Response(new { first = req.Headers.GetValueOrDefault("x-first"), second = req.Headers.GetValueOrDefault("x-second") }));
+        using var client = new AxiosClient();
+
+        var trace = new List<string>();
+        client.Interceptors.Request.Use(config =>
+        {
+            config.Headers.Set("X-First", "1");
+            trace.Add("first");
+            return config;
+        });
+        var secondId = client.Interceptors.Request.Use(config =>
+        {
+            config.Headers.Set("X-Second", "1");
+            trace.Add("second");
+            return config;
+        });
+
+        // 第一次请求建立快照缓存
+        await client.GetAsync(server.Url);
+        Assert.Equal(2, trace.Count);
+
+        // Eject 后：缓存必须失效，被弹出的拦截器不再执行
+        client.Interceptors.Request.Eject(secondId);
+        trace.Clear();
+        await client.GetAsync(server.Url);
+        Assert.Equal(new[] { "first" }, trace);
+
+        // Use 后：缓存必须失效，新注册的拦截器立即生效（按注册逆序执行）
+        client.Interceptors.Request.Use(config =>
+        {
+            config.Headers.Set("X-Second", "2");
+            trace.Add("second-v2");
+            return config;
+        });
+        trace.Clear();
+        await client.GetAsync(server.Url);
+        Assert.Equal(new[] { "second-v2", "first" }, trace);
+
+        // Clear 后：全部不再执行
+        client.Interceptors.Request.Clear();
+        trace.Clear();
+        await client.GetAsync(server.Url);
+        Assert.Empty(trace);
+    }
 }

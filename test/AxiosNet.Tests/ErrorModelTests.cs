@@ -97,4 +97,45 @@ public sealed class ErrorModelTests
         Assert.False(Axios.IsCancel(new InvalidOperationException()));
         Assert.True(Axios.IsCancel(new OperationCanceledException()));
     }
+
+    [Fact]
+    public async Task GenericStreamRequest_WithTextResponseType_IsWrappedAsBadResponse()
+    {
+        // 泛型参数与显式 responseType 不匹配（GetAsync<Stream> 却配了 'text'）：
+        // 以前会漏出裸 InvalidCastException，现在走统一错误模型。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync<Stream>(server.Url + "x", c => c.ResponseType = ResponseType.Text));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.Contains("Stream", ex.Message);
+    }
+
+    [Fact]
+    public async Task GenericStreamRequest_WithArrayBufferResponseType_IsWrappedAsBadResponse()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync<Stream>(server.Url + "x", c => c.ResponseType = ResponseType.ArrayBuffer));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.Contains("Stream", ex.Message);
+    }
+
+    [Fact]
+    public async Task GenericStreamRequest_WithoutExplicitResponseType_StillWorks()
+    {
+        // 正向对照：未显式配置 responseType 时 <Stream> 自动切流式，不受强转收敛影响
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        await using var stream = (await client.GetAsync<Stream>(server.Url + "x")).Data!;
+
+        using var reader = new StreamReader(stream);
+        Assert.Equal("{\"ok\":true}", await reader.ReadToEndAsync());
+    }
 }

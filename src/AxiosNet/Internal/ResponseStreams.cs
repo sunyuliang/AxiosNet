@@ -53,10 +53,21 @@ internal sealed class TimeoutStream : Stream
         set => _inner.Position = value;
     }
 
+    /// <summary>
+    /// 同步读无法在等待中被打断（超时/取消只在实际发起读取前检查），
+    /// 需要可中断的读取请用 <see cref="ReadAsync(byte[], int, int, CancellationToken)"/>。
+    /// </summary>
     public override int Read(byte[] buffer, int offset, int count)
-        => _inner.Read(buffer, offset, count);
+    {
+        EnsureNotCanceled();
+        return _inner.Read(buffer, offset, count);
+    }
 
-    public override int ReadByte() => _inner.ReadByte();
+    public override int ReadByte()
+    {
+        EnsureNotCanceled();
+        return _inner.ReadByte();
+    }
 
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadCoreAsync(
@@ -104,6 +115,25 @@ internal sealed class TimeoutStream : Stream
         finally
         {
             perReadCts?.Dispose();
+        }
+    }
+
+    /// <summary>同步读路径的取消/超时预检：已取消时直接抛对应的 AxiosException。</summary>
+    private void EnsureNotCanceled()
+    {
+        if (!_linkedCts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        if (_externalToken.IsCancellationRequested)
+        {
+            throw AxiosException.Canceled(_config, _request);
+        }
+
+        if (_timeoutCts.IsCancellationRequested)
+        {
+            throw AxiosException.Timeout(_config, _request);
         }
     }
 

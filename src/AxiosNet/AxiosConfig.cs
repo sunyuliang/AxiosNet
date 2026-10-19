@@ -94,6 +94,13 @@ public sealed class AxiosConfig
     /// 按请求设置时<b>显式赋值即可覆盖实例默认值</b>，包括用 <see cref="TimeSpan.Zero"/>
     /// 关闭实例级超时（未赋值则沿用实例默认）。
     /// </para>
+    /// <para>
+    /// 语义是<b>全程总预算</b>（建连 + 等待响应头 + 读取正文），不是单次读写的空闲超时：
+    /// 流式响应（<see cref="ResponseType.Stream"/>）下同样覆盖到正文读取结束——
+    /// 响应头阶段耗时也会从正文的剩余预算里扣除。需要"长连接式"的空闲超时请用
+    /// <see cref="CancellationToken"/> 自行控制。注意超过约 24.8 天的值没有意义
+    /// （底层计时器上限），需要无限超时请用 <see cref="TimeSpan.Zero"/>。
+    /// </para>
     /// </summary>
     public TimeSpan Timeout
     {
@@ -248,6 +255,7 @@ public sealed class AxiosConfig
     /// <summary>
     /// 限速（字节/秒），null 表示不限速。同时作用于上传与下载（与进度回调共用同一套流量包装）。
     /// 按请求显式设为 null 可清除实例默认限速。
+    /// <para>契约：同一请求的响应流须单线程顺序读取（进度计量非线程安全）。</para>
     /// </summary>
     public long? MaxRate
     {
@@ -274,6 +282,7 @@ public sealed class AxiosConfig
     /// <summary>
     /// 下载进度回调（对应 axios onDownloadProgress）。读取响应体时触发；
     /// 流式响应（<see cref="ResponseType.Stream"/>）在调用方读取流的过程中触发。
+    /// <para>契约：同一请求的响应流须单线程顺序读取（进度计量非线程安全）。</para>
     /// </summary>
     public Action<AxiosProgressEvent>? OnDownloadProgress { get; set; }
 

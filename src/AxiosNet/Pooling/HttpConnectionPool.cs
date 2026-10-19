@@ -26,7 +26,8 @@ public sealed class HttpConnectionPool : IDisposable
 
     public HttpConnectionPool(ConnectionPoolOptions? options = null)
     {
-        _options = options ?? new ConnectionPoolOptions();
+        // 克隆：调用方之后修改自己持有的 options 对象，不应影响已建成的池
+        _options = (options ?? new ConnectionPoolOptions()).Clone();
 
         if (_options.IdleHandlerLifetime > TimeSpan.Zero && _options.EvictionInterval > TimeSpan.Zero)
         {
@@ -38,7 +39,10 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    public ConnectionPoolOptions Options => _options;
+    /// <summary>
+    /// 池实际生效的选项（返回副本；修改它不会影响池，要调整请在构造池之前改）。
+    /// </summary>
+    public ConnectionPoolOptions Options => _options.Clone();
 
     /// <summary>从池中租用指定 URI 所属 origin 的连接节点。</summary>
     public PoolLease Lease(Uri requestUri)
@@ -166,8 +170,23 @@ public sealed class HttpConnectionPool : IDisposable
         return new ConnectionPoolStatistics(_endpoints.Count, Interlocked.Read(ref _totalLeases), endpoints);
     }
 
+    /// <summary>
+    /// 生成 origin 池 key（<c>scheme://host:port</c>）。
+    /// <para>
+    /// 主机名统一用 <see cref="Uri.IdnHost"/>（IDNA/punycode）而不是 <see cref="Uri.Host"/>：
+    /// HTTP 主机头只能是 ASCII，unicode 主机名（<c>münchen.de</c>）发送前会被规范化为
+    /// punycode（<c>xn--mnchen-3ya.de</c>）——服务端看到的两者字节完全相同（同一 DNS 名、
+    /// 同一证书、同一 vhost），池 key 若保留原始拼写就会把同一个站点分裂成两个节点
+    /// （连接配额各算一半、生命周期时钟分裂）。对 ASCII / IPv4 该属性与
+    /// <see cref="Uri.Host"/> 一致。
+    /// </para>
+    /// <para>
+    /// IPv6 是例外：<see cref="Uri.IdnHost"/> **不带**方括号（<c>::1</c>），而 Uri 解析与
+    /// Host 头都要求括号形式，因此 IPv6 回退用 <see cref="Uri.Host"/>（带括号）。
+    /// </para>
+    /// </summary>
     private static string BuildOrigin(Uri uri)
-        => $"{uri.Scheme}://{uri.Host}:{uri.Port}";
+        => $"{uri.Scheme}://{(uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost)}:{uri.Port}";
 
     public void Dispose()
     {

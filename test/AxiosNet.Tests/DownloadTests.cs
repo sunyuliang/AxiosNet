@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text;
 using AxiosNet.Tests.Infrastructure;
 
@@ -18,6 +20,57 @@ public sealed class DownloadTests
 
     private static TestResponse Binary(TestRequest _)
         => new(Body: Payload, ContentType: "application/octet-stream");
+
+    /// <summary>
+    /// 服务端不声明 Content-Length、以连接关闭 delimiting 正文的响应（TestHttpServer 发不出这种形态）。
+    /// 覆盖缓冲读取的「未知长度」分支：边读边扩容，返回数组长度必须恒等于实际读到的字节。
+    /// </summary>
+    [Fact]
+    public async Task BufferedRead_WithoutDeclaredContentLength_ReturnsExactBytes()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        var expected = Encoding.UTF8.GetBytes("no-content-length-body");
+        var serverTask = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync();
+            using var stream = new NetworkStream(socket, ownsSocket: true);
+
+            // 读掉请求头（读到 \r\n\r\n 即可，不关心内容）
+            var buffer = new byte[1024];
+            while (!Encoding.ASCII.GetString(buffer).Contains("\r\n\r\n"))
+            {
+                if (await stream.ReadAsync(buffer) == 0)
+                {
+                    break;
+                }
+            }
+
+            await stream.WriteAsync(
+                Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n"));
+            await stream.WriteAsync(expected);
+            await stream.FlushAsync();
+        });
+
+        try
+        {
+            using var client = new AxiosClient();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var response = await client.GetAsync<byte[]>($"http://127.0.0.1:{port}/x", cancellationToken: cts.Token);
+
+            Assert.Equal(200, response.Status);
+            Assert.Equal(expected, response.Data);
+
+            await serverTask.WaitAsync(cts.Token);
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
 
     [Fact]
     public async Task GetAsyncOfStream_StreamsToLocalFile()

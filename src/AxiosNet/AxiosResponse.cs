@@ -1,3 +1,5 @@
+using AxiosNet.Internal;
+
 namespace AxiosNet;
 
 /// <summary>
@@ -29,7 +31,7 @@ public class AxiosResponse
     {
         return new AxiosResponse<TData>
         {
-            Data = Data is null ? default : (TData?)Data,
+            Data = DataCast.To<TData>(Data, Config, Request),
             Status = Status,
             StatusText = StatusText,
             Headers = Headers,
@@ -46,7 +48,8 @@ public sealed class AxiosResponse<TData> : AxiosResponse
 {
     public new TData? Data
     {
-        get => base.Data is null ? default : (TData)base.Data;
+        // 与 AsTyped 同一套收敛逻辑：类型不匹配抛 ERR_BAD_RESPONSE，而不是裸 InvalidCastException。
+        get => DataCast.To<TData>(base.Data, Config, Request);
         set => base.Data = value;
     }
 }
