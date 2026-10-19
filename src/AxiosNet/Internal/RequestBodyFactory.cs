@@ -90,7 +90,7 @@ internal static class RequestBodyFactory
 
         if (IsMediaType(mediaType, AxiosConfig.FormUrlEncodedContentType))
         {
-            return CreateFormContent(data, options, mediaType, encoding, appendCharset);
+            return CreateFormContent(data, options, mediaType, encoding, appendCharset, config.FormFieldNameSelector);
         }
 
         if (IsMediaType(mediaType, MultipartMediaType))
@@ -107,14 +107,15 @@ internal static class RequestBodyFactory
         JsonSerializerOptions options,
         string mediaType,
         Encoding encoding,
-        bool appendCharset)
+        bool appendCharset,
+        Func<string?, string, string>? nameSelector)
     {
         // 先按当前 JSON 选项序列化为 JSON 树，再展平成键值对：
         // 这样命名策略、[JsonPropertyName]、自定义转换器、忽略规则都与 JSON 请求体保持一致。
         var element = JsonSerializer.SerializeToElement(data, data.GetType(), options);
 
         var pairs = new List<KeyValuePair<string, string>>(8);
-        Flatten(null, element, pairs, encoding);
+        Flatten(null, element, pairs, encoding, nameSelector);
 
         // 表单体按「已转义的 ASCII 串」写入，因此编码只影响转义映射（默认 UTF-8 百分号编码，与 axios 一致）。
         var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
@@ -144,7 +145,7 @@ internal static class RequestBodyFactory
         try
         {
             var policy = (config.JsonSerializerOptions ?? JsonOptions.Web).PropertyNamingPolicy;
-            CollectParts(null, data, content, encoding, policy);
+            CollectParts(null, data, content, encoding, policy, config.FormFieldNameSelector);
             return content;
         }
         catch
@@ -160,7 +161,8 @@ internal static class RequestBodyFactory
         object? value,
         MultipartFormDataContent content,
         Encoding encoding,
-        JsonNamingPolicy? policy)
+        JsonNamingPolicy? policy,
+        Func<string?, string, string>? nameSelector)
     {
         switch (value)
         {
@@ -181,7 +183,7 @@ internal static class RequestBodyFactory
                 return;
 
             case JsonElement element:
-                CollectJsonElementParts(name, element, content, encoding);
+                CollectJsonElementParts(name, element, content, encoding, nameSelector);
                 return;
 
             case string text:
@@ -210,7 +212,7 @@ internal static class RequestBodyFactory
                 // 含 ExpandoObject（dynamic）
                 foreach (var entry in genericDictionary)
                 {
-                    CollectParts(CombineName(name, entry.Key), entry.Value, content, encoding, policy);
+                    CollectParts(CombineName(nameSelector, name, entry.Key), entry.Value, content, encoding, policy, nameSelector);
                 }
 
                 return;
@@ -224,11 +226,12 @@ internal static class RequestBodyFactory
                     }
 
                     CollectParts(
-                        CombineName(name, entry.Key.ToString() ?? string.Empty),
+                        CombineName(nameSelector, name, entry.Key.ToString() ?? string.Empty),
                         entry.Value,
                         content,
                         encoding,
-                        policy);
+                        policy,
+                        nameSelector);
                 }
 
                 return;
@@ -245,7 +248,7 @@ internal static class RequestBodyFactory
         {
             foreach (var item in enumerable)
             {
-                CollectParts(name, item, content, encoding, policy);
+                CollectParts(name, item, content, encoding, policy, nameSelector);
             }
 
             return;
@@ -260,11 +263,12 @@ internal static class RequestBodyFactory
             }
 
             CollectParts(
-                CombineName(name, ResolveName(property, policy)),
+                CombineName(nameSelector, name, ResolveName(property, policy)),
                 property.GetValue(value),
                 content,
                 encoding,
-                policy);
+                policy,
+                nameSelector);
         }
     }
 
@@ -272,14 +276,20 @@ internal static class RequestBodyFactory
         string? name,
         JsonElement element,
         MultipartFormDataContent content,
-        Encoding encoding)
+        Encoding encoding,
+        Func<string?, string, string>? nameSelector)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    CollectJsonElementParts(CombineName(name, property.Name), property.Value, content, encoding);
+                    CollectJsonElementParts(
+                        CombineName(nameSelector, name, property.Name),
+                        property.Value,
+                        content,
+                        encoding,
+                        nameSelector);
                 }
 
                 break;
@@ -287,7 +297,7 @@ internal static class RequestBodyFactory
             case JsonValueKind.Array:
                 foreach (var item in element.EnumerateArray())
                 {
-                    CollectJsonElementParts(name, item, content, encoding);
+                    CollectJsonElementParts(name, item, content, encoding, nameSelector);
                 }
 
                 break;
@@ -305,8 +315,11 @@ internal static class RequestBodyFactory
         }
     }
 
-    private static string CombineName(string? prefix, string name)
-        => string.IsNullOrEmpty(prefix) ? name : prefix + "[" + name + "]";
+    /// <summary>字段名生成：默认 <c>prefix[key]</c>，可通过 <see cref="AxiosConfig.FormFieldNameSelector"/> 覆盖。</summary>
+    private static string CombineName(Func<string?, string, string>? selector, string? prefix, string name)
+        => selector is not null
+            ? selector(prefix, name)
+            : string.IsNullOrEmpty(prefix) ? name : prefix + "[" + name + "]";
 
     private static string RequireName(string? name)
     {
@@ -388,7 +401,12 @@ internal static class RequestBodyFactory
     /// 嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、
     /// null 跳过、标量取原始文本。
     /// </summary>
-    private static void Flatten(string? prefix, JsonElement element, List<KeyValuePair<string, string>> pairs, Encoding encoding)
+    private static void Flatten(
+        string? prefix,
+        JsonElement element,
+        List<KeyValuePair<string, string>> pairs,
+        Encoding encoding,
+        Func<string?, string, string>? nameSelector)
     {
         switch (element.ValueKind)
         {
@@ -396,10 +414,11 @@ internal static class RequestBodyFactory
                 foreach (var property in element.EnumerateObject())
                 {
                     Flatten(
-                        prefix is null ? property.Name : prefix + "[" + property.Name + "]",
+                        CombineName(nameSelector, prefix, property.Name),
                         property.Value,
                         pairs,
-                        encoding);
+                        encoding,
+                        nameSelector);
                 }
 
                 break;
@@ -410,7 +429,7 @@ internal static class RequestBodyFactory
                 foreach (var item in element.EnumerateArray())
                 {
                     // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
-                    Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, encoding);
+                    Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, encoding, nameSelector);
                     index++;
                 }
 

@@ -46,6 +46,20 @@ public static class Axios
     public static Task<AxiosResponse<T>> RequestAsync<T>(Action<AxiosConfig> configure)
         => DefaultClient.RequestAsync<T>(configure);
 
+    /// <summary>对应 axios.getUri：只拼 URL，不发请求。</summary>
+    public static string GetUri(AxiosConfig config) => DefaultClient.GetUri(config);
+
+    /// <summary>对应 axios.getUri：只拼 URL，不发请求。</summary>
+    public static string GetUri(Action<AxiosConfig> configure) => DefaultClient.GetUri(configure);
+
+    /// <summary>对应 axios.isAxiosError。</summary>
+    public static bool IsAxiosError(Exception? exception) => exception is AxiosException;
+
+    /// <summary>对应 axios.isCancel：判断是否由取消导致。</summary>
+    public static bool IsCancel(Exception? exception) =>
+        exception is OperationCanceledException
+        || exception is AxiosException { Code: AxiosException.ErrCanceled };
+
     public static Task<AxiosResponse> GetAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync(url, configure, cancellationToken);
 
@@ -111,6 +125,25 @@ public static class Axios
 
     public static Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchAsync<T>(url, data, configure, cancellationToken);
+
+    // 对应 axios postForm / putForm / patchForm：默认 multipart/form-data
+    public static Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.PostFormAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PostFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.PostFormAsync<T>(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse> PutFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.PutFormAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PutFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.PutFormAsync<T>(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse> PatchFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.PatchFormAsync(url, data, configure, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => DefaultClient.PatchFormAsync<T>(url, data, configure, cancellationToken);
 
     // 提示：需要 JS 式动态响应时直接使用泛型 <dynamic>，例如：
     //   dynamic data = (await Axios.GetAsync<dynamic>(url)).Data!;

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
@@ -40,9 +41,17 @@ public sealed class AxiosClient : IDisposable
         else
         {
             var effective = (poolOptions ?? Defaults.PoolOptions ?? new ConnectionPoolOptions()).Clone();
-            effective.MaxAutomaticRedirections = Defaults.MaxRedirects > 0
-                ? Defaults.MaxRedirects
-                : effective.MaxAutomaticRedirections;
+
+            // maxRedirects：0 = 不跟随重定向（对应 axios maxRedirects: 0），> 0 = 覆盖池默认上限。
+            if (Defaults.MaxRedirects == 0)
+            {
+                effective.AllowAutoRedirect = false;
+            }
+            else if (Defaults.MaxRedirects > 0)
+            {
+                effective.MaxAutomaticRedirections = Defaults.MaxRedirects;
+            }
+
             effective.Proxy ??= Defaults.Proxy;
             effective.Credentials ??= Defaults.Credentials;
             if (Defaults.WithCredentials)
@@ -54,6 +63,31 @@ public sealed class AxiosClient : IDisposable
             _pool = new HttpConnectionPool(effective);
             _ownsPool = true;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // getUri：只组装 URL，不发请求（对应 axios.getUri）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 按配置拼出最终请求 URL（含 baseURL 合并与 params 序列化），不发请求。
+    /// 返回的是实际发送形态（已转义，如空格 → <c>%20</c>），可用于签名、日志与调试。
+    /// </summary>
+    public string GetUri(AxiosConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var merged = MergeConfig(config);
+        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.ParamsSerializer)
+            .AbsoluteUri;
+    }
+
+    /// <summary>按 Action 配置拼出最终请求 URL，不发请求。</summary>
+    public string GetUri(Action<AxiosConfig> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        var config = new AxiosConfig();
+        configure(config);
+        return GetUri(config);
     }
 
     // ------------------------------------------------------------------
@@ -190,6 +224,50 @@ public sealed class AxiosClient : IDisposable
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, AxiosMethod.Patch, configure, cancellationToken, data));
 
+    // ------------------------------------------------------------------
+    // 表单快捷方法（对应 axios postForm / putForm / patchForm）
+    // ------------------------------------------------------------------
+
+    /// <summary>对应 axios postForm：默认按 multipart/form-data 发送（字段 + FormFile 文件部件）。</summary>
+    public Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(FormShortcut(url, AxiosMethod.Post, configure, cancellationToken, data), null);
+
+    /// <summary>对应 axios postForm。</summary>
+    public Task<AxiosResponse<T>> PostFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(FormShortcut(url, AxiosMethod.Post, configure, cancellationToken, data));
+
+    /// <summary>对应 axios putForm。</summary>
+    public Task<AxiosResponse> PutFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(FormShortcut(url, AxiosMethod.Put, configure, cancellationToken, data), null);
+
+    /// <summary>对应 axios putForm。</summary>
+    public Task<AxiosResponse<T>> PutFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(FormShortcut(url, AxiosMethod.Put, configure, cancellationToken, data));
+
+    /// <summary>对应 axios patchForm。</summary>
+    public Task<AxiosResponse> PatchFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendAsync(FormShortcut(url, AxiosMethod.Patch, configure, cancellationToken, data), null);
+
+    /// <summary>对应 axios patchForm。</summary>
+    public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
+        => SendTypedAsync<T>(FormShortcut(url, AxiosMethod.Patch, configure, cancellationToken, data));
+
+    private static AxiosConfig FormShortcut(
+        string url,
+        AxiosMethod method,
+        Action<AxiosConfig>? configure,
+        CancellationToken cancellationToken,
+        object? data)
+    {
+        var config = Shortcut(url, method, configure, cancellationToken, data);
+        if (!config.ContentTypeSet)
+        {
+            config.ContentType = "multipart/form-data";
+        }
+
+        return config;
+    }
+
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
         var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
@@ -238,6 +316,10 @@ public sealed class AxiosClient : IDisposable
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
 
+        // 实例级选项（Proxy/Credentials/WithCredentials/MaxRedirects）在构造连接池时已固定，
+        // 按请求设置无法生效 —— 与其静默忽略，不如明确报错。
+        ValidatePerRequestOptions(perCallConfig);
+
         var config = MergeConfig(perCallConfig);
 
         // 泛型调用 XxxAsync<dynamic>/<object> 时（T 即 object），响应自动展开为动态对象图，
@@ -272,16 +354,37 @@ public sealed class AxiosClient : IDisposable
             }
         }
 
-        // 2) 构造 URI 与 HttpRequestMessage
-        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params);
+        // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
+        foreach (var transform in config.TransformRequest)
+        {
+            config.Data = transform(config.Data, config);
+        }
+
+        // 3) 构造 URI 与 HttpRequestMessage
+        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.ParamsSerializer);
         var request = new HttpRequestMessage(config.Method.ToHttpMethod(), uri)
         {
             Version = config.HttpVersion ?? HttpVersion.Version11
         };
 
         var content = RequestBodyFactory.Create(config.Data, config);
+
+        // 上传进度 / 限速：包一层流量统计（头部从原内容复制，序列化逻辑不变）
+        if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
+        {
+            content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate);
+        }
+
         if (content is not null)
         {
+            if (config.MaxBodyLength is long maxBody
+                && content.Headers.ContentLength is long bodyLength
+                && bodyLength > maxBody)
+            {
+                content.Dispose();
+                throw AxiosException.MaxBodyLength(config, request, bodyLength, maxBody);
+            }
+
             request.Content = content;
         }
 
@@ -296,7 +399,7 @@ public sealed class AxiosClient : IDisposable
 
         var streamResponse = config.ResponseType == ResponseType.Stream;
 
-        // 3) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
+        // 4) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
         Func<Task<AxiosResponse>> invoker = async () =>
         {
             PoolLease? lease = null;
@@ -341,6 +444,12 @@ public sealed class AxiosClient : IDisposable
 
                     throw AxiosException.Canceled(config, request);
                 }
+                catch
+                {
+                    // 读取/解析失败（含 maxContentLength 超限、反序列化失败）：先释放响应，避免连接泄漏
+                    responseMessage.Dispose();
+                    throw;
+                }
 
                 // stream 模式下消息不能释放（调用方要继续读流）
                 if (!streamResponse)
@@ -362,7 +471,7 @@ public sealed class AxiosClient : IDisposable
             }
         };
 
-        // 4) 响应拦截器：按注册顺序包装成责任链
+        // 5) 响应拦截器：按注册顺序包装成责任链
         var chain = invoker;
         foreach (var interceptor in Interceptors.Response.Snapshot())
         {
@@ -402,6 +511,97 @@ public sealed class AxiosClient : IDisposable
 
     private static bool DefaultValidateStatus(int status) => status is >= 200 and < 300;
 
+    /// <summary>
+    /// 实例级选项（Proxy / Credentials / WithCredentials / MaxRedirects）在构造连接池时已固定，
+    /// 按请求设置无法生效 —— 与其静默忽略，不如明确报错。
+    /// </summary>
+    private void ValidatePerRequestOptions(AxiosConfig perCall)
+    {
+        if (perCall.Proxy is not null && !ReferenceEquals(perCall.Proxy, Defaults.Proxy))
+        {
+            throw AxiosException.InvalidOption(
+                "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Proxy = ... }) "
+                + "或 ConnectionPoolOptions.Proxy。");
+        }
+
+        if (perCall.Credentials is not null && !ReferenceEquals(perCall.Credentials, Defaults.Credentials))
+        {
+            throw AxiosException.InvalidOption(
+                "Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。");
+        }
+
+        if (perCall.WithCredentialsSet && perCall.WithCredentials != Defaults.WithCredentials)
+        {
+            throw AxiosException.InvalidOption(
+                "WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），请在 AxiosClient 的 defaults 上设置。");
+        }
+
+        if (perCall.MaxRedirectsSet && perCall.MaxRedirects != Defaults.MaxRedirects)
+        {
+            throw AxiosException.InvalidOption(
+                "MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），请在 AxiosClient 的 defaults 上设置。");
+        }
+    }
+
+    /// <summary>
+    /// 下载侧包装：先按 Content-Length 做 maxContentLength 预检，
+    /// 再按需套上进度/限速流（既没有进度回调也没有限速时原样返回）。
+    /// </summary>
+    private static Stream WrapDownloadStream(
+        Stream stream,
+        HttpResponseMessage message,
+        HttpRequestMessage request,
+        AxiosConfig config)
+    {
+        var declared = message.Content.Headers.ContentLength;
+
+        if (config.MaxContentLength is long limit && declared is long length && length > limit)
+        {
+            stream.Dispose();
+            throw AxiosException.MaxContentLength(config, request, length, limit);
+        }
+
+        if (config.OnDownloadProgress is null && config.MaxRate is not > 0)
+        {
+            return stream;
+        }
+
+        return new ProgressReadStream(stream, declared, config.OnDownloadProgress, config.MaxRate);
+    }
+
+    /// <summary>读取整个响应体；服务端未声明长度时按已读字节执行 maxContentLength。</summary>
+    private static async Task<byte[]> ReadAllBytesAsync(
+        Stream stream,
+        AxiosConfig config,
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        const int chunkSize = 81920;
+        var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
+
+        try
+        {
+            using var body = new MemoryStream();
+            int read;
+            while ((read = await stream.ReadAsync(buffer.AsMemory(0, chunkSize), cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                if (config.MaxContentLength is long limit && body.Length + read > limit)
+                {
+                    throw AxiosException.MaxContentLength(config, request, body.Length + read, limit);
+                }
+
+                body.Write(buffer, 0, read);
+            }
+
+            return body.ToArray();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            stream.Dispose();
+        }
+    }
+
     private static async Task<AxiosResponse> ReadResponseAsync(
         HttpResponseMessage message,
         HttpRequestMessage request,
@@ -423,17 +623,27 @@ public sealed class AxiosClient : IDisposable
         object? data;
         if (config.ResponseType == ResponseType.Stream)
         {
-            data = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            data = WrapDownloadStream(responseStream, message, request, config);
         }
         else
         {
             // 原始内容优先：一律先取原始字节，再解码为文本，最后按返回类型转换。
-            var bytes = await message.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            var downloadStream = WrapDownloadStream(responseStream, message, request, config);
+            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken).ConfigureAwait(false);
+
             var text = ResponseTextDecoder.Decode(
                 bytes,
                 message.Content.Headers.ContentType?.CharSet,
                 config.ResponseEncoding);
             data = ConvertData(config, request, dataType, bytes, text);
+
+            // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）
+            foreach (var transform in config.TransformResponse)
+            {
+                data = transform(data, config);
+            }
         }
 
         var status = (int)message.StatusCode;
@@ -561,14 +771,33 @@ public sealed class AxiosClient : IDisposable
         merged.ValidateStatus = perCall.ValidateStatus ?? merged.ValidateStatus;
         merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
         merged.HttpVersion = perCall.HttpVersion ?? merged.HttpVersion;
-        merged.Proxy = perCall.Proxy ?? merged.Proxy;
-        merged.Credentials = perCall.Credentials ?? merged.Credentials;
-        // WithCredentials / MaxRedirects 属于实例级配置（构造 AxiosClient 时应用到连接池 Handler），
-        // 无法按请求生效，因此这里不做合并，避免出现「设置了却无效果」的假象。
         merged.JsonSerializerOptions = perCall.JsonSerializerOptions ?? merged.JsonSerializerOptions;
         merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
         merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;
         merged.PoolOptions = perCall.PoolOptions ?? merged.PoolOptions;
+
+        // 以下为后加的配置：Proxy/Credentials 已在 ValidatePerRequestOptions 里拦掉「按请求设置」，
+        // WithCredentials/MaxRedirects 属实例级，不做合并。
+        merged.MaxContentLength = perCall.MaxContentLength ?? merged.MaxContentLength;
+        merged.MaxBodyLength = perCall.MaxBodyLength ?? merged.MaxBodyLength;
+        merged.MaxRate = perCall.MaxRate ?? merged.MaxRate;
+        merged.TimeoutMessage = perCall.TimeoutMessage ?? merged.TimeoutMessage;
+        merged.OnUploadProgress = perCall.OnUploadProgress ?? merged.OnUploadProgress;
+        merged.OnDownloadProgress = perCall.OnDownloadProgress ?? merged.OnDownloadProgress;
+        merged.ParamsSerializer = perCall.ParamsSerializer ?? merged.ParamsSerializer;
+        merged.FormFieldNameSelector = perCall.FormFieldNameSelector ?? merged.FormFieldNameSelector;
+
+        // transform 链按「实例默认 + 本次追加」组合，顺序稳定
+        foreach (var transform in perCall.TransformRequest)
+        {
+            merged.TransformRequest.Add(transform);
+        }
+
+        foreach (var transform in perCall.TransformResponse)
+        {
+            merged.TransformResponse.Add(transform);
+        }
+
         return merged;
     }
 

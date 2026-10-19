@@ -123,17 +123,109 @@ public sealed class AxiosConfig
     /// <summary>HTTP 版本，默认 1.1。</summary>
     public Version? HttpVersion { get; set; }
 
-    /// <summary>对应 axios withCredentials（使用系统默认凭据/Cookie）。仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler。</summary>
-    public bool WithCredentials { get; set; }
+    private bool _withCredentials;
 
-    /// <summary>代理设置。</summary>
+    /// <summary>
+    /// 对应 axios withCredentials（使用系统默认凭据/Cookie）。
+    /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；按请求设置会抛 <see cref="AxiosException"/>。
+    /// </summary>
+    public bool WithCredentials
+    {
+        get => _withCredentials;
+        set
+        {
+            _withCredentials = value;
+            WithCredentialsSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
+    internal bool WithCredentialsSet { get; private set; }
+
+    /// <summary>代理设置。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>。</summary>
     public IWebProxy? Proxy { get; set; }
 
-    /// <summary>显式凭据。</summary>
+    /// <summary>显式凭据。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>。</summary>
     public ICredentials? Credentials { get; set; }
 
-    /// <summary>最大自动重定向次数。仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler，默认 5。</summary>
-    public int MaxRedirects { get; set; } = 5;
+    private int _maxRedirects = 5;
+
+    /// <summary>
+    /// 对应 axios maxRedirects，默认 5；<b>设为 0 表示不跟随重定向</b>（返回 3xx 响应本身，默认 validateStatus 会视为错误）。
+    /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；按请求设置会抛 <see cref="AxiosException"/>。
+    /// </summary>
+    public int MaxRedirects
+    {
+        get => _maxRedirects;
+        set
+        {
+            _maxRedirects = value;
+            MaxRedirectsSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
+    internal bool MaxRedirectsSet { get; private set; }
+
+    /// <summary>
+    /// 对应 axios maxContentLength：响应体最大字节数，null 表示不限。
+    /// 超出时抛 <see cref="AxiosException"/>（<see cref="AxiosException.ErrBadResponse"/>）；
+    /// 服务端声明了 Content-Length 时在读取正文前就拒绝，否则边读边计数。
+    /// </summary>
+    public long? MaxContentLength { get; set; }
+
+    /// <summary>
+    /// 对应 axios maxBodyLength：请求体最大字节数，null 表示不限。
+    /// 仅在长度可确定时校验（对象/字符串/byte[] 等；未知长度的 Stream 不校验），
+    /// 超出时抛 <see cref="AxiosException"/>（<see cref="AxiosException.ErrBadRequest"/>）。
+    /// </summary>
+    public long? MaxBodyLength { get; set; }
+
+    /// <summary>
+    /// 限速（字节/秒），null 表示不限速。同时作用于上传与下载（与进度回调共用同一套流量包装）。
+    /// </summary>
+    public long? MaxRate { get; set; }
+
+    /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
+    public string? TimeoutMessage { get; set; }
+
+    /// <summary>
+    /// 上传进度回调（对应 axios onUploadProgress）。写入请求体时按已发送字节触发，约 50ms 一次。
+    /// 回调在请求线程上同步执行，避免阻塞；抛异常会中断请求。
+    /// </summary>
+    public Action<AxiosProgressEvent>? OnUploadProgress { get; set; }
+
+    /// <summary>
+    /// 下载进度回调（对应 axios onDownloadProgress）。读取响应体时触发；
+    /// 流式响应（<see cref="ResponseType.Stream"/>）在调用方读取流的过程中触发。
+    /// </summary>
+    public Action<AxiosProgressEvent>? OnDownloadProgress { get; set; }
+
+    /// <summary>
+    /// 对应 axios paramsSerializer：自定义 query string 生成方式，返回不含前导 <c>?</c> 的查询串。
+    /// null 时使用内置规则（数组 <c>a[]=v</c>、嵌套 <c>a[b]=v</c>、null 跳过）。
+    /// </summary>
+    public Func<object?, string>? ParamsSerializer { get; set; }
+
+    /// <summary>
+    /// 表单/multipart 字段名生成规则：参数为（父级前缀, 键名），返回实际字段名。
+    /// 默认 <c>prefix[key]</c>（无前缀时就是 key）；可改成 <c>prefix.key</c>、下划线或忽略前缀。
+    /// </summary>
+    public Func<string?, string, string>? FormFieldNameSelector { get; set; }
+
+    /// <summary>
+    /// 对应 axios transformRequest：在拦截器之后、请求体编码之前依次作用于 <see cref="Data"/>，
+    /// 每个函数返回新的数据（可返回 string/byte[]/Stream/HttpContent 等）。
+    /// </summary>
+    public IList<Func<object?, AxiosConfig, object?>> TransformRequest { get; set; }
+        = new List<Func<object?, AxiosConfig, object?>>();
+
+    /// <summary>
+    /// 对应 axios transformResponse：在响应体转换/反序列化之后依次作用于 Data
+    /// （例如统一拆包 <c>{code,data}</c>）。流式响应不适用。
+    /// </summary>
+    public IList<Func<object?, AxiosConfig, object?>> TransformResponse { get; set; }
+        = new List<Func<object?, AxiosConfig, object?>>();
 
     /// <summary>JSON 序列化选项（请求体序列化 / 响应体反序列化共用）。</summary>
     public JsonSerializerOptions? JsonSerializerOptions { get; set; }
@@ -181,7 +273,17 @@ public sealed class AxiosConfig
             JsonSerializerOptions = JsonSerializerOptions,
             RequestEncoding = RequestEncoding,
             ResponseEncoding = ResponseEncoding,
-            PoolOptions = PoolOptions
+            PoolOptions = PoolOptions,
+            MaxContentLength = MaxContentLength,
+            MaxBodyLength = MaxBodyLength,
+            MaxRate = MaxRate,
+            TimeoutMessage = TimeoutMessage,
+            OnUploadProgress = OnUploadProgress,
+            OnDownloadProgress = OnDownloadProgress,
+            ParamsSerializer = ParamsSerializer,
+            FormFieldNameSelector = FormFieldNameSelector,
+            TransformRequest = new List<Func<object?, AxiosConfig, object?>>(TransformRequest),
+            TransformResponse = new List<Func<object?, AxiosConfig, object?>>(TransformResponse)
         };
 
         // 属性赋值会把「已显式设置」置为 true，这里还原真实状态，保证合并语义正确。
@@ -189,6 +291,8 @@ public sealed class AxiosConfig
         clone.ResponseTypeSet = ResponseTypeSet;
         clone.CancellationTokenSet = CancellationTokenSet;
         clone.ContentTypeSet = ContentTypeSet;
+        clone.WithCredentialsSet = WithCredentialsSet;
+        clone.MaxRedirectsSet = MaxRedirectsSet;
         return clone;
     }
 }

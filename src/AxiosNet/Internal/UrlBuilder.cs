@@ -10,7 +10,11 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class UrlBuilder
 {
-    public static Uri Build(string? baseAddress, string? url, object? queryParams)
+    public static Uri Build(
+        string? baseAddress,
+        string? url,
+        object? queryParams,
+        Func<object?, string>? serializer = null)
     {
         if (string.IsNullOrWhiteSpace(url) && string.IsNullOrWhiteSpace(baseAddress))
         {
@@ -19,7 +23,10 @@ internal static class UrlBuilder
 
         var combined = Combine(baseAddress, url);
 
-        var query = ParamsSerializer.Serialize(queryParams);
+        // 自定义序列化器（对应 axios paramsSerializer）返回的串允许带前导 ?/&，这里统一去掉。
+        var query = serializer is null
+            ? ParamsSerializer.Serialize(queryParams)
+            : NormalizeQuery(serializer(queryParams));
         if (query.Length > 0)
         {
             var separator = combined.Contains('?') ? "&" : "?";
@@ -45,8 +52,7 @@ internal static class UrlBuilder
     }
 
     /// <summary>对应 axios isAbsoluteURL + combineURLs。</summary>
-    private static string Combine(string? baseAddress, string? url)
-    {
+    private static string Combine(string? baseAddress, string? url)    {
         if (string.IsNullOrWhiteSpace(url))
         {
             return baseAddress!.TrimEnd('/');
@@ -62,6 +68,16 @@ internal static class UrlBuilder
 
     private static bool IsAbsoluteUrl(string url)
         => Uri.TryCreate(url, UriKind.Absolute, out _);
+
+    private static string NormalizeQuery(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return string.Empty;
+        }
+
+        return query.Trim().TrimStart('?', '&');
+    }
 }
 
 internal static class ParamsSerializer

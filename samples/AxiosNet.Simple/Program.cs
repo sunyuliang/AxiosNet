@@ -27,7 +27,9 @@ IExample[] examples =
     new ErrorHandlingExample(),
     new ConnectionPoolExample(),
     new MultipartExample(),
-    new DownloadExample()
+    new DownloadExample(),
+    new GetUriAndLimitsExample(),
+    new ProgressAndRateExample()
 };
 
 try
