@@ -367,7 +367,7 @@ public sealed class BasicRequestTests
         var response = await client.RequestAsync<JsonElement>(c =>
         {
             c.Url = server.Url + "explicit";
-            c.Method = AxiosMethod.Get;
+            c.Method = HttpMethod.Get;
             c.Headers.Set("X-Custom", "yes");
         });
 

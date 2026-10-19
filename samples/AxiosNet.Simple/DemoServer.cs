@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace AxiosNet.Simple;
@@ -218,6 +219,18 @@ public sealed class DemoServer : IDisposable
                 // 302：用于演示 maxRedirects / 是否跟随重定向
                 return (302, Array.Empty<byte>(), "text/plain", null, "/users/1");
 
+            case "GET" when path == "/headers":
+            {
+                // 回显全部请求头（键统一小写）：用于演示自定义 Handler 给请求加头
+                var echoed = headers.Select(kv =>
+                    $"\"{Escape(kv.Key.ToLowerInvariant())}\":\"{Escape(kv.Value)}\"");
+                return Json(200, "{" + string.Join(",", echoed) + "}");
+            }
+
+            case "PROPFIND" when path == "/users/1":
+                // 非标准方法：用于演示直接用 BCL HttpMethod 发自定义谓词
+                return Json(200, """{"method":"PROPFIND","supported":true}""");
+
             case "POST" when path == "/form":
                 var pairs = Encoding.UTF8.GetString(body)
                     .Split('&', StringSplitOptions.RemoveEmptyEntries)
@@ -226,11 +239,59 @@ public sealed class DemoServer : IDisposable
                 return Json(200, "{" + string.Join(",", pairs) + "}");
 
             case "POST" when path == "/upload":
-                // 粗略统计 multipart 部件：本示例只演示发送，不解析文件内容
-                var multipartText = Encoding.UTF8.GetString(body);
-                var parts = CountOccurrences(multipartText, "Content-Disposition");
-                var files = CountOccurrences(multipartText, "filename=");
-                return Json(200, $"{{\"parts\":{parts},\"files\":{files},\"bytes\":{body.Length}}}");
+            {
+                // 精确解析 multipart：逐部件解析 name/filename/content-type，并按字节截取内容
+                if (!MultipartReader.TryParse(
+                        headers.GetValueOrDefault("content-type"), body, out var parts, out var parseError))
+                {
+                    Console.Error.WriteLine($"[multipart] {parseError} | ct={headers.GetValueOrDefault("content-type")} | len={body.Length}");
+                    return Json(400, $"{{\"error\":\"{Escape(parseError!)}\"}}");
+                }
+
+                var fileParts = parts.Where(p => p.IsFile).ToArray();
+                var fileBytes = fileParts.Sum(p => (long)p.Content.Length);
+
+                return Json(200,
+                    $"{{\"parts\":{parts.Count},\"files\":{fileParts.Length},\"bytes\":{fileBytes},"
+                    + $"\"partsDetail\":[{string.Join(",", parts.Select(DescribePart))}]}}");
+            }
+
+            case "POST" when path == "/upload/single":
+            {
+                // 单文件（multipart）：取出文件部件 + 可选普通字段，回报精确字节数与 SHA256
+                if (!MultipartReader.TryParse(
+                        headers.GetValueOrDefault("content-type"), body, out var parts, out var parseError))
+                {
+                    return Json(400, $"{{\"error\":\"{Escape(parseError!)}\"}}");
+                }
+
+                var file = parts.FirstOrDefault(p => p.IsFile);
+                if (file is null)
+                {
+                    return Json(400, """{"error":"没有找到文件部件（缺少 filename）"}""");
+                }
+
+                var note = parts.FirstOrDefault(p => !p.IsFile && p.Name == "note")?.Text;
+
+                return Json(200,
+                    $"{{\"mode\":\"multipart\",\"field\":\"{Escape(file.Name)}\","
+                    + $"\"fileName\":\"{Escape(file.FileName!)}\","
+                    + $"\"contentType\":\"{Escape(file.ContentType ?? string.Empty)}\","
+                    + $"\"bytes\":{file.Content.Length},\"sha256\":\"{Sha256Hex(file.Content)}\","
+                    + $"\"note\":\"{Escape(note ?? string.Empty)}\"}}");
+            }
+
+            case "POST" when path == "/upload/raw":
+            {
+                // 裸流直传：整个请求体就是文件内容，文件名/类型只能从头部拿
+                var fileName = headers.GetValueOrDefault("x-file-name", "upload.bin");
+
+                return Json(200,
+                    $"{{\"mode\":\"raw\",\"fileName\":\"{Escape(fileName)}\","
+                    + $"\"bytes\":{body.Length},"
+                    + $"\"contentType\":\"{Escape(headers.GetValueOrDefault("content-type", string.Empty))}\","
+                    + $"\"sha256\":\"{Sha256Hex(body)}\"}}");
+            }
 
             default:
                 return Json(404, """{"message":"unknown route"}""");
@@ -240,18 +301,19 @@ public sealed class DemoServer : IDisposable
     private static (int, byte[], string, string?, string?) Json(int status, string json)
         => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8", null, null);
 
-    private static int CountOccurrences(string text, string value)
+    /// <summary>把解析出的部件序列化成一段 JSON（用于 /upload 的明细）。</summary>
+    private static string DescribePart(MultipartPart part)
     {
-        var count = 0;
-        var index = 0;
-        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
-        {
-            count++;
-            index += value.Length;
-        }
+        var fileName = part.FileName is null ? "null" : $"\"{Escape(part.FileName)}\"";
+        var contentType = part.ContentType is null ? "null" : $"\"{Escape(part.ContentType)}\"";
 
-        return count;
+        return $"{{\"field\":\"{Escape(part.Name)}\",\"fileName\":{fileName},"
+            + $"\"contentType\":{contentType},\"bytes\":{part.Content.Length},"
+            + $"\"sha256\":\"{Sha256Hex(part.Content)}\"}}";
     }
+
+    private static string Sha256Hex(byte[] content)
+        => Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 
     private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 

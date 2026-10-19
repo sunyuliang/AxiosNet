@@ -6,12 +6,13 @@ namespace AxiosNet.Simple.Examples;
 
 /// <summary>
 /// 13. multipart/form-data：普通字段 + 一堆文件（内存文件与本地文件各一）。
+/// 演示服务器用 MultipartReader 按字节精确解析，回报每个部件的字段名/文件名/字节数/SHA256。
 /// </summary>
 public sealed class MultipartExample : IExample
 {
     public int Number => 13;
 
-    public string Title => "multipart/form-data：字段 + 一堆文件";
+    public string Title => "multipart/form-data：字段 + 一堆文件（服务端精确解析）";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -25,7 +26,7 @@ public sealed class MultipartExample : IExample
             using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
             var response = await http.PostAsync<JsonElement>(
-                "/upload",
+                "upload",
                 new
                 {
                     title = "季度报告",
@@ -39,7 +40,25 @@ public sealed class MultipartExample : IExample
                 },
                 c => c.ContentType = "multipart/form-data");
 
-            Console.WriteLine($"  {response.Status} -> {SampleConsole.Pretty(response.Data)}");
+            var data = response.Data;
+            Console.WriteLine(
+                $"  {response.Status} -> 部件 {data.GetProperty("parts").GetInt32()} 个, "
+                + $"文件 {data.GetProperty("files").GetInt32()} 个, "
+                + $"文件总字节 {data.GetProperty("bytes").GetInt64()}");
+
+            foreach (var part in data.GetProperty("partsDetail").EnumerateArray())
+            {
+                var field = part.GetProperty("field").GetString();
+                var fileName = part.TryGetProperty("fileName", out var file) && file.ValueKind == JsonValueKind.String
+                    ? file.GetString()
+                    : null;
+                var bytes = part.GetProperty("bytes").GetInt64();
+                var sha = part.GetProperty("sha256").GetString()!;
+
+                Console.WriteLine(fileName is null
+                    ? $"    [{field}] 普通字段, {bytes} bytes"
+                    : $"    [{field}] 文件 {fileName}, {bytes} bytes, sha256={sha[..12]}…");
+            }
         }
         finally
         {

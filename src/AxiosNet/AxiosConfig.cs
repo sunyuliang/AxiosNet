@@ -15,14 +15,19 @@ public sealed class AxiosConfig
     /// <summary>对应 axios url（相对或绝对地址）。</summary>
     public string? Url { get; set; }
 
-    private AxiosMethod _method = AxiosMethod.Get;
+    private HttpMethod _method = HttpMethod.Get;
 
-    /// <summary>对应 axios method，默认 GET。</summary>
-    public AxiosMethod Method
+    /// <summary>
+    /// 对应 axios method，默认 <see cref="HttpMethod.Get"/>。
+    /// 直接使用 BCL 的 <see cref="System.Net.Http.HttpMethod"/>，因此
+    /// <c>HttpMethod.Patch</c>、<c>new HttpMethod("PROPFIND")</c> 等自定义方法都能直接用。
+    /// </summary>
+    public HttpMethod Method
     {
         get => _method;
         set
         {
+            ArgumentNullException.ThrowIfNull(value);
             _method = value;
             MethodSet = true;
         }
@@ -128,6 +133,7 @@ public sealed class AxiosConfig
     /// <summary>
     /// 对应 axios withCredentials（使用系统默认凭据/Cookie）。
     /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；按请求设置会抛 <see cref="AxiosException"/>。
+    /// 若注入了自定义 Handler，本项需由 Handler 自己处理（在 defaults 上设置会抛 <see cref="AxiosException"/>）。
     /// </summary>
     public bool WithCredentials
     {
@@ -142,10 +148,16 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
     internal bool WithCredentialsSet { get; private set; }
 
-    /// <summary>代理设置。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>。</summary>
+    /// <summary>
+    /// 代理设置。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>；
+    /// 注入自定义 Handler 时由 Handler 决定。
+    /// </summary>
     public IWebProxy? Proxy { get; set; }
 
-    /// <summary>显式凭据。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>。</summary>
+    /// <summary>
+    /// 显式凭据。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>；
+    /// 注入自定义 Handler 时由 Handler 决定。
+    /// </summary>
     public ICredentials? Credentials { get; set; }
 
     private int _maxRedirects = 5;
@@ -153,6 +165,7 @@ public sealed class AxiosConfig
     /// <summary>
     /// 对应 axios maxRedirects，默认 5；<b>设为 0 表示不跟随重定向</b>（返回 3xx 响应本身，默认 validateStatus 会视为错误）。
     /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；按请求设置会抛 <see cref="AxiosException"/>。
+    /// 注入自定义 Handler 时由 Handler 决定（在 defaults 上设置会抛 <see cref="AxiosException"/>）。
     /// </summary>
     public int MaxRedirects
     {

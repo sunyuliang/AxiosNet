@@ -29,7 +29,9 @@ IExample[] examples =
     new MultipartExample(),
     new DownloadExample(),
     new GetUriAndLimitsExample(),
-    new ProgressAndRateExample()
+    new ProgressAndRateExample(),
+    new CustomHandlerExample(),
+    new SingleFileUploadExample()
 };
 
 try

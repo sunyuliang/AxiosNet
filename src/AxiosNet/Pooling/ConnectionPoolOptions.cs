@@ -9,6 +9,8 @@ namespace AxiosNet.Pooling;
 /// 底层按 origin(scheme://host:port) 复用 SocketsHttpHandler，
 /// 每个 Handler 内部维护 TCP 连接池，本配置控制单服务器最大连接数、连接生命周期、
 /// 空闲回收等，整体在 HttpClient 原生连接复用之上进一步按目标站点隔离与调优。
+/// 需要插入自己的 <see cref="DelegatingHandler"/>（日志/签名/重试）时用 <see cref="HandlerFactory"/>，
+/// 它会在保留上述池化能力的前提下替换每个 origin 的 Handler。
 /// </summary>
 public sealed class ConnectionPoolOptions
 {
@@ -54,6 +56,20 @@ public sealed class ConnectionPoolOptions
     /// <summary>限制 TLS 协议版本。</summary>
     public SslProtocols? EnabledSslProtocols { get; set; }
 
+    /// <summary>
+    /// 自定义 Handler 工厂：每个 origin 调用一次，返回值用于该 origin 的所有请求。
+    /// <para>
+    /// 返回 <c>null</c> 表示使用库默认 Handler（等价于不设置）。想保留默认行为又插入自己的
+    /// <see cref="DelegatingHandler"/> 时，用 <see cref="PooledHandlerContext.CreateDefaultHandler"/>
+    /// 作为内层：<c>ctx => new MyHandler { InnerHandler = ctx.CreateDefaultHandler() }</c>。
+    /// </para>
+    /// <para>
+    /// 约定：必须为每个 origin 返回<b>独立</b>实例（同一个 Handler 实例不能同时挂在多条管线/多个 origin 上），
+    /// 且由连接池负责释放（收到 origin 驱逐或池 Dispose 时调用 <see cref="IDisposable.Dispose"/>）。
+    /// </para>
+    /// </summary>
+    public Func<PooledHandlerContext, HttpMessageHandler>? HandlerFactory { get; set; }
+
     public ConnectionPoolOptions Clone() => new()
     {
         MaxConnectionsPerServer = MaxConnectionsPerServer,
@@ -69,6 +85,7 @@ public sealed class ConnectionPoolOptions
         Proxy = Proxy,
         Credentials = Credentials,
         ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
-        EnabledSslProtocols = EnabledSslProtocols
+        EnabledSslProtocols = EnabledSslProtocols,
+        HandlerFactory = HandlerFactory
     };
 }

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-136%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-153%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -22,6 +22,7 @@
 - [axios ↔ AxiosNet 对照表](#axios--axiosnet-对照表)
 - [配置项](#配置项)
 - [请求体 data 与查询参数 params](#请求体-data-与查询参数-params)
+- [对接 ASP.NET Core Web API：单文件上传](#对接-aspnet-core-web-api单文件上传)
 - [响应类型 responseType（含 dynamic）](#响应类型-responsetype含-dynamic)
 - [下载文件](#下载文件)
 - [表单快捷方法 postForm / putForm / patchForm](#表单快捷方法-postform--putform--patchform)
@@ -31,6 +32,7 @@
 - [错误处理](#错误处理)
 - [超时与取消](#超时与取消)
 - [网络连接池](#网络连接池)
+- [自定义 Handler 注入](#自定义-handler-注入)
 - [示例项目](#示例项目)
 - [构建与测试](#构建与测试)
 - [项目结构](#项目结构)
@@ -44,7 +46,7 @@
 **与 axios 对齐**
 
 - `axios.create(config)` → `Axios.Create(config)`，静态门面 `Axios.GetAsync(...)`
-- 快捷方法：`Get / Post / Put / Patch / Delete / Head / Options`
+- 快捷方法：`Get / Post / Put / Patch / Delete / Head / Options`；`Method` 直接用 BCL `HttpMethod`，自定义谓词（`new HttpMethod("PROPFIND")`）照发不误
 - `baseURL + url` 合并、`params` 默认序列化（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过）
 - `data` 编码由 `config.ContentType` 决定（默认 `application/json`，与数据类型无关）：对象/字典/dynamic/集合统一 JSON；设为 `application/x-www-form-urlencoded` 转键值对表单；设为 `multipart/form-data` 自动把 `FormFile`/`Stream`/`byte[]` 拼成文件部件；`string/byte[]/Stream/HttpContent` 原样透传
 - 所有快捷方法（`Get/Post/Put/Patch/Delete/Head/Options`）都可携带任意类型的 `data`
@@ -68,7 +70,9 @@
 - 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）
 - 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
 - ⬇️ **文件下载**：`GetAsync<Stream>` 流式落盘（内存占用恒定）、`GetAsync<byte[]>` 一次性字节；流读完自动归还连接（可复验连接复用）
+- ⬆️ **文件上传**：裸流直传（`Stream`/`byte[]` + 文件类型 `ContentType`）与 `multipart/form-data`（`FormFile`、同名重复部件）；示例服务器按字节精确解析并回报字段名/文件名/大小/SHA256
 - 📊 **流量治理**：进度回调 + 单向限速 + 大小上限，均为纯 BCL 实现（包装 `HttpContent.SerializeToStreamAsync` 与 `Stream`），不依赖 `HttpClient` 原生能力
+- 🧵 **自定义 Handler 注入**：`ConnectionPoolOptions.HandlerFactory` 在每个 origin 的默认 `SocketsHttpHandler` 外套你的 `DelegatingHandler`（日志/签名/重试/埋点），保留连接复用；`new AxiosClient(handler: ...)` 则完全接管连接层（不走池）
 
 ## 安装
 
@@ -132,6 +136,7 @@ string url = http.GetUri(c =>
 | --- | --- |
 | `axios(config)` | `client.RequestAsync(new AxiosConfig { ... })` |
 | `axios(url, config)` | `client.GetAsync(url, c => { ... })` |
+| `config.method` | `c.Method`（`System.Net.Http.HttpMethod`，默认 `HttpMethod.Get`） |
 | `axios.get/post/put/patch/delete/head/options` | `GetAsync / PostAsync / PutAsync / PatchAsync / DeleteAsync / HeadAsync / OptionsAsync` |
 | `axios.create(config)` | `Axios.Create(config)` |
 | `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` / `Axios.GetUri(...)` |
@@ -169,7 +174,7 @@ var config = new AxiosConfig
 {
     BaseAddress = "https://api.example.com/", // 等同 baseURL
     Url = "users",                            // 相对或绝对地址
-    Method = AxiosMethod.Post,                // 默认 Get
+    Method = HttpMethod.Post,                 // 直接用 BCL HttpMethod，默认 Get
     Headers = new AxiosHeaders(),             // 大小写不敏感
     Params = new { page = 1 },                // -> ?page=1
     Data = new { name = "bob" },              // 请求体（按 ContentType 编码）
@@ -278,6 +283,97 @@ multipart 补充说明：
 - **文件名**：`FormFile.FileName` 决定 `filename`；直接用 `Stream`/`byte[]` 也会作为文件部件发送（文件名回退为字段名）。
 - **边界**：默认自动生成；`c.ContentType = "multipart/form-data; boundary=----xxx"` 可指定固定边界。
 - **生命周期**：部件内容随请求释放（成功/异常/取消都会 `Dispose`），`File.OpenRead(...)` 的流不要在请求之外复用；需要复用时先读成 `byte[]`。
+
+### 对接 ASP.NET Core Web API：单文件上传
+
+「单文件上传」在 HTTP 层有两种形态，客户端与服务端必须对上：
+
+| 形态 | Content-Type | 客户端 | 服务端 |
+| --- | --- | --- | --- |
+| **裸流直传**（整个请求体就是文件） | 文件类型，如 `application/octet-stream` | `PostAsync(url, stream, c => c.ContentType = ...)` | 读 `HttpRequest.Body` 流式落盘 |
+| **multipart 单文件**（文件 + 其它字段） | `multipart/form-data` | `PostFormAsync(url, new { file = FormFile.FromPath(...) })` | `IFormFile file` |
+
+#### 1) 裸流直传（大文件首选）
+
+```csharp
+// 服务端（Minimal API）：请求体直接就是文件内容，边收边落盘，不占内存
+app.MapPost("/api/files/raw", async (HttpRequest request) =>
+{
+    var name = Path.GetFileName(request.Headers["X-File-Name"].ToString());
+    var path = Path.Combine(uploadRoot, string.IsNullOrEmpty(name) ? $"{Guid.NewGuid():N}.bin" : name);
+
+    await using (var target = File.Create(path))
+    {
+        await request.Body.CopyToAsync(target);
+    }
+
+    return Results.Ok(new { bytes = new FileInfo(path).Length, contentType = request.ContentType });
+});
+
+// 客户端：data 直接给 Stream（或 byte[]），Content-Type 声明为文件类型
+await using var stream = File.OpenRead(@"D:\data\report.bin");
+var res = await http.PostAsync<UploadResult>("api/files/raw", stream, c =>
+{
+    c.ContentType = "application/octet-stream";
+    c.Headers.Set("X-File-Name", "report.bin");   // 裸流没有文件名，用自定义头/query 带过去
+});
+
+// 小文件也可以直接给 byte[]
+await http.PostAsync("api/files/raw", bytes, c => c.ContentType = "image/png");
+```
+
+> **别让 `ContentType` 留默认值**：`Stream`/`byte[]` 若不显式设置，会按默认的 `application/json` 发送（字节仍原样，但网关、服务端判断与日志都会错）。
+
+#### 2) multipart 单文件（需要一起提交其它字段时）
+
+```csharp
+// 服务端：IFormFile 的参数名 = 表单字段名
+app.MapPost("/api/files/form", async (IFormFile file, string? note) =>
+{
+    var path = Path.Combine(uploadRoot, Path.GetFileName(file.FileName));
+    await using (var target = File.Create(path))
+    {
+        await file.CopyToAsync(target);
+    }
+
+    return Results.Ok(new { file.FileName, bytes = new FileInfo(path).Length, note });
+}).DisableAntiforgery();   // .NET 8 Minimal API 绑定 IFormFile 需显式关闭防伪校验
+
+// 客户端：PostFormAsync 默认就是 multipart，字段名与参数名一致即可
+await http.PostFormAsync("api/files/form", new
+{
+    file = FormFile.FromPath(@"D:\data\report.bin"),   // 字段名 file
+    note = "季度报告"
+});
+```
+
+MVC Controller 等价写法：
+
+```csharp
+[HttpPost("upload")]
+[RequestSizeLimit(50 * 1024 * 1024)]
+public async Task<IActionResult> Upload(IFormFile file, [FromForm] string? note) { ... }
+```
+
+> 在 ASP.NET Core 项目里 `FormFile` 会出现二义性（`AxiosNet.FormFile` vs `Microsoft.AspNetCore.Http.FormFile`），用别名区分：`using ClientFile = AxiosNet.FormFile;`。
+
+#### 3) 大文件三件套
+
+```csharp
+await http.PostAsync("api/files/raw", File.OpenRead(path), c =>
+{
+    c.ContentType = "application/octet-stream";
+    c.MaxBodyLength = 200 * 1024 * 1024;   // 客户端上限：长度可算时在发送前就拦截
+    c.MaxRate = 8 * 1024 * 1024;           // 限速 8 MB/s（可选）
+    c.OnUploadProgress = e => Console.WriteLine($"{e.Progress:P0} {e.Rate / 1024:F0} KB/s");
+});
+```
+
+- 服务端 Kestrel 默认请求体上限 **30 MB**，超出直接 413：`builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 50 * 1024 * 1024)`，或端点级 `.DisableRequestSizeLimit()`。
+- 服务端用 `request.Body.CopyToAsync(fileStream)` 边收边写；**避免** `[FromBody] byte[]`（整包进内存）。
+- `FileStream` 可 Seek，`Content-Length` 确定，因此进度回调的 `Total` 与 `MaxBodyLength` 都准确。
+
+可运行示例：`samples/AxiosNet.Simple` 的第 18 项（`dotnet run --project samples/AxiosNet.Simple`）—— `DemoServer` 提供 `/upload/raw` 与 `/upload/single`，按字节精确解析并回报文件名/字节数/SHA256，客户端逐个校验。
 
 ## 响应类型 responseType（含 dynamic）
 
@@ -686,9 +782,71 @@ sharedPool.EvictIdleEndpoints();
 
 > 性能要点：顺序/并发请求都会复用已建立的 TCP 连接（仓库测试与示例实测：5 个顺序请求只建立 1 条 TCP；6 个并发慢请求在 `MaxConnectionsPerServer=2` 下峰值并发恰好为 2）。应用关闭时 `Dispose()` 池即可释放全部连接；共享池不会因为单个 client 释放而被销毁（仅池拥有者负责释放）。
 
+## 自定义 Handler 注入
+
+连接层有两个可插拔点，按「是否保留连接池」选择：
+
+| 需求 | 用法 | 走连接池 |
+| --- | --- | --- |
+| 插入日志/签名/重试等 `DelegatingHandler`，同时保留按 origin 复用 | `ConnectionPoolOptions.HandlerFactory` | ✅ |
+| 完全接管连接层（测试桩、自定义传输、外部给的 Handler） | `new AxiosClient(handler: ...)` | ❌ |
+
+### 方式一：HandlerFactory（推荐）
+
+每个 origin 创建 Handler 时调用一次。`PooledHandlerContext` 提供 `Origin` / `BaseAddress` / `Options`，以及 `CreateDefaultHandler()` —— 拿到的是**按池选项配好的** `SocketsHttpHandler`（连接上限、生命周期、重定向、解压、代理、证书校验都已就绪），直接当内层即可：
+
+```csharp
+using AxiosNet.Pooling;
+
+using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+{
+    MaxConnectionsPerServer = 32,
+    HandlerFactory = ctx => new TraceHandler               // 你的 DelegatingHandler
+    {
+        InnerHandler = ctx.CreateDefaultHandler()          // 内层：调优过的 SocketsHttpHandler
+    }
+});
+```
+
+约定：
+
+- 每个 origin 必须返回**独立**实例（同一个 Handler 不能同时挂在多条管线/多个 origin 上）；
+- 返回的 Handler 由连接池负责释放（origin 被驱逐、池 `Clear()` / `Dispose()` 时）；
+- 返回 `null` 会在首次请求该 origin 时抛 `InvalidOperationException`；
+- 工厂只在「首次访问某 origin」时调用，之后复用同一个 Handler —— 连接复用、`MaxConnectionsPerServer`、空闲驱逐等池能力全部保留。
+
+### 方式二：直接注入 Handler（无池）
+
+```csharp
+// 1) 完全自定义传输（示例：内存桩，不发网络请求）
+var stub = new StubHandler();
+using var client = new AxiosClient(handler: stub);
+
+// 2) 自己拼 Handler 链
+var handler = new TraceHandler { InnerHandler = new SocketsHttpHandler() };
+using var client2 = new AxiosClient(
+    defaults: new AxiosConfig { BaseAddress = "https://api.example.com/" },
+    handler: handler,
+    disposeHandler: true);   // 释放 AxiosClient 时是否一并释放该 Handler，默认 true
+
+// 3) 静态门面
+using var client3 = Axios.Create(
+    c => c.BaseAddress = "https://api.example.com/",
+    handler: new TraceHandler { InnerHandler = new SocketsHttpHandler() });
+```
+
+> 一个 Handler 实例只能属于一条管线：不要把它同时注入多个 client。
+
+要点：
+
+- 注入后**不创建连接池**：`client.Pool` 为 `null`、`client.UsesConnectionPool` 为 `false`，所有 origin 共用这一个 Handler（`SocketsHttpHandler` 自身仍会按 host 复用 TCP）。
+- 连接层行为完全由 Handler 决定，因此在 defaults 上设置 `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` 会抛 `ERR_BAD_OPTION_VALUE`（避免"设了没生效"）。
+- 与 `pool` / `poolOptions` 互斥，同时传入同样抛 `ERR_BAD_OPTION_VALUE`。
+- 超时仍由库按请求控制（`HttpClient.Timeout` 内部设为 Infinite，`c.Timeout` 照常生效）；`OnUploadProgress` / `maxRate` / `maxContentLength` 等数据层能力不受影响。
+
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 16 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 18 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -702,14 +860,18 @@ sharedPool.EvictIdleEndpoints();
 10. 请求/响应拦截器（含 401/404 错误恢复）
 11. 错误码、超时、取消、validateStatus
 12. 连接池（连接复用、并发上限、多客户端共享）
-13. **multipart/form-data**：字段 + 一堆文件（内存文件与本地文件）
+13. **multipart/form-data**：字段 + 一堆文件（内存文件与本地文件，服务端逐部件精确解析）
 14. **文件下载**：`GetAsync<Stream>` 流式落盘（1 MB 演示）、`GetAsync<byte[]>`、`Content-Disposition` 取文件名
 15. **getUri 预览 / maxContentLength 拦截 / maxRedirects: 0**
 16. **上传下载进度回调 + maxRate 限速**
+17. **HttpMethod 直用 + 自定义 Handler 注入**（`PROPFIND` 自定义谓词、`DelegatingHandler` 直接注入、连接池 `HandlerFactory`）
+18. **单文件上传**：裸流直传（`/upload/raw`）与 multipart 单文件（`/upload/single`），服务端精确回报字节数 + SHA256
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
+
+> 上面的第 13 项与第 18 项覆盖了上传：`DemoServer` 用 `MultipartReader` **按字节精确解析** multipart，回报每个部件的字段名、文件名、Content-Type、字节数与 SHA256；单文件场景还提供 `/upload/raw`（裸流）与 `/upload/single`（multipart 单文件）两个端点。
 
 ## 构建与测试
 
@@ -717,7 +879,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 136 个 xUnit 单元测试
+# 运行全部 153 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -738,6 +900,7 @@ dotnet build AxiosNet.slnx -c Release
 - 文件下载：`GetAsync<Stream>` 落盘、`ResponseType.ArrayBuffer`、流释放后连接复用、Content-Disposition 文件名、下载超时
 - dynamic 响应图与 dynamic 请求（9 个专项测试，覆盖 GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt; / 静态门面 / 显式 responseType 优先）
 - 连接池：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义
+- 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null、与 pool/poolOptions 及实例级选项的 fail-fast
 
 ## 项目结构
 
@@ -754,14 +917,14 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ AxiosException.cs       # AxiosError 对齐
 │     ├─ AxiosProgressEvent.cs   # 上传/下载进度事件
 │     ├─ FormFile.cs             # multipart 文件部件
-│     ├─ AxiosMethod.cs / ResponseType.cs / AxiosAuth.cs
+│     ├─ ResponseType.cs / AxiosAuth.cs          # 响应形态 / Basic 认证
 │     ├─ Interceptors/           # 请求/响应拦截器管理
 │     ├─ Internal/               # URL/params、请求体工厂、进度与限速流、dynamic JSON、状态码文本
-│     └─ Pooling/                # HttpConnectionPool 连接池
+│     └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 16 类集成调用示例（内置演示服务器）
+│  └─ AxiosNet.Simple/           # 18 类集成调用示例（内置演示服务器 + multipart 精确解析）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（136 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（153 个）
 ```
 
 ## 与 axios 的差异说明
@@ -777,7 +940,8 @@ dotnet build AxiosNet.slnx -c Release
 7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
 8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
-10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换。
+10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
+11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`。
 
 
 ## License

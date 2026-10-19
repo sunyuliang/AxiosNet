@@ -1,19 +1,16 @@
-using System.Net.Security;
-using System.Net.Sockets;
-using System.Security.Authentication;
-
 namespace AxiosNet.Pooling;
 
 /// <summary>
 /// 单个 origin（scheme://host:port）对应的池化节点：
-/// 持有一个调优过的 SocketsHttpHandler 与其上的 HttpClient，
+/// 持有一个调优过的 HttpMessageHandler（默认 <see cref="SocketsHttpHandler"/>，
+/// 也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供/包装）与其上的 HttpClient，
 /// Handler 内部负责 TCP 连接复用、排队与连接数上限。
 /// </summary>
 internal sealed class PooledEndpoint : IDisposable
 {
     public string Origin { get; }
 
-    public SocketsHttpHandler Handler { get; }
+    public HttpMessageHandler Handler { get; }
 
     public HttpClient Client { get; }
 
@@ -29,7 +26,7 @@ internal sealed class PooledEndpoint : IDisposable
     public PooledEndpoint(string origin, ConnectionPoolOptions options)
     {
         Origin = origin;
-        Handler = CreateHandler(options);
+        Handler = CreateHandler(origin, options);
         Client = new HttpClient(Handler, disposeHandler: false)
         {
             // 超时由 AxiosClient 按请求统一控制，避免 Handler 级超时干扰
@@ -37,37 +34,20 @@ internal sealed class PooledEndpoint : IDisposable
         };
     }
 
-    private static SocketsHttpHandler CreateHandler(ConnectionPoolOptions o)
+    private static HttpMessageHandler CreateHandler(string origin, ConnectionPoolOptions options)
     {
-        var handler = new SocketsHttpHandler
+        if (options.HandlerFactory is null)
         {
-            MaxConnectionsPerServer = o.MaxConnectionsPerServer,
-            PooledConnectionLifetime = o.PooledConnectionLifetime,
-            PooledConnectionIdleTimeout = o.PooledConnectionIdleTimeout,
-            ConnectTimeout = o.ConnectTimeout,
-            AllowAutoRedirect = o.AllowAutoRedirect,
-            MaxAutomaticRedirections = o.MaxAutomaticRedirections,
-            AutomaticDecompression = o.AutomaticDecompression
-                ? DecompressionMethods.All
-                : DecompressionMethods.None,
-            UseCookies = o.UseCookies,
-            UseProxy = o.Proxy is not null,
-            Proxy = o.Proxy,
-            Credentials = o.Credentials
-        };
-
-        if (o.UseCookies)
-        {
-            handler.CookieContainer = new CookieContainer();
+            return DefaultHandlerFactory.Create(options);
         }
 
-        if (o.ServerCertificateCustomValidationCallback is not null || o.EnabledSslProtocols is not null)
+        var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options);
+        var handler = options.HandlerFactory(context);
+
+        if (handler is null)
         {
-            handler.SslOptions = new SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = o.ServerCertificateCustomValidationCallback,
-                EnabledSslProtocols = o.EnabledSslProtocols ?? SslProtocols.None
-            };
+            throw new InvalidOperationException(
+                $"ConnectionPoolOptions.HandlerFactory 对 origin '{origin}' 返回了 null，必须返回一个可用的 HttpMessageHandler。");
         }
 
         return handler;

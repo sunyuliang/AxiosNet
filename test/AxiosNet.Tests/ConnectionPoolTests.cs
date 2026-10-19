@@ -24,7 +24,7 @@ public sealed class ConnectionPoolTests
         var perConnection = Assert.Single(server.RequestsPerConnection);
         Assert.Equal(2, perConnection.Value);
 
-        var stats = client.Pool.GetStatistics();
+        var stats = client.Pool!.GetStatistics();
         Assert.Equal(1, stats.EndpointCount);
         Assert.Equal(2, stats.TotalLeases);
         Assert.All(stats.Endpoints, e => Assert.Equal(0, e.ActiveLeases));
@@ -133,7 +133,7 @@ public sealed class ConnectionPoolTests
         await client.GetAsync(server2.Url);
         await client.GetAsync(server1.Url);
 
-        var stats = client.Pool.GetStatistics();
+        var stats = client.Pool!.GetStatistics();
         Assert.Equal(2, stats.EndpointCount);
         Assert.Equal(3, stats.TotalLeases);
         Assert.Contains(stats.Endpoints, e => e.Origin == $"http://127.0.0.1:{server1.Port}");
@@ -154,11 +154,11 @@ public sealed class ConnectionPoolTests
             IdleHandlerLifetime = TimeSpan.FromMinutes(30)
         });
         await client.GetAsync(server.Url);
-        Assert.Equal(1, client.Pool.GetStatistics().EndpointCount);
+        Assert.Equal(1, client.Pool!.GetStatistics().EndpointCount);
 
         client.Dispose();
 
-        Assert.Equal(0, client.Pool.GetStatistics().EndpointCount);
+        Assert.Equal(0, client.Pool!.GetStatistics().EndpointCount);
     }
 
     [Fact]

@@ -21,17 +21,32 @@ public static class Axios
     /// <summary>对应 axios.interceptors。</summary>
     public static AxiosInterceptors Interceptors => DefaultClient.Interceptors;
 
-    /// <summary>对应 axios.create(config)。</summary>
-    public static AxiosClient Create(AxiosConfig? defaults = null, ConnectionPoolOptions? poolOptions = null)
-        => new(defaults, poolOptions: poolOptions);
+    /// <summary>
+    /// 对应 axios.create(config)。
+    /// <para>
+    /// 注入 <paramref name="handler"/> 时不使用连接池（所有 origin 共用该 Handler）；
+    /// 想在保留连接池的前提下插入自己的 Handler 链，请用
+    /// <see cref="ConnectionPoolOptions.HandlerFactory"/>。
+    /// </para>
+    /// </summary>
+    public static AxiosClient Create(
+        AxiosConfig? defaults = null,
+        ConnectionPoolOptions? poolOptions = null,
+        HttpMessageHandler? handler = null,
+        bool disposeHandler = true)
+        => new(defaults, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
 
     /// <summary>对应 axios.create(config)，用 Action 配置默认项。</summary>
-    public static AxiosClient Create(Action<AxiosConfig> configureDefaults, ConnectionPoolOptions? poolOptions = null)
+    public static AxiosClient Create(
+        Action<AxiosConfig> configureDefaults,
+        ConnectionPoolOptions? poolOptions = null,
+        HttpMessageHandler? handler = null,
+        bool disposeHandler = true)
     {
         ArgumentNullException.ThrowIfNull(configureDefaults);
         var config = new AxiosConfig();
         configureDefaults(config);
-        return new AxiosClient(config, poolOptions: poolOptions);
+        return new AxiosClient(config, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
     }
 
     public static Task<AxiosResponse> RequestAsync(AxiosConfig config)
