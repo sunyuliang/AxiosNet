@@ -51,6 +51,7 @@ public sealed class AxiosConfig
     /// 请求体的编码格式由本项决定，<b>与 <see cref="Data"/> 的运行时类型无关</b>：
     /// 对象、字典、dynamic、集合等结构化数据在 json 下都会序列化为 JSON；
     /// 设为 <c>application/x-www-form-urlencoded</c> 时转为键值对表单（嵌套用 <c>a[b]=v</c>、数组用 <c>a[]=v</c>）；
+    /// 设为 <c>multipart/form-data</c> 时构建字段 + 文件部件（文件用 <see cref="FormFile"/> / Stream / byte[] / HttpContent 表示）；
     /// 其他媒体类型（text/plain、application/xml 等）下结构化数据仍按 JSON 文本写入，仅头部不同。
     /// </para>
     /// <para>

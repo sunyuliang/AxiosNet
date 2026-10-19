@@ -150,17 +150,156 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task MultipartContentType_IsRejected_WithActionableMessage()
+    public async Task Multipart_SendsTextFieldsAndMultipleFileParts()
     {
         await using var server = TestHttpServer.Start(EchoJson);
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(() => client.PostAsync(
+        await client.PostAsync(
             server.Url + "upload",
-            new { name = "alice" },
-            c => c.ContentType = "multipart/form-data"));
+            new
+            {
+                title = "年报",
+                meta = new { author = "bob" },
+                files = new[]
+                {
+                    new FormFile("a.txt", Encoding.UTF8.GetBytes("alpha"), "text/plain"),
+                    FormFile.FromBytes("b.txt", Encoding.UTF8.GetBytes("beta"))
+                }
+            },
+            c => c.ContentType = "multipart/form-data");
 
-        Assert.Contains("MultipartFormDataContent", ex.Message);
+        var sent = server.Received[0];
+        var contentType = ContentType(sent)!;
+        Assert.StartsWith("multipart/form-data", contentType);
+        Assert.Contains("boundary=", contentType);
+
+        var body = Body(sent);
+        Assert.Contains("name=title", body);
+        Assert.Contains("年报", body);
+        Assert.Contains("meta[author]", body);
+        Assert.Contains("bob", body);
+
+        Assert.Equal(2, CountOccurrences(body, "filename="));
+        Assert.Contains("a.txt", body);
+        Assert.Contains("alpha", body);
+        Assert.Contains("text/plain", body);
+        Assert.Contains("b.txt", body);
+        Assert.Contains("beta", body);
+        Assert.Contains("application/octet-stream", body);
+    }
+
+    [Fact]
+    public async Task Multipart_FromPath_StreamsFileContent()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".txt");
+        await File.WriteAllTextAsync(path, "file-on-disk");
+
+        try
+        {
+            await using var server = TestHttpServer.Start(EchoJson);
+            using var client = new AxiosClient();
+
+            await client.PostAsync(
+                server.Url + "upload",
+                new { file = FormFile.FromPath(path, "report.txt") },
+                c => c.ContentType = "multipart/form-data");
+
+            var body = Body(server.Received[0]);
+            Assert.Contains("report.txt", body);
+            Assert.Contains("file-on-disk", body);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Multipart_AcceptsRawStreamsAndByteArraysAsFileParts()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("stream-data"));
+
+        await client.PostAsync(
+            server.Url + "upload",
+            new Dictionary<string, object?>
+            {
+                ["title"] = "hello",
+                ["stream"] = stream,
+                ["bytes"] = new byte[] { 9, 8, 7 }
+            },
+            c => c.ContentType = "multipart/form-data");
+
+        var body = Body(server.Received[0]);
+        Assert.Contains("name=title", body);
+        Assert.Contains("stream-data", body);
+        Assert.Contains("name=stream", body);
+        Assert.Contains("name=bytes", body);
+    }
+
+    [Fact]
+    public async Task Multipart_RootFileCollection_UsesFieldName()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        await client.PostAsync(
+            server.Url + "upload",
+            new[]
+            {
+                new FormFile("x.txt", Encoding.UTF8.GetBytes("x-content")) { FieldName = "files" },
+                new FormFile("y.txt", Encoding.UTF8.GetBytes("y-content")) { FieldName = "files" }
+            },
+            c => c.ContentType = "multipart/form-data");
+
+        var body = Body(server.Received[0]);
+        Assert.Equal(2, CountOccurrences(body, "name=files"));
+        Assert.Contains("x-content", body);
+        Assert.Contains("y-content", body);
+    }
+
+    [Fact]
+    public async Task Multipart_HonorsExplicitBoundary()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        await client.PostAsync(
+            server.Url + "upload",
+            new { a = 1 },
+            c => c.ContentType = "multipart/form-data; boundary=----axios-net");
+
+        var sent = server.Received[0];
+        Assert.Contains("----axios-net", ContentType(sent));
+        Assert.Contains("------axios-net", Body(sent));
+    }
+
+    [Fact]
+    public async Task Multipart_RootScalarWithoutFieldName_Throws()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.PostAsync(
+            server.Url + "upload",
+            42,
+            c => c.ContentType = "multipart/form-data"));
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 
     [Fact]

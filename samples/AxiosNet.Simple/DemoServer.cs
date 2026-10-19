@@ -196,6 +196,13 @@ public sealed class DemoServer : IDisposable
                     .Select(p => $"\"{Uri.UnescapeDataString(p[0])}\":\"{(p.Length > 1 ? Uri.UnescapeDataString(p[1]) : "")}\"");
                 return Json(200, "{" + string.Join(",", pairs) + "}");
 
+            case "POST" when path == "/upload":
+                // 粗略统计 multipart 部件：本示例只演示发送，不解析文件内容
+                var multipartText = Encoding.UTF8.GetString(body);
+                var parts = CountOccurrences(multipartText, "Content-Disposition");
+                var files = CountOccurrences(multipartText, "filename=");
+                return Json(200, $"{{\"parts\":{parts},\"files\":{files},\"bytes\":{body.Length}}}");
+
             default:
                 return Json(404, """{"message":"unknown route"}""");
         }
@@ -203,6 +210,19 @@ public sealed class DemoServer : IDisposable
 
     private static (int, byte[], string) Json(int status, string json)
         => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8");
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
 
     private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 

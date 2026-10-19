@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-87%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-92%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
@@ -42,7 +42,7 @@
 - `axios.create(config)` → `Axios.Create(config)`，静态门面 `Axios.GetAsync(...)`
 - 快捷方法：`Get / Post / Put / Patch / Delete / Head / Options`
 - `baseURL + url` 合并、`params` 默认序列化（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过）
-- `data` 编码由 `config.ContentType` 决定（默认 `application/json`，与数据类型无关）：对象/字典/dynamic/集合统一 JSON；显式设为 `application/x-www-form-urlencoded` 时转键值对表单；`string/byte[]/Stream/MultipartFormDataContent` 原样透传
+- `data` 编码由 `config.ContentType` 决定（默认 `application/json`，与数据类型无关）：对象/字典/dynamic/集合统一 JSON；设为 `application/x-www-form-urlencoded` 转键值对表单；设为 `multipart/form-data` 自动把 `FormFile`/`Stream`/`byte[]` 拼成文件部件；`string/byte[]/Stream/HttpContent` 原样透传
 - 所有快捷方法（`Get/Post/Put/Patch/Delete/Head/Options`）都可携带任意类型的 `data`
 - 请求/响应拦截器（同步 & 异步、`Eject`、请求拦截器逆序执行、响应拦截器顺序执行、错误分支可恢复）
 - `validateStatus` 自定义合法状态码
@@ -160,7 +160,7 @@ var config = new AxiosConfig
 | --- | --- | --- |
 | `application/json`（默认） | JSON 文本 | 原样发送 |
 | `application/x-www-form-urlencoded` | 键值对表单（嵌套 `a[b]=v`、数组 `a[]=v`、null 跳过） | 原样发送（视为已编码好的表单串） |
-| `multipart/form-data` | 抛出 `NotSupportedException`（部件边界需由调用方决定） | 原样发送（请传 `MultipartFormDataContent`） |
+| `multipart/form-data` | 字段 + 文件部件（`FormFile` / `Stream` / `byte[]` / `HttpContent`，数组展开为同名重复部件） | 原样发送（也可直接传 `MultipartFormDataContent`） |
 | 其他（`text/plain`、`application/xml` …） | 仍写 JSON 文本，只有头部不同 | 原样发送 |
 
 ```csharp
@@ -176,18 +176,33 @@ await http.PostAsync("login", new Dictionary<string, object?>
     ["tags"] = new[] { "a", "b" }        // -> tags[]=a&tags[]=b
 }, c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
-// 3) 原样透传
-using var multipart = new MultipartFormDataContent("boundary");
-multipart.Add(new StringContent("alice"), "name");
-await http.PostAsync("upload", multipart);                       // 保留 multipart 自带头部
+// 3) multipart/form-data：字段 + 一堆文件
+//    3.1 交给库构建：对象/字典里放 FormFile / Stream / byte[] / HttpContent
+await http.PostAsync("upload", new
+{
+    title = "季度报告",
+    files = new[]
+    {
+        new FormFile("a.pdf", File.OpenRead("a.pdf"), "application/pdf"), // 流随请求释放
+        FormFile.FromPath("b.zip"),                                      // 库负责打开/释放文件流
+        FormFile.FromBytes("c.txt", bytes, "text/plain")
+    }
+}, c => c.ContentType = "multipart/form-data");
 
+//    3.2 自己拼 MultipartFormDataContent（需要逐部件控制时）
+using var multipart = new MultipartFormDataContent();
+multipart.Add(new StringContent("alice"), "name");
+multipart.Add(new ByteArrayContent(bytes), "file", "a.bin");
+await http.PostAsync("upload-up", multipart);                    // 原样透传，保留自带头部与边界
+
+// 4) 二进制直发
 await http.PostAsync("bin", bytes, c => c.ContentType = "application/octet-stream");
 
-// 4) 每个方法都能携带任意类型的 body（GET / DELETE / HEAD / OPTIONS 同样支持）
+// 5) 每个方法都能携带任意类型的 body（GET / DELETE / HEAD / OPTIONS 同样支持）
 await http.GetAsync("reports/query", new { from = "2024-01-01", to = "2024-02-01" });
 await http.DeleteAsync("users/1", new { reason = "duplicated" });
 
-// 5) params：数组/嵌套对象（与 axios 默认 paramsSerializer 对齐）
+// 6) params：数组/嵌套对象（与 axios 默认 paramsSerializer 对齐）
 await http.GetAsync("search", c =>
     c.Params = new
     {
@@ -198,6 +213,14 @@ await http.GetAsync("search", c =>
 ```
 
 > 默认媒体类型是 JSON，因此发送二进制载荷时请显式设置 `c.ContentType = "application/octet-stream"`（库不会根据 `byte[]`/`Stream` 猜测类型）。
+
+multipart 补充说明：
+
+- **字段名**：取所在对象的属性名或字典的键（遵循 `JsonSerializerOptions.PropertyNamingPolicy`，并识别 `[JsonPropertyName]` / `[JsonIgnore]`）；嵌套对象写成 `meta[author]`；数组/集合展开为**同名重复部件**（ASP.NET Core `IFormFileCollection`、FastAPI、PHP 都能直接绑定）。
+- **根节点是文件数组**时没有键名，用 `FormFile.FieldName` 指定部件名：`new[] { new FormFile(...) { FieldName = "files" } }`。
+- **文件名**：`FormFile.FileName` 决定 `filename`；直接用 `Stream`/`byte[]` 也会作为文件部件发送（文件名回退为字段名）。
+- **边界**：默认自动生成；`c.ContentType = "multipart/form-data; boundary=----xxx"` 可指定固定边界。
+- **生命周期**：部件内容随请求释放（成功/异常/取消都会 `Dispose`），`File.OpenRead(...)` 的流不要在请求之外复用；需要复用时先读成 `byte[]`。
 
 ## 响应类型 responseType（含 dynamic）
 
@@ -410,7 +433,7 @@ sharedPool.EvictIdleEndpoints();
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 12 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、零外部依赖**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，离线即可运行，覆盖 13 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -424,6 +447,7 @@ sharedPool.EvictIdleEndpoints();
 10. 请求/响应拦截器（含 401/404 错误恢复）
 11. 错误码、超时、取消、validateStatus
 12. 连接池（连接复用、并发上限、多客户端共享）
+13. **multipart/form-data**：字段 + 一堆文件（内存文件与本地文件）
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -435,7 +459,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）
 dotnet build AxiosNet.slnx
 
-# 运行全部 87 个 xUnit 单元测试
+# 运行全部 92 个 xUnit 单元测试
 dotnet test AxiosNet.slnx
 
 # Release
@@ -445,7 +469,7 @@ dotnet build AxiosNet.slnx -c Release
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
 - 基础请求/全方法/重定向/HEAD/BaseAddress/静态门面
-- params 序列化、请求体编码（`ContentType` 决定 JSON/表单/透传）、全方法携带 body、multipart、Basic Auth、默认头
+- params 序列化、请求体编码（`ContentType` 决定 JSON/表单/multipart/透传）、全方法携带 body、Basic Auth、默认头
 - 请求/响应拦截器（顺序、Eject、异步、错误恢复）
 - 4xx/5xx/超时/取消/网络错误/validateStatus
 - dynamic 响应图与 dynamic 请求（9 个专项测试，覆盖 GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt; / 静态门面 / 显式 responseType 优先）
@@ -469,9 +493,9 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ Internal/               # URL/params、请求体工厂、dynamic JSON、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 12 类集成调用示例（内置演示服务器）
+│  └─ AxiosNet.Simple/           # 13 类集成调用示例（内置演示服务器）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（87 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（92 个）
 ```
 
 ## 与 axios 的差异说明

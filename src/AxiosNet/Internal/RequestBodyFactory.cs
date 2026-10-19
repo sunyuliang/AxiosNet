@@ -1,5 +1,9 @@
+using System.Collections;
+using System.Globalization;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AxiosNet.Internal;
 
@@ -11,11 +15,14 @@ namespace AxiosNet.Internal;
 /// </para>
 /// <list type="bullet">
 /// <item>string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent：内容原样发送，只应用配置的 Content-Type（HttpContent 自带时保留）。</item>
-/// <item>结构化数据（对象、字典、dynamic、集合）：json → JSON 文本；x-www-form-urlencoded → 键值对表单；其余类型仍以 JSON 文本写入。</item>
+/// <item>结构化数据（对象、字典、dynamic、集合）：json → JSON 文本；x-www-form-urlencoded → 键值对表单；multipart/form-data → 字段 + 文件部件；其余类型仍以 JSON 文本写入。</item>
 /// </list>
 /// </summary>
 internal static class RequestBodyFactory
 {
+    private const string MultipartMediaType = "multipart/form-data";
+    private const string OctetStreamMediaType = "application/octet-stream";
+
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
         // 请求体文本编码：默认 UTF-8（axios 行为），可用 config.RequestEncoding 覆盖。
@@ -86,11 +93,9 @@ internal static class RequestBodyFactory
             return CreateFormContent(data, options, mediaType, encoding, appendCharset);
         }
 
-        if (IsMediaType(mediaType, "multipart/form-data"))
+        if (IsMediaType(mediaType, MultipartMediaType))
         {
-            // 边界与部件头必须由调用方决定（文件名、每部件 Content-Type），不做隐式推断。
-            throw new NotSupportedException(
-                "multipart/form-data 的部件边界与部件头无法由库隐式推断，请使用 MultipartFormDataContent 作为 Data 传入。");
+            return CreateMultipartContent(data, mediaType, encoding, config);
         }
 
         var json = JsonSerializer.Serialize(data, data.GetType(), options);
@@ -118,6 +123,264 @@ internal static class RequestBodyFactory
         var declared = ComposeMediaType(mediaType, encoding, appendCharset);
         SetContentType(content, declared);
         return content;
+    }
+
+    /// <summary>
+    /// 构建 multipart/form-data：标量/嵌套对象 → 普通字段，<see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件。
+    /// 数组/集合展开为「同名重复部件」（ASP.NET Core、FastAPI、PHP 等都能按同名集合绑定）。
+    /// </summary>
+    private static HttpContent CreateMultipartContent(
+        object data,
+        string mediaType,
+        Encoding encoding,
+        AxiosConfig config)
+    {
+        // 用户显式声明 boundary 时沿用（部分服务端会校验），否则由 MultipartFormDataContent 生成随机边界。
+        var boundary = ExtractBoundary(mediaType);
+        var content = boundary is null
+            ? new MultipartFormDataContent()
+            : new MultipartFormDataContent(boundary);
+
+        try
+        {
+            var policy = (config.JsonSerializerOptions ?? JsonOptions.Web).PropertyNamingPolicy;
+            CollectParts(null, data, content, encoding, policy);
+            return content;
+        }
+        catch
+        {
+            // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
+            content.Dispose();
+            throw;
+        }
+    }
+
+    private static void CollectParts(
+        string? name,
+        object? value,
+        MultipartFormDataContent content,
+        Encoding encoding,
+        JsonNamingPolicy? policy)
+    {
+        switch (value)
+        {
+            case null:
+                return;
+
+            case FormFile file:
+            {
+                var part = new StreamContent(file.Content);
+                SetContentType(part, file.ContentType ?? OctetStreamMediaType);
+                content.Add(part, RequireName(file.FieldName ?? name), file.FileName);
+                return;
+            }
+
+            case HttpContent part:
+                // 调用方自带部件内容（可自行控制 Content-Type / 文件名）
+                content.Add(part, RequireName(name));
+                return;
+
+            case JsonElement element:
+                CollectJsonElementParts(name, element, content, encoding);
+                return;
+
+            case string text:
+                content.Add(new StringContent(text, encoding), RequireName(name));
+                return;
+
+            case byte[] bytes:
+            {
+                var part = new ByteArrayContent(bytes);
+                SetContentType(part, OctetStreamMediaType);
+                var field = RequireName(name);
+                content.Add(part, field, field);
+                return;
+            }
+
+            case Stream stream:
+            {
+                var part = new StreamContent(stream);
+                SetContentType(part, OctetStreamMediaType);
+                var field = RequireName(name);
+                content.Add(part, field, field);
+                return;
+            }
+
+            case IDictionary<string, object?> genericDictionary:
+                // 含 ExpandoObject（dynamic）
+                foreach (var entry in genericDictionary)
+                {
+                    CollectParts(CombineName(name, entry.Key), entry.Value, content, encoding, policy);
+                }
+
+                return;
+
+            case IDictionary dictionary:
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key is null)
+                    {
+                        continue;
+                    }
+
+                    CollectParts(
+                        CombineName(name, entry.Key.ToString() ?? string.Empty),
+                        entry.Value,
+                        content,
+                        encoding,
+                        policy);
+                }
+
+                return;
+        }
+
+        var type = value.GetType();
+        if (IsScalar(type))
+        {
+            content.Add(new StringContent(ScalarToString(value), encoding), RequireName(name));
+            return;
+        }
+
+        if (value is IEnumerable enumerable)
+        {
+            foreach (var item in enumerable)
+            {
+                CollectParts(name, item, content, encoding, policy);
+            }
+
+            return;
+        }
+
+        // 嵌套 POCO：public 可读属性，命名策略 / [JsonPropertyName] / [JsonIgnore] 与 JSON 请求体保持一致。
+        foreach (var property in type.GetProperties())
+        {
+            if (!property.CanRead || property.GetIndexParameters().Length > 0 || IsIgnored(property))
+            {
+                continue;
+            }
+
+            CollectParts(
+                CombineName(name, ResolveName(property, policy)),
+                property.GetValue(value),
+                content,
+                encoding,
+                policy);
+        }
+    }
+
+    private static void CollectJsonElementParts(
+        string? name,
+        JsonElement element,
+        MultipartFormDataContent content,
+        Encoding encoding)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectJsonElementParts(CombineName(name, property.Name), property.Value, content, encoding);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectJsonElementParts(name, item, content, encoding);
+                }
+
+                break;
+
+            case JsonValueKind.String:
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                content.Add(new StringContent(ScalarText(element), encoding), RequireName(name));
+                break;
+
+            default:
+                // null / undefined：跳过
+                break;
+        }
+    }
+
+    private static string CombineName(string? prefix, string name)
+        => string.IsNullOrEmpty(prefix) ? name : prefix + "[" + name + "]";
+
+    private static string RequireName(string? name)
+    {
+        if (!string.IsNullOrEmpty(name))
+        {
+            return name;
+        }
+
+        throw new InvalidOperationException(
+            "multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
+    }
+
+    private static bool IsScalar(Type type)
+        => type.IsPrimitive
+            || type.IsEnum
+            || type == typeof(string)
+            || type == typeof(decimal)
+            || type == typeof(DateTime)
+            || type == typeof(DateTimeOffset)
+            || type == typeof(DateOnly)
+            || type == typeof(TimeOnly)
+            || type == typeof(TimeSpan)
+            || type == typeof(Guid)
+            || type == typeof(Uri);
+
+    private static string ScalarToString(object value) => value switch
+    {
+        string s => s,
+        bool b => b ? "true" : "false",
+        char c => c.ToString(),
+        DateTime dt => dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+        DateTimeOffset dto => dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+        Enum e => e.ToString(),
+        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? string.Empty
+    };
+
+    private static string ResolveName(PropertyInfo property, JsonNamingPolicy? policy)
+    {
+        var explicitName = property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name;
+        return explicitName ?? policy?.ConvertName(property.Name) ?? property.Name;
+    }
+
+    private static bool IsIgnored(PropertyInfo property)
+    {
+        var attribute = property.GetCustomAttribute<JsonIgnoreAttribute>();
+        return attribute is not null && attribute.Condition == JsonIgnoreCondition.Always;
+    }
+
+    /// <summary>从媒体类型参数里取 boundary（支持带引号的形式）。</summary>
+    private static string? ExtractBoundary(string mediaType)
+    {
+        const string marker = "boundary=";
+        var index = mediaType.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var value = mediaType[(index + marker.Length)..].Trim();
+        if (value.StartsWith('"'))
+        {
+            var end = value.IndexOf('"', 1);
+            return end > 1 ? value[1..end] : null;
+        }
+
+        var separator = value.IndexOf(';');
+        if (separator >= 0)
+        {
+            value = value[..separator];
+        }
+
+        value = value.Trim();
+        return value.Length == 0 ? null : value;
     }
 
     /// <summary>

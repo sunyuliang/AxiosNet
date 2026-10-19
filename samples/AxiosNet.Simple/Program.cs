@@ -25,7 +25,8 @@ IExample[] examples =
     new ResponseTypesExample(),
     new InterceptorsExample(),
     new ErrorHandlingExample(),
-    new ConnectionPoolExample()
+    new ConnectionPoolExample(),
+    new MultipartExample()
 };
 
 try
