@@ -30,7 +30,11 @@ public sealed class FormFile
     /// <param name="contentType">部件的 Content-Type，默认 <c>application/octet-stream</c>。</param>
     public FormFile(string fileName, Stream content, string? contentType = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", nameof(fileName));
+        }
+
         ArgumentNullException.ThrowIfNull(content);
 
         FileName = fileName;
@@ -72,7 +76,11 @@ public sealed class FormFile
     /// <summary>打开本地文件并指定发送给服务端的文件名。文件流随请求一起释放。</summary>
     public static FormFile FromPath(string path, string fileName, string? contentType = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", nameof(path));
+        }
+
         var stream = new FileStream(
             path,
             FileMode.Open,

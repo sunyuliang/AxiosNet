@@ -1,6 +1,6 @@
 # AxiosNet
 
-[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
 [![tests](https://img.shields.io/badge/tests-168%20passed-success)](#构建与测试)
@@ -9,7 +9,7 @@
 用 .NET (C#) 实现的 **axios 风格 HTTP 客户端**，API 设计与 JS 生态的 [axios](https://github.com/axios/axios) 一一对应；并在 .NET 原生 `SocketsHttpHandler` 连接复用之上，额外提供一层**按 origin 隔离的网络连接池**（连接复用、并发上限、空闲驱逐、多实例共享、可观测统计）。
 
 - 零第三方依赖，仅使用 .NET BCL
-- 目标框架：`net8.0`
+- 运行时支持：**.NET 6 及以上**（单目标 `net6.0`，详见[目标框架与运行时支持](#目标框架与运行时支持)）
 - 异步优先（`Task` / `CancellationToken` / `ConfigureAwait(false)`）
 
 > 仓库：**Gitee（[itsm/axios-net](https://gitee.com/itsm/axios-net)）是提交主仓**，Issue / PR / tag 以 Gitee 为准；[GitHub](https://github.com/sunyuliang/AxiosNet) 为只读镜像（CI 自动发布 NuGet 也由镜像侧执行）。
@@ -36,6 +36,7 @@
 - [网络连接池](#网络连接池)
 - [自定义 Handler 注入](#自定义-handler-注入)
 - [示例项目](#示例项目)
+- [目标框架与运行时支持](#目标框架与运行时支持)
 - [构建与测试](#构建与测试)
 - [项目结构](#项目结构)
 - [与 axios 的差异说明](#与-axios-的差异说明)
@@ -961,13 +962,31 @@ dotnet run --project samples/AxiosNet.Simple
 >
 > 第 19 项是唯一需要额外 NuGet 包（`Newtonsoft.Json`）的示例，仅用于演示**引擎替换**——类库本身仍然零第三方运行时依赖；不需要自定义序列化时可以把 `Newtonsoft.Json` 从示例项目里删掉。
 
+## 目标框架与运行时支持
+
+类库是**单目标 `net6.0`**，一份程序集覆盖 .NET 6 及以上的全部运行时：
+
+| 消费方目标框架 | 结果 |
+| --- | --- |
+| `net6.0` / `net7.0` / `net8.0` / `net9.0` / `net10.0` / `net11.0` … | 直接引用 `lib/net6.0`，无需任何配置 |
+
+- **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
+- **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
+- **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 168 个用例（共 336 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+
+```xml
+<!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
+<PackageReference Include="AxiosNet" Version="1.0.0" />
+```
+
 ## 构建与测试
 
 ```bash
-# 构建（Debug）
+# 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 168 个 xUnit 单元测试
+# 运行全部 168 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 336 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -998,7 +1017,7 @@ dotnet build AxiosNet.slnx -c Release
 .
 ├─ AxiosNet.slnx
 ├─ src/
-│  └─ AxiosNet/                  # 类库
+│  └─ AxiosNet/                  # 类库（单目标 net6.0，兼容 .NET 6 及以上全部运行时）
 │     ├─ Axios.cs                # 静态门面（对应全局 axios）
 │     ├─ AxiosClient.cs          # 实例 + 请求管线 + 响应读取
 │     ├─ AxiosClient.Shortcuts.cs# 全部快捷方法重载（get/post/... + form）
@@ -1018,7 +1037,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 19 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（168 个）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（168 个用例 × net6.0 / net8.0 双目标 = 336 次执行）
 ```
 
 ## 与 axios 的差异说明

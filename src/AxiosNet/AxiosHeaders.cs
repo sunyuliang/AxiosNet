@@ -33,7 +33,11 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>设置/覆盖请求头，返回当前对象以支持链式调用。</summary>
     public AxiosHeaders Set(string name, string? value)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        // ArgumentException.ThrowIfNullOrWhiteSpace 是 .NET 8 才有的 API，这里手写以兼容 net6.0 目标。
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", nameof(name));
+        }
         var key = NormalizeName(name);
         lock (_sync)
         {

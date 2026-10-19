@@ -1,7 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- 与类库的 TFM 对齐：net6.0 那套用例验证「最低支持基线」的真实行为（含连接池、流式、JSON）。
+         net8.0 之外的测试基建都只用 netstandard2.0 级别的 API，可直接复用。 -->
+    <TargetFrameworks>net8.0;net6.0</TargetFrameworks>
+    <!-- net6.0 默认 C# 10，测试里用了原始字符串字面量（C# 11），统一用最新语言版本 -->
+    <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 

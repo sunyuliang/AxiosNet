@@ -71,7 +71,7 @@ public sealed class JsonCustomizationTests
         {
             JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             {
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+                PropertyNamingPolicy = SnakeCase
             }
         });
 
@@ -134,12 +134,52 @@ public sealed class JsonCustomizationTests
         public int Age { get; set; }
     }
 
+    /// <summary>
+    /// net8.0 内置 <c>JsonNamingPolicy.SnakeCaseLower</c>，net6.0 的 System.Text.Json 6 没有，
+    /// 这里给出等价实现，保证两个 TFM 的用例语义一致。
+    /// </summary>
+    private static JsonNamingPolicy SnakeCase =>
+#if NET8_0_OR_GREATER
+        JsonNamingPolicy.SnakeCaseLower;
+#else
+        SnakeCaseNamingPolicy.Instance;
+#endif
+
+    private sealed class SnakeCaseNamingPolicy : JsonNamingPolicy
+    {
+        public static SnakeCaseNamingPolicy Instance { get; } = new();
+
+        public override string ConvertName(string name)
+        {
+            var builder = new StringBuilder(name.Length + 8);
+            for (var i = 0; i < name.Length; i++)
+            {
+                var c = name[i];
+                if (char.IsUpper(c))
+                {
+                    if (i > 0)
+                    {
+                        builder.Append('_');
+                    }
+
+                    builder.Append(char.ToLowerInvariant(c));
+                }
+                else
+                {
+                    builder.Append(c);
+                }
+            }
+
+            return builder.ToString();
+        }
+    }
+
     /// <summary>用 snake_case 固定策略的 STJ 适配器，证明自定义序列化器会绕开 config 里的 options。</summary>
     private sealed class SnakeCaseSerializer : IAxiosJsonSerializer
     {
         private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
         {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+            PropertyNamingPolicy = SnakeCase
         };
 
         public static SnakeCaseSerializer Instance { get; } = new();

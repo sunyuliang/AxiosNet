@@ -43,7 +43,10 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>从池中租用指定 URI 所属 origin 的连接节点。</summary>
     public PoolLease Lease(Uri requestUri)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            throw new ObjectDisposedException(nameof(HttpConnectionPool));
+        }
 
         if (requestUri is null || !requestUri.IsAbsoluteUri)
         {

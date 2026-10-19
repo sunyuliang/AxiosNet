@@ -1,7 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- 单目标 net6.0：.NET 向高版本兼容，同一份程序集可直接跑在 .NET 6 / 7 / 8 / 9 / 10 / 11 上，
+         无需为每个运行时重复发布资产。代码也不使用任何 6.0 之后才有的 BCL API。
+         不使用 netstandard：连接池依赖 SocketsHttpHandler，netstandard2.0 里没有该类型。 -->
+    <TargetFramework>net6.0</TargetFramework>
+    <!-- net6.0 默认 C# 10，显式用最新语言版本（测试项目同样如此） -->
+    <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -14,8 +19,8 @@
     <Version>1.0.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。An axios-style HTTP client for .NET built on SocketsHttpHandler.</Description>
-    <PackageTags>axios;http;httpclient;rest;json;api-client;connection-pool;net8</PackageTags>
+    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。单目标 net6.0，适用于 .NET 6 及以上的全部运行时（6/7/8/9/10/11…）。An axios-style HTTP client for .NET.</Description>
+    <PackageTags>axios;http;httpclient;rest;json;api-client;connection-pool;net6;net8;net9;net10</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>

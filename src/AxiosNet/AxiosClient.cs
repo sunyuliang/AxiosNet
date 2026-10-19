@@ -210,7 +210,11 @@ public sealed partial class AxiosClient : IDisposable
 
     private async Task<AxiosResponse> SendAsync(AxiosConfig perCallConfig, Type? dataType)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) == 1, this);
+        // ObjectDisposedException.ThrowIf 是 .NET 7 才有的 API，手写以兼容 net6.0 目标。
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            throw new ObjectDisposedException(nameof(AxiosClient));
+        }
 
         // 实例级选项（Proxy/Credentials/WithCredentials/MaxRedirects）在构造连接池时已固定，
         // 按请求设置无法生效 —— 与其静默忽略，不如明确报错。

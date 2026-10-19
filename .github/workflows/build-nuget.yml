@@ -44,7 +44,11 @@ jobs:
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          # 类库是单目标 net6.0，但测试项目为 net6.0 + net8.0 双目标（验证同一份资产在两种运行时上的行为），
+          # 因此 6.0 运行时必须显式安装（runner 镜像不保证保留已 EOL 的 6.0）
+          dotnet-version: |
+            8.0.x
+            6.0.x
 
       - name: 还原依赖
         run: dotnet restore "$TEST_PROJECT"
@@ -83,7 +87,9 @@ jobs:
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            6.0.x
 
       - name: 校验 tag 并解析包版本
         id: meta
