@@ -1,6 +1,7 @@
 # AxiosNet
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=.net)](https://dotnet.microsoft.com/)
+[![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
 [![tests](https://img.shields.io/badge/tests-136%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -71,13 +72,21 @@
 
 ## 安装
 
-### 方式一：引用项目（当前仓库）
+### 方式一：NuGet（推荐）
+
+```bash
+dotnet add package AxiosNet
+```
+
+> 版本号与 Git tag 一致：打 `v1.2.3` 即发布 `1.2.3`；带后缀的 tag（如 `v1.2.3-rc.1`）会作为预发布版本发布。
+
+### 方式二：引用项目（当前仓库）
 
 ```bash
 dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj
 ```
 
-### 方式二：源码引入
+### 方式三：源码引入
 
 直接把 `src/AxiosNet` 目录复制进你的解决方案：
 

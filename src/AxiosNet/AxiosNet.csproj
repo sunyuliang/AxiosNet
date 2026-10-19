@@ -6,4 +6,44 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- ===== NuGet 包元数据 ===== -->
+  <PropertyGroup>
+    <PackageId>AxiosNet</PackageId>
+    <Title>AxiosNet</Title>
+    <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z） -->
+    <Version>1.0.0</Version>
+    <Authors>sunyuliang</Authors>
+    <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
+    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。An axios-style HTTP client for .NET built on SocketsHttpHandler.</Description>
+    <PackageTags>axios;http;httpclient;rest;json;api-client;connection-pool;net8</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/sunyuliang/AxiosNet</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- ===== 符号包 + XML 文档 ===== -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!-- 把仓库根目录的 README / LICENSE 打进包 -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <!-- SourceLink：snupkg 可反查 GitHub 源码；PrivateAssets=all，不会成为包的依赖 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

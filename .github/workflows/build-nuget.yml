@@ -1,0 +1,142 @@
+# 打 tag（v1.2.3 / v1.2.3-rc.1）时自动构建、测试、打包并发布到 nuget.org。
+# 认证方式：NuGet Trusted Publishing（OIDC），不需要长期 API Key，也不需要 NUGET_API_KEY 密钥。
+#
+# 与 nuget.org「Trusted Publishing」策略必须逐项一致（大小写不敏感，但内容要相同）：
+#   Repository Owner : sunyuliang        ← 仓库：https://github.com/sunyuliang/AxiosNet
+#   Repository       : AxiosNet
+#   Workflow File    : build-nuget.yml   ← 只填文件名，不带 .github/workflows/ 路径
+#   Environment      : build-nuget
+# 任一不匹配，NuGet/login 会拿不到临时 Key（401/403）。
+
+name: build-nuget
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: pack & push
+    runs-on: ubuntu-latest
+    # 必须与 nuget.org 策略里填的 Environment 完全一致（策略填了就必须匹配）
+    environment: build-nuget
+    permissions:
+      contents: read
+      id-token: write # OIDC：换取 nuget.org 短期 API Key 的前提
+
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      NUGET_SOURCE: https://api.nuget.org/v3/index.json
+      PACKAGE_PROJECT: src/AxiosNet/AxiosNet.csproj
+      TEST_PROJECT: test/AxiosNet.Tests/AxiosNet.Tests.csproj
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # SourceLink 需要完整历史来计算 commit
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 校验 tag 并解析包版本
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          # 允许 1.2.3 与 1.2.3-rc.1（NuGet 语义化版本，不含 build metadata）
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::tag '$tag' 不符合 vMAJOR.MINOR.PATCH[-prerelease]，例如 v1.0.0 / v1.1.0-rc.1"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if [[ "$ver" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "解析出版本：$ver（来自 tag $tag，commit ${GITHUB_SHA:0:7}）"
+
+      - name: 还原依赖
+        run: dotnet restore "$TEST_PROJECT"
+
+      - name: 构建
+        run: |
+          dotnet build "$TEST_PROJECT" \
+            --configuration Release \
+            --no-restore \
+            -p:Version="${{ steps.meta.outputs.version }}" \
+            -p:ContinuousIntegrationBuild=true
+
+      - name: 运行单元测试
+        run: |
+          dotnet test "$TEST_PROJECT" \
+            --configuration Release \
+            --no-build \
+            --no-restore \
+            --logger "console;verbosity=normal"
+
+      - name: 打包 nupkg + snupkg
+        run: |
+          set -euo pipefail
+          dotnet pack "$PACKAGE_PROJECT" \
+            --configuration Release \
+            --no-build \
+            --output artifacts \
+            -p:Version="${{ steps.meta.outputs.version }}" \
+            -p:ContinuousIntegrationBuild=true
+          echo '--- artifacts ---'
+          ls -l artifacts
+
+      - name: 换取 nuget.org 短期 API Key（OIDC 受信发布）
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          # nuget.org 用户名（profile name），不是邮箱；已在仓库 Secrets 中配置
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: 推送到 nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          # 包 + 符号包都用同一把临时 Key（有效期 1 小时）
+          dotnet nuget push "artifacts/*.nupkg" \
+            --source "$NUGET_SOURCE" \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
+
+          if compgen -G "artifacts/*.snupkg" > /dev/null; then
+            dotnet nuget push "artifacts/*.snupkg" \
+              --source "$NUGET_SOURCE" \
+              --api-key "$NUGET_API_KEY" \
+              --skip-duplicate
+          else
+            echo "::warning::没有生成 snupkg，跳过符号包推送"
+          fi
+
+      - name: 写入运行摘要
+        if: always()
+        run: |
+          {
+            echo "### AxiosNet ${{ steps.meta.outputs.version }}"
+            echo ""
+            echo "- tag: \`${{ github.ref_name }}\`"
+            echo "- 预发布: \`${{ steps.meta.outputs.is_prerelease }}\`"
+            echo "- 包: https://www.nuget.org/packages/AxiosNet/${{ steps.meta.outputs.version }}"
+            echo "- commit: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
