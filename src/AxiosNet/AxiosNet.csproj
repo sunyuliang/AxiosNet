@@ -14,13 +14,13 @@
   <!-- ===== NuGet 包元数据 ===== -->
   <PropertyGroup>
     <PackageId>AxiosNet</PackageId>
-    <Title>AxiosNet</Title>
+    <Title>AxiosNet - axios 风格 HTTP 客户端（.NET 6+）</Title>
     <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z） -->
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。单目标 net6.0，适用于 .NET 6 及以上的全部运行时（6/7/8/9/10/11…）。An axios-style HTTP client for .NET.</Description>
-    <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;connection-pool;csharp;dotnet;net6</PackageTags>
+    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。支持 .NET 6 及以上全部运行时（6/7/8/9/10/11）：单目标 net6.0 程序集，一份资产直接引用，无需多目标配置。An axios-style HTTP client for .NET — single net6.0 assembly, runs on .NET 6/7/8/9/10/11.</Description>
+    <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;connection-pool;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>

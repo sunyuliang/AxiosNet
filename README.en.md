@@ -1013,7 +1013,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
-<PackageReference Include="AxiosNet" Version="1.0.0" />
+<PackageReference Include="AxiosNet" Version="1.0.1" />
 ```
 
 ## Build and test

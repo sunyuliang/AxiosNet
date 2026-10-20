@@ -1013,7 +1013,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
-<PackageReference Include="AxiosNet" Version="1.0.0" />
+<PackageReference Include="AxiosNet" Version="1.0.1" />
 ```
 
 ## 构建与测试

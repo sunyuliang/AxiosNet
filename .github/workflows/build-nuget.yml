@@ -133,14 +133,25 @@ jobs:
       - name: 打包 nupkg + snupkg
         run: |
           set -euo pipefail
+          # 不用 --no-build：由 pack 自己构建。--no-build 打包在某些 SDK/环境组合下可能不生成
+          # snupkg，而符号包缺失在推送端毫无报错（1.0.0 实际中招，详见下方可见性校验）。
           dotnet pack "$PACKAGE_PROJECT" \
             --configuration Release \
-            --no-build \
             --output artifacts \
             -p:Version="${{ steps.meta.outputs.version }}" \
             -p:ContinuousIntegrationBuild=true
           echo '--- artifacts ---'
           ls -l artifacts
+          # 符号包是源码映射（SourceLink）的唯一载体，nuget.org 只从 snupkg 提取 PDB 进符号服务器。
+          # 缺了它消费者调试时 F11 进不了库源码，且没有任何错误提示——必须在此硬失败。
+          if ! compgen -G "artifacts/*.snupkg" > /dev/null; then
+            echo "::error::pack 未生成 snupkg，源码映射将不可用，终止发布"
+            exit 1
+          fi
+          if ! unzip -l artifacts/*.snupkg | grep -q '\.pdb$'; then
+            echo "::error::snupkg 内未找到 .pdb，符号包内容异常，终止发布"
+            exit 1
+          fi
 
       - name: 换取 nuget.org 短期 API Key（OIDC 受信发布）
         id: nuget-login
@@ -159,15 +170,43 @@ jobs:
             --source "$NUGET_SOURCE" \
             --api-key "$NUGET_API_KEY" \
             --skip-duplicate
+          dotnet nuget push "artifacts/*.snupkg" \
+            --source "$NUGET_SOURCE" \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
 
-          if compgen -G "artifacts/*.snupkg" > /dev/null; then
-            dotnet nuget push "artifacts/*.snupkg" \
-              --source "$NUGET_SOURCE" \
-              --api-key "$NUGET_API_KEY" \
-              --skip-duplicate
-          else
-            echo "::warning::没有生成 snupkg，跳过符号包推送"
-          fi
+      - name: 校验符号已在 nuget.org 符号服务器可见
+        # 1.0.0 的教训：nupkg 与 snupkg 都「推送成功」、job 全绿，但符号从未到达符号服务器，
+        # 消费者调试时无法 F11 进源码。推送端点不回报符号摄入结果，唯一权威判据是符号服务器本身。
+        run: |
+          set -euo pipefail
+          DLL="$(dirname "$PACKAGE_PROJECT")/bin/Release/net6.0/AxiosNet.dll"
+          DEBUG_ID="$(python3 - "$DLL" <<'PYEOF'
+          import struct, sys, uuid
+          data = open(sys.argv[1], 'rb').read()
+          i = data.find(b'RSDS')
+          if i < 0:
+              sys.exit('DLL 中找不到 CodeView(RSDS) 记录')
+          g = uuid.UUID(bytes_le=data[i+4:i+20])
+          print(g.hex.upper())
+          PYEOF
+          )"
+          echo "PDB debug id: $DEBUG_ID"
+          # portable PDB 查符号服务器时 age 掩码为 FFFFFFFF（只取 32 位 GUID）；SymbolChecksum 头必须带
+          # （符号服务器只验该头存在性，缺头一律 403，与符号是否存在无关）
+          URL="https://symbols.nuget.org/download/symbols/AxiosNet.pdb/${DEBUG_ID}FFFFFFFF/AxiosNet.pdb"
+          # 符号摄入有秒级~分钟级延迟，轮询至多 5 分钟；302=已收录，200=直连
+          for i in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H "SymbolChecksum: SHA256:$DEBUG_ID" "$URL")"
+            if [ "$code" = "302" ] || [ "$code" = "200" ]; then
+              echo "符号已就绪，源码映射可用：$URL"
+              exit 0
+            fi
+            echo "符号尚不可见（HTTP $code，$i/30），10s 后重试…"
+            sleep 10
+          done
+          echo "::error::符号推送后 5 分钟仍不可见，源码映射不会生效：$URL"
+          exit 1
 
       - name: 写入运行摘要
         if: always()
@@ -178,5 +217,6 @@ jobs:
             echo "- tag: \`${{ github.ref_name }}\`"
             echo "- 预发布: \`${{ steps.meta.outputs.is_prerelease }}\`"
             echo "- 包: https://www.nuget.org/packages/AxiosNet/${{ steps.meta.outputs.version }}"
+            echo "- 符号: https://symbols.nuget.org/download/symbols/AxiosNet.pdb/ （源码映射载体，已由上方步骤校验）"
             echo "- commit: \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
