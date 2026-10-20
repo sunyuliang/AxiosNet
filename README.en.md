@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-183%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-236%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -588,8 +588,9 @@ catch (AxiosException ex)
 await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 ```
 
-- `MaxContentLength` accumulates **while reading** for ordinary (buffered) responses: it aborts and releases the connection as soon as the limit is crossed, rather than reading all 8 MB into memory first. For `ResponseType.Stream` it checks the declared `Content-Length` when the headers arrive and fails immediately if that declaration exceeds the limit (no extra interception when no length is declared).
+- `MaxContentLength` accumulates **while reading** for ordinary (buffered) responses: it aborts and releases the connection as soon as the limit is crossed, rather than reading all 8 MB into memory first. For `ResponseType.Stream` it works in two layers: the declared `Content-Length` is pre-checked when the headers arrive, and the bytes read are counted as they arrive — so a chunked / length-less response also fails on the read that crosses the limit.
 - `MaxBodyLength` checks `Content.Headers.ContentLength` before sending, so it only applies to bodies whose length is known (JSON / forms / `byte[]` / `FormFile`); custom `HttpContent` of unknown length is not intercepted.
+- **Negative** values for these four limits throw `ERR_BAD_OPTION_VALUE` (they used to be silently treated as "unlimited", so callers believed a limit was in force). `MaxRate = 0` means "unthrottled" and `Timeout = TimeSpan.Zero` means "no timeout".
 
 ## Custom serialization and data transforms
 
@@ -822,6 +823,8 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
 > For streaming responses (`ResponseType.Stream`) the timeout covers through the end of body reading: after the request returns, reading from the stream for longer than `Timeout` also throws `ECONNABORTED`. Note that this is a **total budget for the whole operation** (connect + wait for headers + read body combined), not a per-read idle timeout — time spent waiting for headers is deducted from the body's remaining budget. For a long-connection style idle timeout, control it yourself with a `CancellationToken`. The token is passed to every underlying read/write, so synchronous `Read`/`Write`/`Flush` honor it too (implemented as a blocking wait over the async core; a timeout/cancellation during the read interrupts it immediately), but that occupies the calling thread — prefer `ReadAsync` where possible.
+>
+> The timeout value is capped at about **49.7 days** (the underlying timer is `uint.MaxValue-1` milliseconds): anything larger is **clamped to that cap** instead of throwing, so `TimeSpan.MaxValue` is safe too; use `Timeout = TimeSpan.Zero` for a genuinely unlimited timeout. Negative values throw `ERR_BAD_OPTION_VALUE`. Cancellation/timeout exceptions keep the underlying `OperationCanceledException` as `Cause`, so `AxiosException.ToJson()` and logs show the trigger point.
 
 ## Connection pool
 
@@ -853,6 +856,8 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
     AutomaticDecompression = true,          // gzip/deflate/br
+    MaxEndpointCount = 1024,                // cap on origin nodes (0 / negative = unlimited)
+    UseCookies = false,                     // when on, one shared CookieContainer for the whole pool
 });
 
 // 2) Recommended: share one global pool across multiple clients
@@ -874,6 +879,12 @@ sharedPool.EvictIdleEndpoints();
 > Fail-fast: a shared pool's connection behavior (redirects / proxy / credentials / cookies / pool options) is fixed when the pool is created. Setting `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` / `PoolOptions` on a shared-pool client's defaults, or passing both `pool` and `poolOptions` to `AxiosClient`, throws `ERR_BAD_OPTION_VALUE` instead of being silently ignored — configure these on the `ConnectionPoolOptions` used to create the pool, or let that client build its own pool (do not pass `pool`).
 >
 > Two defaults: when `Proxy` is not set explicitly the pool **does not use system/environment proxies** (avoiding surprising routing from environment variables); set `Proxy = HttpClient.DefaultProxy` to opt into the system proxy. When `EvictionInterval ≤ 0` the background eviction timer is not started (only manual `EvictIdleEndpoints()` then). The pool clones the options passed in, and `pool.Options` returns a copy too — mutating the object you hold afterwards does not affect an already-created pool.
+>
+> `MaxEndpointCount` is a resource-surface guard: when destination hosts come from user input (short links, webhooks, per-tenant domains), the number of origin nodes is exactly what can be amplified. At the cap the least-recently-used idle node is evicted first; only when every node is busy does the pool refuse with `ERR_BAD_OPTION_VALUE` — requests are never dropped silently.
+>
+> With `UseCookies = true` the whole pool shares **one** `CookieContainer` (no longer one per origin): cookies are scoped by domain/path rather than by port, so a session set by `auth.example.com` is sent to `api.example.com`, matching browser / axios `withCredentials` semantics. Cookies of unrelated domains are still isolated by domain matching.
+>
+> `Dispose()` is a **graceful shutdown**: idle nodes are released immediately, while nodes with in-flight requests wait until their last lease is returned — closing a client never turns an in-flight request into `ObjectDisposedException`. Use `Clear()` when you want to cut every connection right now.
 
 > Performance notes: sequential and concurrent requests both reuse established TCP connections (measured in the repository tests and samples: 5 sequential requests open only 1 TCP connection; 6 concurrent slow requests with `MaxConnectionsPerServer=2` peak at exactly 2 concurrent). Disposing the pool at shutdown releases all connections; a shared pool is not destroyed when one client is disposed (only the owner disposes it).
 
@@ -998,7 +1009,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 183 cases on each runtime (366 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 236 cases on each runtime (472 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1011,7 +1022,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 183 xUnit tests (the test project targets net8.0 + net6.0, so 366 executions)
+# Run all 236 xUnit tests (the test project targets net8.0 + net6.0, so 472 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1038,6 +1049,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / wrapping the default handler / returning null, plus fail-fast with pool/poolOptions and instance-level options
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
 - Pluggable JSON (`JsonCustomizationTests`): a custom `IAxiosJsonSerializer` driving request/response/dynamic/form flattening, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists
+- Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client)
 
 ## Project layout
 
@@ -1065,7 +1077,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 20 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json serializer + DNS refresh)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (183 cases × net6.0 / net8.0 = 366 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (236 cases × net6.0 / net8.0 = 472 executions)
 ```
 
 ## Differences from axios
@@ -1083,6 +1095,9 @@ Intentional differences driven by the .NET platform:
 9. `maxRate`, `onUploadProgress` / `onDownloadProgress` are implemented by the library at the `HttpContent` and `Stream` layers (`HttpClient` has no native support), so for custom `HttpContent` the "encoded bytes" counted are the bytes actually written to the network stream;
 10. `transformRequest` / `transformResponse` take `object?` rather than a generic chain (C# cannot discard a type and narrow it back as freely as JS can); cast inside the delegate when you need strong typing;
 11. `config.method` uses the BCL `HttpMethod` directly (there is no bespoke enum here), so any custom verb can be sent; axios's adapter corresponds to `HttpMessageHandler` on the .NET side, with `ConnectionPoolOptions.HandlerFactory` or `new AxiosClient(handler: ...)` as the entry points.
+12. **Headers are validated on write**: a header name must be an RFC 7230 token and its value must not contain `CR` / `LF` / `NUL`, otherwise `AxiosHeaders.Set` throws `ArgumentException` (axios/JS does no such check). Browser/Node HTTP stacks split CRLF themselves; .NET's `TryAddWithoutValidation` does not — without this check the library would leave an HTTP request-splitting (CWE-113) door open;
+13. **`WithCredentials` cookies are shared per domain** (one container for the whole pool instead of one per origin), so sessions across sub-domains / alternate ports behave like a browser;
+14. `Timeout` is capped at about 49.7 days; larger values are clamped to the cap instead of throwing (`Timeout = 0` is the real unlimited timeout).
 
 
 ## License

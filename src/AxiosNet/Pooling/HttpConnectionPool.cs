@@ -20,6 +20,7 @@ public sealed class HttpConnectionPool : IDisposable
 {
     private readonly ConcurrentDictionary<string, PooledEndpoint> _endpoints = new();
     private readonly ConnectionPoolOptions _options;
+    private readonly CookieContainer? _cookies;
     private readonly Timer? _evictionTimer;
     private long _totalLeases;
     private int _disposed;
@@ -28,6 +29,10 @@ public sealed class HttpConnectionPool : IDisposable
     {
         // 克隆：调用方之后修改自己持有的 options 对象，不应影响已建成的池
         _options = (options ?? new ConnectionPoolOptions()).Clone();
+
+        // 整个池共用一个 Cookie 容器：Cookie 的隔离维度是域/路径而不是端口，
+        // 每个 origin 各持一个容器会把跨子域、换端口的会话直接切断。
+        _cookies = _options.UseCookies ? new CookieContainer() : null;
 
         if (_options.IdleHandlerLifetime > TimeSpan.Zero && _options.EvictionInterval > TimeSpan.Zero)
         {
@@ -61,11 +66,13 @@ public sealed class HttpConnectionPool : IDisposable
 
         while (true)
         {
+            EnsureCapacity(origin);
+
             // 正常情况下 GetOrAdd 只创建一次；极端竞态下落选的新建节点直接释放。
             PooledEndpoint? created = null;
             var endpoint = _endpoints.GetOrAdd(origin, key =>
             {
-                created = new PooledEndpoint(key, _options);
+                created = new PooledEndpoint(this, key, _options, _cookies);
                 return created;
             });
 
@@ -101,19 +108,54 @@ public sealed class HttpConnectionPool : IDisposable
         endpoint.Release();
     }
 
+    /// <summary>节点退租时把自己从字典摘掉（池已关闭的优雅回收路径）。</summary>
+    internal void Forget(PooledEndpoint endpoint)
+    {
+        _endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(endpoint.Origin, endpoint));
+    }
+
     /// <summary>手动驱逐空闲超过 IdleHandlerLifetime 的 origin 节点。</summary>
-    public int EvictIdleEndpoints()
+    public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue);
+
+    /// <summary>
+    /// 新建 origin 节点前的容量检查：达到 <see cref="ConnectionPoolOptions.MaxEndpointCount"/>
+    /// 时先驱逐最久未使用的空闲节点，一个都驱逐不掉（全部在途）才拒绝。
+    /// </summary>
+    private void EnsureCapacity(string origin)
+    {
+        var max = _options.MaxEndpointCount;
+        if (max <= 0 || _endpoints.Count < max || _endpoints.ContainsKey(origin))
+        {
+            return;
+        }
+
+        if (EvictIdle(TimeSpan.Zero, limit: 1) > 0)
+        {
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"连接池的 origin 节点数已达上限 {max}，且没有可驱逐的空闲节点（可能全部在途）。"
+            + "可提高 ConnectionPoolOptions.MaxEndpointCount，或显式调用 Clear() 回收。");
+    }
+
+    private int EvictIdle(TimeSpan minIdle, int limit)
     {
         var evicted = 0;
         var now = DateTime.UtcNow;
         foreach (var pair in _endpoints)
         {
+            if (evicted >= limit)
+            {
+                break;
+            }
+
             var endpoint = pair.Value;
             lock (endpoint.SyncRoot)
             {
                 if (endpoint.IsDisposed
                     || endpoint.ActiveLeases > 0
-                    || now - endpoint.LastUsedUtc < _options.IdleHandlerLifetime)
+                    || now - endpoint.LastUsedUtc < minIdle)
                 {
                     continue;
                 }
@@ -146,7 +188,10 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    /// <summary>立即驱逐并释放所有 origin 节点（通常在应用关闭时调用）。</summary>
+    /// <summary>
+    /// 立即驱逐并释放所有 origin 节点（强制版，在途请求会被打断）。
+    /// 优雅关闭请用 <see cref="Dispose"/>。
+    /// </summary>
     public void Clear()
     {
         foreach (var pair in _endpoints)
@@ -192,6 +237,13 @@ public sealed class HttpConnectionPool : IDisposable
     private static string BuildOrigin(Uri uri)
         => $"{uri.Scheme}://{(uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost)}:{uri.Port}";
 
+    /// <summary>
+    /// 优雅关闭：空闲节点立即释放；仍有租约在途的节点先打标记，最后一条租约归还时自行回收。
+    /// <para>
+    /// 直接释放全部节点会让「客户端关闭时刚好有请求在飞」的调用方拿到
+    /// <see cref="ObjectDisposedException"/> / 连接被重置——关闭不应该是一种数据破坏行为。
+    /// </para>
+    /// </summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -200,6 +252,21 @@ public sealed class HttpConnectionPool : IDisposable
         }
 
         _evictionTimer?.Dispose();
-        Clear();
+
+        foreach (var pair in _endpoints)
+        {
+            var endpoint = pair.Value;
+            lock (endpoint.SyncRoot)
+            {
+                if (endpoint.ActiveLeases == 0 && _endpoints.TryRemove(pair))
+                {
+                    endpoint.Dispose();
+                }
+                else
+                {
+                    endpoint.DisposeWhenIdle = true;
+                }
+            }
+        }
     }
 }

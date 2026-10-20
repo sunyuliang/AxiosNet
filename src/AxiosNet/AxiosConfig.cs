@@ -98,8 +98,12 @@ public sealed class AxiosConfig
     /// 语义是<b>全程总预算</b>（建连 + 等待响应头 + 读取正文），不是单次读写的空闲超时：
     /// 流式响应（<see cref="ResponseType.Stream"/>）下同样覆盖到正文读取结束——
     /// 响应头阶段耗时也会从正文的剩余预算里扣除。需要"长连接式"的空闲超时请用
-    /// <see cref="CancellationToken"/> 自行控制。注意超过约 24.8 天的值没有意义
-    /// （底层计时器上限），需要无限超时请用 <see cref="TimeSpan.Zero"/>。
+    /// <see cref="CancellationToken"/> 自行控制。
+    /// </para>
+    /// <para>
+    /// 底层计时器的上限约为 49.7 天（<c>uint.MaxValue-1</c> 毫秒）：超过这个值会被<b>收敛到上限</b>，
+    /// 不会抛异常。需要真正的无限超时请用 <see cref="TimeSpan.Zero"/>。负值非法，会抛
+    /// <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
     /// </para>
     /// </summary>
     public TimeSpan Timeout

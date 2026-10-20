@@ -87,18 +87,32 @@ internal sealed class TrafficMeter
 }
 
 /// <summary>
-/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.OnDownloadProgress"/> 回报进度，
-/// 并按 <see cref="AxiosConfig.MaxRate"/> 限速（读满配额后按速率等待）。
+/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.OnDownloadProgress"/> 回报进度、
+/// 按 <see cref="AxiosConfig.MaxRate"/> 限速（读满配额后按速率等待），
+/// 并在累计字节超出 <see cref="AxiosConfig.MaxContentLength"/> 时立刻中断。
 /// </summary>
 internal sealed class ProgressReadStream : Stream
 {
     private readonly Stream _inner;
     private readonly TrafficMeter _meter;
+    private readonly long? _contentLimit;
+    private readonly AxiosConfig _config;
+    private readonly HttpRequestMessage _request;
 
-    public ProgressReadStream(Stream inner, long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
+    public ProgressReadStream(
+        Stream inner,
+        long? total,
+        Action<AxiosProgressEvent>? callback,
+        long? maxRate,
+        long? contentLimit,
+        AxiosConfig config,
+        HttpRequestMessage request)
     {
         _inner = inner;
         _meter = new TrafficMeter(total, callback, maxRate);
+        _contentLimit = contentLimit;
+        _config = config;
+        _request = request;
     }
 
     public override bool CanRead => true;
@@ -132,8 +146,27 @@ internal sealed class ProgressReadStream : Stream
     private async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         var read = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        ThrowIfOverLimit(read);
         await TrackAsync(read, cancellationToken).ConfigureAwait(false);
         return read;
+    }
+
+    /// <summary>
+    /// 累计字节越界即中断：既覆盖 chunked / 未声明长度的流式响应，
+    /// 也让非流式路径在「超限的那一个缓冲区」上就停下，而不是等整个正文读完。
+    /// </summary>
+    private void ThrowIfOverLimit(int read)
+    {
+        if (read <= 0 || _contentLimit is not long limit)
+        {
+            return;
+        }
+
+        var total = _meter.Loaded + read;
+        if (total > limit)
+        {
+            throw AxiosException.MaxContentLength(_config, _request, total, limit);
+        }
     }
 
     private async ValueTask TrackAsync(int read, CancellationToken cancellationToken)

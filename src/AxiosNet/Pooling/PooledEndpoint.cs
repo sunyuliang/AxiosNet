@@ -8,6 +8,8 @@ namespace AxiosNet.Pooling;
 /// </summary>
 internal sealed class PooledEndpoint : IDisposable
 {
+    private readonly HttpConnectionPool _owner;
+
     public string Origin { get; }
 
     public HttpMessageHandler Handler { get; }
@@ -20,13 +22,24 @@ internal sealed class PooledEndpoint : IDisposable
 
     public bool IsDisposed { get; private set; }
 
+    /// <summary>
+    /// 池已经 Dispose：本节点在最后一条租约归还时自行销毁。
+    /// 用于「关闭客户端时还有请求在途」的场景——直接 Dispose 会让在途请求拿到 ObjectDisposedException。
+    /// </summary>
+    public bool DisposeWhenIdle { get; set; }
+
     /// <summary>租约计数与释放共用的锁。</summary>
     public object SyncRoot { get; } = new();
 
-    public PooledEndpoint(string origin, ConnectionPoolOptions options)
+    public PooledEndpoint(
+        HttpConnectionPool owner,
+        string origin,
+        ConnectionPoolOptions options,
+        CookieContainer? cookieContainer)
     {
+        _owner = owner;
         Origin = origin;
-        Handler = CreateHandler(origin, options);
+        Handler = CreateHandler(origin, options, cookieContainer);
         Client = new HttpClient(Handler, disposeHandler: false)
         {
             // 超时由 AxiosClient 按请求统一控制，避免 Handler 级超时干扰
@@ -34,14 +47,17 @@ internal sealed class PooledEndpoint : IDisposable
         };
     }
 
-    private static HttpMessageHandler CreateHandler(string origin, ConnectionPoolOptions options)
+    private static HttpMessageHandler CreateHandler(
+        string origin,
+        ConnectionPoolOptions options,
+        CookieContainer? cookieContainer)
     {
         if (options.HandlerFactory is null)
         {
-            return DefaultHandlerFactory.Create(options);
+            return DefaultHandlerFactory.Create(options, cookieContainer);
         }
 
-        var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options);
+        var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options, cookieContainer);
         var handler = options.HandlerFactory(context);
 
         if (handler is null)
@@ -71,6 +87,7 @@ internal sealed class PooledEndpoint : IDisposable
 
     public void Release()
     {
+        var retire = false;
         lock (SyncRoot)
         {
             if (ActiveLeases > 0)
@@ -79,6 +96,19 @@ internal sealed class PooledEndpoint : IDisposable
             }
 
             LastUsedUtc = DateTime.UtcNow;
+
+            if (DisposeWhenIdle && ActiveLeases == 0 && !IsDisposed)
+            {
+                IsDisposed = true;
+                retire = true;
+            }
+        }
+
+        if (retire)
+        {
+            // 池已关闭：归还租约的同时把自己从池里摘掉并释放，避免「关闭后永久挂着一个 Handler」。
+            _owner.Forget(this);
+            DisposeClientAndHandler();
         }
     }
 
@@ -92,6 +122,21 @@ internal sealed class PooledEndpoint : IDisposable
             }
 
             IsDisposed = true;
+        }
+
+        DisposeClientAndHandler();
+    }
+
+    private void DisposeClientAndHandler()
+    {
+        try
+        {
+            // HttpClient 自身也持有取消计时器等资源（Handler 以 disposeHandler:false 传入，不会被连带释放）
+            Client.Dispose();
+        }
+        catch
+        {
+            // 忽略：关闭阶段的异常不应影响池的清理
         }
 
         try

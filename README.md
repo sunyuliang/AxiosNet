@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-183%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-236%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -588,8 +588,9 @@ catch (AxiosException ex)
 await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 ```
 
-- `MaxContentLength` 对普通（缓冲）响应是**边读边累计**：越界立即中止并释放连接，不会先把 8 MB 全读进内存再判断；对 `ResponseType.Stream` 则在拿到响应头时按声明的 `Content-Length` 判断，声明超限直接失败（未声明长度时不做额外拦截）。
+- `MaxContentLength` 对普通（缓冲）响应是**边读边累计**：越界立即中止并释放连接，不会先把 8 MB 全读进内存再判断；对 `ResponseType.Stream` 则是"声明长度先预检 + 读取时边读边计数"两层：声明超限时连响应头都不读正文就失败，chunked / 未声明长度的响应也会在累计越界的那一刻让 `Read`/`ReadAsync` 抛出 `ERR_BAD_RESPONSE`。
 - `MaxBodyLength` 在发送前按 `Content.Headers.ContentLength` 判断，只对能算出长度的请求体生效（JSON / 表单 / `byte[]` / `FormFile`）；自定义的未知长度 `HttpContent` 不做拦截。
+- 这四个限制项的**负值会抛 `ERR_BAD_OPTION_VALUE`**（此前的实现把负值静默当作"不限制"，调用方会以为限制生效了）。`MaxRate = 0` 等价于不限速，`Timeout = TimeSpan.Zero` 表示不超时。
 
 ## 自定义序列化与数据转换
 
@@ -822,6 +823,8 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
 > 流式响应（`ResponseType.Stream`）的超时覆盖到正文读取结束：请求返回后，在流上继续读超过 `Timeout` 同样抛 `ECONNABORTED`。注意这是**全程总预算**（建连 + 等响应头 + 读正文一起算），不是单次读写的空闲超时——响应头阶段耗时也会从正文剩余预算里扣除；需要"长连接式"的空闲超时请自行用 `CancellationToken` 控制。令牌是交给每一次底层读写的，同步 `Read`/`Write`/`Flush` 同样生效（内部实现为对异步核心的阻塞等待，读取过程中触发超时/取消会立刻打断），只是它会占住当前线程，能用 `ReadAsync` 的场景优先用 `ReadAsync`。
+>
+> 超时值上限约 **49.7 天**（底层计时器是 `uint.MaxValue-1` 毫秒）：超过这个值会**收敛到上限**而不是抛异常，因此 `TimeSpan.MaxValue` 也是安全的；真正的无限超时用 `Timeout = TimeSpan.Zero`。负值抛 `ERR_BAD_OPTION_VALUE`。取消/超时异常会保留底层 `OperationCanceledException` 作为 `Cause`，`AxiosException.ToJson()` 与日志都能看到触发点。
 
 ## 网络连接池
 
@@ -853,6 +856,8 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
     AutomaticDecompression = true,          // gzip/deflate/br
+    MaxEndpointCount = 1024,                // origin 节点数上限（0/负数 = 不限制）
+    UseCookies = false,                     // 打开后整个池共用一份 CookieContainer
 });
 
 // 2) 推荐：全局共享一个池给多个客户端
@@ -874,6 +879,12 @@ sharedPool.EvictIdleEndpoints();
 > fail-fast：共享池的连接行为（重定向 / 代理 / 凭据 / Cookie / 池选项）在创建池时已固定。在共享池 client 的 defaults 上设置 `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` / `PoolOptions`，或给 `AxiosClient` 同时传 `pool` 与 `poolOptions`，都会抛 `ERR_BAD_OPTION_VALUE` 而不是静默忽略——这些项请在创建池的 `ConnectionPoolOptions` 上配置，或让该 client 自建池（不传 `pool`）。
 >
 > 两个默认行为：未显式设置 `Proxy` 时池**不使用系统/环境代理**（避免环境变量带来的意外路由），需要显式走系统代理时设 `Proxy = HttpClient.DefaultProxy`；`EvictionInterval ≤ 0` 时不启动后台驱逐定时器（只能手动 `EvictIdleEndpoints()`）。池构造时会克隆传入的 options，`pool.Options` 也返回副本——事后修改自己持有的对象不影响已建成的池。
+>
+> `MaxEndpointCount` 是资源面护栏：目标主机若来自用户输入（短链、webhook、多租户自定义域名），origin 节点数就是可被放大的面。达到上限时先驱逐最久未使用的空闲节点；一个都驱逐不掉（全部在途）才抛 `InvalidOperationException`，不会悄悄丢请求。
+>
+> `UseCookies = true` 时整个池**共用一份** `CookieContainer`（不再每个 origin 一份）：Cookie 的隔离维度是域/路径而不是端口，共用之后 `auth.example.com` 种下的会话才能被 `api.example.com` 带上，与浏览器/axios 的 `withCredentials` 语义一致，不同站点之间仍由域匹配隔离。
+>
+> `Dispose()` 是**优雅关闭**：空闲节点立即释放，仍有请求在途的节点等最后一条租约归还时自行回收——关闭客户端不会把在途请求打成 `ObjectDisposedException`。需要立刻掐断全部连接用 `Clear()`。
 
 > 性能要点：顺序/并发请求都会复用已建立的 TCP 连接（仓库测试与示例实测：5 个顺序请求只建立 1 条 TCP；6 个并发慢请求在 `MaxConnectionsPerServer=2` 下峰值并发恰好为 2）。应用关闭时 `Dispose()` 池即可释放全部连接；共享池不会因为单个 client 释放而被销毁（仅池拥有者负责释放）。
 
@@ -998,7 +1009,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 183 个用例（共 366 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 236 个用例（共 472 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1011,7 +1022,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 183 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 366 次）
+# 运行全部 236 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 472 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1038,6 +1049,7 @@ dotnet build AxiosNet.slnx -c Release
 - 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null、与 pool/poolOptions 及实例级选项的 fail-fast
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 - JSON 可插拔（`JsonCustomizationTests`）：自定义 `IAxiosJsonSerializer` 驱动请求/响应/dynamic/表单展平、实例级 `JsonSerializerOptions`、transform 列表并发增删
+- 安全与加固（`HardeningTests`）：请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖、流式正文截断与 `Timeout=0` 下的统一 `ERR_NETWORK`、超大 `Timeout` 收敛到 49.7 天、负值限制项 fail-fast、params 落在 fragment 之前、`PostAsync(url, null)` 的 `ArgumentNullException`、流式与 chunked 的 `maxContentLength`、跨 origin 共享 Cookie、取消异常保留 `Cause`、params 传 `JsonElement`、池 origin 上限与优雅 `Dispose`（在途请求不被关闭打断）
 
 ## 项目结构
 
@@ -1065,7 +1077,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 20 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器 + DNS 刷新）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（183 个用例 × net6.0 / net8.0 双目标 = 366 次执行）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（236 个用例 × net6.0 / net8.0 双目标 = 472 次执行）
 ```
 
 ## 与 axios 的差异说明
@@ -1082,7 +1094,10 @@ dotnet build AxiosNet.slnx -c Release
 8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
-11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`。
+11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
+12. **请求头写入即校验**：头部名必须是 RFC 7230 token、取值不允许出现 `CR` / `LF` / `NUL`，否则 `AxiosHeaders.Set` 抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
+13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
+14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）。
 
 
 ## License

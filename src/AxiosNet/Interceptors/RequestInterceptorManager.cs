@@ -7,7 +7,16 @@ internal sealed record RequestInterceptor(
 
 /// <summary>
 /// 请求拦截器管理器，对应 axios.interceptors.request。
-/// 注意：与 axios 一致，请求拦截器按注册顺序的逆序执行。
+/// <para>
+/// 执行顺序与 axios 一致：按注册顺序的**逆序**执行（后注册的先执行）。
+/// </para>
+/// <para>
+/// <b>与 axios 的一处有意分歧</b>：<see cref="RequestInterceptor.OnRejected"/> 只捕获
+/// <b>同一拦截器自己的 <c>OnFulfilled</c></b> 抛出的异常，不捕获发送阶段（建连 / 超时 / 取消 / 网络）的错误。
+/// axios 里请求拦截器的 rejected 处在同一条链上，因此也能兜住 dispatch 异常，但它返回的 config 会被
+/// 当作"再发一次请求"——一个只做日志的 rejected 就会把 POST 静默重发一遍。
+/// 这里选择更窄也更可预期的语义：要感知发送错误，请用响应拦截器的 <c>OnRejected</c>（它能拿到所有异常）。
+/// </para>
 /// </summary>
 public sealed class RequestInterceptorManager
 {

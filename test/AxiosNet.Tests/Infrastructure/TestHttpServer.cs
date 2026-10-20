@@ -24,7 +24,8 @@ public sealed record TestResponse(
     IReadOnlyDictionary<string, string>? Headers = null,
     bool CloseConnection = false,
     long? ContentLengthOverride = null,
-    TimeSpan? BodyDelay = null);
+    TimeSpan? BodyDelay = null,
+    bool Chunked = false);
 
 /// <summary>
 /// 基于 TcpListener 的极简 HTTP/1.1 测试服务器：
@@ -331,7 +332,17 @@ public sealed class TestHttpServer : IAsyncDisposable
 
         var sb = new StringBuilder();
         sb.Append("HTTP/1.1 ").Append(response.StatusCode).Append(' ').Append(reason).Append("\r\n");
-        sb.Append("Content-Length: ").Append(declaredLength).Append("\r\n");
+
+        // Chunked：不声明长度，用于验证「服务端未声明 Content-Length 时」的路径。
+        if (response.Chunked)
+        {
+            sb.Append("Transfer-Encoding: chunked\r\n");
+        }
+        else
+        {
+            sb.Append("Content-Length: ").Append(declaredLength).Append("\r\n");
+        }
+
         sb.Append("Content-Type: ").Append(response.ContentType).Append("\r\n");
 
         if (response.Headers is not null)
@@ -360,10 +371,31 @@ public sealed class TestHttpServer : IAsyncDisposable
             && !string.Equals(requestMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
             && response.StatusCode != 204)
         {
-            await stream.WriteAsync(body);
+            if (response.Chunked)
+            {
+                await WriteChunkedBodyAsync(stream, body);
+            }
+            else
+            {
+                await stream.WriteAsync(body);
+            }
         }
 
         await stream.FlushAsync();
+    }
+
+    private static async Task WriteChunkedBodyAsync(NetworkStream stream, byte[] body)
+    {
+        const int chunkSize = 4096;
+        for (var offset = 0; offset < body.Length; offset += chunkSize)
+        {
+            var count = Math.Min(chunkSize, body.Length - offset);
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(count.ToString("X") + "\r\n"));
+            await stream.WriteAsync(body.AsMemory(offset, count));
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("\r\n"));
+        }
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("0\r\n\r\n"));
     }
 
     private void UpdatePeak(int active)

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Globalization;
+using System.Text.Json;
 
 namespace AxiosNet.Internal;
 
@@ -23,15 +24,24 @@ internal static class UrlBuilder
 
         var combined = Combine(baseAddress, url);
 
+        // 查询串必须拼在 fragment 之前：url 自带 "#top" 时直接追加会变成
+        // "http://a.com/p#top?q=1"——整个查询串落进 fragment，永远发不到服务端
+        // （axios 的 buildURL 也是先切 hash、拼完再补回）。
+        var hashIndex = combined.IndexOf('#');
+        var fragment = hashIndex >= 0 ? combined[hashIndex..] : string.Empty;
+        var target = hashIndex >= 0 ? combined[..hashIndex] : combined;
+
         // 自定义序列化器（对应 axios paramsSerializer）返回的串允许带前导 ?/&，这里统一去掉。
         var query = serializer is null
             ? ParamsSerializer.Serialize(queryParams)
             : NormalizeQuery(serializer(queryParams));
         if (query.Length > 0)
         {
-            var separator = combined.Contains('?') ? "&" : "?";
-            combined = combined + separator + query;
+            var separator = target.Contains('?') ? "&" : "?";
+            target = target + separator + query;
         }
+
+        combined = fragment.Length > 0 ? target + fragment : target;
 
         try
         {
@@ -127,7 +137,13 @@ internal static class ParamsSerializer
         }
 
         var pairs = new List<KeyValuePair<string, string>>(8);
-        if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
+        if (paramsObj is JsonElement rootElement)
+        {
+            // 直接传 JsonElement（从 JsonDocument / JsonSerializer 拿到的查询片段）必须按 JSON 树展开；
+            // 走反射兜底只会把 JsonElement 自己的属性（ValueKind / RawText…）序列化出去。
+            AppendJsonElement(null, rootElement, pairs);
+        }
+        else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
         {
             // ExpandoObject（dynamic）等仅实现泛型字典的类型
             foreach (var entry in stringKeyedDictionary)
@@ -163,6 +179,12 @@ internal static class ParamsSerializer
         // 与 axios 一致：null 直接跳过
         if (value is null)
         {
+            return;
+        }
+
+        if (value is JsonElement element)
+        {
+            AppendJsonElement(prefix, element, pairs);
             return;
         }
 
@@ -214,6 +236,64 @@ internal static class ParamsSerializer
             Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs);
         }
     }
+
+    /// <summary>
+    /// 按 JSON 树展开查询参数，规则与表单展平一致：
+    /// 嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、null 跳过。
+    /// </summary>
+    private static void AppendJsonElement(string? prefix, JsonElement element, List<KeyValuePair<string, string>> pairs)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    AppendJsonElement(
+                        prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]",
+                        property.Value,
+                        pairs);
+                }
+
+                break;
+
+            case JsonValueKind.Array:
+            {
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs);
+                    index++;
+                }
+
+                break;
+            }
+
+            case JsonValueKind.String:
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                if (prefix is null)
+                {
+                    // 根标量没有可表达的键名，忽略而不是伪造一个 key。
+                    break;
+                }
+
+                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(JsonScalarText(element))));
+                break;
+
+            default:
+                // null / undefined：与 axios 一致，直接跳过。
+                break;
+        }
+    }
+
+    private static string JsonScalarText(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString() ?? string.Empty,
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => element.GetRawText()
+    };
 
     private static bool IsScalar(object value)
     {

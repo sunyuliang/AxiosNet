@@ -3,13 +3,18 @@ using AxiosNet.Pooling;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 流式响应的超时包装：把「请求总超时」延续到响应体读取阶段。
+/// 流式响应的正文包装：把「请求总超时」延续到响应体读取阶段，并统一正文阶段的取消/IO 异常。
 /// <para>
 /// 非流式响应在库内部就把正文读完，<see cref="AxiosConfig.Timeout"/> 天然覆盖；
 /// 流式响应把正文交给调用方读取，若不额外包一层，超时在拿到响应头后就失效了。
 /// 这里用剩余的 timeout 建一个 CTS，并把「外部取消 + 超时 + 本次调用传入的令牌」链接后
 /// 交给底层的每一次读写/Flush：超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>，
 /// 调用方自己的 token 取消则原样抛 <see cref="OperationCanceledException"/>。
+/// </para>
+/// <para>
+/// <b>无条件包装</b>（<see cref="AxiosConfig.Timeout"/> 为 0 时 <c>remaining</c> 传 <c>null</c>）：
+/// 外部取消的翻译与正文阶段 <see cref="IOException"/> 的翻译不能只在「设了超时」时才生效，
+/// 否则同一个断连场景会因为 Timeout 是否为 0 而抛出两种不同的异常类型。
 /// </para>
 /// <para>
 /// 关键点：令牌必须交给**底层那一次 I/O**，而不是在发起前判断一次。
@@ -31,9 +36,13 @@ internal sealed class TimeoutStream : Stream
     private readonly CancellationTokenSource _linkedCts;
     private int _disposed;
 
+    /// <summary>
+    /// 包装流式正文。<paramref name="remaining"/> 为剩余超时预算，<c>null</c> 表示不超时
+    /// （此时仍处理外部取消与 IO 异常翻译）。
+    /// </summary>
     public TimeoutStream(
         Stream inner,
-        TimeSpan remaining,
+        TimeSpan? remaining,
         CancellationToken externalToken,
         AxiosConfig config,
         HttpRequestMessage request)
@@ -44,7 +53,12 @@ internal sealed class TimeoutStream : Stream
         _externalToken = externalToken;
 
         _timeoutCts = new CancellationTokenSource();
-        _timeoutCts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        if (remaining is TimeSpan budget)
+        {
+            // 预算已耗尽时给 0 延迟（立即取消），语义等同「超时已到」。
+            _timeoutCts.CancelAfter(Timeouts.Clamp(budget > TimeSpan.Zero ? budget : TimeSpan.Zero));
+        }
+
         _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken, _timeoutCts.Token);
     }
 
@@ -64,7 +78,7 @@ internal sealed class TimeoutStream : Stream
 
     /// <summary>
     /// 同步读：阻塞等待异步核心。为了不出现「读前预检一次、读中就断不掉」的洞，
-    /// 这里不再走 <c>_inner.Read</c>，而是把同一条带令牌的异步路径同步等待掉。
+    /// 这里不走 <c>_inner.Read</c>，而是把同一条带令牌的异步路径同步等待掉。
     /// </summary>
     public override int Read(byte[] buffer, int offset, int count)
         => BlockingWait.Wait(ReadCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
@@ -85,10 +99,16 @@ internal sealed class TimeoutStream : Stream
         {
             return await _inner.ReadAsync(buffer, token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            ThrowIfTimedOutOrCanceled(callerToken);
+            ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
+        }
+        catch (IOException ex)
+        {
+            // 正文读到一半连接断了（HttpIOException / RST / 长度不符）：与非流式路径保持同一错误模型，
+            // 而不是把裸 IOException 漏给调用方。
+            throw AxiosException.Network(_config, _request, ex);
         }
         finally
         {
@@ -113,10 +133,14 @@ internal sealed class TimeoutStream : Stream
         {
             await _inner.WriteAsync(buffer, token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            ThrowIfTimedOutOrCanceled(callerToken);
+            ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
+        }
+        catch (IOException ex)
+        {
+            throw AxiosException.Network(_config, _request, ex);
         }
         finally
         {
@@ -135,10 +159,14 @@ internal sealed class TimeoutStream : Stream
         {
             await _inner.FlushAsync(token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            ThrowIfTimedOutOrCanceled(callerToken);
+            ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
+        }
+        catch (IOException ex)
+        {
+            throw AxiosException.Network(_config, _request, ex);
         }
         finally
         {
@@ -172,7 +200,7 @@ internal sealed class TimeoutStream : Stream
     /// 调用方自己的令牌取消时什么也不做，由调用处的 <c>throw;</c> 原样抛出
     /// <see cref="OperationCanceledException"/>（保留原始堆栈）。
     /// </summary>
-    private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken)
+    private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken, Exception inner)
     {
         if (callerToken.IsCancellationRequested)
         {
@@ -181,12 +209,12 @@ internal sealed class TimeoutStream : Stream
 
         if (_externalToken.IsCancellationRequested)
         {
-            throw AxiosException.Canceled(_config, _request);
+            throw AxiosException.Canceled(_config, _request, inner);
         }
 
         if (_timeoutCts.IsCancellationRequested)
         {
-            throw AxiosException.Timeout(_config, _request);
+            throw AxiosException.Timeout(_config, _request, inner);
         }
     }
 
@@ -228,22 +256,30 @@ internal sealed class TimeoutStream : Stream
 }
 
 /// <summary>
-/// 把连接池租约的生命周期绑定到响应流上：
+/// 流式响应的所有权包装：把「连接池租约」与「<see cref="HttpResponseMessage"/>」的生命周期
+/// 绑定到调用方手里的响应流上。
 /// <para>
-/// 非流式响应在读完正文后立刻归还租约；流式响应的正文还在调用方手里，
+/// 非流式响应在读完正文后立刻归还租约并释放消息；流式响应的正文还在调用方手里，
 /// 此时归还租约会让「该 origin 空闲」成立，后台驱逐可能把仍在下载的连接节点回收掉。
 /// 因此流式响应把租约延后到流 Dispose 时归还，同时让统计里的 ActiveLeases 反映真实在读的下载数。
 /// </para>
+/// <para>
+/// 同理，<see cref="HttpResponseMessage"/> 也不能提前释放（正文流从它取出来），
+/// 而此前流式路径只释放了正文、消息本体永久悬空——这里一并在流 Dispose 时释放。
+/// 注入自定义 Handler 的实例没有租约，<c>lease</c> 传 <c>null</c> 即可。
+/// </para>
 /// </summary>
-internal sealed class LeaseHoldingStream : Stream
+internal sealed class ResponseStreamOwner : Stream
 {
     private readonly Stream _inner;
-    private readonly PoolLease _lease;
+    private readonly HttpResponseMessage? _message;
+    private readonly PoolLease? _lease;
     private int _disposed;
 
-    public LeaseHoldingStream(Stream inner, PoolLease lease)
+    public ResponseStreamOwner(Stream inner, HttpResponseMessage? message, PoolLease? lease)
     {
         _inner = inner;
+        _message = message;
         _lease = lease;
     }
 
@@ -289,14 +325,7 @@ internal sealed class LeaseHoldingStream : Stream
     {
         if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
         {
-            try
-            {
-                _inner.Dispose();
-            }
-            finally
-            {
-                _lease.Dispose();
-            }
+            ReleaseAll();
         }
 
         base.Dispose(disposing);
@@ -312,10 +341,35 @@ internal sealed class LeaseHoldingStream : Stream
             }
             finally
             {
-                _lease.Dispose();
+                ReleaseOwnership();
             }
         }
 
         await base.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private void ReleaseAll()
+    {
+        try
+        {
+            _inner.Dispose();
+        }
+        finally
+        {
+            ReleaseOwnership();
+        }
+    }
+
+    /// <summary>释放响应消息与租约；两者都不能因为前一个抛异常而被跳过。</summary>
+    private void ReleaseOwnership()
+    {
+        try
+        {
+            _message?.Dispose();
+        }
+        finally
+        {
+            _lease?.Dispose();
+        }
     }
 }

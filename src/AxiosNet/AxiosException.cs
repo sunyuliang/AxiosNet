@@ -85,18 +85,18 @@ public sealed class AxiosException : Exception
         };
     }
 
-    internal static AxiosException Timeout(AxiosConfig config, HttpRequestMessage request)
+    internal static AxiosException Timeout(AxiosConfig config, HttpRequestMessage request, Exception? inner = null)
     {
         var message = string.IsNullOrWhiteSpace(config.TimeoutMessage)
             ? $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded"
             : config.TimeoutMessage!;
 
-        return new AxiosException(message, ErrConnAborted, config, request, null, null);
+        return new AxiosException(message, ErrConnAborted, config, request, null, inner);
     }
 
-    internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request)
+    internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, Exception? inner = null)
     {
-        return new AxiosException("Request canceled", ErrCanceled, config, request, null, null);
+        return new AxiosException("Request canceled", ErrCanceled, config, request, null, inner);
     }
 
     internal static AxiosException Network(AxiosConfig config, HttpRequestMessage? request, Exception inner)

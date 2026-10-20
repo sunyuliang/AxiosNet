@@ -48,10 +48,26 @@ public sealed class ConnectionPoolOptions
     public int MaxAutomaticRedirections { get; set; } = 5;
 
     /// <summary>是否使用 Cookie 容器。</summary>
+    /// <remarks>
+    /// 打开后整个池共用<b>一个</b> <see cref="System.Net.CookieContainer"/>（不再是每个 origin 一个）：
+    /// Cookie 的隔离维度是域和路径，不是端口——共用容器才能让
+    /// <c>auth.example.com</c> 种下的会话 Cookie 被 <c>api.example.com</c> 带上，
+    /// 与浏览器/axios 的 withCredentials 语义一致；不同站点之间仍由管家的域匹配规则隔离。
+    /// </remarks>
     public bool UseCookies { get; set; }
 
     /// <summary>是否自动解压 gzip/deflate/br（默认 true）。</summary>
     public bool AutomaticDecompression { get; set; } = true;
+
+    /// <summary>
+    /// 池内 origin 节点（scheme://host:port）数量上限，默认 1024；0 或负数表示不限制。
+    /// <para>
+    /// 每个节点都会建一个 <c>SocketsHttpHandler</c>（持有连接池与定时器），请求目标若来自
+    /// 用户输入（短链解析、webhook 回调、多租户自定义域名），节点数就成了可被放大的资源面。
+    /// 达到上限时先驱逐最久未使用的空闲节点；一个都驱逐不掉（全部在途）则拒绝新 origin。
+    /// </para>
+    /// </summary>
+    public int MaxEndpointCount { get; set; } = 1024;
 
     /// <summary>
     /// 代理。为 null 时池化为 <c>UseProxy = false</c>，即**不使用系统/环境代理**
@@ -95,6 +111,7 @@ public sealed class ConnectionPoolOptions
         MaxAutomaticRedirections = MaxAutomaticRedirections,
         UseCookies = UseCookies,
         AutomaticDecompression = AutomaticDecompression,
+        MaxEndpointCount = MaxEndpointCount,
         Proxy = Proxy,
         Credentials = Credentials,
         ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,

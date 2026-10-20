@@ -179,6 +179,10 @@ public sealed partial class AxiosClient
 
     private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)
     {
+        // PostAsync(url, null) 在重载决议里会落到本方法的调用方（AxiosConfig 比 object 更具体），
+        // 没有这层守卫就是一句 NullReferenceException；这里给出明确的参数错误。
+        ArgumentNullException.ThrowIfNull(config);
+
         // 不能就地修改调用方传入的 config：同一个 config 并发复用时 Url/Method 会互相覆盖。
         var copy = config.Clone();
         copy.Url = url;

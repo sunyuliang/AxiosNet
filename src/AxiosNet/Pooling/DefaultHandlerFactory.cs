@@ -11,7 +11,12 @@ namespace AxiosNet.Pooling;
 /// </summary>
 internal static class DefaultHandlerFactory
 {
-    public static SocketsHttpHandler Create(ConnectionPoolOptions o)
+    /// <param name="o">池选项。</param>
+    /// <param name="cookieContainer">
+    /// 池共享的 Cookie 容器（<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空）。
+    /// 每个 origin 用各自的容器会按端口切割 Cookie，跨子域/换端口的会话就丢了。
+    /// </param>
+    public static SocketsHttpHandler Create(ConnectionPoolOptions o, CookieContainer? cookieContainer = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -32,7 +37,7 @@ internal static class DefaultHandlerFactory
 
         if (o.UseCookies)
         {
-            handler.CookieContainer = new CookieContainer();
+            handler.CookieContainer = cookieContainer ?? new CookieContainer();
         }
 
         if (o.ServerCertificateCustomValidationCallback is not null || o.EnabledSslProtocols is not null)

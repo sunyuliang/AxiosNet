@@ -46,10 +46,17 @@ public class AxiosResponse
 /// </summary>
 public sealed class AxiosResponse<TData> : AxiosResponse
 {
+    /// <summary>
+    /// 已转换成 <typeparamref name="TData"/> 的 Data。
+    /// <para>
+    /// 转换在泛型请求返回时（<see cref="AxiosResponse.AsTyped{TData}"/>）就完成了，
+    /// 因此这里只做拆箱，不再每次读取都跑一遍转换，也不把类型不匹配的检查推迟到属性 getter
+    /// （getter 抛业务异常会让日志、调试器、序列化统统在这里炸掉）。
+    /// </para>
+    /// </summary>
     public new TData? Data
     {
-        // 与 AsTyped 同一套收敛逻辑：类型不匹配抛 ERR_BAD_RESPONSE，而不是裸 InvalidCastException。
-        get => DataCast.To<TData>(base.Data, Config, Request);
+        get => base.Data is null ? default : (TData)base.Data;
         set => base.Data = value;
     }
 }
