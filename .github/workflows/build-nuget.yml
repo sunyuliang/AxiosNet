@@ -153,6 +153,27 @@ jobs:
             exit 1
           fi
 
+      - name: 确认版本尚未发布
+        # 1.0.0/1.0.1 的教训：本地 dotnet nuget push 与 CI 赛跑，本地版抢先落库后
+        # CI 推送全 409 却被 --skip-duplicate 吞掉，随后符号校验拿着 CI 自己构建的
+        # PDB GUID 去查符号服务器，永远 404，表象极其迷惑。NuGet 版本不可变、先到
+        # 先得，双发布方并存时每次发版都会复现——发布前先硬校验，把竞争变成显式失败。
+        run: |
+          set -euo pipefail
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
+          VER="${{ steps.meta.outputs.version }}"
+          URL="https://api.nuget.org/v3-flatcontainer/${ID,,}/${VER}/${ID,,}.${VER}.nupkg"
+          # flat container 地址要求全小写包 id；该端点无条件 302 重定向到 blob 存储，
+          # 必须跟随重定向后按最终状态码判定：200=已存在，404=不存在
+          code="$(curl -sL -o /dev/null -w '%{http_code}' "$URL")"
+          if [ "$code" = "200" ]; then
+            echo "::error::AxiosNet ${VER} 已存在于 nuget.org，CI 拒绝发布。"
+            echo "::error::多半是本地 dotnet nuget push 抢先落库（版本不可变、先到先得）。发布方必须唯一：请只从 CI 打 tag 发布，不要本地 push。"
+            echo "::error::若这是对推送已成功过的 job 的重跑，属预期保护：nupkg 已落库，只需人工补推/核查 snupkg，或递增版本号重新发版。"
+            exit 1
+          fi
+          echo "版本 ${VER} 未被发布（HTTP $code），可以继续"
+
       - name: 换取 nuget.org 短期 API Key（OIDC 受信发布）
         id: nuget-login
         uses: NuGet/login@v1
@@ -165,47 +186,70 @@ jobs:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           set -euo pipefail
-          # 包 + 符号包都用同一把临时 Key（有效期 1 小时）
+          # 包 + 符号包都用同一把临时 Key（有效期 1 小时）。
+          # 故意不用 --skip-duplicate：版本冲突必须响亮失败（上方已有发布前校验兜底），
+          # 静默跳过会让 CI 以为发布成功、符号校验却查一个从未上过的 GUID（1.0.1 事故）。
           dotnet nuget push "artifacts/*.nupkg" \
             --source "$NUGET_SOURCE" \
-            --api-key "$NUGET_API_KEY" \
-            --skip-duplicate
+            --api-key "$NUGET_API_KEY"
           dotnet nuget push "artifacts/*.snupkg" \
             --source "$NUGET_SOURCE" \
-            --api-key "$NUGET_API_KEY" \
-            --skip-duplicate
+            --api-key "$NUGET_API_KEY"
 
       - name: 校验符号已在 nuget.org 符号服务器可见
         # 1.0.0 的教训：nupkg 与 snupkg 都「推送成功」、job 全绿，但符号从未到达符号服务器，
         # 消费者调试时无法 F11 进源码。推送端点不回报符号摄入结果，唯一权威判据是符号服务器本身。
         run: |
           set -euo pipefail
-          DLL="$(dirname "$PACKAGE_PROJECT")/bin/Release/net6.0/AxiosNet.dll"
-          DEBUG_ID="$(python3 - "$DLL" <<'PYEOF'
-          import struct, sys, uuid
-          data = open(sys.argv[1], 'rb').read()
-          i = data.find(b'RSDS')
-          if i < 0:
-              sys.exit('DLL 中找不到 CodeView(RSDS) 记录')
-          g = uuid.UUID(bytes_le=data[i+4:i+20])
-          print(g.hex.upper())
+          # PDB debug id 必须从 nupkg 内实际发布的 DLL 提取（消费者调试器正是按这个 DLL 里的
+          # CodeView 记录请求符号），并按 PE 调试目录解析，不做裸字节搜索。
+          NUPKG="$(ls artifacts/*.nupkg)"
+          DEBUG_ID="$(python3 - "$NUPKG" <<'PYEOF'
+          import struct, sys, uuid, zipfile
+          dll = zipfile.ZipFile(sys.argv[1]).read('lib/net6.0/AxiosNet.dll')
+          e_lfanew = struct.unpack_from('<I', dll, 0x3C)[0]
+          coff = e_lfanew + 4
+          num_sections = struct.unpack_from('<H', dll, coff + 2)[0]
+          opt_size = struct.unpack_from('<H', dll, coff + 16)[0]
+          opt = coff + 20
+          magic = struct.unpack_from('<H', dll, opt)[0]
+          dd = opt + (96 if magic == 0x10B else 112) + 6 * 8  # Debug = 数据目录第 6 项
+          rva, size = struct.unpack_from('<II', dll, dd)
+          sec_table = opt + opt_size
+          foff = None
+          for k in range(num_sections):
+              _, vsize, vaddr, _, roff = struct.unpack_from('<8sIIIIIIHHI', dll, sec_table + k * 40)[:5]
+              if vaddr <= rva < vaddr + vsize:
+                  foff = roff + (rva - vaddr)
+                  break
+          if not size or foff is None:
+              sys.exit('PE 调试目录缺失或 RVA 转换失败')
+          for k in range(size // 28):
+              _, _, _, _, ttype, sz, _, ptr = struct.unpack_from('<IIHHIIII', dll, foff + k * 28)
+              if ttype == 2:  # CODEVIEW
+                  cv = dll[ptr:ptr + sz]
+                  print(uuid.UUID(bytes_le=cv[4:20]).hex.upper())
+                  break
+          else:
+              sys.exit('调试目录中无 CodeView 项')
           PYEOF
           )"
-          echo "PDB debug id: $DEBUG_ID"
+          echo "PDB debug id（来自 nupkg 内 DLL）: $DEBUG_ID"
           # portable PDB 查符号服务器时 age 掩码为 FFFFFFFF（只取 32 位 GUID）；SymbolChecksum 头必须带
           # （符号服务器只验该头存在性，缺头一律 403，与符号是否存在无关）
           URL="https://symbols.nuget.org/download/symbols/AxiosNet.pdb/${DEBUG_ID}FFFFFFFF/AxiosNet.pdb"
-          # 符号摄入有秒级~分钟级延迟，轮询至多 5 分钟；302=已收录，200=直连
-          for i in $(seq 1 30); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' -H "SymbolChecksum: SHA256:$DEBUG_ID" "$URL")"
-            if [ "$code" = "302" ] || [ "$code" = "200" ]; then
+          # 符号摄入有秒级~分钟级延迟，且 symbols.nuget.org 边缘节点有抖动（302 探测与实际下载
+          # 可能不一致），轮询至多 10 分钟、以实际下载为准；302=已收录，200=直连
+          for i in $(seq 1 60); do
+            code="$(curl -sL -o /dev/null -w '%{http_code}' -H "SymbolChecksum: SHA256:$DEBUG_ID" "$URL")"
+            if [ "$code" = "200" ]; then
               echo "符号已就绪，源码映射可用：$URL"
               exit 0
             fi
-            echo "符号尚不可见（HTTP $code，$i/30），10s 后重试…"
+            echo "符号尚不可见（HTTP $code，$i/60），10s 后重试…"
             sleep 10
           done
-          echo "::error::符号推送后 5 分钟仍不可见，源码映射不会生效：$URL"
+          echo "::error::符号推送后 10 分钟仍不可见，源码映射不会生效：$URL"
           exit 1
 
       - name: 写入运行摘要
