@@ -29,6 +29,7 @@ public sealed class HttpConnectionPool : IDisposable
     {
         // 克隆：调用方之后修改自己持有的 options 对象，不应影响已建成的池
         _options = (options ?? new ConnectionPoolOptions()).Clone();
+        ValidateOptions(_options);
 
         // 整个池共用一个 Cookie 容器：Cookie 的隔离维度是域/路径而不是端口，
         // 每个 origin 各持一个容器会把跨子域、换端口的会话直接切断。
@@ -41,6 +42,46 @@ public sealed class HttpConnectionPool : IDisposable
                 state: null,
                 dueTime: _options.EvictionInterval,
                 period: _options.EvictionInterval);
+        }
+    }
+
+    /// <summary>
+    /// 构造期校验：这些值非法时 <see cref="SocketsHttpHandler"/> 会在「首次请求」抛裸
+    /// <see cref="ArgumentOutOfRangeException"/>，既不是统一错误模型、也不在配置处暴露。
+    /// </summary>
+    internal static void ValidateOptions(ConnectionPoolOptions options, AxiosConfig? config = null)
+    {
+        if (options.MaxConnectionsPerServer <= 0)
+        {
+            throw AxiosException.InvalidOption(
+                $"MaxConnectionsPerServer 必须大于 0（当前 {options.MaxConnectionsPerServer}）。", config);
+        }
+
+        if (options.PooledConnectionLifetime < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption(
+                "PooledConnectionLifetime 不能为负（0 表示连接不复用；不限生命周期请用 Timeout.InfiniteTimeSpan）。", config);
+        }
+
+        if (options.PooledConnectionIdleTimeout < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption("PooledConnectionIdleTimeout 不能为负（0 表示不保留空闲连接）。", config);
+        }
+
+        if (options.ConnectTimeout <= TimeSpan.Zero && options.ConnectTimeout != Timeout.InfiniteTimeSpan)
+        {
+            throw AxiosException.InvalidOption("ConnectTimeout 必须大于 0；不限请用 Timeout.InfiniteTimeSpan。", config);
+        }
+
+        if (options.MaxAutomaticRedirections <= 0)
+        {
+            throw AxiosException.InvalidOption(
+                "MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
+        }
+
+        if (options.IdleHandlerLifetime < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption("IdleHandlerLifetime 不能为负。", config);
         }
     }
 
@@ -83,6 +124,17 @@ public sealed class HttpConnectionPool : IDisposable
 
             if (endpoint.TryAcquire())
             {
+                // 租用与关闭的竞态：GetOrAdd 可能在池已 Dispose 之后才插入新节点
+                // （关闭迭代没看到它），此时 TryAcquire 仍会成功。不拦截的话，
+                // 这条租约归还时节点既不在字典里、也没有 DisposeWhenIdle 标记，
+                // Handler 与连接永久泄漏。带上标记再释放，让节点自行摘除。
+                if (Volatile.Read(ref _disposed) == 1)
+                {
+                    endpoint.DisposeWhenIdle = true;
+                    endpoint.Release();
+                    throw new ObjectDisposedException(nameof(HttpConnectionPool));
+                }
+
                 Interlocked.Increment(ref _totalLeases);
                 return new PoolLease(this, endpoint);
             }

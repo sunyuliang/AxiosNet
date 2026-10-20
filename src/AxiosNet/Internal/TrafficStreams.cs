@@ -188,7 +188,8 @@ internal sealed class ProgressReadStream : Stream
         _meter.Report(force: false, upload: false);
     }
 
-    public override void Flush() => _inner.Flush();
+    // 同步 Flush 同样阻塞等待异步核心：不把同步 I/O 直接压给内层流。
+    public override void Flush() => BlockingWait.Wait(_inner.FlushAsync(CancellationToken.None));
 
     public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
 
@@ -279,7 +280,8 @@ internal sealed class ProgressWriteStream : Stream
         _meter.Report(force: false, upload: true);
     }
 
-    public override void Flush() => _inner.Flush();
+    // 同步 Flush 同样阻塞等待异步核心：上传流的 Flush 可能真正阻塞在网络写入上。
+    public override void Flush() => BlockingWait.Wait(_inner.FlushAsync(CancellationToken.None));
 
     public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
 

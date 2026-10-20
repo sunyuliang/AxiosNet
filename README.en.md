@@ -136,6 +136,8 @@ string url = http.GetUri(c =>
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
 
+> `GetUri` returns the **actual wire form**: percent-encoded unreserved characters in the query (`%41`→`A`, `%7E`→`~`) are normalized by `System.Uri` per RFC 3986, exactly like the request line that goes out; use the `GetUri` result as the signing input for pre-signed URLs.
+
 ## axios ↔ AxiosNet mapping
 
 | axios (JS) | AxiosNet (.NET) |
@@ -144,7 +146,7 @@ string url = http.GetUri(c =>
 | `axios(url, config)` | `client.GetAsync(url, c => { ... })` |
 | `config.method` | `c.Method` (`System.Net.Http.HttpMethod`, defaults to `HttpMethod.Get`) |
 | `axios.get/post/put/patch/delete/head/options` | `GetAsync / PostAsync / PutAsync / PatchAsync / DeleteAsync / HeadAsync / OptionsAsync` |
-| `axios.create(config)` | `Axios.Create(config)` |
+| `axios.create(config)` | `Axios.Create(config)` / `Axios.Create(config, sharedPool)` (the second argument accepts a shared pool) |
 | `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` / `Axios.GetUri(...)` |
 | `axios.postForm / putForm / patchForm` | `PostFormAsync / PutFormAsync / PatchFormAsync` (multipart by default) |
 | `axios.defaults` | `Axios.Defaults` / `client.Defaults` |
@@ -218,7 +220,7 @@ var config = new AxiosConfig
 
 The default JSON options are **web-style** (camelCase output, case-insensitive input), matching JS/axios conventions. Precedence is "per request → instance defaults → global `AxiosJson.Options`"; see [Custom JSON serialization](#custom-json-serialization) for wiring up a custom serializer.
 
-> `withCredentials` / `proxy` / `credentials` / `maxRedirects` are **instance-level** settings: the pool handler is created when the `AxiosClient` is constructed, so these only take effect on instance defaults. To avoid silent misconfiguration, setting any of these four on a **single request** throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) immediately, telling you to move it into the instance defaults passed to `Axios.Create(...)`.
+> `withCredentials` / `proxy` / `credentials` / `maxRedirects` / `poolOptions` are **instance-level** settings: the pool handler is created when the `AxiosClient` is constructed, so these only take effect on instance defaults. To avoid silent misconfiguration, setting any of them on a **single request** throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) immediately, telling you to move it into the instance defaults passed to `Axios.Create(...)`. To drop one of the instance default headers on a single request, use `config.RemoveHeaders.Add("X-Foo")`.
 >
 > The same applies to an `AxiosClient(pool: ...)` sharing a pool: these four settings and `PoolOptions` apply to the **pool**, not to an individual instance, so setting them on a shared-pool client's defaults also throws `ERR_BAD_OPTION_VALUE` immediately. Configure them on the `ConnectionPoolOptions` used to create the pool instead (see [Connection pool](#connection-pool)).
 >
@@ -228,11 +230,11 @@ The default JSON options are **web-style** (camelCase output, case-insensitive i
 
 The body encoding is decided **solely by `ContentType`, independent of the runtime type of `data`**: a dictionary is not automatically treated as a form, and an object does not change encoding just because it implements a particular interface.
 
-| `ContentType` | Structured data (objects / dictionaries / dynamic / collections) | `string` / `byte[]` / `Stream` / `HttpContent` |
+| `ContentType` | Structured data (objects / dictionaries / dynamic / collections) | `string` / `byte[]` / `Memory<byte>` / `ArraySegment<byte>` / `Stream` / `HttpContent` |
 | --- | --- | --- |
 | `application/json` (default) | JSON text | Sent as-is |
 | `application/x-www-form-urlencoded` | Key-value form (nested `a[b]=v`, arrays `a[]=v`, nulls skipped) | Sent as-is (treated as an already-encoded form string) |
-| `multipart/form-data` | Fields + file parts (`FormFile` / `Stream` / `byte[]` / `HttpContent`; arrays expand into repeated same-name parts) | Sent as-is (a `MultipartFormDataContent` can also be passed directly) |
+| `multipart/form-data` | Fields + file parts (`FormFile` / `Stream` / `byte[]` / memory types / `HttpContent`; arrays expand into repeated same-name parts) | Throws `ERR_BAD_OPTION_VALUE` (header/body contradiction); pass a pre-serialized multipart body as `HttpContent`, or give `Content-Type` a `boundary` parameter |
 | Anything else (`text/plain`, `application/xml`, …) | Still written as JSON text; only the header differs | Sent as-is |
 
 ```csharp
@@ -290,7 +292,8 @@ Additional notes on multipart:
 
 - **Field names** come from the object's property names or the dictionary's keys (honoring `JsonSerializerOptions.PropertyNamingPolicy` and recognizing `[JsonPropertyName]` / `[JsonIgnore]`); nested objects become `meta[author]`; arrays/collections expand into **repeated same-name parts** (bindable directly by ASP.NET Core `IFormFileCollection`, FastAPI, and PHP).
 - **When the root is an array of files** there is no key name; use `FormFile.FieldName` to name the part: `new[] { new FormFile(...) { FieldName = "files" } }`.
-- **File names**: `FormFile.FileName` determines `filename`; a bare `Stream`/`byte[]` is also sent as a file part (the file name falls back to the field name).
+- **File names**: `FormFile.FileName` determines `filename`; a bare `Stream`/`byte[]`/`Memory<byte>` is also sent as a file part (zero-copy, file name falls back to the field name).
+- **Your own `HttpContent` part**: when the part already carries a `Content-Disposition` it is preserved as-is (including `filename`) and only a missing `name` is filled in — otherwise the server cannot bind the field.
 - **Boundary**: generated automatically by default; `c.ContentType = "multipart/form-data; boundary=----xxx"` pins a fixed boundary.
 - **Lifetime**: part contents are disposed with the request (on success, failure, and cancellation), so do not reuse a `File.OpenRead(...)` stream outside the request; read it into a `byte[]` first if you need to reuse it.
 
@@ -799,13 +802,13 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | Trigger | axios equivalent |
 | --- | --- | --- |
-| `ERR_BAD_REQUEST` | Response status is 4xx (default validation failure); request body exceeds `MaxBodyLength` | ✅ |
+| `ERR_BAD_REQUEST` | Response status is 4xx (default validation failure); request body exceeds `MaxBodyLength`; request body serialization failed (cycles, converter exceptions — see `ex.Cause`) | ✅ |
 | `ERR_BAD_RESPONSE` | Response status is 5xx; response body cannot be deserialized to the target type (including `dynamic` receiving non-JSON); response body exceeds `MaxContentLength`; generic argument and `responseType` mismatch (e.g. `GetAsync<Stream>` combined with `text`/`arraybuffer`) | ✅ |
 | `ECONNABORTED` | The request exceeded `Timeout` (the message can be replaced via `TimeoutMessage`) | ✅ |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped mid-flight / truncated response, i.e. network-layer failures (see `ex.Cause` for the inner exception) | ✅ |
 | `ERR_CANCELED` | `CancellationToken` cancellation | ✅ |
-| `ERR_INVALID_URL` | Invalid URL (including a relative URL with no `baseURL`) | ✅ |
-| `ERR_BAD_OPTION_VALUE` | Instance-only settings set on a single request (`proxy` / `credentials` / `withCredentials` / `maxRedirects`); connection-level options set on a shared-pool client's defaults; `pool` and `poolOptions` passed together | ✅ (same code) |
+| `ERR_INVALID_URL` | Invalid URL (including a relative URL with no `baseURL`, or a scheme other than `http`/`https`) | ✅ |
+| `ERR_BAD_OPTION_VALUE` | Instance-only settings set on a single request (`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`); connection-level options set on a shared-pool client's defaults; `pool` and `poolOptions` passed together; invalid pool option values (e.g. `MaxConnectionsPerServer <= 0`); raw content (`string` / `byte[]` / `Memory` / `Stream`) passed as `data` while `Content-Type` is `multipart/form-data` without a `boundary` parameter | ✅ (same code) |
 
 ## Timeouts and cancellation
 
@@ -842,6 +845,7 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 ### Usage
 
 ```csharp
+using System.Security.Authentication;
 using AxiosNet.Pooling;
 
 // 1) Every AxiosClient creates its own pool by default, or you can configure it explicitly
@@ -858,6 +862,11 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
     AutomaticDecompression = true,          // gzip/deflate/br
     MaxEndpointCount = 1024,                // cap on origin nodes (0 / negative = unlimited)
     UseCookies = false,                     // when on, one shared CookieContainer for the whole pool
+    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,   // optional: restrict TLS versions
+    ConfigureSslOptions = ssl =>            // optional: client certs / ALPN / cipher suites and other SslClientAuthenticationOptions
+    {
+        // ssl.ClientCertificates.Add(myCert);
+    }
 });
 
 // 2) Recommended: share one global pool across multiple clients
@@ -867,6 +876,7 @@ await using var sharedPool = new HttpConnectionPool(new ConnectionPoolOptions
 });
 using var orderClient  = new AxiosClient(pool: sharedPool);
 using var payClient    = new AxiosClient(pool: sharedPool);
+using var payClient2   = Axios.Create(c => c.BaseAddress = "https://pay.example.com/", sharedPool);  // the static facade takes a shared pool too
 
 // 3) Observe pool state
 ConnectionPoolStatistics stats = sharedPool.GetStatistics();
@@ -885,6 +895,8 @@ sharedPool.EvictIdleEndpoints();
 > With `UseCookies = true` the whole pool shares **one** `CookieContainer` (no longer one per origin): cookies are scoped by domain/path rather than by port, so a session set by `auth.example.com` is sent to `api.example.com`, matching browser / axios `withCredentials` semantics. Cookies of unrelated domains are still isolated by domain matching.
 >
 > `Dispose()` is a **graceful shutdown**: idle nodes are released immediately, while nodes with in-flight requests wait until their last lease is returned — closing a client never turns an in-flight request into `ObjectDisposedException`. Use `Clear()` when you want to cut every connection right now.
+>
+> `AxiosClient.Dispose()` does not interrupt in-flight requests either: while requests are still in flight, disposal of the injected `HttpClient`/`Handler` or the client-owned pool is deferred until the last request finishes (that request performs it), after which no new requests are accepted (`ERR_CANCELED` — never a raw `ObjectDisposedException`).
 
 > Performance notes: sequential and concurrent requests both reuse established TCP connections (measured in the repository tests and samples: 5 sequential requests open only 1 TCP connection; 6 concurrent slow requests with `MaxConnectionsPerServer=2` peak at exactly 2 concurrent). Disposing the pool at shutdown releases all connections; a shared pool is not destroyed when one client is disposed (only the owner disposes it).
 
@@ -1046,10 +1058,10 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Interceptors: snapshot caching (reused when unchanged) and immediate invalidation on Use/Eject/Clear
 - Response reading: close-delimited responses without Content-Length (buffered unknown-length branch), zero-copy return when the length allows exact preallocation
 - Generic routing: `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
-- Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / wrapping the default handler / returning null, plus fail-fast with pool/poolOptions and instance-level options
+- Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
 - Pluggable JSON (`JsonCustomizationTests`): a custom `IAxiosJsonSerializer` driving request/response/dynamic/form flattening, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists
-- Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client)
+- Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
 
 ## Project layout
 

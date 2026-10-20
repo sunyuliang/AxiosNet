@@ -283,10 +283,14 @@ public sealed class RequestBodyTests
         await using var server = TestHttpServer.Start(EchoJson);
         using var client = new AxiosClient();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.PostAsync(
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             server.Url + "upload",
             42,
             c => c.ContentType = "multipart/form-data"));
+
+        Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
+        Assert.IsType<InvalidOperationException>(ex.Cause);
+        Assert.Contains("字段名", ex.Cause!.Message);
     }
 
     private static int CountOccurrences(string text, string value)

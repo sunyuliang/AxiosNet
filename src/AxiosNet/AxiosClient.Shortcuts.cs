@@ -128,6 +128,72 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
 
+    // ------------------------------------------------------------------
+    // CancellationToken 显式重载
+    // CancellationToken 是 struct，没有这些重载时 GetAsync(url, ct) 会被装箱成 object
+    // 落到 data 上，把令牌当请求体序列化。
+    // ------------------------------------------------------------------
+
+    public Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Get, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> GetAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, null, cancellationToken));
+
+    public Task<AxiosResponse> DeleteAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Delete, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> DeleteAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, null, cancellationToken));
+
+    public Task<AxiosResponse> HeadAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Head, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> HeadAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, null, cancellationToken));
+
+    public Task<AxiosResponse> OptionsAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Options, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> OptionsAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, null, cancellationToken));
+
+    public Task<AxiosResponse> PostAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Post, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> PostAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Post, null, cancellationToken));
+
+    public Task<AxiosResponse> PutAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Put, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> PutAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, null, cancellationToken));
+
+    public Task<AxiosResponse> PatchAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(Shortcut(url, HttpMethod.Patch, null, cancellationToken), null);
+
+    public Task<AxiosResponse<T>> PatchAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, null, cancellationToken));
+
+    public Task<AxiosResponse> PostFormAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(FormShortcut(url, HttpMethod.Post, null, cancellationToken, null), null);
+
+    public Task<AxiosResponse<T>> PostFormAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Post, null, cancellationToken, null));
+
+    public Task<AxiosResponse> PutFormAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(FormShortcut(url, HttpMethod.Put, null, cancellationToken, null), null);
+
+    public Task<AxiosResponse<T>> PutFormAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Put, null, cancellationToken, null));
+
+    public Task<AxiosResponse> PatchFormAsync(string url, CancellationToken cancellationToken)
+        => SendAsync(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null), null);
+
+    public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null));
+
     private static AxiosConfig FormShortcut(
         string url,
         HttpMethod method,
@@ -168,6 +234,14 @@ public sealed partial class AxiosClient
         {
             config.CancellationToken = cancellationToken;
         }
+
+        // (object)token 之类的写法仍可能落到 data 上：直接报错，别把令牌序列化成请求体。
+        if (data is CancellationToken)
+        {
+            throw AxiosException.InvalidOption(
+                "CancellationToken 不能作为请求体传入，请使用 cancellationToken 参数。", config);
+        }
+
         if (data is not null)
         {
             config.Data = data;

@@ -34,6 +34,17 @@ internal sealed class TimeoutStream : Stream
     private readonly CancellationToken _externalToken;
     private readonly CancellationTokenSource _timeoutCts;
     private readonly CancellationTokenSource _linkedCts;
+
+    /// <summary>
+    /// 构造时预算就已耗尽（响应头阶段用完了整个 timeout）。
+    /// <para>
+    /// 此时底层 socket 里可能还躺着已经到达的字节：若用 <c>CancelAfter(0)</c> 抢跑，
+    /// 同一次 Read 可能读到数据、也可能抛超时（计时器线程与读取赛跑）——
+    /// 这里改成确定性失败，核心方法入口直接抛 <c>ECONNABORTED</c>。
+    /// </para>
+    /// </summary>
+    private readonly bool _budgetExhausted;
+
     private int _disposed;
 
     /// <summary>
@@ -55,8 +66,14 @@ internal sealed class TimeoutStream : Stream
         _timeoutCts = new CancellationTokenSource();
         if (remaining is TimeSpan budget)
         {
-            // 预算已耗尽时给 0 延迟（立即取消），语义等同「超时已到」。
-            _timeoutCts.CancelAfter(Timeouts.Clamp(budget > TimeSpan.Zero ? budget : TimeSpan.Zero));
+            if (budget > TimeSpan.Zero)
+            {
+                _timeoutCts.CancelAfter(Timeouts.Clamp(budget));
+            }
+            else
+            {
+                _budgetExhausted = true;
+            }
         }
 
         _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken, _timeoutCts.Token);
@@ -94,6 +111,8 @@ internal sealed class TimeoutStream : Stream
 
     private async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
+        ThrowIfBudgetExhausted();
+
         var (token, perCallCts) = Link(callerToken);
         try
         {
@@ -128,6 +147,8 @@ internal sealed class TimeoutStream : Stream
 
     private async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken callerToken)
     {
+        ThrowIfBudgetExhausted();
+
         var (token, perCallCts) = Link(callerToken);
         try
         {
@@ -154,6 +175,8 @@ internal sealed class TimeoutStream : Stream
 
     private async ValueTask FlushCoreAsync(CancellationToken callerToken)
     {
+        ThrowIfBudgetExhausted();
+
         var (token, perCallCts) = Link(callerToken);
         try
         {
@@ -193,6 +216,15 @@ internal sealed class TimeoutStream : Stream
 
         var cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken, linked);
         return (cts.Token, cts);
+    }
+
+    /// <summary>预算在构造时即耗尽：确定性失败，不与「已到达的字节」赛跑。</summary>
+    private void ThrowIfBudgetExhausted()
+    {
+        if (_budgetExhausted)
+        {
+            throw AxiosException.Timeout(_config, _request);
+        }
     }
 
     /// <summary>
@@ -305,6 +337,14 @@ internal sealed class ResponseStreamOwner : Stream
 
     public override void Write(byte[] buffer, int offset, int count)
         => BlockingWait.Wait(_inner.WriteAsync(buffer.AsMemory(offset, count), CancellationToken.None));
+
+    // WriteAsync 必须显式覆写：基类实现会退化成同步 Write（再 BlockingWait 一次），
+    // 异步调用方会在线程池线程上白等一次同步-over-async。
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => _inner.WriteAsync(buffer, offset, count, cancellationToken);
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        => _inner.WriteAsync(buffer, cancellationToken);
 
     public override void Flush()
         => BlockingWait.Wait(_inner.FlushAsync(CancellationToken.None));

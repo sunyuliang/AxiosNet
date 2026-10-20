@@ -41,6 +41,14 @@ public sealed class AxiosConfig
     /// <summary>对应 axios headers（大小写不敏感）。</summary>
     public AxiosHeaders Headers { get; set; } = new();
 
+    /// <summary>
+    /// 按请求要删除的 Header 名（大小写不敏感）：在 defaults 的头合并完成之后生效，
+    /// 用于摘掉实例默认头（合并语义下没法用「设为 null」表达删除）。
+    /// <para>线程安全：可在请求进行中增删，枚举走快照（与 Headers 的并发语义一致）。</para>
+    /// </summary>
+    public ICollection<string> RemoveHeaders { get; }
+        = new Internal.SynchronizedList<string>();
+
     /// <summary>对应 axios params，会被序列化为 query string，支持对象/字典/数组/嵌套。</summary>
     public object? Params { get; set; }
 
@@ -344,8 +352,9 @@ public sealed class AxiosConfig
     public Encoding? ResponseEncoding { get; set; }
 
     /// <summary>
-    /// 连接池选项。仅在 AxiosClient 自建连接池时生效；
+    /// 连接池选项。仅在构造 AxiosClient（自建连接池）时生效；
     /// 也可以在构造 AxiosClient 时直接传入共享的 <see cref="HttpConnectionPool"/>。
+    /// 单次请求上设置会抛 <see cref="AxiosException"/>（池此时已建好）。
     /// </summary>
     public ConnectionPoolOptions? PoolOptions { get; set; }
 
@@ -387,6 +396,11 @@ public sealed class AxiosConfig
             TransformRequest = new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformRequest),
             TransformResponse = new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformResponse)
         };
+
+        foreach (var name in RemoveHeaders)
+        {
+            clone.RemoveHeaders.Add(name);
+        }
 
         // 属性赋值会把「已显式设置」置为 true，这里还原真实状态，保证合并语义正确。
         clone.MethodSet = MethodSet;

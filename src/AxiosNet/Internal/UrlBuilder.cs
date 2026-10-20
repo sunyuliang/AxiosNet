@@ -8,6 +8,13 @@ namespace AxiosNet.Internal;
 /// 负责 baseURL + url 合并（combineURLs）以及 params 序列化（buildURL）。
 /// 序列化规则与 axios 默认 paramsSerializer 对齐：
 /// 数组 a[]=1&amp;a[]=2、嵌套对象 o[k]=v、null 值跳过、方括号不转义。
+/// <para>
+/// 百分号编码的非保留字符（<c>%41</c>→<c>A</c>、<c>%7E</c>→<c>~</c>）会被
+/// <see cref="System.Uri"/> 按 RFC 3986 §6.2.2.2 归一化——这与 HttpClient 实际发上线的
+/// 请求行完全一致（已用原始 socket 验证），因此 <see cref="AxiosClient.GetUri(AxiosConfig)"/> 返回的
+/// 就是真实发送形态；需要按签名原样保留调用方传入的编码串时，请用自定义 paramsSerializer
+/// 输出最终串，并以 <see cref="AxiosClient.GetUri(AxiosConfig)"/> 的结果作为签名输入。
+/// </para>
 /// </summary>
 internal static class UrlBuilder
 {
@@ -15,11 +22,12 @@ internal static class UrlBuilder
         string? baseAddress,
         string? url,
         object? queryParams,
-        Func<object?, string>? serializer = null)
+        Func<object?, string>? serializer = null,
+        AxiosConfig? config = null)
     {
         if (string.IsNullOrWhiteSpace(url) && string.IsNullOrWhiteSpace(baseAddress))
         {
-            throw AxiosException.InvalidUrl(url ?? string.Empty);
+            throw AxiosException.InvalidUrl(url ?? string.Empty, config);
         }
 
         var combined = Combine(baseAddress, url);
@@ -51,16 +59,16 @@ internal static class UrlBuilder
             // 而不是等到连接池抛出 InvalidOperationException。
             // IsFile：Unix 下 "/items" 这类根相对地址会被 Uri 解析成 file:///items（隐式文件路径），
             // 不在这里拦住的话，会一路走到 Handler 才报「不支持的 scheme」。
-            if (!uri.IsAbsoluteUri || uri.IsFile)
+            if (!uri.IsAbsoluteUri || uri.IsFile || !IsHttpScheme(uri))
             {
-                throw AxiosException.InvalidUrl(combined);
+                throw AxiosException.InvalidUrl(combined, config);
             }
 
             return uri;
         }
         catch (UriFormatException ex)
         {
-            throw AxiosException.InvalidUrl(combined, ex);
+            throw AxiosException.InvalidUrl(combined, config, ex);
         }
     }
 
@@ -115,6 +123,11 @@ internal static class UrlBuilder
 
     private static bool IsAsciiLetter(char c)
         => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+
+    /// <summary>只有 http/https 能交给传输层，其余（ftp/data/ws…）在构造阶段就拒绝。</summary>
+    private static bool IsHttpScheme(Uri uri)
+        => string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeQuery(string? query)
     {
@@ -320,6 +333,9 @@ internal static class ParamsSerializer
                 return s;
             case bool b:
                 return b ? "true" : "false";
+            case byte[] bytes:
+                // query 里没有 byte[] 的标准形态；base64 至少可逆且能完整还原
+                return Convert.ToBase64String(bytes);
             case DateTime dt:
                 return dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
             case DateTimeOffset dto:

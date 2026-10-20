@@ -99,19 +99,24 @@ public sealed class AxiosException : Exception
         return new AxiosException("Request canceled", ErrCanceled, config, request, null, inner);
     }
 
+    internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, string message, Exception? inner = null)
+    {
+        return new AxiosException(message, ErrCanceled, config, request, null, inner);
+    }
+
     internal static AxiosException Network(AxiosConfig config, HttpRequestMessage? request, Exception inner)
     {
         return new AxiosException("Network Error", ErrNetwork, config, request, null, inner);
     }
 
-    internal static AxiosException InvalidUrl(string url, Exception? inner = null)
+    internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null)
     {
-        return new AxiosException($"Invalid URL: {url}", ErrInvalidUrl, null, null, null, inner);
+        return new AxiosException($"Invalid URL: {url}", ErrInvalidUrl, config, null, null, inner);
     }
 
-    internal static AxiosException InvalidOption(string message)
+    internal static AxiosException InvalidOption(string message, AxiosConfig? config = null)
     {
-        return new AxiosException(message, ErrBadOptionValue, null, null, null, null);
+        return new AxiosException(message, ErrBadOptionValue, config, null, null, null);
     }
 
     internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage request, AxiosResponse response)
@@ -134,6 +139,17 @@ public sealed class AxiosException : Exception
         return new AxiosException(
             $"Response body could not be deserialized to '{targetName}'",
             ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
+    internal static AxiosException BadRequestPayload(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
+    {
+        return new AxiosException(
+            $"Request body could not be serialized from '{targetName}'",
+            ErrBadRequest,
             config,
             request,
             null,

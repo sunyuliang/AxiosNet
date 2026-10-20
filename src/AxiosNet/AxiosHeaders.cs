@@ -3,7 +3,7 @@ using System.Collections;
 namespace AxiosNet;
 
 /// <summary>
-/// 类似 axios 的 AxiosHeaders：大小写不敏感、支持多值、支持链式调用。
+/// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用。
 /// <para>
 /// 所有读写都在内部锁内完成，因此实例默认值（<see cref="Axios.Defaults"/> 等）可以在
 /// 请求进行中安全地增删请求头（例如运行期刷新 Token），不会让并发的配置合并看到半成品集合。

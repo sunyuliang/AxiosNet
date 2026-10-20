@@ -20,7 +20,13 @@ public class AxiosResponse
 
     public AxiosConfig? Config { get; set; }
 
-    /// <summary>底层 HttpRequestMessage（对应 axios response.request）。</summary>
+    /// <summary>
+    /// 底层 HttpRequestMessage（对应 axios response.request）。
+    /// <para>
+    /// 请求结束后它已被释放：<c>Method</c> / <c>RequestUri</c> / <c>Headers</c> 等内存态属性可读，
+    /// <c>Content</c> 的读取操作会抛 <see cref="ObjectDisposedException"/>。
+    /// </para>
+    /// </summary>
     public HttpRequestMessage? Request { get; set; }
 
     /// <summary>便捷获取响应头第一个值。</summary>

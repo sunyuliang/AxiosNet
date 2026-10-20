@@ -40,13 +40,18 @@ internal static class DefaultHandlerFactory
             handler.CookieContainer = cookieContainer ?? new CookieContainer();
         }
 
-        if (o.ServerCertificateCustomValidationCallback is not null || o.EnabledSslProtocols is not null)
+        if (o.ServerCertificateCustomValidationCallback is not null
+            || o.EnabledSslProtocols is not null
+            || o.ConfigureSslOptions is not null)
         {
             handler.SslOptions = new SslClientAuthenticationOptions
             {
                 RemoteCertificateValidationCallback = o.ServerCertificateCustomValidationCallback,
                 EnabledSslProtocols = o.EnabledSslProtocols ?? SslProtocols.None
             };
+
+            // 扩展入口放最后：回调内的赋值是最终值，库不会二次覆盖
+            o.ConfigureSslOptions?.Invoke(handler.SslOptions);
         }
 
         return handler;

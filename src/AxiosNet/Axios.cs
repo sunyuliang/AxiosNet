@@ -28,17 +28,23 @@ public static class Axios
     /// 想在保留连接池的前提下插入自己的 Handler 链，请用
     /// <see cref="ConnectionPoolOptions.HandlerFactory"/>。
     /// </para>
+    /// <para>
+    /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥
+    /// （同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）；共享池的连接行为在创建池时已固定。
+    /// </para>
     /// </summary>
     public static AxiosClient Create(
         AxiosConfig? defaults = null,
+        HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
         bool disposeHandler = true)
-        => new(defaults, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
+        => new(defaults, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
 
     /// <summary>对应 axios.create(config)，用 Action 配置默认项。</summary>
     public static AxiosClient Create(
         Action<AxiosConfig> configureDefaults,
+        HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
         bool disposeHandler = true)
@@ -46,7 +52,7 @@ public static class Axios
         ArgumentNullException.ThrowIfNull(configureDefaults);
         var config = new AxiosConfig();
         configureDefaults(config);
-        return new AxiosClient(config, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
+        return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
     }
 
     public static Task<AxiosResponse> RequestAsync(AxiosConfig config)
@@ -159,6 +165,67 @@ public static class Axios
 
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchFormAsync<T>(url, data, configure, cancellationToken);
+
+    // 令牌直接作第二个参数的重载：与实例方法一致，避免 CancellationToken 被装箱成请求体。
+    public static Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.GetAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> GetAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.GetAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> DeleteAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.DeleteAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.DeleteAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> HeadAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.HeadAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> HeadAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.HeadAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> OptionsAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.OptionsAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.OptionsAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> PostAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.PostAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PostAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.PostAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> PutAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.PutAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PutAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.PutAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> PatchAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.PatchAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PatchAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.PatchAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> PostFormAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.PostFormAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PostFormAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.PostFormAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> PutFormAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.PutFormAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PutFormAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.PutFormAsync<T>(url, cancellationToken);
+
+    public static Task<AxiosResponse> PatchFormAsync(string url, CancellationToken cancellationToken)
+        => DefaultClient.PatchFormAsync(url, cancellationToken);
+
+    public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
+        => DefaultClient.PatchFormAsync<T>(url, cancellationToken);
 
     // 提示：需要 JS 式动态响应时直接使用泛型 <dynamic>，例如：
     //   dynamic data = (await Axios.GetAsync<dynamic>(url)).Data!;

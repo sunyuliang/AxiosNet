@@ -15,8 +15,9 @@ namespace AxiosNet.Internal;
 /// 传入字典不会再被「猜」成表单，对象也不会因为实现了 IEnumerable 而改变编码方式。
 /// </para>
 /// <list type="bullet">
-/// <item>string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent：内容原样发送，只应用配置的 Content-Type（HttpContent 自带时保留）。</item>
+/// <item>string / byte[] / ReadOnlyMemory&lt;byte&gt; / Memory&lt;byte&gt; / ArraySegment&lt;byte&gt; / Stream / HttpContent：内容原样发送，只应用配置的 Content-Type（HttpContent 自带时保留）。</item>
 /// <item>结构化数据（对象、字典、dynamic、集合）：json → JSON 文本；x-www-form-urlencoded → 键值对表单；multipart/form-data → 字段 + 文件部件；其余类型仍以 JSON 文本写入。</item>
+/// <item>Content-Type 为 multipart/form-data 而 data 是原始内容（无 boundary 参数）时抛 <c>ERR_BAD_OPTION_VALUE</c>：头部与正文自相矛盾，服务端无法解析。</item>
 /// </list>
 /// </summary>
 internal static class RequestBodyFactory
@@ -31,6 +32,22 @@ internal static class RequestBodyFactory
         var encoding = config.RequestEncoding ?? Encoding.UTF8;
         var appendCharset = config.RequestEncoding is not null;
         var mediaType = config.ContentType;
+
+        // multipart/form-data 与「原始内容」请求体是矛盾的组合：头部声明了 multipart，
+        // 正文却是裸 string / byte[] / Stream——没有 boundary 参数时服务端无从解析，
+        // 带上 boundary 也说明不了字段名。结构化数据才会被组装成 multipart 字段；
+        // 要发送预序列化的 multipart 正文，请用 HttpContent 作为 data。
+        if (data is not null and not HttpContent
+            && IsRawContent(data)
+            && IsMediaType(mediaType, MultipartMediaType)
+            && ExtractBoundary(mediaType) is null)
+        {
+            throw AxiosException.InvalidOption(
+                "Content-Type 为 multipart/form-data 时，data 不能是原始内容"
+                + "（string / byte[] / Memory / Stream）：请传入对象或字典由库组装 multipart 字段，"
+                + "或用 HttpContent（如 MultipartFormDataContent）承载预序列化的 multipart 正文。",
+                config);
+        }
 
         switch (data)
         {
@@ -54,7 +71,13 @@ internal static class RequestBodyFactory
                 return CreateBinary(bytes, mediaType);
 
             case ReadOnlyMemory<byte> memory:
-                return CreateBinary(memory.ToArray(), mediaType);
+                return CreateBinary(memory, mediaType);
+
+            case Memory<byte> memory:
+                return CreateBinary(memory, mediaType);
+
+            case ArraySegment<byte> segment:
+                return CreateBinary(segment.AsMemory(), mediaType);
 
             case Stream stream:
                 var streamContent = new StreamContent(stream);
@@ -76,6 +99,17 @@ internal static class RequestBodyFactory
     private static HttpContent CreateBinary(byte[] bytes, string mediaType)
     {
         var content = new ByteArrayContent(bytes);
+        SetContentType(content, mediaType);
+        return content;
+    }
+
+    /// <summary>
+    /// 零拷贝发送 <see cref="ReadOnlyMemory{T}"/>：net6.0 没有内置的 ReadOnlyMemoryContent
+    /// （net7 才引入），而 ByteArrayContent 需要先 ToArray()——大请求体上这是一次整段复制。
+    /// </summary>
+    private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType)
+    {
+        var content = new ReadOnlyMemoryContent(memory);
         SetContentType(content, mediaType);
         return content;
     }
@@ -194,8 +228,10 @@ internal static class RequestBodyFactory
             }
 
             case HttpContent part:
-                // 调用方自带部件内容（可自行控制 Content-Type / 文件名）
-                content.Add(part, RequireName(name));
+                // 调用方自带部件内容（可自行控制 Content-Type / 文件名）：
+                // MultipartFormDataContent.Add 在部件已带 Content-Disposition 时完全不碰它
+                // （实测 net6.0/net8.0），因此这里只补缺失的 Name，其余（尤其 filename）原样保留。
+                AddUserPart(content, part, RequireName(name));
                 return;
 
             case JsonElement element:
@@ -207,22 +243,24 @@ internal static class RequestBodyFactory
                 return;
 
             case byte[] bytes:
-            {
-                var part = new ByteArrayContent(bytes);
-                SetContentType(part, OctetStreamMediaType);
-                var field = RequireName(name);
-                content.Add(part, field, field);
+                AddFilePart(content, name, new ByteArrayContent(bytes));
                 return;
-            }
+
+            case ReadOnlyMemory<byte> memory:
+                AddFilePart(content, name, new ReadOnlyMemoryContent(memory));
+                return;
+
+            case Memory<byte> memory:
+                AddFilePart(content, name, new ReadOnlyMemoryContent(memory));
+                return;
+
+            case ArraySegment<byte> segment:
+                AddFilePart(content, name, new ReadOnlyMemoryContent(segment.AsMemory()));
+                return;
 
             case Stream stream:
-            {
-                var part = new StreamContent(stream);
-                SetContentType(part, OctetStreamMediaType);
-                var field = RequireName(name);
-                content.Add(part, field, field);
+                AddFilePart(content, name, new StreamContent(stream));
                 return;
-            }
 
             case IDictionary<string, object?> genericDictionary:
                 // 含 ExpandoObject（dynamic）
@@ -336,6 +374,36 @@ internal static class RequestBodyFactory
         => selector is not null
             ? selector(prefix, name)
             : string.IsNullOrEmpty(prefix) ? name : prefix + "[" + name + "]";
+
+    /// <summary>二进制内容一律作为文件部件：字段名同时用作文件名（与 byte[] 既有行为一致）。</summary>
+    private static void AddFilePart(MultipartFormDataContent content, string? name, HttpContent part)
+    {
+        SetContentType(part, OctetStreamMediaType);
+        var field = RequireName(name);
+        content.Add(part, field, field);
+    }
+
+    /// <summary>
+    /// 加入调用方自带的部件：已有 Content-Disposition 时只补缺失的 Name
+    /// （保留 filename / 类型等一切用户设置），走基类 Add 避免二次改写；
+    /// 没有 disposition 时交给 <see cref="MultipartFormDataContent"/> 按 name 生成。
+    /// </summary>
+    private static void AddUserPart(MultipartFormDataContent content, HttpContent part, string name)
+    {
+        var disposition = part.Headers.ContentDisposition;
+        if (disposition is null)
+        {
+            content.Add(part, name);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(disposition.Name))
+        {
+            disposition.Name = name;
+        }
+
+        ((MultipartContent)content).Add(part);
+    }
 
     private static string RequireName(string? name)
     {
@@ -489,6 +557,10 @@ internal static class RequestBodyFactory
         return string.Equals(main, expected, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>「内容原样发送」的类型：与结构化数据相对，不经过任何展平/序列化。</summary>
+    private static bool IsRawContent(object data)
+        => data is string or byte[] or ReadOnlyMemory<byte> or Memory<byte> or ArraySegment<byte> or Stream;
+
     /// <summary>
     /// 组合实际写入的 Content-Type：媒体类型已自带 charset 时尊重用户；
     /// 文本类媒体类型在显式设置 RequestEncoding 时补 charset，二进制类型不补。
@@ -566,4 +638,31 @@ internal static class RequestBodyFactory
         || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~';
 
     private static char HexUpper(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
+}
+
+/// <summary>
+/// 零拷贝的 <see cref="ReadOnlyMemory{T}"/> 请求体内容：net6.0 没有内置的
+/// ReadOnlyMemoryContent（net7 才引入），ByteArrayContent 又需要先 ToArray()。
+/// </summary>
+internal sealed class ReadOnlyMemoryContent : HttpContent
+{
+    private readonly ReadOnlyMemory<byte> _memory;
+
+    public ReadOnlyMemoryContent(ReadOnlyMemory<byte> memory) => _memory = memory;
+
+    // net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，必须实现。
+    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        => SerializeToStreamAsync(stream, context, CancellationToken.None);
+
+    protected override Task SerializeToStreamAsync(
+        Stream stream,
+        TransportContext? context,
+        CancellationToken cancellationToken)
+        => stream.WriteAsync(_memory, cancellationToken).AsTask();
+
+    protected override bool TryComputeLength(out long length)
+    {
+        length = _memory.Length;
+        return true;
+    }
 }

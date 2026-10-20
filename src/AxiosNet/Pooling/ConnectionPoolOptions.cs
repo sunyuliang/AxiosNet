@@ -86,11 +86,24 @@ public sealed class ConnectionPoolOptions
     public SslProtocols? EnabledSslProtocols { get; set; }
 
     /// <summary>
+    /// TLS 选项的扩展入口：库按 <see cref="ServerCertificateCustomValidationCallback"/> /
+    /// <see cref="EnabledSslProtocols"/> 构造出 <see cref="SslClientAuthenticationOptions"/> 后调用，
+    /// 用于设置这两个属性覆盖不到的部分——客户端证书（<c>ClientCertificates</c>）、
+    /// ALPN（<c>ApplicationProtocols</c>）、加密套件策略（<c>CipherSuitesPolicy</c>）等。
+    /// <para>
+    /// 只设置本回调（不设置上面两项）时同样会构造 <see cref="SslClientAuthenticationOptions"/>；
+    /// 回调内对 <c>EnabledSslProtocols</c> 的赋值即为最终值（库不会再覆盖）。
+    /// </para>
+    /// </summary>
+    public Action<SslClientAuthenticationOptions>? ConfigureSslOptions { get; set; }
+
+    /// <summary>
     /// 自定义 Handler 工厂：每个 origin 调用一次，返回值用于该 origin 的所有请求。
     /// <para>
-    /// 返回 <c>null</c> 表示使用库默认 Handler（等价于不设置）。想保留默认行为又插入自己的
-    /// <see cref="DelegatingHandler"/> 时，用 <see cref="PooledHandlerContext.CreateDefaultHandler"/>
-    /// 作为内层：<c>ctx => new MyHandler { InnerHandler = ctx.CreateDefaultHandler() }</c>。
+    /// 必须返回非 null 实例：返回 null 会抛 <see cref="InvalidOperationException"/>。
+    /// 想保留默认行为又插入自己的 <see cref="DelegatingHandler"/> 时，用
+    /// <see cref="PooledHandlerContext.CreateDefaultHandler"/> 作为内层：
+    /// <c>ctx => new MyHandler { InnerHandler = ctx.CreateDefaultHandler() }</c>。
     /// </para>
     /// <para>
     /// 约定：必须为每个 origin 返回<b>独立</b>实例（同一个 Handler 实例不能同时挂在多条管线/多个 origin 上），
@@ -116,6 +129,7 @@ public sealed class ConnectionPoolOptions
         Credentials = Credentials,
         ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
         EnabledSslProtocols = EnabledSslProtocols,
+        ConfigureSslOptions = ConfigureSslOptions,
         HandlerFactory = HandlerFactory
     };
 }

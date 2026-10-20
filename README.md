@@ -136,6 +136,8 @@ string url = http.GetUri(c =>
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
 
+> `GetUri` 返回的就是**实际发送形态**：查询串里的百分号编码非保留字符（`%41`→`A`、`%7E`→`~`）会被 `System.Uri` 按 RFC 3986 归一化，与请求行上线内容一致；做预签名时请以 `GetUri` 的返回值作为签名输入。
+
 ## axios ↔ AxiosNet 对照表
 
 | axios (JS) | AxiosNet (.NET) |
@@ -144,7 +146,7 @@ string url = http.GetUri(c =>
 | `axios(url, config)` | `client.GetAsync(url, c => { ... })` |
 | `config.method` | `c.Method`（`System.Net.Http.HttpMethod`，默认 `HttpMethod.Get`） |
 | `axios.get/post/put/patch/delete/head/options` | `GetAsync / PostAsync / PutAsync / PatchAsync / DeleteAsync / HeadAsync / OptionsAsync` |
-| `axios.create(config)` | `Axios.Create(config)` |
+| `axios.create(config)` | `Axios.Create(config)` / `Axios.Create(config, sharedPool)`（第二参数可传共享池） |
 | `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` / `Axios.GetUri(...)` |
 | `axios.postForm / putForm / patchForm` | `PostFormAsync / PutFormAsync / PatchFormAsync`（默认 multipart） |
 | `axios.defaults` | `Axios.Defaults` / `client.Defaults` |
@@ -228,11 +230,11 @@ var config = new AxiosConfig
 
 请求体的编码格式**只由 `ContentType` 决定，与 `data` 的运行时类型无关**：字典不会被自动当成表单，对象也不会因为实现了某个接口而改变编码方式。
 
-| `ContentType` | 结构化数据（对象 / 字典 / dynamic / 集合） | `string` / `byte[]` / `Stream` / `HttpContent` |
+| `ContentType` | 结构化数据（对象 / 字典 / dynamic / 集合） | `string` / `byte[]` / `Memory<byte>` / `ArraySegment<byte>` / `Stream` / `HttpContent` |
 | --- | --- | --- |
 | `application/json`（默认） | JSON 文本 | 原样发送 |
 | `application/x-www-form-urlencoded` | 键值对表单（嵌套 `a[b]=v`、数组 `a[]=v`、null 跳过） | 原样发送（视为已编码好的表单串） |
-| `multipart/form-data` | 字段 + 文件部件（`FormFile` / `Stream` / `byte[]` / `HttpContent`，数组展开为同名重复部件） | 原样发送（也可直接传 `MultipartFormDataContent`） |
+| `multipart/form-data` | 字段 + 文件部件（`FormFile` / `Stream` / `byte[]` / 内存类型 / `HttpContent`，数组展开为同名重复部件） | 抛 `ERR_BAD_OPTION_VALUE`（头部与正文矛盾）；预序列化的 multipart 正文请用 `HttpContent`，或 Content-Type 自带 `boundary` 参数 |
 | 其他（`text/plain`、`application/xml` …） | 仍写 JSON 文本，只有头部不同 | 原样发送 |
 
 ```csharp
@@ -290,7 +292,8 @@ multipart 补充说明：
 
 - **字段名**：取所在对象的属性名或字典的键（遵循 `JsonSerializerOptions.PropertyNamingPolicy`，并识别 `[JsonPropertyName]` / `[JsonIgnore]`）；嵌套对象写成 `meta[author]`；数组/集合展开为**同名重复部件**（ASP.NET Core `IFormFileCollection`、FastAPI、PHP 都能直接绑定）。
 - **根节点是文件数组**时没有键名，用 `FormFile.FieldName` 指定部件名：`new[] { new FormFile(...) { FieldName = "files" } }`。
-- **文件名**：`FormFile.FileName` 决定 `filename`；直接用 `Stream`/`byte[]` 也会作为文件部件发送（文件名回退为字段名）。
+- **文件名**：`FormFile.FileName` 决定 `filename`；直接用 `Stream`/`byte[]`/`Memory<byte>` 也会作为文件部件发送（零拷贝，文件名回退为字段名）。
+- **自带 `HttpContent` 部件**：部件已带 `Content-Disposition` 时原样保留（含 `filename`），只补缺失的 `name`——否则服务端无法绑定该字段。
 - **边界**：默认自动生成；`c.ContentType = "multipart/form-data; boundary=----xxx"` 可指定固定边界。
 - **生命周期**：部件内容随请求释放（成功/异常/取消都会 `Dispose`），`File.OpenRead(...)` 的流不要在请求之外复用；需要复用时先读成 `byte[]`。
 
@@ -799,13 +802,13 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | 触发场景 | 对应 axios |
 | --- | --- | --- |
-| `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `MaxBodyLength` | ✅ |
+| `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `MaxBodyLength`；请求体序列化失败（循环引用、转换器抛错等，底层异常见 `ex.Cause`） | ✅ |
 | `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型（含 `dynamic` 拿到非 JSON）；响应体超过 `MaxContentLength`；泛型参数与 `responseType` 不匹配（如 `GetAsync<Stream>` 却配 `text`/`arraybuffer`） | ✅ |
 | `ECONNABORTED` | 请求超过 `Timeout`（消息可用 `TimeoutMessage` 覆盖） | ✅ |
 | `ERR_NETWORK` | 连接被拒绝/DNS 失败/连接中途断开/响应体被截断等网络层异常（底层异常见 `ex.Cause`） | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
-| `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`） | ✅ |
-| `ERR_BAD_OPTION_VALUE` | 在单次请求上设置了仅实例级生效的项（`proxy` / `credentials` / `withCredentials` / `maxRedirects`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions` | ✅（同码） |
+| `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`、非 `http`/`https` 的 scheme） | ✅ |
+| `ERR_BAD_OPTION_VALUE` | 在单次请求上设置了仅实例级生效的项（`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions`；连接池选项取值非法（如 `MaxConnectionsPerServer <= 0`）；`Content-Type` 为 `multipart/form-data` 而 `data` 是原始内容（`string` / `byte[]` / `Memory` / `Stream`，且 Content-Type 未带 `boundary`） | ✅（同码） |
 
 ## 超时与取消
 
@@ -842,6 +845,7 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 ### 使用方式
 
 ```csharp
+using System.Security.Authentication;
 using AxiosNet.Pooling;
 
 // 1) 每个 AxiosClient 默认自建池，也可显式配置
@@ -858,6 +862,11 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
     AutomaticDecompression = true,          // gzip/deflate/br
     MaxEndpointCount = 1024,                // origin 节点数上限（0/负数 = 不限制）
     UseCookies = false,                     // 打开后整个池共用一份 CookieContainer
+    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,   // 可选：限制 TLS 版本
+    ConfigureSslOptions = ssl =>            // 可选：客户端证书 / ALPN / 加密套件等 SslClientAuthenticationOptions 扩展
+    {
+        // ssl.ClientCertificates.Add(myCert);
+    }
 });
 
 // 2) 推荐：全局共享一个池给多个客户端
@@ -867,6 +876,7 @@ await using var sharedPool = new HttpConnectionPool(new ConnectionPoolOptions
 });
 using var orderClient  = new AxiosClient(pool: sharedPool);
 using var payClient    = new AxiosClient(pool: sharedPool);
+using var payClient2   = Axios.Create(c => c.BaseAddress = "https://pay.example.com/", sharedPool);  // 静态门面同样支持共享池
 
 // 3) 观察池状态
 ConnectionPoolStatistics stats = sharedPool.GetStatistics();
@@ -885,6 +895,8 @@ sharedPool.EvictIdleEndpoints();
 > `UseCookies = true` 时整个池**共用一份** `CookieContainer`（不再每个 origin 一份）：Cookie 的隔离维度是域/路径而不是端口，共用之后 `auth.example.com` 种下的会话才能被 `api.example.com` 带上，与浏览器/axios 的 `withCredentials` 语义一致，不同站点之间仍由域匹配隔离。
 >
 > `Dispose()` 是**优雅关闭**：空闲节点立即释放，仍有请求在途的节点等最后一条租约归还时自行回收——关闭客户端不会把在途请求打成 `ObjectDisposedException`。需要立刻掐断全部连接用 `Clear()`。
+>
+> `AxiosClient.Dispose()` 同样不打断在途请求：仍有请求在飞时，注入的 `HttpClient`/`Handler` 或自建池的释放会推迟到最后一个请求结束（由它代为执行），但此后不再接受新请求（抛 `ERR_CANCELED`，不再漏裸 `ObjectDisposedException`）。
 
 > 性能要点：顺序/并发请求都会复用已建立的 TCP 连接（仓库测试与示例实测：5 个顺序请求只建立 1 条 TCP；6 个并发慢请求在 `MaxConnectionsPerServer=2` 下峰值并发恰好为 2）。应用关闭时 `Dispose()` 池即可释放全部连接；共享池不会因为单个 client 释放而被销毁（仅池拥有者负责释放）。
 
@@ -1048,10 +1060,10 @@ dotnet build AxiosNet.slnx -c Release
 - 拦截器：快照缓存（无变更复用）与 Use/Eject/Clear 即时失效
 - 响应读取：无 Content-Length 的关闭 delimiting 响应（缓冲读取未知长度分支）、精确预分配时零拷贝返回
 - 泛型路由：`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
-- 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null、与 pool/poolOptions 及实例级选项的 fail-fast
+- 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 - JSON 可插拔（`JsonCustomizationTests`）：自定义 `IAxiosJsonSerializer` 驱动请求/响应/dynamic/表单展平、实例级 `JsonSerializerOptions`、transform 列表并发增删
-- 安全与加固（`HardeningTests`）：请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖、流式正文截断与 `Timeout=0` 下的统一 `ERR_NETWORK`、超大 `Timeout` 收敛到 49.7 天、负值限制项 fail-fast、params 落在 fragment 之前、`PostAsync(url, null)` 的 `ArgumentNullException`、流式与 chunked 的 `maxContentLength`、跨 origin 共享 Cookie、取消异常保留 `Cause`、params 传 `JsonElement`、池 origin 上限与优雅 `Dispose`（在途请求不被关闭打断）
+- 安全与加固（`HardeningTests`）：请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖、流式正文截断与 `Timeout=0` 下的统一 `ERR_NETWORK`、超大 `Timeout` 收敛到 49.7 天、负值限制项 fail-fast、params 落在 fragment 之前、`PostAsync(url, null)` 的 `ArgumentNullException`、流式与 chunked 的 `maxContentLength`、跨 origin 共享 Cookie、取消异常保留 `Cause`、params 传 `JsonElement`、params 传 `byte[]`（base64）、池 origin 上限与优雅 `Dispose`（在途请求不被关闭打断、关闭竞态不漏裸 `ObjectDisposedException`）
 
 ## 项目结构
 
@@ -1093,7 +1105,7 @@ dotnet build AxiosNet.slnx -c Release
 5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
 7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
-8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上；
+8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头用 `config.RemoveHeaders.Add("X-Foo")`；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；

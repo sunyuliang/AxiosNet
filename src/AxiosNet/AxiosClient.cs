@@ -19,6 +19,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private readonly bool _ownsPool;
     private readonly bool _ownsCustomHandler;
     private int _disposed;
+    private int _inFlight;
+    private int _resourcesDisposed;
 
     /// <summary>对应 axios instance.defaults。</summary>
     public AxiosConfig Defaults { get; }
@@ -65,17 +67,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             if (pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时注入 handler 和 pool：注入 handler 时不使用连接池，请二选一。");
+                    "不能同时注入 handler 和 pool：注入 handler 时不使用连接池，请二选一。", Defaults);
             }
 
             if (poolOptions is not null || Defaults.PoolOptions is not null)
             {
                 throw AxiosException.InvalidOption(
                     "不能同时注入 handler 和连接池选项（poolOptions / defaults.PoolOptions）："
-                    + "handler 的连接行为由它自己决定，需要池化请改用 ConnectionPoolOptions.HandlerFactory。");
+                    + "handler 的连接行为由它自己决定，需要池化请改用 ConnectionPoolOptions.HandlerFactory。", Defaults);
             }
 
-            ValidateHandlerLevelOptions(defaults);
+            ValidateHandlerLevelOptions(defaults, Defaults);
             _customHandler = handler;
             _ownsCustomHandler = disposeHandler;
             _customClient = new HttpClient(handler, disposeHandler: false)
@@ -92,12 +94,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             {
                 throw AxiosException.InvalidOption(
                     "不能同时传入 pool 和 poolOptions / defaults.PoolOptions："
-                    + "共享池已按自己的 ConnectionPoolOptions 创建，请在创建池时配置，或改为只传 poolOptions 让本实例自建池。");
+                    + "共享池已按自己的 ConnectionPoolOptions 创建，请在创建池时配置，或改为只传 poolOptions 让本实例自建池。", Defaults);
             }
 
             // 池的连接行为（重定向 / 代理 / 凭据 / Cookie）在各 origin 的 Handler 创建时已固定，
             // defaults 上的同类选项无从生效 —— 与其静默忽略，不如明确报错（与注入 handler 的策略一致）。
-            ValidateSharedPoolLevelOptions(defaults);
+            ValidateSharedPoolLevelOptions(defaults, Defaults);
 
             _pool = pool;
             _ownsPool = false;
@@ -106,6 +108,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         {
             var effective = (poolOptions ?? Defaults.PoolOptions ?? new ConnectionPoolOptions()).Clone();
 
+            // 池选项非法时在构造期就带配置抛错（池自身的校验没有 config 可挂），
+            // 而不是等池内部抛出 config 为 null 的同类异常。
+            HttpConnectionPool.ValidateOptions(effective, Defaults);
+
             // maxRedirects：0 = 不跟随重定向（对应 axios maxRedirects: 0），> 0 = 覆盖池默认上限。
             // 必须按 *Set 判断：MaxRedirects 未显式设置时读到的也是默认值 5，
             // 无条件生效会把调用方在 poolOptions 上配好的 MaxAutomaticRedirections 悄悄改回 5。
@@ -113,7 +119,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             {
                 if (Defaults.MaxRedirects < 0)
                 {
-                    throw AxiosException.InvalidOption("MaxRedirects 不能为负数；不跟随重定向请设为 0。");
+                    throw AxiosException.InvalidOption("MaxRedirects 不能为负数；不跟随重定向请设为 0。", Defaults);
                 }
 
                 if (Defaults.MaxRedirects == 0)
@@ -142,7 +148,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>
     /// 注入 Handler 时，连接层行为完全由 Handler 决定，实例级选项无法生效 —— 与其静默忽略，不如报错。
     /// </summary>
-    private static void ValidateHandlerLevelOptions(AxiosConfig? defaults)
+    private static void ValidateHandlerLevelOptions(AxiosConfig? defaults, AxiosConfig config)
     {
         if (defaults is null)
         {
@@ -152,19 +158,19 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         if (defaults.MaxRedirectsSet)
         {
             throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），请在 handler 上配置。");
+                "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），请在 handler 上配置。", config);
         }
 
         if (defaults.WithCredentialsSet)
         {
             throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 WithCredentials 由 handler 决定（Cookie 容器在连接层），请在 handler 上配置。");
+                "注入自定义 handler 时 WithCredentials 由 handler 决定（Cookie 容器在连接层），请在 handler 上配置。", config);
         }
 
         if (defaults.Proxy is not null || defaults.Credentials is not null)
         {
             throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 Proxy / Credentials 由 handler 决定，请在 handler 上配置。");
+                "注入自定义 handler 时 Proxy / Credentials 由 handler 决定，请在 handler 上配置。", config);
         }
     }
 
@@ -172,7 +178,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 共享连接池时，池已按自己的 <see cref="ConnectionPoolOptions"/> 创建完成，
     /// defaults 上的连接级配置（重定向 / 凭据 / 代理 / Cookie）与 PoolOptions 都无法生效 —— 直接报错。
     /// </summary>
-    private static void ValidateSharedPoolLevelOptions(AxiosConfig? defaults)
+    private static void ValidateSharedPoolLevelOptions(AxiosConfig? defaults, AxiosConfig config)
     {
         if (defaults is null)
         {
@@ -184,7 +190,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             throw AxiosException.InvalidOption(
                 "共享连接池时 MaxRedirects 由池决定（重定向由各 origin 的 Handler 处理），"
                 + "请在创建 ConnectionPoolOptions 时设置 AllowAutoRedirect / MaxAutomaticRedirections，"
-                + "或不传 pool 让本实例自建池。");
+                + "或不传 pool 让本实例自建池。", config);
         }
 
         if (defaults.WithCredentialsSet)
@@ -192,14 +198,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             throw AxiosException.InvalidOption(
                 "共享连接池时 WithCredentials 由池决定（Cookie 容器在连接层），"
                 + "请在创建 ConnectionPoolOptions 时设置 UseCookies / Credentials，"
-                + "或不传 pool 让本实例自建池。");
+                + "或不传 pool 让本实例自建池。", config);
         }
 
         if (defaults.Proxy is not null || defaults.Credentials is not null)
         {
             throw AxiosException.InvalidOption(
                 "共享连接池时 Proxy / Credentials 由池决定，"
-                + "请在 ConnectionPoolOptions.Proxy / Credentials 上设置，或不传 pool 让本实例自建池。");
+                + "请在 ConnectionPoolOptions.Proxy / Credentials 上设置，或不传 pool 让本实例自建池。", config);
         }
     }
 
@@ -210,12 +216,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>
     /// 按配置拼出最终请求 URL（含 baseURL 合并与 params 序列化），不发请求。
     /// 返回的是实际发送形态（已转义，如空格 → <c>%20</c>），可用于签名、日志与调试。
+    /// <para>
+    /// 注意：<see cref="System.Uri"/> 会按 RFC 3986 归一化百分号编码的非保留字符
+    /// （<c>%41</c>→<c>A</c>、<c>%7E</c>→<c>~</c>），这与请求行实际发送的内容一致；
+    /// 需要按原样保留调用方传入的编码串时，请以本方法的返回值作为签名输入。
+    /// </para>
     /// </summary>
     public string GetUri(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
         var merged = MergeConfig(config);
-        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.ParamsSerializer)
+        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.ParamsSerializer, config: merged)
             .AbsoluteUri;
     }
 
@@ -270,14 +281,59 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     // 核心请求管线
     // ------------------------------------------------------------------
 
+    private const string DisposedMessage = "AxiosClient 已释放，不能发起新请求";
+
+    /// <summary>
+    /// 请求入口：负责「已释放」拦截与在途计数（配合 <see cref="Dispose"/> 的推迟释放协议），
+    /// 校验通过后转入 <see cref="SendCoreAsync"/>。
+    /// </summary>
     private async Task<AxiosResponse> SendAsync(AxiosConfig perCallConfig, Type? dataType)
     {
         // ObjectDisposedException.ThrowIf 是 .NET 7 才有的 API，手写以兼容 net6.0 目标。
         if (Volatile.Read(ref _disposed) == 1)
         {
-            throw new ObjectDisposedException(nameof(AxiosClient));
+            // 统一错误模型：已释放的实例不再漏出裸 ObjectDisposedException
+            throw AxiosException.Canceled(
+                perCallConfig,
+                null,
+                DisposedMessage,
+                new ObjectDisposedException(nameof(AxiosClient)));
         }
 
+        // 先占位再复核：保证请求要么完整跑在释放之前，要么明确收到错误，
+        // 不会出现「拿着已释放的 Handler/池资源跑到一半」的中间态。
+        Interlocked.Increment(ref _inFlight);
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            ReleaseInFlight();
+            throw AxiosException.Canceled(
+                perCallConfig,
+                null,
+                DisposedMessage,
+                new ObjectDisposedException(nameof(AxiosClient)));
+        }
+
+        try
+        {
+            return await SendCoreAsync(perCallConfig, dataType).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReleaseInFlight();
+        }
+    }
+
+    /// <summary>最后一个在途请求结束时，补做 <see cref="Dispose"/> 推迟的资源释放。</summary>
+    private void ReleaseInFlight()
+    {
+        if (Interlocked.Decrement(ref _inFlight) == 0 && Volatile.Read(ref _disposed) == 1)
+        {
+            DisposeResources();
+        }
+    }
+
+    private async Task<AxiosResponse> SendCoreAsync(AxiosConfig perCallConfig, Type? dataType)
+    {
         // 实例级选项（Proxy/Credentials/WithCredentials/MaxRedirects）在构造连接池时已固定，
         // 按请求设置无法生效 —— 与其静默忽略，不如明确报错。
         ValidatePerRequestOptions(perCallConfig);
@@ -322,11 +378,18 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
         foreach (var transform in config.TransformRequest)
         {
-            config.Data = transform(config.Data, config);
+            try
+            {
+                config.Data = transform(config.Data, config);
+            }
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+            {
+                throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
+            }
         }
 
         // 3) 构造 URI 与 HttpRequestMessage
-        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.ParamsSerializer);
+        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.ParamsSerializer, config: config);
         var request = new HttpRequestMessage(config.Method, uri)
         {
             Version = config.HttpVersion ?? HttpVersion.Version11
@@ -337,7 +400,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         // 都必须先释放它；只把「发送 + 读取」包进 finally 会把未发出的请求体漏掉。
         try
         {
-            var content = RequestBodyFactory.Create(config.Data, config);
+            HttpContent? content;
+            try
+            {
+                content = RequestBodyFactory.Create(config.Data, config);
+            }
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+            {
+                // 序列化失败（循环引用、自定义转换器抛错、multipart 缺字段名等）同样走统一错误模型；
+                // 取消类异常原样抛出，保证 IsCancel 语义不被吞掉。
+                throw AxiosException.BadRequestPayload(
+                    config,
+                    request,
+                    config.Data?.GetType().Name ?? "null",
+                    ex);
+            }
 
             // 上传进度 / 限速：包一层流量统计（头部从原内容复制，序列化逻辑不变）
             if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
@@ -373,6 +450,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             // 流式响应的 timeout 需要延续到正文读取结束，这里记录请求起点用于计算剩余时间。
             var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            // 流式正文的所有权交给调用方持有的流；拦截器抛异常或丢弃响应时由这里兜底释放，
+            // 否则租约永远不归还，该 origin 节点再也不会被驱逐。
+            IDisposable? streamOwner = null;
 
             // 4) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
             Func<Task<AxiosResponse>> invoker = async () =>
@@ -426,6 +507,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     }
                     catch (IOException ex)
                     {
+                        throw AxiosException.Network(config, request, ex);
+                    }
+                    catch (NotSupportedException ex)
+                    {
+                        // 自定义 Handler / Content 不支持某种能力时不要把裸异常漏给调用方。
                         throw AxiosException.Network(config, request, ex);
                     }
 
@@ -496,9 +582,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         lease = null;
 
                         response.Data = wrapped;
+                        streamOwner = wrapped;
                     }
 
                     return response;
+                }
+                catch (ObjectDisposedException ex)
+                {
+                    // 池被直接 Dispose()/Clear()（或在途时关闭）：底层 Handler/Client 已释放，
+                    // 裸 ObjectDisposedException 对调用方没有信息量，统一翻译成「请求被中止」。
+                    throw AxiosException.Canceled(
+                        config,
+                        request,
+                        "客户端或其连接池在请求在途时被释放，请求被中止",
+                        ex);
                 }
                 finally
                 {
@@ -534,7 +631,32 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 };
             }
 
-            return await chain().ConfigureAwait(false);
+            AxiosResponse? result;
+            try
+            {
+                result = await chain().ConfigureAwait(false);
+            }
+            catch
+            {
+                try
+                {
+                    streamOwner?.Dispose();
+                }
+                catch
+                {
+                    // 兜底释放失败不能掩盖拦截器的原始异常
+                }
+
+                throw;
+            }
+
+            // 拦截器返回了新实例：原流式正文没有任何引用，需要在这里释放。
+            if (streamOwner is not null && !ReferenceEquals(result?.Data, streamOwner))
+            {
+                streamOwner.Dispose();
+            }
+
+            return result!;
         }
         finally
         {
@@ -557,25 +679,25 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         if (config.Timeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption(
-                $"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。");
+                $"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。", config);
         }
 
         if (config.MaxRate is < 0)
         {
             throw AxiosException.InvalidOption(
-                $"MaxRate 不能为负（当前 {config.MaxRate}）：要不限速请设为 null（0 等价于不限速）。");
+                $"MaxRate 不能为负（当前 {config.MaxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
         }
 
         if (config.MaxContentLength is < 0)
         {
             throw AxiosException.InvalidOption(
-                $"MaxContentLength 不能为负（当前 {config.MaxContentLength}）：不限制请设为 null。");
+                $"MaxContentLength 不能为负（当前 {config.MaxContentLength}）：不限制请设为 null。", config);
         }
 
         if (config.MaxBodyLength is < 0)
         {
             throw AxiosException.InvalidOption(
-                $"MaxBodyLength 不能为负（当前 {config.MaxBodyLength}）：不限制请设为 null。");
+                $"MaxBodyLength 不能为负（当前 {config.MaxBodyLength}）：不限制请设为 null。", config);
         }
     }
 
@@ -589,19 +711,27 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         {
             throw AxiosException.InvalidOption(
                 "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Proxy = ... }) "
-                + "或 ConnectionPoolOptions.Proxy。");
+                + "或 ConnectionPoolOptions.Proxy。", perCall);
         }
 
         if (perCall.Credentials is not null && !ReferenceEquals(perCall.Credentials, Defaults.Credentials))
         {
             throw AxiosException.InvalidOption(
-                "Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。");
+                "Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。", perCall);
+        }
+
+        // 池在构造时已经建好，按请求改它只会被静默丢弃 —— 与 Proxy/MaxRedirects 保持一致地报错。
+        if (perCall.PoolOptions is not null && !ReferenceEquals(perCall.PoolOptions, Defaults.PoolOptions))
+        {
+            throw AxiosException.InvalidOption(
+                "PoolOptions 是实例级配置（连接池在构造 AxiosClient 时创建），"
+                + "请通过 AxiosClient 构造参数或 defaults.PoolOptions 设置。", perCall);
         }
 
         if (perCall.WithCredentialsSet)
         {
             throw AxiosException.InvalidOption(
-                "WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），请在 AxiosClient 的 defaults 上设置。");
+                "WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），请在 AxiosClient 的 defaults 上设置。", perCall);
         }
 
         // 只要「按请求设置过」就报错，而不是「值与本实例默认不同」才报错：
@@ -610,7 +740,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         if (perCall.MaxRedirectsSet)
         {
             throw AxiosException.InvalidOption(
-                "MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），请在 AxiosClient 的 defaults 上设置。");
+                "MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），请在 AxiosClient 的 defaults 上设置。", perCall);
         }
     }
 
@@ -717,6 +847,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             headers[header.Key] = header.Value;
         }
 
+        var status = (int)message.StatusCode;
+
+        // 状态码不合法时转换必须宽松：否则 404 + HTML 错误页会在反序列化处抛错，
+        // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
+        var lenient = !(config.ValidateStatus ?? DefaultValidateStatus)(status);
+
         object? data;
         if (config.ResponseType == ResponseType.Stream)
         {
@@ -739,7 +875,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     message.Content.Headers.ContentType?.CharSet,
                     config.ResponseEncoding)
                 : string.Empty;
-            data = ConvertData(config, request, dataType, bytes, text);
+            data = ConvertData(config, request, dataType, bytes, text, lenient);
 
             // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）
             foreach (var transform in config.TransformResponse)
@@ -748,7 +884,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
         }
 
-        var status = (int)message.StatusCode;
         return new AxiosResponse
         {
             Data = data,
@@ -774,8 +909,15 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
+    /// <paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始文本，不抛异常。
     /// </summary>
-    private static object? ConvertData(AxiosConfig config, HttpRequestMessage request, Type? dataType, byte[] bytes, string text)
+    private static object? ConvertData(
+        AxiosConfig config,
+        HttpRequestMessage request,
+        Type? dataType,
+        byte[] bytes,
+        string text,
+        bool lenient)
     {
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
         if (config.ResponseType == ResponseType.ArrayBuffer)
@@ -804,6 +946,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             catch (Exception ex) when (ex is not AxiosException)
             {
                 // 非 JSON 响应（HTML 错误页、纯文本等）也必须走统一错误模型，而不是裸 JsonException。
+                if (lenient)
+                {
+                    return text;
+                }
+
                 throw AxiosException.BadResponse(config, request, "dynamic JSON", ex);
             }
         }
@@ -850,14 +997,41 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 return scalar;
             }
 
+            if (lenient)
+            {
+                return text;
+            }
+
             // 兜底失败：包装成 AxiosException，保持统一的错误模型（而不是裸抛 JsonException）。
             throw AxiosException.BadResponse(config, request, dataType!, ex);
         }
     }
 
+    /// <summary>
+    /// 释放实例。与共享连接池一致的优雅语义：<b>不打断在途请求</b>——
+    /// 仍有在途请求时，Handler/池的释放推迟到最后一个请求结束（由它代为执行），
+    /// 但此后不再接受新请求（抛 <c>ERR_CANCELED</c>）。
+    /// </summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        if (Volatile.Read(ref _inFlight) > 0)
+        {
+            // 在途请求结束时由 ReleaseInFlight 补做释放
+            return;
+        }
+
+        DisposeResources();
+    }
+
+    /// <summary>资源释放本体（幂等）：注入的 HttpClient/Handler 与本实例自建的池。</summary>
+    private void DisposeResources()
+    {
+        if (Interlocked.Exchange(ref _resourcesDisposed, 1) != 0)
         {
             return;
         }

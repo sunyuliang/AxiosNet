@@ -1,3 +1,5 @@
+using System.Net.Http.Headers;
+
 namespace AxiosNet;
 
 // AxiosClient 的配置合并与请求头应用：Defaults → 单次请求的合并规则，
@@ -27,6 +29,12 @@ public sealed partial class AxiosClient
             merged.Headers.MergeFrom(perCall.Headers);
         }
 
+        // 合并之后再删：这样「按请求摘掉实例默认头」才有表达方式。
+        foreach (var name in perCall.RemoveHeaders)
+        {
+            merged.Headers.Delete(name);
+        }
+
         if (perCall.Params is not null)
         {
             merged.Params = perCall.Params;
@@ -37,7 +45,12 @@ public sealed partial class AxiosClient
             merged.Data = perCall.Data;
         }
 
-        merged.ContentType = perCall.ContentTypeSet ? perCall.ContentType : merged.ContentType;
+        // 只在显式设置时赋值：否则 ContentTypeSet 会被恒置为 true，
+        // 让「HttpContent 自带 Content-Type 就原样透传」的判断永远失效。
+        if (perCall.ContentTypeSet)
+        {
+            merged.ContentType = perCall.ContentType;
+        }
 
         // 用 *Set 标记判断「显式设置」：Timeout=0 / Max*=null 也能按请求覆盖实例默认值。
         if (perCall.TimeoutSet)
@@ -55,7 +68,6 @@ public sealed partial class AxiosClient
         merged.JsonSerializer = perCall.JsonSerializer ?? merged.JsonSerializer;
         merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
         merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;
-        merged.PoolOptions = perCall.PoolOptions ?? merged.PoolOptions;
 
         // 以下为后加的配置：Proxy/Credentials 已在 ValidatePerRequestOptions 里拦掉「按请求设置」，
         // WithCredentials/MaxRedirects 属实例级，不做合并。
@@ -119,13 +131,22 @@ public sealed partial class AxiosClient
         var content = request.Content;
         foreach (var header in config.Headers)
         {
-            if (string.IsNullOrEmpty(header.Value))
-            {
-                continue;
-            }
-
             if (content is not null && ContentHeaderNames.Contains(header.Key))
             {
+                // 空值用在 Content-* 上会把 Content-Length / Content-Type 直接清掉，保留原有跳过语义。
+                if (string.IsNullOrEmpty(header.Value))
+                {
+                    continue;
+                }
+
+                // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
+                // 覆盖会让正文无法解析，因此保留内容自身的头部。
+                if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
+                    && HasMultipartBoundary(content.Headers.ContentType))
+                {
+                    continue;
+                }
+
                 // Content-Type 允许用户显式覆盖工厂默认值
                 content.Headers.Remove(header.Key);
                 content.Headers.TryAddWithoutValidation(header.Key, header.Value);
@@ -142,5 +163,26 @@ public sealed partial class AxiosClient
         {
             request.Headers.TryAddWithoutValidation("Authorization", config.Auth.ToBasicHeaderValue());
         }
+    }
+
+    /// <summary>内容自身是否已带 multipart boundary（此时不能覆盖 Content-Type）。</summary>
+    private static bool HasMultipartBoundary(MediaTypeHeaderValue? contentType)
+    {
+        if (contentType?.MediaType is not { } mediaType
+            || !mediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        foreach (var parameter in contentType.Parameters)
+        {
+            if (parameter.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(parameter.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
