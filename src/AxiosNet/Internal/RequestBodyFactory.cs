@@ -212,10 +212,18 @@ internal static class RequestBodyFactory
             CollectParts(null, data, content, encoding, policy, config.FormFieldNameSelector);
             return content;
         }
-        catch
+        catch (Exception ex)
         {
             // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
             content.Dispose();
+
+            // 字段名非法是「调用方给的选项有误」，不是序列化机制出错：
+            // 换成带配置上下文的 ERR_BAD_OPTION_VALUE，消息里已指明是哪个名字、哪个字符。
+            if (ex is InvalidFieldNameException invalid)
+            {
+                throw AxiosException.InvalidOption(invalid.Message, config, invalid);
+            }
+
             throw;
         }
     }
@@ -421,13 +429,25 @@ internal static class RequestBodyFactory
 
     private static string RequireName(string? name)
     {
-        if (!string.IsNullOrEmpty(name))
+        if (string.IsNullOrEmpty(name))
         {
-            return name;
+            throw new InvalidOperationException(
+                "multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
         }
 
-        throw new InvalidOperationException(
-            "multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
+        // 字段名最终写进 Content-Disposition 的 name="..."（quoted-string）。
+        // 反斜杠与控制字符不会让 .NET 报错，而是让解析端退回「带引号的原文」——
+        // 服务端收到的键名多两个引号，字段静默对不上；引号与换行则直接破坏语法。
+        if (DispositionTokens.FindInvalidCharacter(name) is { } invalid)
+        {
+            throw new InvalidFieldNameException(
+                $"multipart 字段名包含非法字符（{invalid}）：'{name}'。"
+                + "Content-Disposition 的 name 是 quoted-string：双引号、反斜杠、CR/LF 与其它控制字符"
+                + "会破坏语法或让服务端拿到的键名错位。中文可以正常使用（按 RFC 2047 编码），"
+                + "请只去掉这些字符。");
+        }
+
+        return name;
     }
 
     private static bool IsScalar(Type type)

@@ -384,4 +384,73 @@ public sealed class RequestBodyTests
         Assert.Equal("GET", server.Received[0].Method);
         Assert.Equal("stream-body", Body(server.Received[0]));
     }
+
+    // ------------------------------------------------------------------
+    // multipart 的字段名 / 文件名：Content-Disposition 是 quoted-string，
+    // 引号与换行原本会让 HttpClient 抛一句看不出所以然的异常，反斜杠与控制字符更糟——
+    // 不报错，但服务端解析回来是「带引号的原文」，字段静默对不上。统一在发出前拦下。
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("a\"b")]
+    [InlineData("a\\b")]
+    [InlineData("a\r\nb")]
+    [InlineData("a\tb")]
+    [InlineData("a\0b")]
+    public async Task Multipart_FieldNameWithDispositionSeparator_ThrowsBadOptionValue(string fieldName)
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
+            server.Url + "upload",
+            new Dictionary<string, object?> { [fieldName] = "v" },
+            c => c.ContentType = "multipart/form-data"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains(fieldName, ex.Message);
+        Assert.NotNull(ex.Cause);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task Multipart_FieldNamesThatAreLegalInQuotedString_StillWork()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        await client.PostAsync(
+            server.Url + "upload",
+            new Dictionary<string, object?>
+            {
+                ["a[b]"] = "1",
+                ["c d"] = "2",
+                ["a;b"] = "3",
+                ["a=b"] = "4",
+                ["中文名"] = "5"
+            },
+            c => c.ContentType = "multipart/form-data");
+
+        var body = Body(server.Received[0]);
+        Assert.Contains("name=\"a[b]\"", body);
+        Assert.Contains("name=\"c d\"", body);
+        Assert.Contains("name=\"a;b\"", body);
+        Assert.Contains("name=\"a=b\"", body);
+        // 非 ASCII 字段名由 HttpClient 编成 RFC 2047 encoded-word，服务端解析回「中文名」
+        Assert.Contains("name=\"=?utf-8?B?5Lit5paH5ZCN?=\"", body);
+    }
+
+    [Theory]
+    [InlineData("a\"b.txt")]
+    [InlineData("a\\b.txt")]
+    [InlineData("a\nb.txt")]
+    [InlineData("a\rb.txt")]
+    [InlineData("a\0b.txt")]
+    public void FormFile_FileNameWithDispositionSeparator_IsRejectedUpfront(string fileName)
+    {
+        var ex = Assert.Throws<ArgumentException>(() => new FormFile(fileName, new byte[] { 1 }));
+
+        Assert.Equal("fileName", ex.ParamName);
+        Assert.Contains(fileName, ex.Message);
+    }
 }

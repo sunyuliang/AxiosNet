@@ -1,3 +1,5 @@
+using AxiosNet.Internal;
+
 namespace AxiosNet;
 
 /// <summary>
@@ -36,6 +38,18 @@ public sealed class FormFile
         }
 
         ArgumentNullException.ThrowIfNull(content);
+
+        // 文件名写进 Content-Disposition 的 filename="..."（quoted-string）。引号与换行会让
+        // MultipartFormDataContent 抛异常（错误信息里只有裸值，看不出是文件名），
+        // 反斜杠与控制字符则是静默错乱——在这里一次性拦住，给出指名到参数的错误。
+        if (DispositionTokens.FindInvalidCharacter(fileName) is { } invalid)
+        {
+            throw new ArgumentException(
+                $"文件名包含不能出现在 Content-Disposition 里的字符（{invalid}）：'{fileName}'。"
+                + "双引号、反斜杠、CR/LF 与其它控制字符会破坏头部语法或让服务端收到的文件名错位；"
+                + "中文可以正常使用（会按 RFC 5987 编码）。",
+                nameof(fileName));
+        }
 
         FileName = fileName;
         Content = content;

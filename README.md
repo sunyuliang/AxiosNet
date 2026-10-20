@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-236%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-441%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -26,6 +26,7 @@
 - [axios ↔ AxiosNet 对照表](#axios--axiosnet-对照表)
 - [配置项](#配置项)
 - [请求体 data 与查询参数 params](#请求体-data-与查询参数-params)
+- [URL 编码：哪些位置会自动编码](#url-编码哪些位置会自动编码)
 - [对接 ASP.NET Core Web API：单文件上传](#对接-aspnet-core-web-api单文件上传)
 - [响应类型 responseType（含 dynamic）](#响应类型-responsetype含-dynamic)
 - [下载文件](#下载文件)
@@ -300,6 +301,33 @@ multipart 补充说明：
 - **自带 `HttpContent` 部件**：部件已带 `Content-Disposition` 时原样保留（含 `filename`），只补缺失的 `name`——否则服务端无法绑定该字段。
 - **边界**：默认自动生成；`c.ContentType = "multipart/form-data; boundary=----xxx"` 可指定固定边界。
 - **生命周期**：部件内容随请求释放（成功/异常/取消都会 `Dispose`），`File.OpenRead(...)` 的流不要在请求之外复用；需要复用时先读成 `byte[]`。
+
+### URL 编码：哪些位置会自动编码
+
+只有「结构化输入」会被自动编码；手写在 `Url` 里的文本按原样参与拼接，不会再被语义编码。
+
+| 位置 | 自动编码 | 说明 |
+| --- | --- | --- |
+| `c.Params` 的键与值（对象 / 字典 / 集合） | ✅ | `Uri.EscapeDataString`：空格 → `%20`、`&` → `%26`、`=` → `%3D`、`+` → `%2B`、`%` → `%25`、中文 → UTF-8 百分号编码；键里的 `[]` 保留（`a[b]`） |
+| `c.Params` 传已序列化的查询串（`string`） | ❌ | 原样透传（只去掉前导 `?` / `&`）；值里的 `&`、`+` 会被服务端当结构字符，需要调用方自己编码 |
+| `c.Url` 里手写的查询串 | ❌ | 只有 `System.Uri` 的归一化：空格 → `%20`、中文 → UTF-8、裸 `%` → `%25`、非保留字符还原（`%41` → `A`） |
+| `c.Url` 里的路径段 | ❌ | 值里的 `/` 会直接拆段、`#` 会变成 fragment；用 `AxiosUrl.EncodePathSegment(...)` 转义 |
+| `application/x-www-form-urlencoded` 的键与值 | ✅ | 空格 → `+`（与 `FormUrlEncodedContent` 一致）、`+` → `%2B`、`&` → `%26`，键里的 `[]` 保留 |
+| `multipart/form-data` 的字段名 / 文件名 / 正文 | 不需要 | 靠 boundary 分段定位，名字与正文按 UTF-8 原样传输；非 ASCII 文件名由传输层生成 RFC 5987 `filename*=utf-8''...`，非 ASCII 字段名生成 RFC 2047 encoded-word。字段名/文件名里的 `"`、`\`、CR/LF 与控制字符会破坏 `Content-Disposition`，**在发出前直接报错**（`ERR_BAD_OPTION_VALUE` / `ArgumentException`） |
+| 请求头 | ❌ | 不做任何编码；非 ASCII 头值被传输层拒绝（`ERR_NETWORK`，`Cause` 为 `Request headers must contain only ASCII characters`），需要自己转 base64 等 |
+
+```csharp
+// 路径参数：值里可能有 / ? # 或空格
+var id = "a/b c";
+await http.GetAsync("items/" + AxiosUrl.EncodePathSegment(id));    // items/a%2Fb%20c
+
+// 手写查询串：值必须自己编码（更好的做法是交给 Params，由库自动编码）
+await http.GetAsync("search?q=" + Uri.EscapeDataString("a&b"));     // search?q=a%26b
+
+// 已编码过的串别再塞进 Params 对象：会二次编码（%20 → %2520）
+```
+
+> 预签名时以 `GetUri` 的返回值为准：`Uri` 会把非保留字符的百分号编码还原（`%41`→`A`、`%7E`→`~`），该返回值与请求行完全一致。
 
 ### 对接 ASP.NET Core Web API：单文件上传
 
@@ -1040,7 +1068,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 236 个用例（共 472 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 441 个用例（共 882 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1053,7 +1081,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 236 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 472 次）
+# 运行全部 441 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 882 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1095,6 +1123,7 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ AxiosClient.Config.cs   # 配置合并与请求头应用
 │     ├─ AxiosJson.cs            # JSON 全局默认（选项 / 可插拔序列化器）
 │     ├─ AxiosConfig.cs          # 请求/实例配置
+│     ├─ AxiosUrl.cs             # 路径段转义（AxiosUrl.EncodePathSegment）
 │     ├─ AxiosHeaders.cs         # 大小写不敏感请求头
 │     ├─ AxiosResponse.cs        # 响应（泛型/非泛型）
 │     ├─ AxiosException.cs       # AxiosError 对齐
@@ -1108,7 +1137,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 22 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（236 个用例 × net6.0 / net8.0 双目标 = 472 次执行）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（441 个用例 × net6.0 / net8.0 双目标 = 882 次执行）
 ```
 
 ## 与 axios 的差异说明
@@ -1128,7 +1157,9 @@ dotnet build AxiosNet.slnx -c Release
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
 12. **请求头写入即校验**：头部名必须是 RFC 7230 token、取值不允许出现 `CR` / `LF` / `NUL`，否则 `AxiosHeaders.Set` 抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
 13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
-14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）。
+14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）；
+15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `ParamsSerializer`；
+16. **multipart 的字段名/文件名发送前就校验**：`"`、`\`、`CR`/`LF` 与控制字符会破坏 `Content-Disposition` 的 quoted-string，直接抛 `ERR_BAD_OPTION_VALUE`（`FormFile` 构造时抛 `ArgumentException`），而不是让服务端静默收到错位的键名（浏览器 `FormData` 对这些字符的处理各不相同，axios 侧无法依赖）。
 
 
 ## License

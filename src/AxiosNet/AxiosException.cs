@@ -124,8 +124,11 @@ public sealed class AxiosException : Exception
             : value[..MaxUrlInMessage] + $"...(truncated, {value.Length} chars)";
 
     internal static AxiosException InvalidOption(string message, AxiosConfig? config = null)
+        => InvalidOption(message, config, null);
+
+    internal static AxiosException InvalidOption(string message, AxiosConfig? config, Exception? inner)
     {
-        return new AxiosException(message, ErrBadOptionValue, config, null, null, null);
+        return new AxiosException(message, ErrBadOptionValue, config, null, null, inner);
     }
 
     internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage request, AxiosResponse response)

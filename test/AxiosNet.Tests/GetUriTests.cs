@@ -89,4 +89,32 @@ public sealed class GetUriTests
 
         Assert.Equal("https://example.com/a?q=x%20y", uri);
     }
+
+    [Theory]
+    [InlineData("a/b c", "a%2Fb%20c")]
+    [InlineData("中文", "%E4%B8%AD%E6%96%87")]
+    [InlineData("a?b#c&d+e", "a%3Fb%23c%26d%2Be")]
+    [InlineData("plain-id_1.2~3", "plain-id_1.2~3")]
+    [InlineData("100%", "100%25")]
+    [InlineData("", "")]
+    public void EncodePathSegment_EscapesSeparatorsAndNonAscii(string value, string expected)
+        => Assert.Equal(expected, AxiosUrl.EncodePathSegment(value));
+
+    [Fact]
+    public async Task EncodePathSegment_KeepsValueInsideOneSegment()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        // 不转义时 "a/b c" 会被拆成两段：items/a/b%20c
+        await client.GetAsync(server.Url + "items/" + AxiosUrl.EncodePathSegment("a/b c"));
+
+        Assert.Equal("/items/a%2Fb%20c", server.Received[0].RawUrl);
+    }
+
+    [Fact]
+    public void EncodePathSegment_Null_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() => AxiosUrl.EncodePathSegment(null!));
+    }
 }
