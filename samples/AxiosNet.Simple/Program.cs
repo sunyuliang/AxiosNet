@@ -33,7 +33,9 @@ IExample[] examples =
     new CustomHandlerExample(),
     new SingleFileUploadExample(),
     new NewtonsoftJsonExample(),
-    new DnsRefreshExample()
+    new DnsRefreshExample(),
+    new BearerTokenExample(),
+    new RequestSigningExample()
 };
 
 try

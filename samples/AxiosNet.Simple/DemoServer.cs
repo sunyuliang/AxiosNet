@@ -31,6 +31,9 @@ public sealed class DemoServer : IDisposable
 
     public string Url => $"http://127.0.0.1:{Port}/";
 
+    /// <summary>令牌 / 请求签名业务逻辑（Bearer 认证与请求签名两个示例的服务端）。</summary>
+    internal DemoAuthApi AuthApi { get; } = new();
+
     public int TotalConnections => Volatile.Read(ref _totalConnections);
 
     public int PeakConcurrentRequests => Volatile.Read(ref _peakRequests);
@@ -304,6 +307,26 @@ public sealed class DemoServer : IDisposable
                     + $"\"sha256\":\"{Sha256Hex(body)}\"}}");
             }
 
+            // ---- Bearer 令牌 / 请求签名（业务逻辑在 DemoAuthApi） ----
+            case "POST" when path == DemoAuthApi.LoginPath:
+                return Json(AuthApi.Login(query, Encoding.UTF8.GetString(body)));
+
+            case "GET" when path == DemoAuthApi.VerifyPath:
+                return Json(AuthApi.VerifyToken(headers));
+
+            case "GET" when path == DemoAuthApi.OrdersPath:
+                return Json(AuthApi.Orders(headers));
+
+            case "POST" when path == DemoAuthApi.RefreshPath:
+                return Json(AuthApi.Refresh(Encoding.UTF8.GetString(body)));
+
+            case "POST" when path == DemoAuthApi.LogoutPath:
+                return Json(AuthApi.Logout(headers));
+
+            case "POST" when path == DemoAuthApi.SignedOrdersPath:
+            case "GET" when path == DemoAuthApi.SignedProfilePath:
+                return Json(AuthApi.VerifySigned(method, path, query, headers, body));
+
             default:
                 return Json(404, """{"message":"unknown route"}""");
         }
@@ -311,6 +334,10 @@ public sealed class DemoServer : IDisposable
 
     private static (int, byte[], string, string?, string?) Json(int status, string json)
         => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8", null, null);
+
+    /// <summary>DemoAuthApi 返回 (状态码, JSON 文本)，转成路由元组。</summary>
+    private static (int, byte[], string, string?, string?) Json((int Status, string Json) result)
+        => Json(result.Status, result.Json);
 
     /// <summary>把解析出的部件序列化成一段 JSON（用于 /upload 的明细）。</summary>
     private static string DescribePart(MultipartPart part)

@@ -967,7 +967,7 @@ using var client3 = Axios.Create(
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 20 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 22 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -989,6 +989,8 @@ using var client3 = Axios.Create(
 18. **单文件上传**：裸流直传（`/upload/raw`）与 multipart 单文件（`/upload/single`），服务端精确回报字节数 + SHA256
 19. **自定义 JSON 序列化**：实现 `IAxiosJsonSerializer`，用 **Newtonsoft.Json** 替换 System.Text.Json（请求体 / 强类型响应 / dynamic 三条路径统一走同一引擎）
 20. **DNS 变更与连接过期**：两个本地服务器模拟同一域名的旧/新地址，演示 `PooledConnectionLifetime` 到期的自然收敛，以及 `pool.Clear()` 的立即失效
+21. **Bearer Token 认证**：登录签发、请求拦截器自动携带 `Authorization`、服务端验签端点，以及 401 后「刷新令牌 → 重试一次」的完整闭环（含登出吊销后刷新失败向上抛错）
+22. **请求签名**：HMAC-SHA256(token + 时间戳 + nonce + 方法 + 路径 + 请求体哈希)，演示防篡改（改请求体）与防重放（nonce 一次性 + 时间戳窗口）
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1075,7 +1077,7 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ Internal/               # URL/params、请求体工厂、流量计量、动态 JSON、反射缓存、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 20 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器 + DNS 刷新）
+│  └─ AxiosNet.Simple/           # 22 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 └─ test/
    └─ AxiosNet.Tests/            # xUnit 单元测试（236 个用例 × net6.0 / net8.0 双目标 = 472 次执行）
 ```
