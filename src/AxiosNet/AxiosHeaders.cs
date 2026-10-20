@@ -16,6 +16,11 @@ namespace AxiosNet;
 /// 那一层不做任何检查——若把外部输入直接拼进头部，<c>\r\n</c> 会被当成头部分隔符，
 /// 等于给调用方开了一个 HTTP 请求拆分（CWE-113）的口子。这里提前拒绝。
 /// </para>
+/// <para>
+/// 读/删入口（<see cref="Get"/> / <see cref="Has"/> / <see cref="Delete"/>）对
+/// <c>null</c> 名称抛 <see cref="ArgumentNullException"/> 而不是让空引用冒出来：
+/// 头部名常来自配置或循环变量，传错时报出参数名比一句 <c>NullReferenceException</c> 更容易定位。
+/// </para>
 /// </summary>
 public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 {
@@ -76,24 +81,36 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return this;
     }
 
+    /// <summary>读取请求头（大小写不敏感，名称允许带首尾空白）。不存在返回 <c>null</c>。</summary>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> 为 <c>null</c>。</exception>
     public string? Get(string name)
     {
+        ArgumentNullException.ThrowIfNull(name);
+
         lock (_sync)
         {
             return _store.TryGetValue(NormalizeName(name), out var value) ? value : null;
         }
     }
 
+    /// <summary>指定名称是否存在（大小写不敏感）。</summary>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> 为 <c>null</c>。</exception>
     public bool Has(string name)
     {
+        ArgumentNullException.ThrowIfNull(name);
+
         lock (_sync)
         {
             return _store.ContainsKey(NormalizeName(name));
         }
     }
 
+    /// <summary>删除指定请求头，返回是否真的删掉了条目。</summary>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> 为 <c>null</c>。</exception>
     public bool Delete(string name)
     {
+        ArgumentNullException.ThrowIfNull(name);
+
         lock (_sync)
         {
             return _store.Remove(NormalizeName(name));

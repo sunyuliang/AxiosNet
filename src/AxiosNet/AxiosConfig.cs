@@ -38,8 +38,23 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MethodSet { get; private set; }
 
+    private AxiosHeaders _headers = new();
+
     /// <summary>对应 axios headers（大小写不敏感）。</summary>
-    public AxiosHeaders Headers { get; set; } = new();
+    /// <exception cref="ArgumentNullException">赋值为 <c>null</c>。</exception>
+    /// <remarks>
+    /// 赋 null 会让后续的配置合并（<c>perCall.Headers.Count</c>）在请求管线深处抛空引用，
+    /// 报错点与真正的错误位置（这一行赋值）相隔很远；这里在赋值处就拒绝。
+    /// </remarks>
+    public AxiosHeaders Headers
+    {
+        get => _headers;
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _headers = value;
+        }
+    }
 
     /// <summary>
     /// 按请求要删除的 Header 名（大小写不敏感）：在 defaults 的头合并完成之后生效，
