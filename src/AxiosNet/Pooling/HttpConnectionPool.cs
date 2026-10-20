@@ -57,15 +57,16 @@ public sealed class HttpConnectionPool : IDisposable
                 $"MaxConnectionsPerServer 必须大于 0（当前 {options.MaxConnectionsPerServer}）。", config);
         }
 
-        if (options.PooledConnectionLifetime < TimeSpan.Zero)
+        if (IsNegativeLimit(options.PooledConnectionLifetime))
         {
             throw AxiosException.InvalidOption(
                 "PooledConnectionLifetime 不能为负（0 表示连接不复用；不限生命周期请用 Timeout.InfiniteTimeSpan）。", config);
         }
 
-        if (options.PooledConnectionIdleTimeout < TimeSpan.Zero)
+        if (IsNegativeLimit(options.PooledConnectionIdleTimeout))
         {
-            throw AxiosException.InvalidOption("PooledConnectionIdleTimeout 不能为负（0 表示不保留空闲连接）。", config);
+            throw AxiosException.InvalidOption(
+                "PooledConnectionIdleTimeout 不能为负（0 表示不保留空闲连接；不限请用 Timeout.InfiniteTimeSpan）。", config);
         }
 
         if (options.ConnectTimeout <= TimeSpan.Zero && options.ConnectTimeout != Timeout.InfiniteTimeSpan)
@@ -79,19 +80,40 @@ public sealed class HttpConnectionPool : IDisposable
                 "MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
         }
 
-        if (options.IdleHandlerLifetime < TimeSpan.Zero)
+        if (IsNegativeLimit(options.IdleHandlerLifetime))
         {
-            throw AxiosException.InvalidOption("IdleHandlerLifetime 不能为负。", config);
+            throw AxiosException.InvalidOption(
+                "IdleHandlerLifetime 不能为负（0 表示任何空闲节点立即可被驱逐；不限请用 Timeout.InfiniteTimeSpan）。",
+                config);
         }
     }
+
+    /// <summary>
+    /// 是否为非法的负时长。<see cref="Timeout.InfiniteTimeSpan"/>（-1ms）是 BCL 表达「不限」的标准值，
+    /// 报错文案本身就在让调用方用它 —— 必须放行，否则「照文档改」只会换来另一个异常。
+    /// </summary>
+    private static bool IsNegativeLimit(TimeSpan value)
+        => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
 
     /// <summary>
     /// 池实际生效的选项（返回副本；修改它不会影响池，要调整请在构造池之前改）。
     /// </summary>
     public ConnectionPoolOptions Options => _options.Clone();
 
+    /// <summary>
+    /// 池实际生效的选项（不克隆）。<see cref="Options"/> 每次访问都会克隆一份，
+    /// 请求管线里只是读两个值，没必要为它分配对象 —— 仅限库内只读使用。
+    /// </summary>
+    internal ConnectionPoolOptions EffectiveOptions => _options;
+
     /// <summary>从池中租用指定 URI 所属 origin 的连接节点。</summary>
-    public PoolLease Lease(Uri requestUri)
+    public PoolLease Lease(Uri requestUri) => Lease(requestUri, config: null);
+
+    /// <summary>
+    /// 管道内部入口：带上本次请求的合并配置，让池级错误（如 origin 节点数上限）也能通过
+    /// <see cref="AxiosException.Config"/> 指回调用方的配置，而不是一个 Config 为 null 的异常。
+    /// </summary>
+    internal PoolLease Lease(Uri requestUri, AxiosConfig? config)
     {
         if (Volatile.Read(ref _disposed) == 1)
         {
@@ -107,7 +129,7 @@ public sealed class HttpConnectionPool : IDisposable
 
         while (true)
         {
-            EnsureCapacity(origin);
+            EnsureCapacity(origin, config);
 
             // 正常情况下 GetOrAdd 只创建一次；极端竞态下落选的新建节点直接释放。
             PooledEndpoint? created = null;
@@ -150,9 +172,13 @@ public sealed class HttpConnectionPool : IDisposable
     /// <see cref="OperationCanceledException"/>，不会占用池节点。
     /// </summary>
     public ValueTask<PoolLease> LeaseAsync(Uri requestUri, CancellationToken cancellationToken = default)
+        => LeaseAsync(requestUri, config: null, cancellationToken);
+
+    /// <summary>管道内部入口：语义同 <see cref="LeaseAsync(Uri, CancellationToken)"/>，额外携带请求配置。</summary>
+    internal ValueTask<PoolLease> LeaseAsync(Uri requestUri, AxiosConfig? config, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new ValueTask<PoolLease>(Lease(requestUri));
+        return new ValueTask<PoolLease>(Lease(requestUri, config));
     }
 
     internal void Return(PooledEndpoint endpoint)
@@ -173,7 +199,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// 新建 origin 节点前的容量检查：达到 <see cref="ConnectionPoolOptions.MaxEndpointCount"/>
     /// 时先驱逐最久未使用的空闲节点，一个都驱逐不掉（全部在途）才拒绝。
     /// </summary>
-    private void EnsureCapacity(string origin)
+    private void EnsureCapacity(string origin, AxiosConfig? config)
     {
         var max = _options.MaxEndpointCount;
         if (max <= 0 || _endpoints.Count < max || _endpoints.ContainsKey(origin))
@@ -188,7 +214,8 @@ public sealed class HttpConnectionPool : IDisposable
 
         throw AxiosException.InvalidOption(
             $"连接池的 origin 节点数已达上限 {max}，且没有可驱逐的空闲节点（可能全部在途）。"
-            + "可提高 ConnectionPoolOptions.MaxEndpointCount，或显式调用 Clear() 回收。");
+            + "可提高 ConnectionPoolOptions.MaxEndpointCount，或显式调用 Clear() 回收。",
+            config);
     }
 
     private int EvictIdle(TimeSpan minIdle, int limit)

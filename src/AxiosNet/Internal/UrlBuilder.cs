@@ -41,12 +41,24 @@ internal static class UrlBuilder
 
         // 自定义序列化器（对应 axios paramsSerializer）返回的串允许带前导 ?/&，这里统一去掉。
         var query = serializer is null
-            ? ParamsSerializer.Serialize(queryParams)
+            ? ParamsSerializer.Serialize(queryParams, config)
             : NormalizeQuery(serializer(queryParams));
         if (query.Length > 0)
         {
-            var separator = target.Contains('?') ? "&" : "?";
-            target = target + separator + query;
+            // 「url 已经以 ? / & 结尾」时不能再补分隔符：`search?` + params 会拼出 `search?&a=1`，
+            // 多出来的空参数在严格的服务端/网关眼里是「一个无名的空参数」，不是等价形态。
+            if (target.Length == 0)
+            {
+                target = query;
+            }
+            else if (target[^1] is '?' or '&')
+            {
+                target += query;
+            }
+            else
+            {
+                target += (target.Contains('?') ? "&" : "?") + query;
+            }
         }
 
         combined = fragment.Length > 0 ? target + fragment : target;
@@ -142,11 +154,20 @@ internal static class UrlBuilder
 
 internal static class ParamsSerializer
 {
-    public static string Serialize(object? paramsObj)
+    /// <param name="paramsObj">查询参数：对象 / 字典 / 集合 / 已序列化的查询串（string）。</param>
+    /// <param name="config">用于把「params 类型非法」的错误挂上配置。</param>
+    public static string Serialize(object? paramsObj, AxiosConfig? config = null)
     {
         if (paramsObj is null)
         {
             return string.Empty;
+        }
+
+        // 已经是查询串（`"a=1&b=2"`）：原样透传。此前落到反射分支后会被当成普通对象序列化成
+        // `?Length=7`——把 string 自身的 CLR 属性写进了查询串，与服务端约定完全不搭。
+        if (paramsObj is string rawQuery)
+        {
+            return NormalizeRawQuery(rawQuery);
         }
 
         var pairs = new List<KeyValuePair<string, string>>(8);
@@ -154,6 +175,12 @@ internal static class ParamsSerializer
         {
             // 直接传 JsonElement（从 JsonDocument / JsonSerializer 拿到的查询片段）必须按 JSON 树展开；
             // 走反射兜底只会把 JsonElement 自己的属性（ValueKind / RawText…）序列化出去。
+            if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
+                or JsonValueKind.True or JsonValueKind.False)
+            {
+                throw InvalidParamsRoot(paramsObj, config);
+            }
+
             AppendJsonElement(null, rootElement, pairs);
         }
         else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
@@ -176,6 +203,22 @@ internal static class ParamsSerializer
                 Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs);
             }
         }
+        else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
+        {
+            // 根集合（数组 / List）：与表单展平一致，用下标作键。
+            // 此前同样落到反射分支，会输出 `Length=2&Rank=1&SyncRoot[]=1&...`（Array 的 CLR 属性）。
+            var index = 0;
+            foreach (var item in items)
+            {
+                Append("[" + index + "]", item, pairs);
+                index++;
+            }
+        }
+        else if (IsScalar(paramsObj))
+        {
+            // 标量没有任何可表达的键名：伪造一个 key 或静默丢弃都会让调用方以为参数发出去了。
+            throw InvalidParamsRoot(paramsObj, config);
+        }
         else
         {
             foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
@@ -185,6 +228,20 @@ internal static class ParamsSerializer
         }
 
         return string.Join("&", pairs.Select(p => p.Key + "=" + p.Value));
+    }
+
+    /// <summary>非法根类型：统一成 <c>ERR_BAD_OPTION_VALUE</c>，并说明可用的形态。</summary>
+    private static AxiosException InvalidParamsRoot(object paramsObj, AxiosConfig? config)
+        => AxiosException.InvalidOption(
+            $"params 的类型 '{paramsObj.GetType()}' 无法序列化为查询串：请传对象 / 字典 / 集合，"
+            + "或已经序列化好的查询串（string，如 \"a=1&b=2\"）。",
+            config);
+
+    /// <summary>去掉查询串首尾空白与前导 <c>?</c> / <c>&amp;</c>（与自定义 paramsSerializer 的归一化一致）。</summary>
+    private static string NormalizeRawQuery(string query)
+    {
+        var trimmed = query.Trim();
+        return trimmed.Length == 0 ? string.Empty : trimmed.TrimStart('?', '&');
     }
 
     private static void Append(string prefix, object? value, List<KeyValuePair<string, string>> pairs)

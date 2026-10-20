@@ -64,7 +64,18 @@ public sealed class AxiosConfig
     public ICollection<string> RemoveHeaders { get; }
         = new Internal.SynchronizedList<string>();
 
-    /// <summary>对应 axios params，会被序列化为 query string，支持对象/字典/数组/嵌套。</summary>
+    /// <summary>
+    /// 对应 axios params，会被序列化为 query string。
+    /// <para>
+    /// 支持：对象 / 字典（含 <c>dynamic</c>）/ 集合（根集合用 <c>[0]=v</c> 下标，
+    /// 嵌套数组用 <c>a[]=v</c>、嵌套对象用 <c>a[b]=v</c>，null 跳过）/
+    /// 已经序列化好的查询串（<see cref="string"/>，如 <c>"a=1&amp;b=2"</c>，原样拼进 URL）。
+    /// </para>
+    /// <para>
+    /// 标量（<see cref="int"/> / <see cref="bool"/> / <see cref="DateTime"/> …）无法表达键名，
+    /// 会抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）而不是被静默丢弃。
+    /// </para>
+    /// </summary>
     public object? Params { get; set; }
 
     /// <summary>库默认的请求体媒体类型。</summary>
@@ -187,7 +198,8 @@ public sealed class AxiosConfig
 
     /// <summary>
     /// 对应 axios withCredentials（使用系统默认凭据/Cookie）。
-    /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；按请求设置会抛 <see cref="AxiosException"/>。
+    /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；
+    /// 按请求写<b>与实例生效值不同</b>的值会抛 <see cref="AxiosException"/>（写相同的值等价于不写，放行）。
     /// 若注入了自定义 Handler，本项需由 Handler 自己处理（在 defaults 上设置会抛 <see cref="AxiosException"/>）。
     /// </summary>
     public bool WithCredentials
@@ -219,7 +231,8 @@ public sealed class AxiosConfig
 
     /// <summary>
     /// 对应 axios maxRedirects，默认 5；<b>设为 0 表示不跟随重定向</b>（返回 3xx 响应本身，默认 validateStatus 会视为错误）。
-    /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；按请求设置会抛 <see cref="AxiosException"/>。
+    /// 仅实例级生效：在构造 AxiosClient 时应用到连接池 Handler；
+    /// 按请求写<b>与实例生效值不同</b>的值会抛 <see cref="AxiosException"/>（写相同的值等价于不写，放行）。
     /// 注入自定义 Handler 时由 Handler 决定（在 defaults 上设置会抛 <see cref="AxiosException"/>）。
     /// </summary>
     public int MaxRedirects

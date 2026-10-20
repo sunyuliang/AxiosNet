@@ -251,11 +251,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>对应 axios(config)，Data 反序列化为 T。</summary>
-    public async Task<AxiosResponse<T>> RequestAsync<T>(AxiosConfig config)
+    public Task<AxiosResponse<T>> RequestAsync<T>(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
-        return response.AsTyped<T>();
+        return SendTypedAsync<T>(config);
     }
 
     /// <summary>用 Action 配置请求的非泛型入口。</summary>
@@ -268,13 +267,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>用 Action 配置请求的泛型入口。</summary>
-    public async Task<AxiosResponse<T>> RequestAsync<T>(Action<AxiosConfig> configure)
+    public Task<AxiosResponse<T>> RequestAsync<T>(Action<AxiosConfig> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
         var config = new AxiosConfig();
         configure(config);
-        var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
-        return response.AsTyped<T>();
+        return SendTypedAsync<T>(config);
     }
 
     // ------------------------------------------------------------------
@@ -360,9 +358,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         // 1) 请求拦截器：与 axios 一致，按注册逆序执行
         foreach (var interceptor in Interceptors.Request.SnapshotReversed())
         {
+            AxiosConfig next;
             try
             {
-                config = await interceptor.OnFulfilled(config).ConfigureAwait(false);
+                next = await interceptor.OnFulfilled(config).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -371,8 +370,15 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     throw;
                 }
 
-                config = await interceptor.OnRejected(ex).ConfigureAwait(false);
+                next = await interceptor.OnRejected(ex).ConfigureAwait(false);
             }
+
+            // 返回 null 时此前会在下一行（config.TransformRequest）炸成裸 NullReferenceException，
+            // 调用方既拿不到 AxiosException 也看不出是哪一层拦截器出的错。
+            config = next ?? throw AxiosException.InvalidOption(
+                "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
+                + "（要做修改请改传入的 config 后端返回它）。",
+                config);
         }
 
         // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
@@ -470,7 +476,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     {
                         try
                         {
-                            lease = await _pool!.LeaseAsync(uri, linkedCts.Token).ConfigureAwait(false);
+                            lease = await _pool!.LeaseAsync(uri, config, linkedCts.Token).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException ex)
                         {
@@ -516,9 +522,24 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     }
 
                     AxiosResponse response;
+                    bool statusAccepted;
                     try
                     {
-                        response = await ReadResponseAsync(responseMessage, request, config, linkedCts.Token, dataType)
+                        // 状态码的接受性只判定一次：它同时决定「宽松解析」与「是否抛错」，
+                        // 调用两次会让带副作用的 validateStatus（计数、日志、限流）被执行两遍，
+                        // 且两次结果不一致时（非确定性判定）行为自相矛盾。
+                        var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
+                        statusAccepted = validateStatus((int)responseMessage.StatusCode);
+
+                        // 状态码不合法时转换必须宽松：否则 404 + HTML 错误页会在反序列化处抛错，
+                        // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
+                        response = await ReadResponseAsync(
+                                responseMessage,
+                                request,
+                                config,
+                                linkedCts.Token,
+                                dataType,
+                                lenient: !statusAccepted)
                             .ConfigureAwait(false);
                     }
                     catch (OperationCanceledException ex)
@@ -550,8 +571,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         responseMessage.Dispose();
                     }
 
-                    var validate = config.ValidateStatus ?? DefaultValidateStatus;
-                    if (!validate(response.Status))
+                    if (!statusAccepted)
                     {
                         if (streamResponse)
                         {
@@ -624,10 +644,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                             throw;
                         }
 
-                        return await rejected(ex).ConfigureAwait(false);
+                        // 返回 null 此前会被当成「响应就是 null」原样交回调用方，
+                        // GetAsync<T> 随后在 AsTyped 上炸 NRE —— 明确报成配置错误。
+                        return (await rejected(ex).ConfigureAwait(false))
+                            ?? throw NullInterceptorResult(config);
                     }
 
-                    return await fulfilled(response).ConfigureAwait(false);
+                    return (await fulfilled(response).ConfigureAwait(false))
+                        ?? throw NullInterceptorResult(config);
                 };
             }
 
@@ -667,6 +691,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private static bool DefaultValidateStatus(int status) => status is >= 200 and < 300;
 
     /// <summary>
+    /// 响应拦截器返回 <c>null</c>：返回类型是非空的 <see cref="AxiosResponse"/>，
+    /// 静默把 null 交出去会让调用方在很远的地方炸 NRE（<c>GetAsync&lt;T&gt;</c> 的 <c>AsTyped</c>）。
+    /// </summary>
+    private static AxiosException NullInterceptorResult(AxiosConfig config)
+        => AxiosException.InvalidOption(
+            "响应拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosResponse 实例"
+            + "（要中断这次请求请抛异常，不要返回 null）。",
+            config);
+
+    /// <summary>
     /// 限制类配置的取值范围校验。
     /// <para>
     /// 负值此前一律被静默当作「不限制」（<c>Timeout &gt; 0</c> / <c>is &gt; 0</c> 判断），
@@ -702,8 +736,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 实例级选项（Proxy / Credentials / WithCredentials / MaxRedirects）在构造连接池时已固定，
-    /// 按请求设置无法生效 —— 与其静默忽略，不如明确报错。
+    /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造连接池时已固定，
+    /// 按请求写<b>不同的值</b>无法生效 —— 与其静默忽略，不如明确报错；
+    /// 写<b>与实例生效值相同</b>的值则是等价写法，放行（否则调用方把 defaults 抄一遍到每个请求上都会炸）。
     /// </summary>
     private void ValidatePerRequestOptions(AxiosConfig perCall)
     {
@@ -728,20 +763,76 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 + "请通过 AxiosClient 构造参数或 defaults.PoolOptions 设置。", perCall);
         }
 
+        // 必须按 *Set 判断「调用方到底写没写」：perCall 是只含按请求项的配置，
+        // 缺省值分别是 false 与 5。若直接拿值比生效值，实例 WithCredentials = true
+        // 或池上限为 3 时，连「按请求根本没写」的正常请求都会被误判成「写了不同的值」。
         if (perCall.WithCredentialsSet)
         {
-            throw AxiosException.InvalidOption(
-                "WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），请在 AxiosClient 的 defaults 上设置。", perCall);
+            ValidatePerRequestWithCredentials(perCall);
         }
 
-        // 只要「按请求设置过」就报错，而不是「值与本实例默认不同」才报错：
-        // 后者在 value == 默认值时会静默通过却完全不生效（例如实例默认 5、按请求也写 5），
-        // 调用方无从知道自己写的这一行其实被丢掉了。
         if (perCall.MaxRedirectsSet)
         {
-            throw AxiosException.InvalidOption(
-                "MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），请在 AxiosClient 的 defaults 上设置。", perCall);
+            ValidatePerRequestMaxRedirects(perCall);
         }
+    }
+
+    /// <summary>
+    /// 按请求写 <c>WithCredentials</c>：只允许复述实例生效值。
+    /// <para>
+    /// 判定依据是「值是否与生效值不同」而不是「是否设置过」：写相同的值完全等价于不写，
+    /// 没有理由报错。注入自定义 Handler 时无从得知它的 Cookie 策略、无法判断是否等价，仍一律报错。
+    /// </para>
+    /// </summary>
+    private void ValidatePerRequestWithCredentials(AxiosConfig perCall)
+    {
+        if (_customClient is not null)
+        {
+            throw AxiosException.InvalidOption(
+                "注入自定义 handler 时 WithCredentials 完全由 handler 决定（Cookie 容器在连接层），"
+                + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", perCall);
+        }
+
+        if (perCall.WithCredentials == Defaults.WithCredentials)
+        {
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），按请求只能写与实例相同的值；"
+            + $"当前按请求为 {perCall.WithCredentials}，实例生效值为 {Defaults.WithCredentials}。"
+            + "要改变它请新建 AxiosClient 并在 defaults 上设置。", perCall);
+    }
+
+    /// <summary>
+    /// 按请求写 <c>MaxRedirects</c>：只允许复述实例生效值。
+    /// <para>
+    /// 生效值取自池上真正生效的重定向策略（<c>AllowAutoRedirect = false</c> 时视为 0），
+    /// 而不是 <see cref="AxiosConfig.MaxRedirects"/> 的属性默认值 5 —— 否则
+    /// 「defaults 没设置、poolOptions 把上限改成 3」这类实例会被误判为 5。
+    /// </para>
+    /// </summary>
+    private void ValidatePerRequestMaxRedirects(AxiosConfig perCall)
+    {
+        if (_customClient is not null)
+        {
+            throw AxiosException.InvalidOption(
+                "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），"
+                + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", perCall);
+        }
+
+        var options = _pool!.EffectiveOptions;
+        var effective = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
+
+        if (perCall.MaxRedirects == effective)
+        {
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），按请求只能写与实例相同的值；"
+            + $"当前按请求为 {perCall.MaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
+            + "要改变它请新建 AxiosClient 并在 defaults 或 ConnectionPoolOptions 上设置。", perCall);
     }
 
     /// <summary>
@@ -834,7 +925,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         HttpRequestMessage request,
         AxiosConfig config,
         CancellationToken cancellationToken,
-        Type? dataType)
+        Type? dataType,
+        bool lenient)
     {
         var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var header in message.Headers)
@@ -848,10 +940,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
 
         var status = (int)message.StatusCode;
-
-        // 状态码不合法时转换必须宽松：否则 404 + HTML 错误页会在反序列化处抛错，
-        // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
-        var lenient = !(config.ValidateStatus ?? DefaultValidateStatus)(status);
 
         object? data;
         if (config.ResponseType == ResponseType.Stream)

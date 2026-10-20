@@ -154,7 +154,7 @@ string url = http.GetUri(c =>
 | `interceptors.request.use(ok, err)` | `Interceptors.Request.Use(...)`（同步/异步重载） |
 | `interceptors.response.use(...)` | `Interceptors.Response.Use(...)` |
 | `interceptors.x.eject(id)` | `Eject(id)` |
-| `config.params` | `c.Params`（对象/字典/数组/嵌套） |
+| `config.params` | `c.Params`（对象/字典/数组/嵌套；也接受已序列化好的查询串 `string`，标量会抛 `ERR_BAD_OPTION_VALUE`） |
 | `config.data`（对象→JSON） | `c.Data`（任意类型；编码方式由 `c.ContentType` 决定，默认 JSON） |
 | `config.ContentType` | 请求体媒体类型（默认 `application/json`，可传含 charset 的完整值；决定 data 的编码格式） |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
@@ -163,7 +163,7 @@ string url = http.GetUri(c =>
 | `validateStatus` | `c.ValidateStatus = status => ...` |
 | `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
 | `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
-| `withCredentials` / `proxy` / `maxRedirects` | 同名属性（**仅实例级**生效，见下） |
+| `withCredentials` / `proxy` / `maxRedirects` | 同名属性（**仅实例级**生效：按请求写与实例不同的值会抛 `ERR_BAD_OPTION_VALUE`，见下） |
 | `maxContentLength` / `maxBodyLength` | 同名属性（`long?`，字节；超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`） |
 | `maxRate` | `c.MaxRate`（字节/秒，上传下载共用） |
 | `onUploadProgress` / `onDownloadProgress` | 同名属性（`Action<AxiosProgressEvent>`） |
@@ -220,7 +220,7 @@ var config = new AxiosConfig
 
 默认 JSON 选项为 **Web 风格**（输出 camelCase、输入大小写不敏感），与 JS/axios 生态习惯一致；优先级是「单次请求 → 实例 defaults → 全局 `AxiosJson.Options`」，自定义序列化器的接入方式见 [自定义 JSON 序列化](#自定义-json-序列化)。
 
-> `withCredentials` / `proxy` / `credentials` / `maxRedirects` 属于**实例级**配置：连接池 Handler 在构造 `AxiosClient` 时创建，因此这些项只在实例默认值上生效。为避免"设了却没生效"的静默错误，在**单次请求**上显式设置这四项会立即抛出 `AxiosException`（`ERR_BAD_OPTION_VALUE`），提示改为在 `Axios.Create(...)` 的实例 defaults 中设置。
+> `withCredentials` / `proxy` / `credentials` / `maxRedirects` 属于**实例级**配置：连接池 Handler 在构造 `AxiosClient` 时创建，因此这些项只在实例默认值上生效。为避免"设了却没生效"的静默错误，在**单次请求**上写**与实例生效值不同**的值会立即抛出 `AxiosException`（`ERR_BAD_OPTION_VALUE`），提示改为在 `Axios.Create(...)` 的实例 defaults 中设置。判定依据是"值是否与生效值不同"而不是"是否写过"：把 defaults 里的值原样抄到单次请求上属于等价写法，不会报错（`maxRedirects` 的生效值取自池的实际策略——`AllowAutoRedirect = false` 时为 `0`，`poolOptions.MaxAutomaticRedirections` 为多少就是多少）。`proxy` / `credentials` / `poolOptions` 按引用与 defaults 比较，传入不同实例即视为不同值。
 >
 > 共享连接池的 `AxiosClient(pool: ...)` 同理：这四项与 `PoolOptions` 作用于**池**而非单个实例，在共享池 client 的 defaults 上设置同样立即抛 `ERR_BAD_OPTION_VALUE`，应改为在创建池的 `ConnectionPoolOptions` 上配置（详见[网络连接池](#网络连接池)）。
 >
@@ -284,6 +284,10 @@ await http.GetAsync("search", c =>
         ids = new[] { 1, 2 },            // ids[]=1&ids[]=2
         filter = new { kind = "book" }   // filter[kind]=book
     });
+
+// 6.1) params 也可以直接给「已序列化好的查询串」，或给根集合（用下标作键）
+await http.GetAsync("search", c => c.Params = "a=1&b=2");   // ?a=1&b=2
+await http.GetAsync("search", c => c.Params = new[] { 1, 2 }); // ?[0]=1&[1]=2
 ```
 
 > 默认媒体类型是 JSON，因此发送二进制载荷时请显式设置 `c.ContentType = "application/octet-stream"`（库不会根据 `byte[]`/`Stream` 猜测类型）。
@@ -476,7 +480,20 @@ await http.PostAsync("legacy", "中文", c => c.RequestEncoding = Encoding.GetEn
 await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gbk"));
 ```
 
-> .NET Core 上使用 GBK 等代码页编码需先注册 `CodePagesEncodingProvider`，否则 `Encoding.GetEncoding("gbk")` 会抛异常；此时自动识别会静默回退到 BOM/UTF-8。
+> **GBK / GB2312 / Big5 等代码页编码必须先注册提供程序**（`utf-8` / `utf-16` / `ascii` / `iso-8859-1` 之外都算）。
+> .NET 6+ 内置编码表里没有它们，未注册时 `Encoding.GetEncoding("gbk")` 会抛 `ArgumentException`。
+>
+> ```csharp
+> // 启动期执行一次；需要 NuGet 包 System.Text.Encoding.CodePages（库本身零依赖，不替你引）
+> Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+>
+> // 之后两种用法都有效
+> await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gbk"));  // 强制按 GBK 解码
+> // 或什么都不配：服务端 Content-Type: text/html; charset=gbk 时自动识别就能解对
+> ```
+>
+> ⚠️ **没注册时是静默乱码**：`charset=gbk` 会被当成未知编码，回落到 BOM/UTF-8 解码，
+> 中文变成 `����` 且**不抛任何异常**。如果对端是国内老系统，先确认这一行加过。
 
 JSON 到 CLR 的映射规则：
 
@@ -808,7 +825,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_NETWORK` | 连接被拒绝/DNS 失败/连接中途断开/响应体被截断等网络层异常（底层异常见 `ex.Cause`） | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
 | `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`、非 `http`/`https` 的 scheme） | ✅ |
-| `ERR_BAD_OPTION_VALUE` | 在单次请求上设置了仅实例级生效的项（`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions`；连接池选项取值非法（如 `MaxConnectionsPerServer <= 0`）；`Content-Type` 为 `multipart/form-data` 而 `data` 是原始内容（`string` / `byte[]` / `Memory` / `Stream`，且 Content-Type 未带 `boundary`） | ✅（同码） |
+| `ERR_BAD_OPTION_VALUE` | 在单次请求上写了**与实例生效值不同**的仅实例级选项（`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions`；连接池选项取值非法（如 `MaxConnectionsPerServer <= 0`）；`Content-Type` 为 `multipart/form-data` 而 `data` 是原始内容（`string` / `byte[]` / `Memory` / `Stream`，且 Content-Type 未带 `boundary`）；`Params` 是标量（`int` / `bool` / `DateTime` …，无法表达键名）；拦截器返回 `null` | ✅（同码） |
 
 ## 超时与取消
 
@@ -1105,7 +1122,7 @@ dotnet build AxiosNet.slnx -c Release
 5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
 7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
-8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上设置会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头用 `config.RemoveHeaders.Add("X-Foo")`；
+8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上写**与实例生效值不同**的值会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast），写相同的值则等价于不写、正常放行；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头用 `config.RemoveHeaders.Add("X-Foo")`；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；

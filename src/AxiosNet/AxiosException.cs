@@ -111,8 +111,17 @@ public sealed class AxiosException : Exception
 
     internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null)
     {
-        return new AxiosException($"Invalid URL: {url}", ErrInvalidUrl, config, null, null, inner);
+        // 超长 URL（>64KB 的查询串）本身就会让 Uri 拒绝解析；把整条 URL 塞进消息里
+        // 只会让异常信息变成几十万字符，日志与 IDE 都被它拖住。
+        return new AxiosException($"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
     }
+
+    private const int MaxUrlInMessage = 512;
+
+    private static string Truncate(string value)
+        => value.Length <= MaxUrlInMessage
+            ? value
+            : value[..MaxUrlInMessage] + $"...(truncated, {value.Length} chars)";
 
     internal static AxiosException InvalidOption(string message, AxiosConfig? config = null)
     {

@@ -1,4 +1,4 @@
-using System.Net.Http.Headers;
+using AxiosNet.Internal;
 
 namespace AxiosNet;
 
@@ -131,30 +131,76 @@ public sealed partial class AxiosClient
         var content = request.Content;
         foreach (var header in config.Headers)
         {
-            if (content is not null && ContentHeaderNames.Contains(header.Key))
+            if (!ContentHeaderNames.Contains(header.Key))
             {
-                // 空值用在 Content-* 上会把 Content-Length / Content-Type 直接清掉，保留原有跳过语义。
-                if (string.IsNullOrEmpty(header.Value))
+                // 非 Content-* 头：先给请求头；请求头不认的个别名称再退回内容头。
+                if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value) && content is not null)
                 {
+                    content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
+
+                continue;
+            }
+
+            // 空值用在 Content-* 上会把 Content-Length / Content-Type 直接清掉，保留原有跳过语义。
+            if (string.IsNullOrEmpty(header.Value))
+            {
+                continue;
+            }
+
+            // Content-Length 必须与正文实际字节数一致：写错的值会让连接一直等一个永远不会来的正文，
+            // 最终只表现为一句 ERR_NETWORK（真实原因埋在几十层堆栈下面）。
+            if (string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
+            {
+                if (content is null)
+                {
+                    // 没有正文时写它没有任何意义（传输层会自己补 Content-Length: 0），
+                    // 也不能为了它就造一个正文。
                     continue;
                 }
 
-                // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
-                // 覆盖会让正文无法解析，因此保留内容自身的头部。
-                if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
-                    && HasMultipartBoundary(content.Headers.ContentType))
+                var actualLength = content.Headers.ContentLength;
+                if (actualLength is long known)
                 {
+                    if (!IsLengthHeaderMatching(header.Value, known))
+                    {
+                        throw AxiosException.InvalidOption(
+                            $"Content-Length 头（{header.Value.Trim()}）与请求体实际长度（{known} 字节）不一致。"
+                            + "内容长度已知时该头由库按实际字节数生成，请删掉这一行。",
+                            config);
+                    }
+
+                    // 一致：内容自身已经声明了正确长度，不必再写一遍
                     continue;
                 }
 
-                // Content-Type 允许用户显式覆盖工厂默认值
+                // 长度未知（非 seekable 的 Stream 等）：尊重调用方显式声明的值 ——
+                // 这是「已知长度、但要关掉 chunked」的逃生口。
                 content.Headers.Remove(header.Key);
                 content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                continue;
             }
-            else if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value) && content is not null)
+
+            // Content-* 头只能挂在正文上：没有正文时 HttpRequestHeaders 会直接拒收
+            // （TryAddWithoutValidation 返回 false），这个头就被静默丢掉了。
+            // 调用方显式写了内容头，说明这次请求就该带上它 —— 补一个空正文让它落到线上。
+            if (content is null)
             {
-                content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                content = new ByteArrayContent(Array.Empty<byte>());
+                request.Content = content;
             }
+
+            // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
+            // 覆盖会让正文无法解析，因此保留内容自身的头部。
+            if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
+                && RequestBodyFactory.HasMultipartBoundary(content.Headers.ContentType))
+            {
+                continue;
+            }
+
+            // Content-Type 允许用户显式覆盖工厂默认值
+            content.Headers.Remove(header.Key);
+            content.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
         if (config.Auth is not null
@@ -165,24 +211,12 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>内容自身是否已带 multipart boundary（此时不能覆盖 Content-Type）。</summary>
-    private static bool HasMultipartBoundary(MediaTypeHeaderValue? contentType)
-    {
-        if (contentType?.MediaType is not { } mediaType
-            || !mediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        foreach (var parameter in contentType.Parameters)
-        {
-            if (parameter.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrEmpty(parameter.Value))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    /// <summary>手写的 Content-Length 是否等于实际字节数（非数字一律视为不一致）。</summary>
+    private static bool IsLengthHeaderMatching(string headerValue, long actual)
+        => long.TryParse(
+                headerValue.Trim(),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsed)
+            && parsed == actual;
 }

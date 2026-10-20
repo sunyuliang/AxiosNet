@@ -17,10 +17,16 @@ public sealed class ConnectionPoolOptions
     /// <summary>每个 origin 允许的最大并发 TCP 连接数（默认 100）。</summary>
     public int MaxConnectionsPerServer { get; set; } = 100;
 
-    /// <summary>池化连接的最大存活时间，到期后优雅轮换（默认 10 分钟，支持 DNS 变更）。</summary>
+    /// <summary>
+    /// 池化连接的最大存活时间，到期后优雅轮换（默认 10 分钟，支持 DNS 变更）。
+    /// 不限生命周期请设为 <see cref="Timeout.InfiniteTimeSpan"/>。
+    /// </summary>
     public TimeSpan PooledConnectionLifetime { get; set; } = TimeSpan.FromMinutes(10);
 
-    /// <summary>连接在池中空闲多久后关闭（默认 2 分钟）。</summary>
+    /// <summary>
+    /// 连接在池中空闲多久后关闭（默认 2 分钟）。
+    /// 一直保留空闲连接请设为 <see cref="Timeout.InfiniteTimeSpan"/>。
+    /// </summary>
     public TimeSpan PooledConnectionIdleTimeout { get; set; } = TimeSpan.FromMinutes(2);
 
     /// <summary>建立 TCP/TLS 连接的超时时间（默认 15 秒）。</summary>
@@ -28,7 +34,8 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 某个 origin 的 Handler 空闲多久后从池中驱逐并释放（默认 5 分钟）。
-    /// 设为 <see cref="TimeSpan.Zero"/> 表示任何空闲节点立即可被驱逐（手动或后台）。
+    /// 设为 <see cref="TimeSpan.Zero"/> 表示任何空闲节点立即可被驱逐（手动或后台）；
+    /// 永不驱逐请设为 <see cref="Timeout.InfiniteTimeSpan"/>。
     /// </summary>
     public TimeSpan IdleHandlerLifetime { get; set; } = TimeSpan.FromMinutes(5);
 

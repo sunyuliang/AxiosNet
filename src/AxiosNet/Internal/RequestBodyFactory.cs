@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Globalization;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -60,6 +61,19 @@ internal static class RequestBodyFactory
                 if (config.ContentTypeSet && existing.Headers.ContentType is null)
                 {
                     SetContentType(existing, mediaType);
+                }
+
+                // multipart 没有 boundary 服务端必然解析失败（正文里就是靠随机边界切分部件的）。
+                // 自带边界时（MultipartFormDataContent / 手写头部）透传；否则说明调用方既没让库
+                // 组装字段、也没准备合法的 multipart 正文 —— 与其发出去换一个看不懂的 400，不如在这里拦。
+                if (existing.Headers.ContentType?.MediaType is { } existingMediaType
+                    && existingMediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase)
+                    && !HasMultipartBoundary(existing.Headers.ContentType))
+                {
+                    throw AxiosException.InvalidOption(
+                        "Content-Type 为 multipart 却没有 boundary：data 传入的 HttpContent 必须自带合法边界"
+                        + "（如 MultipartFormDataContent），或把对象/字典交给库组装字段。",
+                        config);
                 }
 
                 return existing;
@@ -555,6 +569,33 @@ internal static class RequestBodyFactory
         var end = mediaType.IndexOf(';');
         var main = (end < 0 ? mediaType : mediaType[..end]).Trim();
         return string.Equals(main, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 内容自身是否已带 multipart boundary。
+    /// <para>
+    /// 挂在 <see cref="RequestBodyFactory"/> 而不是各调用方：请求体工厂（校验 HttpContent 合法性）
+    /// 与 header 应用（multipart 的 Content-Type 不允许被覆盖）用的是同一条判定，不能各写一份。
+    /// </para>
+    /// </summary>
+    internal static bool HasMultipartBoundary(MediaTypeHeaderValue? contentType)
+    {
+        if (contentType?.MediaType is not { } mediaType
+            || !mediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        foreach (var parameter in contentType.Parameters)
+        {
+            if (parameter.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(parameter.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>「内容原样发送」的类型：与结构化数据相对，不经过任何展平/序列化。</summary>

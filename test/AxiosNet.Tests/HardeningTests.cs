@@ -332,18 +332,20 @@ public sealed class HardeningTests
     }
 
     // ---------------------------------------------------------------
-    // P2：实例级配置按请求设置必须报错，哪怕值与默认相同
+    // P2：实例级配置按请求写「与生效值相同」的值等价于不写，放行；写不同的值才报错
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task PerRequestMaxRedirects_EqualToInstanceDefault_StillThrows()
+    public async Task PerRequestMaxRedirects_EqualToEffectiveValue_IsAccepted()
     {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig { MaxRedirects = 5 });
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.MaxRedirects = 5));
+        // 把 defaults 抄一遍到每个请求上是常见写法：值相同就是等价写法，不该炸
+        var response = await client.GetAsync(server.Url + "x", c => c.MaxRedirects = 5);
 
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Equal(200, response.Status);
+        Assert.Single(server.Received);
     }
 
     // ---------------------------------------------------------------

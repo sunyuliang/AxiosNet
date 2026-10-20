@@ -213,7 +213,19 @@ public sealed partial class AxiosClient
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
         var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
-        return response.AsTyped<T>();
+        try
+        {
+            return response.AsTyped<T>();
+        }
+        catch
+        {
+            // 泛型参数与 responseType 不匹配（如 responseType: stream + GetAsync<byte[]>）：
+            // 这个响应已经交不到调用方手里了，流式正文必须在这里释放 ——
+            // 否则池租约永不归还，该 origin 的连接会被一个没人读的流一直占住。
+            (response.Data as IDisposable)?.Dispose();
+            response.Data = null;
+            throw;
+        }
     }
 
     private static AxiosConfig Shortcut(
