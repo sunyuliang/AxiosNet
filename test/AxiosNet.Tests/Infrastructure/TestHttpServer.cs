@@ -13,7 +13,8 @@ public sealed record TestRequest(
     string? Query,
     IReadOnlyDictionary<string, string> Headers,
     byte[] Body,
-    int RequestNumberOnConnection);
+    int RequestNumberOnConnection,
+    string Version = "HTTP/1.1");
 
 /// <summary>测试服务器返回的 HTTP 响应。</summary>
 public sealed record TestResponse(
@@ -156,6 +157,7 @@ public sealed class TestHttpServer : IAsyncDisposable
                     var requestLine = lines[0].Split(' ');
                     var method = requestLine[0];
                     var rawUrl = requestLine[1];
+                    var version = requestLine.Length > 2 ? requestLine[2] : "HTTP/1.1";
                     var (path, query) = SplitUrl(rawUrl);
                     var headers = ParseHeaders(lines);
 
@@ -169,7 +171,7 @@ public sealed class TestHttpServer : IAsyncDisposable
                     var body = await ReadBodyAsync(stream, headers, _cts.Token);
 
                     var testRequest = new TestRequest(
-                        method, rawUrl, path, query, headers, body, requestsOnConnection);
+                        method, rawUrl, path, query, headers, body, requestsOnConnection, version);
                     _received.Enqueue(testRequest);
 
                     var active = Interlocked.Increment(ref _activeRequests);
