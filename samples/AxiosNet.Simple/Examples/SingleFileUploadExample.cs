@@ -34,7 +34,7 @@ public sealed class SingleFileUploadExample : IExample
             {
                 var raw = await http.PostAsync<JsonElement>("upload/raw", stream, c =>
                 {
-                    c.ContentType = "application/octet-stream";
+                    c.ContentType = AxiosContentType.OctetStream;
                     c.Headers.Set("X-File-Name", "single-file.bin");
                 });
 
@@ -49,7 +49,7 @@ public sealed class SingleFileUploadExample : IExample
             // 2) multipart 单文件：PostFormAsync 默认 multipart，字段名 file 与服务端解析一致
             var form = await http.PostFormAsync<JsonElement>("upload/single", new
             {
-                file = FormFile.FromPath(path, "single-file.bin", "application/octet-stream"),
+                file = FormFile.FromPath(path, "single-file.bin", AxiosContentType.OctetStream),
                 note = "季度报告"
             });
 

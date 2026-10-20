@@ -204,7 +204,7 @@ public sealed partial class AxiosClient
         var config = Shortcut(url, method, configure, cancellationToken, data);
         if (!config.ContentTypeSet)
         {
-            config.ContentType = "multipart/form-data";
+            config.ContentType = AxiosContentType.MultipartFormData;
         }
 
         return config;

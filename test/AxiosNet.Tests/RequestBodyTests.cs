@@ -453,4 +453,65 @@ public sealed class RequestBodyTests
         Assert.Equal("fileName", ex.ParamName);
         Assert.Contains(fileName, ex.Message);
     }
+
+    // ------------------------------------------------------------------
+    // Content-Type 预置常量：目标框架是 net6.0，BCL 的 MediaTypeNames 在那里
+    // 还没有 multipart / form-urlencoded（.NET 8 才补齐），所以库自带一套。
+    //
+    // 刻意把「常量的值」和「常量的行为」分开验：
+    // - 值用字面量断言（唯一允许引用常量自身以外写法的地方），常量写错时立刻红；
+    // - 行为用「字面量 vs 常量」成对比较，证明两者等价。
+    // 本文件其余用例继续用字面量 —— 断言必须独立于被测常量，否则常量写错时
+    // 测试会跟着一起绿（同源断言）。
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ContentTypeConstants_AreWireValues_AndBackwardCompatible()
+    {
+        Assert.Equal("application/json", AxiosContentType.Json);
+        Assert.Equal("application/x-www-form-urlencoded", AxiosContentType.FormUrlEncoded);
+        Assert.Equal("multipart/form-data", AxiosContentType.MultipartFormData);
+        Assert.Equal("application/octet-stream", AxiosContentType.OctetStream);
+        Assert.Equal("application/xml", AxiosContentType.Xml);
+        Assert.Equal("text/plain", AxiosContentType.TextPlain);
+        Assert.Equal("application/problem+json", AxiosContentType.ProblemJson);
+
+        // 旧常量必须与新类同值：已有用户代码直接引用了它们
+        Assert.Equal(AxiosContentType.Json, AxiosConfig.JsonContentType);
+        Assert.Equal(AxiosContentType.FormUrlEncoded, AxiosConfig.FormUrlEncodedContentType);
+    }
+
+    [Fact]
+    public async Task ContentTypeConstants_BehaveExactlyLikeTheirLiteralForms()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+        using var client = new AxiosClient();
+
+        var payload = new { a = "1 2" };
+
+        // 同一份数据，分别用字面量与常量发送：正文与头部必须逐字节一致
+        await client.PostAsync(server.Url + "f1", payload, c => c.ContentType = "application/x-www-form-urlencoded");
+        await client.PostAsync(server.Url + "f2", payload, c => c.ContentType = AxiosContentType.FormUrlEncoded);
+        Assert.Equal(Body(server.Received[0]), Body(server.Received[1]));
+        Assert.Equal(ContentType(server.Received[0]), ContentType(server.Received[1]));
+        Assert.Equal("a=1+2", Body(server.Received[1]));
+
+        await client.PostAsync(server.Url + "j1", payload, c => c.ContentType = "application/json");
+        await client.PostAsync(server.Url + "j2", payload, c => c.ContentType = AxiosContentType.Json);
+        Assert.Equal(Body(server.Received[2]), Body(server.Received[3]));
+        Assert.Equal(ContentType(server.Received[2]), ContentType(server.Received[3]));
+
+        // multipart：boundary 随机，固定住才能逐字节比较
+        await client.PostAsync(server.Url + "m1", payload, c => c.ContentType = "multipart/form-data; boundary=----fixed");
+        await client.PostAsync(server.Url + "m2", payload, c => c.ContentType = AxiosContentType.MultipartFormData + "; boundary=----fixed");
+        Assert.Equal(Body(server.Received[4]), Body(server.Received[5]));
+        Assert.Equal(ContentType(server.Received[4]), ContentType(server.Received[5]));
+        // 纯 token 的字段名不加引号：Content-Disposition: form-data; name=a
+        Assert.Contains("form-data; name=a", Body(server.Received[5]));
+
+        await client.PostAsync(server.Url + "b1", new byte[] { 1, 2 }, c => c.ContentType = "application/octet-stream");
+        await client.PostAsync(server.Url + "b2", new byte[] { 1, 2 }, c => c.ContentType = AxiosContentType.OctetStream);
+        Assert.Equal(server.Received[6].Body, server.Received[7].Body);
+        Assert.Equal(ContentType(server.Received[6]), ContentType(server.Received[7]));
+    }
 }

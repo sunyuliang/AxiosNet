@@ -23,11 +23,11 @@ public sealed class PostFormExample : IExample
             ["role"] = "admin"
         };
 
-        // 默认是 application/json（字典同样按 JSON 发送）；需要表单编码必须显式声明
+        // 默认是 AxiosContentType.Json（字典同样按 JSON 发送）；需要表单编码必须显式声明
         var response = await http.PostAsync<JsonElement>(
             "/form",
             form,             
-            c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
+            c => c.ContentType = AxiosContentType.FormUrlEncoded);
 
         Console.WriteLine($"  {response.Status} -> {SampleConsole.Pretty(response.Data)}");
     }

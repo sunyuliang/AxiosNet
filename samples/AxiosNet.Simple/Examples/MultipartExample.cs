@@ -33,12 +33,12 @@ public sealed class MultipartExample : IExample
                     files = new[]
                     {
                         // 内存中的文件：文件名 + 字节内容 + 部件 Content-Type
-                        new FormFile("readme.txt", Encoding.UTF8.GetBytes("in-memory"), "text/plain"),
+                        new FormFile("readme.txt", Encoding.UTF8.GetBytes("in-memory"), AxiosContentType.TextPlain),
                         // 本地文件：库负责打开流，请求结束后随请求一起释放
-                        FormFile.FromPath(tempPath, "from-disk.txt", "text/plain")
+                        FormFile.FromPath(tempPath, "from-disk.txt", AxiosContentType.TextPlain)
                     }
                 },
-                c => c.ContentType = "multipart/form-data");
+                c => c.ContentType = AxiosContentType.MultipartFormData);
 
             var data = response.Data;
             Console.WriteLine(

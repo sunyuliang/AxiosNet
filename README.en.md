@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-441%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-443%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -157,7 +157,8 @@ string url = http.GetUri(c =>
 | `interceptors.x.eject(id)` | `Eject(id)` |
 | `config.params` | `c.Params` (objects/dictionaries/arrays/nested) |
 | `config.data` (object → JSON) | `c.Data` (any type; encoding decided by `c.ContentType`, JSON by default) |
-| `config.ContentType` | Request body media type (default `application/json`, a full value including charset is accepted; decides how `data` is encoded) |
+| `config.ContentType` | Request body media type (default `AxiosContentType.Json`, a full value including charset is accepted; decides how `data` is encoded) |
+| — (no equivalent) | `AxiosContentType` presets: `Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml` |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
 | — (natively dynamic in JS) | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
 | — (no equivalent setting) | `RequestEncoding` / `ResponseEncoding` (request/response text encoding) |
@@ -237,6 +238,21 @@ The body encoding is decided **solely by `ContentType`, independent of the runti
 | `application/x-www-form-urlencoded` | Key-value form (nested `a[b]=v`, arrays `a[]=v`, nulls skipped) | Sent as-is (treated as an already-encoded form string) |
 | `multipart/form-data` | Fields + file parts (`FormFile` / `Stream` / `byte[]` / memory types / `HttpContent`; arrays expand into repeated same-name parts) | Throws `ERR_BAD_OPTION_VALUE` (header/body contradiction); pass a pre-serialized multipart body as `HttpContent`, or give `Content-Type` a `boundary` parameter |
 | Anything else (`text/plain`, `application/xml`, …) | Still written as JSON text; only the header differs | Sent as-is |
+
+For the common values, use the `AxiosContentType` constants (the same trade-off as `HttpMethod.Get`: built-in common values plus arbitrary custom ones, still a `string` underneath):
+
+```csharp
+c.ContentType = AxiosContentType.Json;                 // application/json (default)
+c.ContentType = AxiosContentType.FormUrlEncoded;       // application/x-www-form-urlencoded
+c.ContentType = AxiosContentType.MultipartFormData;    // multipart/form-data
+c.ContentType = AxiosContentType.OctetStream;          // application/octet-stream
+c.ContentType = AxiosContentType.ProblemJson;          // application/problem+json
+
+c.ContentType = AxiosContentType.MultipartFormData + "; boundary=----axios-net";  // with parameters
+c.ContentType = "application/vnd.api+json";                                       // custom types still work
+```
+
+> `Content-Type` is a composite of *media type + parameters*, and `charset` / `boundary` are exactly the customization points the library supports (`c.ContentType = "multipart/form-data; boundary=----xxx"`). That is why it is a `string` and not an `enum`: an enum cannot express parameters and would also block reading the value from configuration. `AxiosConfig.JsonContentType` / `FormUrlEncodedContentType` are unchanged (same values).
 
 ```csharp
 // 1) Default application/json: objects, dictionaries, dynamic, and collections all become JSON
@@ -1049,7 +1065,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 441 cases on each runtime (882 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 443 cases on each runtime (886 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1062,7 +1078,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 441 xUnit tests (the test project targets net8.0 + net6.0, so 882 executions)
+# Run all 443 xUnit tests (the test project targets net8.0 + net6.0, so 886 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1104,6 +1120,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 │     ├─ AxiosClient.Config.cs   # config merging and header application
 │     ├─ AxiosJson.cs            # global JSON defaults (options / pluggable serializer)
 │     ├─ AxiosConfig.cs          # request/instance configuration
+│     ├─ AxiosContentType.cs     # common Content-Type presets
 │     ├─ AxiosUrl.cs             # path-segment escaping (AxiosUrl.EncodePathSegment)
 │     ├─ AxiosHeaders.cs         # case-insensitive headers
 │     ├─ AxiosResponse.cs        # response (generic/non-generic)
@@ -1118,7 +1135,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 20 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json serializer + DNS refresh)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (441 cases × net6.0 / net8.0 = 882 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (443 cases × net6.0 / net8.0 = 886 executions)
 ```
 
 ## Differences from axios
@@ -1140,7 +1157,8 @@ Intentional differences driven by the .NET platform:
 13. **`WithCredentials` cookies are shared per domain** (one container for the whole pool instead of one per origin), so sessions across sub-domains / alternate ports behave like a browser;
 14. `Timeout` is capped at about 49.7 days; larger values are clamped to the cap instead of throwing (`Timeout = 0` is the real unlimited timeout);
 15. **`params` uses strict RFC 3986 encoding** (`Uri.EscapeDataString`), whose character set differs from axios's default `encode()`: spaces become `%20` instead of `+`, and `!'()*` plus `,:$` are encoded too. That encoding is actually a better fit for OSS/S3-style pre-signing; pass a custom `ParamsSerializer` when you need axios's exact form;
-16. **Multipart field names and file names are validated before sending**: `"`, `\`, `CR`/`LF` and control characters would break the quoted-string in `Content-Disposition`, so they throw `ERR_BAD_OPTION_VALUE` (or `ArgumentException` from the `FormFile` constructor) instead of letting the server silently receive a garbled key (browser `FormData` handles these inconsistently, so axios cannot rely on any particular behavior).
+16. **Multipart field names and file names are validated before sending**: `"`, `\`, `CR`/`LF` and control characters would break the quoted-string in `Content-Disposition`, so they throw `ERR_BAD_OPTION_VALUE` (or `ArgumentException` from the `FormFile` constructor) instead of letting the server silently receive a garbled key (browser `FormData` handles these inconsistently, so axios cannot rely on any particular behavior);
+17. **`ContentType` is a `string`, not an enum** (a `Content-Type` is media type + `charset`/`boundary` parameters, which an enum cannot express). Common values ship as `AxiosContentType` constants — the same "presets plus arbitrary custom values" idea as `HttpMethod.Get` together with `new HttpMethod("PROPFIND")`.
 
 
 ## License

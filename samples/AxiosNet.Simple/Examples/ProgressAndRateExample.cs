@@ -47,7 +47,7 @@ public sealed class ProgressAndRateExample : IExample
         var payload = new string('x', 512 * 1024);
         await http.PostAsync<string>("/echo", payload, c =>
         {
-            c.ContentType = "text/plain";
+            c.ContentType = AxiosContentType.TextPlain;
             c.ResponseType = ResponseType.Text;
             c.MaxRate = 1024 * 1024;
             c.OnUploadProgress = Report;

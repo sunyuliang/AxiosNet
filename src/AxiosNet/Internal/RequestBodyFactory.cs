@@ -23,8 +23,8 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class RequestBodyFactory
 {
-    private const string MultipartMediaType = "multipart/form-data";
-    private const string OctetStreamMediaType = "application/octet-stream";
+    private const string MultipartMediaType = AxiosContentType.MultipartFormData;
+    private const string OctetStreamMediaType = AxiosContentType.OctetStream;
 
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
@@ -646,8 +646,8 @@ internal static class RequestBodyFactory
         return main.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
             || main.EndsWith("+json", StringComparison.OrdinalIgnoreCase)
             || main.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
-            || main.Equals("application/json", StringComparison.OrdinalIgnoreCase)
-            || main.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
+            || main.Equals(AxiosContentType.Json, StringComparison.OrdinalIgnoreCase)
+            || main.Equals(AxiosContentType.Xml, StringComparison.OrdinalIgnoreCase)
             || main.Equals(AxiosConfig.FormUrlEncodedContentType, StringComparison.OrdinalIgnoreCase)
             || main.Equals("application/javascript", StringComparison.OrdinalIgnoreCase);
     }

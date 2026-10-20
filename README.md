@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-441%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-443%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -157,7 +157,8 @@ string url = http.GetUri(c =>
 | `interceptors.x.eject(id)` | `Eject(id)` |
 | `config.params` | `c.Params`（对象/字典/数组/嵌套；也接受已序列化好的查询串 `string`，标量会抛 `ERR_BAD_OPTION_VALUE`） |
 | `config.data`（对象→JSON） | `c.Data`（任意类型；编码方式由 `c.ContentType` 决定，默认 JSON） |
-| `config.ContentType` | 请求体媒体类型（默认 `application/json`，可传含 charset 的完整值；决定 data 的编码格式） |
+| `config.ContentType` | 请求体媒体类型（默认 `AxiosContentType.Json`，可传含 charset 的完整值；决定 data 的编码格式） |
+| —（无对应） | `AxiosContentType` 预置常量：`Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml` |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
 | —（JS 天然动态） | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
 | —（无对应配置） | `RequestEncoding` / `ResponseEncoding`（请求/响应文本编码） |
@@ -237,6 +238,21 @@ var config = new AxiosConfig
 | `application/x-www-form-urlencoded` | 键值对表单（嵌套 `a[b]=v`、数组 `a[]=v`、null 跳过） | 原样发送（视为已编码好的表单串） |
 | `multipart/form-data` | 字段 + 文件部件（`FormFile` / `Stream` / `byte[]` / 内存类型 / `HttpContent`，数组展开为同名重复部件） | 抛 `ERR_BAD_OPTION_VALUE`（头部与正文矛盾）；预序列化的 multipart 正文请用 `HttpContent`，或 Content-Type 自带 `boundary` 参数 |
 | 其他（`text/plain`、`application/xml` …） | 仍写 JSON 文本，只有头部不同 | 原样发送 |
+
+常用值可以直接用 `AxiosContentType` 的预置常量（与 `HttpMethod.Get` 同一取舍：内置常用 + 允许任意自定义，底层仍是 `string`）：
+
+```csharp
+c.ContentType = AxiosContentType.Json;                 // application/json（默认）
+c.ContentType = AxiosContentType.FormUrlEncoded;       // application/x-www-form-urlencoded
+c.ContentType = AxiosContentType.MultipartFormData;    // multipart/form-data
+c.ContentType = AxiosContentType.OctetStream;          // application/octet-stream
+c.ContentType = AxiosContentType.ProblemJson;          // application/problem+json
+
+c.ContentType = AxiosContentType.MultipartFormData + "; boundary=----axios-net";  // 带参数
+c.ContentType = "application/vnd.api+json";                                       // 私有类型照旧
+```
+
+> `Content-Type` 是「媒体类型 + 参数」的复合值，`charset` 与 `boundary` 恰恰是库要支持的自定义点（`c.ContentType = "multipart/form-data; boundary=----xxx"`），因此它是 `string` 而不是 `enum`——枚举表达不了参数部分，也会把「读配置字符串」这条路堵死。`AxiosConfig.JsonContentType` / `FormUrlEncodedContentType` 保留不变（值相等）。
 
 ```csharp
 // 1) 默认 application/json：对象、字典、dynamic、集合一律 JSON
@@ -1068,7 +1084,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 441 个用例（共 882 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 443 个用例（共 886 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1081,7 +1097,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 441 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 882 次）
+# 运行全部 443 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 886 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1123,6 +1139,7 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ AxiosClient.Config.cs   # 配置合并与请求头应用
 │     ├─ AxiosJson.cs            # JSON 全局默认（选项 / 可插拔序列化器）
 │     ├─ AxiosConfig.cs          # 请求/实例配置
+│     ├─ AxiosContentType.cs     # 常用 Content-Type 预置常量
 │     ├─ AxiosUrl.cs             # 路径段转义（AxiosUrl.EncodePathSegment）
 │     ├─ AxiosHeaders.cs         # 大小写不敏感请求头
 │     ├─ AxiosResponse.cs        # 响应（泛型/非泛型）
@@ -1137,7 +1154,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 22 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json 序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（441 个用例 × net6.0 / net8.0 双目标 = 882 次执行）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（443 个用例 × net6.0 / net8.0 双目标 = 886 次执行）
 ```
 
 ## 与 axios 的差异说明
@@ -1159,7 +1176,8 @@ dotnet build AxiosNet.slnx -c Release
 13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
 14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）；
 15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `ParamsSerializer`；
-16. **multipart 的字段名/文件名发送前就校验**：`"`、`\`、`CR`/`LF` 与控制字符会破坏 `Content-Disposition` 的 quoted-string，直接抛 `ERR_BAD_OPTION_VALUE`（`FormFile` 构造时抛 `ArgumentException`），而不是让服务端静默收到错位的键名（浏览器 `FormData` 对这些字符的处理各不相同，axios 侧无法依赖）。
+16. **multipart 的字段名/文件名发送前就校验**：`"`、`\`、`CR`/`LF` 与控制字符会破坏 `Content-Disposition` 的 quoted-string，直接抛 `ERR_BAD_OPTION_VALUE`（`FormFile` 构造时抛 `ArgumentException`），而不是让服务端静默收到错位的键名（浏览器 `FormData` 对这些字符的处理各不相同，axios 侧无法依赖）；
+17. **`ContentType` 是 `string` 而非枚举**（`Content-Type` 由媒体类型 + `charset`/`boundary` 参数组成，枚举表达不了），常用值以 `AxiosContentType` 常量提供——与 BCL 的 `HttpMethod.Get` + `new HttpMethod("PROPFIND")` 是同一套「预置常量 + 任意自定义」思路。
 
 
 ## License

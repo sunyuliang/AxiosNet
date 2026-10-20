@@ -78,11 +78,11 @@ public sealed class AxiosConfig
     /// </summary>
     public object? Params { get; set; }
 
-    /// <summary>库默认的请求体媒体类型。</summary>
-    public const string JsonContentType = "application/json";
+    /// <summary>库默认的请求体媒体类型（等价于 <see cref="AxiosContentType.Json"/>）。</summary>
+    public const string JsonContentType = AxiosContentType.Json;
 
-    /// <summary>表单编码媒体类型常量（配合 <see cref="ContentType"/> 使用）。</summary>
-    public const string FormUrlEncodedContentType = "application/x-www-form-urlencoded";
+    /// <summary>表单编码媒体类型常量（等价于 <see cref="AxiosContentType.FormUrlEncoded"/>，配合 <see cref="ContentType"/> 使用）。</summary>
+    public const string FormUrlEncodedContentType = AxiosContentType.FormUrlEncoded;
 
     private string _contentType = JsonContentType;
 
