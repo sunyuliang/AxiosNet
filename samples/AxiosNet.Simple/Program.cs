@@ -35,7 +35,9 @@ IExample[] examples =
     new NewtonsoftJsonExample(),
     new DnsRefreshExample(),
     new BearerTokenExample(),
-    new RequestSigningExample()
+    new RequestSigningExample(),
+    new XmlSerializationExample(),
+    new BinarySerializationExample()
 };
 
 try

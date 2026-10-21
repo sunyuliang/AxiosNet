@@ -1,4 +1,3 @@
-using System.Dynamic;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Serialization;
@@ -7,7 +6,7 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// JSON 序列化可插拔：自定义 <see cref="IAxiosJsonSerializer"/>、实例级
+/// 序列化可插拔：自定义 <see cref="IContentSerializer"/>、实例级
 /// <see cref="AxiosConfig.JsonSerializerOptions"/>，以及 transform 列表的并发安全。
 /// </summary>
 public sealed class JsonCustomizationTests
@@ -21,7 +20,7 @@ public sealed class JsonCustomizationTests
             ? TestJson.Response(new { user_name = "bob", age = 30 })
             : TestJson.Echo(req));
 
-        using var client = new AxiosClient(new AxiosConfig { JsonSerializer = SnakeCaseSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = SnakeCaseSerializer.Instance });
 
         await client.PostAsync(server.Url + "users", new User { UserName = "alice", Age = 20 });
 
@@ -35,26 +34,28 @@ public sealed class JsonCustomizationTests
     }
 
     [Fact]
-    public async Task CustomSerializer_AlsoDrivesFormFlattening()
+    public async Task FormFlattening_IgnoresCustomSerializer()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { JsonSerializer = SnakeCaseSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = SnakeCaseSerializer.Instance });
 
         await client.PostAsync(
             server.Url + "form",
             new User { UserName = "alice", Age = 20 },
             c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
+        // 表单是独立编码通道：换 JSON 引擎（snake_case）不影响字段名，命名只看属性名 /
+        // [JsonPropertyName] / FormFieldNameSelector。这样换 XML、YAML 序列化器也不会把表单带坏。
         var body = Body(server.Received[0]);
-        Assert.Contains("user_name=alice", body);
-        Assert.Contains("age=20", body);
+        Assert.Contains("UserName=alice", body);
+        Assert.Contains("Age=20", body);
     }
 
     [Fact]
     public async Task CustomSerializer_DrivesDynamicResponse()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { user_name = "bob", age = 30 }));
-        using var client = new AxiosClient(new AxiosConfig { JsonSerializer = SnakeCaseSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = SnakeCaseSerializer.Instance });
 
         dynamic data = (await client.GetAsync<dynamic>(server.Url + "users/1")).Data!;
 
@@ -83,7 +84,8 @@ public sealed class JsonCustomizationTests
     [Fact]
     public void GlobalJsonDefaults_AreSystemTextJsonWeb()
     {
-        Assert.IsType<SystemTextJsonSerializer>(AxiosJson.Serializer);
+        // 未注入任何序列化器：全局槽是 null（= 自动模式，查表未命中才回落内置 STJ）
+        Assert.Null(AxiosContent.Serializer);
         Assert.Equal(JsonNamingPolicy.CamelCase, AxiosJson.Options.PropertyNamingPolicy);
         Assert.True(AxiosJson.Options.PropertyNameCaseInsensitive);
     }
@@ -175,7 +177,7 @@ public sealed class JsonCustomizationTests
     }
 
     /// <summary>用 snake_case 固定策略的 STJ 适配器，证明自定义序列化器会绕开 config 里的 options。</summary>
-    private sealed class SnakeCaseSerializer : IAxiosJsonSerializer
+    private sealed class SnakeCaseSerializer : IContentSerializer
     {
         private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
         {
@@ -189,40 +191,5 @@ public sealed class JsonCustomizationTests
 
         public object? Deserialize(string json, Type type, AxiosConfig config)
             => JsonSerializer.Deserialize(json, type, Options);
-
-        public object? ParseDynamic(string json, AxiosConfig config)
-        {
-            using var document = JsonDocument.Parse(json);
-            return FromElement(document.RootElement);
-        }
-
-        public object ParseDocument(string json, AxiosConfig config)
-        {
-            using var document = JsonDocument.Parse(json);
-            return document.RootElement.Clone();
-        }
-
-        private static object? FromElement(JsonElement element) => element.ValueKind switch
-        {
-            JsonValueKind.Object => ToExpando(element),
-            JsonValueKind.Array => element.EnumerateArray().Select(FromElement).ToList(),
-            JsonValueKind.String => element.GetString(),
-            JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            _ => null
-        };
-
-        private static ExpandoObject ToExpando(JsonElement element)
-        {
-            var expando = new ExpandoObject();
-            var dictionary = (IDictionary<string, object?>)expando;
-            foreach (var property in element.EnumerateObject())
-            {
-                dictionary[property.Name] = FromElement(property.Value);
-            }
-
-            return expando;
-        }
     }
 }

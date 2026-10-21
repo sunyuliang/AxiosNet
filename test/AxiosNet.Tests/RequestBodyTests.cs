@@ -514,4 +514,49 @@ public sealed class RequestBodyTests
         Assert.Equal(server.Received[6].Body, server.Received[7].Body);
         Assert.Equal(ContentType(server.Received[6]), ContentType(server.Received[7]));
     }
+
+    [Fact]
+    public async Task CustomFormAndMultipart_CanBypassTheFramework_ViaTransformRequest()
+    {
+        await using var server = TestHttpServer.Start(EchoJson);
+
+        var fileBytes = new byte[] { 0xFF, 0x00, 0xFE };
+        var config = new AxiosConfig();
+
+        // 逃生口在 transformRequest：返回 HttpContent 后库只负责原样发送（头也自己带）。
+        // 也就是说内置的表单/multipart 组装不是唯一路径 —— 自己造 FormUrlEncodedContent /
+        // MultipartFormDataContent（含自定义 boundary、流式文件部件）完全可行，不必改库。
+        config.TransformRequest.Add((data, _) => data switch
+        {
+            "as-form" => new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["name"] = "alice",
+                ["tags"] = "a,b"
+            }),
+            "as-multipart" => BuildMultipart(fileBytes),
+            _ => data
+        });
+
+        using var client = new AxiosClient(config);
+
+        await client.PostAsync(server.Url + "form", "as-form", c => c.ContentType = AxiosContentType.FormUrlEncoded);
+        await client.PostAsync(server.Url + "upload", "as-multipart", c => c.ContentType = AxiosContentType.MultipartFormData);
+
+        var form = Body(server.Received[0]);
+        Assert.Contains("name=alice", form);
+        Assert.Contains("tags=a%2Cb", form);   // 由 BCL 的 FormUrlEncodedContent 编码，不经框架展平
+
+        // boundary 由 BCL 生成：断言结构 + 文件字节原样到达（没有被当文本重编码）
+        Assert.StartsWith("multipart/form-data; boundary=", ContentType(server.Received[1]));
+        Assert.Contains("name=file; filename=a.bin", Body(server.Received[1]));
+        Assert.True(server.Received[1].Body.AsSpan().IndexOf(fileBytes) >= 0);
+    }
+
+    private static HttpContent BuildMultipart(byte[] fileBytes)
+    {
+        var form = new MultipartFormDataContent();
+        form.Add(new StringContent("bob"), "owner");
+        form.Add(new ByteArrayContent(fileBytes), "file", "a.bin");
+        return form;
+    }
 }

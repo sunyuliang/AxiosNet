@@ -43,7 +43,16 @@ public static class AxiosContentType
     /// <summary><c>application/octet-stream</c>：二进制载荷（<c>byte[]</c> / <c>Stream</c>）的常规选择。</summary>
     public const string OctetStream = "application/octet-stream";
 
-    /// <summary><c>application/xml</c>：结构化数据仍按 JSON 文本写入，只有头部不同。</summary>
+    /// <summary>
+    /// <c>application/xml</c>：需要配合 XML 序列化器 —— 用库内置的
+    /// <see cref="Serialization.XmlContentSerializer"/>（<c>XmlContentSerializer.Instance</c>）即可，
+    /// 也可换成自己的实现（<see cref="AxiosConfig.ContentSerializer"/> / <see cref="AxiosContent.Serializer"/>）。
+    /// 只改本常量而用默认 JSON 序列化器，会发出「头部 XML、正文 JSON」的自相矛盾请求。
+    /// <para>
+    /// 反过来也成立：注入 <see cref="Serialization.XmlContentSerializer"/> 后<b>不必</b>再设本常量，
+    /// 头会自动变成 <c>application/xml</c>（序列化器自报，仅当调用方没显式设置 ContentType 时生效）。
+    /// </para>
+    /// </summary>
     public const string Xml = "application/xml";
 
     /// <summary><c>application/json-patch+json</c>：JSON Patch 文档（PATCH 常用）。</summary>
@@ -52,7 +61,10 @@ public static class AxiosContentType
     /// <summary><c>application/problem+json</c>：RFC 7807 问题详情。</summary>
     public const string ProblemJson = "application/problem+json";
 
-    /// <summary><c>text/plain</c>：纯文本，结构化数据仍按 JSON 文本写入（要发裸文本请把 <c>string</c> 直接作为 data）。</summary>
+    /// <summary>
+    /// <c>text/plain</c>：纯文本。结构化数据仍走当前序列化器（默认 JSON），
+    /// 要发裸文本请把 <c>string</c> 直接作为 data（原样发送）。
+    /// </summary>
     public const string TextPlain = "text/plain";
 
     /// <summary><c>text/html</c>：HTML 片段。</summary>

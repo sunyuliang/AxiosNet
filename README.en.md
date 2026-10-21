@@ -137,7 +137,7 @@ var config = new AxiosConfig
 
     // —— Serialization and transforms ——
     JsonSerializerOptions = myJsonOptions,    // System.Text.Json options for this request/instance
-    JsonSerializer = mySerializer,            // custom IAxiosJsonSerializer (null = global default)
+    ContentSerializer = mySerializer,         // content serializer for any format (null = default JSON)
     ParamsSerializer = p => MyQuery(p),       // Func<object?, string>: custom ?a=1&b=2
     FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     // TransformRequest / TransformResponse: IList<Func<object?, AxiosConfig, object?>>
@@ -160,12 +160,14 @@ The default JSON options are **web-style** (camelCase output, case-insensitive i
 
 The body encoding is decided **solely by `ContentType`, independent of the runtime type of `data`**: a dictionary is not automatically treated as a form, and an object does not change encoding just because it implements a particular interface.
 
-| `ContentType` | Structured data (objects / dictionaries / dynamic / collections) | `string` / `byte[]` / `Memory<byte>` / `ArraySegment<byte>` / `Stream` / `HttpContent` |
-| --- | --- | --- |
-| `application/json` (default) | JSON text | Sent as-is |
-| `application/x-www-form-urlencoded` | Key-value form (nested `a[b]=v`, arrays `a[]=v`, nulls skipped) | Sent as-is (treated as an already-encoded form string) |
-| `multipart/form-data` | Fields + file parts (`FormFile` / `Stream` / `byte[]` / memory types / `HttpContent`; arrays expand into repeated same-name parts) | Throws `ERR_BAD_OPTION_VALUE` (header/body contradiction); pass a pre-serialized multipart body as `HttpContent`, or give `Content-Type` a `boundary` parameter |
-| Anything else (`text/plain`, `application/xml`, …) | Still written as JSON text; only the header differs | Sent as-is |
+Primitives (numbers / bool / enum / Guid / date-time / Uri…) are **written as their own text and never reach the serializer** (a bare scalar has no "format"); dictionaries follow exactly the same logic as objects — neither is flattened, and neither falls into the scalar branch.
+
+| `ContentType` | Structured data (objects / dictionaries / dynamic / collections) | Primitives (numbers / bool / enum / Guid / date-time / Uri…) | `string` / `byte[]` / `Memory<byte>` / `ArraySegment<byte>` / `Stream` / `HttpContent` |
+| --- | --- | --- | --- |
+| `application/json` (default) | JSON text from the current serializer | The value's own text (`42`, `true`, `Paid`), **never through the serializer** | Sent as-is |
+| `application/x-www-form-urlencoded` | Key-value form (nested `a[b]=v`, arrays `a[]=v`, nulls skipped) | A root scalar has no key: ignored (empty body) | Sent as-is (treated as an already-encoded form string) |
+| `multipart/form-data` | Fields + file parts (`FormFile` / `Stream` / `byte[]` / memory types / `HttpContent`; arrays expand into repeated same-name parts) | A root scalar has no field name: throws (put it inside an object/dictionary field) | Throws `ERR_BAD_OPTION_VALUE` (header/body contradiction); pass a pre-serialized multipart body as `HttpContent`, or give `Content-Type` a `boundary` parameter |
+| Anything else (`application/xml`, `application/yaml`, …) | Handed to the current serializer (an XML serializer produces XML) | The value's own text, **never through the serializer** | Sent as-is |
 
 For the common values, use the `AxiosContentType` constants (the same trade-off as `HttpMethod.Get`: built-in common values plus arbitrary custom ones, still a `string` underneath):
 
@@ -367,7 +369,7 @@ Runnable sample: item 18 of `samples/AxiosNet.Simple` (`dotnet run --project sam
 var typed = await http.GetAsync<User>("users/1");
 User u = typed.Data!;
 
-// 2) Non-generic: Data is a JsonElement (falls back to the raw text for invalid JSON, matching axios transformResponse)
+// 2) Non-generic: Data is a JsonElement (falls back to raw text for invalid JSON; binary responses give byte[])
 var raw = await http.GetAsync("users/1");
 JsonElement element = (JsonElement)raw.Data!;
 
@@ -433,7 +435,8 @@ var raw = (await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayB
 - `GetAsync<string>` / `ResponseType.Text`: returns the raw text without JSON parsing;
 - Numbers / dates / booleans / GUIDs / enums / `TimeSpan`, etc.: deserialized directly when the body is a JSON scalar, parsed by type when it is bare scalar text;
 - Complex types: deserialized as JSON;
-- Non-generic: `JsonElement` for valid JSON, the raw text for invalid JSON (matching axios's `transformResponse`).
+- Non-generic: with a textual body, `JsonElement` for valid JSON and the raw text for invalid JSON (matching axios's `transformResponse`); with a binary body (`Content-Type` non-textual) you get `byte[]`;
+- Business objects over binary responses (`GetAsync<T>`): bytes go straight to the serializer's byte entry, with no text decoding.
 
 ### Content encoding
 
@@ -569,14 +572,162 @@ await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 
 ## Custom serialization and data transforms
 
-### Custom JSON serialization
+### Content serialization (JSON by default, any format pluggable)
+
+Request/response encoding is owned by `IContentSerializer`; the default implementation is System.Text.Json. The interface is **2 + 1** methods: text formats implement the first two, binary formats override the third (it ships a default body, so text serializers can ignore it). There is also an **optional** `MediaType` property (defaulted too): the serializer declares which media type it speaks, and the library writes it into the request header when the caller did not set `ContentType`:
+
+```csharp
+public interface IContentSerializer
+{
+    // optional: this format's media type. null (default) = do not self-declare.
+    // Affects the request header only, and only when the caller never set ContentType.
+    string? MediaType => null;
+
+    string Serialize(object? value, Type type, AxiosConfig config);
+
+    // textual responses (no Content-Type counts as textual)
+    object? Deserialize(string text, Type type, AxiosConfig config);
+
+    // binary responses (Content-Type declared non-textual): default decodes UTF-8 and
+    // delegates above; binary formats override it
+    object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
+        => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
+}
+```
+
+Only **business objects** enter the serializer; everything else is dispatched by the framework — the library never interprets response content and needs no generic data tree:
+
+| Direction | Handled by |
+| --- | --- |
+| Request `string` / `byte[]` / `Stream` / `HttpContent` | Sent as-is, only the `ContentType` header is applied |
+| Request form / multipart | Assembled by the library from `ContentType` (**never through the serializer**) |
+| Request primitives (numbers / bool / enum / Guid / date-time / Uri…) | The framework writes the value's text (**never through the serializer**) |
+| Request objects / dictionaries / dynamic / collections | `Serialize` (a dictionary follows the same logic as an object; it is neither flattened nor treated as a scalar) |
+| Response `Stream` / `byte[]` | Given directly by the framework |
+| Response `string` | Raw text from the framework |
+| Response primitives (numbers / bool / enum / Guid / date-time / Uri…) | Parsed from text by the framework |
+| Response `dynamic` | Expanded from JSON by the framework (JSON convenience) |
+| Response non-generic / `JsonElement` | Textual → JSON document shape (raw text on failure); binary → raw `byte[]` |
+| Response any other object (textual response) | `Deserialize(string)` |
+| Response any other object (binary response) | `Deserialize(ReadOnlyMemory<byte>)`, never decoded |
+
+#### Serializers can write request headers
+
+The `config` passed to `Serialize` is a **per-request copy** (`Defaults.Clone()`, headers cloned too). Headers written there are applied after the body is built — the equivalent of `headers.setContentType(...)` inside axios' `transformRequest(data, headers)`:
+
+```csharp
+public string Serialize(object? value, Type type, AxiosConfig config)
+{
+    config.Headers.Set("X-Checksum", Checksum(value));   // a header bound to the format
+    return ToCsv(value);
+}
+```
+
+Three rules:
+
+- **It can override `Content-Type`**: headers are applied after the factory sets its default, so `Headers.Set("Content-Type", ...)` wins. The one exception is a multipart body, where the boundary must be preserved (the library skips that override).
+- **Nothing leaks**: per-request copy, so instance `Defaults` and concurrent requests are untouched (covered by a test).
+- ⚠️ **Assigning `config.ContentType` has no effect on the current request**: the body was already built from the previous value, so it is a silent no-op. Use `MediaType` to declare the format, or write `Headers` directly.
+
+Format-agnostic headers (trace IDs, tenants) belong in `TransformRequest` — earlier, clearer, and not tied to one serializer. Writing headers from `Deserialize` is pointless: the request is long gone.
+
+The other direction works too: **deserialization can read response headers** through `config.Response` (`int Status` / `Headers` / `MediaType` / `CharSet` / `GetHeader(name)`):
+
+```csharp
+public object? Deserialize(string text, Type type, AxiosConfig config)
+    => config.Response?.GetHeader("X-Schema-Version") switch   // only set on the response path; null while serializing
+    {
+        "2" => ParseV2(text, type),
+        _   => ParseV1(text, type)
+    };
+```
+
+Two boundaries: it is **only populated during the response phase** (`Serialize` sees `null`), and it is **dropped by `Clone()`** so a previous response's headers cannot leak into the next request. `Headers` is the same dictionary instance as `AxiosResponse.Headers` — zero copy. `TransformResponse` can read it as well, which is the natural place to attach `X-Total-Count`-style metadata to the business object.
+
+#### Which serializer is used: four layers
+
+| Order | Source | Notes |
+| --- | --- | --- |
+| 1 | `AxiosConfig.ContentSerializer` (per request / instance defaults) | **explicit injection, highest priority** |
+| 2 | `AxiosContent.Serializer` (global explicit injection) | **`null` (default) = not injected** → auto mode |
+| 3 | Auto mode: registry lookup by media type (`AxiosContent.Register`) | request uses `ContentType`, response uses its `Content-Type`; **a miss returns `null`** |
+| 4 | Built-in JSON (`SystemTextJsonSerializer.Instance`) | final fallback |
+
+Two implementations ship **built in**: `SystemTextJsonSerializer` (JSON) and `XmlContentSerializer` (XML via `System.Xml.Serialization`, no third-party dependencies). There are two ways to get XML:
+
+```csharp
+using AxiosNet.Serialization;
+
+// A: explicit injection — one client (or the whole app) speaks a single format
+AxiosContent.Serializer = XmlContentSerializer.Instance;                        // global
+// or new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance })   // instance only
+
+// B: auto mode + registry — one app mixes formats by Content-Type
+AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
+AxiosContent.Register(AxiosContentType.Json, new MyJsonEngine());   // also replaces the JSON engine
+// AxiosContent.Unregister(AxiosContentType.Xml);
+
+await http.PostAsync("orders", order);                                             // A: header auto = the serializer's MediaType
+await http.PostAsync("orders", order, c => c.ContentType = AxiosContentType.Xml);   // B: explicit, triggers auto matching
+var user = (await http.GetAsync<User>("users/1")).Data;                            // application/json → auto → JSON
+```
+
+Registry matching: only the media-type main value is compared (case-insensitive, `; charset=...` and friends ignored); **structured suffixes** such as `application/vnd.api+xml` fall back to `application/xml` (same for `+json` / `+yaml`), so one registration covers its vendor variants — an exact registration for a vendor type still wins.
+
+> Header/body pairing works **both ways**: auto mode *picks the format from the header*, and a serializer can *declare the header*.
+> 1. **Injection path** (A): `ContentSerializer = XmlContentSerializer.Instance` is the only change needed — the request header becomes `application/xml` automatically, no `ContentType` required;
+> 2. **Registry path** (B): the registry key *is* the media type, so you must set `ContentType`, otherwise the lookup misses and JSON is used;
+> 3. once `ContentType` was set explicitly (per request or on instance defaults), the serializer's `MediaType` never overrides it — that value is the caller's judgement about its server;
+> 4. `ContentType = Xml` with neither injection nor registration leaves the body as JSON (the mismatch is not auto-corrected).
+
+Details and limits of the built-in XML implementation:
+
+- `XmlSerializer` instances are cached per target type (construction is expensive) and shared safely across threads;
+- output declares `encoding="utf-8"` (matching the bytes written to the socket) and drops the `xmlns:xsi` / `xmlns:xsd` noise, while `[XmlRoot(Namespace = ...)]` is honoured;
+- deserialization **prohibits DTDs** (XXE / billion laughs), and failures surface as `ERR_BAD_RESPONSE`;
+- XmlSerializer's own limits still apply: the target type needs a **public parameterless constructor** and only public read/write properties/fields are serialized; anonymous types, interfaces and `Dictionary<,>` are unsupported — use a DTO.
+
+For other formats (YAML / CSV / MessagePack…) implement the two methods yourself:
+
+```csharp
+using AxiosNet.Serialization;
+
+public sealed class YamlSerializer : IContentSerializer
+{
+    // self-declared media type: inject it and the request header follows without setting ContentType
+    public string? MediaType => "application/yaml";
+
+    public string Serialize(object? value, Type type, AxiosConfig config)
+        => YamlConvert.Serialize(value, type);
+
+    public object? Deserialize(string text, Type type, AxiosConfig config)
+        => YamlConvert.Deserialize(text, type);
+}
+
+AxiosContent.Serializer = new YamlSerializer();          // global; or per instance / per request
+```
+
+Boundaries:
+
+- **The request header can be declared by the serializer**: when `MediaType` is non-null and the caller never set `ContentType`, the library writes it into the request (mirroring axios' default `headers.setContentType(..., false)`). An explicit value always wins. The response direction ignores `MediaType` — the response header is authoritative.
+- **Text vs binary comes from the response `Content-Type`** (only the media type main value; `charset` / `boundary` parameters are ignored): `text/*`, `application/json`, `application/xml`, `+json` / `+xml` / `+yaml`, YAML and CSV count as textual; everything else (`application/octet-stream`, `image/png`, `application/x-protobuf`…) is binary; **a missing Content-Type counts as textual**.
+- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly.
+- **Binary requests** are serialized to `byte[]` by the caller and passed as `data` (sent as-is); `Serialize` only carries text.
+- **Primitive requests never reach the serializer**: `PostAsync("url", 42)` sends `42`, `true` sends `true`, enums send their name. A bare scalar has no "format" (XML / YAML cannot express an unnamed root scalar), so routing it through the serializer would only force every implementation to special-case scalars again. It therefore does not take part in the `MediaType` header fill either: the header stays at `ContentType` (default `application/json` — and a bare `42` is valid JSON). Date-times use the round-trip format (Kind and ticks preserved) rather than the millisecond UTC form used by forms.
+- **Forms / multipart never go through the serializer**: field names come from `FormFieldNameSelector` and `[JsonPropertyName]` (ignore with `[JsonIgnore]`).
+- **`dynamic` depends on JSON**: with a non-JSON response `GetAsync<dynamic>` throws `ERR_BAD_RESPONSE`; use `ResponseType.Text` or the non-generic `GetAsync()` for raw text.
+- **Non-generic responses**: textual bodies become a `JsonElement` (raw text on failure), binary bodies come back as `byte[]`, independent of the serializer.
+- **`GetAsync<JsonDocument>` works, but it counts as a business object**: it is not the framework's document shape — it goes through the active serializer (STJ supports it natively). So the caller **must `Dispose` it** (pooled buffers underneath), and it fails outright under the XML serializer. For read-only JSON tree access prefer `GetAsync<JsonElement>` (framework-provided, nothing to dispose) or the non-generic `GetAsync()`.
+- Performance note: textual responses still have to be decoded to a string (one extra ≈2× payload copy, large responses only); binary responses skip that step entirely — bytes go straight to the serializer.
+
+#### JSON-specific settings
 
 JSON behavior has three layers, each overriding the previous one:
 
 | Layer | Entry point | Typical use |
 | --- | --- | --- |
-| Global | `AxiosJson.Options` / `AxiosJson.Serializer` | One naming strategy and number/date handling for the whole app |
-| Instance | `Axios.Create(c => c.JsonSerializerOptions = ...)`, `c.JsonSerializer = ...` | One backend that speaks PascalCase / snake_case |
+| Global | `AxiosJson.Options` | One naming strategy and number/date handling for the whole app |
+| Instance | `Axios.Create(c => c.JsonSerializerOptions = ...)` | One backend that speaks PascalCase / snake_case |
 | Per request | `c => c.JsonSerializerOptions = ...` | Special contracts for individual endpoints |
 
 ```csharp
@@ -603,12 +754,12 @@ await http.PostAsync("users", user, c => c.JsonSerializerOptions = specialOption
 
 > When replacing `AxiosJson.Options`, always assign a **new instance**; System.Text.Json freezes an options instance once it has been used, and mutating it afterwards throws `InvalidOperationException`. Setting it once at startup is recommended.
 
-To swap the whole serialization engine (Newtonsoft.Json, source-generated serializers, etc.), implement `IAxiosJsonSerializer`:
+To swap the whole JSON engine (Newtonsoft.Json, source-generated serializers, etc.), implement `IContentSerializer` as well — it only affects business objects; `dynamic` and non-generic responses stay in the framework:
 
 ```csharp
 using AxiosNet.Serialization;
 
-public sealed class NewtonsoftJsonSerializer : IAxiosJsonSerializer
+public sealed class NewtonsoftJsonSerializer : IContentSerializer
 {
     private static readonly JsonSerializerSettings Settings = new()
     {
@@ -620,27 +771,17 @@ public sealed class NewtonsoftJsonSerializer : IAxiosJsonSerializer
 
     public object? Deserialize(string json, Type type, AxiosConfig config) =>
         JsonConvert.DeserializeObject(json, type, Settings);
-
-    // dynamic expands to JObject/JArray (supports data.user.name, data.items[0].id)
-    public object? ParseDynamic(string json, AxiosConfig config) =>
-        JsonConvert.DeserializeObject<JToken>(json, Settings);
-
-    // Data of non-generic responses: the document shape is up to you (the default implementation uses JsonElement)
-    public object ParseDocument(string json, AxiosConfig config) =>
-        JToken.Parse(json);
 }
 
-AxiosJson.Serializer = new NewtonsoftJsonSerializer();            // global
+AxiosContent.Serializer = new NewtonsoftJsonSerializer();         // global
 // or: new AxiosClient(new AxiosConfig { JsonSerializer = ... })   // instance only
 ```
 
 Conventions and boundaries:
 
 - The serializer is shared by concurrent requests, so implementations must be stateless or thread-safe; thrown exceptions are wrapped as `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`.
-- It only affects the **JSON request body**, **JSON response deserialization**, **dynamic expansion**, and **document parsing for non-generic responses**.
-- Field naming for forms/multipart still comes from `JsonSerializerOptions`; with a custom serializer the library first serializes the object to JSON and then parses it into a tree to flatten it, so naming stays consistent.
-
-> A complete runnable version lives in [`samples/AxiosNet.Simple/NewtonsoftJsonSerializer.cs`](samples/AxiosNet.Simple/NewtonsoftJsonSerializer.cs) and `Examples/NewtonsoftJsonExample.cs` (sample item 19): the same data is serialized with Newtonsoft and System.Text.Json and the request bodies compared, plus both a PascalCase strongly-typed response path and a `dynamic` (`JObject`) path.
+- Scope: **request bodies and response deserialization of business objects**. `dynamic`, non-generic responses, primitives, forms and multipart never go through it.
+- One abstraction, one injection point: per request > instance > global (`AxiosContent.Serializer`).
 
 ### paramsSerializer
 
@@ -969,7 +1110,7 @@ Key points:
 - `maxRate`: one-way upload/download throttling (bytes/second)
 - `paramsSerializer` / `formFieldNameSelector`: custom query string and form field naming (the field-name customization of axios's `formSerializer`)
 - `transformRequest` / `transformResponse`: pre-request and post-response transform chains (thread-safe, mutable at runtime)
-- 🔧 **Pluggable JSON serialization**: System.Text.Json by default, with `JsonSerializerOptions` overridden per "global → instance → request"; implement `IAxiosJsonSerializer` to swap the whole engine (e.g. Newtonsoft.Json)
+- 🔧 **Pluggable content serialization**: JSON (System.Text.Json) by default with **XML built in** (`XmlContentSerializer`); `JsonSerializerOptions` overridden per "global → instance → request"; implement `IContentSerializer` (two text methods + one byte entry for binary formats + an optional `MediaType` self-declaration) to switch to YAML / Protobuf or replace the JSON engine via `AxiosContent.Serializer`, with the request header aligned automatically
 - `postForm` / `putForm` / `patchForm`: one-liners for `multipart/form-data` or forms
 - Full response shape: `Data / Status / StatusText / Headers / Config / Request`
 
@@ -1027,7 +1168,7 @@ Intentional differences driven by the .NET platform:
 
 1. Methods use the .NET naming convention `XxxAsync` (`GetAsync` corresponds to `axios.get`);
 2. `timeout` uses `TimeSpan` rather than a millisecond count;
-3. For non-generic JSON responses, `Data` is a `JsonElement` (use the generic `GetAsync<dynamic>` when you need JS-style dynamic access);
+3. For non-generic responses, `Data` is a `JsonElement` for textual bodies and `byte[]` for binary ones (use the generic `GetAsync<dynamic>` when you need JS-style dynamic access);
 4. Cancellation uses `CancellationToken` (semantically equivalent to `AbortController`);
 5. **The request body encoding is decided by `ContentType`** (JSON by default) and is never inferred from the data type: dictionaries are not automatically turned into forms, so you must set `ContentType = AxiosConfig.FormUrlEncodedContentType` explicitly when you need a form;
 6. The connection pool is an extension of this library; axios (browser/XHR, Node http) has no isomorphic implementation;
@@ -1066,8 +1207,12 @@ Intentional differences driven by the .NET platform:
 16. **Upload and download progress callbacks + maxRate throttling**
 17. **Using `HttpMethod` directly + custom handler injection** (`PROPFIND` custom verb, direct `DelegatingHandler` injection, pool `HandlerFactory`)
 18. **Single-file upload**: raw stream (`/upload/raw`) and multipart single file (`/upload/single`), with the server reporting exact byte count + SHA256
-19. **Custom JSON serialization**: implement `IAxiosJsonSerializer` and replace System.Text.Json with **Newtonsoft.Json** (request body / strongly-typed response / dynamic all routed through the same engine)
+19. **Custom JSON serialization**: implement `IContentSerializer` and replace System.Text.Json with **Newtonsoft.Json** (business objects on both the request and response side go through the same engine)
 20. **DNS changes and connection expiry**: two local servers simulate old and new addresses for the same domain, demonstrating natural convergence when `PooledConnectionLifetime` expires and the immediate invalidation of `pool.Clear()`
+21. **Bearer token auth**: login issues tokens, an request interceptor attaches them automatically, the server verifies them, and a 401 triggers the refresh-and-retry loop
+22. **Request signing**: HMAC-SHA256(token + timestamp + nonce + method + path + body hash), demonstrating tamper protection and replay protection
+23. **XML serialization (built in)**: switch to `XmlContentSerializer.Instance` — request body, strongly-typed response, non-generic raw text, scalar request bodies bypassing the serializer, the `AxiosContent.Register` auto mode (serializer picked by Content-Type), and the decoupling of forms/multipart from the serializer
+24. **Binary formats (byte entry)**: implement the byte entry of `IContentSerializer` to parse `application/octet-stream` with zero decoding (same shape as Protobuf / MessagePack), compare it with the non-generic / `byte[]` paths, and show a binary request body serialized by the caller and sent as-is
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1127,7 +1272,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Generic routing: `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
-- Pluggable JSON (`JsonCustomizationTests`): a custom `IAxiosJsonSerializer` driving request/response/dynamic/form flattening, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists
+- Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte entry (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
 - Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
 
 ## Project layout
@@ -1141,24 +1286,26 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 │     ├─ AxiosClient.cs          # instance + request pipeline + response reading
 │     ├─ AxiosClient.Shortcuts.cs# all shortcut overloads (get/post/... + form)
 │     ├─ AxiosClient.Config.cs   # config merging and header application
-│     ├─ AxiosJson.cs            # global JSON defaults (options / pluggable serializer)
+│     ├─ AxiosJson.cs            # global JSON defaults (JsonSerializerOptions)
+│     ├─ AxiosContent.cs         # global injection point for content serialization
 │     ├─ AxiosConfig.cs          # request/instance configuration
 │     ├─ AxiosContentType.cs     # common Content-Type presets
 │     ├─ AxiosUrl.cs             # path-segment escaping (AxiosUrl.EncodePathSegment)
 │     ├─ AxiosHeaders.cs         # case-insensitive headers
 │     ├─ AxiosResponse.cs        # response (generic/non-generic)
+│     ├─ AxiosResponseInfo.cs    # read-only response context for deserialization (status/headers/media type)
 │     ├─ AxiosException.cs       # aligned with AxiosError
 │     ├─ AxiosProgressEvent.cs   # upload/download progress events
 │     ├─ FormFile.cs             # multipart file part
 │     ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
 │     ├─ Interceptors/           # request/response interceptor management
-│     ├─ Serialization/          # IAxiosJsonSerializer + default System.Text.Json implementation
-│     ├─ Internal/               # URL/params, body factories, traffic metering, dynamic JSON, reflection cache, status text
+│     ├─ Serialization/          # IContentSerializer (2 text methods + 1 byte entry + MediaType) + built-in JSON / XML implementations
+│     ├─ Internal/               # URL/params, body factories, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
 │     └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 20 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json serializer + DNS refresh)
+│  └─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (443 cases × net6.0 / net8.0 = 886 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (482 cases × net6.0 / net8.0 = 964 executions)
 ```
 
 ## License

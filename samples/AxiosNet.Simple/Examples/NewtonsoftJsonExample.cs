@@ -3,8 +3,8 @@ using AxiosNet;
 namespace AxiosNet.Simple.Examples;
 
 /// <summary>
-/// 19. 自定义 JSON 序列化：实现 IAxiosJsonSerializer，把默认的 System.Text.Json 换成 Newtonsoft.Json，
-/// 请求体、强类型响应、dynamic 响应统一走同一个引擎。
+/// 19. 自定义 JSON 序列化：实现 IContentSerializer，把默认的 System.Text.Json 换成 Newtonsoft.Json，
+/// 业务对象的请求体与强类型响应走同一个引擎（dynamic 由库自己展开，与引擎无关）。
 /// </summary>
 public sealed class NewtonsoftJsonExample : IExample
 {
@@ -28,7 +28,7 @@ public sealed class NewtonsoftJsonExample : IExample
         using var newtonsoft = Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
-            c.JsonSerializer = new NewtonsoftJsonSerializer();
+            c.ContentSerializer = new NewtonsoftJsonSerializer();
         });
 
         // 对比用的默认实例（System.Text.Json，Web 默认 camelCase）
@@ -49,9 +49,9 @@ public sealed class NewtonsoftJsonExample : IExample
             $"  强类型响应: UserName={typed.Data!.UserName}, Age={typed.Data.Age}, "
             + $"City={typed.Data.Address?.City}, Roles={string.Join("/", typed.Data.Roles ?? [])}");
 
-        // 3) dynamic：Newtonsoft 实现返回 JObject，同样支持 data.UserName
+        // 3) dynamic：由库展开成 ExpandoObject（JSON 便利能力，与序列化器无关）
         dynamic data = (await newtonsoft.GetAsync<dynamic>("users/1/pascal")).Data!;
-        Console.WriteLine($"  dynamic(JObject): UserName={data.UserName}, Age={data.Age}, Roles[1]={data.Roles[1]}");
+        Console.WriteLine($"  dynamic(ExpandoObject): UserName={data.UserName}, Age={data.Age}, Roles[1]={data.Roles[1]}");
 
         Console.WriteLine("  提示：库本身仍零第三方依赖，Newtonsoft 只在示例项目中引用");
     }

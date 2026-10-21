@@ -15,9 +15,15 @@ namespace AxiosNet.Internal;
 /// 唯一约定：<b>请求体格式由 <see cref="AxiosConfig.ContentType"/> 决定，与 data 的运行时类型无关</b>。
 /// 传入字典不会再被「猜」成表单，对象也不会因为实现了 IEnumerable 而改变编码方式。
 /// </para>
+/// <para>
+/// 唯一的例外是「调用方没表态」：未显式设置 ContentType 时，头部采用生效序列化器自报的
+/// <see cref="IContentSerializer.MediaType"/>（注入 XML / protobuf 序列化器即自动配对头与正文）。
+/// 显式设置过则一律以调用方为准。
+/// </para>
 /// <list type="bullet">
 /// <item>string / byte[] / ReadOnlyMemory&lt;byte&gt; / Memory&lt;byte&gt; / ArraySegment&lt;byte&gt; / Stream / HttpContent：内容原样发送，只应用配置的 Content-Type（HttpContent 自带时保留）。</item>
-/// <item>结构化数据（对象、字典、dynamic、集合）：json → JSON 文本；x-www-form-urlencoded → 键值对表单；multipart/form-data → 字段 + 文件部件；其余类型仍以 JSON 文本写入。</item>
+/// <item>基础数据类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…，见 <c>IsScalar</c>）：直接取文本写入，<b>不经过序列化器</b>。</item>
+/// <item>结构化数据（对象、字典、dynamic、集合）：json → 当前序列化器；x-www-form-urlencoded → 键值对表单；multipart/form-data → 字段 + 文件部件。</item>
 /// <item>Content-Type 为 multipart/form-data 而 data 是原始内容（无 boundary 参数）时抛 <c>ERR_BAD_OPTION_VALUE</c>：头部与正文自相矛盾，服务端无法解析。</item>
 /// </list>
 /// </summary>
@@ -145,26 +151,34 @@ internal static class RequestBodyFactory
             return CreateMultipartContent(data, mediaType, encoding, config);
         }
 
-        // JSON 请求体走可插拔序列化器（默认 System.Text.Json，可换成 Newtonsoft 等）。
-        var json = AxiosJson.Get(config).Serialize(data, data.GetType(), config);
-        return CreateText(json, mediaType, encoding, appendCharset);
-    }
+        var type = data.GetType();
 
-    /// <summary>
-    /// 表单/multipart 展平需要 JSON 树语义：默认实现直接 SerializeToElement（零额外解析），
-    /// 自定义序列化器则先序列化为 JSON 文本再解析，保证命名策略与转换器仍然生效。
-    /// </summary>
-    private static JsonElement ToJsonElement(object data, AxiosConfig config)
-    {
-        var serializer = AxiosJson.Get(config);
-        if (serializer is SystemTextJsonSerializer systemTextJson)
+        // 基础数据类型（IsScalar：数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）<b>不经过序列化器</b>：
+        // 请求体语义就是「这个值本身」，直接取其文本发起。
+        // 交给序列化器既多余（JSON 的裸标量 42 / true 与这里的文本完全一致）又不可行
+        // （XML / YAML 序列化器对根标量无从下手：没有元素名），那会逼每个自定义实现各写一遍标量特判。
+        // 注意：字典 / 集合 / 对象 / dynamic 一律<b>不进这个分支</b> —— 它们和业务对象是同一套逻辑，
+        // 走下面的序列化器（字典不会因为实现了 IDictionary 就被当成标量或表单）。
+        if (IsScalar(type))
         {
-            return systemTextJson.ToElement(data, data.GetType(), config);
+            return CreateText(ScalarBodyText(data), mediaType, encoding, appendCharset);
         }
 
-        var json = serializer.Serialize(data, data.GetType(), config);
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
+        // 其余（json / xml / yaml … 的对象、字典、dynamic、集合）交给生效的序列化器：
+        // 显式注入优先，未注入时按 mediaType 自动匹配注册表（再回落内置 JSON）。
+        // 库只知道「业务对象 → 文本」，二进制载荷请由调用方序列化成 byte[] / Stream 作为 data 传入。
+        var serializer = AxiosContent.Get(config, mediaType);
+
+        // 头由正文的产出者自报 —— 与 axios 默认 transformRequest 里的
+        // headers.setContentType('application/json', false) 同构：调用方没显式设置 Content-Type 时
+        // 采用序列化器声明的媒体类型（注入 protobuf / XML 序列化器后头会自动跟上）；
+        // 显式设置过就绝不覆盖，那是调用方对服务端的判断。
+        if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
+        {
+            mediaType = declared.Trim();
+        }
+
+        return CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset);
     }
 
     private static HttpContent CreateFormContent(
@@ -174,12 +188,10 @@ internal static class RequestBodyFactory
         Encoding encoding,
         bool appendCharset)
     {
-        // 先按当前 JSON 选项序列化为 JSON 树，再展平成键值对：
-        // 这样命名策略、[JsonPropertyName]、自定义转换器、忽略规则都与 JSON 请求体保持一致。
-        var element = ToJsonElement(data, config);
-
+        // 表单是独立的编码通道，与序列化器无关：直接按对象结构展平（详见 CollectFormPairs），
+        // 命名只看 FormFieldNameSelector 与属性上的 [JsonPropertyName]。
         var pairs = new List<KeyValuePair<string, string>>(8);
-        Flatten(null, element, pairs, encoding, config.FormFieldNameSelector);
+        CollectFormPairs(null, data, pairs, encoding, config.FormFieldNameSelector);
 
         // 表单体按「已转义的 ASCII 串」写入，因此编码只影响转义映射（默认 UTF-8 百分号编码，与 axios 一致）。
         var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
@@ -208,8 +220,7 @@ internal static class RequestBodyFactory
 
         try
         {
-            var policy = AxiosJson.GetOptions(config).PropertyNamingPolicy;
-            CollectParts(null, data, content, encoding, policy, config.FormFieldNameSelector);
+            CollectParts(null, data, content, encoding, config.FormFieldNameSelector);
             return content;
         }
         catch (Exception ex)
@@ -233,7 +244,6 @@ internal static class RequestBodyFactory
         object? value,
         MultipartFormDataContent content,
         Encoding encoding,
-        JsonNamingPolicy? policy,
         Func<string?, string, string>? nameSelector)
     {
         switch (value)
@@ -288,7 +298,7 @@ internal static class RequestBodyFactory
                 // 含 ExpandoObject（dynamic）
                 foreach (var entry in genericDictionary)
                 {
-                    CollectParts(CombineName(nameSelector, name, entry.Key), entry.Value, content, encoding, policy, nameSelector);
+                    CollectParts(CombineName(nameSelector, name, entry.Key), entry.Value, content, encoding, nameSelector);
                 }
 
                 return;
@@ -306,7 +316,6 @@ internal static class RequestBodyFactory
                         entry.Value,
                         content,
                         encoding,
-                        policy,
                         nameSelector);
                 }
 
@@ -324,13 +333,15 @@ internal static class RequestBodyFactory
         {
             foreach (var item in enumerable)
             {
-                CollectParts(name, item, content, encoding, policy, nameSelector);
+                CollectParts(name, item, content, encoding, nameSelector);
             }
 
             return;
         }
 
-        // 嵌套 POCO：public 可读属性，命名策略 / [JsonPropertyName] / [JsonIgnore] 与 JSON 请求体保持一致。
+        // 嵌套 POCO：public 可读属性；字段名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
+        // 这里刻意不读 JsonSerializerOptions.PropertyNamingPolicy：表单与序列化器解耦，
+        // 换成 XML / YAML 序列化器时字段名不能跟着变。
         foreach (var property in ReflectionCache.GetReadableProperties(type))
         {
             if (IsIgnored(property))
@@ -339,13 +350,148 @@ internal static class RequestBodyFactory
             }
 
             CollectParts(
-                CombineName(nameSelector, name, ResolveName(property, policy)),
+                CombineName(nameSelector, name, ResolveFieldName(property)),
                 property.GetValue(value),
                 content,
                 encoding,
-                policy,
                 nameSelector);
         }
+    }
+
+    /// <summary>
+    /// 把结构化数据展平为表单键值对：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、
+    /// null 跳过、标量取原始文本。
+    /// <para>
+    /// 直接读对象结构，<b>不经过序列化器</b>：表单是独立编码通道，换个 JSON/XML/YAML 序列化器
+    /// 不该改变表单里的字段名与内容。命名只看 <c>FormFieldNameSelector</c> 与 <c>[JsonPropertyName]</c>。
+    /// </para>
+    /// <para>
+    /// 传入 <see cref="JsonElement"/> 时按树语义展平（已经是解析好的树，没必要再反射一遍）。
+    /// </para>
+    /// </summary>
+    private static void CollectFormPairs(
+        string? prefix,
+        object? value,
+        List<KeyValuePair<string, string>> pairs,
+        Encoding encoding,
+        Func<string?, string, string>? nameSelector)
+    {
+        switch (value)
+        {
+            case null:
+                return;
+
+            case JsonElement element:
+                Flatten(prefix, element, pairs, encoding, nameSelector);
+                return;
+
+            case string text:
+                AddPair(prefix, text, pairs, encoding);
+                return;
+
+            // urlencoded 没有二进制表示：用 base64（JSON 形态下字节也是字符串化的）。
+            case byte[] bytes:
+                AddPair(prefix, Convert.ToBase64String(bytes), pairs, encoding);
+                return;
+
+            case ReadOnlyMemory<byte> memory:
+                AddPair(prefix, Convert.ToBase64String(memory.Span), pairs, encoding);
+                return;
+
+            case Memory<byte> memory:
+                AddPair(prefix, Convert.ToBase64String(memory.Span), pairs, encoding);
+                return;
+
+            case ArraySegment<byte> segment:
+                AddPair(prefix, Convert.ToBase64String(segment.AsSpan()), pairs, encoding);
+                return;
+
+            // 文件类内容在 urlencoded 里无法表达：multipart 才有「字段 + 文件名」的位置。
+            case FormFile:
+            case Stream:
+            case HttpContent:
+                throw new InvalidOperationException(
+                    "application/x-www-form-urlencoded 无法承载文件部件：请改用 multipart/form-data。");
+
+            case IDictionary<string, object?> genericDictionary:
+                // 含 ExpandoObject（dynamic）
+                foreach (var entry in genericDictionary)
+                {
+                    CollectFormPairs(
+                        CombineName(nameSelector, prefix, entry.Key),
+                        entry.Value,
+                        pairs,
+                        encoding,
+                        nameSelector);
+                }
+
+                return;
+
+            case IDictionary dictionary:
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key is null)
+                    {
+                        continue;
+                    }
+
+                    CollectFormPairs(
+                        CombineName(nameSelector, prefix, entry.Key.ToString() ?? string.Empty),
+                        entry.Value,
+                        pairs,
+                        encoding,
+                        nameSelector);
+                }
+
+                return;
+        }
+
+        var type = value.GetType();
+        if (IsScalar(type))
+        {
+            AddPair(prefix, ScalarToString(value), pairs, encoding);
+            return;
+        }
+
+        if (value is IEnumerable enumerable)
+        {
+            var index = 0;
+            foreach (var item in enumerable)
+            {
+                // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
+                var name = prefix is null ? "[" + index + "]" : prefix + "[]";
+                CollectFormPairs(name, item, pairs, encoding, nameSelector);
+                index++;
+            }
+
+            return;
+        }
+
+        foreach (var property in ReflectionCache.GetReadableProperties(type))
+        {
+            if (IsIgnored(property))
+            {
+                continue;
+            }
+
+            CollectFormPairs(
+                CombineName(nameSelector, prefix, ResolveFieldName(property)),
+                property.GetValue(value),
+                pairs,
+                encoding,
+                nameSelector);
+        }
+    }
+
+    /// <summary>加入一个键值对；根标量没有可表达的键名，直接忽略（不伪造 key）。</summary>
+    private static void AddPair(string? prefix, string value, List<KeyValuePair<string, string>> pairs, Encoding encoding)
+    {
+        if (prefix is null)
+        {
+            return;
+        }
+
+        pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, encoding), EncodeValue(value, encoding)));
     }
 
     private static void CollectJsonElementParts(
@@ -475,11 +621,30 @@ internal static class RequestBodyFactory
         _ => value.ToString() ?? string.Empty
     };
 
-    private static string ResolveName(PropertyInfo property, JsonNamingPolicy? policy)
+    /// <summary>
+    /// 请求体标量的文本形态。<b>不进序列化器</b>（<see cref="IsScalar"/> 命中就走这里）。
+    /// <para>
+    /// 与表单/查询串的 <see cref="ScalarToString"/> 刻意不同：日期时间用往返格式（<c>O</c>），
+    /// 保留 Kind 与 tick —— 请求体是「这个值本身」，把本地时间悄悄折成 UTC、
+    /// 或把 tick 截到毫秒都是失真；表单/params 那边受既有约定约束，保持原样。
+    /// </para>
+    /// </summary>
+    private static string ScalarBodyText(object value) => value switch
     {
-        var explicitName = property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name;
-        return explicitName ?? policy?.ConvertName(property.Name) ?? property.Name;
-    }
+        string s => s,
+        bool b => b ? "true" : "false",
+        char c => c.ToString(),
+        DateTime dt => dt.ToString("O", CultureInfo.InvariantCulture),
+        DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
+        DateOnly date => date.ToString("O", CultureInfo.InvariantCulture),
+        TimeOnly time => time.ToString("O", CultureInfo.InvariantCulture),
+        Enum e => e.ToString(),
+        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? string.Empty
+    };
+
+    private static string ResolveFieldName(PropertyInfo property)
+        => property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? property.Name;
 
     private static bool IsIgnored(PropertyInfo property)
     {
@@ -625,31 +790,18 @@ internal static class RequestBodyFactory
     /// <summary>
     /// 组合实际写入的 Content-Type：媒体类型已自带 charset 时尊重用户；
     /// 文本类媒体类型在显式设置 RequestEncoding 时补 charset，二进制类型不补。
+    /// 文本 / 二进制的判定与响应侧共用 <see cref="MediaTypes.IsTextual"/>。
     /// </summary>
     private static string ComposeMediaType(string mediaType, Encoding encoding, bool appendCharset)
     {
         if (!appendCharset
             || mediaType.Contains("charset=", StringComparison.OrdinalIgnoreCase)
-            || !IsTextual(mediaType))
+            || !MediaTypes.IsTextual(mediaType))
         {
             return mediaType;
         }
 
         return mediaType + "; charset=" + encoding.WebName;
-    }
-
-    private static bool IsTextual(string mediaType)
-    {
-        var end = mediaType.IndexOf(';');
-        var main = (end < 0 ? mediaType : mediaType[..end]).Trim();
-
-        return main.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
-            || main.EndsWith("+json", StringComparison.OrdinalIgnoreCase)
-            || main.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
-            || main.Equals(AxiosContentType.Json, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(AxiosContentType.Xml, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(AxiosConfig.FormUrlEncodedContentType, StringComparison.OrdinalIgnoreCase)
-            || main.Equals("application/javascript", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void SetContentType(HttpContent content, string mediaType)

@@ -69,7 +69,7 @@ public sealed partial class AxiosClient
         merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
         merged.HttpVersion = perCall.HttpVersion ?? merged.HttpVersion;
         merged.JsonSerializerOptions = perCall.JsonSerializerOptions ?? merged.JsonSerializerOptions;
-        merged.JsonSerializer = perCall.JsonSerializer ?? merged.JsonSerializer;
+        merged.ContentSerializer = perCall.ContentSerializer ?? merged.ContentSerializer;
         merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
         merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;
 

@@ -1,14 +1,16 @@
 using System.Text.Json;
-using AxiosNet.Internal;
 
 namespace AxiosNet.Serialization;
 
 /// <summary>
-/// 默认的 System.Text.Json 实现：
-/// 序列化/反序列化使用 <see cref="AxiosConfig.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>），
-/// dynamic 展开与文档解析复用库内已有的 <see cref="DynamicJson"/> / <see cref="JsonDocument"/>。
+/// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：
+/// 序列化 / 反序列化使用 <see cref="AxiosConfig.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
+/// <para>
+/// <c>dynamic</c> 展开与非泛型响应的 <c>JsonElement</c> 形态由库自己处理，不经过本类
+/// （它们是「无目标类型」的形态，不属于业务对象反序列化）。
+/// </para>
 /// </summary>
-public sealed class SystemTextJsonSerializer : IAxiosJsonSerializer
+public sealed class SystemTextJsonSerializer : IContentSerializer
 {
     /// <summary>无状态单例，可安全并发共享。</summary>
     public static SystemTextJsonSerializer Instance { get; } = new();
@@ -17,6 +19,9 @@ public sealed class SystemTextJsonSerializer : IAxiosJsonSerializer
     {
     }
 
+    /// <summary><c>application/json</c>（与库的 <see cref="AxiosConfig.ContentType"/> 默认值一致）。</summary>
+    public string? MediaType => AxiosContentType.Json;
+
     public string Serialize(object? value, Type type, AxiosConfig config)
         => JsonSerializer.Serialize(value, type, AxiosJson.GetOptions(config));
 
@@ -24,31 +29,9 @@ public sealed class SystemTextJsonSerializer : IAxiosJsonSerializer
         => JsonSerializer.Deserialize(json, type, AxiosJson.GetOptions(config));
 
     /// <summary>
-    /// 直接从 UTF-8 字节反序列化，跳过「bytes → UTF-16 字符串」这一整段中转（≈2× payload）。
-    /// <para>
-    /// 只在「响应有效编码就是 UTF-8」时可用（由 <c>ResponseTextDecoder.TryGetUtf8Payload</c> 判定，
-    /// 已剥离 BOM）；其它编码必须走 <see cref="Deserialize"/>，否则会把 GBK/UTF-16 的字节当 UTF-8 解析。
-    /// </para>
-    /// <para>
-    /// 非接口成员，与 <see cref="ToElement"/> 同样的用法：<c>RequestBodyFactory</c> 与响应管线按
-    /// 「是不是默认序列化器」分支使用它，自定义序列化器仍只实现接口上的字符串入口。
-    /// </para>
+    /// 二进制入口：直接走 UTF-8 字节反序列化，不做 <c>byte[] → string</c> 中转。
+    /// 触达路径是「Content-Type 声明非文本」（如服务端把 JSON 标成 <c>application/octet-stream</c>）。
     /// </summary>
-    public object? DeserializeUtf8(ReadOnlySpan<byte> utf8Json, Type type, AxiosConfig config)
-        => JsonSerializer.Deserialize(utf8Json, type, AxiosJson.GetOptions(config));
-
-    public object? ParseDynamic(string json, AxiosConfig config) => DynamicJson.Parse(json);
-
-    public object ParseDocument(string json, AxiosConfig config)
-    {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
-    }
-
-    /// <summary>
-    /// 序列化为 <see cref="JsonElement"/> 树（表单/multipart 展平需要 JSON 树语义）。
-    /// 与 <see cref="Serialize"/> 使用同一套选项，保证命名策略/转换器一致。
-    /// </summary>
-    public JsonElement ToElement(object? value, Type type, AxiosConfig config)
-        => JsonSerializer.SerializeToElement(value, type, AxiosJson.GetOptions(config));
+    public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
+        => JsonSerializer.Deserialize(data.Span, type, AxiosJson.GetOptions(config));
 }

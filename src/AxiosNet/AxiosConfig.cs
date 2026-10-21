@@ -44,7 +44,14 @@ public sealed class AxiosConfig
     // 只有第一次访问/写入才真正创建；库内读路径一律先用 Has* 判定，不为「看一眼」付创建成本。
     private AxiosHeaders? _headers;
 
-    /// <summary>对应 axios headers（大小写不敏感）。</summary>
+    /// <summary>
+    /// 对应 axios headers（大小写不敏感）。
+    /// <para>
+    /// 序列化器在 <see cref="IContentSerializer.Serialize"/> 里也可以写它：拿到的 config 是本次请求
+    /// 独占的副本，写入的头在请求体构造完成后统一应用（能覆盖 <see cref="ContentType"/> 生成的默认头），
+    /// 不会泄漏到实例默认值或并发请求。
+    /// </para>
+    /// </summary>
     /// <exception cref="ArgumentNullException">赋值为 <c>null</c>。</exception>
     /// <remarks>
     /// 赋 null 会让后续的配置合并（<c>perCall.Headers.Count</c>）在请求管线深处抛空引用，
@@ -105,10 +112,18 @@ public sealed class AxiosConfig
     /// 请求体媒体类型（Content-Type），默认 <c>application/json</c>。
     /// <para>
     /// 请求体的编码格式由本项决定，<b>与 <see cref="Data"/> 的运行时类型无关</b>：
-    /// 对象、字典、dynamic、集合等结构化数据在 json 下都会序列化为 JSON；
     /// 设为 <c>application/x-www-form-urlencoded</c> 时转为键值对表单（嵌套用 <c>a[b]=v</c>、数组用 <c>a[]=v</c>）；
     /// 设为 <c>multipart/form-data</c> 时构建字段 + 文件部件（文件用 <see cref="FormFile"/> / Stream / byte[] / HttpContent 表示）；
-    /// 其他媒体类型（text/plain、application/xml 等）下结构化数据仍按 JSON 文本写入，仅头部不同。
+    /// 其余媒体类型下，结构化数据交给当前 <see cref="ContentSerializer"/>（默认 JSON）编码。
+    /// 也就是说 <c>application/xml</c> / <c>application/yaml</c> 要配合对应的序列化器使用 ——
+    /// 只改本项而用默认 JSON 序列化器，会得到「头部 XML、正文 JSON」的自相矛盾请求。
+    /// </para>
+    /// <para>
+    /// 反过来，<b>不设置本项</b>时头由序列化器自报：若生效的 <see cref="IContentSerializer"/>
+    /// 声明了 <see cref="IContentSerializer.MediaType"/>（内置 JSON 是 <c>application/json</c>、
+    /// 内置 XML 是 <c>application/xml</c>），请求头就用它。所以
+    /// <c>ContentSerializer = XmlContentSerializer.Instance</c> 一处改动即可完成换格式。
+    /// 一旦显式设置过本项（单次或实例 <c>Defaults</c>），序列化器的声明不再生效。
     /// </para>
     /// <para>
     /// 传入 string / byte[] / Stream / HttpContent 时本项只影响头部：内容原样发送。
@@ -130,7 +145,8 @@ public sealed class AxiosConfig
 
     /// <summary>
     /// 对应 axios data：请求体原始数据，支持任意类型 ——
-    /// 对象/字典/dynamic/集合（按 <see cref="ContentType"/> 序列化），
+    /// 对象/字典/dynamic/集合（按 <see cref="ContentType"/> 序列化，字典与对象同一套逻辑），
+    /// 基础数据类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…，直接取其文本，不经过序列化器），
     /// 以及 string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent（原样发送）。
     /// </summary>
     public object? Data { get; set; }
@@ -350,6 +366,11 @@ public sealed class AxiosConfig
     /// <summary>
     /// 表单/multipart 字段名生成规则：参数为（父级前缀, 键名），返回实际字段名。
     /// 默认 <c>prefix[key]</c>（无前缀时就是 key）；可改成 <c>prefix.key</c>、下划线或忽略前缀。
+    /// <para>
+    /// 这是字段命名的<b>唯一入口</b>（属性级覆盖用 <c>[JsonPropertyName]</c>，忽略用 <c>[JsonIgnore]</c>）：
+    /// 表单不走序列化器，所以与 <see cref="JsonSerializerOptions"/> / <see cref="ContentSerializer"/> 完全无关 ——
+    /// 换 XML、YAML 序列化器不会改变表单字段名。
+    /// </para>
     /// </summary>
     public Func<string?, string, string>? FormFieldNameSelector { get; set; }
 
@@ -381,6 +402,10 @@ public sealed class AxiosConfig
     /// <summary>
     /// 对应 axios transformResponse：在响应体转换/反序列化之后依次作用于 Data
     /// （例如统一拆包 <c>{code,data}</c>）。流式响应不适用。
+    /// <para>
+    /// 这里可以读 <see cref="Response"/> 拿响应头（如把 <c>X-Total-Count</c> 贴到分页对象上）——
+    /// 反序列化已经完成，所以适合「加工已造好的对象」，而不是「决定怎么解析」。
+    /// </para>
     /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
     /// </summary>
     public IList<Func<object?, AxiosConfig, object?>> TransformResponse
@@ -393,18 +418,36 @@ public sealed class AxiosConfig
         }
     }
 
-    /// <summary>JSON 序列化选项（请求体序列化 / 响应体反序列化共用）。</summary>
+    /// <summary>
+    /// JSON 序列化选项。<b>只对默认 JSON 序列化器生效</b>
+    /// （请求体 JSON 序列化 / 响应体 JSON 反序列化）。
+    /// <para>
+    /// 表单与 multipart 的字段命名与本项<b>无关</b>：它们不经过序列化器，命名规则见
+    /// <see cref="FormFieldNameSelector"/> 与属性上的 <c>[JsonPropertyName]</c>。
+    /// </para>
+    /// </summary>
     public JsonSerializerOptions? JsonSerializerOptions { get; set; }
 
     /// <summary>
-    /// 自定义 JSON 序列化器（例如 Newtonsoft.Json 适配器）。
+    /// 本次请求（或本实例默认）使用的内容序列化器，<b>优先级最高</b>：
+    /// 高于 <see cref="AxiosContent.Serializer"/>，也高于按媒体类型的自动匹配（<see cref="AxiosContent.Register"/>）。
     /// <para>
-    /// null 表示使用 <see cref="AxiosJson.Serializer"/> 的全局默认（System.Text.Json）。
-    /// 设置后，请求体 JSON 序列化、响应体反序列化、<c>dynamic</c> 展开与非泛型响应的文档解析都由它负责；
-    /// <see cref="JsonSerializerOptions"/> 仍用于表单/multipart 的字段命名与展平（需要 JSON 树语义）。
+    /// null 表示不覆盖，继续走「全局注入 → 按 <see cref="ContentType"/> 自动匹配 → 内置 JSON」。
+    /// 只有<b>业务对象</b>经过它：请求方向把 <see cref="Data"/> 序列化成文本，
+    /// 响应方向把正文反序列化成目标类型。库不理解它背后是 JSON、XML、YAML 还是 Protobuf。
+    /// </para>
+    /// <para>
+    /// 响应侧走哪个入口由响应 <c>Content-Type</c> 判定：文本类型进 <c>Deserialize(string)</c>，
+    /// 非文本类型进 <c>Deserialize(ReadOnlyMemory&lt;byte&gt;)</c> 且不做文本解码。
+    /// </para>
+    /// <para>
+    /// string / byte[] / Stream / HttpContent 请求体原样发送；响应侧 string / byte[] / Stream /
+    /// 基础数据类型 / dynamic 由库自己处理，都不经过序列化器。
     /// </para>
     /// </summary>
-    public IAxiosJsonSerializer? JsonSerializer { get; set; }
+    public IContentSerializer? ContentSerializer { get; set; }
+
+
 
     /// <summary>
     /// 请求体文本编码（string / 对象 JSON / 表单），决定写入 socket 的字节与 Content-Type 中的 charset。
@@ -417,6 +460,22 @@ public sealed class AxiosConfig
     /// 设置后强制按指定编码解码原始字节（用于服务端 charset 缺失/错误的情况）。
     /// </summary>
     public Encoding? ResponseEncoding { get; set; }
+
+    /// <summary>
+    /// 响应阶段的只读上下文：状态码、响应头、响应的媒体类型与字符集。
+    /// <para>
+    /// <b>只在响应方向有值</b>——请求阶段（<see cref="IContentSerializer.Serialize"/>）读到的是 <c>null</c>。
+    /// 反序列化（<see cref="IContentSerializer.Deserialize(string, Type, AxiosConfig)"/> 与字节入口）
+    /// 和 <see cref="TransformResponse"/> 都能拿到它：
+    /// 前者用来按响应头决定解析规则（如 <c>X-Schema-Version</c>），
+    /// 后者用来搬运元数据（如 <c>X-Total-Count</c>）。
+    /// </para>
+    /// <para>
+    /// 由库写入，调用方只读；<see cref="Headers"/> 与 <see cref="AxiosResponse.Headers"/> 是同一份字典，
+    /// 不额外占内存。<see cref="Clone"/> 不会复制它 —— 否则上一个响应的头会被带进下一次请求。
+    /// </para>
+    /// </summary>
+    public AxiosResponseInfo? Response { get; internal set; }
 
     /// <summary>
     /// 连接池选项。仅在构造 AxiosClient（自建连接池）时生效；
@@ -450,6 +509,10 @@ public sealed class AxiosConfig
             : null;
         clone._transformRequest = CopiedTransforms(_transformRequest);
         clone._transformResponse = CopiedTransforms(_transformResponse);
+
+        // 响应上下文属于「某一次响应」：克隆出来的是给下一次请求用的配置，
+        // 带上旧响应头只会让序列化器读到上一个请求的状态（而且这种脏读极难定位）。
+        clone.Response = null;
 
         return clone;
     }

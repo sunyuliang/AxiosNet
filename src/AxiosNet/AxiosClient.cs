@@ -957,6 +957,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         var status = (int)message.StatusCode;
 
+        // 反序列化 / transformResponse 阶段可读的响应上下文：零拷贝复用刚建好的 headers。
+        // 让序列化器能按响应头决定解析规则（如 X-Schema-Version），transformResponse 能搬元数据
+        // （如 X-Total-Count）。响应体的文本/二进制判定不受影响 —— 那由 MediaTypes.IsTextual 决定。
+        var contentType = message.Content.Headers.ContentType;
+        config.Response = new AxiosResponseInfo(
+            status,
+            StatusTextMap.Get(status),
+            headers,
+            contentType?.MediaType,
+            contentType?.CharSet);
+
         object? data;
         if (config.ResponseType == ResponseType.Stream)
         {
@@ -972,24 +983,19 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared)
                 .ConfigureAwait(false);
 
-            var charSet = message.Content.Headers.ContentType?.CharSet;
+            var charSet = contentType?.CharSet;
+            var responseMediaType = contentType?.MediaType;
 
-            // JSON + 具体目标类型（且用默认 System.Text.Json）时可以直接按 UTF-8 字节反序列化：
-            // 「bytes → UTF-16 字符串」是一次 ≈2× payload 的拷贝，大响应上比反序列化本身还贵。
-            // 解析失败会退回文本路径（裸标量兜底 / lenient 返回原文），语义与纯文本路径完全一致。
-            ReadOnlyMemory<byte>? utf8 = null;
-            if (NeedsUtf8FastPath(config, dataType)
-                && ResponseTextDecoder.TryGetUtf8Payload(bytes, charSet, config.ResponseEncoding, out var payload))
-            {
-                utf8 = payload;
-            }
+            // 响应体是文本还是二进制，由 Content-Type 决定（无 Content-Type 视为文本）。
+            // 二进制响应连解码都不做：protobuf / 图片 / 下载流没理由先转成 UTF-16 再交给序列化器。
+            var textual = MediaTypes.IsTextual(responseMediaType);
 
-            // 只要字节的调用（arraybuffer / byte[]）不做文本解码：大二进制响应解码成 string 是纯浪费。
-            // 走 UTF-8 直读时同样不解码：文本只在兜底路径上才需要（由 ConvertData 按需解码）。
-            var text = utf8 is null && NeedsText(config, dataType)
+            // 只要字节的调用（arraybuffer / byte[] / 二进制响应的业务对象）不做文本解码。
+            // 其余情况只解码一次，文本在 ConvertData 里按需使用（基础类型直读、文本对象交序列化器）。
+            var text = NeedsText(config, dataType, textual)
                 ? ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding)
                 : null;
-            data = ConvertData(config, request, dataType, bytes, text, charSet, utf8, lenient);
+            data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
 
             // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）
             if (config.HasTransformResponse)
@@ -1014,28 +1020,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 是否真的需要把响应字节解码成文本。
-    /// arraybuffer / byte[] 只给原始字节；text / dynamic 必然需要；json 下除 byte[] 外都要。
+    /// arraybuffer / stream / byte[] 只给原始字节；二进制响应（Content-Type 非文本）的业务对象走
+    /// 序列化器的字节入口，同样不解码；其余形态（text、dynamic、基础类型、文本对象）都需要文本
+    /// —— 解码一次，后续路径共用。
     /// </summary>
-    private static bool NeedsText(AxiosConfig config, Type? dataType) => config.ResponseType switch
+    private static bool NeedsText(AxiosConfig config, Type? dataType, bool textual) => config.ResponseType switch
     {
         ResponseType.ArrayBuffer => false,
         ResponseType.Stream => false,
         ResponseType.Text or ResponseType.Dynamic => true,
-        _ => dataType != typeof(byte[])
+        _ => textual && dataType != typeof(byte[])
     };
-
-    /// <summary>
-    /// 是否值得走「UTF-8 字节直读」：只有「按 JSON 反序列化为具体类型」才有意义。
-    /// string / byte[] / JsonElement / object(dynamic) 各自有专门的返回形态（含解析失败回退原文），
-    /// 不在本优化范围内。
-    /// </summary>
-    private static bool NeedsUtf8FastPath(AxiosConfig config, Type? dataType)
-        => config.ResponseType == ResponseType.Json
-            && dataType is not null
-            && dataType != typeof(object)
-            && dataType != typeof(JsonElement)
-            && dataType != typeof(string)
-            && dataType != typeof(byte[]);
 
     /// <summary>body 是否只含空白字符（<c>""</c> 与 <c>"  \r\n"</c> 语义等价）。</summary>
     private static bool IsBlank(string text) => text.AsSpan().Trim().IsEmpty;
@@ -1059,10 +1054,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
-    /// <paramref name="text"/> 为 <c>null</c> 表示尚未解码（UTF-8 直读路径）：只有真正需要文本的
-    /// 分支才付 bytes → UTF-16 的代价。<paramref name="utf8"/> 非 <c>null</c> 表示字节可直接交给
-    /// System.Text.Json（已剥离 BOM）。<paramref name="lenient"/> 为 true 时（状态码不合法）
-    /// 解析失败返回原始文本，不抛异常。
+    /// <para>
+    /// 分派原则（与格式解耦）：原始字节、文本、dynamic 图、基础数据类型都由框架自己给出；
+    /// 只有<b>业务对象</b>才交给 <see cref="IContentSerializer"/>，且按 <paramref name="textual"/>
+    /// 决定进文本入口还是字节入口。
+    /// </para>
+    /// <para><paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始内容，不抛异常。</para>
     /// </summary>
     private static object? ConvertData(
         AxiosConfig config,
@@ -1071,10 +1068,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         byte[] bytes,
         string? text,
         string? charSet,
-        ReadOnlyMemory<byte>? utf8,
+        bool textual,
+        string? mediaType,
         bool lenient)
     {
-        // 按需解码：能走 UTF-8 直读的响应永远不会在这里分配那个 UTF-16 字符串。
+        // 按需解码：只要字节的分支永远不付 bytes → UTF-16 的代价。
         string Text() => text ??= ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding);
 
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
@@ -1083,13 +1081,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return bytes;
         }
 
-        // 2) text 直接给原始文本（不做任何 JSON 解析）。
+        // 2) text 直接给原始文本（不做任何解析）。
         if (config.ResponseType == ResponseType.Text)
         {
             return Text();
         }
 
-        // 3) dynamic 展开为动态对象图（空 body 为 null，对齐 axios）。
+        // 3) dynamic 展开：JSON 特有的「无类型对象图」，由框架解析，不经过序列化器。
         if (config.ResponseType == ResponseType.Dynamic)
         {
             var json = Text();
@@ -1100,15 +1098,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             try
             {
-                return AxiosJson.Get(config).ParseDynamic(json, config);
+                return DynamicJson.Parse(json);
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                // 非 JSON 响应（HTML 错误页、纯文本等）也必须走统一错误模型，而不是裸 JsonException。
-                // 注意这是**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，
+                // 非 JSON 响应（HTML 错误页、纯文本等）同样走统一错误模型，而不是裸解析异常。
+                // 这是**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，
                 // 把一段 HTML 当 data 交回去只会在几十行之后炸成 RuntimeBinderException。
-                // 状态码不合法时（lenient）仍然回退原文 —— 那条路径要的是「把错误页原样带给调用方」，
-                // 异常本身已经携带 Status/Response 了。
+                // 状态码不合法时（lenient）仍然回退原文。
                 if (lenient)
                 {
                     return json;
@@ -1129,82 +1126,79 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return bytes;
         }
 
-        // 5) Json（默认）：空 body 视为 null；只含空白的 body 同样视为空 —— 否则服务端多吐一个
-        //    换行就会让 typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null，两者本该等价。
+        // 5) 空 body 视为 null；只含空白的 body 同样视为空 —— 否则服务端多吐一个换行就会让
+        //    typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null，两者本该等价。
         if (text is null ? IsBlankUtf8(bytes) : IsBlank(text))
         {
             return null;
         }
 
-        // 6) Json + 具体类型 + 默认序列化器：直接按 UTF-8 字节反序列化（省掉整段 UTF-16 中转）。
-        if (utf8 is ReadOnlyMemory<byte> payload
-            && AxiosJson.Get(config) is SystemTextJsonSerializer systemTextJson)
-        {
-            try
-            {
-                return systemTextJson.DeserializeUtf8(payload.Span, dataType!, config);
-            }
-            catch (Exception ex) when (ex is not AxiosException)
-            {
-                // 与文本路径完全相同的兜底：非 JSON 的裸标量（42 / 2024-01-01 / true …）。
-                var fallback = Text();
-
-                // 只在解码后才认得出的空白（NBSP 等非 ASCII 空白）同样按空 body 处理：
-                // 前面的字节级判空只看 ASCII 空白，这里补上最后一块。
-                if (IsBlank(fallback))
-                {
-                    return null;
-                }
-
-                if (ScalarParser.TryParse(fallback, dataType!, out var scalar))
-                {
-                    return scalar;
-                }
-
-                if (lenient)
-                {
-                    return fallback;
-                }
-
-                throw AxiosException.BadResponse(config, request, dataType!, ex);
-            }
-        }
-
-        // 7) 未指定具体类型（非泛型 / object / JsonElement）：对齐 axios transformResponse，
-        //    JSON 解析失败时原样返回文本。
+        // 6) 没有目标类型（非泛型 / JsonElement）：框架按 JSON 文档形态给出，
+        //    解析失败原样返回文本（对齐 axios transformResponse）。
+        //    注意这里不用序列化器：它已经没有「文档形态」的概念，而「无类型」本来也不需要业务反序列化。
         if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
         {
-            var json = Text();
+            // 二进制响应没有「文档形态」，原样给字节——把 protobuf / 图片当文本解析只会得到乱码。
+            if (!textual)
+            {
+                return bytes;
+            }
+
+            var document = Text();
             try
             {
-                return AxiosJson.Get(config).ParseDocument(json, config);
+                using var parsed = JsonDocument.Parse(document);
+                return parsed.RootElement.Clone();
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                return json;
+                return document;
             }
         }
 
-        // 8) 其余编码（GBK / UTF-16 …）或自定义序列化器：按文本反序列化。
+        // 7) 二进制响应（Content-Type 声明为非文本）：不做文本解码，交给序列化器的字节入口。
+        //    Protobuf / MessagePack / CBOR 因此拿到的就是原始字节；文本格式的序列化器不用实现该入口
+        //    （接口里默认按 UTF-8 解码转调文本入口）。
+        if (!textual)
+        {
+            try
+            {
+                return AxiosContent.Get(config, mediaType).Deserialize(bytes, dataType, config);
+            }
+            catch (Exception ex) when (ex is not AxiosException)
+            {
+                // lenient（状态码不合法）：解析失败不抛，原样回字节——此时已经没有「文本」可回退。
+                if (lenient)
+                {
+                    return bytes;
+                }
+
+                throw AxiosException.BadResponse(config, request, dataType, ex);
+            }
+        }
+
         var raw = Text();
+
+        // 8) 基础数据类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，
+        //    不依赖序列化器 —— XML 的 <Age>30</Age> 与 JSON 的裸 42 都走这里。
+        //    JSON 的带引号形态（"42"）框架解析不了，交给下面的序列化器兜底。
+        if (ScalarParser.TryParse(raw, dataType, out var scalar))
+        {
+            return scalar;
+        }
+
+        // 9) 文本响应的业务对象：交给当前序列化器，返回什么对象，Data 就是什么。
         try
         {
-            return AxiosJson.Get(config).Deserialize(raw, dataType, config);
+            return AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
         }
         catch (Exception ex) when (ex is not AxiosException)
         {
-            // 非 JSON 的裸标量（42 / 2024-01-01 / true …）：按目标类型解析原始文本。
-            if (ScalarParser.TryParse(raw, dataType, out var scalar))
-            {
-                return scalar;
-            }
-
             if (lenient)
             {
                 return raw;
             }
 
-            // 兜底失败：包装成 AxiosException，保持统一的错误模型（而不是裸抛 JsonException）。
             throw AxiosException.BadResponse(config, request, dataType, ex);
         }
     }

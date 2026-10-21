@@ -178,6 +178,22 @@ public sealed class DemoServer : IDisposable
                     {"UserName":"bob","Age":30,"Address":{"City":"Shanghai","Zip":"200000"},"Roles":["admin","user"]}
                     """);
 
+            case "GET" when path == "/users/1/xml":
+                // XML 契约：演示 IContentSerializer 接入 JSON 之外的格式（正文由序列化器产出/解析）
+                return (200,
+                    Encoding.UTF8.GetBytes("""<?xml version="1.0" encoding="utf-8"?><User><Id>1</Id><Name>alice</Name><Age>30</Age></User>"""),
+                    "application/xml; charset=utf-8",
+                    null,
+                    null);
+
+            case "GET" when path == "/orders/1/binary":
+                // 二进制契约：Content-Type 非文本 → 库不解码，原始字节直达序列化器的字节入口
+                return (200,
+                    OrderBinarySerializer.Write(new BinaryOrder { Id = 1, Name = "alice", Quantity = 2, AmountCents = 1999 }),
+                    "application/octet-stream",
+                    null,
+                    null);
+
             case "GET" when path == "/search":
                 return Json(200, $"{{\"query\":\"{Escape(query)}\"}}");
 
