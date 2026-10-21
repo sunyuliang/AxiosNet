@@ -194,21 +194,13 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
         => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null));
 
-    private static AxiosConfig FormShortcut(
+    private AxiosConfig FormShortcut(
         string url,
         HttpMethod method,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken,
         object? data)
-    {
-        var config = Shortcut(url, method, configure, cancellationToken, data);
-        if (!config.ContentTypeSet)
-        {
-            config.ContentType = AxiosContentType.MultipartFormData;
-        }
-
-        return config;
-    }
+        => Shortcut(url, method, configure, cancellationToken, data, AxiosContentType.MultipartFormData);
 
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
@@ -228,18 +220,36 @@ public sealed partial class AxiosClient
         }
     }
 
-    private static AxiosConfig Shortcut(
+    /// <summary>
+    /// 组装一次快捷调用的<b>生效配置</b>：直接在实例默认值的副本上填写本次请求项。
+    /// <para>
+    /// 以前这里是「先 new 一个只含按请求项的 AxiosConfig，再交给管线逐属性合并到 Defaults 副本」——
+    /// 每请求两个配置对象（约 670 B）加一次全字段拷贝，而这两个对象里没有一个会活到请求之外。
+    /// 现在只剩管线真正要用的那一个，<see cref="AxiosConfig.EffectiveMerged"/> 让管线知道不必再合并。
+    /// </para>
+    /// <para>
+    /// 唯一的行为差异：<paramref name="configure"/> 回调里读到的 config 已经带上实例默认值
+    /// （以前是一张白纸）。设置项不受影响 —— 写进副本与「写进按请求项再合并」结果相同。
+    /// </para>
+    /// </summary>
+    private AxiosConfig Shortcut(
         string url,
         HttpMethod method,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken,
-        object? data = null)
+        object? data = null,
+        string? defaultContentType = null)
     {
-        var config = new AxiosConfig
+        var config = Defaults.Clone();
+        config.EffectiveMerged = true;
+        config.Url = url;
+        config.Method = method;
+
+        // 表单快捷方法：没人表态时默认 multipart。放在 configure 之前，回调里显式设的值仍然优先。
+        if (defaultContentType is not null && !config.ContentTypeSet)
         {
-            Url = url,
-            Method = method
-        };
+            config.ContentType = defaultContentType;
+        }
 
         // 仅在调用方传入可取消的令牌时才写入，避免用 CancellationToken.None 覆盖掉实例默认令牌
         if (cancellationToken.CanBeCanceled)
@@ -260,6 +270,17 @@ public sealed partial class AxiosClient
         }
 
         configure?.Invoke(config);
+
+        // 合并语义是「先把按请求的头并进来，再摘掉要删除的」：这里没有可并的了，
+        // 但 configure 里写的 RemoveHeaders 仍必须在它写完之后才生效。
+        if (config.HasRemoveHeaders && config.HasHeaders)
+        {
+            foreach (var name in config.RemoveHeaders)
+            {
+                config.Headers.Delete(name);
+            }
+        }
+
         return config;
     }
 

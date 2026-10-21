@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
@@ -312,5 +313,73 @@ public sealed class ConfigMergeContractTests
         var received = server.Received[0];
         Assert.Equal("/search", received.Path);
         Assert.Equal("q=a%20b&tags[]=x&tags[]=y", received.Query);
+    }
+
+    // ---------------------------------------------------------------
+    // 快捷方法直接在 Defaults 的副本上填写（见 AxiosClient.Shortcut）：
+    // 必须保证「请求之间」「请求与实例默认值之间」没有共享可变状态。
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task ShortcutConfig_SequentialRequests_DoNotLeakIntoDefaultsOrEachOther()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        client.Defaults.Headers.Set("X-Default", "base");
+        client.Defaults.Headers.Set("X-Second", "2");
+
+        // 第一次：加一个只属于本次的头，并摘掉一个实例默认头
+        await client.GetAsync("first", c =>
+        {
+            c.Headers.Set("X-Only", "1");
+            c.RemoveHeaders.Add("X-Second");
+        });
+
+        // 第二次：什么都不写，必须回到「只有实例默认头」的状态
+        await client.GetAsync("second");
+
+        var first = server.Received[0];
+        var second = server.Received[1];
+
+        // 本次生效
+        Assert.Equal("1", first.Headers["X-Only"]);
+        Assert.Equal("base", first.Headers["X-Default"]);
+        Assert.False(first.Headers.ContainsKey("X-Second"));
+
+        // 下一次不受影响：写的头不残留、删的头也没被写回实例默认值
+        Assert.False(second.Headers.ContainsKey("X-Only"));
+        Assert.Equal("2", second.Headers["X-Second"]);
+
+        // 实例默认值原样
+        Assert.Equal(2, client.Defaults.Headers.Count);
+        Assert.Equal("base", client.Defaults.Headers.Get("X-Default"));
+        Assert.Equal("2", client.Defaults.Headers.Get("X-Second"));
+        Assert.Empty(client.Defaults.RemoveHeaders);
+    }
+
+    [Fact]
+    public async Task ShortcutConfig_ConcurrentRequests_KeepTheirOwnHeaderValues()
+    {
+        // 服务端把收到的 X-Req 原样回显：任何一次请求的配置被别的请求覆盖，断言当场就会失败
+        await using var server = TestHttpServer.Start(req => new TestResponse(
+            Body: Encoding.UTF8.GetBytes(req.Headers["X-Req"]),
+            ContentType: "text/plain; charset=utf-8"));
+
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        client.Defaults.Headers.Set("X-Default", "base");
+
+        var calls = Enumerable.Range(0, 64).Select(async i =>
+        {
+            var tag = i.ToString(CultureInfo.InvariantCulture);
+            var response = await client.GetAsync<string>("echo", c => c.Headers.Set("X-Req", tag));
+            Assert.Equal(tag, response.Data);
+        });
+
+        await Task.WhenAll(calls);
+
+        // 并发写完，实例默认值里也不该多出这次的头
+        Assert.False(client.Defaults.Headers.Has("X-Req"));
+        Assert.Equal("base", client.Defaults.Headers.Get("X-Default"));
     }
 }

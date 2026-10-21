@@ -24,7 +24,8 @@ public sealed class RequestInterceptorManager
     private int _nextId;
 
     // 快照缓存：注册/弹出/清空才失效。请求热路径上避免每请求重建 List（含逆序副本）。
-    private IReadOnlyList<RequestInterceptor>? _snapshot;
+    // 用数组而不是 IReadOnlyList：数组的 foreach 编译成下标循环，不会把枚举器装箱。
+    private RequestInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
     public int Use(
@@ -88,14 +89,14 @@ public sealed class RequestInterceptorManager
     }
 
     /// <summary>快照并按 axios 规则逆序（后注册的先执行）；无变更时复用缓存。</summary>
-    internal IReadOnlyList<RequestInterceptor> SnapshotReversed()
+    internal RequestInterceptor[] SnapshotReversed()
     {
         lock (_interceptors)
         {
             if (_snapshot is null)
             {
-                var copy = new List<RequestInterceptor>(_interceptors);
-                copy.Reverse();
+                var copy = _interceptors.ToArray();
+                Array.Reverse(copy);
                 _snapshot = copy;
             }
 

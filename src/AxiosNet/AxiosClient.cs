@@ -283,7 +283,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private const string DisposedMessage = "AxiosClient 已释放，不能发起新请求";
 
     /// <summary>
-    /// 请求入口：负责「已释放」拦截与在途计数（配合 <see cref="Dispose"/> 的推迟释放协议），
+    /// 请求入口：负责「已释放」拦截、在途计数（配合 <see cref="Dispose"/> 的推迟释放协议）与配置合并，
     /// 校验通过后转入 <see cref="SendCoreAsync"/>。
     /// </summary>
     private async Task<AxiosResponse> SendAsync(AxiosConfig perCallConfig, Type? dataType)
@@ -312,9 +312,23 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 new ObjectDisposedException(nameof(AxiosClient)));
         }
 
+        // 生效配置：快捷方法传进来的已经是合并好的（见 Shortcut），其余入口在这里合并到实例默认值。
+        // 校验一律对「生效配置」做：两种来源的判定条件相同（见 ValidatePerRequestOptions）。
+        AxiosConfig config;
         try
         {
-            return await SendCoreAsync(perCallConfig, dataType).ConfigureAwait(false);
+            config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
+            ValidatePerRequestOptions(config);
+        }
+        catch
+        {
+            ReleaseInFlight();
+            throw;
+        }
+
+        try
+        {
+            return await SendCoreAsync(config, dataType).ConfigureAwait(false);
         }
         finally
         {
@@ -331,14 +345,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
     }
 
-    private async Task<AxiosResponse> SendCoreAsync(AxiosConfig perCallConfig, Type? dataType)
+    private async Task<AxiosResponse> SendCoreAsync(AxiosConfig config, Type? dataType)
     {
-        // 实例级选项（Proxy/Credentials/WithCredentials/MaxRedirects）在构造连接池时已固定，
-        // 按请求设置无法生效 —— 与其静默忽略，不如明确报错。
-        ValidatePerRequestOptions(perCallConfig);
-
-        var config = MergeConfig(perCallConfig);
-
         // 泛型调用 XxxAsync<dynamic>/<object> 时（T 即 object），响应自动展开为动态对象图，
         // 对标 JS 中直接 response.data.xxx 的用法；显式指定过其他 responseType 时以显式配置为准。
         if (dataType == typeof(object) && config.ResponseType == ResponseType.Json)
@@ -755,100 +763,111 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造连接池时已固定，
     /// 按请求写<b>不同的值</b>无法生效 —— 与其静默忽略，不如明确报错；
     /// 写<b>与实例生效值相同</b>的值则是等价写法，放行（否则调用方把 defaults 抄一遍到每个请求上都会炸）。
+    /// <para>
+    /// 判定对象是<b>合并后的生效配置</b>：快捷方法把请求项直接写进 defaults 的副本，非快捷入口在
+    /// <see cref="SendAsync"/> 里合并，两者到这里的形态一致 —— 于是只需判定「值与实例生效值是否相同」，
+    /// 不用再靠 <c>*Set</c> 标记去追「是谁写的」。
+    /// </para>
     /// </summary>
-    private void ValidatePerRequestOptions(AxiosConfig perCall)
+    private void ValidatePerRequestOptions(AxiosConfig config)
     {
-        if (perCall.Proxy is not null && !ReferenceEquals(perCall.Proxy, Defaults.Proxy))
+        if (config.Proxy is not null && !ReferenceEquals(config.Proxy, Defaults.Proxy))
         {
             throw AxiosException.InvalidOption(
                 "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Proxy = ... }) "
-                + "或 ConnectionPoolOptions.Proxy。", perCall);
+                + "或 ConnectionPoolOptions.Proxy。", config);
         }
 
-        if (perCall.Credentials is not null && !ReferenceEquals(perCall.Credentials, Defaults.Credentials))
+        if (config.Credentials is not null && !ReferenceEquals(config.Credentials, Defaults.Credentials))
         {
             throw AxiosException.InvalidOption(
-                "Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。", perCall);
+                "Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。", config);
         }
 
         // 池在构造时已经建好，按请求改它只会被静默丢弃 —— 与 Proxy/MaxRedirects 保持一致地报错。
-        if (perCall.PoolOptions is not null && !ReferenceEquals(perCall.PoolOptions, Defaults.PoolOptions))
+        if (config.PoolOptions is not null && !ReferenceEquals(config.PoolOptions, Defaults.PoolOptions))
         {
             throw AxiosException.InvalidOption(
                 "PoolOptions 是实例级配置（连接池在构造 AxiosClient 时创建），"
-                + "请通过 AxiosClient 构造参数或 defaults.PoolOptions 设置。", perCall);
+                + "请通过 AxiosClient 构造参数或 defaults.PoolOptions 设置。", config);
         }
 
-        // 必须按 *Set 判断「调用方到底写没写」：perCall 是只含按请求项的配置，
-        // 缺省值分别是 false 与 5。若直接拿值比生效值，实例 WithCredentials = true
-        // 或池上限为 3 时，连「按请求根本没写」的正常请求都会被误判成「写了不同的值」。
-        if (perCall.WithCredentialsSet)
-        {
-            ValidatePerRequestWithCredentials(perCall);
-        }
-
-        if (perCall.MaxRedirectsSet)
-        {
-            ValidatePerRequestMaxRedirects(perCall);
-        }
+        ValidateWithCredentials(config);
+        ValidateMaxRedirects(config);
     }
 
     /// <summary>
-    /// 按请求写 <c>WithCredentials</c>：只允许复述实例生效值。
+    /// <c>WithCredentials</c>：只允许复述实例生效值。
     /// <para>
-    /// 判定依据是「值是否与生效值不同」而不是「是否设置过」：写相同的值完全等价于不写，
-    /// 没有理由报错。注入自定义 Handler 时无从得知它的 Cookie 策略、无法判断是否等价，仍一律报错。
+    /// 判定依据是「值是否与生效值不同」而不是「是否设置过」：写相同的值完全等价于不写，没有理由报错。
+    /// 注入自定义 Handler 时无从得知它的 Cookie 策略、无法判断是否等价，只要写就报错
+    /// （这种实例的 defaults 上不可能设过该项，构造期就拦了，因此 <c>WithCredentialsSet</c> 为 true 一定是本次写的）。
     /// </para>
     /// </summary>
-    private void ValidatePerRequestWithCredentials(AxiosConfig perCall)
+    private void ValidateWithCredentials(AxiosConfig config)
     {
         if (_customClient is not null)
         {
-            throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 WithCredentials 完全由 handler 决定（Cookie 容器在连接层），"
-                + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", perCall);
+            if (config.WithCredentialsSet)
+            {
+                throw AxiosException.InvalidOption(
+                    "注入自定义 handler 时 WithCredentials 完全由 handler 决定（Cookie 容器在连接层），"
+                    + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", config);
+            }
+
+            return;
         }
 
-        if (perCall.WithCredentials == Defaults.WithCredentials)
+        if (config.WithCredentials == Defaults.WithCredentials)
         {
             return;
         }
 
         throw AxiosException.InvalidOption(
             $"WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {perCall.WithCredentials}，实例生效值为 {Defaults.WithCredentials}。"
-            + "要改变它请新建 AxiosClient 并在 defaults 上设置。", perCall);
+            + $"当前按请求为 {config.WithCredentials}，实例生效值为 {Defaults.WithCredentials}。"
+            + "要改变它请新建 AxiosClient 并在 defaults 上设置。", config);
     }
 
     /// <summary>
-    /// 按请求写 <c>MaxRedirects</c>：只允许复述实例生效值。
+    /// <c>MaxRedirects</c>：只允许写与实例生效值相同的值。
     /// <para>
-    /// 生效值取自池上真正生效的重定向策略（<c>AllowAutoRedirect = false</c> 时视为 0），
-    /// 而不是 <see cref="AxiosConfig.MaxRedirects"/> 的属性默认值 5 —— 否则
-    /// 「defaults 没设置、poolOptions 把上限改成 3」这类实例会被误判为 5。
+    /// 与实例默认值相同就没什么可判的；不同的值再与池上真正生效的策略比一次
+    /// ——「defaults 没设置、poolOptions 把上限改成 3、按请求写 3」正是这种等价写法。
+    /// 生效值取池的实际策略（<c>AllowAutoRedirect = false</c> 时视为 0），不是属性默认值 5。
     /// </para>
     /// </summary>
-    private void ValidatePerRequestMaxRedirects(AxiosConfig perCall)
+    private void ValidateMaxRedirects(AxiosConfig config)
     {
         if (_customClient is not null)
         {
-            throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），"
-                + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", perCall);
+            if (config.MaxRedirectsSet)
+            {
+                throw AxiosException.InvalidOption(
+                    "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），"
+                    + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", config);
+            }
+
+            return;
+        }
+
+        if (config.MaxRedirects == Defaults.MaxRedirects)
+        {
+            return;
         }
 
         var options = _pool!.EffectiveOptions;
         var effective = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
 
-        if (perCall.MaxRedirects == effective)
+        if (config.MaxRedirects == effective)
         {
             return;
         }
 
         throw AxiosException.InvalidOption(
             $"MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {perCall.MaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
-            + "要改变它请新建 AxiosClient 并在 defaults 或 ConnectionPoolOptions 上设置。", perCall);
+            + $"当前按请求为 {config.MaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
+            + "要改变它请新建 AxiosClient 并在 defaults 或 ConnectionPoolOptions 上设置。", config);
     }
 
     /// <summary>
@@ -956,6 +975,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
 
         var status = (int)message.StatusCode;
+        var statusText = StatusTextMap.Get(status);
 
         // 反序列化 / transformResponse 阶段可读的响应上下文：零拷贝复用刚建好的 headers。
         // 让序列化器能按响应头决定解析规则（如 X-Schema-Version），transformResponse 能搬元数据
@@ -963,7 +983,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         var contentType = message.Content.Headers.ContentType;
         config.Response = new AxiosResponseInfo(
             status,
-            StatusTextMap.Get(status),
+            statusText,
             headers,
             contentType?.MediaType,
             contentType?.CharSet);
@@ -1011,7 +1031,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         {
             Data = data,
             Status = status,
-            StatusText = StatusTextMap.Get(status),
+            StatusText = statusText,
             Headers = headers,
             Config = config,
             Request = request

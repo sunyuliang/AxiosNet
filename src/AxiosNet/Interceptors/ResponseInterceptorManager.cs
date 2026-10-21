@@ -14,7 +14,8 @@ public sealed class ResponseInterceptorManager
     private int _nextId;
 
     // 快照缓存：注册/弹出/清空才失效。请求热路径上避免每请求重建 List。
-    private IReadOnlyList<ResponseInterceptor>? _snapshot;
+    // 用数组而不是 IReadOnlyList：数组的 foreach 编译成下标循环，不会把枚举器装箱。
+    private ResponseInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
     public int Use(
@@ -77,13 +78,13 @@ public sealed class ResponseInterceptorManager
         }
     }
 
-    internal IReadOnlyList<ResponseInterceptor> Snapshot()
+    internal ResponseInterceptor[] Snapshot()
     {
         lock (_interceptors)
         {
             if (_snapshot is null)
             {
-                _snapshot = new List<ResponseInterceptor>(_interceptors);
+                _snapshot = _interceptors.ToArray();
             }
 
             return _snapshot;

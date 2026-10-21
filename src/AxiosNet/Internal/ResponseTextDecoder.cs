@@ -7,6 +7,10 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class ResponseTextDecoder
 {
+    private const string Utf8Name = "utf-8";
+    private const string AsciiName = "us-ascii";
+    private const string Latin1Name = "iso-8859-1";
+
     public static string Decode(byte[] bytes, string? charSet, Encoding? forced)
     {
         if (bytes.Length == 0)
@@ -31,11 +35,29 @@ internal static class ResponseTextDecoder
             return null;
         }
 
-        // 允许 charset="utf-8" 这种带引号的写法。
-        var name = charSet.Trim().Trim('"');
+        // 允许 charset="utf-8" 这种带引号的写法；切片判等不产生字符串。
+        var name = charSet.AsSpan().Trim().Trim('"');
+
+        // 最常见的几个 charset 直接用内置实例：Encoding.GetEncoding 要先在名称表里做一次
+        // 大小写不敏感查找，而真实响应里基本只有 utf-8（其次 us-ascii / latin1）。
+        if (name.Equals(Utf8Name, StringComparison.OrdinalIgnoreCase))
+        {
+            return Encoding.UTF8;
+        }
+
+        if (name.Equals(AsciiName, StringComparison.OrdinalIgnoreCase))
+        {
+            return Encoding.ASCII;
+        }
+
+        if (name.Equals(Latin1Name, StringComparison.OrdinalIgnoreCase))
+        {
+            return Encoding.Latin1;
+        }
+
         try
         {
-            return Encoding.GetEncoding(name);
+            return Encoding.GetEncoding(name.ToString());
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {

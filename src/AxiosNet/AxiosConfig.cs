@@ -184,6 +184,16 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool TimeoutSet { get; private set; }
 
+    /// <summary>
+    /// 这份配置是否<b>已经是合并后的生效配置</b>（由快捷方法在实例默认值的副本上直接填写而来，
+    /// 见 <c>AxiosClient.Shortcut</c>）。
+    /// <para>
+    /// 只有它自己的 <c>Clone()</c> 会继承该标记，管线据此跳过二次合并；调用方手动构造的
+    /// <see cref="AxiosConfig"/> 永远是 <c>false</c>，仍走「按请求项合并到实例默认值」的常规路径。
+    /// </para>
+    /// </summary>
+    internal bool EffectiveMerged { get; set; }
+
     /// <summary>对应 axios auth（HTTP Basic）。</summary>
     public AxiosAuth? Auth { get; set; }
 

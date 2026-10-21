@@ -14,9 +14,18 @@ public class AxiosResponse
 
     public string StatusText { get; set; } = string.Empty;
 
+    private IReadOnlyDictionary<string, IEnumerable<string>>? _headers;
+
     /// <summary>合并了响应头与内容头的只读字典（大小写不敏感）。</summary>
-    public IReadOnlyDictionary<string, IEnumerable<string>> Headers { get; set; }
-        = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+    /// <remarks>
+    /// 延迟创建：请求管线里这个字典是现成的（直接整体赋值），构造期先建一个空字典
+    /// 只会在每个响应上白分配一次。手动 <c>new AxiosResponse()</c> 时读到的是空字典。
+    /// </remarks>
+    public IReadOnlyDictionary<string, IEnumerable<string>> Headers
+    {
+        get => _headers ??= new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        set => _headers = value;
+    }
 
     public AxiosConfig? Config { get; set; }
 
