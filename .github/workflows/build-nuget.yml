@@ -153,27 +153,6 @@ jobs:
             exit 1
           fi
 
-      - name: 确认版本尚未发布
-        # 1.0.0/1.0.1 的教训：本地 dotnet nuget push 与 CI 赛跑，本地版抢先落库后
-        # CI 推送全 409 却被 --skip-duplicate 吞掉，随后符号校验拿着 CI 自己构建的
-        # PDB GUID 去查符号服务器，永远 404，表象极其迷惑。NuGet 版本不可变、先到
-        # 先得，双发布方并存时每次发版都会复现——发布前先硬校验，把竞争变成显式失败。
-        run: |
-          set -euo pipefail
-          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
-          VER="${{ steps.meta.outputs.version }}"
-          URL="https://api.nuget.org/v3-flatcontainer/${ID,,}/${VER}/${ID,,}.${VER}.nupkg"
-          # flat container 地址要求全小写包 id；该端点无条件 302 重定向到 blob 存储，
-          # 必须跟随重定向后按最终状态码判定：200=已存在，404=不存在
-          code="$(curl -sL -o /dev/null -w '%{http_code}' "$URL")"
-          if [ "$code" = "200" ]; then
-            echo "::error::AxiosNet ${VER} 已存在于 nuget.org，CI 拒绝发布。"
-            echo "::error::多半是本地 dotnet nuget push 抢先落库（版本不可变、先到先得）。发布方必须唯一：请只从 CI 打 tag 发布，不要本地 push。"
-            echo "::error::若这是对推送已成功过的 job 的重跑，属预期保护：nupkg 已落库，只需人工补推/核查 snupkg，或递增版本号重新发版。"
-            exit 1
-          fi
-          echo "版本 ${VER} 未被发布（HTTP $code），可以继续"
-
       - name: 换取 nuget.org 短期 API Key（OIDC 受信发布）
         id: nuget-login
         uses: NuGet/login@v1
@@ -181,67 +160,152 @@ jobs:
           # nuget.org 用户名（profile name），不是邮箱；已在仓库 Secrets 中配置
           user: ${{ secrets.NUGET_USER }}
 
-      - name: 推送到 nuget.org
+      - name: 发布到 nuget.org（幂等：按线上真实状态决定推什么）
+        id: publish
+        # 为什么不是一个「确认未发布 → 推 → 推符号」的直线流程：
+        #   · nuget.org 摄入是异步的。管理端后台（Manage Packages）立刻能看到记录，但公开索引
+        #     （flat container / registration / 搜索）要过一段时间，这段窗口里 flat container 是
+        #     404——**404 不等于「没发布」**，直线流程会误判成未发布、再推一次拿 409 然后失败。
+        #   · 反过来，健康的重跑（nupkg 已在库、符号也齐）不该报错，缺符号时应该只补推符号。
+        # 所以这里按「先推、用 409 反推真实状态、再核对二进制身份」的幂等状态机走：
+        #   new      → 本次发布成功（推了 nupkg；snupkg 按需推）
+        #   existing → 版本已在库：先比对线上二进制与本次构建是否同一份，再决定是否补推符号
+        # 关键判据都放在唯一权威端点上：包是否在库看 flat container，符号是否可用看符号服务器。
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
-          set -euo pipefail
-          # 包 + 符号包都用同一把临时 Key（有效期 1 小时）。
-          # 故意不用 --skip-duplicate：版本冲突必须响亮失败（上方已有发布前校验兜底），
-          # 静默跳过会让 CI 以为发布成功、符号校验却查一个从未上过的 GUID（1.0.1 事故）。
-          dotnet nuget push "artifacts/*.nupkg" \
-            --source "$NUGET_SOURCE" \
-            --api-key "$NUGET_API_KEY"
-          dotnet nuget push "artifacts/*.snupkg" \
-            --source "$NUGET_SOURCE" \
-            --api-key "$NUGET_API_KEY"
+          set -uo pipefail
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
+          ID_LC="${ID,,}"
+          VER="${{ steps.meta.outputs.version }}"
+          NUPKG="$(ls artifacts/*.nupkg)"
+          SNUPKG="$(ls artifacts/*.snupkg)"
+          FLAT="https://api.nuget.org/v3-flatcontainer/${ID_LC}/${VER}/${ID_LC}.${VER}.nupkg"
+          SYM="https://symbols.nuget.org/download/symbols/${ID}.pdb"
+
+          # flat container / blob 存储：该端点无条件 302 到 blob，必须跟随重定向看最终码（200/404）
+          probe_pkg() { curl -sL -o /dev/null -w '%{http_code}' --max-time 60 "$FLAT"; }
+          # 符号服务器只验 SymbolChecksum 头是否存在，缺头一律 403（与符号在否无关）；
+          # portable PDB 的 age 掩码固定 FFFFFFFF
+          probe_sym() {
+            curl -sL -o /dev/null -w '%{http_code}' --max-time 60 \
+              -H "SymbolChecksum: SHA256:$1" "${SYM}/$1FFFFFFFF/${ID}.pdb"
+          }
+
+          LOCAL_ID="$(python3 .github/scripts/debug-id.py --nupkg "$NUPKG")" || {
+            echo "::error::无法从本次构建的 nupkg 提取 PDB debug id，终止发布"
+            exit 1
+          }
+          echo "本次构建：$NUPKG"
+          echo "本次构建 PDB debug id：$LOCAL_ID"
+
+          # ── 1. nupkg：先推，用结果反推真实状态 ──────────────────────────────
+          STATE=new
+          code="$(probe_pkg)"
+          echo "flat container 探测：HTTP $code"
+          if [ "$code" = "200" ]; then
+            echo "版本 $VER 已在公开索引可拉取，本次不再推 nupkg"
+            STATE=existing
+          else
+            echo "推送 $NUPKG …"
+            # --no-symbols 不可省：dotnet nuget push 推 nupkg 时会自动把同目录同名的 .snupkg
+            # 一并推到源的符号端点（1.0.2 因此把符号包推了两次，第二次 409 把 job 弄红）。
+            log="$(dotnet nuget push "$NUPKG" --source "$NUGET_SOURCE" --api-key "$NUGET_API_KEY" --no-symbols 2>&1)"
+            rc=$?
+            echo "$log"
+            if [ $rc -ne 0 ]; then
+              if ! printf '%s' "$log" | grep -qiE 'conflict|409'; then
+                echo "::error::nupkg 推送失败（不是版本冲突），终止发布"
+                exit 1
+              fi
+              echo "推送返回 409：版本已存在（多为此前 job 已推过，或公开索引尚未跟上），转为核对线上二进制"
+              STATE=existing
+            fi
+          fi
+
+          # ── 2. 版本已在库：线上那份二进制是不是本次构建？────────────────────
+          # 版本号不可变、先到先得。若线上是另一份构建（1.0.0/1.0.1 就是本地抢先发布），
+          # 本次构建的产物永远进不去该版本，补推符号也只会挂上没人会请求的 GUID——那属于
+          # 错误操作，必须响亮失败并让人递增版本号，而不是假装补推成功。
+          if [ "$STATE" = "existing" ]; then
+            for i in $(seq 1 18); do
+              code="$(probe_pkg)"
+              [ "$code" = "200" ] && break
+              echo "等待 $VER 在 flat container 可拉取（HTTP $code，$i/18），10s 后重试…"
+              sleep 10
+            done
+            if [ "$code" != "200" ]; then
+              echo "::error::线上已存在 $VER（推送冲突），但 flat container 始终取不到（HTTP $code），无法核对二进制身份，本次不补推符号"
+              exit 1
+            fi
+            curl -sL --max-time 180 -o /tmp/published.nupkg "$FLAT" || {
+              echo "::error::下载已发布的 nupkg 失败"
+              exit 1
+            }
+            REMOTE_ID="$(python3 .github/scripts/debug-id.py --nupkg /tmp/published.nupkg)" || {
+              echo "::error::无法从已发布的 nupkg 提取 PDB debug id"
+              exit 1
+            }
+            echo "线上 $VER 的 PDB debug id：$REMOTE_ID"
+            if [ "$REMOTE_ID" != "$LOCAL_ID" ]; then
+              echo "::error::线上 $VER 的二进制不是本次构建（线上 $REMOTE_ID ≠ 本地 $LOCAL_ID）"
+              echo "::error::版本号不可变：本次构建内容无法以该版本号发布，补推符号也对不上。请递增版本号重新发版，并确保发布方唯一（只从 CI 打 tag 发布）。"
+              exit 1
+            fi
+            echo "线上与本次构建是同一份二进制，可安全补推符号"
+          fi
+
+          # ── 3. snupkg：缺才补推；已有副本在排队（409）不算失败 ───────────────
+          PUSH_SYM=1
+          if [ "$STATE" = "existing" ]; then
+            sym="$(probe_sym "$LOCAL_ID")"
+            echo "符号服务器探测：HTTP $sym"
+            if [ "$sym" = "200" ]; then
+              echo "符号已就绪，跳过推送（重跑幂等）"
+              PUSH_SYM=0
+            fi
+          fi
+          if [ "$PUSH_SYM" = "1" ]; then
+            echo "推送 $SNUPKG …"
+            log="$(dotnet nuget push "$SNUPKG" --source "$NUGET_SOURCE" --api-key "$NUGET_API_KEY" 2>&1)"
+            rc=$?
+            echo "$log"
+            if [ $rc -ne 0 ]; then
+              if ! printf '%s' "$log" | grep -qiE 'conflict|409|pending validation'; then
+                echo "::error::符号包推送失败（不是重复冲突），终止发布"
+                exit 1
+              fi
+              # 409 的含义是「已有同名符号包在排队验证」。符号到底可不可用，唯一权威判据是
+              # 符号服务器本身（下一步轮询），所以这里不 fail——1.0.2 的假红就是这么来的。
+              echo "符号包已有副本在排队验证（409），不视为失败，交由符号服务器校验判定"
+            fi
+          fi
+
+          {
+            echo "debug_id=$LOCAL_ID"
+            echo "state=$STATE"
+            echo "symbols_pushed=$PUSH_SYM"
+          } >> "$GITHUB_OUTPUT"
+          echo "发布状态：state=$STATE，symbols_pushed=$PUSH_SYM"
 
       - name: 校验符号已在 nuget.org 符号服务器可见
         # 1.0.0 的教训：nupkg 与 snupkg 都「推送成功」、job 全绿，但符号从未到达符号服务器，
         # 消费者调试时无法 F11 进源码。推送端点不回报符号摄入结果，唯一权威判据是符号服务器本身。
+        # debug id 直接取上一步核对过的值（那是「线上二进制」的 id，比重新从本地 DLL 算更权威）。
+        env:
+          DEBUG_ID: ${{ steps.publish.outputs.debug_id }}
         run: |
           set -euo pipefail
-          # PDB debug id 必须从 nupkg 内实际发布的 DLL 提取（消费者调试器正是按这个 DLL 里的
-          # CodeView 记录请求符号），并按 PE 调试目录解析，不做裸字节搜索。
-          NUPKG="$(ls artifacts/*.nupkg)"
-          DEBUG_ID="$(python3 - "$NUPKG" <<'PYEOF'
-          import struct, sys, uuid, zipfile
-          dll = zipfile.ZipFile(sys.argv[1]).read('lib/net6.0/AxiosNet.dll')
-          e_lfanew = struct.unpack_from('<I', dll, 0x3C)[0]
-          coff = e_lfanew + 4
-          num_sections = struct.unpack_from('<H', dll, coff + 2)[0]
-          opt_size = struct.unpack_from('<H', dll, coff + 16)[0]
-          opt = coff + 20
-          magic = struct.unpack_from('<H', dll, opt)[0]
-          dd = opt + (96 if magic == 0x10B else 112) + 6 * 8  # Debug = 数据目录第 6 项
-          rva, size = struct.unpack_from('<II', dll, dd)
-          sec_table = opt + opt_size
-          foff = None
-          for k in range(num_sections):
-              _, vsize, vaddr, _, roff = struct.unpack_from('<8sIIIIIIHHI', dll, sec_table + k * 40)[:5]
-              if vaddr <= rva < vaddr + vsize:
-                  foff = roff + (rva - vaddr)
-                  break
-          if not size or foff is None:
-              sys.exit('PE 调试目录缺失或 RVA 转换失败')
-          for k in range(size // 28):
-              _, _, _, _, ttype, sz, _, ptr = struct.unpack_from('<IIHHIIII', dll, foff + k * 28)
-              if ttype == 2:  # CODEVIEW
-                  cv = dll[ptr:ptr + sz]
-                  print(uuid.UUID(bytes_le=cv[4:20]).hex.upper())
-                  break
-          else:
-              sys.exit('调试目录中无 CodeView 项')
-          PYEOF
-          )"
-          echo "PDB debug id（来自 nupkg 内 DLL）: $DEBUG_ID"
-          # portable PDB 查符号服务器时 age 掩码为 FFFFFFFF（只取 32 位 GUID）；SymbolChecksum 头必须带
-          # （符号服务器只验该头存在性，缺头一律 403，与符号是否存在无关）
-          URL="https://symbols.nuget.org/download/symbols/AxiosNet.pdb/${DEBUG_ID}FFFFFFFF/AxiosNet.pdb"
+          if [ -z "${DEBUG_ID:-}" ]; then
+            echo "::error::发布步骤没有输出 debug_id，无法校验符号"
+            exit 1
+          fi
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
+          URL="https://symbols.nuget.org/download/symbols/${ID}.pdb/${DEBUG_ID}FFFFFFFF/${ID}.pdb"
           # 符号摄入有秒级~分钟级延迟，且 symbols.nuget.org 边缘节点有抖动（302 探测与实际下载
           # 可能不一致），轮询至多 10 分钟、以实际下载为准；302=已收录，200=直连
           for i in $(seq 1 60); do
-            code="$(curl -sL -o /dev/null -w '%{http_code}' -H "SymbolChecksum: SHA256:$DEBUG_ID" "$URL")"
+            code="$(curl -sL -o /dev/null -w '%{http_code}' --max-time 60 -H "SymbolChecksum: SHA256:$DEBUG_ID" "$URL")"
             if [ "$code" = "200" ]; then
               echo "符号已就绪，源码映射可用：$URL"
               exit 0
@@ -252,6 +316,32 @@ jobs:
           echo "::error::符号推送后 10 分钟仍不可见，源码映射不会生效：$URL"
           exit 1
 
+      - name: 等待包对客户端可拉取（索引生效滞后是正常的）
+        id: visibility
+        # nuget.org 的摄入与索引是异步的，这两个阶段要分清：
+        #   管理端后台（Manage Packages / 上传记录）—— 提交后立刻可见，说明「已收到」；
+        #   公开索引（flat container / registration / 搜索）—— 过一段时间才生效，说明「可消费」。
+        # 生效前 `dotnet add package` / restore 会报 NU1101/NU1102，网页也可能 404，这都不是发布失败。
+        # 所以这一步只做「如实告知 + 有界等待」，不让索引滞后把已落库的发布判死。
+        run: |
+          set -uo pipefail
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
+          ID_LC="${ID,,}"
+          VER="${{ steps.meta.outputs.version }}"
+          FLAT="https://api.nuget.org/v3-flatcontainer/${ID_LC}/${VER}/${ID_LC}.${VER}.nupkg"
+          for i in $(seq 1 20); do
+            code="$(curl -sL -o /dev/null -w '%{http_code}' --max-time 60 "$FLAT")"
+            if [ "$code" = "200" ]; then
+              echo "客户端已可拉取：$FLAT"
+              echo "ready=yes" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "尚不可拉取（HTTP $code，$i/20），15s 后重试…"
+            sleep 15
+          done
+          echo "ready=no" >> "$GITHUB_OUTPUT"
+          echo "::warning::发布已成功，但 ${VER} 在公开索引仍不可拉取（摄入/索引滞后）。这与发布结果无关，通常几分钟~数十分钟后自动生效，届时无需重跑；期间下游 restore 报 NU1101 属正常。若长时间不生效，去 nuget.org 管理端核对包状态。"
+
       - name: 写入运行摘要
         if: always()
         run: |
@@ -260,6 +350,10 @@ jobs:
             echo ""
             echo "- tag: \`${{ github.ref_name }}\`"
             echo "- 预发布: \`${{ steps.meta.outputs.is_prerelease }}\`"
+            echo "- 发布状态: \`${{ steps.publish.outputs.state }}\`（new=本次发布，existing=版本已在库）"
+            echo "- 符号包本次推送: \`${{ steps.publish.outputs.symbols_pushed }}\`（0=线上已就绪，跳过）"
+            echo "- PDB debug id: \`${{ steps.publish.outputs.debug_id }}\`"
+            echo "- 客户端可拉取: \`${{ steps.visibility.outputs.ready }}\`（空白=该步未执行；no=索引仍在生效中）"
             echo "- 包: https://www.nuget.org/packages/AxiosNet/${{ steps.meta.outputs.version }}"
             echo "- 符号: https://symbols.nuget.org/download/symbols/AxiosNet.pdb/ （源码映射载体，已由上方步骤校验）"
             echo "- commit: \`${{ github.sha }}\`"
