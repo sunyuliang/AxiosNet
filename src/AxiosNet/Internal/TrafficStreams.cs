@@ -91,9 +91,8 @@ internal sealed class TrafficMeter
 /// 按 <see cref="AxiosConfig.MaxRate"/> 限速（读满配额后按速率等待），
 /// 并在累计字节超出 <see cref="AxiosConfig.MaxContentLength"/> 时立刻中断。
 /// </summary>
-internal sealed class ProgressReadStream : Stream
+internal sealed class ProgressReadStream : DelegatingStream
 {
-    private readonly Stream _inner;
     private readonly TrafficMeter _meter;
     private readonly long? _contentLimit;
     private readonly AxiosConfig _config;
@@ -107,8 +106,8 @@ internal sealed class ProgressReadStream : Stream
         long? contentLimit,
         AxiosConfig config,
         HttpRequestMessage request)
+        : base(inner)
     {
-        _inner = inner;
         _meter = new TrafficMeter(total, callback, maxRate);
         _contentLimit = contentLimit;
         _config = config;
@@ -117,35 +116,15 @@ internal sealed class ProgressReadStream : Stream
 
     public override bool CanRead => true;
 
-    public override bool CanSeek => _inner.CanSeek;
-
     public override bool CanWrite => false;
 
-    public override long Length => _inner.Length;
+    public override void SetLength(long value) => throw new NotSupportedException();
 
-    public override long Position
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    protected override async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
-        get => _inner.Position;
-        set => _inner.Position = value;
-    }
-
-    /// <summary>
-    /// 同步读：阻塞等待异步核心（限速等待也走 Task.Delay 的异步路径），不把同步 I/O 压给内层流。
-    /// </summary>
-    public override int Read(byte[] buffer, int offset, int count)
-        => BlockingWait.Wait(ReadCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
-
-    // ReadByte 不覆写：基类实现会换算成 Read(byte[], int, int)，落到同一路径（进度/限速语义一致）。
-
-    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        => ReadCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
-
-    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        => ReadCoreAsync(buffer, cancellationToken);
-
-    private async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
-    {
-        var read = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        var read = await Inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         ThrowIfOverLimit(read);
         await TrackAsync(read, cancellationToken).ConfigureAwait(false);
         return read;
@@ -187,41 +166,19 @@ internal sealed class ProgressReadStream : Stream
 
         _meter.Report(force: false, upload: false);
     }
-
-    // 同步 Flush 同样阻塞等待异步核心：不把同步 I/O 直接压给内层流。
-    public override void Flush() => BlockingWait.Wait(_inner.FlushAsync(CancellationToken.None));
-
-    public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
-
-    public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
-
-    public override void SetLength(long value) => throw new NotSupportedException();
-
-    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            _inner.Dispose();
-        }
-
-        base.Dispose(disposing);
-    }
 }
 
 /// <summary>
 /// 上传侧流量包装：写入底层传输流时统计字节、回报进度并限速。
 /// 底层流由 HttpClient 拥有，因此默认不随本包装释放（leaveOpen）。
 /// </summary>
-internal sealed class ProgressWriteStream : Stream
+internal sealed class ProgressWriteStream : DelegatingStream
 {
-    private readonly Stream _inner;
     private readonly TrafficMeter _meter;
 
     public ProgressWriteStream(Stream inner, long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
+        : base(inner)
     {
-        _inner = inner;
         _meter = new TrafficMeter(total, callback, maxRate);
     }
 
@@ -239,28 +196,24 @@ internal sealed class ProgressWriteStream : Stream
         set => throw new NotSupportedException();
     }
 
-    /// <summary>
-    /// 同步写：与同步读同理，阻塞等待异步核心（限速等待走 Task.Delay 的异步路径）。
-    /// </summary>
-    public override void Write(byte[] buffer, int offset, int count)
-        => BlockingWait.Wait(WriteCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 
-    // WriteByte 不覆写：基类实现会换算成 Write(byte[], int, int)，落到同一路径。
+    public override void SetLength(long value) => throw new NotSupportedException();
 
-    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        => WriteCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
-
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-        => WriteCoreAsync(buffer, cancellationToken);
-
-    private async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
-    {
-        await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-        await TrackAsync(buffer.Length, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>底层流由 HttpClient 拥有，不随本包装释放。</summary>
+    protected override bool DisposeInnerStream => false;
 
     /// <summary>所有内容写完时调用，保证最后一次回调一定报告（loaded == total）。</summary>
     public void Complete() => _meter.Complete(upload: true);
+
+    protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
+    protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    {
+        await Inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        await TrackAsync(buffer.Length, cancellationToken).ConfigureAwait(false);
+    }
 
     private async ValueTask TrackAsync(int count, CancellationToken cancellationToken)
     {
@@ -279,15 +232,4 @@ internal sealed class ProgressWriteStream : Stream
 
         _meter.Report(force: false, upload: true);
     }
-
-    // 同步 Flush 同样阻塞等待异步核心：上传流的 Flush 可能真正阻塞在网络写入上。
-    public override void Flush() => BlockingWait.Wait(_inner.FlushAsync(CancellationToken.None));
-
-    public override Task FlushAsync(CancellationToken cancellationToken) => _inner.FlushAsync(cancellationToken);
-
-    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-
-    public override void SetLength(long value) => throw new NotSupportedException();
 }

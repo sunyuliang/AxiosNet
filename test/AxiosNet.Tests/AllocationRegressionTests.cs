@@ -201,4 +201,43 @@ public sealed class AllocationRegressionTests
         // first 的链接源被替换时释放，但流本身不受影响：不传令牌仍走预建链接源正常读
         Assert.Equal(64, await stream.ReadAsync(buffer));
     }
+
+    [Fact]
+    public void DeclaredLengthResponse_BeyondPreallocTrustBound_AllocatesCloseToOneTimes()
+    {
+        // 32MB：超过 8MB 预分配信任上限，走段式累积（pipeline 的池化分段思想）。
+        // ByteArrayContent 自带 Content-Length；注入 Handler 而非 TestHttpServer：内存响应同步完成，
+        // 分配全部落在测量线程上，与上面 CTS 用例同一理由（真实 socket 读路径每块有几百 B 且随分段
+        // 波动，基线不可比）。
+        const int size = 32 * 1024 * 1024;
+        using var client = new AxiosClient(handler: new MemoryPayloadHandler(size));
+
+        // warmup：JIT、静态缓存、HttpClient 首次管道与 ArrayPool 冷启动都不计入测量窗口
+        ReadDeclaredPayload(client, size);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var data = ReadDeclaredPayload(client, size);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(size, data.Length);
+
+        // MemoryStream 老路（>8MB 时的唯一路径）：从 256B 倍增到 32MB（累计 ≈ 2×），
+        // 扩容必过冲 → TryGetBuffer 快路径不命中 → 再 ToArray 一次，合计 ≈ 3× 载荷。
+        // 段式累积：段从 ArrayPool 租用（warmup 后全部命中、零新分配），只付 1× 最终数组。
+        // 阈值 1.5×：足以抓住退回 MemoryStream 倍增的路径，又给运行时噪声留一倍以内余量。
+        Assert.True(
+            allocated < size * 3 / 2,
+            $"声明长度 {size:N0} B 的响应读取分配了 {allocated:N0} B（{allocated / (double)size:0.0}× 载荷）"
+            + "——超出 1.5× 护栏，疑似段式累积被替换回 MemoryStream 倍增路径。");
+    }
+
+    /// <summary>以 arraybuffer 同步读整个响应并校验长度；同步阻塞等待避免 await 基础设施噪声。</summary>
+    private static byte[] ReadDeclaredPayload(AxiosClient client, int expected)
+    {
+        var response = client.GetAsync<byte[]>(
+            "http://localhost/big",
+            c => c.ResponseType = ResponseType.ArrayBuffer).GetAwaiter().GetResult();
+        Assert.Equal(expected, response.Data!.Length);
+        return response.Data;
+    }
 }

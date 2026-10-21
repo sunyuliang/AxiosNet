@@ -1,9 +1,6 @@
-using System.Buffers;
-using System.Text.Json;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
-using AxiosNet.Serialization;
 
 namespace AxiosNet;
 
@@ -70,7 +67,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     + "handler 的连接行为由它自己决定，需要池化请改用 ConnectionPoolOptions.HandlerFactory。", Defaults);
             }
 
-            ValidateHandlerLevelOptions(defaults, Defaults);
+            ValidateConnectionLevelOptions(defaults, Defaults, ConnectionLevelMessages.Handler);
             _customHandler = handler;
             _ownsCustomHandler = disposeHandler;
             _customClient = new HttpClient(handler, disposeHandler: false)
@@ -92,7 +89,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             // 池的连接行为（重定向 / 代理 / 凭据 / Cookie）在各 origin 的 Handler 创建时已固定，
             // defaults 上的同类选项无从生效 —— 与其静默忽略，不如明确报错（与注入 handler 的策略一致）。
-            ValidateSharedPoolLevelOptions(defaults, Defaults);
+            ValidateConnectionLevelOptions(defaults, Defaults, ConnectionLevelMessages.SharedPool);
 
             _pool = pool;
             _ownsPool = false;
@@ -138,8 +135,15 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>注入 Handler 时连接级选项无法生效（由 Handler 决定）—— 与其静默忽略，不如报错。</summary>
-    private static void ValidateHandlerLevelOptions(AxiosConfig? defaults, AxiosConfig config)
+    /// <summary>
+    /// 连接级选项无法按 defaults 生效时的构造期校验：注入自定义 handler 时由 handler 决定，
+    /// 共享池时由池决定 —— 两种场景判定相同（都看 defaults 上的显式设置），
+    /// 只是归属方与补救文案不同，故按场景取文案、共用一套判定。
+    /// </summary>
+    private static void ValidateConnectionLevelOptions(
+        AxiosConfig? defaults,
+        AxiosConfig config,
+        ConnectionLevelMessages messages)
     {
         if (defaults is null)
         {
@@ -148,53 +152,39 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         if (defaults.MaxRedirectsSet)
         {
-            throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），请在 handler 上配置。", config);
+            throw AxiosException.InvalidOption(messages.MaxRedirects, config);
         }
 
         if (defaults.WithCredentialsSet)
         {
-            throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 WithCredentials 由 handler 决定（Cookie 容器在连接层），请在 handler 上配置。", config);
+            throw AxiosException.InvalidOption(messages.WithCredentials, config);
         }
 
         if (defaults.Proxy is not null || defaults.Credentials is not null)
         {
-            throw AxiosException.InvalidOption(
-                "注入自定义 handler 时 Proxy / Credentials 由 handler 决定，请在 handler 上配置。", config);
+            throw AxiosException.InvalidOption(messages.ProxyCredentials, config);
         }
     }
 
-    /// <summary>共享连接池时池已建好，defaults 上的连接级配置与 PoolOptions 都无法生效 —— 直接报错。</summary>
-    private static void ValidateSharedPoolLevelOptions(AxiosConfig? defaults, AxiosConfig config)
+    /// <summary>两种连接级场景的报错文案（判定相同、归属方不同）。</summary>
+    private sealed record ConnectionLevelMessages(string MaxRedirects, string WithCredentials, string ProxyCredentials)
     {
-        if (defaults is null)
-        {
-            return;
-        }
+        /// <summary>注入自定义 handler：连接级选项由 handler 决定。</summary>
+        public static ConnectionLevelMessages Handler { get; } = new(
+            "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），请在 handler 上配置。",
+            "注入自定义 handler 时 WithCredentials 由 handler 决定（Cookie 容器在连接层），请在 handler 上配置。",
+            "注入自定义 handler 时 Proxy / Credentials 由 handler 决定，请在 handler 上配置。");
 
-        if (defaults.MaxRedirectsSet)
-        {
-            throw AxiosException.InvalidOption(
-                "共享连接池时 MaxRedirects 由池决定（重定向由各 origin 的 Handler 处理），"
-                + "请在创建 ConnectionPoolOptions 时设置 AllowAutoRedirect / MaxAutomaticRedirections，"
-                + "或不传 pool 让本实例自建池。", config);
-        }
-
-        if (defaults.WithCredentialsSet)
-        {
-            throw AxiosException.InvalidOption(
-                "共享连接池时 WithCredentials 由池决定（Cookie 容器在连接层），"
-                + "请在创建 ConnectionPoolOptions 时设置 UseCookies / Credentials，"
-                + "或不传 pool 让本实例自建池。", config);
-        }
-
-        if (defaults.Proxy is not null || defaults.Credentials is not null)
-        {
-            throw AxiosException.InvalidOption(
-                "共享连接池时 Proxy / Credentials 由池决定，"
-                + "请在 ConnectionPoolOptions.Proxy / Credentials 上设置，或不传 pool 让本实例自建池。", config);
-        }
+        /// <summary>共享连接池：连接级选项由池决定。</summary>
+        public static ConnectionLevelMessages SharedPool { get; } = new(
+            "共享连接池时 MaxRedirects 由池决定（重定向由各 origin 的 Handler 处理），"
+            + "请在创建 ConnectionPoolOptions 时设置 AllowAutoRedirect / MaxAutomaticRedirections，"
+            + "或不传 pool 让本实例自建池。",
+            "共享连接池时 WithCredentials 由池决定（Cookie 容器在连接层），"
+            + "请在创建 ConnectionPoolOptions 时设置 UseCookies / Credentials，"
+            + "或不传 pool 让本实例自建池。",
+            "共享连接池时 Proxy / Credentials 由池决定，"
+            + "请在 ConnectionPoolOptions.Proxy / Credentials 上设置，或不传 pool 让本实例自建池。");
     }
 
     // ------------------------------------------------------------------
@@ -527,7 +517,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
                             // 状态码不合法时宽松解析：否则 404 + HTML 会在反序列化处抛错，
                             // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
-                            response = await ReadResponseAsync(
+                            response = await ResponseReader.ReadAsync(
                                     responseMessage,
                                     request,
                                     config,
@@ -823,354 +813,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             $"MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），按请求只能写与实例相同的值；"
             + $"当前按请求为 {config.MaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
             + "要改变它请新建 AxiosClient 并在 defaults 或 ConnectionPoolOptions 上设置。", config);
-    }
-
-    /// <summary>
-    /// 下载侧包装：先按 Content-Length 预检 maxContentLength，再按需套进度/限速/长度上限流
-    /// （都不需要时原样返回）。
-    /// <para>长度上限必须在流上生效，否则 chunked / 未声明长度的流式响应完全没有约束。</para>
-    /// </summary>
-    private static Stream WrapDownloadStream(
-        Stream stream,
-        HttpResponseMessage message,
-        HttpRequestMessage request,
-        AxiosConfig config)
-    {
-        var declared = message.Content.Headers.ContentLength;
-
-        if (config.MaxContentLength is long limit && declared is long length && length > limit)
-        {
-            stream.Dispose();
-            throw AxiosException.MaxContentLength(config, request, length, limit);
-        }
-
-        if (config.OnDownloadProgress is null && config.MaxRate is not > 0 && config.MaxContentLength is null)
-        {
-            return stream;
-        }
-
-        return new ProgressReadStream(
-            stream,
-            declared,
-            config.OnDownloadProgress,
-            config.MaxRate,
-            config.MaxContentLength,
-            config,
-            request);
-    }
-
-    /// <summary>读取整个响应体；服务端未声明长度时按已读字节执行 maxContentLength。</summary>
-    private static async Task<byte[]> ReadAllBytesAsync(
-        Stream stream,
-        AxiosConfig config,
-        HttpRequestMessage request,
-        CancellationToken cancellationToken,
-        long? declaredLength)
-    {
-        const int chunkSize = 81920;
-
-        // 声明了长度时按声明值预分配，避免 MemoryStream 反复扩容（大响应在 LOH 上抖动明显）。
-        // 上限 8MB：防止恶意 Content-Length 触发一次超大分配。
-        const long maxPreallocated = 8 * 1024 * 1024;
-        var capacity = declaredLength is > 0 and <= maxPreallocated ? (int)declaredLength.Value : 0;
-        var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
-
-        try
-        {
-            using var body = capacity > 0 ? new MemoryStream(capacity) : new MemoryStream();
-            int read;
-            while ((read = await stream.ReadAsync(buffer.AsMemory(0, chunkSize), cancellationToken).ConfigureAwait(false)) > 0)
-            {
-                if (config.MaxContentLength is long limit && body.Length + read > limit)
-                {
-                    throw AxiosException.MaxContentLength(config, request, body.Length + read, limit);
-                }
-
-                body.Write(buffer, 0, read);
-            }
-
-            // 精确预分配且刚好写满时直接交出底层数组，省掉 ToArray 的第二次拷贝。
-            // 必须同时确认底层数组长度 == 已读字节：ArraySegment.Array 是完整数组（容量可能大于 Count），
-            // 只比 Count 会把扩容路径的零填充一起交出去。任一不吻合就退回拷贝。
-            return body.TryGetBuffer(out var segment)
-                && segment.Count == body.Length
-                && segment.Array is { Length: var arrayLength }
-                && arrayLength == segment.Count
-                ? segment.Array
-                : body.ToArray();
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-            stream.Dispose();
-        }
-    }
-
-    private static async Task<AxiosResponse> ReadResponseAsync(
-        HttpResponseMessage message,
-        HttpRequestMessage request,
-        AxiosConfig config,
-        CancellationToken cancellationToken,
-        Type? dataType,
-        AxiosResponse? target,
-        bool lenient)
-    {
-        var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in message.Headers)
-        {
-            headers[header.Key] = header.Value;
-        }
-
-        foreach (var header in message.Content.Headers)
-        {
-            headers[header.Key] = header.Value;
-        }
-
-        var status = (int)message.StatusCode;
-        var statusText = StatusTextMap.Get(status);
-
-        // 反序列化 / transformResponse 阶段可读的响应上下文：零拷贝复用刚建好的 headers。
-        // 序列化器可据此选解析规则（X-Schema-Version），transformResponse 可搬元数据（X-Total-Count）。
-        // 响应体的文本/二进制判定不受影响 —— 那由 MediaTypes.IsTextual 决定。
-        var contentType = message.Content.Headers.ContentType;
-        config.Response = new AxiosResponseInfo(
-            status,
-            statusText,
-            headers,
-            contentType?.MediaType,
-            contentType?.CharSet);
-
-        object? data;
-        if (config.ResponseType == ResponseType.Stream)
-        {
-            var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            data = WrapDownloadStream(responseStream, message, request, config);
-        }
-        else
-        {
-            // 原始内容优先：一律先取原始字节，再按需解码为文本，最后按返回类型转换。
-            Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            var downloadStream = WrapDownloadStream(responseStream, message, request, config);
-            var declared = message.Content.Headers.ContentLength;
-            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared)
-                .ConfigureAwait(false);
-
-            var charSet = contentType?.CharSet;
-            var responseMediaType = contentType?.MediaType;
-
-            // 文本还是二进制由 Content-Type 决定（无 Content-Type 视为文本）；二进制连解码都不做。
-            var textual = MediaTypes.IsTextual(responseMediaType);
-
-            // 只要字节的调用（arraybuffer / byte[] / 二进制业务对象）不解码；
-            // 其余只解码一次，文本在 ConvertData 里按需使用。
-            var text = NeedsText(config, dataType, textual)
-                ? ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding)
-                : null;
-            data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
-
-            // transformResponse：反序列化之后依次加工 Data。
-            // 调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，不让裸异常从管线深处漏出。
-            if (config.HasTransformResponse)
-            {
-                foreach (var transform in config.TransformResponse)
-                {
-                    try
-                    {
-                        data = transform(data, config);
-                    }
-                    catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-                    {
-                        throw AxiosException.ResponseTransformFailed(config, request, ex);
-                    }
-                }
-            }
-        }
-
-        // 泛型调用方已把目标类型的响应对象造好交过来：就地填充，
-        // 否则「管线造一个非泛型响应 + AsTyped 再复制一个」是每请求两个响应对象。
-        var response = target ?? new AxiosResponse();
-        response.Data = data;
-        response.Status = status;
-        response.StatusText = statusText;
-        response.Headers = headers;
-        response.Config = config;
-        response.Request = request;
-        return response;
-    }
-
-    /// <summary>
-    /// 是否真的要把响应字节解码成文本：arraybuffer / stream / byte[] 只要字节；
-    /// 二进制响应走序列化器的字节入口；其余形态（text、dynamic、基础类型、文本对象）都需要文本。
-    /// </summary>
-    private static bool NeedsText(AxiosConfig config, Type? dataType, bool textual) => config.ResponseType switch
-    {
-        ResponseType.ArrayBuffer => false,
-        ResponseType.Stream => false,
-        ResponseType.Text or ResponseType.Dynamic => true,
-        _ => textual && dataType != typeof(byte[])
-    };
-
-    /// <summary>body 是否只含空白字符（<c>""</c> 与 <c>"  \r\n"</c> 语义等价）。</summary>
-    private static bool IsBlank(string text) => text.AsSpan().Trim().IsEmpty;
-
-    /// <summary>
-    /// 未解码时的空白判定：只含 ASCII 空白（SP/HTAB/CR/LF）即可直接判空，
-    /// 非 ASCII 空白（如 NBSP）留给解码后的 <see cref="IsBlank"/>。
-    /// </summary>
-    private static bool IsBlankUtf8(ReadOnlySpan<byte> bytes)
-    {
-        foreach (var b in bytes)
-        {
-            if (b is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// 按 responseType / 目标类型把「原始字节 + 已解码文本」转换为 Data：
-    /// 字节、文本、dynamic 图、基础类型由框架给出，只有<b>业务对象</b>交给 <see cref="IContentSerializer"/>。
-    /// <para><paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始内容，不抛异常。</para>
-    /// </summary>
-    private static object? ConvertData(
-        AxiosConfig config,
-        HttpRequestMessage request,
-        Type? dataType,
-        byte[] bytes,
-        string? text,
-        string? charSet,
-        bool textual,
-        string? mediaType,
-        bool lenient)
-    {
-        // 按需解码：只要字节的分支永远不付 bytes → UTF-16 的代价。
-        string Text() => text ??= ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding);
-
-        // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
-        if (config.ResponseType == ResponseType.ArrayBuffer)
-        {
-            return bytes;
-        }
-
-        // 2) text 直接给原始文本（不做任何解析）。
-        if (config.ResponseType == ResponseType.Text)
-        {
-            return Text();
-        }
-
-        // 3) dynamic 展开：JSON 特有的「无类型对象图」，由框架解析，不经过序列化器。
-        if (config.ResponseType == ResponseType.Dynamic)
-        {
-            var json = Text();
-            if (IsBlank(json))
-            {
-                return null;
-            }
-
-            try
-            {
-                return DynamicJson.Parse(json);
-            }
-            catch (Exception ex) when (ex is not AxiosException)
-            {
-                // 非 JSON 响应（HTML 错误页、纯文本）同样走统一错误模型。
-                // 这里**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，把 HTML 交回去只会在几十行后炸成
-                // RuntimeBinderException；状态码不合法时（lenient）仍然回退原文。
-                if (lenient)
-                {
-                    return json;
-                }
-
-                throw AxiosException.BadResponse(config, request, "dynamic JSON", ex);
-            }
-        }
-
-        // 4) 目标类型就是原始内容本身：string 原样返回（支持纯文本），byte[] 直接给字节。
-        if (dataType == typeof(string))
-        {
-            return Text();
-        }
-
-        if (dataType == typeof(byte[]))
-        {
-            return bytes;
-        }
-
-        // 5) 空 body 视为 null；只含空白的 body 同样视为空 —— 否则服务端多吐一个换行就会让
-        //    typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null。
-        if (text is null ? IsBlankUtf8(bytes) : IsBlank(text))
-        {
-            return null;
-        }
-
-        // 6) 没有目标类型（非泛型 / JsonElement）：框架按 JSON 文档形态给出，解析失败原样返回文本。
-        //    不用序列化器：它没有「文档形态」的概念，而「无类型」也不需要业务反序列化。
-        if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
-        {
-            // 二进制响应没有文档形态，原样给字节。
-            if (!textual)
-            {
-                return bytes;
-            }
-
-            var document = Text();
-            try
-            {
-                using var parsed = JsonDocument.Parse(document);
-                return parsed.RootElement.Clone();
-            }
-            catch (Exception ex) when (ex is not AxiosException)
-            {
-                return document;
-            }
-        }
-
-        // 7) 二进制响应（Content-Type 非文本）：不做解码，交给序列化器的字节入口。
-        //    文本格式的序列化器不用实现该入口（接口默认按 UTF-8 解码转调文本入口）。
-        if (!textual)
-        {
-            try
-            {
-                return AxiosContent.Get(config, mediaType).Deserialize(bytes, dataType, config);
-            }
-            catch (Exception ex) when (ex is not AxiosException)
-            {
-                // lenient（状态码不合法）：解析失败不抛，原样回字节——此时没有「文本」可回退。
-                if (lenient)
-                {
-                    return bytes;
-                }
-
-                throw AxiosException.BadResponse(config, request, dataType, ex);
-            }
-        }
-
-        var raw = Text();
-
-        // 8) 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，不依赖序列化器
-        //    —— XML 的 <Age>30</Age> 与 JSON 的裸 42 都走这里；JSON 的带引号形态（"42"）交给序列化器兜底。
-        if (ScalarParser.TryParse(raw, dataType, out var scalar))
-        {
-            return scalar;
-        }
-
-        // 9) 文本响应的业务对象：交给当前序列化器，返回什么对象，Data 就是什么。
-        try
-        {
-            return AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
-        }
-        catch (Exception ex) when (ex is not AxiosException)
-        {
-            if (lenient)
-            {
-                return raw;
-            }
-
-            throw AxiosException.BadResponse(config, request, dataType, ex);
-        }
     }
 
     /// <summary>
