@@ -56,13 +56,18 @@ public sealed class AxiosConfig
         }
     }
 
+    private SynchronizedList<string> _removeHeaders = new();
+
     /// <summary>
     /// 按请求要删除的 Header 名（大小写不敏感）：在 defaults 的头合并完成之后生效，
     /// 用于摘掉实例默认头（合并语义下没法用「设为 null」表达删除）。
     /// <para>线程安全：可在请求进行中增删，枚举走快照（与 Headers 的并发语义一致）。</para>
     /// </summary>
-    public ICollection<string> RemoveHeaders { get; }
-        = new Internal.SynchronizedList<string>();
+    /// <remarks>
+    /// 手写属性 + 私有字段而不是自动属性：<see cref="Clone"/> 用 MemberwiseClone 之后
+    /// 必须把集合成员换成独立副本，自动属性的编译体 backing field 在类外不可赋值。
+    /// </remarks>
+    public ICollection<string> RemoveHeaders => _removeHeaders;
 
     /// <summary>
     /// 对应 axios params，会被序列化为 query string。
@@ -387,60 +392,33 @@ public sealed class AxiosConfig
     public ConnectionPoolOptions? PoolOptions { get; set; }
 
     /// <summary>深拷贝（Headers 独立，引用类型成员如 Params/Data 按引用共享）。</summary>
+    /// <remarks>
+    /// 用 <see cref="object.MemberwiseClone"/> 而不是 new + 逐属性赋值：
+    /// <list type="bullet">
+    /// <item>构造函数会给 <c>_headers</c> 与三个列表分配对象，随后立刻被覆盖——每请求一次纯浪费；</item>
+    /// <item>各带 <c>*Set</c> 标记的属性 setter 会把「未显式设置」误置为 true，需要末尾逐个还原；
+    /// 字段级复制原样保留真实状态，合并语义反而更精确。</item>
+    /// </list>
+    /// MemberwiseClone 是浅拷贝：Params/Data/委托等引用成员与源共享（文档语义），
+    /// 集合成员（Headers / RemoveHeaders / Transform*）则必须在下面换成独立副本。
+    /// </remarks>
     public AxiosConfig Clone()
     {
-        var clone = new AxiosConfig
-        {
-            BaseAddress = BaseAddress,
-            Url = Url,
-            Method = Method,
-            Headers = Headers.Clone(),
-            Params = Params,
-            Data = Data,
-            ContentType = ContentType,
-            Timeout = Timeout,
-            Auth = Auth,
-            ResponseType = ResponseType,
-            ValidateStatus = ValidateStatus,
-            CancellationToken = CancellationToken,
-            HttpVersion = HttpVersion,
-            WithCredentials = WithCredentials,
-            Proxy = Proxy,
-            Credentials = Credentials,
-            MaxRedirects = MaxRedirects,
-            JsonSerializerOptions = JsonSerializerOptions,
-            JsonSerializer = JsonSerializer,
-            RequestEncoding = RequestEncoding,
-            ResponseEncoding = ResponseEncoding,
-            PoolOptions = PoolOptions,
-            MaxContentLength = MaxContentLength,
-            MaxBodyLength = MaxBodyLength,
-            MaxRate = MaxRate,
-            TimeoutMessage = TimeoutMessage,
-            OnUploadProgress = OnUploadProgress,
-            OnDownloadProgress = OnDownloadProgress,
-            ParamsSerializer = ParamsSerializer,
-            FormFieldNameSelector = FormFieldNameSelector,
-            TransformRequest = new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformRequest),
-            TransformResponse = new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformResponse)
-        };
+        var clone = (AxiosConfig)MemberwiseClone();
 
-        foreach (var name in RemoveHeaders)
-        {
-            clone.RemoveHeaders.Add(name);
-        }
+        clone._headers = _headers.Clone();
+        // 空链用无参构造：拷贝构造会对 SynchronizedList 源做「锁内快照」，
+        // 每请求 2 次加锁 + 2 个内部 List，而空链根本无内容可拷。
+        clone._removeHeaders = _removeHeaders.Count > 0
+            ? new SynchronizedList<string>(_removeHeaders)
+            : new SynchronizedList<string>();
+        clone.TransformRequest = TransformRequest.Count > 0
+            ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformRequest)
+            : new SynchronizedList<Func<object?, AxiosConfig, object?>>();
+        clone.TransformResponse = TransformResponse.Count > 0
+            ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformResponse)
+            : new SynchronizedList<Func<object?, AxiosConfig, object?>>();
 
-        // 属性赋值会把「已显式设置」置为 true，这里还原真实状态，保证合并语义正确。
-        clone.MethodSet = MethodSet;
-        clone.ResponseTypeSet = ResponseTypeSet;
-        clone.CancellationTokenSet = CancellationTokenSet;
-        clone.ContentTypeSet = ContentTypeSet;
-        clone.WithCredentialsSet = WithCredentialsSet;
-        clone.MaxRedirectsSet = MaxRedirectsSet;
-        clone.TimeoutSet = TimeoutSet;
-        clone.MaxContentLengthSet = MaxContentLengthSet;
-        clone.MaxBodyLengthSet = MaxBodyLengthSet;
-        clone.MaxRateSet = MaxRateSet;
         return clone;
     }
 }

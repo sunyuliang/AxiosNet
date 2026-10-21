@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
@@ -202,6 +203,115 @@ public sealed class OwnershipAndPoolTests
 
         Assert.Equal(1, pool.EvictIdleEndpoints());
         Assert.Equal(0, pool.GetStatistics().EndpointCount);
+    }
+
+    // ---------------------------------------------------------------
+    // 驱逐路径：锁内判定、锁外释放（P1：不得持锁关闭 Handler）
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task Pool_EvictIdle_ReleasesHandlerOutsideLock_PoolStaysResponsive()
+    {
+        var disposeEntered = new ManualResetEventSlim(false);
+        var releaseDispose = new ManualResetEventSlim(false);
+
+        // 工厂第一次调用对应 9000（唯一会被驱逐的 origin）：让它拿到受控实例，
+        // 之后的新 origin 各拿独立实例（池约定：一个 Handler 实例不能跨 origin 共用）。
+        var first = new BlockingDisposeHandler(disposeEntered, releaseDispose);
+        var created = 0;
+
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            HandlerFactory = _ => Interlocked.Increment(ref created) == 1
+                ? first
+                : new BlockingDisposeHandler(disposeEntered, releaseDispose),
+            EvictionInterval = TimeSpan.Zero,
+            IdleHandlerLifetime = TimeSpan.Zero
+        });
+
+        using var lease = pool.Lease(new Uri("http://127.0.0.1:9000/x"));
+        lease.Dispose();
+
+        var evictTask = Task.Run(() => pool.EvictIdleEndpoints());
+        Assert.True(disposeEntered.Wait(TimeSpan.FromSeconds(10)), "驱逐没有进入 Handler 释放。");
+
+        // Handler 正在关闭（修复前这段持着 endpoint.SyncRoot）：
+        // 池上的其它操作必须不被它拖住——统计要遍历各节点的锁，新 origin 租用要走 EnsureCapacity。
+        Assert.Equal(0, pool.GetStatistics().EndpointCount);
+        using var other = pool.Lease(new Uri("http://127.0.0.1:9001/y"));
+        Assert.Equal(1, pool.GetStatistics().EndpointCount);
+
+        releaseDispose.Set();
+        Assert.Equal(1, await evictTask);
+        Assert.True(first.Disposed, "被驱逐节点的 Handler 未被释放。");
+
+        other.Dispose();
+        Assert.All(pool.GetStatistics().Endpoints, e => Assert.Equal(0, e.ActiveLeases));
+    }
+
+    [Fact]
+    public async Task Pool_EvictIdle_ConcurrentWithLeasing_StaysConsistent()
+    {
+        using var pool = NewPool();
+        var stop = false;
+
+        var leaser = Task.Run(() =>
+        {
+            var i = 0;
+            while (!Volatile.Read(ref stop))
+            {
+                using var lease = pool.Lease(new Uri($"http://127.0.0.1:{9200 + (i++ % 8)}/x"));
+            }
+        });
+
+        // 驱逐与租用并发：锁内只做判定+摘除+置位，释放全部移到锁外，
+        // 两侧不能因为持锁释放 Handler 而互相排队（更不能死锁）。
+        for (var round = 0; round < 50; round++)
+        {
+            pool.EvictIdleEndpoints();
+            await Task.Delay(1);
+        }
+
+        Volatile.Write(ref stop, true);
+        await leaser.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // 租约全部归还后，池必须能回到干净状态：
+        // 8 个 origin 的节点都空闲，一次驱逐即应清零（不再残留、也不再抛异常）。
+        Assert.All(pool.GetStatistics().Endpoints, e => Assert.Equal(0, e.ActiveLeases));
+        Assert.InRange(pool.EvictIdleEndpoints(), 0, 8);
+        Assert.Equal(0, pool.GetStatistics().EndpointCount);
+    }
+
+    /// <summary>Dispose 时阻塞到手动放行的 Handler，用于验证「释放不在锁内执行」。</summary>
+    private sealed class BlockingDisposeHandler : HttpMessageHandler
+    {
+        private readonly ManualResetEventSlim _entered;
+        private readonly ManualResetEventSlim _release;
+        private int _disposed;
+
+        public BlockingDisposeHandler(ManualResetEventSlim entered, ManualResetEventSlim release)
+        {
+            _entered = entered;
+            _release = release;
+        }
+
+        public bool Disposed => Volatile.Read(ref _disposed) == 1;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _entered.Set();
+                _release.Wait();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     [Fact]

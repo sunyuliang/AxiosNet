@@ -114,18 +114,36 @@ internal sealed class PooledEndpoint : IDisposable
 
     public void Dispose()
     {
+        if (MarkDisposed())
+        {
+            DisposeClientAndHandler();
+        }
+    }
+
+    /// <summary>
+    /// 只置「已释放」标记并返回是否由本次调用首次置位。
+    /// <para>
+    /// 供池的「锁内判定、锁外释放」驱逐路径使用：<see cref="DisposeClientAndHandler"/> 会关闭
+    /// 该 origin 的全部 TCP 连接、可能耗时，不能占着 <see cref="SyncRoot"/> 让同 origin 的
+    /// 新租约 / 统计 / 另一次驱逐在门外排队。
+    /// </para>
+    /// </summary>
+    public bool MarkDisposed()
+    {
         lock (SyncRoot)
         {
             if (IsDisposed)
             {
-                return;
+                return false;
             }
 
             IsDisposed = true;
+            return true;
         }
-
-        DisposeClientAndHandler();
     }
+
+    /// <summary>释放 HttpClient 与 Handler（调用方须已通过 <see cref="MarkDisposed"/> 置位）。</summary>
+    internal void ReleaseResources() => DisposeClientAndHandler();
 
     private void DisposeClientAndHandler()
     {

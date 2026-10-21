@@ -222,6 +222,8 @@ public sealed class HttpConnectionPool : IDisposable
     {
         var evicted = 0;
         var now = DateTime.UtcNow;
+        List<PooledEndpoint>? pending = null;
+
         foreach (var pair in _endpoints)
         {
             if (evicted >= limit)
@@ -239,11 +241,25 @@ public sealed class HttpConnectionPool : IDisposable
                     continue;
                 }
 
-                if (_endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(pair.Key, endpoint)))
+                // 先摘字典再置标记：两步都成功后收集起来，锁外统一释放。
+                // 若标记返回 false，说明该节点已被其它路径（Clear / Dispose）接管，不必再释放。
+                if (_endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(pair.Key, endpoint))
+                    && endpoint.MarkDisposed())
                 {
-                    endpoint.Dispose();
+                    (pending ??= new List<PooledEndpoint>(1)).Add(endpoint);
                     evicted++;
                 }
+            }
+        }
+
+        // 关闭 Handler 会断开该 origin 的全部 TCP 连接、可能耗时：必须放在锁外。
+        // 持锁释放会让同 origin 的 TryAcquire / GetStatistics / 另一次驱逐全部排队等它，
+        // 而 EnsureCapacity 触发的驱逐恰恰跑在请求线程自己身上。
+        if (pending is not null)
+        {
+            foreach (var endpoint in pending)
+            {
+                endpoint.ReleaseResources();
             }
         }
 

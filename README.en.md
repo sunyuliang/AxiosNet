@@ -20,7 +20,6 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 
 ## Table of contents
 
-- [Features](#features)
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [axios ↔ AxiosNet mapping](#axios--axiosnet-mapping)
@@ -42,44 +41,11 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Target framework and runtime support](#target-framework-and-runtime-support)
 - [Build and test](#build-and-test)
 - [Project layout](#project-layout)
+- [Features](#features)
 - [Differences from axios](#differences-from-axios)
 - [License](#license)
 
 ---
-
-## Features
-
-**Aligned with axios**
-
-- `axios.create(config)` → `Axios.Create(config)`, plus the static facade `Axios.GetAsync(...)`
-- Shortcut methods: `Get / Post / Put / Patch / Delete / Head / Options`; `Method` takes the BCL `HttpMethod` directly, so custom verbs (`new HttpMethod("PROPFIND")`) work out of the box
-- `baseURL + url` merging, default `params` serialization (arrays as `a[]=1&a[]=2`, nested objects as `o[k]=v`, nulls skipped)
-- `data` encoding is decided by `config.ContentType` (default `application/json`, independent of the data type): objects/dictionaries/dynamic/collections all become JSON; set `application/x-www-form-urlencoded` to send a key-value form; set `multipart/form-data` to have `FormFile`/`Stream`/`byte[]` assembled into file parts; `string/byte[]/Stream/HttpContent` pass through untouched
-- Every shortcut method (`Get/Post/Put/Patch/Delete/Head/Options`) accepts a `data` payload of any type
-- Request/response interceptors (sync & async, `Eject`, request interceptors run in reverse registration order, response interceptors in registration order, rejected branches can recover)
-- `validateStatus` for custom acceptable status codes
-- `timeout` (`ECONNABORTED`), external cancellation (`ERR_CANCELED`), network errors (`ERR_NETWORK`), custom `timeoutMessage`
-- Error codes aligned with axios: `ERR_BAD_REQUEST` (4xx) / `ERR_BAD_RESPONSE` (5xx) / `ERR_INVALID_URL` / `ERR_BAD_OPTION_VALUE`, with `Axios.IsAxiosError` / `Axios.IsCancel` predicates
-- `auth` (HTTP Basic), `withCredentials`, proxy, automatic redirects (`maxRedirects: 0` disables them entirely), automatic gzip/deflate/br decompression
-- `axios.getUri(config)` → `client.GetUri(config)`: builds the URL without sending a request (debugging/logging/pre-signing)
-- `maxContentLength` / `maxBodyLength`: size caps for response and request bodies; exceeding them throws `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST` with the actual byte count in the message
-- `onUploadProgress` / `onDownloadProgress`: progress events (loaded/total/percentage/average rate/ETA) in both directions
-- `maxRate`: one-way upload/download throttling (bytes/second)
-- `paramsSerializer` / `formFieldNameSelector`: custom query string and form field naming (the field-name customization of axios's `formSerializer`)
-- `transformRequest` / `transformResponse`: pre-request and post-response transform chains (thread-safe, mutable at runtime)
-- 🔧 **Pluggable JSON serialization**: System.Text.Json by default, with `JsonSerializerOptions` overridden per "global → instance → request"; implement `IAxiosJsonSerializer` to swap the whole engine (e.g. Newtonsoft.Json)
-- `postForm` / `putForm` / `patchForm`: one-liners for `multipart/form-data` or forms
-- Full response shape: `Data / Status / StatusText / Headers / Config / Request`
-
-**Additional capabilities**
-
-- 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
-- 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS)
-- 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
-- ⬇️ **File download**: `GetAsync<Stream>` streams to disk with constant memory, `GetAsync<byte[]>` grabs all bytes at once; connections return to the pool when the stream is disposed (connection reuse is verifiable)
-- ⬆️ **File upload**: raw stream passthrough (`Stream`/`byte[]` plus a file `ContentType`) and `multipart/form-data` (`FormFile`, repeated same-name parts); the sample server parses byte-exactly and reports field name/file name/size/SHA256
-- 📊 **Traffic governance**: progress callbacks + one-way rate limiting + size caps, all in pure BCL (wrapping `HttpContent.SerializeToStreamAsync` and `Stream`), with no reliance on native `HttpClient` features
-- 🧵 **Custom handler injection**: `ConnectionPoolOptions.HandlerFactory` wraps your `DelegatingHandler` around the default `SocketsHttpHandler` per origin (logging/signing/retries/telemetry) while keeping connection reuse; `new AxiosClient(handler: ...)` takes over the connection layer entirely (bypassing the pool)
 
 ## Installation
 
@@ -1137,6 +1103,40 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 └─ test/
    └─ AxiosNet.Tests/            # xUnit tests (443 cases × net6.0 / net8.0 = 886 executions)
 ```
+
+## Features
+
+**Aligned with axios**
+
+- `axios.create(config)` → `Axios.Create(config)`, plus the static facade `Axios.GetAsync(...)`
+- Shortcut methods: `Get / Post / Put / Patch / Delete / Head / Options`; `Method` takes the BCL `HttpMethod` directly, so custom verbs (`new HttpMethod("PROPFIND")`) work out of the box
+- `baseURL + url` merging, default `params` serialization (arrays as `a[]=1&a[]=2`, nested objects as `o[k]=v`, nulls skipped)
+- `data` encoding is decided by `config.ContentType` (default `application/json`, independent of the data type): objects/dictionaries/dynamic/collections all become JSON; set `application/x-www-form-urlencoded` to send a key-value form; set `multipart/form-data` to have `FormFile`/`Stream`/`byte[]` assembled into file parts; `string/byte[]/Stream/HttpContent` pass through untouched
+- Every shortcut method (`Get/Post/Put/Patch/Delete/Head/Options`) accepts a `data` payload of any type
+- Request/response interceptors (sync & async, `Eject`, request interceptors run in reverse registration order, response interceptors in registration order, rejected branches can recover)
+- `validateStatus` for custom acceptable status codes
+- `timeout` (`ECONNABORTED`), external cancellation (`ERR_CANCELED`), network errors (`ERR_NETWORK`), custom `timeoutMessage`
+- Error codes aligned with axios: `ERR_BAD_REQUEST` (4xx) / `ERR_BAD_RESPONSE` (5xx) / `ERR_INVALID_URL` / `ERR_BAD_OPTION_VALUE`, with `Axios.IsAxiosError` / `Axios.IsCancel` predicates
+- `auth` (HTTP Basic), `withCredentials`, proxy, automatic redirects (`maxRedirects: 0` disables them entirely), automatic gzip/deflate/br decompression
+- `axios.getUri(config)` → `client.GetUri(config)`: builds the URL without sending a request (debugging/logging/pre-signing)
+- `maxContentLength` / `maxBodyLength`: size caps for response and request bodies; exceeding them throws `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST` with the actual byte count in the message
+- `onUploadProgress` / `onDownloadProgress`: progress events (loaded/total/percentage/average rate/ETA) in both directions
+- `maxRate`: one-way upload/download throttling (bytes/second)
+- `paramsSerializer` / `formFieldNameSelector`: custom query string and form field naming (the field-name customization of axios's `formSerializer`)
+- `transformRequest` / `transformResponse`: pre-request and post-response transform chains (thread-safe, mutable at runtime)
+- 🔧 **Pluggable JSON serialization**: System.Text.Json by default, with `JsonSerializerOptions` overridden per "global → instance → request"; implement `IAxiosJsonSerializer` to swap the whole engine (e.g. Newtonsoft.Json)
+- `postForm` / `putForm` / `patchForm`: one-liners for `multipart/form-data` or forms
+- Full response shape: `Data / Status / StatusText / Headers / Config / Request`
+
+**Additional capabilities**
+
+- 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
+- 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS)
+- 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
+- ⬇️ **File download**: `GetAsync<Stream>` streams to disk with constant memory, `GetAsync<byte[]>` grabs all bytes at once; connections return to the pool when the stream is disposed (connection reuse is verifiable)
+- ⬆️ **File upload**: raw stream passthrough (`Stream`/`byte[]` plus a file `ContentType`) and `multipart/form-data` (`FormFile`, repeated same-name parts); the sample server parses byte-exactly and reports field name/file name/size/SHA256
+- 📊 **Traffic governance**: progress callbacks + one-way rate limiting + size caps, all in pure BCL (wrapping `HttpContent.SerializeToStreamAsync` and `Stream`), with no reliance on native `HttpClient` features
+- 🧵 **Custom handler injection**: `ConnectionPoolOptions.HandlerFactory` wraps your `DelegatingHandler` around the default `SocketsHttpHandler` per origin (logging/signing/retries/telemetry) while keeping connection reuse; `new AxiosClient(handler: ...)` takes over the connection layer entirely (bypassing the pool)
 
 ## Differences from axios
 

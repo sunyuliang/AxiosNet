@@ -45,6 +45,15 @@ internal sealed class TimeoutStream : Stream
     /// </summary>
     private readonly bool _budgetExhausted;
 
+    /// <summary>
+    /// 最近一次「调用方自备可取消令牌」对应的链接源缓存。
+    /// 循环 <c>ReadAsync(buf, ct)</c> 读大文件时 ct 每块都一样，没有这层缓存就会
+    /// 每块新建一个 CTS + 两次注册 + dispose——按缓冲区数量级的纯浪费。
+    /// </summary>
+    private CancellationToken _cachedCallerToken;
+
+    private CancellationTokenSource? _cachedCallerCts;
+
     private int _disposed;
 
     /// <summary>
@@ -205,6 +214,11 @@ internal sealed class TimeoutStream : Stream
     /// 把本次调用传入的令牌链接到「外部取消 + 超时」上。
     /// 调用方没传令牌、或传进来的就是已知的那两个源时直接复用预建的链接源，
     /// 避免每一次读写都新建一个 CTS（大文件下载时这是按缓冲区数量级的分配）。
+    /// <para>
+    /// 调用方反复传<b>同一个</b>自备令牌时同样复用：链接源按「最近一个 callerToken」缓存，
+    /// 换令牌才释放上一个（它的读必然已经返回——响应流是单读者顺序读取的）。
+    /// 多读者并发读同一条流违反本类的使用契约，不在保证范围内。
+    /// </para>
     /// </summary>
     private (CancellationToken Token, CancellationTokenSource? Cts) Link(CancellationToken callerToken)
     {
@@ -214,8 +228,19 @@ internal sealed class TimeoutStream : Stream
             return (linked, null);
         }
 
+        if (callerToken == _cachedCallerToken && _cachedCallerCts is not null)
+        {
+            return (_cachedCallerCts.Token, null);
+        }
+
         var cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken, linked);
-        return (cts.Token, cts);
+        var previous = _cachedCallerCts;
+        _cachedCallerToken = callerToken;
+        _cachedCallerCts = cts;
+
+        // 释放被替换掉的旧链接源：单读者顺序读保证它的读写已全部返回。
+        previous?.Dispose();
+        return (cts.Token, null);
     }
 
     /// <summary>预算在构造时即耗尽：确定性失败，不与「已到达的字节」赛跑。</summary>
@@ -260,6 +285,7 @@ internal sealed class TimeoutStream : Stream
             }
             finally
             {
+                _cachedCallerCts?.Dispose();
                 _linkedCts.Dispose();
                 _timeoutCts.Dispose();
             }
@@ -278,6 +304,7 @@ internal sealed class TimeoutStream : Stream
             }
             finally
             {
+                _cachedCallerCts?.Dispose();
                 _linkedCts.Dispose();
                 _timeoutCts.Dispose();
             }
