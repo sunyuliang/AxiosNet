@@ -129,19 +129,21 @@ public sealed class HttpConnectionPool : IDisposable
 
         while (true)
         {
-            EnsureCapacity(origin, config);
-
-            // 正常情况下 GetOrAdd 只创建一次；极端竞态下落选的新建节点直接释放。
-            PooledEndpoint? created = null;
-            var endpoint = _endpoints.GetOrAdd(origin, key =>
+            // 稳态（origin 已在池里）只做一次哈希查找：
+            // ① 容量检查里的 _endpoints.Count 是「拿全桶锁 + 逐表统计」的 O(n) 操作（1024 节点实测 18µs，
+            //    是单次查找的 800 倍），只有真的要新建节点时才需要；
+            // ② GetOrAdd 的工厂是带捕获的闭包，热路径上每次调用都会分配一个闭包对象。
+            if (!_endpoints.TryGetValue(origin, out var endpoint))
             {
-                created = new PooledEndpoint(this, key, _options, _cookies);
-                return created;
-            });
+                EnsureCapacity(origin, config);
 
-            if (created is not null && !ReferenceEquals(created, endpoint))
-            {
-                created.Dispose();
+                // 竞态下 GetOrAdd 只创建一次，落选的新建节点直接释放。
+                var created = new PooledEndpoint(this, origin, _options, _cookies);
+                endpoint = _endpoints.GetOrAdd(origin, created);
+                if (!ReferenceEquals(created, endpoint))
+                {
+                    created.Dispose();
+                }
             }
 
             if (endpoint.TryAcquire())
@@ -198,11 +200,15 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>
     /// 新建 origin 节点前的容量检查：达到 <see cref="ConnectionPoolOptions.MaxEndpointCount"/>
     /// 时先驱逐最久未使用的空闲节点，一个都驱逐不掉（全部在途）才拒绝。
+    /// <para>
+    /// 只在「origin 不在池里」时调用。<c>ContainsKey</c> 放在 <c>Count</c> 前面：后者要拿全桶锁
+    /// 逐表统计，而这里绝大多数情况都已经命中（并发下别的线程刚插入）而提前返回。
+    /// </para>
     /// </summary>
     private void EnsureCapacity(string origin, AxiosConfig? config)
     {
         var max = _options.MaxEndpointCount;
-        if (max <= 0 || _endpoints.Count < max || _endpoints.ContainsKey(origin))
+        if (max <= 0 || _endpoints.ContainsKey(origin) || _endpoints.Count < max)
         {
             return;
         }
@@ -220,6 +226,14 @@ public sealed class HttpConnectionPool : IDisposable
 
     private int EvictIdle(TimeSpan minIdle, int limit)
     {
+        // InfiniteTimeSpan 是 -1ms（BCL 表达「不限」的标准值），而下面的判定是
+        // 「空闲时长 < minIdle 才跳过」：-1ms 会让所有空闲节点都判成「可驱逐」，
+        // 手动调用 EvictIdleEndpoints() 就会把整个池清空 —— 与文档「永不驱逐」正好相反。
+        if (minIdle == Timeout.InfiniteTimeSpan)
+        {
+            return 0;
+        }
+
         var evicted = 0;
         var now = DateTime.UtcNow;
         List<PooledEndpoint>? pending = null;

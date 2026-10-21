@@ -23,6 +23,20 @@ public sealed class SystemTextJsonSerializer : IAxiosJsonSerializer
     public object? Deserialize(string json, Type type, AxiosConfig config)
         => JsonSerializer.Deserialize(json, type, AxiosJson.GetOptions(config));
 
+    /// <summary>
+    /// 直接从 UTF-8 字节反序列化，跳过「bytes → UTF-16 字符串」这一整段中转（≈2× payload）。
+    /// <para>
+    /// 只在「响应有效编码就是 UTF-8」时可用（由 <c>ResponseTextDecoder.TryGetUtf8Payload</c> 判定，
+    /// 已剥离 BOM）；其它编码必须走 <see cref="Deserialize"/>，否则会把 GBK/UTF-16 的字节当 UTF-8 解析。
+    /// </para>
+    /// <para>
+    /// 非接口成员，与 <see cref="ToElement"/> 同样的用法：<c>RequestBodyFactory</c> 与响应管线按
+    /// 「是不是默认序列化器」分支使用它，自定义序列化器仍只实现接口上的字符串入口。
+    /// </para>
+    /// </summary>
+    public object? DeserializeUtf8(ReadOnlySpan<byte> utf8Json, Type type, AxiosConfig config)
+        => JsonSerializer.Deserialize(utf8Json, type, AxiosJson.GetOptions(config));
+
     public object? ParseDynamic(string json, AxiosConfig config) => DynamicJson.Parse(json);
 
     public object ParseDocument(string json, AxiosConfig config)

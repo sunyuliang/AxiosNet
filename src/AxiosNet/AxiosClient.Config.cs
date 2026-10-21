@@ -24,15 +24,19 @@ public sealed partial class AxiosClient
 
         // 空集合时跳过：快捷方法（Shortcut）每请求新建的 config 大概率没有自定义头/transform，
         // 省掉快照枚举与空列表合并的分配（热路径上每请求 3 个小对象）。
-        if (perCall.Headers.Count > 0)
+        if (perCall.HasHeaders)
         {
             merged.Headers.MergeFrom(perCall.Headers);
         }
 
         // 合并之后再删：这样「按请求摘掉实例默认头」才有表达方式。
-        foreach (var name in perCall.RemoveHeaders)
+        // 两边都没内容时整段跳过——Delete 对空集合是 no-op，却会把空集合创建出来。
+        if (perCall.HasRemoveHeaders && merged.HasHeaders)
         {
-            merged.Headers.Delete(name);
+            foreach (var name in perCall.RemoveHeaders)
+            {
+                merged.Headers.Delete(name);
+            }
         }
 
         if (perCall.Params is not null)
@@ -92,7 +96,7 @@ public sealed partial class AxiosClient
         merged.FormFieldNameSelector = perCall.FormFieldNameSelector ?? merged.FormFieldNameSelector;
 
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定
-        if (perCall.TransformRequest.Count > 0)
+        if (perCall.HasTransformRequest)
         {
             foreach (var transform in perCall.TransformRequest)
             {
@@ -100,7 +104,7 @@ public sealed partial class AxiosClient
             }
         }
 
-        if (perCall.TransformResponse.Count > 0)
+        if (perCall.HasTransformResponse)
         {
             foreach (var transform in perCall.TransformResponse)
             {
@@ -129,82 +133,89 @@ public sealed partial class AxiosClient
     private static void ApplyHeaders(HttpRequestMessage request, AxiosConfig config)
     {
         var content = request.Content;
-        foreach (var header in config.Headers)
+
+        // 没有头就整段跳过：config.Headers 是延迟创建的，为「遍历一个空集合」把它建出来
+        // 是每请求 ~200 B 的白分配（绝大多数快捷方法调用都不带自定义头）。
+        if (config.HasHeaders)
         {
-            if (!ContentHeaderNames.Contains(header.Key))
+            foreach (var header in config.Headers)
             {
-                // 非 Content-* 头：先给请求头；请求头不认的个别名称再退回内容头。
-                if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value) && content is not null)
+                if (!ContentHeaderNames.Contains(header.Key))
                 {
-                    content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-                }
-
-                continue;
-            }
-
-            // 空值用在 Content-* 上会把 Content-Length / Content-Type 直接清掉，保留原有跳过语义。
-            if (string.IsNullOrEmpty(header.Value))
-            {
-                continue;
-            }
-
-            // Content-Length 必须与正文实际字节数一致：写错的值会让连接一直等一个永远不会来的正文，
-            // 最终只表现为一句 ERR_NETWORK（真实原因埋在几十层堆栈下面）。
-            if (string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
-            {
-                if (content is null)
-                {
-                    // 没有正文时写它没有任何意义（传输层会自己补 Content-Length: 0），
-                    // 也不能为了它就造一个正文。
-                    continue;
-                }
-
-                var actualLength = content.Headers.ContentLength;
-                if (actualLength is long known)
-                {
-                    if (!IsLengthHeaderMatching(header.Value, known))
+                    // 非 Content-* 头：先给请求头；请求头不认的个别名称再退回内容头。
+                    if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value) && content is not null)
                     {
-                        throw AxiosException.InvalidOption(
-                            $"Content-Length 头（{header.Value.Trim()}）与请求体实际长度（{known} 字节）不一致。"
-                            + "内容长度已知时该头由库按实际字节数生成，请删掉这一行。",
-                            config);
+                        content.Headers.TryAddWithoutValidation(header.Key, header.Value);
                     }
 
-                    // 一致：内容自身已经声明了正确长度，不必再写一遍
                     continue;
                 }
 
-                // 长度未知（非 seekable 的 Stream 等）：尊重调用方显式声明的值 ——
-                // 这是「已知长度、但要关掉 chunked」的逃生口。
+                // 空值用在 Content-* 上会把 Content-Length / Content-Type 直接清掉，保留原有跳过语义。
+                if (string.IsNullOrEmpty(header.Value))
+                {
+                    continue;
+                }
+
+                // Content-Length 必须与正文实际字节数一致：写错的值会让连接一直等一个永远不会来的正文，
+                // 最终只表现为一句 ERR_NETWORK（真实原因埋在几十层堆栈下面）。
+                if (string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (content is null)
+                    {
+                        // 没有正文时写它没有任何意义（传输层会自己补 Content-Length: 0），
+                        // 也不能为了它就造一个正文。
+                        continue;
+                    }
+
+                    var actualLength = content.Headers.ContentLength;
+                    if (actualLength is long known)
+                    {
+                        if (!IsLengthHeaderMatching(header.Value, known))
+                        {
+                            throw AxiosException.InvalidOption(
+                                $"Content-Length 头（{header.Value.Trim()}）与请求体实际长度（{known} 字节）不一致。"
+                                + "内容长度已知时该头由库按实际字节数生成，请删掉这一行。",
+                                config);
+                        }
+
+                        // 一致：内容自身已经声明了正确长度，不必再写一遍
+                        continue;
+                    }
+
+                    // 长度未知（非 seekable 的 Stream 等）：尊重调用方显式声明的值 ——
+                    // 这是「已知长度、但要关掉 chunked」的逃生口。
+                    content.Headers.Remove(header.Key);
+                    content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                    continue;
+                }
+
+                // Content-* 头只能挂在正文上：没有正文时 HttpRequestHeaders 会直接拒收
+                // （TryAddWithoutValidation 返回 false），这个头就被静默丢掉了。
+                // 调用方显式写了内容头，说明这次请求就该带上它 —— 补一个空正文让它落到线上。
+                if (content is null)
+                {
+                    content = new ByteArrayContent(Array.Empty<byte>());
+                    request.Content = content;
+                }
+
+                // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
+                // 覆盖会让正文无法解析，因此保留内容自身的头部。
+                if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
+                    && RequestBodyFactory.HasMultipartBoundary(content.Headers.ContentType))
+                {
+                    continue;
+                }
+
+                // Content-Type 允许用户显式覆盖工厂默认值
                 content.Headers.Remove(header.Key);
                 content.Headers.TryAddWithoutValidation(header.Key, header.Value);
-                continue;
             }
-
-            // Content-* 头只能挂在正文上：没有正文时 HttpRequestHeaders 会直接拒收
-            // （TryAddWithoutValidation 返回 false），这个头就被静默丢掉了。
-            // 调用方显式写了内容头，说明这次请求就该带上它 —— 补一个空正文让它落到线上。
-            if (content is null)
-            {
-                content = new ByteArrayContent(Array.Empty<byte>());
-                request.Content = content;
-            }
-
-            // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
-            // 覆盖会让正文无法解析，因此保留内容自身的头部。
-            if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
-                && RequestBodyFactory.HasMultipartBoundary(content.Headers.ContentType))
-            {
-                continue;
-            }
-
-            // Content-Type 允许用户显式覆盖工厂默认值
-            content.Headers.Remove(header.Key);
-            content.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
+        // HasHeaders 先判：没有自定义头时不必为一次「有没有 Authorization」的检查建出集合。
         if (config.Auth is not null
-            && !config.Headers.Has("Authorization")
+            && !(config.HasHeaders && config.Headers.Has("Authorization"))
             && !request.Headers.Contains("Authorization"))
         {
             request.Headers.TryAddWithoutValidation("Authorization", config.Auth.ToBasicHeaderValue());

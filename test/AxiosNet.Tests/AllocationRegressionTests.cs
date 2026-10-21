@@ -38,8 +38,9 @@ public sealed class AllocationRegressionTests
 
         // 修复前：new AxiosConfig（含 4 个集合 + _headers 初始化）≈ 704 B，
         // 加上属性逐个赋值与被立刻覆盖的白分配，实测 1168 B/次；
-        // 修复后 MemberwiseClone + 3 个集合副本，两个 TFM 实测 960 B/次。
-        // 阈值 1050：留 10% 余量给运行时差异，同时仍能抓退 1168 B 的旧路径。
+        // MemberwiseClone 之后实测 960 B/次（4 个空集合各拷一份）；
+        // 集合改为延迟创建后实测 ≈ 700 B/次（只剩这份有内容的 Headers 副本 + 对象本身）。
+        // 阈值 1050：仍能抓住「退回到 new + 逐属性赋值」的 1168 B 路径，同时给运行时差异留余量。
         var average = AverageBytes(20_000, () => config.Clone());
         Assert.True(
             average < 1050,

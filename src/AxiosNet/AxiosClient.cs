@@ -3,6 +3,7 @@ using System.Text.Json;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
+using AxiosNet.Serialization;
 
 namespace AxiosNet;
 
@@ -382,15 +383,19 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
 
         // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
-        foreach (var transform in config.TransformRequest)
+        // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
+        if (config.HasTransformRequest)
         {
-            try
+            foreach (var transform in config.TransformRequest)
             {
-                config.Data = transform(config.Data, config);
-            }
-            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-            {
-                throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
+                try
+                {
+                    config.Data = transform(config.Data, config);
+                }
+                catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                {
+                    throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
+                }
             }
         }
 
@@ -444,18 +449,29 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             ApplyHeaders(request, config);
 
             var externalToken = config.CancellationToken;
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-            if (config.Timeout > TimeSpan.Zero)
+            var hasTimeout = config.Timeout > TimeSpan.Zero;
+
+            // 只有「设了超时」或「外部令牌可取消」才需要链接源：两者都不成立时 linkedCts.Token
+            // 恒等于 None，为每个请求建一个 CTS（连同 SendAsync 里的令牌注册）换不来任何行为差异。
+            using CancellationTokenSource? linkedCts = hasTimeout || externalToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
+                : null;
+
+            if (hasTimeout)
             {
                 // CancelAfter 的上限是 uint.MaxValue-1 毫秒（约 49.7 天），越界会抛裸
                 // ArgumentOutOfRangeException：收敛到上限，语义等价于「极长但有限」。
-                linkedCts.CancelAfter(Timeouts.Clamp(config.Timeout));
+                linkedCts!.CancelAfter(Timeouts.Clamp(config.Timeout));
             }
+
+            // 交给底层每一次 I/O 的令牌：无超时且无外部取消时就是 None（不注册、不分配）。
+            var sendToken = linkedCts?.Token ?? CancellationToken.None;
 
             var streamResponse = config.ResponseType == ResponseType.Stream;
 
             // 流式响应的 timeout 需要延续到正文读取结束，这里记录请求起点用于计算剩余时间。
-            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // 只有「流式 + 设了超时」用得上：其余组合下 remaining 恒为 null，计时器纯属白分配。
+            var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
 
             // 流式正文的所有权交给调用方持有的流；拦截器抛异常或丢弃响应时由这里兜底释放，
             // 否则租约永远不归还，该 origin 节点再也不会被驱逐。
@@ -476,11 +492,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     {
                         try
                         {
-                            lease = await _pool!.LeaseAsync(uri, config, linkedCts.Token).ConfigureAwait(false);
+                            lease = await _pool!.LeaseAsync(uri, config, sendToken).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException ex)
                         {
-                            if (!externalToken.IsCancellationRequested && linkedCts.IsCancellationRequested)
+                            if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
                             {
                                 throw AxiosException.Timeout(config, request, ex);
                             }
@@ -495,12 +511,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     try
                     {
                         responseMessage = await httpClient
-                            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token)
+                            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sendToken)
                             .ConfigureAwait(false);
                     }
                     catch (OperationCanceledException ex)
                     {
-                        if (!externalToken.IsCancellationRequested && linkedCts.IsCancellationRequested)
+                        if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
                         {
                             throw AxiosException.Timeout(config, request, ex);
                         }
@@ -537,7 +553,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                                 responseMessage,
                                 request,
                                 config,
-                                linkedCts.Token,
+                                sendToken,
                                 dataType,
                                 lenient: !statusAccepted)
                             .ConfigureAwait(false);
@@ -545,7 +561,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     catch (OperationCanceledException ex)
                     {
                         responseMessage.Dispose();
-                        if (!externalToken.IsCancellationRequested && linkedCts.IsCancellationRequested)
+                        if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
                         {
                             throw AxiosException.Timeout(config, request, ex);
                         }
@@ -589,7 +605,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     {
                         // 无条件包装（Timeout=0 也包）：只有这样「外部取消」与「正文阶段 I/O 异常」
                         // 在流式响应上才和非流式一致，否则同一场景会因 Timeout 配置不同给出不同的异常类型。
-                        var remaining = config.Timeout > TimeSpan.Zero
+                        var remaining = clock is not null
                             ? config.Timeout - clock.Elapsed
                             : (TimeSpan?)null;
 
@@ -956,19 +972,32 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared)
                 .ConfigureAwait(false);
 
+            var charSet = message.Content.Headers.ContentType?.CharSet;
+
+            // JSON + 具体目标类型（且用默认 System.Text.Json）时可以直接按 UTF-8 字节反序列化：
+            // 「bytes → UTF-16 字符串」是一次 ≈2× payload 的拷贝，大响应上比反序列化本身还贵。
+            // 解析失败会退回文本路径（裸标量兜底 / lenient 返回原文），语义与纯文本路径完全一致。
+            ReadOnlyMemory<byte>? utf8 = null;
+            if (NeedsUtf8FastPath(config, dataType)
+                && ResponseTextDecoder.TryGetUtf8Payload(bytes, charSet, config.ResponseEncoding, out var payload))
+            {
+                utf8 = payload;
+            }
+
             // 只要字节的调用（arraybuffer / byte[]）不做文本解码：大二进制响应解码成 string 是纯浪费。
-            var text = NeedsText(config, dataType)
-                ? ResponseTextDecoder.Decode(
-                    bytes,
-                    message.Content.Headers.ContentType?.CharSet,
-                    config.ResponseEncoding)
-                : string.Empty;
-            data = ConvertData(config, request, dataType, bytes, text, lenient);
+            // 走 UTF-8 直读时同样不解码：文本只在兜底路径上才需要（由 ConvertData 按需解码）。
+            var text = utf8 is null && NeedsText(config, dataType)
+                ? ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding)
+                : null;
+            data = ConvertData(config, request, dataType, bytes, text, charSet, utf8, lenient);
 
             // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）
-            foreach (var transform in config.TransformResponse)
+            if (config.HasTransformResponse)
             {
-                data = transform(data, config);
+                foreach (var transform in config.TransformResponse)
+                {
+                    data = transform(data, config);
+                }
             }
         }
 
@@ -996,17 +1025,58 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     };
 
     /// <summary>
+    /// 是否值得走「UTF-8 字节直读」：只有「按 JSON 反序列化为具体类型」才有意义。
+    /// string / byte[] / JsonElement / object(dynamic) 各自有专门的返回形态（含解析失败回退原文），
+    /// 不在本优化范围内。
+    /// </summary>
+    private static bool NeedsUtf8FastPath(AxiosConfig config, Type? dataType)
+        => config.ResponseType == ResponseType.Json
+            && dataType is not null
+            && dataType != typeof(object)
+            && dataType != typeof(JsonElement)
+            && dataType != typeof(string)
+            && dataType != typeof(byte[]);
+
+    /// <summary>body 是否只含空白字符（<c>""</c> 与 <c>"  \r\n"</c> 语义等价）。</summary>
+    private static bool IsBlank(string text) => text.AsSpan().Trim().IsEmpty;
+
+    /// <summary>
+    /// 尚未解码时的空白判定：只含 ASCII 空白（SP/HTAB/CR/LF）的字节串无需解码就能判空。
+    /// 非 ASCII 空白（如 NBSP）留给解码后的 <see cref="IsBlank"/> 兜底。
+    /// </summary>
+    private static bool IsBlankUtf8(ReadOnlySpan<byte> bytes)
+    {
+        foreach (var b in bytes)
+        {
+            if (b is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
-    /// <paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始文本，不抛异常。
+    /// <paramref name="text"/> 为 <c>null</c> 表示尚未解码（UTF-8 直读路径）：只有真正需要文本的
+    /// 分支才付 bytes → UTF-16 的代价。<paramref name="utf8"/> 非 <c>null</c> 表示字节可直接交给
+    /// System.Text.Json（已剥离 BOM）。<paramref name="lenient"/> 为 true 时（状态码不合法）
+    /// 解析失败返回原始文本，不抛异常。
     /// </summary>
     private static object? ConvertData(
         AxiosConfig config,
         HttpRequestMessage request,
         Type? dataType,
         byte[] bytes,
-        string text,
+        string? text,
+        string? charSet,
+        ReadOnlyMemory<byte>? utf8,
         bool lenient)
     {
+        // 按需解码：能走 UTF-8 直读的响应永远不会在这里分配那个 UTF-16 字符串。
+        string Text() => text ??= ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding);
+
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
         if (config.ResponseType == ResponseType.ArrayBuffer)
         {
@@ -1016,27 +1086,32 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         // 2) text 直接给原始文本（不做任何 JSON 解析）。
         if (config.ResponseType == ResponseType.Text)
         {
-            return text;
+            return Text();
         }
 
         // 3) dynamic 展开为动态对象图（空 body 为 null，对齐 axios）。
         if (config.ResponseType == ResponseType.Dynamic)
         {
-            if (text.Length == 0)
+            var json = Text();
+            if (IsBlank(json))
             {
                 return null;
             }
 
             try
             {
-                return AxiosJson.Get(config).ParseDynamic(text, config);
+                return AxiosJson.Get(config).ParseDynamic(json, config);
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
                 // 非 JSON 响应（HTML 错误页、纯文本等）也必须走统一错误模型，而不是裸 JsonException。
+                // 注意这是**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，
+                // 把一段 HTML 当 data 交回去只会在几十行之后炸成 RuntimeBinderException。
+                // 状态码不合法时（lenient）仍然回退原文 —— 那条路径要的是「把错误页原样带给调用方」，
+                // 异常本身已经携带 Status/Response 了。
                 if (lenient)
                 {
-                    return text;
+                    return json;
                 }
 
                 throw AxiosException.BadResponse(config, request, "dynamic JSON", ex);
@@ -1046,7 +1121,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         // 4) 目标类型就是原始内容本身：string 原样返回（支持纯文本），byte[] 直接给字节。
         if (dataType == typeof(string))
         {
-            return text;
+            return Text();
         }
 
         if (dataType == typeof(byte[]))
@@ -1054,44 +1129,83 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return bytes;
         }
 
-        // 5) Json（默认）：空 body 视为 null。
-        if (text.Length == 0)
+        // 5) Json（默认）：空 body 视为 null；只含空白的 body 同样视为空 —— 否则服务端多吐一个
+        //    换行就会让 typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null，两者本该等价。
+        if (text is null ? IsBlankUtf8(bytes) : IsBlank(text))
         {
             return null;
         }
 
-        if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
+        // 6) Json + 具体类型 + 默认序列化器：直接按 UTF-8 字节反序列化（省掉整段 UTF-16 中转）。
+        if (utf8 is ReadOnlyMemory<byte> payload
+            && AxiosJson.Get(config) is SystemTextJsonSerializer systemTextJson)
         {
-            // 对齐 axios transformResponse：JSON 解析失败时原样返回文本。
             try
             {
-                return AxiosJson.Get(config).ParseDocument(text, config);
+                return systemTextJson.DeserializeUtf8(payload.Span, dataType!, config);
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                return text;
+                // 与文本路径完全相同的兜底：非 JSON 的裸标量（42 / 2024-01-01 / true …）。
+                var fallback = Text();
+
+                // 只在解码后才认得出的空白（NBSP 等非 ASCII 空白）同样按空 body 处理：
+                // 前面的字节级判空只看 ASCII 空白，这里补上最后一块。
+                if (IsBlank(fallback))
+                {
+                    return null;
+                }
+
+                if (ScalarParser.TryParse(fallback, dataType!, out var scalar))
+                {
+                    return scalar;
+                }
+
+                if (lenient)
+                {
+                    return fallback;
+                }
+
+                throw AxiosException.BadResponse(config, request, dataType!, ex);
             }
         }
 
+        // 7) 未指定具体类型（非泛型 / object / JsonElement）：对齐 axios transformResponse，
+        //    JSON 解析失败时原样返回文本。
+        if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
+        {
+            var json = Text();
+            try
+            {
+                return AxiosJson.Get(config).ParseDocument(json, config);
+            }
+            catch (Exception ex) when (ex is not AxiosException)
+            {
+                return json;
+            }
+        }
+
+        // 8) 其余编码（GBK / UTF-16 …）或自定义序列化器：按文本反序列化。
+        var raw = Text();
         try
         {
-            return AxiosJson.Get(config).Deserialize(text, dataType, config);
+            return AxiosJson.Get(config).Deserialize(raw, dataType, config);
         }
         catch (Exception ex) when (ex is not AxiosException)
         {
             // 非 JSON 的裸标量（42 / 2024-01-01 / true …）：按目标类型解析原始文本。
-            if (ScalarParser.TryParse(text, dataType, out var scalar))
+            if (ScalarParser.TryParse(raw, dataType, out var scalar))
             {
                 return scalar;
             }
 
             if (lenient)
             {
-                return text;
+                return raw;
             }
 
             // 兜底失败：包装成 AxiosException，保持统一的错误模型（而不是裸抛 JsonException）。
-            throw AxiosException.BadResponse(config, request, dataType!, ex);
+            throw AxiosException.BadResponse(config, request, dataType, ex);
         }
     }
 

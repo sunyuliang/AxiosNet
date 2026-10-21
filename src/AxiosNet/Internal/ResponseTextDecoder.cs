@@ -24,6 +24,45 @@ internal static class ResponseTextDecoder
         return encoding.GetString(bytes, bomLength, bytes.Length - bomLength);
     }
 
+    /// <summary>
+    /// 解析出「可直接当 UTF-8 交给 JSON 解析器」的字节段（已剥离 BOM）。
+    /// <para>
+    /// 返回 <c>false</c> 表示本次响应的有效编码不是 UTF-8（GBK / UTF-16 等，或强制指定了别的编码），
+    /// 调用方必须走解码路径——按 UTF-8 解析那些字节会得到乱码或解析失败。
+    /// </para>
+    /// <para>
+    /// 用途：typed JSON 响应的主流形态就是无 BOM 的 UTF-8，此时可以直接
+    /// <c>JsonSerializer.Deserialize(ReadOnlySpan&lt;byte&gt;)</c>，省掉「bytes → UTF-16 字符串」
+    /// 这一整段拷贝（≈2× payload）。
+    /// </para>
+    /// </summary>
+    public static bool TryGetUtf8Payload(
+        byte[] bytes,
+        string? charSet,
+        Encoding? forced,
+        out ReadOnlyMemory<byte> payload)
+    {
+        payload = default;
+        if (bytes.Length == 0)
+        {
+            return false;
+        }
+
+        var encoding = forced
+            ?? ResolveFromCharset(charSet)
+            ?? DetectFromBom(bytes)
+            ?? Encoding.UTF8;
+
+        // 只认 UTF-8（含 BOM 判出的 UTF-8）；其余编码一律回退解码路径。
+        if (encoding.CodePage != Encoding.UTF8.CodePage)
+        {
+            return false;
+        }
+
+        payload = bytes.AsMemory(GetPreambleLength(bytes, encoding));
+        return true;
+    }
+
     private static Encoding? ResolveFromCharset(string? charSet)
     {
         if (string.IsNullOrWhiteSpace(charSet))

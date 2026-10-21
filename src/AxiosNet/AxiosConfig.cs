@@ -38,7 +38,11 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MethodSet { get; private set; }
 
-    private AxiosHeaders _headers = new();
+    // 集合成员延迟创建：快捷方法每请求都会 new 一个 AxiosConfig，而绝大多数字段是空的。
+    // 构造期直接 new 出 Headers + 3 个列表是每请求 ~700 B 的白分配（Clone 里还有一份，
+    // 合计约 1.2 KB）——热路径上比绝大多数真实工作都贵。字段保留 null 表示「还没有内容」，
+    // 只有第一次访问/写入才真正创建；库内读路径一律先用 Has* 判定，不为「看一眼」付创建成本。
+    private AxiosHeaders? _headers;
 
     /// <summary>对应 axios headers（大小写不敏感）。</summary>
     /// <exception cref="ArgumentNullException">赋值为 <c>null</c>。</exception>
@@ -48,7 +52,7 @@ public sealed class AxiosConfig
     /// </remarks>
     public AxiosHeaders Headers
     {
-        get => _headers;
+        get => _headers ??= new AxiosHeaders();
         set
         {
             ArgumentNullException.ThrowIfNull(value);
@@ -56,7 +60,10 @@ public sealed class AxiosConfig
         }
     }
 
-    private SynchronizedList<string> _removeHeaders = new();
+    /// <summary>是否已经有请求头内容（不创建集合）。供库内热路径先判后取。</summary>
+    internal bool HasHeaders => _headers is { Count: > 0 };
+
+    private SynchronizedList<string>? _removeHeaders;
 
     /// <summary>
     /// 按请求要删除的 Header 名（大小写不敏感）：在 defaults 的头合并完成之后生效，
@@ -67,7 +74,10 @@ public sealed class AxiosConfig
     /// 手写属性 + 私有字段而不是自动属性：<see cref="Clone"/> 用 MemberwiseClone 之后
     /// 必须把集合成员换成独立副本，自动属性的编译体 backing field 在类外不可赋值。
     /// </remarks>
-    public ICollection<string> RemoveHeaders => _removeHeaders;
+    public ICollection<string> RemoveHeaders => _removeHeaders ??= new SynchronizedList<string>();
+
+    /// <summary>是否有要摘除的头（不创建集合）。</summary>
+    internal bool HasRemoveHeaders => _removeHeaders is { Count: > 0 };
 
     /// <summary>
     /// 对应 axios params，会被序列化为 query string。
@@ -348,16 +358,40 @@ public sealed class AxiosConfig
     /// 每个函数返回新的数据（可返回 string/byte[]/Stream/HttpContent 等）。
     /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
     /// </summary>
-    public IList<Func<object?, AxiosConfig, object?>> TransformRequest { get; set; }
-        = new SynchronizedList<Func<object?, AxiosConfig, object?>>();
+    public IList<Func<object?, AxiosConfig, object?>> TransformRequest
+    {
+        get => _transformRequest ??= new SynchronizedList<Func<object?, AxiosConfig, object?>>();
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _transformRequest = value;
+        }
+    }
+
+    private IList<Func<object?, AxiosConfig, object?>>? _transformRequest;
+
+    /// <summary>是否有请求 transform（不创建集合）。</summary>
+    internal bool HasTransformRequest => _transformRequest is { Count: > 0 };
+
+    private IList<Func<object?, AxiosConfig, object?>>? _transformResponse;
+
+    /// <summary>是否有响应 transform（不创建集合）。</summary>
+    internal bool HasTransformResponse => _transformResponse is { Count: > 0 };
 
     /// <summary>
     /// 对应 axios transformResponse：在响应体转换/反序列化之后依次作用于 Data
     /// （例如统一拆包 <c>{code,data}</c>）。流式响应不适用。
     /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
     /// </summary>
-    public IList<Func<object?, AxiosConfig, object?>> TransformResponse { get; set; }
-        = new SynchronizedList<Func<object?, AxiosConfig, object?>>();
+    public IList<Func<object?, AxiosConfig, object?>> TransformResponse
+    {
+        get => _transformResponse ??= new SynchronizedList<Func<object?, AxiosConfig, object?>>();
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _transformResponse = value;
+        }
+    }
 
     /// <summary>JSON 序列化选项（请求体序列化 / 响应体反序列化共用）。</summary>
     public JsonSerializerOptions? JsonSerializerOptions { get; set; }
@@ -395,30 +429,35 @@ public sealed class AxiosConfig
     /// <remarks>
     /// 用 <see cref="object.MemberwiseClone"/> 而不是 new + 逐属性赋值：
     /// <list type="bullet">
-    /// <item>构造函数会给 <c>_headers</c> 与三个列表分配对象，随后立刻被覆盖——每请求一次纯浪费；</item>
+    /// <item>构造函数会创建 4 个集合对象，随后立刻被覆盖——每请求一次纯浪费；</item>
     /// <item>各带 <c>*Set</c> 标记的属性 setter 会把「未显式设置」误置为 true，需要末尾逐个还原；
     /// 字段级复制原样保留真实状态，合并语义反而更精确。</item>
     /// </list>
     /// MemberwiseClone 是浅拷贝：Params/Data/委托等引用成员与源共享（文档语义），
     /// 集合成员（Headers / RemoveHeaders / Transform*）则必须在下面换成独立副本。
+    /// <para>
+    /// 源没有内容的集合保持 <c>null</c>：本方法在请求热路径上每请求执行一次，
+    /// 「空集合副本」是纯分配（4 个对象 + 2 次锁内快照），而读取方一律先用 <c>Has*</c> 判定。
+    /// </para>
     /// </remarks>
     public AxiosConfig Clone()
     {
         var clone = (AxiosConfig)MemberwiseClone();
 
-        clone._headers = _headers.Clone();
-        // 空链用无参构造：拷贝构造会对 SynchronizedList 源做「锁内快照」，
-        // 每请求 2 次加锁 + 2 个内部 List，而空链根本无内容可拷。
-        clone._removeHeaders = _removeHeaders.Count > 0
+        clone._headers = _headers?.Clone();
+        clone._removeHeaders = _removeHeaders is { Count: > 0 }
             ? new SynchronizedList<string>(_removeHeaders)
-            : new SynchronizedList<string>();
-        clone.TransformRequest = TransformRequest.Count > 0
-            ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformRequest)
-            : new SynchronizedList<Func<object?, AxiosConfig, object?>>();
-        clone.TransformResponse = TransformResponse.Count > 0
-            ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(TransformResponse)
-            : new SynchronizedList<Func<object?, AxiosConfig, object?>>();
+            : null;
+        clone._transformRequest = CopiedTransforms(_transformRequest);
+        clone._transformResponse = CopiedTransforms(_transformResponse);
 
         return clone;
     }
+
+    /// <summary>transform 链的独立副本；空链返回 <c>null</c>（调用方只在有内容时才创建）。</summary>
+    private static IList<Func<object?, AxiosConfig, object?>>? CopiedTransforms(
+        IList<Func<object?, AxiosConfig, object?>>? source)
+        => source is { Count: > 0 }
+            ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(source)
+            : null;
 }

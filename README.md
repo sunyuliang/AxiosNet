@@ -22,7 +22,6 @@
 
 - [安装](#安装)
 - [快速开始](#快速开始)
-- [axios ↔ AxiosNet 对照表](#axios--axiosnet-对照表)
 - [配置项](#配置项)
 - [请求体 data 与查询参数 params](#请求体-data-与查询参数-params)
 - [URL 编码：哪些位置会自动编码](#url-编码哪些位置会自动编码)
@@ -37,12 +36,13 @@
 - [超时与取消](#超时与取消)
 - [网络连接池](#网络连接池)
 - [自定义 Handler 注入](#自定义-handler-注入)
+- [特性](#特性)
+- [axios ↔ AxiosNet 对照表](#axios--axiosnet-对照表)
+- [与 axios 的差异说明](#与-axios-的差异说明)
 - [示例项目](#示例项目)
 - [目标框架与运行时支持](#目标框架与运行时支持)
 - [构建与测试](#构建与测试)
 - [项目结构](#项目结构)
-- [特性](#特性)
-- [与 axios 的差异说明](#与-axios-的差异说明)
 - [License](#license)
 
 ---
@@ -104,44 +104,6 @@ string url = http.GetUri(c =>
 ```
 
 > `GetUri` 返回的就是**实际发送形态**：查询串里的百分号编码非保留字符（`%41`→`A`、`%7E`→`~`）会被 `System.Uri` 按 RFC 3986 归一化，与请求行上线内容一致；做预签名时请以 `GetUri` 的返回值作为签名输入。
-
-## axios ↔ AxiosNet 对照表
-
-| axios (JS) | AxiosNet (.NET) |
-| --- | --- |
-| `axios(config)` | `client.RequestAsync(new AxiosConfig { ... })` |
-| `axios(url, config)` | `client.GetAsync(url, c => { ... })` |
-| `config.method` | `c.Method`（`System.Net.Http.HttpMethod`，默认 `HttpMethod.Get`） |
-| `axios.get/post/put/patch/delete/head/options` | `GetAsync / PostAsync / PutAsync / PatchAsync / DeleteAsync / HeadAsync / OptionsAsync` |
-| `axios.create(config)` | `Axios.Create(config)` / `Axios.Create(config, sharedPool)`（第二参数可传共享池） |
-| `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` / `Axios.GetUri(...)` |
-| `axios.postForm / putForm / patchForm` | `PostFormAsync / PutFormAsync / PatchFormAsync`（默认 multipart） |
-| `axios.defaults` | `Axios.Defaults` / `client.Defaults` |
-| `res.data / status / statusText / headers / config` | `Data / Status / StatusText / Headers / Config` |
-| `interceptors.request.use(ok, err)` | `Interceptors.Request.Use(...)`（同步/异步重载） |
-| `interceptors.response.use(...)` | `Interceptors.Response.Use(...)` |
-| `interceptors.x.eject(id)` | `Eject(id)` |
-| `config.params` | `c.Params`（对象/字典/数组/嵌套；也接受已序列化好的查询串 `string`，标量会抛 `ERR_BAD_OPTION_VALUE`） |
-| `config.data`（对象→JSON） | `c.Data`（任意类型；编码方式由 `c.ContentType` 决定，默认 JSON） |
-| `config.ContentType` | 请求体媒体类型（默认 `AxiosContentType.Json`，可传含 charset 的完整值；决定 data 的编码格式） |
-| —（无对应） | `AxiosContentType` 预置常量：`Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml` |
-| `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
-| —（JS 天然动态） | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
-| —（无对应配置） | `RequestEncoding` / `ResponseEncoding`（请求/响应文本编码） |
-| `validateStatus` | `c.ValidateStatus = status => ...` |
-| `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
-| `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
-| `withCredentials` / `proxy` / `maxRedirects` | 同名属性（**仅实例级**生效：按请求写与实例不同的值会抛 `ERR_BAD_OPTION_VALUE`，见下） |
-| `maxContentLength` / `maxBodyLength` | 同名属性（`long?`，字节；超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`） |
-| `maxRate` | `c.MaxRate`（字节/秒，上传下载共用） |
-| `onUploadProgress` / `onDownloadProgress` | 同名属性（`Action<AxiosProgressEvent>`） |
-| `timeoutMessage` | `c.TimeoutMessage` |
-| `paramsSerializer` | `c.ParamsSerializer` 或实例级 `Defaults.ParamsSerializer`（返回已编码查询串） |
-| `formSerializer`（字段名/嵌套风格） | `c.FormFieldNameSelector`（`Func<string?, string, string>`，`(父级名, 当前名) => 最终名`；默认 `prefix[name]`） |
-| `transformRequest` / `transformResponse` | 同名属性（`IList<Func<object?, AxiosConfig, object?>>`，顺序执行、可追加） |
-| `AxiosError.code` | `AxiosException.Code`（同名字符串），另有 `Status` / `Cause` / `ToJson()` |
-| `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
-| （无内置） | `HttpConnectionPool` / `ConnectionPoolOptions` |
 
 ## 配置项
 
@@ -1004,6 +966,101 @@ using var client3 = Axios.Create(
 - 与 `pool` / `poolOptions` 互斥，同时传入同样抛 `ERR_BAD_OPTION_VALUE`。
 - 超时仍由库按请求控制（`HttpClient.Timeout` 内部设为 Infinite，`c.Timeout` 照常生效）；`OnUploadProgress` / `maxRate` / `maxContentLength` 等数据层能力不受影响。
 
+## 特性
+
+**与 axios 对齐**
+
+- `axios.create(config)` → `Axios.Create(config)`，静态门面 `Axios.GetAsync(...)`
+- 快捷方法：`Get / Post / Put / Patch / Delete / Head / Options`；`Method` 直接用 BCL `HttpMethod`，自定义谓词（`new HttpMethod("PROPFIND")`）照发不误
+- `baseURL + url` 合并、`params` 默认序列化（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过）
+- `data` 编码由 `config.ContentType` 决定（默认 `application/json`，与数据类型无关）：对象/字典/dynamic/集合统一 JSON；设为 `application/x-www-form-urlencoded` 转键值对表单；设为 `multipart/form-data` 自动把 `FormFile`/`Stream`/`byte[]` 拼成文件部件；`string/byte[]/Stream/HttpContent` 原样透传
+- 所有快捷方法（`Get/Post/Put/Patch/Delete/Head/Options`）都可携带任意类型的 `data`
+- 请求/响应拦截器（同步 & 异步、`Eject`、请求拦截器逆序执行、响应拦截器顺序执行、错误分支可恢复）
+- `validateStatus` 自定义合法状态码
+- `timeout`（`ECONNABORTED`）、外部取消（`ERR_CANCELED`）、网络错误（`ERR_NETWORK`）、`timeoutMessage` 自定义超时消息
+- 错误码与 axios 对齐：`ERR_BAD_REQUEST`(4xx) / `ERR_BAD_RESPONSE`(5xx) / `ERR_INVALID_URL` / `ERR_BAD_OPTION_VALUE`，`Axios.IsAxiosError` / `Axios.IsCancel` 判定
+- `auth`（HTTP Basic）、`withCredentials`、代理、自动重定向（`maxRedirects: 0` 可完全关闭）、gzip/deflate/br 自动解压
+- `axios.getUri(config)` → `client.GetUri(config)`：只拼 URL 不发请求（调试/日志/预签名）
+- `maxContentLength` / `maxBodyLength`：响应体与请求体大小上限，超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`，消息里带实际字节数
+- `onUploadProgress` / `onDownloadProgress`：进度事件（已传/总量/百分比/平均速率/预估剩余），上传与下载双向
+- `maxRate`：上传、下载单向限速（字节/秒）
+- `paramsSerializer` / `formFieldNameSelector`：自定义查询串与表单字段名（对应 axios `formSerializer` 的字段名定制）
+- `transformRequest` / `transformResponse`：请求前、响应后数据变换链（线程安全，可在运行期增删）
+- 🔧 **可插拔 JSON 序列化**：默认 System.Text.Json，`JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；也可实现 `IAxiosJsonSerializer` 整体替换（如 Newtonsoft.Json）
+- `postForm` / `putForm` / `patchForm`：一行发 `multipart/form-data` 或表单
+- 完整响应结构：`Data / Status / StatusText / Headers / Config / Request`
+
+**额外能力**
+
+- 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
+- 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）
+- 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
+- ⬇️ **文件下载**：`GetAsync<Stream>` 流式落盘（内存占用恒定）、`GetAsync<byte[]>` 一次性字节；流读完自动归还连接（可复验连接复用）
+- ⬆️ **文件上传**：裸流直传（`Stream`/`byte[]` + 文件类型 `ContentType`）与 `multipart/form-data`（`FormFile`、同名重复部件）；示例服务器按字节精确解析并回报字段名/文件名/大小/SHA256
+- 📊 **流量治理**：进度回调 + 单向限速 + 大小上限，均为纯 BCL 实现（包装 `HttpContent.SerializeToStreamAsync` 与 `Stream`），不依赖 `HttpClient` 原生能力
+- 🧵 **自定义 Handler 注入**：`ConnectionPoolOptions.HandlerFactory` 在每个 origin 的默认 `SocketsHttpHandler` 外套你的 `DelegatingHandler`（日志/签名/重试/埋点），保留连接复用；`new AxiosClient(handler: ...)` 则完全接管连接层（不走池）
+
+## axios ↔ AxiosNet 对照表
+
+| axios (JS) | AxiosNet (.NET) |
+| --- | --- |
+| `axios(config)` | `client.RequestAsync(new AxiosConfig { ... })` |
+| `axios(url, config)` | `client.GetAsync(url, c => { ... })` |
+| `config.method` | `c.Method`（`System.Net.Http.HttpMethod`，默认 `HttpMethod.Get`） |
+| `axios.get/post/put/patch/delete/head/options` | `GetAsync / PostAsync / PutAsync / PatchAsync / DeleteAsync / HeadAsync / OptionsAsync` |
+| `axios.create(config)` | `Axios.Create(config)` / `Axios.Create(config, sharedPool)`（第二参数可传共享池） |
+| `axios.getUri(config)` | `client.GetUri(config)` / `client.GetUri(c => ...)` / `Axios.GetUri(...)` |
+| `axios.postForm / putForm / patchForm` | `PostFormAsync / PutFormAsync / PatchFormAsync`（默认 multipart） |
+| `axios.defaults` | `Axios.Defaults` / `client.Defaults` |
+| `res.data / status / statusText / headers / config` | `Data / Status / StatusText / Headers / Config` |
+| `interceptors.request.use(ok, err)` | `Interceptors.Request.Use(...)`（同步/异步重载） |
+| `interceptors.response.use(...)` | `Interceptors.Response.Use(...)` |
+| `interceptors.x.eject(id)` | `Eject(id)` |
+| `config.params` | `c.Params`（对象/字典/数组/嵌套；也接受已序列化好的查询串 `string`，标量会抛 `ERR_BAD_OPTION_VALUE`） |
+| `config.data`（对象→JSON） | `c.Data`（任意类型；编码方式由 `c.ContentType` 决定，默认 JSON） |
+| `config.ContentType` | 请求体媒体类型（默认 `AxiosContentType.Json`，可传含 charset 的完整值；决定 data 的编码格式） |
+| —（无对应） | `AxiosContentType` 预置常量：`Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml` |
+| `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
+| —（JS 天然动态） | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
+| —（无对应配置） | `RequestEncoding` / `ResponseEncoding`（请求/响应文本编码） |
+| `validateStatus` | `c.ValidateStatus = status => ...` |
+| `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
+| `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
+| `withCredentials` / `proxy` / `maxRedirects` | 同名属性（**仅实例级**生效：按请求写与实例不同的值会抛 `ERR_BAD_OPTION_VALUE`，见下） |
+| `maxContentLength` / `maxBodyLength` | 同名属性（`long?`，字节；超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`） |
+| `maxRate` | `c.MaxRate`（字节/秒，上传下载共用） |
+| `onUploadProgress` / `onDownloadProgress` | 同名属性（`Action<AxiosProgressEvent>`） |
+| `timeoutMessage` | `c.TimeoutMessage` |
+| `paramsSerializer` | `c.ParamsSerializer` 或实例级 `Defaults.ParamsSerializer`（返回已编码查询串） |
+| `formSerializer`（字段名/嵌套风格） | `c.FormFieldNameSelector`（`Func<string?, string, string>`，`(父级名, 当前名) => 最终名`；默认 `prefix[name]`） |
+| `transformRequest` / `transformResponse` | 同名属性（`IList<Func<object?, AxiosConfig, object?>>`，顺序执行、可追加） |
+| `AxiosError.code` | `AxiosException.Code`（同名字符串），另有 `Status` / `Cause` / `ToJson()` |
+| `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
+| （无内置） | `HttpConnectionPool` / `ConnectionPoolOptions` |
+
+## 与 axios 的差异说明
+
+受 .NET 平台特性影响的有意差异：
+
+1. 方法命名为 .NET 习惯的 `XxxAsync`（`GetAsync` 对应 `axios.get`）；
+2. `timeout` 使用 `TimeSpan` 而非毫秒数；
+3. 非泛型 JSON 响应的 `Data` 是 `JsonElement`（需要 JS 式动态访问时使用泛型 `GetAsync<dynamic>`）；
+4. 取消使用 `CancellationToken`（语义等同 `AbortController`）；
+5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
+6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
+7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
+8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上写**与实例生效值不同**的值会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast），写相同的值则等价于不写、正常放行；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头用 `config.RemoveHeaders.Add("X-Foo")`；
+9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
+10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
+11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
+12. **请求头写入即校验**：头部名必须是 RFC 7230 token、取值不允许出现 `CR` / `LF` / `NUL`，否则 `AxiosHeaders.Set` 抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
+13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
+14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）；
+15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `ParamsSerializer`；
+16. **multipart 的字段名/文件名发送前就校验**：`"`、`\`、`CR`/`LF` 与控制字符会破坏 `Content-Disposition` 的 quoted-string，直接抛 `ERR_BAD_OPTION_VALUE`（`FormFile` 构造时抛 `ArgumentException`），而不是让服务端静默收到错位的键名（浏览器 `FormData` 对这些字符的处理各不相同，axios 侧无法依赖）；
+17. **`ContentType` 是 `string` 而非枚举**（`Content-Type` 由媒体类型 + `charset`/`boundary` 参数组成，枚举表达不了），常用值以 `AxiosContentType` 常量提供——与 BCL 的 `HttpMethod.Get` + `new HttpMethod("PROPFIND")` 是同一套「预置常量 + 任意自定义」思路。
+
+
 ## 示例项目
 
 [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 22 类集成调用：
@@ -1122,63 +1179,6 @@ dotnet build AxiosNet.slnx -c Release
 └─ test/
    └─ AxiosNet.Tests/            # xUnit 单元测试（443 个用例 × net6.0 / net8.0 双目标 = 886 次执行）
 ```
-
-## 特性
-
-**与 axios 对齐**
-
-- `axios.create(config)` → `Axios.Create(config)`，静态门面 `Axios.GetAsync(...)`
-- 快捷方法：`Get / Post / Put / Patch / Delete / Head / Options`；`Method` 直接用 BCL `HttpMethod`，自定义谓词（`new HttpMethod("PROPFIND")`）照发不误
-- `baseURL + url` 合并、`params` 默认序列化（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过）
-- `data` 编码由 `config.ContentType` 决定（默认 `application/json`，与数据类型无关）：对象/字典/dynamic/集合统一 JSON；设为 `application/x-www-form-urlencoded` 转键值对表单；设为 `multipart/form-data` 自动把 `FormFile`/`Stream`/`byte[]` 拼成文件部件；`string/byte[]/Stream/HttpContent` 原样透传
-- 所有快捷方法（`Get/Post/Put/Patch/Delete/Head/Options`）都可携带任意类型的 `data`
-- 请求/响应拦截器（同步 & 异步、`Eject`、请求拦截器逆序执行、响应拦截器顺序执行、错误分支可恢复）
-- `validateStatus` 自定义合法状态码
-- `timeout`（`ECONNABORTED`）、外部取消（`ERR_CANCELED`）、网络错误（`ERR_NETWORK`）、`timeoutMessage` 自定义超时消息
-- 错误码与 axios 对齐：`ERR_BAD_REQUEST`(4xx) / `ERR_BAD_RESPONSE`(5xx) / `ERR_INVALID_URL` / `ERR_BAD_OPTION_VALUE`，`Axios.IsAxiosError` / `Axios.IsCancel` 判定
-- `auth`（HTTP Basic）、`withCredentials`、代理、自动重定向（`maxRedirects: 0` 可完全关闭）、gzip/deflate/br 自动解压
-- `axios.getUri(config)` → `client.GetUri(config)`：只拼 URL 不发请求（调试/日志/预签名）
-- `maxContentLength` / `maxBodyLength`：响应体与请求体大小上限，超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`，消息里带实际字节数
-- `onUploadProgress` / `onDownloadProgress`：进度事件（已传/总量/百分比/平均速率/预估剩余），上传与下载双向
-- `maxRate`：上传、下载单向限速（字节/秒）
-- `paramsSerializer` / `formFieldNameSelector`：自定义查询串与表单字段名（对应 axios `formSerializer` 的字段名定制）
-- `transformRequest` / `transformResponse`：请求前、响应后数据变换链（线程安全，可在运行期增删）
-- 🔧 **可插拔 JSON 序列化**：默认 System.Text.Json，`JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；也可实现 `IAxiosJsonSerializer` 整体替换（如 Newtonsoft.Json）
-- `postForm` / `putForm` / `patchForm`：一行发 `multipart/form-data` 或表单
-- 完整响应结构：`Data / Status / StatusText / Headers / Config / Request`
-
-**额外能力**
-
-- 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
-- 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）
-- 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
-- ⬇️ **文件下载**：`GetAsync<Stream>` 流式落盘（内存占用恒定）、`GetAsync<byte[]>` 一次性字节；流读完自动归还连接（可复验连接复用）
-- ⬆️ **文件上传**：裸流直传（`Stream`/`byte[]` + 文件类型 `ContentType`）与 `multipart/form-data`（`FormFile`、同名重复部件）；示例服务器按字节精确解析并回报字段名/文件名/大小/SHA256
-- 📊 **流量治理**：进度回调 + 单向限速 + 大小上限，均为纯 BCL 实现（包装 `HttpContent.SerializeToStreamAsync` 与 `Stream`），不依赖 `HttpClient` 原生能力
-- 🧵 **自定义 Handler 注入**：`ConnectionPoolOptions.HandlerFactory` 在每个 origin 的默认 `SocketsHttpHandler` 外套你的 `DelegatingHandler`（日志/签名/重试/埋点），保留连接复用；`new AxiosClient(handler: ...)` 则完全接管连接层（不走池）
-
-## 与 axios 的差异说明
-
-受 .NET 平台特性影响的有意差异：
-
-1. 方法命名为 .NET 习惯的 `XxxAsync`（`GetAsync` 对应 `axios.get`）；
-2. `timeout` 使用 `TimeSpan` 而非毫秒数；
-3. 非泛型 JSON 响应的 `Data` 是 `JsonElement`（需要 JS 式动态访问时使用泛型 `GetAsync<dynamic>`）；
-4. 取消使用 `CancellationToken`（语义等同 `AbortController`）；
-5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
-6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
-7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
-8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上写**与实例生效值不同**的值会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast），写相同的值则等价于不写、正常放行；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头用 `config.RemoveHeaders.Add("X-Foo")`；
-9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
-10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
-11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
-12. **请求头写入即校验**：头部名必须是 RFC 7230 token、取值不允许出现 `CR` / `LF` / `NUL`，否则 `AxiosHeaders.Set` 抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
-13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
-14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）；
-15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `ParamsSerializer`；
-16. **multipart 的字段名/文件名发送前就校验**：`"`、`\`、`CR`/`LF` 与控制字符会破坏 `Content-Disposition` 的 quoted-string，直接抛 `ERR_BAD_OPTION_VALUE`（`FormFile` 构造时抛 `ArgumentException`），而不是让服务端静默收到错位的键名（浏览器 `FormData` 对这些字符的处理各不相同，axios 侧无法依赖）；
-17. **`ContentType` 是 `string` 而非枚举**（`Content-Type` 由媒体类型 + `charset`/`boundary` 参数组成，枚举表达不了），常用值以 `AxiosContentType` 常量提供——与 BCL 的 `HttpMethod.Get` + `new HttpMethod("PROPFIND")` 是同一套「预置常量 + 任意自定义」思路。
-
 
 ## License
 
