@@ -806,6 +806,11 @@ internal static class RequestBodyFactory
 
     private static void SetContentType(HttpContent content, string mediaType)
     {
+        // 所有 Content-Type 的唯一写入口（string / 二进制 / 表单 / multipart 部件 / 序列化器自报）：
+        // 这里统一再拦一次控制字符。调用方配置与 FormFile 已在赋值处校验，
+        // 但第三方 IContentSerializer.MediaType 是不可信输入，且同样直接落到这个头上。
+        AxiosHeaders.ValidateHeaderValue("Content-Type", mediaType);
+
         content.Headers.Remove("Content-Type");
         content.Headers.TryAddWithoutValidation("Content-Type", mediaType);
     }

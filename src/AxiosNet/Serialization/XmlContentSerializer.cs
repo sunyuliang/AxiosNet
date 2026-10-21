@@ -35,7 +35,8 @@ namespace AxiosNet.Serialization;
 /// </para>
 /// <para>
 /// 实现说明：<see cref="XmlSerializer"/> 的构造（反射 + 动态生成序列化程序集）开销很大，
-/// 因此按目标类型缓存且线程安全；输出统一声明 <c>encoding="utf-8"</c>（与库写 socket 的编码一致），
+/// 因此按目标类型缓存且线程安全；输出的 XML 声明里的 <c>encoding</c> 跟随
+/// <see cref="AxiosConfig.RequestEncoding"/>（默认 utf-8）—— 必须与库实际写 socket 的编码一致；
 /// 默认命名空间为空以免请求体里塞满 <c>xmlns:xsi</c>/<c>xmlns:xsd</c> 噪音；
 /// 反序列化禁用 DTD（防 XXE / 十亿笑声）。
 /// </para>
@@ -66,10 +67,14 @@ public sealed class XmlContentSerializer : IContentSerializer
 
         var serializer = For(type);
 
-        // StringWriter 默认声明 encoding="utf-16"，而库按 RequestEncoding（默认 UTF-8）写 socket：
-        // 声明与实际编码必须一致，否则严格的服务端会直接拒收。
-        using var text = new Utf8StringWriter();
-        using (var writer = XmlWriter.Create(text, new XmlWriterSettings { Encoding = Encoding.UTF8 }))
+        // XML 声明里的 encoding 必须与实际写入 socket 的字节编码一致：
+        // 正文由 RequestBodyFactory 按 config.RequestEncoding 编码（默认 UTF-8），
+        // 这里跟着它走。写死 utf-8 会让「RequestEncoding = UTF-16/GBK」的请求发出
+        // 「声明一种编码、字节是另一种」的正文，严格的服务端直接拒收。
+        var encoding = config.RequestEncoding ?? Encoding.UTF8;
+
+        using var text = new DeclaredEncodingStringWriter(encoding);
+        using (var writer = XmlWriter.Create(text, new XmlWriterSettings { Encoding = encoding }))
         {
             serializer.Serialize(writer, value, NamespacesFor(type));
         }
@@ -108,8 +113,17 @@ public sealed class XmlContentSerializer : IContentSerializer
         return namespaces;
     }
 
-    private sealed class Utf8StringWriter : StringWriter
+    /// <summary>
+    /// 让 XML 声明里的 <c>encoding</c> 跟随调用方声明的编码（<c>StringWriter</c> 默认写 utf-16）。
+    /// <see cref="XmlWriter.Create(TextWriter, XmlWriterSettings)"/> 在目标是 TextWriter 时
+    /// 以 <see cref="TextWriter.Encoding"/> 为准，因此这里必须把编码透出来。
+    /// </summary>
+    private sealed class DeclaredEncodingStringWriter : StringWriter
     {
-        public override Encoding Encoding => Encoding.UTF8;
+        private readonly Encoding _encoding;
+
+        public DeclaredEncodingStringWriter(Encoding encoding) => _encoding = encoding;
+
+        public override Encoding Encoding => _encoding;
     }
 }

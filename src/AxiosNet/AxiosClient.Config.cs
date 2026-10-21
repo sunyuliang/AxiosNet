@@ -13,6 +13,12 @@ public sealed partial class AxiosClient
     private AxiosConfig MergeConfig(AxiosConfig? perCall)
     {
         var merged = Defaults.Clone();
+
+        // 合并结果里的实例级选项来自本实例默认值（按请求改写的那几项会在 ValidatePerRequestOptions
+        // 里被拦掉），所以它同样带「来源是实例」标记：这份配置作为 response.Config 被回放到另一个
+        // 实例时，不能再被当成按请求项搬过去。
+        merged.InstanceOptionsInherited = true;
+
         if (perCall is null)
         {
             return merged;
@@ -89,6 +95,31 @@ public sealed partial class AxiosClient
         {
             merged.MaxRate = perCall.MaxRate;
         }
+
+        // 实例级选项：必须合并进来，否则按请求写的值根本到不了 ValidatePerRequestOptions
+        // （它判定的是「生效配置」）—— 表现就是「设了没生效、也不报错」，与本类文档承诺相反。
+        // 判定在验证阶段做（值不同才报错），这里只负责把按请求项搬过来。
+        //
+        // 例外：回放一份生效配置（InstanceOptionsInherited）时这几项描述的是<b>来源实例</b>，
+        // 不是本次调用方写的按请求项。搬过来既会用错连接池，又会被校验判成非法按请求项 ——
+        // 一律沿用本实例的默认值。
+        if (!perCall.InstanceOptionsInherited)
+        {
+            if (perCall.WithCredentialsSet)
+            {
+                merged.WithCredentials = perCall.WithCredentials;
+            }
+
+            if (perCall.MaxRedirectsSet)
+            {
+                merged.MaxRedirects = perCall.MaxRedirects;
+            }
+
+            merged.Proxy = perCall.Proxy ?? merged.Proxy;
+            merged.Credentials = perCall.Credentials ?? merged.Credentials;
+            merged.PoolOptions = perCall.PoolOptions ?? merged.PoolOptions;
+        }
+
         merged.TimeoutMessage = perCall.TimeoutMessage ?? merged.TimeoutMessage;
         merged.OnUploadProgress = perCall.OnUploadProgress ?? merged.OnUploadProgress;
         merged.OnDownloadProgress = perCall.OnDownloadProgress ?? merged.OnDownloadProgress;
@@ -115,6 +146,13 @@ public sealed partial class AxiosClient
         return merged;
     }
 
+    // 只能挂在正文上的头。
+    // 前三项（Allow / Expires / Last-Modified）看起来是响应侧头，但 .NET 的强类型头集合
+    // 把它们登记在 HttpContentHeaders 下：HttpRequestHeaders.TryAddWithoutValidation 对它们
+    // **返回 false**（实测 net6.0 / net8.0 一致，Expires / Last-Modified / Allow 三项皆然）。
+    // 因此这里不能把它们移出集合 —— 移出后回落分支只会静默丢掉这个头，
+    // 比「补一个空正文把它发出去」更糟。无正文的 GET 上设这几个头会带上 Content-Length: 0，
+    // 这是 BCL 的头模型决定的，不是本库的取舍。
     private static readonly HashSet<string> ContentHeaderNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Allow",
@@ -193,6 +231,7 @@ public sealed partial class AxiosClient
                 // Content-* 头只能挂在正文上：没有正文时 HttpRequestHeaders 会直接拒收
                 // （TryAddWithoutValidation 返回 false），这个头就被静默丢掉了。
                 // 调用方显式写了内容头，说明这次请求就该带上它 —— 补一个空正文让它落到线上。
+                // 注意 Allow / Expires / Last-Modified 在 BCL 里同样属于内容头，也走这条路径。
                 if (content is null)
                 {
                     content = new ByteArrayContent(Array.Empty<byte>());

@@ -51,7 +51,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         // null 表示删除，不校验取值
         if (value is not null)
         {
-            ValidateValue(key, value);
+            ValidateHeaderValue(key, value);
         }
 
         lock (_sync)
@@ -221,24 +221,40 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     }
 
     /// <summary>
-    /// 写入前的取值校验：拒绝 CR/LF。
-    /// 这两个字符一旦进入头部值，会被 HTTP 序列化层当作头部分隔符，形成请求拆分。
+    /// 写入/上线前的取值校验：拒绝 <b>C0 控制字符</b>（HTAB 除外）与 DEL。
+    /// <para>
+    /// CR/LF 最危险：HTTP 序列化层把它们当行分隔符，值里带 <c>\r\n</c> 就等于允许调用方
+    /// 追加任意头甚至请求体（CWE-113 请求拆分）。而请求头最终经
+    /// <see cref="HttpRequestMessage.Headers"/> 的 <c>TryAddWithoutValidation</c> 上送，
+    /// 那一层**完全不检查** CR/LF（已抓包证实），所以这里是唯一的闸口。
+    /// </para>
+    /// <para>
+    /// 其余 C0（VT / FF / NUL / SOH…）与 DEL 不拆行，但都不是合法 <c>field-content</c>：
+    /// 底层照样原样写上线，网关/日志组件会截断或误判，因此一并拒绝。HTAB 是合法空白，放行。
+    /// </para>
     /// </summary>
-    private static void ValidateValue(string name, string value)
+    /// <exception cref="ArgumentException">值里含被禁字符。</exception>
+    internal static void ValidateHeaderValue(string name, string value)
     {
         foreach (var c in value)
         {
-            // 不只看 \r\n：单独的 CR 或 LF 同样能截断头部行。
-            if (c is '\r' or '\n' or '\0')
+            if (c == '\t')
+            {
+                continue;
+            }
+
+            if (c < 0x20 || c == 0x7F)
             {
                 throw new ArgumentException(
-                    $"非法 HTTP 请求头取值（头 '{name}'）：不允许包含 CR / LF / NUL 字符。"
+                    $"非法 HTTP 请求头取值（头 '{name}'）：不允许包含控制字符（这里是 U+{(int)c:X4}）。"
+                    + "CR / LF 会被当成头部分隔符，等于允许调用方追加任意头或请求体；"
                     + "如果这是来自外部的数据，请先剔除控制字符——否则可能被用于注入额外的请求头或请求体。",
                     "value");
             }
         }
     }
 
+    /// <summary>RFC 7230 token 字符（头名的字符集）。</summary>
     private static bool IsTokenChar(char c)
         => (c >= 'a' && c <= 'z')
             || (c >= 'A' && c <= 'Z')

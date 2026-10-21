@@ -202,7 +202,7 @@ public sealed class RequestBodyTests
 
             await client.PostAsync(
                 server.Url + "upload",
-                new { file = FormFile.FromPath(path, "report.txt") },
+                new { file = FormFile.FromPath(path, "report.txt", "text/plain") },
                 c => c.ContentType = "multipart/form-data");
 
             var body = Body(server.Received[0]);

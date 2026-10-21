@@ -248,14 +248,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public Task<AxiosResponse> RequestAsync(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return SendAsync(config, dataType: null);
+        return SendAsync(PreparePerCall(config), dataType: null);
     }
 
     /// <summary>对应 axios(config)，Data 反序列化为 T。</summary>
     public Task<AxiosResponse<T>> RequestAsync<T>(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return SendTypedAsync<T>(config);
+        return SendTypedAsync<T>(PreparePerCall(config));
     }
 
     /// <summary>用 Action 配置请求的非泛型入口。</summary>
@@ -275,6 +275,26 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         configure(config);
         return SendTypedAsync<T>(config);
     }
+
+    /// <summary>
+    /// 把调用方交进来的配置整理成「按请求项」：只有一种情况需要动手 —— 它本身就是一份
+    /// <b>已经合并过的生效配置</b>（典型是回放 <see cref="AxiosResponse.Config"/>）。
+    /// <para>
+    /// 那种配置带着 <see cref="AxiosConfig.EffectiveMerged"/> 标记。直接交给管线会被判成「无需合并」，
+    /// 于是本实例的默认值（默认头、transform 链、序列化器、校验规则……）整段被跳过：
+    /// 回放一次就等于切回了上一个实例的配置。这里 <see cref="AxiosConfig.Clone"/> 一次清掉标记，
+    /// 让它重新走「按请求项合并到本实例默认值」的常规路径；顺带避免管线把
+    /// <see cref="AxiosConfig.Response"/> 写回调用方持有的对象。
+    /// </para>
+    /// <para>
+    /// 这里的 <see cref="AxiosConfig.Clone"/> 同时会把那份配置里的<b>实例级选项</b>标成
+    /// 「来源是实例」（<see cref="AxiosConfig.InstanceOptionsInherited"/>），合并时一律沿用本实例的
+    /// 值：那些值原本是上一个实例的生效值、从来不是调用方写的按请求项，带过来只会与本实例比较
+    /// 并报出一条没人写过的 <c>ERR_BAD_OPTION_VALUE</c>，甚至真的换掉连接池。
+    /// </para>
+    /// </summary>
+    private static AxiosConfig PreparePerCall(AxiosConfig config)
+        => config.EffectiveMerged ? config.Clone() : config;
 
     // ------------------------------------------------------------------
     // 核心请求管线
@@ -1017,12 +1037,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 : null;
             data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
 
-            // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）
+            // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）。
+            // 与 transformRequest 同一套错误模型：调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，
+            // 不让裸 InvalidOperationException / NullReferenceException 从管线深处漏给调用方。
             if (config.HasTransformResponse)
             {
                 foreach (var transform in config.TransformResponse)
                 {
-                    data = transform(data, config);
+                    try
+                    {
+                        data = transform(data, config);
+                    }
+                    catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                    {
+                        throw AxiosException.ResponseTransformFailed(config, request, ex);
+                    }
                 }
             }
         }

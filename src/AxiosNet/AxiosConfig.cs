@@ -135,7 +135,21 @@ public sealed class AxiosConfig
         get => _contentType;
         set
         {
-            _contentType = string.IsNullOrWhiteSpace(value) ? JsonContentType : value.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                _contentType = JsonContentType;
+                ContentTypeSet = true;
+                return;
+            }
+
+            var trimmed = value.Trim();
+
+            // 注入的第一道闸：这个值最终经 TryAddWithoutValidation 写进 Content-Type，
+            // 而 .NET 该 API 不拦 CR/LF（已抓包证实能注入任意额外请求头）。
+            // 与 AxiosHeaders 用同一套校验，避免「头集合拦了、ContentType 没拦」这种缺口。
+            AxiosHeaders.ValidateHeaderValue("Content-Type", trimmed);
+
+            _contentType = trimmed;
             ContentTypeSet = true;
         }
     }
@@ -196,6 +210,24 @@ public sealed class AxiosConfig
     /// </para>
     /// </summary>
     internal bool EffectiveMerged { get; set; }
+
+    /// <summary>
+    /// 这份配置里的<b>实例级选项</b>（<see cref="WithCredentials"/> / <see cref="MaxRedirects"/> /
+    /// <see cref="Proxy"/> / <see cref="Credentials"/> / <see cref="PoolOptions"/>）是「某个实例的生效值」，
+    /// 不是本次按请求写的意图。合并时一律沿用本实例的默认值。
+    /// <para>
+    /// 只有库自己产出的配置才有这个标记：快捷方法在 <see cref="AxiosClient.Defaults"/> 副本上填写，
+    /// 合并结果（<c>AxiosClient.MergeConfig</c>）也是从实例默认值拷出来的。调用方 <c>new</c> 出来的配置
+    /// 没有它，所以在按请求设置这些项时照样会被拦下（<c>ERR_BAD_OPTION_VALUE</c>）。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="EffectiveMerged"/> 的区别：那个标记表示「已经合并完，管线别再合并」，用一次就清；
+    /// 这个标记表示「值的来源是实例」，会随 <see cref="Clone"/> 一起继承下去 —— 否则回放
+    /// <see cref="AxiosResponse.Config"/> 到另一个实例时，源实例的池/代理会被当成按请求项搬过去
+    /// （用错连接池，且被校验判成非法按请求项而错报）。
+    /// </para>
+    /// </summary>
+    internal bool InstanceOptionsInherited { get; set; }
 
     /// <summary>对应 axios auth（HTTP Basic）。</summary>
     public AxiosAuth? Auth { get; set; }
@@ -529,7 +561,15 @@ public sealed class AxiosConfig
 
         // 合并标记属于「那一次合并」：克隆出来的是新请求的输入，尚未与本实例的默认值合并。
         // 漏掉这一行，回放 response.Config 就会带上旧实例的全部生效值并跳过本次合并。
-        clone.EffectiveMerged = false;
+        if (clone.EffectiveMerged)
+        {
+            clone.EffectiveMerged = false;
+
+            // 但「这些实例级选项是实例的值、不是按请求项」这条信息必须留下（MemberwiseClone 已带过来，
+            // 这里只补上面向生效配置的一步）：否则合并时会把源实例的 Proxy/PoolOptions 搬进本实例，
+            // 结果既用错连接池，又被校验判成「按请求设置实例级选项」而错报。
+            clone.InstanceOptionsInherited = true;
+        }
 
         return clone;
     }

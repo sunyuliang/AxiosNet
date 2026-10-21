@@ -168,6 +168,21 @@ public sealed class AxiosException : Exception
             inner);
     }
 
+    /// <summary>
+    /// 响应侧 <c>transformResponse</c> 抛错：与「正文无法反序列化」同属 <see cref="ErrBadResponse"/>，
+    /// 原始异常放在 <see cref="Cause"/> 里。请求侧对应的是 <see cref="BadRequestPayload"/>。
+    /// </summary>
+    internal static AxiosException ResponseTransformFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)
+    {
+        return new AxiosException(
+            "Response data could not be transformed by transformResponse",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
     internal static AxiosException MaxContentLength(AxiosConfig config, HttpRequestMessage request, long actual, long limit)
     {
         return new AxiosException(

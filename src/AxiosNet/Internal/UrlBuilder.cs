@@ -100,12 +100,18 @@ internal static class UrlBuilder
     }
 
     /// <summary>
-    /// 是否为绝对地址（形如 <c>scheme:</c>）。
+    /// 是否为绝对地址（形如 <c>scheme://</c>）。
     /// <para>
     /// 不用 <see cref="Uri.TryCreate(string, UriKind, out Uri)"/> 判断：Unix 下以 <c>/</c> 开头的路径
     /// 会被 Uri 当成绝对文件路径（<c>file:///items</c>），从而把根相对地址误判为绝对地址
     /// （dotnet/runtime#76816，官方明确为 by design）。显式的 <c>file://</c> 仍按绝对地址处理，
     /// 由 <see cref="Build"/> 统一拒绝。
+    /// </para>
+    /// <para>
+    /// 判定要求 <c>scheme</c> 后紧跟 <c>//</c>（与 axios 的 <c>isAbsoluteURL</c> 一致）。
+    /// 只按 RFC 3986 的 <c>scheme ":"</c> 判定会把「主机:端口」形态的相对路径
+    /// （<c>localhost:8080/items</c>、<c>api.example.com:8443/x</c>）当成绝对地址：
+    /// baseURL 被静默绕过，随后又因 scheme 不是 http(s) 抛 <c>ERR_INVALID_URL</c>。
     /// </para>
     /// </summary>
     private static bool IsAbsoluteUrl(string url)
@@ -120,10 +126,10 @@ internal static class UrlBuilder
             var c = url[i];
             if (c == ':')
             {
-                return true;
+                // RFC 3986 scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )，且必须是 scheme://
+                return url.Length > i + 2 && url[i + 1] == '/' && url[i + 2] == '/';
             }
 
-            // RFC 3986 scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
             if (!IsAsciiLetter(c) && (c < '0' || c > '9') && c != '+' && c != '-' && c != '.')
             {
                 return false;

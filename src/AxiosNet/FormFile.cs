@@ -51,6 +51,12 @@ public sealed class FormFile
                 nameof(fileName));
         }
 
+        // 这个值最终写进部件的 Content-Type 头（经 TryAddWithoutValidation，不拦控制字符）。
+        if (contentType is not null)
+        {
+            AxiosHeaders.ValidateHeaderValue("Content-Type", contentType);
+        }
+
         FileName = fileName;
         Content = content;
         ContentType = contentType;
@@ -83,7 +89,15 @@ public sealed class FormFile
     /// </summary>
     public string? FieldName { get; init; }
 
-    /// <summary>打开本地文件（文件名取 <see cref="Path.GetFileName(string)"/>）。</summary>
+    /// <summary>
+    /// 打开本地文件；发送给服务端的文件名取 <see cref="Path.GetFileName(string)"/>，
+    /// 第二个参数是 <b>Content-Type</b>。
+    /// <para>
+    /// 注意：本重载与 <see cref="FromPath(string, string, string?)"/> 在「传两个字符串」时不可区分，
+    /// 重载决议固定落到这里 —— <c>FromPath(path, "report.txt")</c> 会把 <c>report.txt</c> 当成
+    /// Content-Type。要指定文件名请显式用三参重载。
+    /// </para>
+    /// </summary>
     public static FormFile FromPath(string path, string? contentType = null)
         => FromPath(path, Path.GetFileName(path), contentType);
 
@@ -102,7 +116,19 @@ public sealed class FormFile
             FileShare.Read,
             bufferSize: 81920,
             useAsync: true);
-        return new FormFile(fileName, stream, contentType);
+
+        try
+        {
+            // 文件名校验在构造函数里（引号/反斜杠/控制字符会破坏 Content-Disposition）。
+            // 校验失败时异常从这里抛出，已经打开的流必须由这里关掉 ——
+            // 否则文件句柄永久泄漏，Windows 上连删除都会被拒。
+            return new FormFile(fileName, stream, contentType);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
     }
 
     /// <summary>用内存字节构造文件部件（<see cref="FormFile(string, byte[], string?)"/> 的语义化写法）。</summary>
