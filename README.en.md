@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-443%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-549%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -42,6 +42,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Sample project](#sample-project)
 - [Target framework and runtime support](#target-framework-and-runtime-support)
 - [Build and test](#build-and-test)
+- [Overall pipeline](#overall-pipeline)
 - [Project layout](#project-layout)
 - [License](#license)
 
@@ -1187,7 +1188,7 @@ Intentional differences driven by the .NET platform:
 
 ## Sample project
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 20 categories of integration calls:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 24 categories of integration calls:
 
 1. The global static facade `Axios.GetAsync`
 2. `Axios.Create` (baseURL / default headers / strongly-typed response)
@@ -1233,7 +1234,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 443 cases on each runtime (886 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 549 cases on each runtime (1098 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1246,7 +1247,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 443 xUnit tests (the test project targets net8.0 + net6.0, so 886 executions)
+# Run all 549 xUnit tests (the test project targets net8.0 + net6.0, so 1098 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1274,6 +1275,119 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
 - Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte entry (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
 - Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
+
+## Overall pipeline
+
+A single request passes through 9 stages from call to `AxiosResponse`. What threads the pipeline together is **one effective config** (instance `Defaults` merged with the per-request items) — the `Headers` that interceptors mutate, the `Data` that `transformRequest` replaces, and the request headers that serializers write back all act on it, which is why they take effect on the final request.
+
+```text
+caller
+                                     │  Axios.GetAsync / client.GetAsync<T> / RequestAsync
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1 Entry & config merge                                                 │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ Shortcut methods assemble an AxiosConfig (url / method / data)         │
+│ Merge instance Defaults -> effective config                            │
+│ Validation: connection-level / negative values fail fast               │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 2 Request interceptors (Interceptors.Request)                          │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ Reverse registration order - async-capable - may mutate Headers        │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 3 TransformRequest chain                                               │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ Runs after interceptors, before encoding; transforms Data              │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 4 URL assembly + request body                                          │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ UrlBuilder: baseURL + url + serialized params                          │
+│ RequestBodyFactory dispatches on ContentType:                          │
+│   object/dictionary/dynamic/collection -> Serialize (JSON/XML/custom)  │
+│   scalars -> text as-is (bypasses the serializer)                      │
+│   form/multipart -> assembled in-library (bypasses it too)             │
+│   string/byte[]/Stream/HttpContent -> passed through untouched         │
+│ Upload progress/throttling -> wrapped in ProgressHttpContent           │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 5 Apply headers + acquire connection                                   │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ Default headers + RemoveHeaders + serializer-declared MediaType        │
+│ Default: pool.LeaseAsync leases per origin                             │
+│   (TCP reuse - concurrency cap - idle eviction)                        │
+│ Injected handler: fixed HttpClient (no pool)                           │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 6 Send                                                                 │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ HttpClient.SendAsync(ResponseHeadersRead)                              │
+│ SocketsHttpHandler: keep-alive / redirects / auto-decompression        │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 7 Response read (ResponseReader)                                       │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ validateStatus evaluated once (lenient parse vs. throw)                │
+│ Response headers -> config.Response (readable in deserialization)      │
+│ Stream: wrapped stream handed over; lease travels with the stream      │
+│ Buffered: read all bytes -> decode as needed -> ConvertData dispatch   │
+│   direct Stream/byte[]/string - scalar parsing - dynamic expansion     │
+│   JsonElement - business objects -> IContentSerializer.Deserialize     │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 8 TransformResponse chain -> response interceptors                     │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ Post-deserialization shaping of Data                                   │
+│ Response interceptors run in registration order; rejected can recover  │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 9 Wrap-up                                                              │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ Buffered: dispose the response message + return the lease to the pool  │
+│ Streaming: TimeoutStream holds the lease; returned on stream dispose   │
+│ Generic: DataCast verifies Data against T                              │
+└────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+                                     AxiosResponse / AxiosResponse<T>
+
+Failure at any stage -> AxiosException (unified model: ERR_* code + Cause)
+                        -> response interceptor rejected chain: refresh-and-retry or fallback
+```
+
+How the stages map onto the source files (read together with the [project layout](#project-layout) below):
+
+| Stage | Key source files |
+| --- | --- |
+| 1 Entry & config merge | `AxiosClient.Shortcuts.cs` (assembly), `AxiosClient.Config.cs` (`MergeConfig` / `ApplyHeaders`) |
+| 2 Request interceptors | `Interceptors/RequestInterceptorManager.cs` |
+| 3 TransformRequest | `AxiosClient.cs` request pipeline |
+| 4 URL + request body | `Internal/UrlBuilder.cs`, `Internal/RequestBodyFactory.cs`, `Internal/ProgressHttpContent.cs` |
+| 5 Headers + connection | `AxiosClient.Config.cs`, `Pooling/HttpConnectionPool.cs` (`LeaseAsync`), `Pooling/PooledEndpoint.cs` |
+| 6 Send | `AxiosClient.cs` (`SendAsync`) → the per-origin `HttpClient` |
+| 7 Response read | `Internal/ResponseReader.cs`, `Internal/ResponseTextDecoder.cs`, `Internal/ScalarParser.cs`, `Internal/DynamicJson.cs`, `Serialization/` |
+| 8 TransformResponse + response interceptors | `Internal/ResponseReader.cs`, `Interceptors/ResponseInterceptorManager.cs` |
+| 9 Wrap-up | `Internal/ResponseStreams.cs` (`TimeoutStream` / `ResponseStreamOwner`), `Internal/DataCast.cs` |
+
+> The failure path travels the same chain: an exception thrown at any stage is normalized into an `AxiosException` (`ERR_*` code + `Cause` for the underlying exception) and enters the response interceptors' rejected chain — where you can refresh a token and replay, or return a fallback response (see [Interceptors](#interceptors) and [Error handling](#error-handling)).
 
 ## Project layout
 
@@ -1305,7 +1419,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (482 cases × net6.0 / net8.0 = 964 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (549 cases × net6.0 / net8.0 = 1098 executions)
 ```
 
 ## License

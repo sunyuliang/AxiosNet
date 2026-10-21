@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-443%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-549%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -42,6 +42,7 @@
 - [示例项目](#示例项目)
 - [目标框架与运行时支持](#目标框架与运行时支持)
 - [构建与测试](#构建与测试)
+- [整体流程](#整体流程)
 - [项目结构](#项目结构)
 - [License](#license)
 
@@ -1203,7 +1204,7 @@ using var client3 = Axios.Create(
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 22 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 24 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -1228,6 +1229,7 @@ using var client3 = Axios.Create(
 21. **Bearer Token 认证**：登录签发、请求拦截器自动携带 `Authorization`、服务端验签端点，以及 401 后「刷新令牌 → 重试一次」的完整闭环（含登出吊销后刷新失败向上抛错）
 22. **请求签名**：HMAC-SHA256(token + 时间戳 + nonce + 方法 + 路径 + 请求体哈希)，演示防篡改（改请求体）与防重放（nonce 一次性 + 时间戳窗口）
 23. **XML 序列化（内置）**：换上 `XmlContentSerializer.Instance` —— 请求体、强类型响应、非泛型原文三条路径，标量请求体不经过序列化器，`AxiosContent.Register` 的自动模式（按 Content-Type 选序列化器），以及表单/multipart 与序列化器解耦
+24. **二进制格式（字节入口）**：实现 `IContentSerializer` 的字节入口解析 `application/octet-stream`（零解码，Protobuf / MessagePack 同理），对比非泛型 / `byte[]` 两条路径，并演示二进制请求体由调用方序列化后原样发送
 24. **二进制格式（字节入口）**：实现 `IContentSerializer` 的字节入口解析 `application/octet-stream`（零解码，Protobuf / MessagePack 同理），对比非泛型 `/ byte[]` 两条路径，并演示二进制请求体由调用方序列化后原样发送
 
 ```bash
@@ -1249,7 +1251,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 443 个用例（共 886 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 549 个用例（共 1098 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1262,7 +1264,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 443 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 886 次）
+# 运行全部 549 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 1098 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1290,6 +1292,119 @@ dotnet build AxiosNet.slnx -c Release
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 - 序列化可插拔（`JsonCustomizationTests` / `ContentSerializerTests`）：自定义 `IContentSerializer` 驱动请求/响应、实例级 `JsonSerializerOptions`、transform 列表并发增删；`IContentSerializer` 的 XML 端到端、基础类型不经过序列化器、非泛型 `JsonElement`/原文、表单与序列化器解耦、XML 下 dynamic 明确失败、二进制响应走字节入口（非 UTF-8 尾字节原样到达、零解码）与文本序列化器在 `octet-stream` 下的默认兜底、内置 XML 序列化器（UTF-8 声明 / 无命名空间噪音 / `[XmlRoot]` 命名空间 / 拒绝 DTD）、`JsonDocument` 目标与序列化器绑定的边界、标量请求体与字典归属、序列化器自报 `MediaType` 回填请求头（显式/实例默认 ContentType 优先、默认 null 零破坏）
 - 安全与加固（`HardeningTests`）：请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖、流式正文截断与 `Timeout=0` 下的统一 `ERR_NETWORK`、超大 `Timeout` 收敛到 49.7 天、负值限制项 fail-fast、params 落在 fragment 之前、`PostAsync(url, null)` 的 `ArgumentNullException`、流式与 chunked 的 `maxContentLength`、跨 origin 共享 Cookie、取消异常保留 `Cause`、params 传 `JsonElement`、params 传 `byte[]`（base64）、池 origin 上限与优雅 `Dispose`（在途请求不被关闭打断、关闭竞态不漏裸 `ObjectDisposedException`）
+
+## 整体流程
+
+一次请求从调用到拿到 `AxiosResponse`，在库里按顺序经过 9 个阶段。贯穿管线的是**同一个生效配置**（实例 `Defaults` 与按请求项合并而来）——拦截器改写的 `Headers`、`transformRequest` 替换的 `Data`、序列化器写回的请求头，作用的都是它，这也是它们能对最终请求生效的原因。
+
+```text
+调用方
+                                │  Axios.GetAsync / client.GetAsync<T> / RequestAsync
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ① 入口与配置合并                                             │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ 快捷方法组装 AxiosConfig（url / method / data）              │
+│ ⊕ 合并实例 Defaults → 生效配置                               │
+│ 选项校验：连接级 / 负值 fail-fast（ERR_BAD_OPTION_VALUE）    │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ② 请求拦截器 Interceptors.Request                            │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ 逆序执行 · 可异步 · 可改 Headers                             │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ③ TransformRequest 链                                        │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ 拦截器之后、编码之前变换 Data                                │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ④ URL 组装 + 请求体构造                                      │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ UrlBuilder：baseURL ⊕ url ⊕ params 序列化                    │
+│ RequestBodyFactory 按 ContentType 分派：                     │
+│   对象/字典/dynamic/集合 → Serialize（JSON / XML / 自定义）  │
+│   标量 → 直取文本（不经过序列化器）                          │
+│   表单/multipart → 库内组装（不经过序列化器）                │
+│   string/byte[]/Stream/HttpContent → 原样透传                │
+│ 上传进度/限速 → ProgressHttpContent 包装                     │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ⑤ 应用请求头 + 获取连接                                      │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ 默认头 ⊕ RemoveHeaders ⊕ 序列化器自报 MediaType              │
+│ 默认：pool.LeaseAsync 按 origin 租用                         │
+│   （TCP 复用 · 并发上限 · 空闲驱逐）                         │
+│ 注入 handler：固定 HttpClient（不走池）                      │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ⑥ 发送                                                       │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ HttpClient.SendAsync(ResponseHeadersRead)                    │
+│ SocketsHttpHandler：Keep-Alive / 重定向 / 自动解压           │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ⑦ 响应读取 ResponseReader                                    │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ validateStatus 判定一次（决定宽松解析 / 抛错）               │
+│ 响应头 → config.Response（序列化器/transform 可读）          │
+│ Stream：包装流直接交出，租约随流转移                         │
+│ 缓冲：读全量字节 → 按需解码 → ConvertData 分派               │
+│   直给 Stream/byte[]/string · 标量解析 · dynamic 展开        │
+│   JsonElement · 业务对象 → IContentSerializer.Deserialize    │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ⑧ TransformResponse 链 → 响应拦截器                          │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ 反序列化之后加工 Data                                        │
+│ 响应拦截器按注册顺序执行；rejected 分支可恢复错误            │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ⑨ 收尾                                                       │
+│ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
+│ 非流式：释放响应消息 + 租约归还连接池                        │
+│ 流式：TimeoutStream 持有租约，流释放时归还                   │
+│ 泛型：DataCast 校验 Data 与 T 兼容                           │
+└──────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+                                AxiosResponse / AxiosResponse<T>
+
+任意阶段失败 → AxiosException（统一错误模型：ERR_* 错误码 + Cause 底层异常）
+              → 进入响应拦截器 rejected 链：可刷新令牌重放，或返回兜底响应
+```
+
+各阶段与源码文件的对应关系（配合下方[项目结构](#项目结构)一起看）：
+
+| 阶段 | 关键源码 |
+| --- | --- |
+| ① 入口与配置合并 | `AxiosClient.Shortcuts.cs`（组装 config）、`AxiosClient.Config.cs`（`MergeConfig` / `ApplyHeaders`） |
+| ② 请求拦截器 | `Interceptors/RequestInterceptorManager.cs` |
+| ③ TransformRequest | `AxiosClient.cs` 请求管线 |
+| ④ URL + 请求体 | `Internal/UrlBuilder.cs`、`Internal/RequestBodyFactory.cs`、`Internal/ProgressHttpContent.cs` |
+| ⑤ 请求头 + 连接 | `AxiosClient.Config.cs`、`Pooling/HttpConnectionPool.cs`（`LeaseAsync`）、`Pooling/PooledEndpoint.cs` |
+| ⑥ 发送 | `AxiosClient.cs`（`SendAsync`）→ 每 origin 的 `HttpClient` |
+| ⑦ 响应读取 | `Internal/ResponseReader.cs`、`Internal/ResponseTextDecoder.cs`、`Internal/ScalarParser.cs`、`Internal/DynamicJson.cs`、`Serialization/` |
+| ⑧ TransformResponse + 响应拦截器 | `Internal/ResponseReader.cs`、`Interceptors/ResponseInterceptorManager.cs` |
+| ⑨ 收尾 | `Internal/ResponseStreams.cs`（`TimeoutStream` / `ResponseStreamOwner`）、`Internal/DataCast.cs` |
+
+> 失败路径与成功路径同样经过这条链：任何阶段抛出的异常都会归一到 `AxiosException`（`ERR_*` 错误码 + `Cause` 底层异常），并进入响应拦截器的 rejected 链——可以在那里刷新令牌后重放，或返回兜底响应（见[拦截器](#拦截器)、[错误处理](#错误处理)）。
 
 ## 项目结构
 
@@ -1321,7 +1436,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（482 个用例 × net6.0 / net8.0 双目标 = 964 次执行）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（549 个用例 × net6.0 / net8.0 双目标 = 1098 次执行）
 ```
 
 ## License
