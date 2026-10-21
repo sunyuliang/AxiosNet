@@ -1,10 +1,9 @@
 namespace AxiosNet.Pooling;
 
 /// <summary>
-/// 单个 origin（scheme://host:port）对应的池化节点：
-/// 持有一个调优过的 HttpMessageHandler（默认 <see cref="SocketsHttpHandler"/>，
-/// 也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供/包装）与其上的 HttpClient，
-/// Handler 内部负责 TCP 连接复用、排队与连接数上限。
+/// 单个 origin（scheme://host:port）对应的池化节点：持有一个调优过的 Handler
+/// （默认 <see cref="SocketsHttpHandler"/>，也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）
+/// 与其上的 HttpClient。
 /// </summary>
 internal sealed class PooledEndpoint : IDisposable
 {
@@ -23,8 +22,8 @@ internal sealed class PooledEndpoint : IDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>
-    /// 池已经 Dispose：本节点在最后一条租约归还时自行销毁。
-    /// 用于「关闭客户端时还有请求在途」的场景——直接 Dispose 会让在途请求拿到 ObjectDisposedException。
+    /// 池已 Dispose：本节点在最后一条租约归还时自行销毁
+    /// —— 直接 Dispose 会让「关闭时还有请求在途」的调用方拿到 ObjectDisposedException。
     /// </summary>
     public bool DisposeWhenIdle { get; set; }
 
@@ -121,11 +120,10 @@ internal sealed class PooledEndpoint : IDisposable
     }
 
     /// <summary>
-    /// 只置「已释放」标记并返回是否由本次调用首次置位。
+    /// 只置「已释放」标记并返回是否首次置位。
     /// <para>
-    /// 供池的「锁内判定、锁外释放」驱逐路径使用：<see cref="DisposeClientAndHandler"/> 会关闭
-    /// 该 origin 的全部 TCP 连接、可能耗时，不能占着 <see cref="SyncRoot"/> 让同 origin 的
-    /// 新租约 / 统计 / 另一次驱逐在门外排队。
+    /// 供池的「锁内判定、锁外释放」驱逐路径使用：关闭 Handler 会断开该 origin 的全部连接、可能耗时，
+    /// 不能占着 <see cref="SyncRoot"/> 让同 origin 的租用 / 统计 / 另一次驱逐排队。
     /// </para>
     /// </summary>
     public bool MarkDisposed()
@@ -149,7 +147,7 @@ internal sealed class PooledEndpoint : IDisposable
     {
         try
         {
-            // HttpClient 自身也持有取消计时器等资源（Handler 以 disposeHandler:false 传入，不会被连带释放）
+            // HttpClient 自身也持有计时器等资源（Handler 以 disposeHandler:false 传入，不会被连带释放）
             Client.Dispose();
         }
         catch

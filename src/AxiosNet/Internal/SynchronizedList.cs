@@ -3,9 +3,8 @@ namespace AxiosNet.Internal;
 /// <summary>
 /// 线程安全的 <see cref="IList{T}"/> 包装，用于 <see cref="AxiosConfig"/> 里的 transform 链。
 /// <para>
-/// transform 是运行期可追加/移除的配置（例如按租户注册转换器），而请求线程会并发枚举；
-/// 直接暴露 <see cref="List{T}"/> 会在「枚举时写入」抛 <see cref="InvalidOperationException"/>。
-/// 这里所有读写都加锁，枚举返回快照，语义与普通 List 一致。
+/// transform 是运行期可追加/移除的配置，而请求线程会并发枚举；直接暴露 <see cref="List{T}"/>
+/// 会在「枚举时写入」抛 <see cref="InvalidOperationException"/>。这里读写加锁，枚举返回快照。
 /// </para>
 /// </summary>
 internal sealed class SynchronizedList<T> : IList<T>

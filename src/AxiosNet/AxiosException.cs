@@ -36,8 +36,7 @@ public sealed class AxiosException : Exception
     /// <summary>
     /// 触发本次错误的 <see cref="System.Net.Http.HttpRequestMessage"/>。
     /// <para>
-    /// 注意：请求结束后该对象已随响应释放——<see cref="System.Net.Http.HttpRequestMessage.Method"/>、
-    /// RequestUri、Headers 等内存态属性可安全读取，但 <c>Content</c> 已释放，访问会抛
+    /// 请求结束后该对象已随响应释放：Method / RequestUri / Headers 可安全读取，但 <c>Content</c> 会抛
     /// <see cref="ObjectDisposedException"/>；需要落日志的结构化快照请用 <see cref="ToJson"/>。
     /// </para>
     /// </summary>
@@ -111,8 +110,7 @@ public sealed class AxiosException : Exception
 
     internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null)
     {
-        // 超长 URL（>64KB 的查询串）本身就会让 Uri 拒绝解析；把整条 URL 塞进消息里
-        // 只会让异常信息变成几十万字符，日志与 IDE 都被它拖住。
+        // 超长 URL（>64KB 的查询串）本身就会让 Uri 拒绝解析：整条塞进消息只会让异常信息变成几十万字符。
         return new AxiosException($"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
     }
 
@@ -170,7 +168,7 @@ public sealed class AxiosException : Exception
 
     /// <summary>
     /// 响应侧 <c>transformResponse</c> 抛错：与「正文无法反序列化」同属 <see cref="ErrBadResponse"/>，
-    /// 原始异常放在 <see cref="Cause"/> 里。请求侧对应的是 <see cref="BadRequestPayload"/>。
+    /// 原始异常放在 <see cref="Cause"/> 里。
     /// </summary>
     internal static AxiosException ResponseTransformFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)
     {

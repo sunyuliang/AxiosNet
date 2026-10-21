@@ -13,18 +13,12 @@ namespace AxiosNet.Internal;
 /// 把 <see cref="AxiosConfig.Data"/> 转成 <see cref="HttpContent"/>。
 /// <para>
 /// 唯一约定：<b>请求体格式由 <see cref="AxiosConfig.ContentType"/> 决定，与 data 的运行时类型无关</b>。
-/// 传入字典不会再被「猜」成表单，对象也不会因为实现了 IEnumerable 而改变编码方式。
-/// </para>
-/// <para>
-/// 唯一的例外是「调用方没表态」：未显式设置 ContentType 时，头部采用生效序列化器自报的
-/// <see cref="IContentSerializer.MediaType"/>（注入 XML / protobuf 序列化器即自动配对头与正文）。
-/// 显式设置过则一律以调用方为准。
+/// 例外是「调用方没表态」：未显式设置时采用生效序列化器自报的 <see cref="IContentSerializer.MediaType"/>。
 /// </para>
 /// <list type="bullet">
-/// <item>string / byte[] / ReadOnlyMemory&lt;byte&gt; / Memory&lt;byte&gt; / ArraySegment&lt;byte&gt; / Stream / HttpContent：内容原样发送，只应用配置的 Content-Type（HttpContent 自带时保留）。</item>
-/// <item>基础数据类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…，见 <c>IsScalar</c>）：直接取文本写入，<b>不经过序列化器</b>。</item>
-/// <item>结构化数据（对象、字典、dynamic、集合）：json → 当前序列化器；x-www-form-urlencoded → 键值对表单；multipart/form-data → 字段 + 文件部件。</item>
-/// <item>Content-Type 为 multipart/form-data 而 data 是原始内容（无 boundary 参数）时抛 <c>ERR_BAD_OPTION_VALUE</c>：头部与正文自相矛盾，服务端无法解析。</item>
+/// <item>string / byte[] / Memory / ArraySegment / Stream / HttpContent：原样发送，只应用 Content-Type。</item>
+/// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，<b>不经过序列化器</b>。</item>
+/// <item>结构化数据：json → 序列化器；form-urlencoded → 键值对；multipart → 字段 + 文件部件。</item>
 /// </list>
 /// </summary>
 internal static class RequestBodyFactory
@@ -34,16 +28,14 @@ internal static class RequestBodyFactory
 
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
-        // 请求体文本编码：默认 UTF-8（axios 行为），可用 config.RequestEncoding 覆盖。
-        // charset 只在显式设置 RequestEncoding 时写入，避免给 json 强加 charset 参数。
+        // 请求体文本编码：默认 UTF-8；charset 只在显式设置 RequestEncoding 时写入，
+        // 避免给 json 强加 charset 参数。
         var encoding = config.RequestEncoding ?? Encoding.UTF8;
         var appendCharset = config.RequestEncoding is not null;
         var mediaType = config.ContentType;
 
-        // multipart/form-data 与「原始内容」请求体是矛盾的组合：头部声明了 multipart，
-        // 正文却是裸 string / byte[] / Stream——没有 boundary 参数时服务端无从解析，
-        // 带上 boundary 也说明不了字段名。结构化数据才会被组装成 multipart 字段；
-        // 要发送预序列化的 multipart 正文，请用 HttpContent 作为 data。
+        // multipart + 原始内容是矛盾的组合：没有 boundary 服务端无从解析，有条 boundary 也说明不了字段名。
+        // 要发预序列化的 multipart 正文，请用 HttpContent 作为 data。
         if (data is not null and not HttpContent
             && IsRawContent(data)
             && IsMediaType(mediaType, MultipartMediaType)
@@ -62,16 +54,14 @@ internal static class RequestBodyFactory
                 return null;
 
             case HttpContent existing:
-                // 已构造好的内容（含 MultipartFormDataContent）原样透传；
-                // 仅当内容自身没有 Content-Type 且用户显式配置过时才补头部。
+                // 已构造好的内容原样透传；仅当内容自身没有 Content-Type 且用户显式配置过时才补头部。
                 if (config.ContentTypeSet && existing.Headers.ContentType is null)
                 {
                     SetContentType(existing, mediaType);
                 }
 
-                // multipart 没有 boundary 服务端必然解析失败（正文里就是靠随机边界切分部件的）。
-                // 自带边界时（MultipartFormDataContent / 手写头部）透传；否则说明调用方既没让库
-                // 组装字段、也没准备合法的 multipart 正文 —— 与其发出去换一个看不懂的 400，不如在这里拦。
+                // multipart 没有 boundary 服务端必然解析失败（正文靠随机边界切分部件），
+                // 与其发出去换一个看不懂的 400，不如在这里拦。
                 if (existing.Headers.ContentType?.MediaType is { } existingMediaType
                     && existingMediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase)
                     && !HasMultipartBoundary(existing.Headers.ContentType))
@@ -124,8 +114,8 @@ internal static class RequestBodyFactory
     }
 
     /// <summary>
-    /// 零拷贝发送 <see cref="ReadOnlyMemory{T}"/>：net6.0 没有内置的 ReadOnlyMemoryContent
-    /// （net7 才引入），而 ByteArrayContent 需要先 ToArray()——大请求体上这是一次整段复制。
+    /// 零拷贝发送 <see cref="ReadOnlyMemory{T}"/>：net6.0 没有内置的 ReadOnlyMemoryContent，
+    /// 而 ByteArrayContent 需要先 ToArray()。
     /// </summary>
     private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType)
     {
@@ -153,26 +143,20 @@ internal static class RequestBodyFactory
 
         var type = data.GetType();
 
-        // 基础数据类型（IsScalar：数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）<b>不经过序列化器</b>：
-        // 请求体语义就是「这个值本身」，直接取其文本发起。
-        // 交给序列化器既多余（JSON 的裸标量 42 / true 与这里的文本完全一致）又不可行
-        // （XML / YAML 序列化器对根标量无从下手：没有元素名），那会逼每个自定义实现各写一遍标量特判。
-        // 注意：字典 / 集合 / 对象 / dynamic 一律<b>不进这个分支</b> —— 它们和业务对象是同一套逻辑，
-        // 走下面的序列化器（字典不会因为实现了 IDictionary 就被当成标量或表单）。
+        // 基础类型<b>不经过序列化器</b>：请求体语义就是「这个值本身」，直接取文本。
+        // 交给序列化器既多余（JSON 裸标量与本函数结果一致）又不可行（XML / YAML 无法表达无名根标量）。
+        // 字典 / 集合 / 对象 / dynamic 一律不进这个分支，它们和业务对象走同一套逻辑。
         if (IsScalar(type))
         {
             return CreateText(ScalarBodyText(data), mediaType, encoding, appendCharset);
         }
 
-        // 其余（json / xml / yaml … 的对象、字典、dynamic、集合）交给生效的序列化器：
-        // 显式注入优先，未注入时按 mediaType 自动匹配注册表（再回落内置 JSON）。
-        // 库只知道「业务对象 → 文本」，二进制载荷请由调用方序列化成 byte[] / Stream 作为 data 传入。
+        // 其余结构化数据交给生效序列化器：显式注入优先，未注入时按 mediaType 自动匹配（再回落内置 JSON）。
+        // 二进制载荷请由调用方序列化成 byte[] / Stream 传入。
         var serializer = AxiosContent.Get(config, mediaType);
 
-        // 头由正文的产出者自报 —— 与 axios 默认 transformRequest 里的
-        // headers.setContentType('application/json', false) 同构：调用方没显式设置 Content-Type 时
-        // 采用序列化器声明的媒体类型（注入 protobuf / XML 序列化器后头会自动跟上）；
-        // 显式设置过就绝不覆盖，那是调用方对服务端的判断。
+        // 头由正文的产出者自报，与 axios 的 headers.setContentType('application/json', false) 同构：
+        // 调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
         {
             mediaType = declared.Trim();
@@ -188,12 +172,12 @@ internal static class RequestBodyFactory
         Encoding encoding,
         bool appendCharset)
     {
-        // 表单是独立的编码通道，与序列化器无关：直接按对象结构展平（详见 CollectFormPairs），
+        // 表单是独立编码通道，与序列化器无关：直接按对象结构展平（详见 CollectFormPairs），
         // 命名只看 FormFieldNameSelector 与属性上的 [JsonPropertyName]。
         var pairs = new List<KeyValuePair<string, string>>(8);
         CollectFormPairs(null, data, pairs, encoding, config.FormFieldNameSelector);
 
-        // 表单体按「已转义的 ASCII 串」写入，因此编码只影响转义映射（默认 UTF-8 百分号编码，与 axios 一致）。
+        // 表单体按已转义的 ASCII 串写入，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
         var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
 
         var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
@@ -203,8 +187,9 @@ internal static class RequestBodyFactory
     }
 
     /// <summary>
-    /// 构建 multipart/form-data：标量/嵌套对象 → 普通字段，<see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件。
-    /// 数组/集合展开为「同名重复部件」（ASP.NET Core、FastAPI、PHP 等都能按同名集合绑定）。
+    /// 构建 multipart/form-data：标量 / 嵌套对象 → 普通字段，
+    /// <see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件；
+    /// 数组 / 集合展开为同名重复部件。
     /// </summary>
     private static HttpContent CreateMultipartContent(
         object data,
@@ -228,8 +213,7 @@ internal static class RequestBodyFactory
             // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
             content.Dispose();
 
-            // 字段名非法是「调用方给的选项有误」，不是序列化机制出错：
-            // 换成带配置上下文的 ERR_BAD_OPTION_VALUE，消息里已指明是哪个名字、哪个字符。
+            // 字段名非法属于调用方选项错误：换成带配置上下文的 ERR_BAD_OPTION_VALUE。
             if (ex is InvalidFieldNameException invalid)
             {
                 throw AxiosException.InvalidOption(invalid.Message, config, invalid);
@@ -260,9 +244,8 @@ internal static class RequestBodyFactory
             }
 
             case HttpContent part:
-                // 调用方自带部件内容（可自行控制 Content-Type / 文件名）：
-                // MultipartFormDataContent.Add 在部件已带 Content-Disposition 时完全不碰它
-                // （实测 net6.0/net8.0），因此这里只补缺失的 Name，其余（尤其 filename）原样保留。
+                // 调用方自带部件内容：Add 在部件已带 Content-Disposition 时完全不碰它，
+                // 因此这里只补缺失的 Name，其余（尤其 filename）原样保留。
                 AddUserPart(content, part, RequireName(name));
                 return;
 
@@ -339,9 +322,8 @@ internal static class RequestBodyFactory
             return;
         }
 
-        // 嵌套 POCO：public 可读属性；字段名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
-        // 这里刻意不读 JsonSerializerOptions.PropertyNamingPolicy：表单与序列化器解耦，
-        // 换成 XML / YAML 序列化器时字段名不能跟着变。
+        // 嵌套 POCO：public 可读属性；命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
+        // 刻意不读 JsonSerializerOptions.PropertyNamingPolicy：表单与序列化器解耦。
         foreach (var property in ReflectionCache.GetReadableProperties(type))
         {
             if (IsIgnored(property))
@@ -359,15 +341,13 @@ internal static class RequestBodyFactory
     }
 
     /// <summary>
-    /// 把结构化数据展平为表单键值对：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、
+    /// 把结构化数据展平为表单键值对：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组 <c>[i]</c>）、
     /// null 跳过、标量取原始文本。
     /// <para>
-    /// 直接读对象结构，<b>不经过序列化器</b>：表单是独立编码通道，换个 JSON/XML/YAML 序列化器
-    /// 不该改变表单里的字段名与内容。命名只看 <c>FormFieldNameSelector</c> 与 <c>[JsonPropertyName]</c>。
+    /// 直接读对象结构、<b>不经过序列化器</b>：表单是独立编码通道，命名只看
+    /// <c>FormFieldNameSelector</c> 与 <c>[JsonPropertyName]</c>。
     /// </para>
-    /// <para>
-    /// 传入 <see cref="JsonElement"/> 时按树语义展平（已经是解析好的树，没必要再反射一遍）。
-    /// </para>
+    /// <para>传入 <see cref="JsonElement"/> 时按树语义展平。</para>
     /// </summary>
     private static void CollectFormPairs(
         string? prefix,
@@ -389,7 +369,7 @@ internal static class RequestBodyFactory
                 AddPair(prefix, text, pairs, encoding);
                 return;
 
-            // urlencoded 没有二进制表示：用 base64（JSON 形态下字节也是字符串化的）。
+            // urlencoded 没有二进制表示：用 base64。
             case byte[] bytes:
                 AddPair(prefix, Convert.ToBase64String(bytes), pairs, encoding);
                 return;
@@ -582,8 +562,7 @@ internal static class RequestBodyFactory
         }
 
         // 字段名最终写进 Content-Disposition 的 name="..."（quoted-string）。
-        // 反斜杠与控制字符不会让 .NET 报错，而是让解析端退回「带引号的原文」——
-        // 服务端收到的键名多两个引号，字段静默对不上；引号与换行则直接破坏语法。
+        // 反斜杠与控制字符不会让 .NET 报错，而是让服务端拿到错位或带引号的键名；引号与换行直接破坏语法。
         if (DispositionTokens.FindInvalidCharacter(name) is { } invalid)
         {
             throw new InvalidFieldNameException(
@@ -622,11 +601,10 @@ internal static class RequestBodyFactory
     };
 
     /// <summary>
-    /// 请求体标量的文本形态。<b>不进序列化器</b>（<see cref="IsScalar"/> 命中就走这里）。
+    /// 请求体标量的文本形态。<b>不进序列化器</b>。
     /// <para>
-    /// 与表单/查询串的 <see cref="ScalarToString"/> 刻意不同：日期时间用往返格式（<c>O</c>），
-    /// 保留 Kind 与 tick —— 请求体是「这个值本身」，把本地时间悄悄折成 UTC、
-    /// 或把 tick 截到毫秒都是失真；表单/params 那边受既有约定约束，保持原样。
+    /// 与表单/查询串的 <see cref="ScalarToString"/> 刻意不同：日期时间用往返格式（<c>O</c>）保留 Kind 与 tick
+    /// —— 请求体是「这个值本身」，折成 UTC 或截到毫秒都是失真；表单/params 那边受既有约定约束。
     /// </para>
     /// </summary>
     private static string ScalarBodyText(object value) => value switch
@@ -757,11 +735,8 @@ internal static class RequestBodyFactory
     }
 
     /// <summary>
-    /// 内容自身是否已带 multipart boundary。
-    /// <para>
-    /// 挂在 <see cref="RequestBodyFactory"/> 而不是各调用方：请求体工厂（校验 HttpContent 合法性）
-    /// 与 header 应用（multipart 的 Content-Type 不允许被覆盖）用的是同一条判定，不能各写一份。
-    /// </para>
+    /// 内容自身是否已带 multipart boundary。请求体工厂（校验）与 header 应用（不允许覆盖 Content-Type）
+    /// 共用这条判定，因此挂在这里。
     /// </summary>
     internal static bool HasMultipartBoundary(MediaTypeHeaderValue? contentType)
     {
@@ -788,9 +763,8 @@ internal static class RequestBodyFactory
         => data is string or byte[] or ReadOnlyMemory<byte> or Memory<byte> or ArraySegment<byte> or Stream;
 
     /// <summary>
-    /// 组合实际写入的 Content-Type：媒体类型已自带 charset 时尊重用户；
-    /// 文本类媒体类型在显式设置 RequestEncoding 时补 charset，二进制类型不补。
-    /// 文本 / 二进制的判定与响应侧共用 <see cref="MediaTypes.IsTextual"/>。
+    /// 组合实际写入的 Content-Type：已自带 charset 时尊重用户；
+    /// 文本类型在显式设置 RequestEncoding 时补 charset，二进制类型不补。
     /// </summary>
     private static string ComposeMediaType(string mediaType, Encoding encoding, bool appendCharset)
     {
@@ -806,9 +780,8 @@ internal static class RequestBodyFactory
 
     private static void SetContentType(HttpContent content, string mediaType)
     {
-        // 所有 Content-Type 的唯一写入口（string / 二进制 / 表单 / multipart 部件 / 序列化器自报）：
-        // 这里统一再拦一次控制字符。调用方配置与 FormFile 已在赋值处校验，
-        // 但第三方 IContentSerializer.MediaType 是不可信输入，且同样直接落到这个头上。
+        // 所有 Content-Type 的唯一写入口：统一再拦一次控制字符
+        // （第三方 IContentSerializer.MediaType 是不可信输入，同样直接落到这个头上）。
         AxiosHeaders.ValidateHeaderValue("Content-Type", mediaType);
 
         content.Headers.Remove("Content-Type");
@@ -859,8 +832,8 @@ internal static class RequestBodyFactory
 }
 
 /// <summary>
-/// 零拷贝的 <see cref="ReadOnlyMemory{T}"/> 请求体内容：net6.0 没有内置的
-/// ReadOnlyMemoryContent（net7 才引入），ByteArrayContent 又需要先 ToArray()。
+/// 零拷贝的 <see cref="ReadOnlyMemory{T}"/> 请求体内容：net6.0 没有内置实现，
+/// ByteArrayContent 又需要先 ToArray()。
 /// </summary>
 internal sealed class ReadOnlyMemoryContent : HttpContent
 {

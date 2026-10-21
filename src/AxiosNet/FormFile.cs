@@ -20,8 +20,8 @@ namespace AxiosNet;
 /// </code>
 /// </para>
 /// <para>
-/// 生命周期：部件内容随请求一起释放（请求结束、异常或取消时都会 Dispose），
-/// 因此传入的流不要在请求之外复用；需要复用请自己读成 byte[] 后传入。
+/// 生命周期：部件内容随请求释放（结束、异常或取消时都会 Dispose），
+/// 因此传入的流不要在请求之外复用；需要复用请自己读成 byte[]。
 /// </para>
 /// </summary>
 public sealed class FormFile
@@ -39,9 +39,8 @@ public sealed class FormFile
 
         ArgumentNullException.ThrowIfNull(content);
 
-        // 文件名写进 Content-Disposition 的 filename="..."（quoted-string）。引号与换行会让
-        // MultipartFormDataContent 抛异常（错误信息里只有裸值，看不出是文件名），
-        // 反斜杠与控制字符则是静默错乱——在这里一次性拦住，给出指名到参数的错误。
+        // 文件名写进 Content-Disposition 的 filename="..."（quoted-string）：引号与换行会让
+        // MultipartFormDataContent 抛异常（且错误信息里看不出是文件名），反斜杠与控制字符则静默错乱。
         if (DispositionTokens.FindInvalidCharacter(fileName) is { } invalid)
         {
             throw new ArgumentException(
@@ -93,9 +92,8 @@ public sealed class FormFile
     /// 打开本地文件；发送给服务端的文件名取 <see cref="Path.GetFileName(string)"/>，
     /// 第二个参数是 <b>Content-Type</b>。
     /// <para>
-    /// 注意：本重载与 <see cref="FromPath(string, string, string?)"/> 在「传两个字符串」时不可区分，
-    /// 重载决议固定落到这里 —— <c>FromPath(path, "report.txt")</c> 会把 <c>report.txt</c> 当成
-    /// Content-Type。要指定文件名请显式用三参重载。
+    /// 注意：与 <see cref="FromPath(string, string, string?)"/> 在「传两个字符串」时无法区分，
+    /// 重载决议固定落到这里 —— <c>FromPath(path, "report.txt")</c> 会把 <c>report.txt</c> 当成 Content-Type。
     /// </para>
     /// </summary>
     public static FormFile FromPath(string path, string? contentType = null)
@@ -119,9 +117,8 @@ public sealed class FormFile
 
         try
         {
-            // 文件名校验在构造函数里（引号/反斜杠/控制字符会破坏 Content-Disposition）。
-            // 校验失败时异常从这里抛出，已经打开的流必须由这里关掉 ——
-            // 否则文件句柄永久泄漏，Windows 上连删除都会被拒。
+            // 文件名校验在构造函数里；失败时异常从这里抛出，已打开的流必须在这里关掉，
+            // 否则文件句柄永久泄漏（Windows 上连删除都会被拒）。
             return new FormFile(fileName, stream, contentType);
         }
         catch

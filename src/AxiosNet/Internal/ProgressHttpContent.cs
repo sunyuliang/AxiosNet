@@ -4,7 +4,7 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 上传侧包装：复用内部 <see cref="HttpContent"/> 的序列化逻辑，同时报告发送进度并按速率限流。
-/// 头部（含 Content-Length / Content-Type）从内部内容复制，因此外层表现与原内容一致。
+/// 头部从内部内容复制，因此外层表现与原内容一致。
 /// </summary>
 internal sealed class ProgressHttpContent : HttpContent
 {
@@ -24,8 +24,7 @@ internal sealed class ProgressHttpContent : HttpContent
         }
     }
 
-    // 注意：net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，
-    // 必须实现；委托到带令牌版本（无令牌可用时传 None）。
+    // net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，必须实现。
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         => SerializeToStreamAsync(stream, context, CancellationToken.None);
 

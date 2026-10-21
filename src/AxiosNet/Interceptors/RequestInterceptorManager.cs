@@ -6,16 +6,13 @@ internal sealed record RequestInterceptor(
     Func<Exception, Task<AxiosConfig>>? OnRejected);
 
 /// <summary>
-/// 请求拦截器管理器，对应 axios.interceptors.request。
+/// 请求拦截器管理器，对应 axios.interceptors.request。执行顺序与 axios 一致：
+/// 按注册顺序的<b>逆序</b>执行（后注册的先执行）。
 /// <para>
-/// 执行顺序与 axios 一致：按注册顺序的**逆序**执行（后注册的先执行）。
-/// </para>
-/// <para>
-/// <b>与 axios 的一处有意分歧</b>：<see cref="RequestInterceptor.OnRejected"/> 只捕获
-/// <b>同一拦截器自己的 <c>OnFulfilled</c></b> 抛出的异常，不捕获发送阶段（建连 / 超时 / 取消 / 网络）的错误。
-/// axios 里请求拦截器的 rejected 处在同一条链上，因此也能兜住 dispatch 异常，但它返回的 config 会被
-/// 当作"再发一次请求"——一个只做日志的 rejected 就会把 POST 静默重发一遍。
-/// 这里选择更窄也更可预期的语义：要感知发送错误，请用响应拦截器的 <c>OnRejected</c>（它能拿到所有异常）。
+/// <b>与 axios 的有意分歧</b>：<see cref="RequestInterceptor.OnRejected"/> 只捕获<b>同一拦截器自己的
+/// <c>OnFulfilled</c></b> 抛出的异常，不捕获发送阶段（建连 / 超时 / 取消 / 网络）的错误。
+/// axios 里 rejected 能兜住 dispatch 异常，但返回的 config 会被当作「再发一次请求」——
+/// 一个只做日志的 rejected 就会把 POST 静默重发。要感知发送错误请用响应拦截器的 <c>OnRejected</c>。
 /// </para>
 /// </summary>
 public sealed class RequestInterceptorManager
@@ -23,7 +20,7 @@ public sealed class RequestInterceptorManager
     private readonly List<RequestInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册/弹出/清空才失效。请求热路径上避免每请求重建 List（含逆序副本）。
+    // 快照缓存：注册/弹出/清空才失效，避免每请求重建 List（含逆序副本）。
     // 用数组而不是 IReadOnlyList：数组的 foreach 编译成下标循环，不会把枚举器装箱。
     private RequestInterceptor[]? _snapshot;
 

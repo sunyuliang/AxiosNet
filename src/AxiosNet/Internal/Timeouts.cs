@@ -3,14 +3,9 @@ namespace AxiosNet.Internal;
 /// <summary>
 /// 超时值的收敛规则。
 /// <para>
-/// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> 底层是计时器队列，
-/// 延迟上限为 <c>uint.MaxValue - 1</c> 毫秒（约 49.7 天）；超出会抛裸
-/// <see cref="ArgumentOutOfRangeException"/>，既不是 <see cref="AxiosException"/>，
-/// 也会在请求体已经创建之后打断调用链（调用方拿到的是一句「参数 delay 越界」）。
-/// </para>
-/// <para>
-/// 因此这里统一收敛：超过上限按上限处理（语义上仍是「极长但有限的超时」），
-/// 调用方不需要知道计时器的实现细节。要真正的无限超时用 <see cref="AxiosConfig.Timeout"/> = 0。
+/// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> 底层是计时器队列，延迟上限为
+/// <c>uint.MaxValue - 1</c> 毫秒（约 49.7 天），超出会抛裸 <see cref="ArgumentOutOfRangeException"/>。
+/// 这里统一收敛到上限（语义仍是「极长但有限」）；要真正的无限超时用 <see cref="AxiosConfig.Timeout"/> = 0。
 /// </para>
 /// </summary>
 internal static class Timeouts

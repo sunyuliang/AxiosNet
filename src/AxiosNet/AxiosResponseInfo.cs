@@ -3,20 +3,14 @@ namespace AxiosNet;
 /// <summary>
 /// 响应阶段的只读上下文（状态码 / 响应头 / 内容类型），通过 <see cref="AxiosConfig.Response"/> 取用。
 /// <para>
-/// 存在的意义：反序列化和 <see cref="AxiosConfig.TransformResponse"/> 都只能看到
-/// <see cref="AxiosConfig"/>，看不到响应头 —— 于是「按 <c>X-Schema-Version</c> 选择解析规则」
-/// 「把 <c>X-Total-Count</c> 贴到分页对象上」这类需求没有落点。本类型补上这个缺口。
+/// 存在意义：反序列化与 <see cref="AxiosConfig.TransformResponse"/> 只能看到 <see cref="AxiosConfig"/>，
+/// 看不到响应头 —— 「按 <c>X-Schema-Version</c> 选解析规则」「把 <c>X-Total-Count</c> 贴到分页对象上」
+/// 这类需求需要它。
 /// </para>
 /// <para>
-/// 三个使用约束：
-/// <list type="bullet">
-/// <item><b>只在响应方向有值</b>：请求阶段（<see cref="Serialization.IContentSerializer.Serialize"/>）
-/// 读到的是 <c>null</c>；</item>
-/// <item><b>零拷贝</b>：<see cref="Headers"/> 与 <see cref="AxiosResponse.Headers"/> 是同一个字典实例，
-/// 不会为了它多复制一份响应头；</item>
-/// <item><b>不随配置克隆</b>：<see cref="AxiosConfig.Clone"/> 会把它清空，避免上一次响应的头
-/// 被带进下一次请求的序列化器。</item>
-/// </list>
+/// 三个约束：<b>只在响应方向有值</b>（请求阶段读到 <c>null</c>）；
+/// <b>零拷贝</b>（<see cref="Headers"/> 与 <see cref="AxiosResponse.Headers"/> 同一实例）；
+/// <b>不随配置克隆</b>（<see cref="AxiosConfig.Clone"/> 会清空它）。
 /// </para>
 /// </summary>
 public sealed class AxiosResponseInfo

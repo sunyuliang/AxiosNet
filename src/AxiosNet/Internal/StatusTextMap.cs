@@ -3,11 +3,10 @@ using System.Net;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// HttpClient 在 .NET Core 上不暴露 reason phrase，这里维护与 axios 行为一致的常见状态码文本。
+/// HttpClient 在 .NET Core 上不暴露 reason phrase，这里维护与 axios 一致的常见状态码文本。
 /// <para>
-/// 用 <c>switch</c> 而不是字典：编译器把它编成对整数区间的二分查找，
-/// 比一次委托到 <see cref="Dictionary{TKey,TValue}.TryGetValue"/> 的哈希查找更省，
-/// 而且状态码与文案的对应关系在源码里一目了然。
+/// 用 <c>switch</c> 而不是字典：编译器编成对整数区间的二分查找，比哈希查找更省，
+/// 且映射关系在源码里一目了然。
 /// </para>
 /// </summary>
 internal static class StatusTextMap

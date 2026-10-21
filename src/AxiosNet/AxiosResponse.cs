@@ -18,8 +18,8 @@ public class AxiosResponse
 
     /// <summary>合并了响应头与内容头的只读字典（大小写不敏感）。</summary>
     /// <remarks>
-    /// 延迟创建：请求管线里这个字典是现成的（直接整体赋值），构造期先建一个空字典
-    /// 只会在每个响应上白分配一次。手动 <c>new AxiosResponse()</c> 时读到的是空字典。
+    /// 延迟创建：管线里这个字典是现成的（直接整体赋值），构造期先建空字典只会在每个响应上白分配一次。
+    /// 手动 <c>new AxiosResponse()</c> 时读到的是空字典。
     /// </remarks>
     public IReadOnlyDictionary<string, IEnumerable<string>> Headers
     {
@@ -45,8 +45,8 @@ public class AxiosResponse
     /// <summary>
     /// 把非泛型响应复制成 <typeparamref name="TData"/> 的响应。
     /// <para>
-    /// 只有<b>响应拦截器把响应对象换掉</b>时才走这里（它写不出具体的泛型参数，只能给回非泛型对象）：
-    /// 正常路径由 <c>AxiosClient.SendTypedAsync</c> 预先造好泛型对象、管线就地填充，不产生第二个响应。
+    /// 只在<b>响应拦截器换掉响应对象</b>时走这里（它写不出泛型参数）：
+    /// 正常路径由管线就地填充预先造好的泛型对象，不产生第二个响应。
     /// </para>
     /// </summary>
     internal AxiosResponse<TData> AsTyped<TData>()
@@ -71,9 +71,8 @@ public sealed class AxiosResponse<TData> : AxiosResponse
     /// <summary>
     /// 未装箱的原始 Data（<c>base.Data</c> 本身）。
     /// <para>
-    /// 泛型请求的响应对象由调用方预先造好、在管线里就地填充（见 <c>AxiosClient.SendTypedAsync</c>），
-    /// 那时还没法走类型化的 <see cref="Data"/>：填充点只知道 <c>object</c>，校验与拆箱留给
-    /// <see cref="Internal.DataCast.EnsureCompatible{T}"/>。少了这个入口就只能把对象强转回基类去写。
+    /// 泛型响应由调用方预造、管线就地填充，填充点只知道 <c>object</c>：
+    /// 校验与拆箱留给 <see cref="Internal.DataCast.EnsureCompatible{T}"/>，因此需要这个入口写入。
     /// </para>
     /// </summary>
     internal object? RawData
@@ -85,10 +84,9 @@ public sealed class AxiosResponse<TData> : AxiosResponse
     /// <summary>
     /// 已转换成 <typeparamref name="TData"/> 的 Data。
     /// <para>
-    /// 转换在请求返回前就完成了（管线就地填充，或拦截器换对象时经
-    /// <see cref="AxiosResponse.AsTyped{TData}"/> 复制），因此这里只做拆箱，不再每次读取都跑一遍转换，
-    /// 也不把类型不匹配的检查推迟到属性 getter
-    /// （getter 抛业务异常会让日志、调试器、序列化统统在这里炸掉）。
+    /// 转换在请求返回前就完成（管线就地填充，或拦截器换对象时经
+    /// <see cref="AxiosResponse.AsTyped{TData}"/> 复制），因此这里只做拆箱；
+    /// 也不把类型检查推迟到 getter（getter 抛业务异常会让日志、调试器、序列化一起炸）。
     /// </para>
     /// </summary>
     public new TData? Data

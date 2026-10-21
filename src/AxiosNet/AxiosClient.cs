@@ -8,9 +8,9 @@ using AxiosNet.Serialization;
 namespace AxiosNet;
 
 /// <summary>
-/// axios 风格的 HTTP 客户端实例，对应 JS 中的 axios instance。
-/// 支持 baseURL / method / headers / params / data / timeout / auth / responseType /
-/// validateStatus / 取消令牌 / 请求与响应拦截器，默认连接复用并由连接池统一管理。
+/// axios 风格的 HTTP 客户端实例（对应 JS 的 axios instance）：支持 baseURL / method / headers /
+/// params / data / timeout / auth / responseType / validateStatus / 取消令牌 / 拦截器，
+/// 默认走连接池复用连接。
 /// </summary>
 public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 {
@@ -29,9 +29,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>对应 axios instance.interceptors。</summary>
     public AxiosInterceptors Interceptors { get; } = new();
 
-    /// <summary>
-    /// 该实例使用的连接池；注入自定义 <see cref="HttpMessageHandler"/> 的实例不使用连接池，此时为 <c>null</c>。
-    /// </summary>
+    /// <summary>本实例的连接池；注入自定义 <see cref="HttpMessageHandler"/> 时为 <c>null</c>。</summary>
     public HttpConnectionPool? Pool => _pool;
 
     /// <summary>是否使用连接池（即未直接注入 Handler）。</summary>
@@ -40,18 +38,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <param name="defaults">实例默认配置（对应 axios instance.defaults）。</param>
     /// <param name="pool">
     /// 共享连接池；与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
-    /// 池的连接行为（重定向 / 代理 / 凭据 / Cookie / 池选项）在创建池时已固定，
-    /// 因此 defaults 上的 <c>MaxRedirects</c> / <c>WithCredentials</c> / <c>Proxy</c> / <c>Credentials</c> /
-    /// <c>PoolOptions</c> 同样抛 <c>ERR_BAD_OPTION_VALUE</c>（与注入 handler 的策略一致），
-    /// 请在创建池的 <see cref="ConnectionPoolOptions"/> 上配置，或不传 pool 让本实例自建池。
+    /// 池的连接行为在创建时已固定，故 defaults 上的连接级选项同样报错，请在 <see cref="ConnectionPoolOptions"/> 上配置。
     /// </param>
     /// <param name="poolOptions">本实例自建连接池的选项。</param>
     /// <param name="handler">
-    /// 直接注入的 <see cref="HttpMessageHandler"/>（如自定义 <see cref="DelegatingHandler"/> 链、
-    /// 测试用内存 Handler）。一旦注入则<b>不创建连接池</b>，所有 origin 共用这一个 Handler，
-    /// 因此 <c>maxRedirects</c> / <c>proxy</c> / <c>credentials</c> / <c>withCredentials</c>
-    /// 等实例级选项需在 Handler 上自行配置（在 defaults 上设置会抛 <c>ERR_BAD_OPTION_VALUE</c>）。
-    /// 想在保留连接池的前提下插入 Handler 链，请改用 <see cref="ConnectionPoolOptions.HandlerFactory"/>。
+    /// 直接注入的 Handler（自定义链、测试用内存 Handler）；注入后<b>不创建连接池</b>，连接级选项由它自己决定。
+    /// 要保留池化请用 <see cref="ConnectionPoolOptions.HandlerFactory"/>。
     /// </param>
     /// <param name="disposeHandler">释放本实例时是否一并释放注入的 <paramref name="handler"/>。</param>
     public AxiosClient(
@@ -146,9 +138,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// 注入 Handler 时，连接层行为完全由 Handler 决定，实例级选项无法生效 —— 与其静默忽略，不如报错。
-    /// </summary>
+    /// <summary>注入 Handler 时连接级选项无法生效（由 Handler 决定）—— 与其静默忽略，不如报错。</summary>
     private static void ValidateHandlerLevelOptions(AxiosConfig? defaults, AxiosConfig config)
     {
         if (defaults is null)
@@ -175,10 +165,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// 共享连接池时，池已按自己的 <see cref="ConnectionPoolOptions"/> 创建完成，
-    /// defaults 上的连接级配置（重定向 / 凭据 / 代理 / Cookie）与 PoolOptions 都无法生效 —— 直接报错。
-    /// </summary>
+    /// <summary>共享连接池时池已建好，defaults 上的连接级配置与 PoolOptions 都无法生效 —— 直接报错。</summary>
     private static void ValidateSharedPoolLevelOptions(AxiosConfig? defaults, AxiosConfig config)
     {
         if (defaults is null)
@@ -215,13 +202,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 按配置拼出最终请求 URL（含 baseURL 合并与 params 序列化），不发请求。
-    /// 返回的是实际发送形态（已转义，如空格 → <c>%20</c>），可用于签名、日志与调试。
-    /// <para>
-    /// 注意：<see cref="System.Uri"/> 会按 RFC 3986 归一化百分号编码的非保留字符
-    /// （<c>%41</c>→<c>A</c>、<c>%7E</c>→<c>~</c>），这与请求行实际发送的内容一致；
-    /// 需要按原样保留调用方传入的编码串时，请以本方法的返回值作为签名输入。
-    /// </para>
+    /// 按配置拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求。
+    /// 返回实际发送形态（已转义），可直接用于签名与日志。
+    /// <para><see cref="System.Uri"/> 按 RFC 3986 归一化非保留字符（<c>%41</c>→<c>A</c>），与请求行一致。</para>
     /// </summary>
     public string GetUri(AxiosConfig config)
     {
@@ -277,21 +260,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 把调用方交进来的配置整理成「按请求项」：只有一种情况需要动手 —— 它本身就是一份
-    /// <b>已经合并过的生效配置</b>（典型是回放 <see cref="AxiosResponse.Config"/>）。
-    /// <para>
-    /// 那种配置带着 <see cref="AxiosConfig.EffectiveMerged"/> 标记。直接交给管线会被判成「无需合并」，
-    /// 于是本实例的默认值（默认头、transform 链、序列化器、校验规则……）整段被跳过：
-    /// 回放一次就等于切回了上一个实例的配置。这里 <see cref="AxiosConfig.Clone"/> 一次清掉标记，
-    /// 让它重新走「按请求项合并到本实例默认值」的常规路径；顺带避免管线把
-    /// <see cref="AxiosConfig.Response"/> 写回调用方持有的对象。
-    /// </para>
-    /// <para>
-    /// 这里的 <see cref="AxiosConfig.Clone"/> 同时会把那份配置里的<b>实例级选项</b>标成
-    /// 「来源是实例」（<see cref="AxiosConfig.InstanceOptionsInherited"/>），合并时一律沿用本实例的
-    /// 值：那些值原本是上一个实例的生效值、从来不是调用方写的按请求项，带过来只会与本实例比较
-    /// 并报出一条没人写过的 <c>ERR_BAD_OPTION_VALUE</c>，甚至真的换掉连接池。
-    /// </para>
+    /// 把调用方交进来的配置整理成「按请求项」：只有带 <see cref="AxiosConfig.EffectiveMerged"/> 的
+    /// 生效配置（典型是回放 <see cref="AxiosResponse.Config"/>）需要处理 ——
+    /// 克隆一次清掉标记，让它重新合并到本实例默认值，否则本实例的默认值会被整段跳过；
+    /// 同时把其中的实例级选项标成「来源是实例」，合并时沿用本实例的值。
     /// </summary>
     private static AxiosConfig PreparePerCall(AxiosConfig config)
         => config.EffectiveMerged ? config.Clone() : config;
@@ -312,17 +284,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 请求入口：负责「已释放」拦截、在途计数（配合 <see cref="Dispose"/> 的推迟释放协议）、
-    /// 配置合并与校验，然后跑完整条管线（拦截器 → 编码 → 发送 → 读取 → 转换）。
-    /// <para>
-    /// <paramref name="target"/> 是调用方预先造好的响应对象（泛型请求用它省掉一次复制），
-    /// 管线读完成功响应后就地填充并返回它。
-    /// </para>
-    /// <para>
-    /// 守卫与计数归还刻意放在同一个方法里成对出现：拆成「入口加、另一个方法减」时，
-    /// 中间任何一处抛异常（合并失败、拦截器返回 null、URI 非法、超时越界……）都会漏掉归还，
-    /// <see cref="Dispose"/> 的推迟释放就再也等不到那最后一条租约。
-    /// </para>
+    /// 请求入口：已释放拦截、在途计数（配合 <see cref="Dispose"/> 的推迟释放）、合并与校验，
+    /// 然后跑完整管线（拦截器 → 编码 → 发送 → 读取 → 转换）。
+    /// <paramref name="target"/> 是调用方预造的响应对象，管线就地填充。
+    /// <para>守卫与计数归还必须成对：任何一处抛异常都靠 finally 归还最后一条租约。</para>
     /// </summary>
     private async Task<AxiosResponse> SendAsync(
         AxiosConfig perCallConfig,
@@ -340,8 +305,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 new ObjectDisposedException(nameof(AxiosClient)));
         }
 
-        // 先占位再复核：保证请求要么完整跑在释放之前，要么明确收到错误，
-        // 不会出现「拿着已释放的 Handler/池资源跑到一半」的中间态。
+        // 先占位再复核：请求要么完整跑在释放之前，要么明确收到错误，
+        // 不会出现「拿着已释放的 Handler/池跑到一半」的中间态。
         Interlocked.Increment(ref _inFlight);
         if (Volatile.Read(ref _disposed) == 1)
         {
@@ -355,26 +320,25 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         try
         {
-            // 生效配置：快捷方法传进来的已经是合并好的（见 Shortcut），其余入口在这里合并到实例默认值。
-            // 校验一律对「生效配置」做：两种来源的判定条件相同（见 ValidatePerRequestOptions）。
+            // 生效配置：快捷方法传进来的已合并好（见 Shortcut），其余入口在这里合并到实例默认值。
+            // 校验一律对生效配置做：两种来源的判定条件相同。
             var config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
             ValidatePerRequestOptions(config);
 
-            // 泛型调用 XxxAsync<dynamic>/<object> 时（T 即 object），响应自动展开为动态对象图，
-            // 对标 JS 中直接 response.data.xxx 的用法；显式指定过其他 responseType 时以显式配置为准。
+            // 泛型 <dynamic>/<object>：响应自动展开为动态对象图（对标 response.data.xxx）；
+            // 显式设置过其他 responseType 时以显式配置为准。
             if (dataType == typeof(object) && config.ResponseType == ResponseType.Json)
             {
                 config.ResponseType = ResponseType.Dynamic;
             }
 
-            // 泛型调用 XxxAsync<Stream> 时自动切换为流式响应（对标 axios responseType: 'stream'），
-            // 下载大文件直接用，不必再手动设置 ResponseType。显式配置的 responseType 仍然优先。
+            // 泛型 <Stream>：自动切流式响应（对标 responseType: 'stream'）；显式配置仍然优先。
             if (dataType == typeof(Stream) && config.ResponseType == ResponseType.Json)
             {
                 config.ResponseType = ResponseType.Stream;
             }
 
-            // 负值没有任何合理语义，静默当作「不限制」会让调用方以为限制生效了 —— 直接报错。
+            // 负值没有合理语义，静默当作「不限制」会让调用方以为限制生效了。
             ValidateRangeConfig(config);
 
             // 1) 请求拦截器：与 axios 一致，按注册逆序执行
@@ -395,15 +359,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     next = await interceptor.OnRejected(ex).ConfigureAwait(false);
                 }
 
-                // 返回 null 时此前会在下一行（config.TransformRequest）炸成裸 NullReferenceException，
-                // 调用方既拿不到 AxiosException 也看不出是哪一层拦截器出的错。
+                // 返回 null 会在下一行炸成裸 NullReferenceException，调用方看不出是哪层拦截器出的错。
                 config = next ?? throw AxiosException.InvalidOption(
                     "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
                     + "（要做修改请改传入的 config 后端返回它）。",
                     config);
             }
 
-            // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
+            // 2) transformRequest：拦截器之后、编码之前依次作用于数据
             // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
             if (config.HasTransformRequest)
             {
@@ -428,8 +391,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             };
 
             // request 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
-            // 所以从这里开始到方法结束的所有路径（含 CancelAfter 越界、请求体超限、拦截器抛异常）
-            // 都必须先释放它；只把「发送 + 读取」包进 finally 会把未发出的请求体漏掉。
+            // 所以从这里到方法结束的所有路径都必须先释放它。
             try
             {
                 HttpContent? content;
@@ -439,8 +401,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
                 catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
                 {
-                    // 序列化失败（循环引用、自定义转换器抛错、multipart 缺字段名等）同样走统一错误模型；
-                    // 取消类异常原样抛出，保证 IsCancel 语义不被吞掉。
+                    // 序列化失败同样走统一错误模型；取消类异常原样抛出，保留 IsCancel 语义。
                     throw AxiosException.BadRequestPayload(
                         config,
                         request,
@@ -448,7 +409,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         ex);
                 }
 
-                // 上传进度 / 限速：包一层流量统计（头部从原内容复制，序列化逻辑不变）
+                // 上传进度 / 限速：包一层流量统计（头部复制，序列化逻辑不变）
                 if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
                 {
                     content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate);
@@ -472,30 +433,29 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 var externalToken = config.CancellationToken;
                 var hasTimeout = config.Timeout > TimeSpan.Zero;
 
-                // 只有「设了超时」或「外部令牌可取消」才需要链接源：两者都不成立时 linkedCts.Token
-                // 恒等于 None，为每个请求建一个 CTS（连同 SendAsync 里的令牌注册）换不来任何行为差异。
+                // 无超时且外部令牌不可取消时 linkedCts.Token 恒为 None，建 CTS 换不来任何行为差异。
                 using CancellationTokenSource? linkedCts = hasTimeout || externalToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
                     : null;
 
                 if (hasTimeout)
                 {
-                    // CancelAfter 的上限是 uint.MaxValue-1 毫秒（约 49.7 天），越界会抛裸
-                    // ArgumentOutOfRangeException：收敛到上限，语义等价于「极长但有限」。
+                    // CancelAfter 上限约 49.7 天（uint.MaxValue-1 毫秒），越界抛裸 ArgumentOutOfRangeException：
+                    // 收敛到上限，语义等价于「极长但有限」。
                     linkedCts!.CancelAfter(Timeouts.Clamp(config.Timeout));
                 }
 
-                // 交给底层每一次 I/O 的令牌：无超时且无外部取消时就是 None（不注册、不分配）。
+                // 交给底层每次 I/O 的令牌：无超时且无外部取消时就是 None（不注册、不分配）。
                 var sendToken = linkedCts?.Token ?? CancellationToken.None;
 
                 var streamResponse = config.ResponseType == ResponseType.Stream;
 
-                // 流式响应的 timeout 需要延续到正文读取结束，这里记录请求起点用于计算剩余时间。
-                // 只有「流式 + 设了超时」用得上：其余组合下 remaining 恒为 null，计时器纯属白分配。
+                // 流式响应的 timeout 要延续到正文读完：记录起点用于算剩余预算。
+                // 只有「流式 + 有超时」用得上，其余组合下计时器纯属白分配。
                 var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
 
-                // 流式正文的所有权交给调用方持有的流；拦截器抛异常或丢弃响应时由这里兜底释放，
-                // 否则租约永远不归还，该 origin 节点再也不会被驱逐。
+                // 流式正文的所有权交给调用方：拦截器抛异常或丢弃响应时由这里兜底释放，
+                // 否则租约永不归还，该 origin 节点再也不会被驱逐。
                 IDisposable? streamOwner = null;
 
                 // 4) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
@@ -504,10 +464,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     PoolLease? lease = null;
                     try
                     {
-                        // 注入 Handler 的实例：固定 HttpClient，所有 origin 共用；
-                        // 默认实例：按 origin 从连接池租用（连接复用 + 并发上限）。
-                        // 租用也走异步入口并把链接后的令牌传进去：已取消/已超时的请求在租用前就会被截断，
-                        // 抛出的 OperationCanceledException 与发送阶段同规则翻译成统一的错误模型。
+                        // 注入 Handler：固定 HttpClient；默认实例：按 origin 租用（连接复用 + 并发上限）。
+                        // 租用也走异步入口：已取消/已超时的请求在租用前就被截断，异常同样翻译成统一错误模型。
                         var httpClient = _customClient;
                         if (httpClient is null)
                         {
@@ -562,13 +520,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         bool statusAccepted;
                         try
                         {
-                            // 状态码的接受性只判定一次：它同时决定「宽松解析」与「是否抛错」，
-                            // 调用两次会让带副作用的 validateStatus（计数、日志、限流）被执行两遍，
-                            // 且两次结果不一致时（非确定性判定）行为自相矛盾。
+                            // 状态码接受性只判定一次：它同时决定宽松解析与是否抛错，
+                            // 判两次会让有副作用的 validateStatus（计数、日志）执行两遍。
                             var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
                             statusAccepted = validateStatus((int)responseMessage.StatusCode);
 
-                            // 状态码不合法时转换必须宽松：否则 404 + HTML 错误页会在反序列化处抛错，
+                            // 状态码不合法时宽松解析：否则 404 + HTML 会在反序列化处抛错，
                             // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
                             response = await ReadResponseAsync(
                                     responseMessage,
@@ -592,18 +549,18 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         }
                         catch (IOException ex)
                         {
-                            // 连接中途断开 / 响应体被截断（HttpIOException）：统一成 ERR_NETWORK，而不是裸 IOException。
+                            // 连接中途断开 / 正文被截断（HttpIOException）：统一成 ERR_NETWORK。
                             responseMessage.Dispose();
                             throw AxiosException.Network(config, request, ex);
                         }
                         catch
                         {
-                            // 读取/解析失败（含 maxContentLength 超限、反序列化失败）：先释放响应，避免连接泄漏
+                            // 读取/解析失败（含长度超限、反序列化失败）：先释放响应，避免连接泄漏
                             responseMessage.Dispose();
                             throw;
                         }
 
-                        // stream 模式下消息不能释放（调用方要继续读流），所有权转移给 ResponseStreamOwner。
+                        // stream 模式下消息不能释放（正文流从它取出），所有权转移给 ResponseStreamOwner。
                         if (!streamResponse)
                         {
                             responseMessage.Dispose();
@@ -613,8 +570,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         {
                             if (streamResponse)
                             {
-                                // 失败响应没有人会去读正文：立即释放内容把连接还回池里，
-                                // 否则这条连接会被一个永远不会被读取的流一直占住（重试几次就能打满连接池）。
+                                // 失败响应没人读正文：立即释放内容把连接还回池，
+                                // 否则这条连接会被一个永远不会被读取的流一直占住（重试几次就能打满池）。
                                 (response.Data as IDisposable)?.Dispose();
                                 response.Data = null;
                                 responseMessage.Dispose();
@@ -625,17 +582,15 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
                         if (streamResponse && response.Data is Stream body)
                         {
-                            // 无条件包装（Timeout=0 也包）：只有这样「外部取消」与「正文阶段 I/O 异常」
-                            // 在流式响应上才和非流式一致，否则同一场景会因 Timeout 配置不同给出不同的异常类型。
+                            // 无条件包装（Timeout=0 也包）：让外部取消与正文 I/O 异常在不同 Timeout 下给出同一类异常。
                             var remaining = clock is not null
                                 ? config.Timeout - clock.Elapsed
                                 : (TimeSpan?)null;
 
                             Stream wrapped = new TimeoutStream(body, remaining, externalToken, config, request);
 
-                            // 租约 + HttpResponseMessage 的所有权一并转移给调用方持有的流：
-                            // 下载期间该 origin 仍被视为活跃（避免空闲驱逐把连接回收），
-                            // 流 Dispose 时释放响应消息（此前流式路径只释放正文，消息本体永久悬空）。
+                            // 租约与 HttpResponseMessage 一并转移给流：下载期间该 origin 仍算活跃，
+                            // 流 Dispose 时统一释放（否则消息本体永久悬空）。
                             wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease);
                             lease = null;
 
@@ -647,8 +602,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     }
                     catch (ObjectDisposedException ex)
                     {
-                        // 池被直接 Dispose()/Clear()（或在途时关闭）：底层 Handler/Client 已释放，
-                        // 裸 ObjectDisposedException 对调用方没有信息量，统一翻译成「请求被中止」。
+                        // 池被 Dispose()/Clear()（或在途时关闭）：底层资源已释放，
+                        // 裸 ObjectDisposedException 没有信息量，翻译成「请求被中止」。
                         throw AxiosException.Canceled(
                             config,
                             request,
@@ -682,8 +637,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                                 throw;
                             }
 
-                            // 返回 null 此前会被当成「响应就是 null」原样交回调用方，
-                            // GetAsync<T> 随后在 AsTyped 上炸 NRE —— 明确报成配置错误。
+                            // 返回 null 会被当成「响应就是 null」交回调用方，GetAsync<T> 随后炸 NRE —— 明确报错。
                             return (await rejected(ex).ConfigureAwait(false))
                                 ?? throw NullInterceptorResult(config);
                         }
@@ -712,7 +666,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     throw;
                 }
 
-                // 拦截器返回了新实例：原流式正文没有任何引用，需要在这里释放。
+                // 拦截器返回了新实例：原流式正文已无引用，需要在这里释放。
                 if (streamOwner is not null && !ReferenceEquals(result?.Data, streamOwner))
                 {
                     streamOwner.Dispose();
@@ -734,8 +688,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private static bool DefaultValidateStatus(int status) => status is >= 200 and < 300;
 
     /// <summary>
-    /// 响应拦截器返回 <c>null</c>：返回类型是非空的 <see cref="AxiosResponse"/>，
-    /// 静默把 null 交出去会让调用方在很远的地方炸 NRE（<c>GetAsync&lt;T&gt;</c> 的 <c>AsTyped</c>）。
+    /// 响应拦截器返回 <c>null</c>：返回类型非空，静默交出去只会让调用方在很远的地方炸 NRE。
     /// </summary>
     private static AxiosException NullInterceptorResult(AxiosConfig config)
         => AxiosException.InvalidOption(
@@ -744,12 +697,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             config);
 
     /// <summary>
-    /// 限制类配置的取值范围校验。
-    /// <para>
-    /// 负值此前一律被静默当作「不限制」（<c>Timeout &gt; 0</c> / <c>is &gt; 0</c> 判断），
-    /// 调用方会以为限制生效了。这里改成显式报错，语义边界写清楚：
-    /// <c>Timeout = 0</c> 表示不超时；<c>MaxRate = 0</c> 等价于不限速；<c>null</c> 表示不限。
-    /// </para>
+    /// 限制类配置的取值范围校验：负值一律报错，不静默当作「不限制」。
+    /// <c>Timeout=0</c> 不超时；<c>MaxRate=0</c> 等价不限速；<c>null</c> 不限。
     /// </summary>
     private static void ValidateRangeConfig(AxiosConfig config)
     {
@@ -779,14 +728,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造连接池时已固定，
-    /// 按请求写<b>不同的值</b>无法生效 —— 与其静默忽略，不如明确报错；
-    /// 写<b>与实例生效值相同</b>的值则是等价写法，放行（否则调用方把 defaults 抄一遍到每个请求上都会炸）。
-    /// <para>
-    /// 判定对象是<b>合并后的生效配置</b>：快捷方法把请求项直接写进 defaults 的副本，非快捷入口在
-    /// <see cref="SendAsync"/> 里合并，两者到这里的形态一致 —— 于是只需判定「值与实例生效值是否相同」，
-    /// 不用再靠 <c>*Set</c> 标记去追「是谁写的」。
-    /// </para>
+    /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造池时已固定：
+    /// 按请求写<b>不同的值</b>报错，写<b>相同的值</b>放行（等价写法）。
+    /// <para>判定对象是合并后的生效配置，因此只需比值，不用追是谁写的。</para>
     /// </summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {
@@ -816,12 +760,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// <c>WithCredentials</c>：只允许复述实例生效值。
-    /// <para>
-    /// 判定依据是「值是否与生效值不同」而不是「是否设置过」：写相同的值完全等价于不写，没有理由报错。
-    /// 注入自定义 Handler 时无从得知它的 Cookie 策略、无法判断是否等价，只要写就报错
-    /// （这种实例的 defaults 上不可能设过该项，构造期就拦了，因此 <c>WithCredentialsSet</c> 为 true 一定是本次写的）。
-    /// </para>
+    /// <c>WithCredentials</c> 只允许复述实例生效值（值相同即等价，不必报错）；
+    /// 注入自定义 Handler 时无从判断是否等价，只要写就报错。
     /// </summary>
     private void ValidateWithCredentials(AxiosConfig config)
     {
@@ -849,12 +789,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// <c>MaxRedirects</c>：只允许写与实例生效值相同的值。
-    /// <para>
-    /// 与实例默认值相同就没什么可判的；不同的值再与池上真正生效的策略比一次
-    /// ——「defaults 没设置、poolOptions 把上限改成 3、按请求写 3」正是这种等价写法。
-    /// 生效值取池的实际策略（<c>AllowAutoRedirect = false</c> 时视为 0），不是属性默认值 5。
-    /// </para>
+    /// <c>MaxRedirects</c> 只允许写与实例生效值相同的值；生效值取池的实际策略
+    /// （<c>AllowAutoRedirect = false</c> 时视为 0），不是属性默认值 5。
     /// </summary>
     private void ValidateMaxRedirects(AxiosConfig config)
     {
@@ -890,12 +826,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 下载侧包装：先按 Content-Length 做 maxContentLength 预检，
-    /// 再按需套上进度/限速/长度上限流（三者都不需要时原样返回）。
-    /// <para>
-    /// 长度上限必须在流上生效，而不只是非流式路径的「边读边计数」：流式响应（含 chunked、
-    /// 服务端未声明长度）此前完全没有 maxContentLength 约束，调用方以为设了限制其实没设。
-    /// </para>
+    /// 下载侧包装：先按 Content-Length 预检 maxContentLength，再按需套进度/限速/长度上限流
+    /// （都不需要时原样返回）。
+    /// <para>长度上限必须在流上生效，否则 chunked / 未声明长度的流式响应完全没有约束。</para>
     /// </summary>
     private static Stream WrapDownloadStream(
         Stream stream,
@@ -937,7 +870,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         const int chunkSize = 81920;
 
         // 声明了长度时按声明值预分配，避免 MemoryStream 反复扩容（大响应在 LOH 上抖动明显）。
-        // 上限 8MB：防止恶意 Content-Length 直接触发一次超大分配。
+        // 上限 8MB：防止恶意 Content-Length 触发一次超大分配。
         const long maxPreallocated = 8 * 1024 * 1024;
         var capacity = declaredLength is > 0 and <= maxPreallocated ? (int)declaredLength.Value : 0;
         var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
@@ -956,10 +889,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 body.Write(buffer, 0, read);
             }
 
-            // 「精确预分配且刚好写满」时底层数组没有多余空间，直接交出，省掉 ToArray 的第二次拷贝
-            // （大响应在 LOH 上每少一次整段复制都很可观）。注意必须同时确认底层数组长度 == 已读字节：
-            // ArraySegment.Array 是完整底层数组（容量可能大于 Count），只比 Count == Length 会把
-            // 扩容路径（未声明长度等）的零填充一起交出去。任何一项不吻合就退回拷贝。
+            // 精确预分配且刚好写满时直接交出底层数组，省掉 ToArray 的第二次拷贝。
+            // 必须同时确认底层数组长度 == 已读字节：ArraySegment.Array 是完整数组（容量可能大于 Count），
+            // 只比 Count 会把扩容路径的零填充一起交出去。任一不吻合就退回拷贝。
             return body.TryGetBuffer(out var segment)
                 && segment.Count == body.Length
                 && segment.Array is { Length: var arrayLength }
@@ -998,8 +930,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         var statusText = StatusTextMap.Get(status);
 
         // 反序列化 / transformResponse 阶段可读的响应上下文：零拷贝复用刚建好的 headers。
-        // 让序列化器能按响应头决定解析规则（如 X-Schema-Version），transformResponse 能搬元数据
-        // （如 X-Total-Count）。响应体的文本/二进制判定不受影响 —— 那由 MediaTypes.IsTextual 决定。
+        // 序列化器可据此选解析规则（X-Schema-Version），transformResponse 可搬元数据（X-Total-Count）。
+        // 响应体的文本/二进制判定不受影响 —— 那由 MediaTypes.IsTextual 决定。
         var contentType = message.Content.Headers.ContentType;
         config.Response = new AxiosResponseInfo(
             status,
@@ -1026,20 +958,18 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var charSet = contentType?.CharSet;
             var responseMediaType = contentType?.MediaType;
 
-            // 响应体是文本还是二进制，由 Content-Type 决定（无 Content-Type 视为文本）。
-            // 二进制响应连解码都不做：protobuf / 图片 / 下载流没理由先转成 UTF-16 再交给序列化器。
+            // 文本还是二进制由 Content-Type 决定（无 Content-Type 视为文本）；二进制连解码都不做。
             var textual = MediaTypes.IsTextual(responseMediaType);
 
-            // 只要字节的调用（arraybuffer / byte[] / 二进制响应的业务对象）不做文本解码。
-            // 其余情况只解码一次，文本在 ConvertData 里按需使用（基础类型直读、文本对象交序列化器）。
+            // 只要字节的调用（arraybuffer / byte[] / 二进制业务对象）不解码；
+            // 其余只解码一次，文本在 ConvertData 里按需使用。
             var text = NeedsText(config, dataType, textual)
                 ? ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding)
                 : null;
             data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
 
-            // transformResponse：在反序列化之后依次加工 Data（对应 axios transformResponse）。
-            // 与 transformRequest 同一套错误模型：调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，
-            // 不让裸 InvalidOperationException / NullReferenceException 从管线深处漏给调用方。
+            // transformResponse：反序列化之后依次加工 Data。
+            // 调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，不让裸异常从管线深处漏出。
             if (config.HasTransformResponse)
             {
                 foreach (var transform in config.TransformResponse)
@@ -1056,7 +986,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
         }
 
-        // 泛型调用方已经把目标类型的响应对象造好交过来（见 SendTypedAsync<T>）：就地填充，
+        // 泛型调用方已把目标类型的响应对象造好交过来：就地填充，
         // 否则「管线造一个非泛型响应 + AsTyped 再复制一个」是每请求两个响应对象。
         var response = target ?? new AxiosResponse();
         response.Data = data;
@@ -1069,10 +999,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 是否真的需要把响应字节解码成文本。
-    /// arraybuffer / stream / byte[] 只给原始字节；二进制响应（Content-Type 非文本）的业务对象走
-    /// 序列化器的字节入口，同样不解码；其余形态（text、dynamic、基础类型、文本对象）都需要文本
-    /// —— 解码一次，后续路径共用。
+    /// 是否真的要把响应字节解码成文本：arraybuffer / stream / byte[] 只要字节；
+    /// 二进制响应走序列化器的字节入口；其余形态（text、dynamic、基础类型、文本对象）都需要文本。
     /// </summary>
     private static bool NeedsText(AxiosConfig config, Type? dataType, bool textual) => config.ResponseType switch
     {
@@ -1086,8 +1014,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private static bool IsBlank(string text) => text.AsSpan().Trim().IsEmpty;
 
     /// <summary>
-    /// 尚未解码时的空白判定：只含 ASCII 空白（SP/HTAB/CR/LF）的字节串无需解码就能判空。
-    /// 非 ASCII 空白（如 NBSP）留给解码后的 <see cref="IsBlank"/> 兜底。
+    /// 未解码时的空白判定：只含 ASCII 空白（SP/HTAB/CR/LF）即可直接判空，
+    /// 非 ASCII 空白（如 NBSP）留给解码后的 <see cref="IsBlank"/>。
     /// </summary>
     private static bool IsBlankUtf8(ReadOnlySpan<byte> bytes)
     {
@@ -1103,12 +1031,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 把「原始字节 + 已解码文本」按 responseType / 目标类型转换为 Data。
-    /// <para>
-    /// 分派原则（与格式解耦）：原始字节、文本、dynamic 图、基础数据类型都由框架自己给出；
-    /// 只有<b>业务对象</b>才交给 <see cref="IContentSerializer"/>，且按 <paramref name="textual"/>
-    /// 决定进文本入口还是字节入口。
-    /// </para>
+    /// 按 responseType / 目标类型把「原始字节 + 已解码文本」转换为 Data：
+    /// 字节、文本、dynamic 图、基础类型由框架给出，只有<b>业务对象</b>交给 <see cref="IContentSerializer"/>。
     /// <para><paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始内容，不抛异常。</para>
     /// </summary>
     private static object? ConvertData(
@@ -1152,10 +1076,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                // 非 JSON 响应（HTML 错误页、纯文本等）同样走统一错误模型，而不是裸解析异常。
-                // 这是**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，
-                // 把一段 HTML 当 data 交回去只会在几十行之后炸成 RuntimeBinderException。
-                // 状态码不合法时（lenient）仍然回退原文。
+                // 非 JSON 响应（HTML 错误页、纯文本）同样走统一错误模型。
+                // 这里**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，把 HTML 交回去只会在几十行后炸成
+                // RuntimeBinderException；状态码不合法时（lenient）仍然回退原文。
                 if (lenient)
                 {
                     return json;
@@ -1177,18 +1100,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
 
         // 5) 空 body 视为 null；只含空白的 body 同样视为空 —— 否则服务端多吐一个换行就会让
-        //    typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null，两者本该等价。
+        //    typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null。
         if (text is null ? IsBlankUtf8(bytes) : IsBlank(text))
         {
             return null;
         }
 
-        // 6) 没有目标类型（非泛型 / JsonElement）：框架按 JSON 文档形态给出，
-        //    解析失败原样返回文本（对齐 axios transformResponse）。
-        //    注意这里不用序列化器：它已经没有「文档形态」的概念，而「无类型」本来也不需要业务反序列化。
+        // 6) 没有目标类型（非泛型 / JsonElement）：框架按 JSON 文档形态给出，解析失败原样返回文本。
+        //    不用序列化器：它没有「文档形态」的概念，而「无类型」也不需要业务反序列化。
         if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
         {
-            // 二进制响应没有「文档形态」，原样给字节——把 protobuf / 图片当文本解析只会得到乱码。
+            // 二进制响应没有文档形态，原样给字节。
             if (!textual)
             {
                 return bytes;
@@ -1206,9 +1128,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
         }
 
-        // 7) 二进制响应（Content-Type 声明为非文本）：不做文本解码，交给序列化器的字节入口。
-        //    Protobuf / MessagePack / CBOR 因此拿到的就是原始字节；文本格式的序列化器不用实现该入口
-        //    （接口里默认按 UTF-8 解码转调文本入口）。
+        // 7) 二进制响应（Content-Type 非文本）：不做解码，交给序列化器的字节入口。
+        //    文本格式的序列化器不用实现该入口（接口默认按 UTF-8 解码转调文本入口）。
         if (!textual)
         {
             try
@@ -1217,7 +1138,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                // lenient（状态码不合法）：解析失败不抛，原样回字节——此时已经没有「文本」可回退。
+                // lenient（状态码不合法）：解析失败不抛，原样回字节——此时没有「文本」可回退。
                 if (lenient)
                 {
                     return bytes;
@@ -1229,9 +1150,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         var raw = Text();
 
-        // 8) 基础数据类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，
-        //    不依赖序列化器 —— XML 的 <Age>30</Age> 与 JSON 的裸 42 都走这里。
-        //    JSON 的带引号形态（"42"）框架解析不了，交给下面的序列化器兜底。
+        // 8) 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，不依赖序列化器
+        //    —— XML 的 <Age>30</Age> 与 JSON 的裸 42 都走这里；JSON 的带引号形态（"42"）交给序列化器兜底。
         if (ScalarParser.TryParse(raw, dataType, out var scalar))
         {
             return scalar;
@@ -1254,9 +1174,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 释放实例。与共享连接池一致的优雅语义：<b>不打断在途请求</b>——
-    /// 仍有在途请求时，Handler/池的释放推迟到最后一个请求结束（由它代为执行），
-    /// 但此后不再接受新请求（抛 <c>ERR_CANCELED</c>）。
+    /// 释放实例：<b>不打断在途请求</b>——资源释放推迟到最后一个请求结束，
+    /// 此后不再接受新请求（抛 <c>ERR_CANCELED</c>）。
     /// </summary>
     public void Dispose()
     {
@@ -1297,8 +1216,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 与 <see cref="Dispose"/> 等价；连接池的关闭本身是同步的（无待刷写缓冲），
-    /// 这里实现它只是为了让调用方可以 <c>await using</c>。
+    /// 与 <see cref="Dispose"/> 等价；连接池关闭本身是同步的，实现它只为支持 <c>await using</c>。
     /// </summary>
     public ValueTask DisposeAsync()
     {

@@ -13,7 +13,7 @@ public sealed class ResponseInterceptorManager
     private readonly List<ResponseInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册/弹出/清空才失效。请求热路径上避免每请求重建 List。
+    // 快照缓存：注册/弹出/清空才失效，避免每请求重建 List。
     // 用数组而不是 IReadOnlyList：数组的 foreach 编译成下标循环，不会把枚举器装箱。
     private ResponseInterceptor[]? _snapshot;
 

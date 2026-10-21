@@ -1,9 +1,8 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把响应原始字节解码为文本。
-/// 解析优先级：显式 <see cref="AxiosConfig.ResponseEncoding"/> → Content-Type 的 charset → BOM → UTF-8，
-/// 与 .NET 内置 HttpContent 的行为一致，但可被手动强制覆盖，且未知 charset 不会抛异常。
+/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.ResponseEncoding"/> → Content-Type charset
+/// → BOM → UTF-8，与 .NET 内置 HttpContent 一致，但可强制覆盖且未知 charset 不抛异常。
 /// </summary>
 internal static class ResponseTextDecoder
 {
@@ -38,8 +37,7 @@ internal static class ResponseTextDecoder
         // 允许 charset="utf-8" 这种带引号的写法；切片判等不产生字符串。
         var name = charSet.AsSpan().Trim().Trim('"');
 
-        // 最常见的几个 charset 直接用内置实例：Encoding.GetEncoding 要先在名称表里做一次
-        // 大小写不敏感查找，而真实响应里基本只有 utf-8（其次 us-ascii / latin1）。
+        // 最常见的几个 charset 直接用内置实例：GetEncoding 要先在名称表里做一次大小写不敏感查找。
         if (name.Equals(Utf8Name, StringComparison.OrdinalIgnoreCase))
         {
             return Encoding.UTF8;

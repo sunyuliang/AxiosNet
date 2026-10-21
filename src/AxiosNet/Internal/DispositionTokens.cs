@@ -2,13 +2,12 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// multipart 的 field name / filename 落在 <c>Content-Disposition</c> 的 quoted-string 里，
-/// 有几个字符会破坏这段语法。实测（net6.0 / net8.0 一致）：
+/// 有几个字符会破坏语法。实测（net6.0 / net8.0 一致）：
 /// <list type="bullet">
-/// <item><c>"</c> → <c>ArgumentException</c>；<c>CR</c> / <c>LF</c> → <c>FormatException</c>（这两个至少会响）。</item>
-/// <item><c>\</c>、<c>NUL</c>、<c>HTAB</c> 等控制字符**不报错**，但解析端会退回「带引号的原文」：
-/// 服务端拿到的键名变成 <c>"a\b"</c>（连引号一起），字段静默对不上。</item>
+/// <item><c>"</c> → <c>ArgumentException</c>；<c>CR</c> / <c>LF</c> → <c>FormatException</c>（至少会响）。</item>
+/// <item><c>\</c>、<c>NUL</c>、<c>HTAB</c> 等控制字符<b>不报错</b>，但服务端拿到的键名会带引号或错位，字段静默对不上。</item>
 /// </list>
-/// 因此统一在组装前拦一道：要么给一个合法的字段名，要么在发请求前拿到指名道姓的错误。
+/// 因此统一在组装前拦一道：要么给合法名字，要么在发请求前拿到指名道姓的错误。
 /// </summary>
 internal static class DispositionTokens
 {

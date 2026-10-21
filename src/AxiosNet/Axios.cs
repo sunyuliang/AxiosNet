@@ -24,13 +24,12 @@ public static class Axios
     /// <summary>
     /// 对应 axios.create(config)。
     /// <para>
-    /// 注入 <paramref name="handler"/> 时不使用连接池（所有 origin 共用该 Handler）；
-    /// 想在保留连接池的前提下插入自己的 Handler 链，请用
-    /// <see cref="ConnectionPoolOptions.HandlerFactory"/>。
+    /// 注入 <paramref name="handler"/> 时不使用连接池；想保留池化又要自己的 Handler 链，
+    /// 请用 <see cref="ConnectionPoolOptions.HandlerFactory"/>。
     /// </para>
     /// <para>
     /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥
-    /// （同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）；共享池的连接行为在创建池时已固定。
+    /// （同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
     /// </para>
     /// </summary>
     public static AxiosClient Create(
@@ -227,7 +226,7 @@ public static class Axios
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PatchFormAsync<T>(url, cancellationToken);
 
-    // 提示：需要 JS 式动态响应时直接使用泛型 <dynamic>，例如：
+    // 需要 JS 式动态响应时用泛型 <dynamic>：
     //   dynamic data = (await Axios.GetAsync<dynamic>(url)).Data!;
-    //   data.address.city、data.items[0].id 可直接访问；Post/Put/Patch/Delete 同理。
+    // Post/Put/Patch/Delete 同理。
 }

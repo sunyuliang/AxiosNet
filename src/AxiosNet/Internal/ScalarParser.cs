@@ -3,9 +3,8 @@ using System.Globalization;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 响应体不是合法 JSON、但语义上是「裸标量文本」时的兜底解析
-/// （如 <c>42</c>、<c>2024-01-01</c>、<c>true</c>、<c>3.14</c>、GUID 等），
-/// 使泛型请求可以直接返回基础数据类型。
+/// 响应体不是合法 JSON、但语义上是「裸标量文本」时的兜底解析（<c>42</c>、<c>true</c>、GUID、日期等），
+/// 使泛型请求可以直接返回基础类型。
 /// </summary>
 internal static class ScalarParser
 {

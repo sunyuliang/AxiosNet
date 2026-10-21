@@ -4,11 +4,9 @@ using System.Text.Json;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把响应 JSON 展开为 .NET 动态对象图：
-/// JSON 对象 -&gt; ExpandoObject（支持 dynamic 成员访问与索引访问），
-/// JSON 数组 -&gt; List&lt;object?&gt;，
-/// 字符串/布尔保持原类型，整数 -&gt; long，浮点 -&gt; double，null -&gt; null。
-/// 行为对齐 JS/axios：response.data 可直接 data.name、data.address.city、data.items[0].id。
+/// 把响应 JSON 展开为 .NET 动态对象图：对象 → ExpandoObject，数组 → <c>List&lt;object?&gt;</c>，
+/// 字符串 / 布尔保持原类型，整数 → long，浮点 → double，null → null。
+/// 行为对齐 JS/axios：<c>data.name</c>、<c>data.items[0].id</c> 可直接访问。
 /// </summary>
 internal static class DynamicJson
 {

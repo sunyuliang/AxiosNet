@@ -3,16 +3,13 @@ namespace AxiosNet;
 /// <summary>
 /// 常用 <c>Content-Type</c> 的预置常量，用于给 <see cref="AxiosConfig.ContentType"/> 赋值。
 /// <para>
-/// 为什么是常量而不是 <c>enum</c>：Content-Type 是「媒体类型 + 参数」的复合值，
-/// 参数部分恰恰是库要支持的自定义点（<c>multipart/form-data; boundary=----xxx</c>、
-/// <c>application/json; charset=gbk</c>），枚举表达不了。这与 BCL 的
-/// <see cref="System.Net.Http.HttpMethod"/> 是同一个取舍——预置
-/// <c>HttpMethod.Get</c> 之类，同时允许 <c>new HttpMethod("PROPFIND")</c> 自定义。
-/// 常量能让 IDE 补全、避免拼错，也能直接用在 <c>switch</c> / 特性里（<c>const</c> 在编译期内联）。
+/// 为什么是常量而不是 <c>enum</c>：Content-Type 是「媒体类型 + 参数」的复合值，而参数恰恰是要支持的自定义点
+/// （<c>multipart/form-data; boundary=----xxx</c>、<c>application/json; charset=gbk</c>）。
+/// 常量还能让 IDE 补全、避免拼错，并可直接用于 <c>switch</c> / 特性。
 /// </para>
 /// <para>
-/// 参数（charset / boundary）直接拼在本值后面即可；<see cref="AxiosConfig.RequestEncoding"/>
-/// 非空时库会自动补 <c>charset=</c>，已经写了的不会重复追加。
+/// 参数直接拼在本值后面即可；<see cref="AxiosConfig.RequestEncoding"/> 非空时库会自动补 <c>charset=</c>，
+/// 已经写了的不会重复追加。
 /// </para>
 /// </summary>
 /// <example>
@@ -44,13 +41,11 @@ public static class AxiosContentType
     public const string OctetStream = "application/octet-stream";
 
     /// <summary>
-    /// <c>application/xml</c>：需要配合 XML 序列化器 —— 用库内置的
-    /// <see cref="Serialization.XmlContentSerializer"/>（<c>XmlContentSerializer.Instance</c>）即可，
-    /// 也可换成自己的实现（<see cref="AxiosConfig.ContentSerializer"/> / <see cref="AxiosContent.Serializer"/>）。
+    /// <c>application/xml</c>：需配合 XML 序列化器（内置的 <see cref="Serialization.XmlContentSerializer"/>）。
     /// 只改本常量而用默认 JSON 序列化器，会发出「头部 XML、正文 JSON」的自相矛盾请求。
     /// <para>
-    /// 反过来也成立：注入 <see cref="Serialization.XmlContentSerializer"/> 后<b>不必</b>再设本常量，
-    /// 头会自动变成 <c>application/xml</c>（序列化器自报，仅当调用方没显式设置 ContentType 时生效）。
+    /// 反过来也成立：注入 XML 序列化器后<b>不必</b>再设本常量，头会自动变成 <c>application/xml</c>
+    /// （序列化器自报，仅当调用方没显式设置 ContentType 时生效）。
     /// </para>
     /// </summary>
     public const string Xml = "application/xml";

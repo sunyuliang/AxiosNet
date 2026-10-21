@@ -4,10 +4,9 @@ namespace AxiosNet.Serialization;
 
 /// <summary>
 /// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：
-/// 序列化 / 反序列化使用 <see cref="AxiosConfig.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
+/// 使用 <see cref="AxiosConfig.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
 /// <para>
-/// <c>dynamic</c> 展开与非泛型响应的 <c>JsonElement</c> 形态由库自己处理，不经过本类
-/// （它们是「无目标类型」的形态，不属于业务对象反序列化）。
+/// <c>dynamic</c> 展开与非泛型响应的 <c>JsonElement</c> 形态由库自己处理，不经过本类。
 /// </para>
 /// </summary>
 public sealed class SystemTextJsonSerializer : IContentSerializer
@@ -29,7 +28,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         => JsonSerializer.Deserialize(json, type, AxiosJson.GetOptions(config));
 
     /// <summary>
-    /// 二进制入口：直接走 UTF-8 字节反序列化，不做 <c>byte[] → string</c> 中转。
+    /// 二进制入口：直接按 UTF-8 字节反序列化，不做 <c>byte[] → string</c> 中转。
     /// 触达路径是「Content-Type 声明非文本」（如服务端把 JSON 标成 <c>application/octet-stream</c>）。
     /// </summary>
     public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)

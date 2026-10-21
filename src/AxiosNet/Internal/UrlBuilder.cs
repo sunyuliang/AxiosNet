@@ -5,15 +5,12 @@ using System.Text.Json;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 负责 baseURL + url 合并（combineURLs）以及 params 序列化（buildURL）。
-/// 序列化规则与 axios 默认 paramsSerializer 对齐：
-/// 数组 a[]=1&amp;a[]=2、嵌套对象 o[k]=v、null 值跳过、方括号不转义。
+/// 负责 baseURL + url 合并（combineURLs）与 params 序列化（buildURL）。
+/// 序列化规则与 axios 默认 paramsSerializer 对齐：数组 <c>a[]=1&amp;a[]=2</c>、嵌套 <c>o[k]=v</c>、
+/// null 跳过、方括号不转义。
 /// <para>
-/// 百分号编码的非保留字符（<c>%41</c>→<c>A</c>、<c>%7E</c>→<c>~</c>）会被
-/// <see cref="System.Uri"/> 按 RFC 3986 §6.2.2.2 归一化——这与 HttpClient 实际发上线的
-/// 请求行完全一致（已用原始 socket 验证），因此 <see cref="AxiosClient.GetUri(AxiosConfig)"/> 返回的
-/// 就是真实发送形态；需要按签名原样保留调用方传入的编码串时，请用自定义 paramsSerializer
-/// 输出最终串，并以 <see cref="AxiosClient.GetUri(AxiosConfig)"/> 的结果作为签名输入。
+/// <see cref="System.Uri"/> 会按 RFC 3986 归一化非保留字符（<c>%41</c>→<c>A</c>），与 HttpClient 实际发送的
+/// 请求行一致，因此 <see cref="AxiosClient.GetUri(AxiosConfig)"/> 返回的就是真实发送形态。
 /// </para>
 /// </summary>
 internal static class UrlBuilder
@@ -32,9 +29,8 @@ internal static class UrlBuilder
 
         var combined = Combine(baseAddress, url);
 
-        // 查询串必须拼在 fragment 之前：url 自带 "#top" 时直接追加会变成
-        // "http://a.com/p#top?q=1"——整个查询串落进 fragment，永远发不到服务端
-        // （axios 的 buildURL 也是先切 hash、拼完再补回）。
+        // 查询串必须拼在 fragment 之前：url 自带 "#top" 时直接追加会让整个查询串落进 fragment，
+        // 永远发不到服务端（axios 的 buildURL 也是先切 hash、拼完再补回）。
         var hashIndex = combined.IndexOf('#');
         var fragment = hashIndex >= 0 ? combined[hashIndex..] : string.Empty;
         var target = hashIndex >= 0 ? combined[..hashIndex] : combined;
@@ -45,8 +41,8 @@ internal static class UrlBuilder
             : NormalizeQuery(serializer(queryParams));
         if (query.Length > 0)
         {
-            // 「url 已经以 ? / & 结尾」时不能再补分隔符：`search?` + params 会拼出 `search?&a=1`，
-            // 多出来的空参数在严格的服务端/网关眼里是「一个无名的空参数」，不是等价形态。
+            // 「url 已以 ? / & 结尾」时不能再补分隔符：`search?` + params 会拼出 `search?&a=1`，
+            // 多出的空参数在严格的服务端/网关眼里是「一个无名的空参数」。
             if (target.Length == 0)
             {
                 target = query;
@@ -67,10 +63,8 @@ internal static class UrlBuilder
         {
             var uri = new Uri(combined, UriKind.RelativeOrAbsolute);
 
-            // 连接池必须使用绝对地址；相对 URL 且未提供 baseURL 时统一抛 ERR_INVALID_URL，
-            // 而不是等到连接池抛出 InvalidOperationException。
-            // IsFile：Unix 下 "/items" 这类根相对地址会被 Uri 解析成 file:///items（隐式文件路径），
-            // 不在这里拦住的话，会一路走到 Handler 才报「不支持的 scheme」。
+            // 连接池必须使用绝对地址；相对 URL 且未提供 baseURL 时统一抛 ERR_INVALID_URL。
+            // IsFile：Unix 下 "/items" 会被 Uri 解析成 file:///items，不拦住会一路走到 Handler 才报错。
             if (!uri.IsAbsoluteUri || uri.IsFile || !IsHttpScheme(uri))
             {
                 throw AxiosException.InvalidUrl(combined, config);
@@ -85,7 +79,8 @@ internal static class UrlBuilder
     }
 
     /// <summary>对应 axios isAbsoluteURL + combineURLs。</summary>
-    private static string Combine(string? baseAddress, string? url)    {
+    private static string Combine(string? baseAddress, string? url)
+    {
         if (string.IsNullOrWhiteSpace(url))
         {
             return baseAddress!.TrimEnd('/');
@@ -102,16 +97,12 @@ internal static class UrlBuilder
     /// <summary>
     /// 是否为绝对地址（形如 <c>scheme://</c>）。
     /// <para>
-    /// 不用 <see cref="Uri.TryCreate(string, UriKind, out Uri)"/> 判断：Unix 下以 <c>/</c> 开头的路径
-    /// 会被 Uri 当成绝对文件路径（<c>file:///items</c>），从而把根相对地址误判为绝对地址
-    /// （dotnet/runtime#76816，官方明确为 by design）。显式的 <c>file://</c> 仍按绝对地址处理，
-    /// 由 <see cref="Build"/> 统一拒绝。
+    /// 不用 <see cref="Uri.TryCreate(string, UriKind, out Uri)"/>：Unix 下以 <c>/</c> 开头的路径会被当成
+    /// 绝对文件路径（<c>file:///items</c>），把根相对地址误判为绝对地址（dotnet/runtime#76816，by design）。
     /// </para>
     /// <para>
-    /// 判定要求 <c>scheme</c> 后紧跟 <c>//</c>（与 axios 的 <c>isAbsoluteURL</c> 一致）。
-    /// 只按 RFC 3986 的 <c>scheme ":"</c> 判定会把「主机:端口」形态的相对路径
-    /// （<c>localhost:8080/items</c>、<c>api.example.com:8443/x</c>）当成绝对地址：
-    /// baseURL 被静默绕过，随后又因 scheme 不是 http(s) 抛 <c>ERR_INVALID_URL</c>。
+    /// 要求 <c>scheme</c> 后紧跟 <c>//</c>（与 axios 一致）：只按 <c>scheme ":"</c> 判定会把
+    /// 「主机:端口」形态（<c>localhost:8080/items</c>）当成绝对地址，baseURL 被静默绕过。
     /// </para>
     /// </summary>
     private static bool IsAbsoluteUrl(string url)
@@ -169,8 +160,7 @@ internal static class ParamsSerializer
             return string.Empty;
         }
 
-        // 已经是查询串（`"a=1&b=2"`）：原样透传。此前落到反射分支后会被当成普通对象序列化成
-        // `?Length=7`——把 string 自身的 CLR 属性写进了查询串，与服务端约定完全不搭。
+        // 已经是查询串（`"a=1&b=2"`）：原样透传，否则落到反射分支会被序列化成 `?Length=7`。
         if (paramsObj is string rawQuery)
         {
             return NormalizeRawQuery(rawQuery);
@@ -179,8 +169,7 @@ internal static class ParamsSerializer
         var pairs = new List<KeyValuePair<string, string>>(8);
         if (paramsObj is JsonElement rootElement)
         {
-            // 直接传 JsonElement（从 JsonDocument / JsonSerializer 拿到的查询片段）必须按 JSON 树展开；
-            // 走反射兜底只会把 JsonElement 自己的属性（ValueKind / RawText…）序列化出去。
+            // 直接传 JsonElement 必须按 JSON 树展开；走反射兜底只会把 ValueKind / RawText 序列化出去。
             if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
                 or JsonValueKind.True or JsonValueKind.False)
             {
@@ -211,8 +200,7 @@ internal static class ParamsSerializer
         }
         else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
         {
-            // 根集合（数组 / List）：与表单展平一致，用下标作键。
-            // 此前同样落到反射分支，会输出 `Length=2&Rank=1&SyncRoot[]=1&...`（Array 的 CLR 属性）。
+            // 根集合（数组 / List）：与表单展平一致，用下标作键；否则反射分支会输出 Array 的 CLR 属性。
             var index = 0;
             foreach (var item in items)
             {
@@ -222,7 +210,7 @@ internal static class ParamsSerializer
         }
         else if (IsScalar(paramsObj))
         {
-            // 标量没有任何可表达的键名：伪造一个 key 或静默丢弃都会让调用方以为参数发出去了。
+            // 标量没有可表达的键名：伪造 key 或静默丢弃都会让调用方以为参数发出去了。
             throw InvalidParamsRoot(paramsObj, config);
         }
         else
@@ -412,7 +400,7 @@ internal static class ParamsSerializer
         }
     }
 
-    // axios 默认 encoder 使用 encodeURIComponent，并把 %5B / %5D 还原成 [ ]
+    // axios 默认 encoder 用 encodeURIComponent，并把 %5B / %5D 还原成 [ ]
     private static string EscapeKey(string key)
         => Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]");
 

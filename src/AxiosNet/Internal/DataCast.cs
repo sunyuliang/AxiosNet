@@ -3,11 +3,8 @@ namespace AxiosNet.Internal;
 /// <summary>
 /// 把非泛型响应的 Data 收敛到目标类型。
 /// <para>
-/// 不匹配时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）而不是裸
-/// <see cref="InvalidCastException"/>——典型诱因是泛型参数与 responseType 不匹配
-/// （例如 <c>GetAsync&lt;Stream&gt;</c> 却显式配了 <c>responseType: 'text'</c>，
-/// 或 <c>GetAsync&lt;Stream&gt;</c> 配 <c>arraybuffer</c> 拿到 byte[]）。
-/// 这属于调用方配置错误，同样要走统一错误模型。
+/// 不匹配时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）而不是裸 <see cref="InvalidCastException"/>：
+/// 典型诱因是泛型参数与 responseType 不匹配（如 <c>GetAsync&lt;Stream&gt;</c> 配了 <c>text</c>）。
 /// </para>
 /// </summary>
 internal static class DataCast
@@ -20,11 +17,7 @@ internal static class DataCast
 
     /// <summary>
     /// 校验 <paramref name="data"/> 已经是 <typeparamref name="T"/>（或 <c>null</c>），不通过就抛。
-    /// <para>
-    /// 泛型请求的响应对象在管线里就地填充（<c>AxiosClient.SendTypedAsync</c>），那里只差这一步
-    /// 校验：管线交出来的 <c>Data</c> 本该就是 T，但 responseType 与泛型参数不匹配时不是 ——
-    /// 必须在这里报错，不能把检查推迟到 <c>AxiosResponse&lt;T&gt;.Data</c> 的 getter。
-    /// </para>
+    /// <para>必须在这里报错：不能把检查推迟到 <c>AxiosResponse&lt;T&gt;.Data</c> 的 getter。</para>
     /// </summary>
     public static void EnsureCompatible<T>(object? data, AxiosConfig? config, HttpRequestMessage? request)
     {

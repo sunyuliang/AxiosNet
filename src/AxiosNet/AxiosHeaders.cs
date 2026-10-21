@@ -5,37 +5,27 @@ namespace AxiosNet;
 /// <summary>
 /// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用。
 /// <para>
-/// 所有读写都在内部锁内完成，因此实例默认值（<see cref="Axios.Defaults"/> 等）可以在
-/// 请求进行中安全地增删请求头（例如运行期刷新 Token），不会让并发的配置合并看到半成品集合。
+/// 所有读写都在存储锁内完成，因此实例默认头可在请求进行中安全增删（如运行期刷新 Token）。
 /// 枚举返回快照，不持有实时视图。
 /// </para>
 /// <para>
-/// <b>写时复制</b>：<see cref="Clone"/> 只增加一次引用计数、共用同一份字典（一次 40 B 的对象分配），
-/// 直到任何一方写入才真正复制字典。默认头是典型的「每请求拷一份、之后只读」场景
-/// —— 以前每克隆一次都要按头数付出 List + 逐条 <see cref="Set(string, string?)"/> 重校验 + 字典重插的代价。
-/// 分离是<b>对称</b>的：克隆方写入不影响源，源写入也不影响已克隆出去的副本（两边各自复制）。
+/// <b>写时复制</b>：<see cref="Clone"/> 只加一次引用计数、共用同一份字典，任一方写入时才真正复制字典。
+/// 分离是<b>对称</b>的：克隆方写入不影响源，源写入也不影响已克隆出去的副本。
 /// </para>
 /// <para>
-/// <b>写入即校验</b>：头部名称必须是 RFC 7230 的 token（不含空格、冒号、控制字符），
-/// 取值不允许出现 <c>CR</c> / <c>LF</c>。请求头最终经由
-/// <see cref="HttpRequestMessage.Headers"/> 的 <c>TryAddWithoutValidation</c> 上送，
-/// 那一层不做任何检查——若把外部输入直接拼进头部，<c>\r\n</c> 会被当成头部分隔符，
-/// 等于给调用方开了一个 HTTP 请求拆分（CWE-113）的口子。这里提前拒绝。
+/// <b>写入即校验</b>：头名必须是 RFC 7230 token，取值不允许 <c>CR</c> / <c>LF</c> 等控制字符 ——
+/// 上送层用 <c>TryAddWithoutValidation</c> 不做任何检查，这里是唯一的闸口（CWE-113 请求拆分）。
 /// </para>
 /// <para>
-/// 读/删入口（<see cref="Get"/> / <see cref="Has"/> / <see cref="Delete"/>）对
-/// <c>null</c> 名称抛 <see cref="ArgumentNullException"/> 而不是让空引用冒出来：
-/// 头部名常来自配置或循环变量，传错时报出参数名比一句 <c>NullReferenceException</c> 更容易定位。
+/// 读/删入口对 <c>null</c> 名称抛 <see cref="ArgumentNullException"/>（带参数名，便于定位）。
 /// </para>
 /// </summary>
 public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 {
     /// <summary>
-    /// 共享存储。克隆出来的实例指向同一个 <see cref="Store"/>，<see cref="Owners"/> 记录有几个实例
-    /// 在用；只要 &gt; 1，任何写入都必须先复制一份再改。
-    /// <para>
-    /// 锁挂在存储上而不是实例上：共享期间多个实例必须串行访问同一份字典，用各自的锁等于没锁。
-    /// </para>
+    /// 共享存储。克隆出来的实例指向同一个 <see cref="Store"/>，<see cref="Owners"/> 记录实例数；
+    /// 只要 &gt; 1，任何写入都必须先复制一份。
+    /// <para>锁挂在存储上而不是实例上：共享期间多个实例必须串行访问同一份字典。</para>
     /// </summary>
     private sealed class Store
     {
@@ -47,8 +37,8 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         internal int Owners = 1;
 
         /// <summary>
-        /// 惰性生成的只读数组快照：枚举/上线读取都走它，写一次就置空。
-        /// 默认头这份内容在进程生命周期里基本不变，所以实际只会建一次。
+        /// 惰性生成的只读数组快照：枚举与上送读取都走它，写入时置空。
+        /// 默认头在进程生命周期里基本不变，实际只会建一次。
         /// </summary>
         internal KeyValuePair<string, string>[]? Frozen;
 
@@ -157,7 +147,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         var key = NormalizeName(name);
         var store = _store;
 
-        // 先只读探测：删除不存在（或落在共享存储上的探测）不必付一次分离复制。
+        // 先只读探测：删除不存在（或共享存储上的探测）不必付一次分离复制。
         lock (store.Sync)
         {
             if (!store.Map.ContainsKey(key))
@@ -215,26 +205,22 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>
     /// 写时复制的克隆：不复制字典、不重新校验，只让共享存储的引用计数 +1。
     /// <para>
-    /// 之后任意一方写入都会先分离，因此语义与「深拷贝」一致，但只读用法（默认头 → 每请求一份）
-    /// 不再为头数付费。
+    /// 之后任意一方写入都会先分离，语义与「深拷贝」一致，但只读用法不再为头数付费。
     /// </para>
     /// <para>
-    /// 引用计数只在写入时递减，实例被 GC 回收时不会减 —— 多出来的计数只会让某次写入多复制一次
-    /// 字典，不影响正确性（因此不需要终结器）。
+    /// 引用计数只在写入时递减，GC 时不减 —— 多出的计数只会让某次写入多复制一次字典，不影响正确性。
     /// </para>
     /// <para>
-    /// 并发边界：克隆<b>返回之后</b>发生的写入一律被分离挡住（写入方判定自己独占时才会就地改）。
-    /// 唯一的不确定窗口是「写入方已判定独占、克隆紧接着完成后写入才落盘」这一瞬间 ——
-    /// 此时副本可能带上那次写入的值。方向只会是「更新」，不会读到半成品：所有读写都在同一把锁内，
-    /// 每次写入是若干个字典操作的原子串行。
+    /// 并发边界：克隆返回后的写入一律被分离挡住；唯一窗口是「写入方已判定独占、克隆紧接着完成」，
+    /// 此时副本可能带上那次写入的值（方向只会是更新，且不会读到半成品 —— 读写都在同一把锁内）。
     /// </para>
     /// </summary>
     public AxiosHeaders Clone()
     {
         var store = _store;
 
-        // 必须与 Exclusive() 的判定在同一把锁内：否则「写方判定 Owner 数为 1」与「克隆方 +1」
-        // 可以交错，克隆出来的副本会与一个仍然就地写入的存储重叠（旧实现每次整份复制，没有这个窗口）。
+        // 必须与 Exclusive() 的判定在同一把锁内：否则「写方判定 Owners 为 1」与「克隆方 +1」可以交错，
+        // 副本会与一个仍在就地写入的存储重叠。
         lock (store.Sync)
         {
             store.Owners++;
@@ -250,7 +236,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return;
         }
 
-        // 先取快照：既是并发安全（对方可能同时在写），也避免两个实例互相合并时持锁顺序相反造成死锁。
+        // 先取快照：既是并发安全（对方可能同时在写），也避免两个实例互相合并时锁序相反造成死锁。
         // 快照是缓存的只读数组，正常情况下零分配。
         var incoming = other.Snapshot();
         if (incoming.Length == 0)
@@ -273,9 +259,8 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>
     /// 只读快照（数组）。调用方<b>不得修改</b>返回的数组。
     /// <para>
-    /// 热路径（<c>ApplyHeaders</c> 把默认头写到 <see cref="HttpRequestMessage"/>）用它代替
-    /// 「每次 new 一个 List」：数组在首次读取时建好并缓存，之后每请求零分配，
-    /// 且 <c>foreach</c> 数组走结构体枚举器，不会有装箱。
+    /// 热路径（<c>ApplyHeaders</c>）用它代替「每次 new 一个 List」：数组首次读取时建好并缓存，
+    /// 之后每请求零分配，且 <c>foreach</c> 数组走结构体枚举器、不装箱。
     /// </para>
     /// </summary>
     internal KeyValuePair<string, string>[] Snapshot()
@@ -299,11 +284,8 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>
-    /// 取一个「只属于自己」的存储：引用计数为 1 时直接返回，否则复制一份字典并降掉旧存储的计数。
-    /// <para>
-    /// 判定必须在锁内：与 <see cref="Clone"/> 的计数 +1 互斥，保证「返回独占存储」这件事在返回后
-    /// 依然成立（否则克隆方可以在这之后把计数改成 2，而本实例已经开始就地写入）。
-    /// </para>
+    /// 取一个「只属于自己」的存储：引用计数为 1 时直接返回，否则复制字典并降掉旧存储的计数。
+    /// <para>判定必须在锁内：与 <see cref="Clone"/> 的 +1 互斥，保证「返回独占存储」在返回后依然成立。</para>
     /// </summary>
     private Store Exclusive()
     {
@@ -346,8 +328,8 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", nameof(name));
         }
 
-        // 先按原始串拒绝控制字符（含 CR/LF）：名字尾部带 \r\n 会被 Trim 悄悄吃掉，
-        // 那正是注入尝试留下的痕迹，不该被「修剪」掉再照常发出去。
+        // 先按原始串拒绝控制字符（含 CR/LF）：名字尾部的 \r\n 会被 Trim 悄悄吃掉，
+        // 那正是注入尝试的痕迹，不该被「修剪」后照常发出去。
         foreach (var c in name)
         {
             if (c < 0x20 || c == 0x7F)
@@ -393,17 +375,12 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     }
 
     /// <summary>
-    /// 写入/上线前的取值校验：拒绝 <b>C0 控制字符</b>（HTAB 除外）与 DEL。
+    /// 写入/上送前的取值校验：拒绝 <b>C0 控制字符</b>（HTAB 除外）与 DEL。
     /// <para>
-    /// CR/LF 最危险：HTTP 序列化层把它们当行分隔符，值里带 <c>\r\n</c> 就等于允许调用方
-    /// 追加任意头甚至请求体（CWE-113 请求拆分）。而请求头最终经
-    /// <see cref="HttpRequestMessage.Headers"/> 的 <c>TryAddWithoutValidation</c> 上送，
-    /// 那一层**完全不检查** CR/LF（已抓包证实），所以这里是唯一的闸口。
+    /// CR/LF 最危险：序列化层把它们当行分隔符，值里带 <c>\r\n</c> 等于允许调用方追加任意头甚至请求体
+    /// （CWE-113）。而 <c>TryAddWithoutValidation</c> 完全不检查（已抓包证实），这里是唯一闸口。
     /// </para>
-    /// <para>
-    /// 其余 C0（VT / FF / NUL / SOH…）与 DEL 不拆行，但都不是合法 <c>field-content</c>：
-    /// 底层照样原样写上线，网关/日志组件会截断或误判，因此一并拒绝。HTAB 是合法空白，放行。
-    /// </para>
+    /// <para>其余 C0 与 DEL 不拆行，但不是合法 <c>field-content</c>，网关/日志会截断或误判，一并拒绝。</para>
     /// </summary>
     /// <exception cref="ArgumentException">值里含被禁字符。</exception>
     internal static void ValidateHeaderValue(string name, string value)

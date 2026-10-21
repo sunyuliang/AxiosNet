@@ -3,18 +3,14 @@ using System.Collections.Concurrent;
 namespace AxiosNet.Pooling;
 
 /// <summary>
-/// 网络连接池。
-/// <para>
-/// .NET 的 <see cref="SocketsHttpHandler"/> 自身已经会复用 TCP 连接，本连接池在其上再做一层
-/// “按 origin 隔离的 Handler/Client 复用 + 并发上限 + 空闲驱逐”：
+/// 网络连接池。在 <see cref="SocketsHttpHandler"/> 自带的连接复用之上再做一层
+/// 「按 origin 隔离的 Handler/Client 复用 + 并发上限 + 空闲驱逐」：
 /// <list type="bullet">
-/// <item>每个 scheme://host:port 对应一个调优过的 <see cref="SocketsHttpHandler"/>，所有请求共享，
-/// 避免重复创建 Handler（错误使用 HttpClient 的典型 socket 耗尽问题）并复用其底层 TCP 连接；</item>
-/// <item>通过 MaxConnectionsPerServer 控制每个站点的最大连接数，超出在连接层排队，整体吞吐更稳；</item>
-/// <item>后台定时驱逐长期空闲的 origin 节点，释放文件描述符与内存；</item>
+/// <item>每个 scheme://host:port 对应一个调优过的 Handler，所有请求共享（避免重复创建 Handler 的典型坑）；</item>
+/// <item><c>MaxConnectionsPerServer</c> 控制单站点连接数，超出在连接层排队；</item>
+/// <item>后台定时驱逐长期空闲的 origin 节点，释放句柄与内存；</item>
 /// <item>同一个池可被多个 AxiosClient 共享。</item>
 /// </list>
-/// </para>
 /// </summary>
 public sealed class HttpConnectionPool : IDisposable
 {
@@ -32,7 +28,7 @@ public sealed class HttpConnectionPool : IDisposable
         ValidateOptions(_options);
 
         // 整个池共用一个 Cookie 容器：Cookie 的隔离维度是域/路径而不是端口，
-        // 每个 origin 各持一个容器会把跨子域、换端口的会话直接切断。
+        // 每个 origin 各持一个会把跨子域、换端口的会话直接切断。
         _cookies = _options.UseCookies ? new CookieContainer() : null;
 
         if (_options.IdleHandlerLifetime > TimeSpan.Zero && _options.EvictionInterval > TimeSpan.Zero)
@@ -90,7 +86,7 @@ public sealed class HttpConnectionPool : IDisposable
 
     /// <summary>
     /// 是否为非法的负时长。<see cref="Timeout.InfiniteTimeSpan"/>（-1ms）是 BCL 表达「不限」的标准值，
-    /// 报错文案本身就在让调用方用它 —— 必须放行，否则「照文档改」只会换来另一个异常。
+    /// 报错文案本身就在让调用方用它，必须放行。
     /// </summary>
     private static bool IsNegativeLimit(TimeSpan value)
         => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
@@ -102,7 +98,7 @@ public sealed class HttpConnectionPool : IDisposable
 
     /// <summary>
     /// 池实际生效的选项（不克隆）。<see cref="Options"/> 每次访问都会克隆一份，
-    /// 请求管线里只是读两个值，没必要为它分配对象 —— 仅限库内只读使用。
+    /// 请求管线只读两个值，没必要为它分配对象 —— 仅限库内只读使用。
     /// </summary>
     internal ConnectionPoolOptions EffectiveOptions => _options;
 
@@ -110,8 +106,8 @@ public sealed class HttpConnectionPool : IDisposable
     public PoolLease Lease(Uri requestUri) => Lease(requestUri, config: null);
 
     /// <summary>
-    /// 管道内部入口：带上本次请求的合并配置，让池级错误（如 origin 节点数上限）也能通过
-    /// <see cref="AxiosException.Config"/> 指回调用方的配置，而不是一个 Config 为 null 的异常。
+    /// 管道内部入口：带上本次请求的配置，让池级错误（如 origin 节点数上限）也能通过
+    /// <see cref="AxiosException.Config"/> 指回调用方，而不是一个 Config 为 null 的异常。
     /// </summary>
     internal PoolLease Lease(Uri requestUri, AxiosConfig? config)
     {
@@ -130,9 +126,8 @@ public sealed class HttpConnectionPool : IDisposable
         while (true)
         {
             // 稳态（origin 已在池里）只做一次哈希查找：
-            // ① 容量检查里的 _endpoints.Count 是「拿全桶锁 + 逐表统计」的 O(n) 操作（1024 节点实测 18µs，
-            //    是单次查找的 800 倍），只有真的要新建节点时才需要；
-            // ② GetOrAdd 的工厂是带捕获的闭包，热路径上每次调用都会分配一个闭包对象。
+            // ① 容量检查里的 _endpoints.Count 是「拿全桶锁 + 逐表统计」的 O(n) 操作，只有真要新建节点时才需要；
+            // ② GetOrAdd 的工厂是带捕获的闭包，热路径上每次调用都会分配一个对象。
             if (!_endpoints.TryGetValue(origin, out var endpoint))
             {
                 EnsureCapacity(origin, config);
@@ -148,10 +143,8 @@ public sealed class HttpConnectionPool : IDisposable
 
             if (endpoint.TryAcquire())
             {
-                // 租用与关闭的竞态：GetOrAdd 可能在池已 Dispose 之后才插入新节点
-                // （关闭迭代没看到它），此时 TryAcquire 仍会成功。不拦截的话，
-                // 这条租约归还时节点既不在字典里、也没有 DisposeWhenIdle 标记，
-                // Handler 与连接永久泄漏。带上标记再释放，让节点自行摘除。
+                // 租用与关闭的竞态：GetOrAdd 可能在池已 Dispose 之后才插入新节点（关闭迭代没看到它），
+                // 此时 TryAcquire 仍会成功。带上标记再释放，让节点自行摘除，否则 Handler 与连接永久泄漏。
                 if (Volatile.Read(ref _disposed) == 1)
                 {
                     endpoint.DisposeWhenIdle = true;
@@ -168,11 +161,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    /// <summary>
-    /// 异步租用：租用本身是轻量同步操作（字典查找 + 计数），
-    /// 但会先检查 <paramref name="cancellationToken"/>——已取消的请求在租用前直接抛
-    /// <see cref="OperationCanceledException"/>，不会占用池节点。
-    /// </summary>
+    /// <summary>异步租用：先检查令牌（已取消的请求在租用前直接抛，不占用池节点），其余与同步版本一致。</summary>
     public ValueTask<PoolLease> LeaseAsync(Uri requestUri, CancellationToken cancellationToken = default)
         => LeaseAsync(requestUri, config: null, cancellationToken);
 
@@ -198,12 +187,9 @@ public sealed class HttpConnectionPool : IDisposable
     public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue);
 
     /// <summary>
-    /// 新建 origin 节点前的容量检查：达到 <see cref="ConnectionPoolOptions.MaxEndpointCount"/>
-    /// 时先驱逐最久未使用的空闲节点，一个都驱逐不掉（全部在途）才拒绝。
-    /// <para>
-    /// 只在「origin 不在池里」时调用。<c>ContainsKey</c> 放在 <c>Count</c> 前面：后者要拿全桶锁
-    /// 逐表统计，而这里绝大多数情况都已经命中（并发下别的线程刚插入）而提前返回。
-    /// </para>
+    /// 新建 origin 节点前的容量检查：达到 <see cref="ConnectionPoolOptions.MaxEndpointCount"/> 时
+    /// 先驱逐最久未使用的空闲节点，一个都驱逐不掉（全部在途）才拒绝。
+    /// <para><c>ContainsKey</c> 放在 <c>Count</c> 前面：后者要拿全桶锁逐表统计，而这里多数情况已提前返回。</para>
     /// </summary>
     private void EnsureCapacity(string origin, AxiosConfig? config)
     {
@@ -226,9 +212,8 @@ public sealed class HttpConnectionPool : IDisposable
 
     private int EvictIdle(TimeSpan minIdle, int limit)
     {
-        // InfiniteTimeSpan 是 -1ms（BCL 表达「不限」的标准值），而下面的判定是
-        // 「空闲时长 < minIdle 才跳过」：-1ms 会让所有空闲节点都判成「可驱逐」，
-        // 手动调用 EvictIdleEndpoints() 就会把整个池清空 —— 与文档「永不驱逐」正好相反。
+        // InfiniteTimeSpan 是 -1ms，而下面的判定是「空闲时长 < minIdle 才跳过」：
+        // 不特判的话所有空闲节点都会被判成可驱逐，手动调用会把整个池清空。
         if (minIdle == Timeout.InfiniteTimeSpan)
         {
             return 0;
@@ -255,8 +240,8 @@ public sealed class HttpConnectionPool : IDisposable
                     continue;
                 }
 
-                // 先摘字典再置标记：两步都成功后收集起来，锁外统一释放。
-                // 若标记返回 false，说明该节点已被其它路径（Clear / Dispose）接管，不必再释放。
+                // 先摘字典再置标记：两步都成功才收集起来、锁外统一释放；
+                // 标记返回 false 说明该节点已被其它路径（Clear / Dispose）接管。
                 if (_endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(pair.Key, endpoint))
                     && endpoint.MarkDisposed())
                 {
@@ -267,8 +252,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
 
         // 关闭 Handler 会断开该 origin 的全部 TCP 连接、可能耗时：必须放在锁外。
-        // 持锁释放会让同 origin 的 TryAcquire / GetStatistics / 另一次驱逐全部排队等它，
-        // 而 EnsureCapacity 触发的驱逐恰恰跑在请求线程自己身上。
+        // 持锁释放会让同 origin 的租用 / 统计 / 另一次驱逐全部排队，而容量检查触发的驱逐就跑在请求线程上。
         if (pending is not null)
         {
             foreach (var endpoint in pending)
@@ -331,27 +315,17 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>
     /// 生成 origin 池 key（<c>scheme://host:port</c>）。
     /// <para>
-    /// 主机名统一用 <see cref="Uri.IdnHost"/>（IDNA/punycode）而不是 <see cref="Uri.Host"/>：
-    /// HTTP 主机头只能是 ASCII，unicode 主机名（<c>münchen.de</c>）发送前会被规范化为
-    /// punycode（<c>xn--mnchen-3ya.de</c>）——服务端看到的两者字节完全相同（同一 DNS 名、
-    /// 同一证书、同一 vhost），池 key 若保留原始拼写就会把同一个站点分裂成两个节点
-    /// （连接配额各算一半、生命周期时钟分裂）。对 ASCII / IPv4 该属性与
-    /// <see cref="Uri.Host"/> 一致。
-    /// </para>
-    /// <para>
-    /// IPv6 是例外：<see cref="Uri.IdnHost"/> **不带**方括号（<c>::1</c>），而 Uri 解析与
-    /// Host 头都要求括号形式，因此 IPv6 回退用 <see cref="Uri.Host"/>（带括号）。
+    /// 主机名用 <see cref="Uri.IdnHost"/>（IDNA/punycode）：unicode 主机名发送前会被规范化成 punycode，
+    /// 服务端看到的是同一个站；池 key 保留原始拼写会把同一站点分裂成两个节点。
+    /// IPv6 例外：<see cref="Uri.IdnHost"/> 不带方括号，因此回退用 <see cref="Uri.Host"/>。
     /// </para>
     /// </summary>
     private static string BuildOrigin(Uri uri)
         => $"{uri.Scheme}://{(uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost)}:{uri.Port}";
 
     /// <summary>
-    /// 优雅关闭：空闲节点立即释放；仍有租约在途的节点先打标记，最后一条租约归还时自行回收。
-    /// <para>
-    /// 直接释放全部节点会让「客户端关闭时刚好有请求在飞」的调用方拿到
-    /// <see cref="ObjectDisposedException"/> / 连接被重置——关闭不应该是一种数据破坏行为。
-    /// </para>
+    /// 优雅关闭：空闲节点立即释放；仍有租约在途的节点先打标记，最后一条租约归还时自行回收
+    /// —— 直接释放会让「关闭时刚好有请求在飞」的调用方拿到异常或连接重置。
     /// </summary>
     public void Dispose()
     {

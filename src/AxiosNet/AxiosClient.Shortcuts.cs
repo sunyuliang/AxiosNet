@@ -2,8 +2,8 @@ using AxiosNet.Internal;
 
 namespace AxiosNet;
 
-// AxiosClient 的快捷方法层：与 axios.get/post/put/patch/delete/head/options
-// 以及 postForm/putForm/patchForm 一一对应的重载，只负责组装 AxiosConfig。
+// AxiosClient 的快捷方法层：与 axios.get/post/put/patch/delete/head/options 及
+// postForm/putForm/patchForm 一一对应，只负责组装 AxiosConfig。
 public sealed partial class AxiosClient
 {
     // ------------------------------------------------------------------
@@ -132,8 +132,8 @@ public sealed partial class AxiosClient
 
     // ------------------------------------------------------------------
     // CancellationToken 显式重载
-    // CancellationToken 是 struct，没有这些重载时 GetAsync(url, ct) 会被装箱成 object
-    // 落到 data 上，把令牌当请求体序列化。
+    // CancellationToken 是 struct：没有这些重载时 GetAsync(url, ct) 会被装箱成 object，
+    // 落到 data 上把令牌当请求体序列化。
     // ------------------------------------------------------------------
 
     public Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
@@ -206,27 +206,26 @@ public sealed partial class AxiosClient
 
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
-        // 目标类型的响应对象在这里造好、交给管线就地填充：原先「管线造一个非泛型响应 →
-        // AsTyped 复制成泛型响应」是每请求两个响应对象（约 120 B），而前者从不离开管线。
+        // 目标类型的响应对象在这里造好交给管线就地填充：省掉「管线造非泛型响应 → AsTyped 复制」
+        // 的每请求两个响应对象。
         var typed = new AxiosResponse<T>();
         var response = await SendAsync(config, typeof(T), typed).ConfigureAwait(false);
 
-        // 响应拦截器把对象换掉了（它写不出具体的泛型参数，只能给回非泛型响应）：走复制这条老路径。
+        // 响应拦截器把对象换掉了（它写不出泛型参数，只能给回非泛型响应）：走复制这条路径。
         if (!ReferenceEquals(response, typed))
         {
             return AsTyped<T>(response);
         }
 
         // Data 必须是 T：responseType 与泛型参数不匹配时给 ERR_BAD_RESPONSE，
-        // 而不是把检查推迟到 Data getter（getter 抛异常会让日志、调试器、序列化统统在属性读取处炸掉）。
+        // 而不是把检查推迟到 Data getter（getter 抛异常会让日志、调试器、序列化一起炸）。
         try
         {
             DataCast.EnsureCompatible<T>(typed.RawData, typed.Config, typed.Request);
         }
         catch
         {
-            // 这个响应已经交不到调用方手里了：流式正文必须在这里释放 ——
-            // 否则池租约永不归还，该 origin 的连接会被一个没人读的流一直占住。
+            // 这个响应已经交不到调用方手里了：流式正文必须在这里释放，否则租约永不归还。
             (typed.RawData as IDisposable)?.Dispose();
             typed.RawData = null;
             throw;
@@ -244,9 +243,8 @@ public sealed partial class AxiosClient
         }
         catch
         {
-            // 泛型参数与 responseType 不匹配（如 responseType: stream + GetAsync<byte[]>）：
-            // 这个响应已经交不到调用方手里了，流式正文必须在这里释放 ——
-            // 否则池租约永不归还，该 origin 的连接会被一个没人读的流一直占住。
+            // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：响应已交不出去，
+            // 流式正文必须在这里释放，否则租约永不归还。
             (response.Data as IDisposable)?.Dispose();
             response.Data = null;
             throw;
@@ -254,15 +252,10 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 组装一次快捷调用的<b>生效配置</b>：直接在实例默认值的副本上填写本次请求项。
+    /// 组装一次快捷调用的<b>生效配置</b>：直接在实例默认值的副本上填写本次请求项，
+    /// 并用 <see cref="AxiosConfig.EffectiveMerged"/> 告诉管线不必再合并。
     /// <para>
-    /// 以前这里是「先 new 一个只含按请求项的 AxiosConfig，再交给管线逐属性合并到 Defaults 副本」——
-    /// 每请求两个配置对象（约 670 B）加一次全字段拷贝，而这两个对象里没有一个会活到请求之外。
-    /// 现在只剩管线真正要用的那一个，<see cref="AxiosConfig.EffectiveMerged"/> 让管线知道不必再合并。
-    /// </para>
-    /// <para>
-    /// 唯一的行为差异：<paramref name="configure"/> 回调里读到的 config 已经带上实例默认值
-    /// （以前是一张白纸）。设置项不受影响 —— 写进副本与「写进按请求项再合并」结果相同。
+    /// 唯一的行为差异：<paramref name="configure"/> 回调里读到的 config 已带实例默认值。
     /// </para>
     /// </summary>
     private AxiosConfig Shortcut(
@@ -304,8 +297,8 @@ public sealed partial class AxiosClient
 
         configure?.Invoke(config);
 
-        // 合并语义是「先把按请求的头并进来，再摘掉要删除的」：这里没有可并的了，
-        // 但 configure 里写的 RemoveHeaders 仍必须在它写完之后才生效。
+        // 合并语义是「先并头，再摘掉要删除的」：这里没有可并的，
+        // 但 configure 里写的 RemoveHeaders 必须在它写完之后才生效。
         if (config.HasRemoveHeaders && config.HasHeaders)
         {
             foreach (var name in config.RemoveHeaders)
@@ -317,18 +310,15 @@ public sealed partial class AxiosClient
         return config;
     }
 
-    /// <summary>
-    /// 把 url/method 填进调用方传入的配置，交给管线按常规路径合并到实例默认值。
-    /// </summary>
+    /// <summary>把 url/method 填进调用方传入的配置，交给管线按常规路径合并到实例默认值。</summary>
     private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)
     {
-        // PostAsync(url, null) 在重载决议里会落到本方法的调用方（AxiosConfig 比 object 更具体），
-        // 没有这层守卫就是一句 NullReferenceException；这里给出明确的参数错误。
+        // PostAsync(url, null) 的重载决议会落到本方法的调用方（AxiosConfig 比 object 更具体），
+        // 没有这层守卫就是一句 NullReferenceException。
         ArgumentNullException.ThrowIfNull(config);
 
-        // 不能就地修改调用方传入的 config：同一个 config 并发复用时 Url/Method 会互相覆盖。
-        // Clone() 同时会清掉 EffectiveMerged：传入的是 response.Config 这类「上一次的生效配置」时，
-        // 它会被当成按请求项重新合并到本实例默认值上（否则新实例的默认值会被整份跳过）。
+        // 不能就地修改调用方传入的 config：并发复用会让 Url/Method 互相覆盖。
+        // Clone() 同时清掉 EffectiveMerged，使 response.Config 这类生效配置重新参与合并。
         var copy = config.Clone();
         copy.Url = url;
         copy.Method = method;
