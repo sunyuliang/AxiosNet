@@ -629,7 +629,7 @@ public interface IContentSerializer
 
 #### 序列化器可以写请求头
 
-`Serialize` 拿到的 `config` 是**本次请求独占的副本**（`Defaults.Clone()`，Headers 也复制了一份），写进去的头会在请求体构造完成后统一应用——这就是 axios `transformRequest(data, headers)` 里 `headers.setContentType(...)` 的等价能力：
+`Serialize` 拿到的 `config` 是**本次请求独占的副本**（`Defaults.Clone()`，Headers 也是独立副本——写时复制，任一方写入才真正分离），写进去的头会在请求体构造完成后统一应用——这就是 axios `transformRequest(data, headers)` 里 `headers.setContentType(...)` 的等价能力：
 
 ```csharp
 public string Serialize(object? value, Type type, AxiosConfig config)
@@ -1193,7 +1193,7 @@ using var client3 = Axios.Create(
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
-12. **请求头写入即校验**：头部名必须是 RFC 7230 token、取值不允许出现 `CR` / `LF` / `NUL`，否则 `AxiosHeaders.Set` 抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
+12. **请求头写入即校验**：头部名必须是 RFC 7230 token，取值不允许出现 C0 控制字符（`HTAB` 除外）与 `DEL`，否则 `AxiosHeaders.Set`（以及 `AxiosConfig.ContentType`）抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
 13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
 14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）；
 15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `ParamsSerializer`；

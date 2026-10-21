@@ -176,7 +176,10 @@ public sealed partial class AxiosClient
         // 是每请求 ~200 B 的白分配（绝大多数快捷方法调用都不带自定义头）。
         if (config.HasHeaders)
         {
-            foreach (var header in config.Headers)
+            // 取缓存的只读数组快照：默认头这份内容基本不变，数组只建一次，
+            // 之后每请求零分配（旧的 Snapshot() 每请求 new 一个 List，再装箱枚举器）。
+            var headers = config.Headers.Snapshot();
+            foreach (var header in headers)
             {
                 if (!ContentHeaderNames.Contains(header.Key))
                 {
