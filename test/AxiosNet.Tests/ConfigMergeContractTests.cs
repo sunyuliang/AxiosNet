@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
@@ -381,5 +382,43 @@ public sealed class ConfigMergeContractTests
         // 并发写完，实例默认值里也不该多出这次的头
         Assert.False(client.Defaults.Headers.Has("X-Req"));
         Assert.Equal("base", client.Defaults.Headers.Get("X-Default"));
+    }
+
+    /// <summary>
+    /// 回放 <see cref="AxiosResponse.Config"/>：它本身是「上一次的生效配置」，但交回来时必须
+    /// 被当成<b>按请求项</b>重新合并到本实例默认值上。
+    /// <para>
+    /// 合并标记只在管线内部有效（<see cref="AxiosConfig.Clone"/> 不继承它）。此前它随
+    /// <c>WithUrl</c> 的克隆一起被带出来，回放到另一个实例会跳过该实例的默认值 —— 头部丢失，
+    /// 而且实例级的 <c>PoolOptions</c> 会被误判成「按请求设置」直接报错（调用方什么都没设）。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ReplayedEffectiveConfig_IsMergedIntoTheNewClientDefaults()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        using var first = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            PoolOptions = new ConnectionPoolOptions()
+        });
+        first.Defaults.Headers.Set("X-First", "1");
+        var response = await first.GetAsync("one");
+
+        using var second = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        second.Defaults.Headers.Set("X-Second", "2");
+
+        // 不抛 ERR_BAD_OPTION（PoolOptions 是第一个实例的默认值，不是本次按请求写的）
+        await second.PostAsync("two", response.Config!);
+
+        var received = server.Received[1];
+
+        // 新实例的默认头必须生效
+        Assert.Equal("2", received.Headers["X-Second"]);
+
+        // 旧实例的生效头仍在：合并后的配置里「实例默认」与「按请求项」已经不可区分，
+        // 回放只能做到「带着旧值再合并一次」，这里把这条语义固定下来。
+        Assert.Equal("1", received.Headers["X-First"]);
     }
 }

@@ -282,11 +282,32 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     private const string DisposedMessage = "AxiosClient 已释放，不能发起新请求";
 
+    /// <summary>最后一个在途请求结束时，补做 <see cref="Dispose"/> 推迟的资源释放。</summary>
+    private void ReleaseInFlight()
+    {
+        if (Interlocked.Decrement(ref _inFlight) == 0 && Volatile.Read(ref _disposed) == 1)
+        {
+            DisposeResources();
+        }
+    }
+
     /// <summary>
-    /// 请求入口：负责「已释放」拦截、在途计数（配合 <see cref="Dispose"/> 的推迟释放协议）与配置合并，
-    /// 校验通过后转入 <see cref="SendCoreAsync"/>。
+    /// 请求入口：负责「已释放」拦截、在途计数（配合 <see cref="Dispose"/> 的推迟释放协议）、
+    /// 配置合并与校验，然后跑完整条管线（拦截器 → 编码 → 发送 → 读取 → 转换）。
+    /// <para>
+    /// <paramref name="target"/> 是调用方预先造好的响应对象（泛型请求用它省掉一次复制），
+    /// 管线读完成功响应后就地填充并返回它。
+    /// </para>
+    /// <para>
+    /// 守卫与计数归还刻意放在同一个方法里成对出现：拆成「入口加、另一个方法减」时，
+    /// 中间任何一处抛异常（合并失败、拦截器返回 null、URI 非法、超时越界……）都会漏掉归还，
+    /// <see cref="Dispose"/> 的推迟释放就再也等不到那最后一条租约。
+    /// </para>
     /// </summary>
-    private async Task<AxiosResponse> SendAsync(AxiosConfig perCallConfig, Type? dataType)
+    private async Task<AxiosResponse> SendAsync(
+        AxiosConfig perCallConfig,
+        Type? dataType,
+        AxiosResponse? target = null)
     {
         // ObjectDisposedException.ThrowIf 是 .NET 7 才有的 API，手写以兼容 net6.0 目标。
         if (Volatile.Read(ref _disposed) == 1)
@@ -312,195 +333,187 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 new ObjectDisposedException(nameof(AxiosClient)));
         }
 
-        // 生效配置：快捷方法传进来的已经是合并好的（见 Shortcut），其余入口在这里合并到实例默认值。
-        // 校验一律对「生效配置」做：两种来源的判定条件相同（见 ValidatePerRequestOptions）。
-        AxiosConfig config;
         try
         {
-            config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
+            // 生效配置：快捷方法传进来的已经是合并好的（见 Shortcut），其余入口在这里合并到实例默认值。
+            // 校验一律对「生效配置」做：两种来源的判定条件相同（见 ValidatePerRequestOptions）。
+            var config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
             ValidatePerRequestOptions(config);
-        }
-        catch
-        {
-            ReleaseInFlight();
-            throw;
-        }
 
-        try
-        {
-            return await SendCoreAsync(config, dataType).ConfigureAwait(false);
-        }
-        finally
-        {
-            ReleaseInFlight();
-        }
-    }
-
-    /// <summary>最后一个在途请求结束时，补做 <see cref="Dispose"/> 推迟的资源释放。</summary>
-    private void ReleaseInFlight()
-    {
-        if (Interlocked.Decrement(ref _inFlight) == 0 && Volatile.Read(ref _disposed) == 1)
-        {
-            DisposeResources();
-        }
-    }
-
-    private async Task<AxiosResponse> SendCoreAsync(AxiosConfig config, Type? dataType)
-    {
-        // 泛型调用 XxxAsync<dynamic>/<object> 时（T 即 object），响应自动展开为动态对象图，
-        // 对标 JS 中直接 response.data.xxx 的用法；显式指定过其他 responseType 时以显式配置为准。
-        if (dataType == typeof(object) && config.ResponseType == ResponseType.Json)
-        {
-            config.ResponseType = ResponseType.Dynamic;
-        }
-
-        // 泛型调用 XxxAsync<Stream> 时自动切换为流式响应（对标 axios responseType: 'stream'），
-        // 下载大文件直接用，不必再手动设置 ResponseType。显式配置的 responseType 仍然优先。
-        if (dataType == typeof(Stream) && config.ResponseType == ResponseType.Json)
-        {
-            config.ResponseType = ResponseType.Stream;
-        }
-
-        // 负值没有任何合理语义，静默当作「不限制」会让调用方以为限制生效了 —— 直接报错。
-        ValidateRangeConfig(config);
-
-        // 1) 请求拦截器：与 axios 一致，按注册逆序执行
-        foreach (var interceptor in Interceptors.Request.SnapshotReversed())
-        {
-            AxiosConfig next;
-            try
+            // 泛型调用 XxxAsync<dynamic>/<object> 时（T 即 object），响应自动展开为动态对象图，
+            // 对标 JS 中直接 response.data.xxx 的用法；显式指定过其他 responseType 时以显式配置为准。
+            if (dataType == typeof(object) && config.ResponseType == ResponseType.Json)
             {
-                next = await interceptor.OnFulfilled(config).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                if (interceptor.OnRejected is null)
-                {
-                    throw;
-                }
-
-                next = await interceptor.OnRejected(ex).ConfigureAwait(false);
+                config.ResponseType = ResponseType.Dynamic;
             }
 
-            // 返回 null 时此前会在下一行（config.TransformRequest）炸成裸 NullReferenceException，
-            // 调用方既拿不到 AxiosException 也看不出是哪一层拦截器出的错。
-            config = next ?? throw AxiosException.InvalidOption(
-                "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
-                + "（要做修改请改传入的 config 后端返回它）。",
-                config);
-        }
-
-        // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
-        // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
-        if (config.HasTransformRequest)
-        {
-            foreach (var transform in config.TransformRequest)
+            // 泛型调用 XxxAsync<Stream> 时自动切换为流式响应（对标 axios responseType: 'stream'），
+            // 下载大文件直接用，不必再手动设置 ResponseType。显式配置的 responseType 仍然优先。
+            if (dataType == typeof(Stream) && config.ResponseType == ResponseType.Json)
             {
+                config.ResponseType = ResponseType.Stream;
+            }
+
+            // 负值没有任何合理语义，静默当作「不限制」会让调用方以为限制生效了 —— 直接报错。
+            ValidateRangeConfig(config);
+
+            // 1) 请求拦截器：与 axios 一致，按注册逆序执行
+            foreach (var interceptor in Interceptors.Request.SnapshotReversed())
+            {
+                AxiosConfig next;
                 try
                 {
-                    config.Data = transform(config.Data, config);
+                    next = await interceptor.OnFulfilled(config).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    if (interceptor.OnRejected is null)
+                    {
+                        throw;
+                    }
+
+                    next = await interceptor.OnRejected(ex).ConfigureAwait(false);
+                }
+
+                // 返回 null 时此前会在下一行（config.TransformRequest）炸成裸 NullReferenceException，
+                // 调用方既拿不到 AxiosException 也看不出是哪一层拦截器出的错。
+                config = next ?? throw AxiosException.InvalidOption(
+                    "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
+                    + "（要做修改请改传入的 config 后端返回它）。",
+                    config);
+            }
+
+            // 2) transformRequest：拦截器之后、编码之前依次作用于数据（对应 axios transformRequest）
+            // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
+            if (config.HasTransformRequest)
+            {
+                foreach (var transform in config.TransformRequest)
+                {
+                    try
+                    {
+                        config.Data = transform(config.Data, config);
+                    }
+                    catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                    {
+                        throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
+                    }
+                }
+            }
+
+            // 3) 构造 URI 与 HttpRequestMessage
+            var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.ParamsSerializer, config: config);
+            var request = new HttpRequestMessage(config.Method, uri)
+            {
+                Version = config.HttpVersion ?? HttpVersion.Version11
+            };
+
+            // request 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
+            // 所以从这里开始到方法结束的所有路径（含 CancelAfter 越界、请求体超限、拦截器抛异常）
+            // 都必须先释放它；只把「发送 + 读取」包进 finally 会把未发出的请求体漏掉。
+            try
+            {
+                HttpContent? content;
+                try
+                {
+                    content = RequestBodyFactory.Create(config.Data, config);
                 }
                 catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
                 {
-                    throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
-                }
-            }
-        }
-
-        // 3) 构造 URI 与 HttpRequestMessage
-        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.ParamsSerializer, config: config);
-        var request = new HttpRequestMessage(config.Method, uri)
-        {
-            Version = config.HttpVersion ?? HttpVersion.Version11
-        };
-
-        // request 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
-        // 所以从这里开始到方法结束的所有路径（含 CancelAfter 越界、请求体超限、拦截器抛异常）
-        // 都必须先释放它；只把「发送 + 读取」包进 finally 会把未发出的请求体漏掉。
-        try
-        {
-            HttpContent? content;
-            try
-            {
-                content = RequestBodyFactory.Create(config.Data, config);
-            }
-            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-            {
-                // 序列化失败（循环引用、自定义转换器抛错、multipart 缺字段名等）同样走统一错误模型；
-                // 取消类异常原样抛出，保证 IsCancel 语义不被吞掉。
-                throw AxiosException.BadRequestPayload(
-                    config,
-                    request,
-                    config.Data?.GetType().Name ?? "null",
-                    ex);
-            }
-
-            // 上传进度 / 限速：包一层流量统计（头部从原内容复制，序列化逻辑不变）
-            if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
-            {
-                content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate);
-            }
-
-            if (content is not null)
-            {
-                if (config.MaxBodyLength is long maxBody
-                    && content.Headers.ContentLength is long bodyLength
-                    && bodyLength > maxBody)
-                {
-                    content.Dispose();
-                    throw AxiosException.MaxBodyLength(config, request, bodyLength, maxBody);
+                    // 序列化失败（循环引用、自定义转换器抛错、multipart 缺字段名等）同样走统一错误模型；
+                    // 取消类异常原样抛出，保证 IsCancel 语义不被吞掉。
+                    throw AxiosException.BadRequestPayload(
+                        config,
+                        request,
+                        config.Data?.GetType().Name ?? "null",
+                        ex);
                 }
 
-                request.Content = content;
-            }
-
-            ApplyHeaders(request, config);
-
-            var externalToken = config.CancellationToken;
-            var hasTimeout = config.Timeout > TimeSpan.Zero;
-
-            // 只有「设了超时」或「外部令牌可取消」才需要链接源：两者都不成立时 linkedCts.Token
-            // 恒等于 None，为每个请求建一个 CTS（连同 SendAsync 里的令牌注册）换不来任何行为差异。
-            using CancellationTokenSource? linkedCts = hasTimeout || externalToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
-                : null;
-
-            if (hasTimeout)
-            {
-                // CancelAfter 的上限是 uint.MaxValue-1 毫秒（约 49.7 天），越界会抛裸
-                // ArgumentOutOfRangeException：收敛到上限，语义等价于「极长但有限」。
-                linkedCts!.CancelAfter(Timeouts.Clamp(config.Timeout));
-            }
-
-            // 交给底层每一次 I/O 的令牌：无超时且无外部取消时就是 None（不注册、不分配）。
-            var sendToken = linkedCts?.Token ?? CancellationToken.None;
-
-            var streamResponse = config.ResponseType == ResponseType.Stream;
-
-            // 流式响应的 timeout 需要延续到正文读取结束，这里记录请求起点用于计算剩余时间。
-            // 只有「流式 + 设了超时」用得上：其余组合下 remaining 恒为 null，计时器纯属白分配。
-            var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
-
-            // 流式正文的所有权交给调用方持有的流；拦截器抛异常或丢弃响应时由这里兜底释放，
-            // 否则租约永远不归还，该 origin 节点再也不会被驱逐。
-            IDisposable? streamOwner = null;
-
-            // 4) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
-            Func<Task<AxiosResponse>> invoker = async () =>
-            {
-                PoolLease? lease = null;
-                try
+                // 上传进度 / 限速：包一层流量统计（头部从原内容复制，序列化逻辑不变）
+                if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
                 {
-                    // 注入 Handler 的实例：固定 HttpClient，所有 origin 共用；
-                    // 默认实例：按 origin 从连接池租用（连接复用 + 并发上限）。
-                    // 租用也走异步入口并把链接后的令牌传进去：已取消/已超时的请求在租用前就会被截断，
-                    // 抛出的 OperationCanceledException 与发送阶段同规则翻译成统一的错误模型。
-                    var httpClient = _customClient;
-                    if (httpClient is null)
+                    content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate);
+                }
+
+                if (content is not null)
+                {
+                    if (config.MaxBodyLength is long maxBody
+                        && content.Headers.ContentLength is long bodyLength
+                        && bodyLength > maxBody)
                     {
+                        content.Dispose();
+                        throw AxiosException.MaxBodyLength(config, request, bodyLength, maxBody);
+                    }
+
+                    request.Content = content;
+                }
+
+                ApplyHeaders(request, config);
+
+                var externalToken = config.CancellationToken;
+                var hasTimeout = config.Timeout > TimeSpan.Zero;
+
+                // 只有「设了超时」或「外部令牌可取消」才需要链接源：两者都不成立时 linkedCts.Token
+                // 恒等于 None，为每个请求建一个 CTS（连同 SendAsync 里的令牌注册）换不来任何行为差异。
+                using CancellationTokenSource? linkedCts = hasTimeout || externalToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
+                    : null;
+
+                if (hasTimeout)
+                {
+                    // CancelAfter 的上限是 uint.MaxValue-1 毫秒（约 49.7 天），越界会抛裸
+                    // ArgumentOutOfRangeException：收敛到上限，语义等价于「极长但有限」。
+                    linkedCts!.CancelAfter(Timeouts.Clamp(config.Timeout));
+                }
+
+                // 交给底层每一次 I/O 的令牌：无超时且无外部取消时就是 None（不注册、不分配）。
+                var sendToken = linkedCts?.Token ?? CancellationToken.None;
+
+                var streamResponse = config.ResponseType == ResponseType.Stream;
+
+                // 流式响应的 timeout 需要延续到正文读取结束，这里记录请求起点用于计算剩余时间。
+                // 只有「流式 + 设了超时」用得上：其余组合下 remaining 恒为 null，计时器纯属白分配。
+                var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
+
+                // 流式正文的所有权交给调用方持有的流；拦截器抛异常或丢弃响应时由这里兜底释放，
+                // 否则租约永远不归还，该 origin 节点再也不会被驱逐。
+                IDisposable? streamOwner = null;
+
+                // 4) 真正的发送 + 读取 + 状态码校验（异常会进入响应拦截器 rejected 链）
+                Func<Task<AxiosResponse>> invoker = async () =>
+                {
+                    PoolLease? lease = null;
+                    try
+                    {
+                        // 注入 Handler 的实例：固定 HttpClient，所有 origin 共用；
+                        // 默认实例：按 origin 从连接池租用（连接复用 + 并发上限）。
+                        // 租用也走异步入口并把链接后的令牌传进去：已取消/已超时的请求在租用前就会被截断，
+                        // 抛出的 OperationCanceledException 与发送阶段同规则翻译成统一的错误模型。
+                        var httpClient = _customClient;
+                        if (httpClient is null)
+                        {
+                            try
+                            {
+                                lease = await _pool!.LeaseAsync(uri, config, sendToken).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException ex)
+                            {
+                                if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                                {
+                                    throw AxiosException.Timeout(config, request, ex);
+                                }
+
+                                throw AxiosException.Canceled(config, request, ex);
+                            }
+
+                            httpClient = lease.Client;
+                        }
+
+                        HttpResponseMessage responseMessage;
                         try
                         {
-                            lease = await _pool!.LeaseAsync(uri, config, sendToken).ConfigureAwait(false);
+                            responseMessage = await httpClient
+                                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sendToken)
+                                .ConfigureAwait(false);
                         }
                         catch (OperationCanceledException ex)
                         {
@@ -511,204 +524,190 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
                             throw AxiosException.Canceled(config, request, ex);
                         }
-
-                        httpClient = lease.Client;
-                    }
-
-                    HttpResponseMessage responseMessage;
-                    try
-                    {
-                        responseMessage = await httpClient
-                            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sendToken)
-                            .ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException ex)
-                    {
-                        if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                        catch (HttpRequestException ex)
                         {
-                            throw AxiosException.Timeout(config, request, ex);
+                            throw AxiosException.Network(config, request, ex);
+                        }
+                        catch (IOException ex)
+                        {
+                            throw AxiosException.Network(config, request, ex);
+                        }
+                        catch (NotSupportedException ex)
+                        {
+                            // 自定义 Handler / Content 不支持某种能力时不要把裸异常漏给调用方。
+                            throw AxiosException.Network(config, request, ex);
                         }
 
-                        throw AxiosException.Canceled(config, request, ex);
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        throw AxiosException.Network(config, request, ex);
-                    }
-                    catch (IOException ex)
-                    {
-                        throw AxiosException.Network(config, request, ex);
-                    }
-                    catch (NotSupportedException ex)
-                    {
-                        // 自定义 Handler / Content 不支持某种能力时不要把裸异常漏给调用方。
-                        throw AxiosException.Network(config, request, ex);
-                    }
-
-                    AxiosResponse response;
-                    bool statusAccepted;
-                    try
-                    {
-                        // 状态码的接受性只判定一次：它同时决定「宽松解析」与「是否抛错」，
-                        // 调用两次会让带副作用的 validateStatus（计数、日志、限流）被执行两遍，
-                        // 且两次结果不一致时（非确定性判定）行为自相矛盾。
-                        var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
-                        statusAccepted = validateStatus((int)responseMessage.StatusCode);
-
-                        // 状态码不合法时转换必须宽松：否则 404 + HTML 错误页会在反序列化处抛错，
-                        // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
-                        response = await ReadResponseAsync(
-                                responseMessage,
-                                request,
-                                config,
-                                sendToken,
-                                dataType,
-                                lenient: !statusAccepted)
-                            .ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException ex)
-                    {
-                        responseMessage.Dispose();
-                        if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                        AxiosResponse response;
+                        bool statusAccepted;
+                        try
                         {
-                            throw AxiosException.Timeout(config, request, ex);
+                            // 状态码的接受性只判定一次：它同时决定「宽松解析」与「是否抛错」，
+                            // 调用两次会让带副作用的 validateStatus（计数、日志、限流）被执行两遍，
+                            // 且两次结果不一致时（非确定性判定）行为自相矛盾。
+                            var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
+                            statusAccepted = validateStatus((int)responseMessage.StatusCode);
+
+                            // 状态码不合法时转换必须宽松：否则 404 + HTML 错误页会在反序列化处抛错，
+                            // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
+                            response = await ReadResponseAsync(
+                                    responseMessage,
+                                    request,
+                                    config,
+                                    sendToken,
+                                    dataType,
+                                    target,
+                                    lenient: !statusAccepted)
+                                .ConfigureAwait(false);
                         }
-
-                        throw AxiosException.Canceled(config, request, ex);
-                    }
-                    catch (IOException ex)
-                    {
-                        // 连接中途断开 / 响应体被截断（HttpIOException）：统一成 ERR_NETWORK，而不是裸 IOException。
-                        responseMessage.Dispose();
-                        throw AxiosException.Network(config, request, ex);
-                    }
-                    catch
-                    {
-                        // 读取/解析失败（含 maxContentLength 超限、反序列化失败）：先释放响应，避免连接泄漏
-                        responseMessage.Dispose();
-                        throw;
-                    }
-
-                    // stream 模式下消息不能释放（调用方要继续读流），所有权转移给 ResponseStreamOwner。
-                    if (!streamResponse)
-                    {
-                        responseMessage.Dispose();
-                    }
-
-                    if (!statusAccepted)
-                    {
-                        if (streamResponse)
+                        catch (OperationCanceledException ex)
                         {
-                            // 失败响应没有人会去读正文：立即释放内容把连接还回池里，
-                            // 否则这条连接会被一个永远不会被读取的流一直占住（重试几次就能打满连接池）。
-                            (response.Data as IDisposable)?.Dispose();
-                            response.Data = null;
                             responseMessage.Dispose();
+                            if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                            {
+                                throw AxiosException.Timeout(config, request, ex);
+                            }
+
+                            throw AxiosException.Canceled(config, request, ex);
                         }
-
-                        throw AxiosException.FromResponse(config, request, response);
-                    }
-
-                    if (streamResponse && response.Data is Stream body)
-                    {
-                        // 无条件包装（Timeout=0 也包）：只有这样「外部取消」与「正文阶段 I/O 异常」
-                        // 在流式响应上才和非流式一致，否则同一场景会因 Timeout 配置不同给出不同的异常类型。
-                        var remaining = clock is not null
-                            ? config.Timeout - clock.Elapsed
-                            : (TimeSpan?)null;
-
-                        Stream wrapped = new TimeoutStream(body, remaining, externalToken, config, request);
-
-                        // 租约 + HttpResponseMessage 的所有权一并转移给调用方持有的流：
-                        // 下载期间该 origin 仍被视为活跃（避免空闲驱逐把连接回收），
-                        // 流 Dispose 时释放响应消息（此前流式路径只释放正文，消息本体永久悬空）。
-                        wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease);
-                        lease = null;
-
-                        response.Data = wrapped;
-                        streamOwner = wrapped;
-                    }
-
-                    return response;
-                }
-                catch (ObjectDisposedException ex)
-                {
-                    // 池被直接 Dispose()/Clear()（或在途时关闭）：底层 Handler/Client 已释放，
-                    // 裸 ObjectDisposedException 对调用方没有信息量，统一翻译成「请求被中止」。
-                    throw AxiosException.Canceled(
-                        config,
-                        request,
-                        "客户端或其连接池在请求在途时被释放，请求被中止",
-                        ex);
-                }
-                finally
-                {
-                    lease?.Dispose();
-                }
-            };
-
-            // 5) 响应拦截器：按注册顺序包装成责任链
-            var chain = invoker;
-            foreach (var interceptor in Interceptors.Response.Snapshot())
-            {
-                var previous = chain;
-                var fulfilled = interceptor.OnFulfilled;
-                var rejected = interceptor.OnRejected;
-                chain = async () =>
-                {
-                    AxiosResponse response;
-                    try
-                    {
-                        response = await previous().ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (rejected is null)
+                        catch (IOException ex)
                         {
+                            // 连接中途断开 / 响应体被截断（HttpIOException）：统一成 ERR_NETWORK，而不是裸 IOException。
+                            responseMessage.Dispose();
+                            throw AxiosException.Network(config, request, ex);
+                        }
+                        catch
+                        {
+                            // 读取/解析失败（含 maxContentLength 超限、反序列化失败）：先释放响应，避免连接泄漏
+                            responseMessage.Dispose();
                             throw;
                         }
 
-                        // 返回 null 此前会被当成「响应就是 null」原样交回调用方，
-                        // GetAsync<T> 随后在 AsTyped 上炸 NRE —— 明确报成配置错误。
-                        return (await rejected(ex).ConfigureAwait(false))
-                            ?? throw NullInterceptorResult(config);
+                        // stream 模式下消息不能释放（调用方要继续读流），所有权转移给 ResponseStreamOwner。
+                        if (!streamResponse)
+                        {
+                            responseMessage.Dispose();
+                        }
+
+                        if (!statusAccepted)
+                        {
+                            if (streamResponse)
+                            {
+                                // 失败响应没有人会去读正文：立即释放内容把连接还回池里，
+                                // 否则这条连接会被一个永远不会被读取的流一直占住（重试几次就能打满连接池）。
+                                (response.Data as IDisposable)?.Dispose();
+                                response.Data = null;
+                                responseMessage.Dispose();
+                            }
+
+                            throw AxiosException.FromResponse(config, request, response);
+                        }
+
+                        if (streamResponse && response.Data is Stream body)
+                        {
+                            // 无条件包装（Timeout=0 也包）：只有这样「外部取消」与「正文阶段 I/O 异常」
+                            // 在流式响应上才和非流式一致，否则同一场景会因 Timeout 配置不同给出不同的异常类型。
+                            var remaining = clock is not null
+                                ? config.Timeout - clock.Elapsed
+                                : (TimeSpan?)null;
+
+                            Stream wrapped = new TimeoutStream(body, remaining, externalToken, config, request);
+
+                            // 租约 + HttpResponseMessage 的所有权一并转移给调用方持有的流：
+                            // 下载期间该 origin 仍被视为活跃（避免空闲驱逐把连接回收），
+                            // 流 Dispose 时释放响应消息（此前流式路径只释放正文，消息本体永久悬空）。
+                            wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease);
+                            lease = null;
+
+                            response.Data = wrapped;
+                            streamOwner = wrapped;
+                        }
+
+                        return response;
                     }
-
-                    return (await fulfilled(response).ConfigureAwait(false))
-                        ?? throw NullInterceptorResult(config);
+                    catch (ObjectDisposedException ex)
+                    {
+                        // 池被直接 Dispose()/Clear()（或在途时关闭）：底层 Handler/Client 已释放，
+                        // 裸 ObjectDisposedException 对调用方没有信息量，统一翻译成「请求被中止」。
+                        throw AxiosException.Canceled(
+                            config,
+                            request,
+                            "客户端或其连接池在请求在途时被释放，请求被中止",
+                            ex);
+                    }
+                    finally
+                    {
+                        lease?.Dispose();
+                    }
                 };
-            }
 
-            AxiosResponse? result;
-            try
-            {
-                result = await chain().ConfigureAwait(false);
-            }
-            catch
-            {
+                // 5) 响应拦截器：按注册顺序包装成责任链
+                var chain = invoker;
+                foreach (var interceptor in Interceptors.Response.Snapshot())
+                {
+                    var previous = chain;
+                    var fulfilled = interceptor.OnFulfilled;
+                    var rejected = interceptor.OnRejected;
+                    chain = async () =>
+                    {
+                        AxiosResponse response;
+                        try
+                        {
+                            response = await previous().ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (rejected is null)
+                            {
+                                throw;
+                            }
+
+                            // 返回 null 此前会被当成「响应就是 null」原样交回调用方，
+                            // GetAsync<T> 随后在 AsTyped 上炸 NRE —— 明确报成配置错误。
+                            return (await rejected(ex).ConfigureAwait(false))
+                                ?? throw NullInterceptorResult(config);
+                        }
+
+                        return (await fulfilled(response).ConfigureAwait(false))
+                            ?? throw NullInterceptorResult(config);
+                    };
+                }
+
+                AxiosResponse? result;
                 try
                 {
-                    streamOwner?.Dispose();
+                    result = await chain().ConfigureAwait(false);
                 }
                 catch
                 {
-                    // 兜底释放失败不能掩盖拦截器的原始异常
+                    try
+                    {
+                        streamOwner?.Dispose();
+                    }
+                    catch
+                    {
+                        // 兜底释放失败不能掩盖拦截器的原始异常
+                    }
+
+                    throw;
                 }
 
-                throw;
-            }
+                // 拦截器返回了新实例：原流式正文没有任何引用，需要在这里释放。
+                if (streamOwner is not null && !ReferenceEquals(result?.Data, streamOwner))
+                {
+                    streamOwner.Dispose();
+                }
 
-            // 拦截器返回了新实例：原流式正文没有任何引用，需要在这里释放。
-            if (streamOwner is not null && !ReferenceEquals(result?.Data, streamOwner))
+                return result!;
+            }
+            finally
             {
-                streamOwner.Dispose();
+                request.Dispose();
             }
-
-            return result!;
         }
         finally
         {
-            request.Dispose();
+            ReleaseInFlight();
         }
     }
 
@@ -961,6 +960,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         AxiosConfig config,
         CancellationToken cancellationToken,
         Type? dataType,
+        AxiosResponse? target,
         bool lenient)
     {
         var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
@@ -1027,15 +1027,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
         }
 
-        return new AxiosResponse
-        {
-            Data = data,
-            Status = status,
-            StatusText = statusText,
-            Headers = headers,
-            Config = config,
-            Request = request
-        };
+        // 泛型调用方已经把目标类型的响应对象造好交过来（见 SendTypedAsync<T>）：就地填充，
+        // 否则「管线造一个非泛型响应 + AsTyped 再复制一个」是每请求两个响应对象。
+        var response = target ?? new AxiosResponse();
+        response.Data = data;
+        response.Status = status;
+        response.StatusText = statusText;
+        response.Headers = headers;
+        response.Config = config;
+        response.Request = request;
+        return response;
     }
 
     /// <summary>

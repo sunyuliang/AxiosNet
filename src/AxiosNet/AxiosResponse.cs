@@ -42,6 +42,13 @@ public class AxiosResponse
     public string? GetHeader(string name)
         => Headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
 
+    /// <summary>
+    /// 把非泛型响应复制成 <typeparamref name="TData"/> 的响应。
+    /// <para>
+    /// 只有<b>响应拦截器把响应对象换掉</b>时才走这里（它写不出具体的泛型参数，只能给回非泛型对象）：
+    /// 正常路径由 <c>AxiosClient.SendTypedAsync</c> 预先造好泛型对象、管线就地填充，不产生第二个响应。
+    /// </para>
+    /// </summary>
     internal AxiosResponse<TData> AsTyped<TData>()
     {
         return new AxiosResponse<TData>
@@ -62,10 +69,25 @@ public class AxiosResponse
 public sealed class AxiosResponse<TData> : AxiosResponse
 {
     /// <summary>
+    /// 未装箱的原始 Data（<c>base.Data</c> 本身）。
+    /// <para>
+    /// 泛型请求的响应对象由调用方预先造好、在管线里就地填充（见 <c>AxiosClient.SendTypedAsync</c>），
+    /// 那时还没法走类型化的 <see cref="Data"/>：填充点只知道 <c>object</c>，校验与拆箱留给
+    /// <see cref="Internal.DataCast.EnsureCompatible{T}"/>。少了这个入口就只能把对象强转回基类去写。
+    /// </para>
+    /// </summary>
+    internal object? RawData
+    {
+        get => base.Data;
+        set => base.Data = value;
+    }
+
+    /// <summary>
     /// 已转换成 <typeparamref name="TData"/> 的 Data。
     /// <para>
-    /// 转换在泛型请求返回时（<see cref="AxiosResponse.AsTyped{TData}"/>）就完成了，
-    /// 因此这里只做拆箱，不再每次读取都跑一遍转换，也不把类型不匹配的检查推迟到属性 getter
+    /// 转换在请求返回前就完成了（管线就地填充，或拦截器换对象时经
+    /// <see cref="AxiosResponse.AsTyped{TData}"/> 复制），因此这里只做拆箱，不再每次读取都跑一遍转换，
+    /// 也不把类型不匹配的检查推迟到属性 getter
     /// （getter 抛业务异常会让日志、调试器、序列化统统在这里炸掉）。
     /// </para>
     /// </summary>

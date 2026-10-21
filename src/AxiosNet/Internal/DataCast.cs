@@ -14,15 +14,24 @@ internal static class DataCast
 {
     public static T? To<T>(object? data, AxiosConfig? config, HttpRequestMessage? request)
     {
-        if (data is null)
-        {
-            return default;
-        }
+        EnsureCompatible<T>(data, config, request);
+        return data is null ? default : (T)data;
+    }
 
+    /// <summary>
+    /// 校验 <paramref name="data"/> 已经是 <typeparamref name="T"/>（或 <c>null</c>），不通过就抛。
+    /// <para>
+    /// 泛型请求的响应对象在管线里就地填充（<c>AxiosClient.SendTypedAsync</c>），那里只差这一步
+    /// 校验：管线交出来的 <c>Data</c> 本该就是 T，但 responseType 与泛型参数不匹配时不是 ——
+    /// 必须在这里报错，不能把检查推迟到 <c>AxiosResponse&lt;T&gt;.Data</c> 的 getter。
+    /// </para>
+    /// </summary>
+    public static void EnsureCompatible<T>(object? data, AxiosConfig? config, HttpRequestMessage? request)
+    {
         // 模式匹配覆盖引用转换与拆箱；T 为 dynamic 时擦除为 object，恒过。
-        if (data is T typed)
+        if (data is null || data is T)
         {
-            return typed;
+            return;
         }
 
         throw AxiosException.BadResponse(

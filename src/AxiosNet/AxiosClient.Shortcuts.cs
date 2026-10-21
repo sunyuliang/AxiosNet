@@ -1,3 +1,5 @@
+using AxiosNet.Internal;
+
 namespace AxiosNet;
 
 // AxiosClient 的快捷方法层：与 axios.get/post/put/patch/delete/head/options
@@ -204,7 +206,38 @@ public sealed partial class AxiosClient
 
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
-        var response = await SendAsync(config, typeof(T)).ConfigureAwait(false);
+        // 目标类型的响应对象在这里造好、交给管线就地填充：原先「管线造一个非泛型响应 →
+        // AsTyped 复制成泛型响应」是每请求两个响应对象（约 120 B），而前者从不离开管线。
+        var typed = new AxiosResponse<T>();
+        var response = await SendAsync(config, typeof(T), typed).ConfigureAwait(false);
+
+        // 响应拦截器把对象换掉了（它写不出具体的泛型参数，只能给回非泛型响应）：走复制这条老路径。
+        if (!ReferenceEquals(response, typed))
+        {
+            return AsTyped<T>(response);
+        }
+
+        // Data 必须是 T：responseType 与泛型参数不匹配时给 ERR_BAD_RESPONSE，
+        // 而不是把检查推迟到 Data getter（getter 抛异常会让日志、调试器、序列化统统在属性读取处炸掉）。
+        try
+        {
+            DataCast.EnsureCompatible<T>(typed.RawData, typed.Config, typed.Request);
+        }
+        catch
+        {
+            // 这个响应已经交不到调用方手里了：流式正文必须在这里释放 ——
+            // 否则池租约永不归还，该 origin 的连接会被一个没人读的流一直占住。
+            (typed.RawData as IDisposable)?.Dispose();
+            typed.RawData = null;
+            throw;
+        }
+
+        return typed;
+    }
+
+    /// <summary>把拦截器换回来的非泛型响应复制成 <typeparamref name="T"/>。</summary>
+    private static AxiosResponse<T> AsTyped<T>(AxiosResponse response)
+    {
         try
         {
             return response.AsTyped<T>();
@@ -284,6 +317,9 @@ public sealed partial class AxiosClient
         return config;
     }
 
+    /// <summary>
+    /// 把 url/method 填进调用方传入的配置，交给管线按常规路径合并到实例默认值。
+    /// </summary>
     private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)
     {
         // PostAsync(url, null) 在重载决议里会落到本方法的调用方（AxiosConfig 比 object 更具体），
@@ -291,6 +327,8 @@ public sealed partial class AxiosClient
         ArgumentNullException.ThrowIfNull(config);
 
         // 不能就地修改调用方传入的 config：同一个 config 并发复用时 Url/Method 会互相覆盖。
+        // Clone() 同时会清掉 EffectiveMerged：传入的是 response.Config 这类「上一次的生效配置」时，
+        // 它会被当成按请求项重新合并到本实例默认值上（否则新实例的默认值会被整份跳过）。
         var copy = config.Clone();
         copy.Url = url;
         copy.Method = method;

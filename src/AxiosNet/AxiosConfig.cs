@@ -186,10 +186,13 @@ public sealed class AxiosConfig
 
     /// <summary>
     /// 这份配置是否<b>已经是合并后的生效配置</b>（由快捷方法在实例默认值的副本上直接填写而来，
-    /// 见 <c>AxiosClient.Shortcut</c>）。
+    /// 见 <c>AxiosClient.Shortcut</c>）。管线据此跳过二次合并。
     /// <para>
-    /// 只有它自己的 <c>Clone()</c> 会继承该标记，管线据此跳过二次合并；调用方手动构造的
-    /// <see cref="AxiosConfig"/> 永远是 <c>false</c>，仍走「按请求项合并到实例默认值」的常规路径。
+    /// 标记只在<b>管线内部</b>有效：<see cref="Clone"/> 不继承它（与 <see cref="Response"/> 同理），
+    /// 所以调用方拿到手、再交回来的配置（典型是回放 <see cref="AxiosResponse.Config"/>）一律
+    /// 走「按请求项合并到实例默认值」的常规路径 —— 否则它会把上一个实例的生效值当成按请求项，
+    /// 静默跳过新实例的默认值（连 <c>Proxy</c>/<c>PoolOptions</c> 这类实例级项都会被误判成
+    /// 「按请求设置」而错报）。
     /// </para>
     /// </summary>
     internal bool EffectiveMerged { get; set; }
@@ -523,6 +526,10 @@ public sealed class AxiosConfig
         // 响应上下文属于「某一次响应」：克隆出来的是给下一次请求用的配置，
         // 带上旧响应头只会让序列化器读到上一个请求的状态（而且这种脏读极难定位）。
         clone.Response = null;
+
+        // 合并标记属于「那一次合并」：克隆出来的是新请求的输入，尚未与本实例的默认值合并。
+        // 漏掉这一行，回放 response.Config 就会带上旧实例的全部生效值并跳过本次合并。
+        clone.EffectiveMerged = false;
 
         return clone;
     }

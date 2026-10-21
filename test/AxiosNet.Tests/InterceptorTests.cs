@@ -224,4 +224,51 @@ public sealed class InterceptorTests
         await client.GetAsync(server.Url);
         Assert.Empty(trace);
     }
+
+    private sealed class Profile
+    {
+        public int Id { get; set; }
+    }
+
+    /// <summary>
+    /// 泛型请求的响应对象由管线就地填充（<c>SendTypedAsync&lt;T&gt;</c> 预先造好），
+    /// 但拦截器把对象换掉时必须仍按 T 转换 —— 那时拿到的是一份全新的非泛型响应。
+    /// </summary>
+    [Fact]
+    public async Task ResponseInterceptor_ReplacingResponse_StillConvertsDataForGenericRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { id = 1 }));
+        using var client = new AxiosClient();
+
+        client.Interceptors.Response.Use((AxiosResponse response) => new AxiosResponse
+        {
+            Data = new Profile { Id = 42 },
+            Status = response.Status,
+            StatusText = response.StatusText,
+            Headers = response.Headers
+        });
+
+        var response = await client.GetAsync<Profile>(server.Url);
+        Assert.Equal(42, response.Data!.Id);
+    }
+
+    /// <summary>
+    /// 拦截器在泛型请求的响应上写入了与 T 不匹配的 Data：必须报 <c>ERR_BAD_RESPONSE</c>，
+    /// 不能把检查推迟到 <c>Data</c> getter（那是裸 <see cref="InvalidCastException"/>）。
+    /// </summary>
+    [Fact]
+    public async Task ResponseInterceptor_WritingIncompatibleData_FailsWithBadResponse()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { id = 1 }));
+        using var client = new AxiosClient();
+
+        client.Interceptors.Response.Use((AxiosResponse response) =>
+        {
+            response.Data = "not a profile";
+            return response;
+        });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Profile>(server.Url));
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+    }
 }
