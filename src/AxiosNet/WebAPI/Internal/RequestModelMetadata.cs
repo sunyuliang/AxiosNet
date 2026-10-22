@@ -27,7 +27,14 @@ internal sealed partial class RequestModelMetadata
     /// <summary>按模板出现顺序排列的路径占位符绑定：Token 是模板中的原文（替换用），Property 提供值。</summary>
     private readonly (string Token, PropertyInfo Property)[] _pathTokens;
     private readonly PropertyBinding[] _queryBindings;
+
+    /// <summary>平铺的字典查询参数（属性值是字符串键字典：<c>a=1&amp;b=2</c> 而不是 <c>name[a]=1</c>）。</summary>
+    private readonly PropertyBinding[] _queryMaps;
     private readonly PropertyBinding[] _headerBindings;
+    private readonly PropertyInfo[] _headerCollections;
+
+    /// <summary>类级静态头：Value 为 null 表示删除该头。</summary>
+    private readonly (string Name, string? Value)[] _staticHeaders;
     private readonly PropertyInfo? _bodyProperty;
 
     private RequestModelMetadata(
@@ -35,14 +42,20 @@ internal sealed partial class RequestModelMetadata
         string pathTemplate,
         (string Token, PropertyInfo Property)[] pathTokens,
         PropertyBinding[] queryBindings,
+        PropertyBinding[] queryMaps,
         PropertyBinding[] headerBindings,
+        PropertyInfo[] headerCollections,
+        (string Name, string? Value)[] staticHeaders,
         PropertyInfo? bodyProperty)
     {
         Method = method;
         _pathTemplate = pathTemplate;
         _pathTokens = pathTokens;
         _queryBindings = queryBindings;
+        _queryMaps = queryMaps;
         _headerBindings = headerBindings;
+        _headerCollections = headerCollections;
+        _staticHeaders = staticHeaders;
         _bodyProperty = bodyProperty;
     }
 
@@ -52,7 +65,10 @@ internal sealed partial class RequestModelMetadata
         _pathTemplate = string.Empty;
         _pathTokens = [];
         _queryBindings = [];
+        _queryMaps = [];
         _headerBindings = [];
+        _headerCollections = [];
+        _staticHeaders = [];
     }
 
     /// <summary>本次请求的 HTTP 方法（来自路由特性；仅构建错误的缓存实例上为占位值，<see cref="Get"/> 会先抛错）。</summary>
@@ -72,7 +88,9 @@ internal sealed partial class RequestModelMetadata
     }
 
     /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
-    public string ResolveUrl(object request)
+    /// <param name="request">请求模型实例。</param>
+    /// <param name="formatter">URL 参数格式化钩子（返回 null 表示用默认规则），可为 null。</param>
+    public string ResolveUrl(object request, Func<object, string?>? formatter)
     {
         if (_pathTokens.Length == 0)
         {
@@ -87,14 +105,14 @@ internal sealed partial class RequestModelMetadata
                 ?? throw new InvalidOperationException(
                     $"路径参数 {property.DeclaringType!.Name}.{property.Name}（占位符 {{{token}}}）为 null：路径缺段无法成行。");
 
-            url = url.Replace("{" + token + "}", Uri.EscapeDataString(ToText(value)));
+            url = url.Replace("{" + token + "}", Uri.EscapeDataString(ToText(FormatValue(value, formatter)!)));
         }
 
         return url;
     }
 
     /// <summary>
-    /// 汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定）；
+    /// 汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定 + 平铺的字典映射）；
     /// 没有任何查询参数时返回 <c>null</c>（省掉空字典）。
     /// <para>
     /// 「有绑定但值全为 null」同样返回 <c>null</c>：此时与「没有任何绑定」一样没有参数要发，
@@ -102,9 +120,11 @@ internal sealed partial class RequestModelMetadata
     /// 返回空字典会静默清掉实例默认参数（如 DI 场景配在 defaults 上的 api_key）。
     /// </para>
     /// </summary>
-    public Dictionary<string, object?>? ResolveQuery(object request)
+    /// <param name="request">请求模型实例。</param>
+    /// <param name="formatter">URL 参数格式化钩子（返回 null 表示用默认规则），可为 null。</param>
+    public Dictionary<string, object?>? ResolveQuery(object request, Func<object, string?>? formatter)
     {
-        if (_queryBindings.Length == 0)
+        if (_queryBindings.Length == 0 && _queryMaps.Length == 0)
         {
             return null;
         }
@@ -113,12 +133,31 @@ internal sealed partial class RequestModelMetadata
 
         foreach (var binding in _queryBindings)
         {
-            var value = binding.Property.GetValue(request);
+            var value = FormatValue(binding.Property.GetValue(request), formatter);
 
             // 与 axios params 一致：null 参数跳过
             if (value is not null)
             {
                 query.Add(binding.Name, value);
+            }
+        }
+
+        // 字典映射平铺：值仍保持原始对象，集合 / 嵌套对象继续走 UrlBuilder 的既有规则
+        foreach (var map in _queryMaps)
+        {
+            if (map.Property.GetValue(request) is not { } dictionary)
+            {
+                continue;
+            }
+
+            foreach (var entry in QueryMap.Enumerate(dictionary))
+            {
+                var value = FormatValue(entry.Value, formatter);
+                if (value is not null)
+                {
+                    // 与具名参数同名时后者覆盖：映射来自显式数据，优先于属性
+                    query[entry.Key] = value;
+                }
             }
         }
 
@@ -136,11 +175,6 @@ internal sealed partial class RequestModelMetadata
     /// </remarks>
     public void ApplyHeaders(object request, AxiosConfig config)
     {
-        if (_headerBindings.Length == 0)
-        {
-            return;
-        }
-
         foreach (var binding in _headerBindings)
         {
             var value = binding.Property.GetValue(request);
@@ -150,6 +184,38 @@ internal sealed partial class RequestModelMetadata
             {
                 config.Headers.Set(binding.Name, ToText(value));
             }
+        }
+
+        foreach (var property in _headerCollections)
+        {
+            if (property.GetValue(request) is not { } dictionary)
+            {
+                continue;
+            }
+
+            foreach (var entry in QueryMap.Enumerate(dictionary))
+            {
+                // 值为 null 的项跳过（字典头没有「删除」语义，删除请用类级 [Headers("X-Remove")]）
+                if (entry.Value is string text)
+                {
+                    config.Headers.Set(entry.Key, text);
+                }
+            }
+        }
+    }
+
+    /// <summary>应用类级 <see cref="HeadersAttribute"/> 声明：值写入头，只有名字的声明摘除同名头。</summary>
+    public void ApplyStaticHeaders(AxiosConfig config)
+    {
+        foreach (var (name, value) in _staticHeaders)
+        {
+            if (value is null)
+            {
+                config.RemoveHeaders.Add(name);
+                continue;
+            }
+
+            config.Headers.Set(name, value);
         }
     }
 
@@ -181,7 +247,13 @@ internal sealed partial class RequestModelMetadata
         var paths = new List<PropertyBinding>();
         var queries = new List<PropertyBinding>();
         var headers = new List<PropertyBinding>();
+        var headerCollections = new List<PropertyInfo>();
         var unannotated = new List<PropertyInfo>();
+
+        // 平铺的字典映射：属性是字符串键字典且没有显式命名时，键直接进查询串（Refit 的动态查询）。
+        // 显式命名（[Query("filters")]）保留既有嵌套语义 ?filters[k]=v，作为逃生口。
+        var mapProperties = new List<PropertyInfo>();
+        var staticHeaders = new List<(string Name, string? Value)>();
         PropertyInfo? body = null;
         // Path 占位符是本库自己的模板语言：与模板 token 的大小写不敏感匹配（属性名回退如 Id ↔ {id}）；
         // Header 名按 RFC 3986 语义大小写不敏感，同名不同写法同样算重复。
@@ -190,16 +262,19 @@ internal sealed partial class RequestModelMetadata
         var seenQueryNames = new HashSet<string>(StringComparer.Ordinal);
         var seenHeaderNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        ParseStaticHeaders(requestType, staticHeaders);
+
         foreach (var property in EnumerateBindableProperties(requestType))
         {
             var path = property.GetCustomAttribute<PathAttribute>();
             var query = property.GetCustomAttribute<QueryAttribute>();
             var header = property.GetCustomAttribute<HeaderAttribute>();
+            var isHeaderCollection = property.GetCustomAttribute<HeaderCollectionAttribute>() is not null;
             var isBody = property.GetCustomAttribute<BodyAttribute>() is not null;
             var ignore = property.GetCustomAttribute<ApiIgnoreAttribute>() is not null;
 
             var kinds = (path is not null ? 1 : 0) + (query is not null ? 1 : 0)
-                + (header is not null ? 1 : 0) + (isBody ? 1 : 0);
+                + (header is not null ? 1 : 0) + (isHeaderCollection ? 1 : 0) + (isBody ? 1 : 0);
 
             if (ignore)
             {
@@ -210,7 +285,7 @@ internal sealed partial class RequestModelMetadata
                 if (ownKinds > 0)
                 {
                     throw new InvalidOperationException(
-                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / Body）："
+                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Body）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
@@ -243,6 +318,24 @@ internal sealed partial class RequestModelMetadata
                 headers.Add(new PropertyBinding(name, property));
             }
 
+            if (isHeaderCollection)
+            {
+                if (header is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [Header] 与 [HeaderCollection]：单值与逐项是二义性。");
+                }
+
+                if (!QueryMap.IsStringMapType(property.PropertyType))
+                {
+                    throw new InvalidOperationException(
+                        $"属性 {requestType.Name}.{property.Name} 标注了 [HeaderCollection]，但类型 {property.PropertyType.Name} "
+                        + "不是字符串键值字典：请用 IDictionary<string, string>（Dictionary / SortedDictionary 等实现均可）。");
+                }
+
+                headerCollections.Add(property);
+            }
+
             if (isBody)
             {
                 if (body is not null)
@@ -267,6 +360,11 @@ internal sealed partial class RequestModelMetadata
 
                 // 「未标注」与「显式 [Query]」要区分：默认 Body 只认前者
                 unannotated.Add(property);
+
+                if (QueryMap.IsMapType(property.PropertyType))
+                {
+                    mapProperties.Add(property);
+                }
             }
             else if (query is not null)
             {
@@ -278,6 +376,12 @@ internal sealed partial class RequestModelMetadata
                 }
 
                 queries.Add(new PropertyBinding(name, property));
+
+                // 字典 + 未显式命名 → 平铺；显式命名保留嵌套（?name[key]=v）
+                if (string.IsNullOrWhiteSpace(query.Name) && QueryMap.IsMapType(property.PropertyType))
+                {
+                    mapProperties.Add(property);
+                }
             }
         }
 
@@ -291,6 +395,13 @@ internal sealed partial class RequestModelMetadata
         {
             body = unannotated[0];
             queries.RemoveAll(q => ReferenceEquals(q.Property, body));
+            mapProperties.Remove(body);
+        }
+
+        // 平铺映射不再走具名查询绑定：同一属性只能有一种形态
+        if (mapProperties.Count > 0)
+        {
+            queries.RemoveAll(q => mapProperties.Contains(q.Property));
         }
 
         var pathTokens = ValidatePathTemplate(requestType, route.Path, paths);
@@ -301,8 +412,64 @@ internal sealed partial class RequestModelMetadata
             route.Path,
             pathTokens,
             [.. queries],
+            [.. mapProperties.Select(p => new PropertyBinding(p.Name, p))],
             [.. headers],
+            [.. headerCollections],
+            [.. staticHeaders],
             body);
+    }
+
+    /// <summary>
+    /// 解析类级静态头声明（基类在前、派生类在后，同名后者覆盖）。
+    /// <para>无冒号 = 摘除同名头；有冒号 = 固定值（冒号后允许为空 = 空值头）。</para>
+    /// </summary>
+    private static void ParseStaticHeaders(Type requestType, List<(string Name, string? Value)> target)
+    {
+        var chain = new List<Type>();
+        for (var type = requestType; type is not null && type != typeof(object); type = type.BaseType)
+        {
+            chain.Add(type);
+        }
+
+        for (var i = chain.Count - 1; i >= 0; i--)
+        {
+            var attribute = chain[i].GetCustomAttribute<HeadersAttribute>(inherit: false);
+            if (attribute is null)
+            {
+                continue;
+            }
+
+            foreach (var declaration in attribute.Headers)
+            {
+                if (declaration is null)
+                {
+                    continue;
+                }
+
+                var separator = declaration.IndexOf(':');
+                if (separator < 0)
+                {
+                    var removalName = declaration.Trim();
+                    if (removalName.Length == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"请求模型 {requestType.Name} 的 [Headers] 含空白声明：无法作为「删除头」的名字。");
+                    }
+
+                    target.Add((removalName, null));
+                    continue;
+                }
+
+                var name = declaration[..separator].Trim();
+                if (name.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"请求模型 {requestType.Name} 的 [Headers] 声明 \"{declaration}\" 缺少头名。");
+                }
+
+                target.Add((name, declaration[(separator + 1)..].Trim()));
+            }
+        }
     }
 
     /// <summary>公共可读实例属性（跳过索引器），按声明顺序遍历。</summary>
@@ -322,6 +489,7 @@ internal sealed partial class RequestModelMetadata
         => (property.GetCustomAttribute<PathAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<QueryAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<HeaderAttribute>(inherit: false) is not null ? 1 : 0)
+            + (property.GetCustomAttribute<HeaderCollectionAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<BodyAttribute>(inherit: false) is not null ? 1 : 0);
 
     /// <summary>
@@ -432,6 +600,13 @@ internal sealed partial class RequestModelMetadata
     /// <c>DateTime</c> 会变成带空格的短日期，同一个值在 <c>[Query]</c> 与 <c>[Path]</c> 上发出两种形态。
     /// </summary>
     private static string ToText(object value) => ParamsSerializer.ScalarToString(value);
+
+    /// <summary>
+    /// URL 参数格式化钩子：<paramref name="formatter"/> 返回 null 时回落到默认规则
+    /// （null 值原样保留，由调用方按各处规则跳过）。
+    /// </summary>
+    private static object? FormatValue(object? value, Func<object, string?>? formatter)
+        => value is null || formatter is null ? value : formatter(value) ?? value;
 
     /// <summary>路径占位符：字母/下划线开头，字母/数字/下划线组成。</summary>
     /// <remarks>GeneratedRegexAttribute 是 .NET 7+ API（net6.0 目标禁用），用编译正则：构建每类型只跑一次。</remarks>

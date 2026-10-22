@@ -36,6 +36,10 @@ public sealed class PathAttribute : Attribute
 /// 不传名称时使用属性名；<b>未标注任何参数特性的属性默认也是本语义</b>——
 /// 唯一例外：POST/PUT/PATCH 且模型恰好有一个未标注的<b>非标量</b>属性时，该属性默认按 <see cref="BodyAttribute"/> 绑定。
 /// </para>
+/// <para>
+/// <b>字典平铺</b>：属性值是字符串键字典且<b>没有显式命名</b>时，键直接进查询串（<c>?a=1&amp;b=2</c>，
+/// 与 Refit 的动态查询一致）；显式命名（<c>[Query("filters")]</c>）保留嵌套形态 <c>?filters[a]=1</c>。
+/// </para>
 /// </summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class QueryAttribute : Attribute

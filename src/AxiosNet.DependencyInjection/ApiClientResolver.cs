@@ -181,8 +181,9 @@ internal static class ApiClientFactory
         var client = new ApiClient(axiosClient);
         configure?.Invoke(client);
 
-        // 显式设置的 Authorization 优先；未设置时才从容器取 IAuthorizationProvider 单例
+        // 显式设置的 Authorization / ErrorFactory 优先；未设置时才从容器取单例
         client.Authorization ??= services.GetService<IAuthorizationProvider>();
+        client.ErrorFactory ??= services.GetService<IApiErrorFactory>();
         return client;
     }
 }

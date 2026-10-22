@@ -242,6 +242,8 @@ internal static class ResponseReader
             contentType?.CharSet);
 
         object? data;
+        // 已解码的响应正文：文本类响应都会在这里留下原文，供错误体读取与诊断（二进制/流为 null）。
+        string? rawText = null;
         if (config.ResponseType == ResponseType.Stream)
         {
             var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -267,6 +269,7 @@ internal static class ResponseReader
             var text = NeedsText(config, dataType, textual)
                 ? ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding)
                 : null;
+            rawText = text;
             data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
 
             // transformResponse：反序列化之后依次加工 Data。
@@ -291,6 +294,10 @@ internal static class ResponseReader
         // 否则「管线造一个非泛型响应 + AsTyped 再复制一个」是每请求两个响应对象。
         var response = target ?? new AxiosResponse();
         response.Data = data;
+
+        // 只在「状态码不合法」时保留原文：正常响应保留整段文本会让大正文跟着响应对象一直活着
+        // （解析完的 Data 才是调用方要的东西）；错误体的原文是 ApiErrorContext 的唯一可靠来源。
+        response.RawText = lenient ? rawText : null;
         response.Status = status;
         response.StatusText = statusText;
         response.Headers = headers;

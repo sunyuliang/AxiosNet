@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-754%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-773%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -148,16 +148,34 @@ Binding rules (parameter semantics aligned with Refit, but applied to **properti
 | --- | --- | --- |
 | Path segment | `[Path]` | substitutes template `{name}`, URL-escaped; `null` throws |
 | Query | `[Query]` / unannotated property | unannotated properties bind as query by default (**exception: default body below**); arrays `a[]=v`, nested `a[b]=v` follow the core package's params rules |
+| Query map | `[Query]` + dictionary property | **flattened** to `?a=1&b=2` when no explicit name is given; an explicit name (`[Query("filters")]`) keeps the nested form `?filters[a]=1` |
 | Header | `[Header]` | `null` is skipped |
+| Header map | `[HeaderCollection]` | `IDictionary<string, string>` written entry by entry; entries with a `null` value are skipped |
+| Static headers | `[Headers]` (class level) | fixed `"Name: Value"` headers; a name alone (`"X-Internal"`) removes that header; property headers override same-named static ones, base-class declarations are inherited |
 | Body | `[Body]` | at most one per model; `null` sends no body |
 | Exclusion | `[ApiIgnore]` | the property is excluded from binding entirely (no path/query/header/body), for internal state or sensitive data; combining with a parameter attribute throws |
+
+```csharp
+[Get("users/{id}")]
+[Headers("Accept: application/json", "X-Api-Version: 2")]   // class-level static headers
+public sealed class GetUserRequest : IApiRequest<User>
+{
+    [Path] public int Id { get; set; }
+    [Query] public Dictionary<string, object?> Filters { get; set; } = new();  // -> ?role=admin&page=2
+    [HeaderCollection] public Dictionary<string, string?> Extra { get; set; } = new();  // one header per entry
+}
+```
 
 - **`[Body]` is optional for single-payload models**: on POST/PUT/PATCH, if the model has exactly one unannotated **non-scalar** property (excluding primitives, enums, string, decimal, DateTime/DateTimeOffset, TimeSpan, Guid and their nullable forms), that property binds as the body by default; the scalar guard keeps "POST with only a query parameter" from silently becoming a request body, and multiple unannotated properties all stay query — ambiguous cases keep the status quo, and `[Body]` can always be stated explicitly
 - **One property can bind to several places (multi-binding)**: e.g. `[Path("id")]` + `[Header("X-Id")]` + `[Body]` on the same property — the value is read once and applied to each binding. Guard: `[Path]` / `[Header]` properties must be scalars (path segments and headers are plain text on the wire; a complex object would only produce a garbage `ToString()` — rejected at build time); `[Query]` / `[Body]` are unrestricted
 - **Properties you don't want to send**: `[ApiIgnore]` excludes the property from binding entirely (it also does not count toward the default body's "exactly one unannotated" check); note this only affects binding — serialization of properties **inside** the request body is the body type's own business (that is STJ's `[JsonIgnore]`)
 - Per-request tweaks (timeout / Content-Type / serializer / responseType): derive from `ApiRequest<T>` and override `Configure(config)`, or call `RequestAsync(request, config => ...)` (runs after model binding, so it can override headers written by the model)
 - Invalid model definitions (missing route attribute, unbound placeholder, multiple bodies, duplicate parameter names) throw `InvalidOperationException` on first use, naming the offending property
+- **Startup check**: `ApiClient.ValidateModels(typeof(GetUserRequest), ...)` or `ApiClient.ValidateModels(assembly)` returns **all** error messages (empty = all valid) without throwing; it shares the same metadata build as the first call, so "validated but still failing" cannot happen
 - Authorization runs **after** binding and `Configure`: signing implementations see the final URL and final headers
+- **Typed errors**: with `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code errors throw `ApiError<TError>` (`Error` / `Status` / `Response` / `Original`, with the original `AxiosException` as `InnerException`); if the factory returns `null` or is not set, `AxiosException` is thrown as before. Network errors / timeouts / cancellation never go through the factory
+- **Reading error bodies**: `ApiErrorContext.Body` exposes the raw error response text (regardless of whether the declared response type could parse it), and `TryReadAsync<TError>()` deserializes it with the serializer selected by the response `Content-Type`; a parse failure only yields `default` and never hides the original HTTP error
+- **URL parameter formatting**: `client.UrlParameterFormatter = value => ...` takes over the text form of `[Path]` / `[Query]` values (enum spellings, date formats, ...); returning `null` falls back to the default rules
 - `client.GetUri(request)` builds the URL without sending; `client.Axios` exposes the underlying `AxiosClient` (interceptors / connection pool / handler injection all available)
 
 ## Dependency injection (singleton registration)
@@ -216,7 +234,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 | `AddApiClient(name, baseAddress, configureDefaults, configure)` | singleton `IApiClientResolver` + named sites | multi-site: each site carries its own BaseAddress and underlying client, reachable only through `IApiClientResolver` by name; a duplicate name throws at registration time |
 
 - **TryAdd semantics**: both extensions skip registration when one already exists (first wins), so repeated calls never create a second connection pool; remove the old registration to replace it
-- **Authorization from the container**: a registered `IAuthorizationProvider` singleton is picked up as `ApiClient.Authorization` automatically; an explicit `Authorization` set in `configure` wins
+- **Authorization and error factory from the container**: registered `IAuthorizationProvider` / `IApiErrorFactory` singletons are attached to the `ApiClient` automatically; anything set explicitly in `configure` wins
 - **The container owns the lifetime**: disposing an injected `ApiClient` does not release the shared underlying client; singletons are released when the container shuts down (self-built clients through an internal holder, named sites through the resolver)
 - **Multi-site resolver**: `Get(name)` throws `InvalidOperationException` when the name is not registered (the message lists all registered sites), `TryGet` never throws, and `Names` lists the site names in registration order; site names are case-sensitive
 - **.NET 8+ alternative**: the official keyed services (`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`, enums work as keys too) are semantically equivalent to the named overload — scenario 6 of the sample demonstrates them, and both approaches can coexist
@@ -256,6 +274,7 @@ var config = new AxiosConfig
     JsonSerializerOptions = myJsonOptions,    // System.Text.Json options for this request/instance
     ContentSerializer = mySerializer,         // content serializer for any format (null = default JSON)
     ParamsSerializer = p => MyQuery(p),       // Func<object?, string>: custom ?a=1&b=2
+    CollectionFormat = AxiosCollectionFormat.Csv, // collection form: Brackets(default)/Multi/Csv/Ssv/Tsv/Pipes
     FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     // TransformRequest / TransformResponse: IList<Func<object?, AxiosConfig, object?>>
 
@@ -930,7 +949,7 @@ await http.GetAsync("items", c =>
 });
 ```
 
-> The first parameter is `object?`; cast to your own DTO when you need strong typing. The default serializer already follows axios conventions (arrays `a[]=1&a[]=2`, nested `o[k]=v`, nulls skipped), so most scenarios need no customization.
+> The first parameter is `object?`; cast to your own DTO when you need strong typing. The default serializer already follows axios conventions (arrays `a[]=1&a[]=2`, nested `o[k]=v`, nulls skipped), so most scenarios need no customization. To change the collection shape (`a=1&a=2`, `a=1,2`, space / tab / pipe separated) use `CollectionFormat`: it works per request, and a custom `ParamsSerializer` overrides it.
 
 ### FormFieldNameSelector
 
@@ -1383,7 +1402,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 754 cases on each runtime (1508 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 773 cases on each runtime (1546 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1396,7 +1415,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 754 xUnit tests (both test projects target net8.0 + net6.0, so 1508 executions)
+# Run all 773 xUnit tests (both test projects target net8.0 + net6.0, so 1546 executions)
 dotnet test AxiosNet.sln
 
 # Release

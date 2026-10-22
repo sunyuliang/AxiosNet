@@ -201,6 +201,7 @@ internal static class ParamsSerializer
         try
         {
             var pairs = new List<KeyValuePair<string, string>>(8);
+            var format = config?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
             if (paramsObj is JsonElement rootElement)
             {
                 // 直接传 JsonElement 必须按 JSON 树展开；走反射兜底只会把 ValueKind / RawText 序列化出去。
@@ -210,14 +211,14 @@ internal static class ParamsSerializer
                     throw InvalidParamsRoot(paramsObj, config);
                 }
 
-                AppendJsonElement(null, rootElement, pairs);
+                AppendJsonElement(null, rootElement, pairs, format);
             }
             else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
             {
                 // ExpandoObject（dynamic）等仅实现泛型字典的类型
                 foreach (var entry in stringKeyedDictionary)
                 {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null);
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
                 }
             }
             else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
@@ -225,7 +226,7 @@ internal static class ParamsSerializer
                 // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
                 foreach (var entry in readOnlyDictionary)
                 {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null);
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
                 }
             }
             else if (paramsObj is IDictionary dictionary)
@@ -237,7 +238,7 @@ internal static class ParamsSerializer
                         continue;
                     }
 
-                    Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null);
+                    Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null, format);
                 }
             }
             else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
@@ -246,7 +247,7 @@ internal static class ParamsSerializer
                 var index = 0;
                 foreach (var item in items)
                 {
-                    Append("[" + index + "]", item, pairs, visited: null);
+                    Append("[" + index + "]", item, pairs, visited: null, format);
                     index++;
                 }
             }
@@ -259,7 +260,7 @@ internal static class ParamsSerializer
             {
                 foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
                 {
-                    Append(EscapeKey(property.Name), property.GetValue(paramsObj), pairs, visited: null);
+                    Append(EscapeKey(property.Name), property.GetValue(paramsObj), pairs, visited: null, format);
                 }
             }
 
@@ -290,7 +291,8 @@ internal static class ParamsSerializer
         string prefix,
         object? value,
         List<KeyValuePair<string, string>> pairs,
-        HashSet<object>? visited)
+        HashSet<object>? visited,
+        AxiosCollectionFormat format)
     {
         // 与 axios 一致：null 直接跳过
         if (value is null)
@@ -300,7 +302,7 @@ internal static class ParamsSerializer
 
         if (value is JsonElement element)
         {
-            AppendJsonElement(prefix, element, pairs);
+            AppendJsonElement(prefix, element, pairs, format);
             return;
         }
 
@@ -312,7 +314,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in stringKeyedNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format);
                 }
             }
             finally
@@ -331,7 +333,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in readOnlyNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format);
                 }
             }
             finally
@@ -354,7 +356,7 @@ internal static class ParamsSerializer
                         continue;
                     }
 
-                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs, visited);
+                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs, visited, format);
                 }
             }
             finally
@@ -367,12 +369,18 @@ internal static class ParamsSerializer
 
         if (value is not string && value is not byte[] && value is IEnumerable enumerable)
         {
+            if (format != AxiosCollectionFormat.Brackets)
+            {
+                AppendCollection(prefix, enumerable, pairs, visited, format);
+                return;
+            }
+
             visited = ObjectGraph.Enter(visited, value);
             try
             {
                 foreach (var item in enumerable)
                 {
-                    Append($"{prefix}[]", item, pairs, visited);
+                    Append($"{prefix}[]", item, pairs, visited, format);
                 }
             }
             finally
@@ -395,7 +403,7 @@ internal static class ParamsSerializer
         {
             foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
             {
-                Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs, visited);
+                Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs, visited, format);
             }
         }
         finally
@@ -405,10 +413,85 @@ internal static class ParamsSerializer
     }
 
     /// <summary>
+    /// 非默认集合形态：<see cref="AxiosCollectionFormat.Multi"/> 展开成重复键，
+    /// 其余分隔形态把标量元素拼成一个值（元素含对象时回落到方括号形态，避免静默丢字段）。
+    /// </summary>
+    private static void AppendCollection(
+        string prefix,
+        IEnumerable enumerable,
+        List<KeyValuePair<string, string>> pairs,
+        HashSet<object>? visited,
+        AxiosCollectionFormat format)
+    {
+        visited = ObjectGraph.Enter(visited, enumerable);
+        try
+        {
+            var items = new List<object?>();
+            foreach (var item in enumerable)
+            {
+                items.Add(item);
+            }
+
+            if (format == AxiosCollectionFormat.Multi)
+            {
+                foreach (var item in items)
+                {
+                    Append(prefix, item, pairs, visited, format);
+                }
+
+                return;
+            }
+
+            var parts = new List<string>(items.Count);
+            foreach (var item in items)
+            {
+                if (item is null)
+                {
+                    continue;
+                }
+
+                if (!IsScalar(item))
+                {
+                    foreach (var fallback in items)
+                    {
+                        Append($"{prefix}[]", fallback, pairs, visited, format);
+                    }
+
+                    return;
+                }
+
+                parts.Add(ScalarToString(item));
+            }
+
+            if (parts.Count > 0)
+            {
+                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(string.Join(Separator(format), parts))));
+            }
+        }
+        finally
+        {
+            ObjectGraph.Exit(visited, enumerable);
+        }
+    }
+
+    /// <summary>分隔形态的分隔符（未列出的形态按逗号处理）。</summary>
+    private static string Separator(AxiosCollectionFormat format) => format switch
+    {
+        AxiosCollectionFormat.Ssv => " ",
+        AxiosCollectionFormat.Tsv => "\t",
+        AxiosCollectionFormat.Pipes => "|",
+        _ => ","
+    };
+
+    /// <summary>
     /// 按 JSON 树展开查询参数，规则与表单展平一致：
     /// 嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、null 跳过。
     /// </summary>
-    private static void AppendJsonElement(string? prefix, JsonElement element, List<KeyValuePair<string, string>> pairs)
+    private static void AppendJsonElement(
+        string? prefix,
+        JsonElement element,
+        List<KeyValuePair<string, string>> pairs,
+        AxiosCollectionFormat format)
     {
         switch (element.ValueKind)
         {
@@ -418,17 +501,24 @@ internal static class ParamsSerializer
                     AppendJsonElement(
                         prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]",
                         property.Value,
-                        pairs);
+                        pairs,
+                        format);
                 }
 
                 break;
 
             case JsonValueKind.Array:
             {
+                if (format != AxiosCollectionFormat.Brackets)
+                {
+                    AppendJsonArray(prefix, element, pairs, format);
+                    break;
+                }
+
                 var index = 0;
                 foreach (var item in element.EnumerateArray())
                 {
-                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs);
+                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format);
                     index++;
                 }
 
@@ -451,6 +541,66 @@ internal static class ParamsSerializer
             default:
                 // null / undefined：与 axios 一致，直接跳过。
                 break;
+        }
+    }
+
+    /// <summary>
+    /// JSON 树里的非默认集合形态：与对象形态同规则（Multi 重复键，其余拼成一个值），
+    /// 元素含对象/数组或根数组时回落方括号形态。
+    /// </summary>
+    private static void AppendJsonArray(
+        string? prefix,
+        JsonElement element,
+        List<KeyValuePair<string, string>> pairs,
+        AxiosCollectionFormat format)
+    {
+        if (prefix is not null)
+        {
+            if (format == AxiosCollectionFormat.Multi)
+            {
+                foreach (var item in element.EnumerateArray())
+                {
+                    AppendJsonElement(prefix, item, pairs, format);
+                }
+
+                return;
+            }
+
+            List<string>? parts = new();
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                {
+                    continue;
+                }
+
+                if (item.ValueKind is not (JsonValueKind.String or JsonValueKind.Number
+                    or JsonValueKind.True or JsonValueKind.False))
+                {
+                    parts = null;
+                    break;
+                }
+
+                parts.Add(JsonScalarText(item));
+            }
+
+            if (parts is { Count: > 0 })
+            {
+                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(string.Join(Separator(format), parts))));
+                return;
+            }
+
+            if (parts is { Count: 0 })
+            {
+                return;
+            }
+        }
+
+        var index = 0;
+        foreach (var item in element.EnumerateArray())
+        {
+            AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format);
+            index++;
         }
     }
 

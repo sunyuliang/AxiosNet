@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-754%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-773%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -147,16 +147,34 @@ await client.RequestAsync(new CreateUserRequest { Payload = payload });   // 返
 | --- | --- | --- |
 | 路径段 | `[Path]` | 替换模板 `{name}`，值 URL 转义，`null` 报错 |
 | 查询参数 | `[Query]` / 无标注属性 | 默认绑定即 Query（**例外见下行默认 Body**）；数组 `a[]=v`、嵌套 `a[b]=v` 走核心包 params 规则 |
+| 字典查询 | `[Query]` + 字典属性 | 未显式命名时**平铺**成 `?a=1&b=2`；显式命名（`[Query("filters")]`）保留嵌套 `?filters[a]=1` |
 | 请求头 | `[Header]` | `null` 跳过 |
+| 字典头 | `[HeaderCollection]` | `IDictionary<string, string>` 逐项写头，值为 `null` 的项跳过 |
+| 静态头 | `[Headers]`（类级） | `"Name: Value"` 固定头，只有名字（`"X-Internal"`）表示删除该头；属性头覆盖同名静态头，基类声明被派生类继承 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
 | 排除 | `[ApiIgnore]` | 属性完全不绑定（不进路径/查询串/头/请求体），内部状态与敏感数据用；与参数特性同用报错 |
+
+```csharp
+[Get("users/{id}")]
+[Headers("Accept: application/json", "X-Api-Version: 2")]   // 类级静态头
+public sealed class GetUserRequest : IApiRequest<User>
+{
+    [Path] public int Id { get; set; }
+    [Query] public Dictionary<string, object?> Filters { get; set; } = new();  // -> ?role=admin&page=2
+    [HeaderCollection] public Dictionary<string, string?> Extra { get; set; } = new();  // 逐项写头
+}
+```
 
 - **单负载模型可省 `[Body]`**：POST/PUT/PATCH 且模型恰好有一个未标注的**非标量**属性（基元类型、枚举、string、decimal、DateTime/DateTimeOffset、TimeSpan、Guid 及其可空形态除外）时，该属性默认按 Body 绑定；标量护栏保证「POST 只想带查询参数」不会被静默变成请求体，多个未标注属性时也全部维持 Query——歧义场景一律维持现状，需要 Body 时显式标注
 - **一个属性可绑定到多处（多特性并存）**：如 `[Path("id")]` + `[Header("X-Id")]` + `[Body]` 同标一个属性，值只读一次、分别应用。护栏：`[Path]` / `[Header]` 的属性必须是标量（路径段与请求头在线上就是文本，复杂对象只有 ToString 垃圾值，构建期报错）；`[Query]` / `[Body]` 不限
 - **不希望发送的属性**：`[ApiIgnore]` 完全排除出绑定（也不参与默认 Body 的「唯一未标注」判定）；注意它只影响绑定层面，请求体**内部**的属性序列化是请求体类型自己的事（那是 STJ 的 `[JsonIgnore]`）
 - 需要按请求微调（超时 / Content-Type / 序列化器 / responseType）：继承 `ApiRequest<T>` 覆写 `Configure(config)`，或调用 `RequestAsync(request, config => ...)`（后者在模型绑定之后执行，可覆盖模型写入的头）
 - 模型定义非法（缺路由特性、占位符没绑定、多个请求体、同名参数）在**首次调用时**抛 `InvalidOperationException`，消息直接指名属性
+- **启动期体检**：`ApiClient.ValidateModels(typeof(GetUserRequest), ...)` 或 `ApiClient.ValidateModels(assembly)` 返回**全部**错误消息（空列表 = 全部合法），不抛异常；与首次调用共用同一份元数据构建，不会出现「校验过了调用还报错」
 - 授权在绑定与 `Configure` **之后**执行：签名类实现拿到的就是最终 URL 与最终头
+- **强类型错误**：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后，状态码错误抛 `ApiError<TError>`（`Error` / `Status` / `Response` / `Original`，`InnerException` 是原始 `AxiosException`）；工厂返回 `null` 或未设置时仍抛 `AxiosException`。网络错误 / 超时 / 取消不经过工厂
+- **错误体读取**：`ApiErrorContext.Body` 给出错误响应原文（与声明返回类型能否解析错误体无关），`TryReadAsync<TError>()` 按响应 `Content-Type` 选序列化器反序列化；解析失败只返回 `default`，不会盖住原始 HTTP 错误
+- **URL 参数格式化**：`client.UrlParameterFormatter = value => ...` 接管 `[Path]` / `[Query]` 的文本形态（枚举写法、日期格式等），返回 `null` 走默认规则
 - `client.GetUri(request)` 只拼 URL 不发请求；`client.Axios` 直接进入底层 `AxiosClient`（拦截器 / 连接池 / Handler 注入全部可用）
 
 ## 依赖注入（单例注册）
@@ -215,7 +233,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 | `AddApiClient(name, baseAddress, configureDefaults, configure)` | 单例 `IApiClientResolver` + 命名站点 | 多站点：每站点自带 BaseAddress 与底层客户端，只经 `IApiClientResolver` 按站点名取用；站点名重复注册期即报错 |
 
 - **TryAdd 语义**：两者都是「已注册则不重复注册」（保留首次），重复调用不会建出第二个连接池；要替换请先移除原注册
-- **授权从容器来**：注册了 `IAuthorizationProvider` 单例时自动作为 `ApiClient.Authorization`；`configure` 里显式设置的优先
+- **授权与错误工厂从容器来**：注册了 `IAuthorizationProvider` / `IApiErrorFactory` 单例时自动挂到 `ApiClient`；`configure` 里显式设置的优先
 - **生命周期归容器**：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端；单例随容器退出统一释放（自建模式经内部持有项、命名站点经解析器释放连接池）
 - **多站点解析器**：`Get(name)` 未注册时抛 `InvalidOperationException`（消息列出全部已注册站点），`TryGet` 不抛，`Names` 按注册顺序给出站点名；命名站点区分大小写
 - **.NET 8+ 替代方案**：官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`，enum 亦可作键）与命名重载语义等价，示例场景 6 有完整演示，两种方案可共存
@@ -255,6 +273,7 @@ var config = new AxiosConfig
     JsonSerializerOptions = myJsonOptions,    // 本次/本实例的 System.Text.Json 选项
     ContentSerializer = mySerializer,         // 内容序列化器，任意格式（null = 全局默认 JSON）
     ParamsSerializer = p => MyQuery(p),       // Func<object?, string>：自定义 ?a=1&b=2
+    CollectionFormat = AxiosCollectionFormat.Csv, // 集合形态：Brackets(默认)/Multi/Csv/Ssv/Tsv/Pipes
     FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     // TransformRequest / TransformResponse：IList<Func<object?, AxiosConfig, object?>>
 
@@ -942,7 +961,7 @@ await http.GetAsync("items", c =>
 });
 ```
 
-> 第一个参数是 `object?`，需要强类型时先转成自己的 DTO。默认序列化器已是 axios 兼容风格（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过），大多数场景不需要自定义。
+> 第一个参数是 `object?`，需要强类型时先转成自己的 DTO。默认序列化器已是 axios 兼容风格（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过），大多数场景不需要自定义。需要换集合形态（`a=1&a=2` / `a=1,2` / 空格 / 制表符 / 竖线）用 `CollectionFormat`，它按请求可用、也受 `ParamsSerializer` 覆盖。
 
 ### FormFieldNameSelector
 
@@ -1395,7 +1414,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 754 个用例（共 1508 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 773 个用例（共 1546 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1408,7 +1427,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 754 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1508 次）
+# 运行全部 773 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1546 次）
 dotnet test AxiosNet.sln
 
 # Release

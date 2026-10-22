@@ -30,6 +30,12 @@ public class AxiosResponse
     public AxiosConfig? Config { get; set; }
 
     /// <summary>
+    /// 错误响应的正文原文（<b>只有状态码不合法时</b>才有；正常响应、二进制 / 流式响应为 <c>null</c>）。
+    /// <para>由库写入，调用方只读：错误体反序列化与日志诊断用它，避免依赖 <see cref="Data"/> 的最终形态。</para>
+    /// </summary>
+    internal string? RawText { get; set; }
+
+    /// <summary>
     /// 底层 HttpRequestMessage（对应 axios response.request）。
     /// <para>
     /// 请求结束后它已被释放：<c>Method</c> / <c>RequestUri</c> / <c>Headers</c> 等内存态属性可读，
@@ -54,6 +60,7 @@ public class AxiosResponse
         return new AxiosResponse<TData>
         {
             Data = DataCast.To<TData>(Data, Config, Request),
+            RawText = RawText,
             Status = Status,
             StatusText = StatusText,
             Headers = Headers,

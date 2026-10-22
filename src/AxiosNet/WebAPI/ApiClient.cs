@@ -20,7 +20,7 @@ namespace AxiosNet.WebAPI;
 /// 深度定制直接取 <see cref="Axios"/>。
 /// </para>
 /// </summary>
-public sealed class ApiClient : IDisposable, IAsyncDisposable
+public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 {
     private readonly bool _ownsAxiosClient;
 
@@ -32,6 +32,27 @@ public sealed class ApiClient : IDisposable, IAsyncDisposable
     /// 把凭据写进最终配置。null 表示不授权（匿名访问）。
     /// </summary>
     public IAuthorizationProvider? Authorization { get; set; }
+
+    /// <summary>
+    /// URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本
+    /// （路径段仍会被 URL 转义）；返回 <c>null</c> 表示「本次不处理」，回落到默认规则。
+    /// <para>
+    /// 只能在发送前设置（绑定发生在请求构造期）：用于枚举自定义写法、日期格式、单位换算等。
+    /// 数组 / 字典值整体传入；返回字符串即整体替换（不再走 <c>a[]=v</c> 规则）。
+    /// </para>
+    /// </summary>
+    public Func<object, string?>? UrlParameterFormatter { get; set; }
+
+    /// <summary>
+    /// HTTP 状态码错误的异常工厂：非 null 时，状态码不合法（<see cref="AxiosException.Response"/> 非 null）
+    /// 的请求会先交给它构造异常；返回 <c>null</c> 表示仍抛原始 <see cref="AxiosException"/>。
+    /// <para>
+    /// 只处理「服务端返回了响应」的错误；网络错误、超时、取消、配置错误不会被接管。
+    /// 工厂自身抛出的异常原样冒泡（与拦截器一致）。
+    /// </para>
+    /// <para>内置实现见 <see cref="ApiErrorFactory{TError}"/>（把错误体反序列化成强类型）。</para>
+    /// </summary>
+    public IApiErrorFactory? ErrorFactory { get; set; }
 
     /// <summary>以 baseAddress 创建自管的 AxiosClient。</summary>
     /// <param name="baseAddress">API 基地址（合并规则与 AxiosNet 的 BaseAddress 一致，请求模型可写绝对 URL 覆盖）。</param>
@@ -88,7 +109,25 @@ public sealed class ApiClient : IDisposable, IAsyncDisposable
                 .ConfigureAwait(false);
         }
 
-        return await Axios.RequestAsync<TResponse>(config).ConfigureAwait(false);
+        try
+        {
+            return await Axios.RequestAsync<TResponse>(config).ConfigureAwait(false);
+        }
+        catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
+        {
+            // 只接管「服务端给了响应」的错误：网络 / 超时 / 取消 / 配置错误保持原样，
+            // 调用方的 catch (AxiosException) 仍然成立（工厂返回 null 时原样再抛）。
+            var replacement = await ErrorFactory
+                .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
+                .ConfigureAwait(false);
+
+            if (replacement is not null)
+            {
+                throw replacement;
+            }
+
+            throw;
+        }
     }
 
     /// <summary>
@@ -102,7 +141,7 @@ public sealed class ApiClient : IDisposable, IAsyncDisposable
         return Axios.GetUri(BuildConfig(metadata, request, configure: null, cancellationToken: default));
     }
 
-    private static AxiosConfig BuildConfig(
+    private AxiosConfig BuildConfig(
         RequestModelMetadata metadata,
         object request,
         Action<AxiosConfig>? configure,
@@ -111,8 +150,8 @@ public sealed class ApiClient : IDisposable, IAsyncDisposable
         var config = new AxiosConfig
         {
             Method = metadata.Method,
-            Url = metadata.ResolveUrl(request),
-            Params = metadata.ResolveQuery(request)
+            Url = metadata.ResolveUrl(request, UrlParameterFormatter),
+            Params = metadata.ResolveQuery(request, UrlParameterFormatter)
         };
 
         var body = metadata.ResolveBody(request);
@@ -121,6 +160,8 @@ public sealed class ApiClient : IDisposable, IAsyncDisposable
             config.Data = body;
         }
 
+        // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项
+        metadata.ApplyStaticHeaders(config);
         metadata.ApplyHeaders(request, config);
 
         // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌

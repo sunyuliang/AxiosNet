@@ -368,6 +368,28 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MaxRateSet { get; private set; }
 
+    private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;
+
+    /// <summary>
+    /// <see cref="Params"/> 里集合值的编码形态，默认 <see cref="AxiosCollectionFormat.Brackets"/>（<c>a[]=1&amp;a[]=2</c>）。
+    /// <para>
+    /// 按请求显式赋值即可覆盖实例默认值；设置了 <see cref="ParamsSerializer"/> 时本项不参与
+    /// （自定义序列化器接管整条查询串）。
+    /// </para>
+    /// </summary>
+    public AxiosCollectionFormat CollectionFormat
+    {
+        get => _collectionFormat;
+        set
+        {
+            _collectionFormat = value;
+            CollectionFormatSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool CollectionFormatSet { get; private set; }
+
     /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
     public string? TimeoutMessage { get; set; }
 

@@ -129,6 +129,11 @@ public sealed partial class AxiosClient
             merged.MaxRate = perCall.MaxRate;
         }
 
+        if (perCall.CollectionFormatSet)
+        {
+            merged.CollectionFormat = perCall.CollectionFormat;
+        }
+
         // 实例级选项必须合并进来，否则按请求写的值到不了 ValidatePerRequestOptions（它判的是生效配置）。
         // 例外：回放一份生效配置（InstanceOptionsInherited）时这几项描述的是来源实例，一律沿用本实例默认值。
         if (!perCall.InstanceOptionsInherited)
