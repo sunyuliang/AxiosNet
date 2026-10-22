@@ -293,22 +293,36 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>
     /// 取一个「只属于自己」的存储：引用计数为 1 时直接返回，否则复制字典并降掉旧存储的计数。
     /// <para>判定必须在锁内：与 <see cref="Clone"/> 的 +1 互斥，保证「返回独占存储」在返回后依然成立。</para>
+    /// <para>
+    /// 拿到旧存储的引用后可能已被别的线程分离（<c>_store</c> 换成了新存储）：此时必须<b>重来一轮</b>，
+    /// 不能直接把新存储交出去 —— 新存储可能刚被 <see cref="Clone"/> 加过计数，
+    /// 直接写入会让克隆出来的副本看到这次写入（隔离性被破坏）。
+    /// </para>
     /// </summary>
     private Store Exclusive()
     {
-        var store = _store;
-        lock (store.Sync)
+        while (true)
         {
-            // 双重检查：另一个实例可能已经分离过，或自己刚刚被降为独占。
-            if (!ReferenceEquals(_store, store) || store.Owners == 1)
+            var store = _store;
+            lock (store.Sync)
             {
-                return _store;
-            }
+                // 已被另一个实例（或本实例的另一个线程）分离过：换它换上的新存储重来，
+                // 下一轮会在新存储的锁内复核 Owners —— 这是「返回的存储一定独占」的唯一保证。
+                if (!ReferenceEquals(_store, store))
+                {
+                    continue;
+                }
 
-            var copy = new Store(store.Map);
-            store.Owners--;
-            Volatile.Write(ref _store, copy);
-            return copy;
+                if (store.Owners == 1)
+                {
+                    return store;
+                }
+
+                var copy = new Store(store.Map);
+                store.Owners--;
+                Volatile.Write(ref _store, copy);
+                return copy;
+            }
         }
     }
 

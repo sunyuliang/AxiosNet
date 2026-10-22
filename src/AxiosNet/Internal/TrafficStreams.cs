@@ -64,8 +64,11 @@ internal sealed class TrafficMeter
         _lastReportMs = elapsedMs;
         _callback(BuildEvent(upload));
 
-        // 已经传满声明长度：后续 EOF / Complete 不再重复报一次 100%
-        if (_total is long total && _loaded >= total)
+        // 已经传满<b>声明</b>长度：后续 EOF / Complete 不再重复报一次 100%。
+        // 必须要求 total > 0：total 为 0（服务端把 Content-Length 写成 0 却仍有正文，
+        // 或注入的 Handler 不按声明长度截断）时，0 >= 0 恒真 —— 第一次上报就会把计量器锁死，
+        // 之后几百 KB 全部静默，调用方只看到一次「loaded=第一块 / total=0」。
+        if (_total is long total && total > 0 && _loaded >= total)
         {
             _completed = true;
         }
