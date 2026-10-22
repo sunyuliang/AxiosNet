@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-728%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-738%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -387,6 +387,8 @@ await http.GetAsync("search?q=" + Uri.EscapeDataString("a&b"));     // search?q=
 ```
 
 > For pre-signing, use the value returned by `GetUri`: `Uri` decodes percent-escapes of unreserved characters (`%41`→`A`, `%7E`→`~`), and that value matches the request line exactly.
+>
+> `url` is a required argument: shortcut methods reject `null` / a blank string with `ERR_INVALID_URL` instead of interpreting it as "request baseAddress itself" — a forgotten variable assignment never turns into an unexpected request to the root path (a `POST` may have side effects). Pass `"/"` explicitly to request the base address.
 
 ### ASP.NET Core Web API: single-file upload
 
@@ -652,7 +654,8 @@ await http.PostAsync("upload", new { files }, c =>
 | `ToString()` | Preformatted, e.g. `"download 1024/2048 bytes (50.0%)"`, ready for logging |
 
 - Callbacks run **synchronously**: move expensive work to the background yourself, otherwise it directly slows the transfer.
-- Reports are throttled to every 50 ms; on completion (`loaded == total`) exactly one 100% event is guaranteed, never duplicated.
+- Reports are throttled to every 50 ms; each actual transfer round reports one 100% event on completion (`loaded == total`), never duplicated within that round. A 307/308 redirect that resends the body keeps accumulating (progress never jumps back), so one more event may follow (with `Progress` capped at 100%).
+- A throwing callback aborts the request through the unified error model: `ERR_BAD_REQUEST` during upload, `ERR_BAD_RESPONSE` during download, with the original exception in `Cause` (previously the upload side was wrapped into `HttpRequestException` and misreported as `ERR_NETWORK`).
 - Download progress also works under `ResponseType.Stream` (bytes are counted as they are read) without affecting the low memory footprint of streaming to disk.
 - Contract: the response stream of a single response must be **read by one thread sequentially** (neither progress accounting nor rate limiting is thread-safe).
 
@@ -1042,13 +1045,13 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | Trigger | axios equivalent |
 | --- | --- | --- |
-| `ERR_BAD_REQUEST` | Response status is 4xx (default validation failure); request body exceeds `MaxBodyLength`; request body serialization failed (cycles, converter exceptions — see `ex.Cause`) | ✅ |
-| `ERR_BAD_RESPONSE` | Response status is 5xx; response body cannot be deserialized to the target type (including `dynamic` receiving non-JSON); response body exceeds `MaxContentLength`; generic argument and `responseType` mismatch (e.g. `GetAsync<Stream>` combined with `text`/`arraybuffer`) | ✅ |
+| `ERR_BAD_REQUEST` | Response status is 4xx (default validation failure); request body exceeds `MaxBodyLength`; request body serialization failed (cycles, converter exceptions — see `ex.Cause`); the upload progress callback (`OnUploadProgress`) threw | ✅ |
+| `ERR_BAD_RESPONSE` | Response status is 5xx; response body cannot be deserialized to the target type (including `dynamic` receiving non-JSON); response body exceeds `MaxContentLength`; generic argument and `responseType` mismatch (e.g. `GetAsync<Stream>` combined with `text`/`arraybuffer`); the download progress callback (`OnDownloadProgress`) or `transformResponse` threw | ✅ |
 | `ECONNABORTED` | The request exceeded `Timeout` (the message can be replaced via `TimeoutMessage`) | ✅ |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped mid-flight / truncated response, i.e. network-layer failures (see `ex.Cause` for the inner exception) | ✅ |
 | `ERR_CANCELED` | `CancellationToken` cancellation | ✅ |
-| `ERR_INVALID_URL` | Invalid URL (including a relative URL with no `baseURL`, or a scheme other than `http`/`https`) | ✅ |
-| `ERR_BAD_OPTION_VALUE` | Instance-only settings set on a single request (`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`); connection-level options set on a shared-pool client's defaults; `pool` and `poolOptions` passed together; invalid pool option values (e.g. `MaxConnectionsPerServer <= 0`); raw content (`string` / `byte[]` / `Memory` / `Stream`) passed as `data` while `Content-Type` is `multipart/form-data` without a `boundary` parameter | ✅ (same code) |
+| `ERR_INVALID_URL` | Invalid URL (including a relative URL with no `baseURL`, a scheme other than `http`/`https`, or a `null` / blank `url` passed to a shortcut method) | ✅ |
+| `ERR_BAD_OPTION_VALUE` | Instance-only settings set on a single request (`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`); connection-level options set on a shared-pool client's defaults; `pool` and `poolOptions` passed together; invalid pool option values (e.g. `MaxConnectionsPerServer <= 0`); raw content (`string` / `byte[]` / `Memory` / `Stream`) passed as `data` while `Content-Type` is `multipart/form-data` without a `boundary` parameter; a custom `paramsSerializer` threw | ✅ (same code) |
 
 ## Timeouts and cancellation
 
@@ -1380,7 +1383,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 728 cases on each runtime (1456 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 738 cases on each runtime (1476 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1393,7 +1396,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 728 xUnit tests (both test projects target net8.0 + net6.0, so 1456 executions)
+# Run all 738 xUnit tests (both test projects target net8.0 + net6.0, so 1476 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1424,6 +1427,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Global-audit regressions (`Audit20261022GlobalAuditFixTests`, 25 cases): per-request `MaxRedirects` validated against the pool's effective value (no more short-circuit against the property default 5), the built-in JSON byte inlet strips the UTF-8 BOM, all-null query bindings no longer wipe instance-default `params`, protocol-relative URLs (`//host`) resolve against the baseURL scheme, a serializer throwing `OperationCanceledException` surfaces as `ERR_CANCELED` instead of `ERR_BAD_RESPONSE`, an invalid HTTP method token is normalized to `InvalidOperationException` and cached, `DateOnly` / `TimeOnly` / `Uri` scalar classification (one shared list with params serialization, so default-body and Path/Header checks no longer drift), `Defaults.RemoveHeaders` behaves identically on the shortcut and `RequestAsync` paths, a request interceptor returning a null Task fails with a clear error, `GetStatistics` taken from a single snapshot, capacity eviction picks the least-recently-used endpoint, blank `ContentType` fails fast, a declared `ContentType` charset wins the encoding (fail-fast when it contradicts `RequestEncoding`), and duplicated connection-level options on a self-built pool fail fast
 - Second global-audit round (`Audit20261022MultipartXmlFixTests`, 12 cases): multipart failures release the caller's `Stream` (invalid field name and root-without-name paths, both reporting `ERR_BAD_OPTION_VALUE`), `FormFile.FieldName` fails fast at assignment like `FileName`, the success path keeps the same stream ownership, and the XML declaration encoding follows the declared `ContentType` charset / `RequestEncoding` (utf-8 by default); `InterceptorTests` adds two more: range validation of limit-style options targets the config after the interceptors (an interceptor writing `Timeout = -1` is rejected, repairing a caller's invalid value is allowed)
 - P2 fixes (`Audit20261022P2FixTests`, 5 cases): upload progress accumulates across a 307 redirect and stays monotonic with the percentage capped at 100%; assigning any `IList` to a transform chain wraps it into the thread-safe implementation (concurrent add/remove plus enumeration never throws) and an already-wrapped instance is not double-wrapped; a Basic username containing a colon is rejected at construction while the password may contain one and the header is encoded correctly
+- Third global-audit round (`Audit20261022Round3FixTests`, 10 cases): a `null` / blank `url` on shortcut methods now fails fast with `ERR_INVALID_URL` (it used to be silently interpreted as "request baseAddress", so a `POST` would land on the root path); exceptions thrown by upload/download progress callbacks and by a custom `paramsSerializer` are normalized to `AxiosException` (the upload side is no longer wrapped by HttpClient into `HttpRequestException` and misreported as `ERR_NETWORK`; download reports `ERR_BAD_RESPONSE`, config errors report `ERR_BAD_OPTION_VALUE`, and the original exception goes into `Cause`); replaying `response.Config` onto another instance now uses the target instance's `BaseAddress` (same origin as connection-level options, so requests no longer go back to the old server); a scalar request body takes its `Content-Type` from the effective serializer (injecting XML no longer yields an `application/json` header with a bare scalar body); `AxiosHeaders` copy-on-write matches a plain-dictionary model instance-by-instance across 3000 random operations (no cross-writes between copies, no missed copies from reference counting); built-in Bearer scheme handling (a `Bearer` prefix is added when there is no space, an explicit scheme is kept as-is)
 - Declarative client (`AxiosNet.Tests/WebAPI/`, 66 cases): route/Path/Query/Header/Body binding end-to-end (path escaping, absolute URL overriding BaseAddress, model- and call-site Configure hooks, inherited property bindings), default body (POST/PUT/PATCH + exactly one unannotated non-scalar property; scalar guard, ambiguity with multiple properties stays query, explicit `[Query]` does not block, DELETE excluded), multi-binding (Path+Header, Query+Header, scalar Path+Body+Header in all three places, complex object Query+Body; non-scalar Path/Header rejected at build time), `[ApiIgnore]` (query exclusion, does not block default body, combining with a parameter attribute throws), edge cases (case-variant placeholders, default-body null/scalar-array semantics, Guid and record models, PROPFIND custom verb, direct [HttpApi("delete", …)] normalization, CRLF injection fail-fast, raw byte[]/Stream responses, connection reuse, facade guards), built-in Bearer (static/factory/scheme-prefixed) and custom authorization (skipping by request type, seeing the final config, no half-sent request on auth failure), model definition validation (missing route, unbound/extra placeholders, malformed braces, duplicate placeholder, multiple bodies, duplicate names, null path value) and error caching
 - Singleton DI registration (`AxiosNet.DependencyInjection.Tests`, 40 cases): `AddAxiosClient` registration shape and configure application, TryAdd first-wins (with configure side effects skipped too), end-to-end requests from a resolved client; `AddApiClient` in both modes (BaseAddress and configureDefaults applied, facade reusing the registered `AxiosClient`, resolve-time error when none is registered, shared client surviving facade disposal, self-built and facade registrations independent), container `IAuthorizationProvider` auto-wiring with explicit `configure` taking precedence, repeated registration first-wins, argument guards; named multi-site (independent client and BaseAddress per site, `Names` in registration order, Get/TryGet and case sensitivity, unknown-name error listing available sites, duplicate name rejected at registration, per-site defaults and authorization, container provider as fallback, named sites exposed only through the resolver, coexistence with the facade overload, end-to-end requests, a throwing site `configure` not corrupting other sites, `Get` after resolver disposal throwing `ObjectDisposedException` (resolved and never-resolved sites alike, ruling out owner-less pool leaks))
 
@@ -1588,7 +1592,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  └─ WebAPI/                 # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification; menu items 25-31)
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IScenario classes under Scenarios/ need no registration to appear in the menu)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (688 cases × net6.0 / net8.0 = 1376 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (698 cases × net6.0 / net8.0 = 1396 executions)
    │  └─ WebAPI/                 # declarative client tests (66 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (40 cases × net6.0 / net8.0, reuses the main/WebAPI test infrastructure)
 ```

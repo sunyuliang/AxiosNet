@@ -9,6 +9,7 @@ namespace AxiosNet.Internal;
 internal sealed class ProgressHttpContent : HttpContent
 {
     private readonly HttpContent _inner;
+    private readonly AxiosConfig _config;
 
     /// <summary>
     /// 计量器挂在内容上而不是每次序列化时新建：307/308 重定向或重试会再次调用
@@ -17,9 +18,10 @@ internal sealed class ProgressHttpContent : HttpContent
     /// </summary>
     private readonly TrafficMeter _meter;
 
-    public ProgressHttpContent(HttpContent inner, Action<AxiosProgressEvent>? callback, long? maxRate)
+    public ProgressHttpContent(HttpContent inner, Action<AxiosProgressEvent>? callback, long? maxRate, AxiosConfig config)
     {
         _inner = inner;
+        _config = config;
 
         // 内容长度已知时进度才有百分比；未知时只有 loaded。
         _meter = new TrafficMeter(inner.Headers.ContentLength, callback, maxRate);
@@ -42,13 +44,41 @@ internal sealed class ProgressHttpContent : HttpContent
         // 新的一轮写出：累计值与计时器保留，只解除「已完成」状态
         _meter.Restart();
 
-        var wrapper = new ProgressWriteStream(stream, _meter);
+        var wrapper = new ProgressWriteStream(stream, _meter, MapCallbackError);
+        try
+        {
+            await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
+            await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
 
-        await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
-        await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
+            // 保证这一轮结束时最后一次回调一定到达
+            Complete();
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            // 兜底：回调可能在 Flush / 完成上报时抛（TrackAsync 已翻译过一次，这里覆盖其余路径）
+            throw MapCallbackError(ex);
+        }
+    }
 
-        // 保证这一轮结束时最后一次回调一定到达
-        _meter.Complete(upload: true);
+    /// <summary>把进度回调的任意异常翻译成统一错误模型（<c>ERR_BAD_REQUEST</c>，原始异常进 Cause）。</summary>
+    private Exception MapCallbackError(Exception ex)
+        => AxiosException.ProgressCallbackFailed(
+            _config,
+            null,
+            nameof(AxiosConfig.OnUploadProgress),
+            ex,
+            upload: true);
+
+    private void Complete()
+    {
+        try
+        {
+            _meter.Complete(upload: true);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            throw MapCallbackError(ex);
+        }
     }
 
     protected override bool TryComputeLength(out long length)

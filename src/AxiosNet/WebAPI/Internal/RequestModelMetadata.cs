@@ -129,6 +129,11 @@ internal sealed partial class RequestModelMetadata
     public object? ResolveBody(object request) => _bodyProperty?.GetValue(request);
 
     /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置（不建集合）。</summary>
+    /// <remarks>
+    /// 头名 / 头值的校验沿用 <see cref="AxiosHeaders.Set(string, string?)"/> 的公开契约（抛 <see cref="ArgumentException"/>），
+    /// 不在模型层改写异常类型：调用方无论是直接写头还是经模型绑定写头，看到的是同一类错误。
+    /// 校验发生在配置构建期，请求一个字节都不会发出。
+    /// </remarks>
     public void ApplyHeaders(object request, AxiosConfig config)
     {
         if (_headerBindings.Length == 0)

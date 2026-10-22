@@ -154,23 +154,23 @@ internal static class RequestBodyFactory
 
         var type = data.GetType();
 
+        // 头由正文的产出者自报，与 axios 的 headers.setContentType('application/json', false) 同构：
+        // 调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
+        // 决策必须放在「标量 / 结构化」分派之前：标量不经过序列化器产出正文，但它的头同样该跟着
+        // 生效序列化器走 —— 否则「注入 XML 序列化器 + PostAsync("u", 42)」会得到
+        // application/json 的头配 "42" 的正文（头体不一致，XML 服务端必然解析失败）。
+        var serializer = AxiosContent.Get(config, mediaType);
+        if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
+        {
+            mediaType = declared.Trim();
+        }
+
         // 基础类型<b>不经过序列化器</b>：请求体语义就是「这个值本身」，直接取文本。
         // 交给序列化器既多余（JSON 裸标量与本函数结果一致）又不可行（XML / YAML 无法表达无名根标量）。
         // 字典 / 集合 / 对象 / dynamic 一律不进这个分支，它们和业务对象走同一套逻辑。
         if (BodyFields.IsScalar(type))
         {
             return CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset);
-        }
-
-        // 其余结构化数据交给生效序列化器：显式注入优先，未注入时按 mediaType 自动匹配（再回落内置 JSON）。
-        var serializer = AxiosContent.Get(config, mediaType);
-
-        // 头由正文的产出者自报，与 axios 的 headers.setContentType('application/json', false) 同构：
-        // 调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
-        // 文本与字节两条通道共用这次决策，先于通道分派完成。
-        if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
-        {
-            mediaType = declared.Trim();
         }
 
         // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送（不编码文本、不补 charset）。

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-728%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-738%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -390,6 +390,8 @@ await http.GetAsync("search?q=" + Uri.EscapeDataString("a&b"));     // search?q=
 ```
 
 > 预签名时以 `GetUri` 的返回值为准：`Uri` 会把非保留字符的百分号编码还原（`%41`→`A`、`%7E`→`~`），该返回值与请求行完全一致。
+>
+> `url` 是必填参数：快捷方法收到 `null` / 空白串时直接抛 `ERR_INVALID_URL`，不会被解释成「请求 baseAddress 本身」——一次「变量忘赋值」不会变成向根路径发出的意外请求（`POST` 可能带副作用）。要请求基地址请显式传 `"/"`。
 
 ### 对接 ASP.NET Core Web API：单文件上传
 
@@ -668,7 +670,8 @@ await http.PostAsync("upload", new { files }, c =>
 | `ToString()` | 已格式化，如 `"download 1024/2048 bytes (50.0%)"`，打日志可直接用 |
 
 - 回调是**同步**执行的：耗时逻辑请自行转到后台，否则会直接拖慢传输。
-- 报告节流 50 ms 一次；结束时（`loaded == total`）保证有且仅有一次 100% 事件，不会重复上报。
+- 报告节流 50 ms 一次；每一轮实际传输结束时（`loaded == total`）上报一次 100% 事件，同一轮内不会重复上报。307/308 重定向重发正文时累计值继续推进（不回跳），因此会再报一次（`Progress` 封顶 100%）。
+- 回调抛异常会中断请求并统一错误模型：上传阶段报 `ERR_BAD_REQUEST`、下载阶段报 `ERR_BAD_RESPONSE`，原始异常放在 `Cause`（此前上传侧会被 HttpClient 包成 `HttpRequestException` 而误报 `ERR_NETWORK`）。
 - 下载进度在 `ResponseType.Stream` 下同样生效（数据边读边计数），不影响流式落盘的低内存占用。
 - 契约：同一响应的响应流须**单线程顺序读取**（进度计量与限速都不是线程安全的）。
 
@@ -1054,13 +1057,13 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | 触发场景 | 对应 axios |
 | --- | --- | --- |
-| `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `MaxBodyLength`；请求体序列化失败（循环引用、转换器抛错等，底层异常见 `ex.Cause`） | ✅ |
-| `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型（含 `dynamic` 拿到非 JSON）；响应体超过 `MaxContentLength`；泛型参数与 `responseType` 不匹配（如 `GetAsync<Stream>` 却配 `text`/`arraybuffer`） | ✅ |
+| `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `MaxBodyLength`；请求体序列化失败（循环引用、转换器抛错等，底层异常见 `ex.Cause`）；上传进度回调（`OnUploadProgress`）抛异常 | ✅ |
+| `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型（含 `dynamic` 拿到非 JSON）；响应体超过 `MaxContentLength`；泛型参数与 `responseType` 不匹配（如 `GetAsync<Stream>` 却配 `text`/`arraybuffer`）；下载进度回调（`OnDownloadProgress`）或 `transformResponse` 抛异常 | ✅ |
 | `ECONNABORTED` | 请求超过 `Timeout`（消息可用 `TimeoutMessage` 覆盖） | ✅ |
 | `ERR_NETWORK` | 连接被拒绝/DNS 失败/连接中途断开/响应体被截断等网络层异常（底层异常见 `ex.Cause`） | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
-| `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`、非 `http`/`https` 的 scheme） | ✅ |
-| `ERR_BAD_OPTION_VALUE` | 在单次请求上写了**与实例生效值不同**的仅实例级选项（`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions`；连接池选项取值非法（如 `MaxConnectionsPerServer <= 0`）；`Content-Type` 为 `multipart/form-data` 而 `data` 是原始内容（`string` / `byte[]` / `Memory` / `Stream`，且 Content-Type 未带 `boundary`）；`Params` 是标量（`int` / `bool` / `DateTime` …，无法表达键名）；拦截器返回 `null` | ✅（同码） |
+| `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`、非 `http`/`https` 的 scheme、快捷方法的 `url` 为 `null` / 空白） | ✅ |
+| `ERR_BAD_OPTION_VALUE` | 在单次请求上写了**与实例生效值不同**的仅实例级选项（`proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions`）；共享池 client 的 defaults 上设置连接级选项；同时传 `pool` 与 `poolOptions`；连接池选项取值非法（如 `MaxConnectionsPerServer <= 0`）；`Content-Type` 为 `multipart/form-data` 而 `data` 是原始内容（`string` / `byte[]` / `Memory` / `Stream`，且 Content-Type 未带 `boundary`）；`Params` 是标量（`int` / `bool` / `DateTime` …，无法表达键名）；自定义 `paramsSerializer` 抛异常；拦截器返回 `null` | ✅（同码） |
 
 ## 超时与取消
 
@@ -1392,7 +1395,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 728 个用例（共 1456 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 738 个用例（共 1476 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1405,7 +1408,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 728 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1456 次）
+# 运行全部 738 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1476 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1436,6 +1439,7 @@ dotnet build AxiosNet.sln -c Release
 - 全局审查回归（`Audit20261022GlobalAuditFixTests`，25 个用例）：`MaxRedirects` 按请求校验对齐池生效值（不再用属性默认值 5 短路）、内置 JSON 字节入口剥 UTF-8 BOM、查询绑定值全为 null 时不再清空实例默认 `params`、协议相对 URL（`//host`）按 baseURL 的 scheme 补全、序列化器抛 `OperationCanceledException` 归一为 `ERR_CANCELED` 而非 `ERR_BAD_RESPONSE`、非法 HTTP 方法 token 统一 `InvalidOperationException` 并入错误缓存、`DateOnly` / `TimeOnly` / `Uri` 的标量判定（与 params 序列化共用一份清单，默认 Body 与 Path/Header 校验不再漂移）、`Defaults.RemoveHeaders` 在快捷与 `RequestAsync` 两条入口行为一致、拦截器返回 null Task 的明确报错、`GetStatistics` 取自同一快照、容量驱逐按最久未使用、`ContentType` 空值 fail-fast、`ContentType` 声明的 charset 优先编码且与 `RequestEncoding` 矛盾时 fail-fast、自建池连接级选项重复传入 fail-fast
 - 第二轮全局排查修复（`Audit20261022MultipartXmlFixTests`，12 个用例）：multipart 字段名校验失败时释放调用方 `Stream`（非法字段名与根节点缺名两条路径，错误码统一 `ERR_BAD_OPTION_VALUE`）、`FormFile.FieldName` 与 `FileName` 一样在赋值处 fail-fast、成功路径的流所有权不变、XML 声明编码跟随 `ContentType` 声明的 charset / `RequestEncoding`（默认仍是 utf-8）；`InterceptorTests` 另补两条：限制类配置的范围校验针对拦截器之后的生效配置（拦截器写 `Timeout = -1` 被拒、拦截器修正调用方的非法值可通过）
 - P2 修复（`Audit20261022P2FixTests`，5 个用例）：307 重定向下上传进度跨次累计且单调、百分比封顶 100%；transform 链整体赋值任意 `IList` 后被包装成线程安全实现（并发增删 + 枚举不抛），已包装实例不重复包装；Basic 用户名含冒号构造期拒绝、密码可含冒号且请求头编码正确
+- 第三轮全局排查修复（`Audit20261022Round3FixTests`，10 个用例）：快捷方法的 `url` 为 null / 空白时 fail-fast 为 `ERR_INVALID_URL`（此前被静默解释成「请求 baseAddress」，`POST` 会落到根路径）；上传 / 下载进度回调与自定义 `paramsSerializer` 抛出的异常统一成 `AxiosException`（上传侧不再被 HttpClient 包成 `HttpRequestException` 而误报 `ERR_NETWORK`，下载侧为 `ERR_BAD_RESPONSE`、配置侧为 `ERR_BAD_OPTION_VALUE`，原始异常进 `Cause`）；`response.Config` 回放到另一个实例时改用目标实例的 `BaseAddress`（与连接级选项同源，不再把请求发回旧服务端）；标量请求体的 `Content-Type` 跟随生效序列化器（注入 XML 后不再出现 `application/json` 头配裸标量正文）；`AxiosHeaders` 的写时复制在 3000 步随机操作下与朴素字典模型逐实例比对一致（副本不串写、引用计数不漏复制）；内置 Bearer 的 scheme 处理（无空格补 `Bearer`、带 scheme 原样发送）
 - 声明式客户端（`AxiosNet.Tests/WebAPI/`，66 个用例）：路由/Path/Query/Header/Body 绑定与端到端（含路径转义、绝对 URL 覆盖 BaseAddress、模型与调用处 Configure 钩子、继承属性绑定）、默认 Body（POST/PUT/PATCH + 恰一个未标注非标量属性；标量护栏、多属性歧义维持 Query、显式 [Query] 不阻断、DELETE 不参与）、多特性并存（Path+Header、Query+Header、标量 Path+Body+Header 三处、复杂对象 Query+Body；Path/Header 非标量构建期拒绝）、[ApiIgnore]（查询串排除、不阻断默认 Body、与参数特性同用报错）、边界场景（大小写变体占位符、默认 Body 空值/标量数组语义、Guid 与 record 模型、PROPFIND 自定义谓词、直用 [HttpApi("delete", …)] 归一化、CRLF 注入头 fail-fast、原始响应 byte[]/Stream、连接复用、门面守卫）、内置 Bearer（固定/工厂/带 scheme）与自定义授权（按请求类型跳过、可见最终配置、失败不发出半个请求）、模型定义校验（缺路由、占位符未绑定/多余绑定、花括号非法、重复占位符、多个请求体、同名参数、null 路径值）与错误缓存
 - DI 单例注入（`AxiosNet.DependencyInjection.Tests`，40 个用例）：`AddAxiosClient` 注册形态与 configure 生效、TryAdd 先到先得（重复注册时 configure 副作用同样不执行）、容器解析后端到端请求；`AddApiClient` 自建 / 门面两种模式（BaseAddress 与 configureDefaults 生效、门面复用已注册的 AxiosClient、缺注册时解析期报错、共享客户端不随门面释放、自建与门面互不相干）、容器 `IAuthorizationProvider` 自动装配与 configure 显式优先、重复注册先到先得、参数守卫；命名多站点（每站点独立客户端与 BaseAddress、`Names` 注册序、Get/TryGet 与大小写敏感、未注册名报错并列可用站点、重名注册期报错、per-site 默认值与授权、容器授权兜底、只经解析器暴露不注册未命名 ApiClient、与门面重载共存、端到端请求、站点 configure 抛错不污染其他站点、解析器释放后 Get 直接抛 `ObjectDisposedException`（已解析与未解析站点一致，杜绝无属主连接池泄漏））
 
@@ -1599,7 +1603,7 @@ dotnet build AxiosNet.sln -c Release
 │  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签，菜单第 25-31 项）
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Scenarios/ 下 IScenario 零注册进菜单）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（688 个用例 × net6.0 / net8.0 双目标 = 1376 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（698 个用例 × net6.0 / net8.0 双目标 = 1396 次执行）
    │  └─ WebAPI/                 # 声明式客户端测试（66 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（40 个用例 × net6.0 / net8.0 双目标，复用主库/WebAPI 测试基建）
 ```

@@ -36,9 +36,20 @@ internal static class UrlBuilder
         var target = hashIndex >= 0 ? combined[..hashIndex] : combined;
 
         // 自定义序列化器（对应 axios paramsSerializer）返回的串允许带前导 ?/&，这里统一去掉。
-        var query = serializer is null
-            ? ParamsSerializer.Serialize(queryParams, config)
-            : NormalizeQuery(serializer(queryParams));
+        // 调用方回调抛的异常属于配置错误：统一成 ERR_BAD_OPTION_VALUE，不让裸异常从管线漏出
+        // （与「params 根类型非法」同一个错误码）。
+        string query;
+        try
+        {
+            query = serializer is null
+                ? ParamsSerializer.Serialize(queryParams, config)
+                : NormalizeQuery(serializer(queryParams));
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            throw AxiosException.InvalidOption(
+                $"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
+        }
         if (query.Length > 0)
         {
             // 「url 已以 ? / & 结尾」时不能再补分隔符：`search?` + params 会拼出 `search?&a=1`，

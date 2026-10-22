@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
@@ -450,7 +451,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 // 上传进度 / 限速：包一层流量统计（头部复制，序列化逻辑不变）
                 if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
                 {
-                    content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate);
+                    content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate, config);
                 }
 
                 if (content is not null)
@@ -539,6 +540,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                             }
 
                             throw AxiosException.Canceled(config, request, ex);
+                        }
+                        catch (HttpRequestException ex) when (FindAxiosException(ex) is { } translated)
+                        {
+                            // 正文序列化（含上传进度回调）抛出的库异常会被 HttpClient 包成
+                            // HttpRequestException：原样还原，否则「回调写错」会被误报成 ERR_NETWORK。
+                            ExceptionDispatchInfo.Capture(translated).Throw();
+                            throw;
                         }
                         catch (HttpRequestException ex)
                         {
@@ -724,6 +732,23 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     private static bool DefaultValidateStatus(int status) => status is >= 200 and < 300;
+
+    /// <summary>
+    /// 沿 <see cref="Exception.InnerException"/> 链找库自己的异常（HttpClient 会把正文序列化异常
+    /// 包成 <see cref="HttpRequestException"/>，需要还原成原来的错误码）。
+    /// </summary>
+    private static AxiosException? FindAxiosException(Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is AxiosException axios)
+            {
+                return axios;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// 响应拦截器返回 <c>null</c>：返回类型非空，静默交出去只会让调用方在很远的地方炸 NRE。

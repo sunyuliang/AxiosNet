@@ -139,7 +139,8 @@ public sealed class Audit20261022P2FixTests
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
-        await client.GetAsync(string.Empty, c => c.Auth = new AxiosAuth("user", "p@ss:word"));
+        // 用 "/" 显式请求 baseAddress 本身（空串 / null 现在按非法地址拒绝）
+        await client.GetAsync("/", c => c.Auth = new AxiosAuth("user", "p@ss:word"));
 
         var expected = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("user:p@ss:word"));
         Assert.Equal(expected, server.Received[0].Headers["Authorization"]);

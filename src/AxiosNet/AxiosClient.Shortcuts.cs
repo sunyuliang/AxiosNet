@@ -268,6 +268,19 @@ public sealed partial class AxiosClient
     {
         var config = Defaults.Clone();
         config.EffectiveMerged = true;
+
+        // url 是必填参数：null / 空白不能静默解释成「请求 baseAddress 本身」——
+        // 那会让一次「变量忘赋值」变成向根路径发出的意外请求（POST / 可能带副作用）。
+        // 要请求基地址本身请显式写 "/"。
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw AxiosException.InvalidUrl(
+                url ?? string.Empty,
+                config,
+                message: "url 不能为 null 或空白：快捷方法的第一个参数是必填的请求地址"
+                    + "（要请求 baseAddress 本身请显式传 \"/\"）。");
+        }
+
         config.Url = url;
         config.Method = method;
 
@@ -316,6 +329,16 @@ public sealed partial class AxiosClient
         // PostAsync(url, null) 的重载决议会落到本方法的调用方（AxiosConfig 比 object 更具体），
         // 没有这层守卫就是一句 NullReferenceException。
         ArgumentNullException.ThrowIfNull(config);
+
+        // 与快捷方法同一套 fail-fast：url 为 null / 空白时同样不能静默落到 baseAddress
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw AxiosException.InvalidUrl(
+                url ?? string.Empty,
+                config,
+                message: "url 不能为 null 或空白：快捷方法的第一个参数是必填的请求地址"
+                    + "（要请求 baseAddress 本身请显式传 \"/\"）。");
+        }
 
         // 不能就地修改调用方传入的 config：并发复用会让 Url/Method 互相覆盖。
         // Clone() 同时清掉 EffectiveMerged，使 response.Config 这类生效配置重新参与合并。

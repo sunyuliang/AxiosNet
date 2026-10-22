@@ -24,7 +24,16 @@ public sealed partial class AxiosClient
         }
 
         merged.Url = perCall.Url ?? merged.Url;
-        merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
+
+        // BaseAddress 与连接级选项同属「实例来源」：回放一份生效配置（response.Config）时，
+        // 上一实例的基地址不能覆盖目标实例的 —— 否则请求会静默发到旧服务端。
+        // 区分依据是 InstanceOptionsInherited（Library 产出的生效配置），
+        // 调用方自己 new 的配置（false）仍可按请求指定基地址。
+        if (!perCall.InstanceOptionsInherited)
+        {
+            merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
+        }
+
         merged.Method = perCall.MethodSet ? perCall.Method : merged.Method;
 
         // 空集合时跳过：快捷方法每请求新建的 config 大概率没有自定义头 / transform，

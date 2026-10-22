@@ -108,10 +108,10 @@ public sealed class AxiosException : Exception
         return new AxiosException("Network Error", ErrNetwork, config, request, null, inner);
     }
 
-    internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null)
+    internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null, string? message = null)
     {
         // 超长 URL（>64KB 的查询串）本身就会让 Uri 拒绝解析：整条塞进消息只会让异常信息变成几十万字符。
-        return new AxiosException($"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
+        return new AxiosException(message ?? $"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
     }
 
     private const int MaxUrlInMessage = 512;
@@ -175,6 +175,30 @@ public sealed class AxiosException : Exception
         return new AxiosException(
             "Response data could not be transformed by transformResponse",
             ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
+    /// <summary>
+    /// 进度回调（<see cref="AxiosConfig.OnUploadProgress"/> / <see cref="AxiosConfig.OnDownloadProgress"/>）抛出异常：
+    /// 回调是请求管线的一部分，异常不能以裸类型漏给调用方。
+    /// <para>
+    /// 错误码按方向取：上传阶段正文还没发出去 → <c>ERR_BAD_REQUEST</c>；
+    /// 下载阶段正文已开始接收 → <c>ERR_BAD_RESPONSE</c>。原始异常放在 <see cref="Cause"/> 里。
+    /// </para>
+    /// </summary>
+    internal static AxiosException ProgressCallbackFailed(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        string callbackName,
+        Exception inner,
+        bool upload)
+    {
+        return new AxiosException(
+            $"{callbackName} 回调抛出异常，请求已中断：{inner.Message}",
+            upload ? ErrBadRequest : ErrBadResponse,
             config,
             request,
             null,

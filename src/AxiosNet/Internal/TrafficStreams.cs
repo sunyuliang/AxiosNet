@@ -158,7 +158,7 @@ internal sealed class ProgressReadStream : DelegatingStream
     {
         if (read <= 0)
         {
-            _meter.Report(force: true, upload: false);
+            Report(force: true);
             return;
         }
 
@@ -170,7 +170,28 @@ internal sealed class ProgressReadStream : DelegatingStream
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
 
-        _meter.Report(force: false, upload: false);
+        Report(force: false);
+    }
+
+    /// <summary>
+    /// 回报进度：回调是请求管线的一部分，抛出的异常不能以裸类型交给调用方 ——
+    /// 统一成 <c>ERR_BAD_RESPONSE</c>（正文已开始接收），原始异常放在 Cause 里。
+    /// </summary>
+    private void Report(bool force)
+    {
+        try
+        {
+            _meter.Report(force, upload: false);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            throw AxiosException.ProgressCallbackFailed(
+                _config,
+                _request,
+                nameof(AxiosConfig.OnDownloadProgress),
+                ex,
+                upload: false);
+        }
     }
 }
 
@@ -182,14 +203,18 @@ internal sealed class ProgressWriteStream : DelegatingStream
 {
     private readonly TrafficMeter _meter;
 
+    /// <summary>进度回调抛异常时的错误翻译（由内容层提供带配置上下文的统一异常）。</summary>
+    private readonly Func<Exception, Exception> _mapCallbackError;
+
     /// <summary>
     /// 由外部提供计量器：同一个 <see cref="HttpContent"/> 可能被序列化多次（重定向 / 重试重发正文），
     /// 计量器必须挂在内容上共享，不能每次为包装流新建一个。
     /// </summary>
-    public ProgressWriteStream(Stream inner, TrafficMeter meter)
+    public ProgressWriteStream(Stream inner, TrafficMeter meter, Func<Exception, Exception> mapCallbackError)
         : base(inner)
     {
         _meter = meter;
+        _mapCallbackError = mapCallbackError;
     }
 
     public override bool CanRead => false;
@@ -237,6 +262,15 @@ internal sealed class ProgressWriteStream : DelegatingStream
             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
 
-        _meter.Report(force: false, upload: true);
+        try
+        {
+            _meter.Report(force: false, upload: true);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            // 回调异常必须换成统一错误模型：否则 HttpClient 会把它包成 HttpRequestException，
+            // 上层再翻译成 ERR_NETWORK —— 一次「回调写错」被误报成「网络故障」。
+            throw _mapCallbackError(ex);
+        }
     }
 }
