@@ -75,8 +75,6 @@ Copy the `src/AxiosNet` folder into your solution:
 dotnet sln YourApp.sln add src/AxiosNet/AxiosNet.csproj
 ```
 
-> The solution file `AxiosNet.slnx` uses the new XML format and requires .NET SDK 8.0.400+ or Visual Studio 2022 17.13+. On older tooling, regenerate a classic `.sln` with `dotnet new sln` and add the projects you need.
-
 ## Quick start
 
 ```csharp
@@ -222,7 +220,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 - **The container owns the lifetime**: disposing an injected `ApiClient` does not release the shared underlying client; singletons are released when the container shuts down (self-built clients through an internal holder, named sites through the resolver)
 - **Multi-site resolver**: `Get(name)` throws `InvalidOperationException` when the name is not registered (the message lists all registered sites), `TryGet` never throws, and `Names` lists the site names in registration order; site names are case-sensitive
 - **.NET 8+ alternative**: the official keyed services (`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`, enums work as keys too) are semantically equivalent to the named overload — scenario 6 of the sample demonstrates them, and both approaches can coexist
-- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, six scenarios over real HTTP round-trips); besides the AxiosNet main package, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
+- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, six scenarios over real HTTP round-trips; the startup menu lists every scenario by reflection — type a number to run, and you are back at the menu when it finishes); besides the AxiosNet main package, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## Configuration
 
@@ -479,7 +477,7 @@ await http.PostAsync("api/files/raw", File.OpenRead(path), c =>
 - Stream to disk with `request.Body.CopyToAsync(fileStream)`; **avoid** `[FromBody] byte[]` (it loads the whole payload into memory).
 - `FileStream` is seekable and `Content-Length` is known, so both the progress `Total` and `MaxBodyLength` are exact.
 
-Runnable sample: item 18 of `samples/AxiosNet.Simple` (`dotnet run --project samples/AxiosNet.Simple`) — `DemoServer` exposes `/upload/raw` and `/upload/single`, parses byte-exactly, and reports file name/byte count/SHA256, which the client verifies one by one.
+Runnable sample: item 18 of `samples/AxiosNet.Simple` (`dotnet run --project samples/AxiosNet.Simple`, then type 18 at the menu) — `DemoServer` exposes `/upload/raw` and `/upload/single`, parses byte-exactly, and reports file name/byte count/SHA256, which the client verifies one by one.
 
 ## responseType (including dynamic)
 
@@ -1349,6 +1347,8 @@ Intentional differences driven by the .NET platform:
 dotnet run --project samples/AxiosNet.Simple
 ```
 
+The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 7 declarative = 31 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
+
 > Items 13 and 18 above cover uploads: `DemoServer` uses `MultipartReader` to parse multipart **byte-exactly** and reports each part's field name, file name, content type, byte count, and SHA256; the single-file scenario also provides `/upload/raw` (raw stream) and `/upload/single` (multipart single file).
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.
@@ -1363,8 +1363,10 @@ The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is 
 6. **Global logging**: `client.Axios.Interceptors` with request/response/error branches (plus a global header)
 7. **Signing/verification**: the `SigningSerializer` decorator around the built-in JSON — request body HMAC-SHA256 into `X-Signature`, response verified before parsing; the demo server verifies symmetrically and rejects unsigned requests with 401
 
+These 7 items live in the same startup menu as the 24 above (menu items 25-31, with their own demo server started lazily on first use):
+
 ```bash
-dotnet run --project samples/AxiosNet.Simple -- webapi
+dotnet run --project samples/AxiosNet.Simple
 ```
 
 ## Target framework and runtime support
@@ -1389,13 +1391,13 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 
 ```bash
 # Build (Debug): the library produces a single net6.0 asset
-dotnet build AxiosNet.slnx
+dotnet build AxiosNet.sln
 
 # Run all 681 xUnit tests (both test projects target net8.0 + net6.0, so 1362 executions)
-dotnet test AxiosNet.slnx
+dotnet test AxiosNet.sln
 
 # Release
-dotnet build AxiosNet.slnx -c Release
+dotnet build AxiosNet.sln -c Release
 ```
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
@@ -1541,7 +1543,7 @@ How the stages map onto the source files (read together with the [project layout
 
 ```
 .
-├─ AxiosNet.slnx
+├─ AxiosNet.sln
 ├─ src/
 │  ├─ AxiosNet/                  # library (net6.0 only, compatible with all runtimes from .NET 6 onward)
 │  │  ├─ Axios.cs                # static facade (the global axios equivalent)
@@ -1578,9 +1580,10 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification; run with `dotnet run -- webapi`)
-│  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services)
+│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 7 declarative samples under WebAPI/; the startup menu lists all 31 by reflection — type a number to run, a = all, q = quit
+│  │  ├─ Examples/               # core integration samples (24 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification; menu items 25-31)
+│  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IScenario classes under Scenarios/ need no registration to appear in the menu)
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit tests (644 cases × net6.0 / net8.0 = 1288 executions)
    │  └─ WebAPI/                 # declarative client tests (66 cases, same project and assembly as the main tests)

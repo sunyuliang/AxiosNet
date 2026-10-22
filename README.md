@@ -75,8 +75,6 @@ dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj
 dotnet sln YourApp.sln add src/AxiosNet/AxiosNet.csproj
 ```
 
-> 解决方案文件 `AxiosNet.slnx` 为新的 XML 格式，需要 .NET SDK 8.0.400+ 或 Visual Studio 2022 17.13+；旧版本可自行执行 `dotnet new sln` 重新生成经典 `.sln` 并添加所需项目。
-
 ## 快速开始
 
 ```csharp
@@ -221,7 +219,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 - **生命周期归容器**：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端；单例随容器退出统一释放（自建模式经内部持有项、命名站点经解析器释放连接池）
 - **多站点解析器**：`Get(name)` 未注册时抛 `InvalidOperationException`（消息列出全部已注册站点），`TryGet` 不抛，`Names` 按注册顺序给出站点名；命名站点区分大小写
 - **.NET 8+ 替代方案**：官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`，enum 亦可作键）与命名重载语义等价，示例场景 6 有完整演示，两种方案可共存
-- 可运行示例见 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host 六个场景，跑真实 HTTP 往返）；扩展包除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`
+- 可运行示例见 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host 六个场景，跑真实 HTTP 往返；启动菜单反射列出全部场景，输入编号运行，执行完毕继续选）；扩展包除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## 配置项
 
@@ -482,7 +480,7 @@ await http.PostAsync("api/files/raw", File.OpenRead(path), c =>
 - 服务端用 `request.Body.CopyToAsync(fileStream)` 边收边写；**避免** `[FromBody] byte[]`（整包进内存）。
 - `FileStream` 可 Seek，`Content-Length` 确定，因此进度回调的 `Total` 与 `MaxBodyLength` 都准确。
 
-可运行示例：`samples/AxiosNet.Simple` 的第 18 项（`dotnet run --project samples/AxiosNet.Simple`）—— `DemoServer` 提供 `/upload/raw` 与 `/upload/single`，按字节精确解析并回报文件名/字节数/SHA256，客户端逐个校验。
+可运行示例：`samples/AxiosNet.Simple` 的第 18 项（`dotnet run --project samples/AxiosNet.Simple` 启动后输入 18）—— `DemoServer` 提供 `/upload/raw` 与 `/upload/single`，按字节精确解析并回报文件名/字节数/SHA256，客户端逐个校验。
 
 ## 响应类型 responseType（含 dynamic）
 
@@ -1361,7 +1359,9 @@ using var client3 = Axios.Create(
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-> 上面的第 13 项与第 18 项覆盖了上传：`DemoServer` 用 `MultipartReader` **按字节精确解析** multipart，回报每个部件的字段名、文件名、Content-Type、字节数与 SHA256；单文件场景还提供 `/upload/raw`（裸流）与 `/upload/single`（multipart 单文件）两个端点。
+启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 31 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 24 项。
+
+> 第 13 项与第 18 项覆盖了上传：`DemoServer` 用 `MultipartReader` **按字节精确解析** multipart，回报每个部件的字段名、文件名、Content-Type、字节数与 SHA256；单文件场景还提供 `/upload/raw`（裸流）与 `/upload/single`（multipart 单文件）两个端点。
 >
 > 第 19 项是唯一需要额外 NuGet 包（`Newtonsoft.Json`）的示例，仅用于演示**引擎替换**——类库本身仍然零第三方运行时依赖；不需要自定义序列化时可以把 `Newtonsoft.Json` 从示例项目里删掉。
 
@@ -1375,8 +1375,10 @@ dotnet run --project samples/AxiosNet.Simple
 6. **全局日志**：`client.Axios.Interceptors` 请求/响应/错误三分支（含全局追加头）
 7. **签名/验签**：`SigningSerializer` 装饰内置 JSON——请求体 HMAC-SHA256 写 `X-Signature`，响应先验签再解析；演示服务器对称校验，未签名请求被 401 拒绝
 
+这 7 项与上面的 24 项同在启动菜单里（菜单第 25-31 项，自带另一套演示服务器，按选择懒启动）：
+
 ```bash
-dotnet run --project samples/AxiosNet.Simple -- webapi
+dotnet run --project samples/AxiosNet.Simple
 ```
 
 ## 目标框架与运行时支持
@@ -1401,13 +1403,13 @@ dotnet run --project samples/AxiosNet.Simple -- webapi
 
 ```bash
 # 构建（Debug）：类库产出单份 net6.0 资产
-dotnet build AxiosNet.slnx
+dotnet build AxiosNet.sln
 
 # 运行全部 681 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1362 次）
-dotnet test AxiosNet.slnx
+dotnet test AxiosNet.sln
 
 # Release
-dotnet build AxiosNet.slnx -c Release
+dotnet build AxiosNet.sln -c Release
 ```
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
@@ -1552,7 +1554,7 @@ dotnet build AxiosNet.slnx -c Release
 
 ```
 .
-├─ AxiosNet.slnx
+├─ AxiosNet.sln
 ├─ src/
 │  ├─ AxiosNet/                  # 类库（单目标 net6.0，兼容 .NET 6 及以上全部运行时）
 │  │  ├─ Axios.cs                # 静态门面（对应全局 axios）
@@ -1589,9 +1591,10 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ ApiClientResolver.cs            # IApiClientResolver 解析器 + 站点定义/创建（命名站点属主）
 │     └─ ApiClientOwnedAxiosClient.cs     # 自建模式与命名站点持有底层客户端的内部注册项（容器退出时释放）
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
-│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签；dotnet run -- webapi 运行）
-│  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务）
+│  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 7 项声明式示例；启动菜单反射列出全部 31 项，输入编号运行，a = 全部，q = 退出
+│  │  ├─ Examples/               # 核心集成示例（24 项，IExample 零注册自动进菜单；SampleMenu.cs 为交互菜单，两个示例程序共用）
+│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签，菜单第 25-31 项）
+│  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Scenarios/ 下 IScenario 零注册进菜单）
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit 单元测试（644 个用例 × net6.0 / net8.0 双目标 = 1288 次执行）
    │  └─ WebAPI/                 # 声明式客户端测试（66 个用例，与主库测试同项目同程序集）

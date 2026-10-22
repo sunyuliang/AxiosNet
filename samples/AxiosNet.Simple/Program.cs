@@ -1,75 +1,67 @@
 using AxiosNet.Simple;
 using AxiosNet.Simple.Examples;
 using AxiosNet.Simple.WebAPI;
+using AxiosNet.Simple.WebAPI.Examples;
+using CoreExample = AxiosNet.Simple.Examples.IExample;
+using CoreContext = AxiosNet.Simple.Examples.ExampleContext;
+using WebApiExample = AxiosNet.Simple.WebAPI.Examples.IExample;
+using WebApiContext = AxiosNet.Simple.WebAPI.Examples.ExampleContext;
 
 // AxiosNet.Simple —— AxiosNet 各类集成调用示例
-// 每个示例对应 Examples 目录下的一个类（实现 IExample），此处统一注册并顺序执行。
-// 示例自带本地 HTTP/1.1 Keep-Alive 服务器，离线即可运行：
-//   dotnet run --project samples/AxiosNet.Simple              # 核心集成示例（默认）
-//   dotnet run --project samples/AxiosNet.Simple -- webapi    # 声明式 API 客户端示例（WebAPI/ 目录）
+// 启动时反射列出全部示例，用户输入编号运行，执行完毕回到菜单继续选择，直到输入 q 退出（a = 顺序运行全部）。
+// 示例零注册：Examples/ 与 WebAPI/Examples/ 下实现 IExample 的类自动进菜单，按自身 Number 排序。
+// 两套示例各带本地 HTTP/1.1 Keep-Alive 演示服务器，按首次选择懒启动，离线即可运行：
+//   dotnet run --project samples/AxiosNet.Simple
 
-// webapi 参数分派到声明式客户端示例套件（WebAPI/ 目录）
-if (args is { Length: 1 } && string.Equals(args[0], "webapi", StringComparison.OrdinalIgnoreCase))
+var items = new List<SampleMenuItem>();
+
+DemoServer? coreServer = null;
+DemoApiServer? webApiServer = null;
+
+// 核心套件：Examples/ 目录
+foreach (var example in Discover(typeof(CoreExample))
+    .Select(t => (CoreExample)Activator.CreateInstance(t)!)
+    .OrderBy(e => e.Number))
 {
-    await WebApiSample.RunAsync();
-    return;
+    items.Add(new SampleMenuItem("核心集成示例", example.Number, example.GetType().Name, example.Title, () =>
+    {
+        var server = coreServer ??= DemoServer.Start();
+        return example.RunAsync(new CoreContext(server.Url, server));
+    }));
 }
 
-using var server = DemoServer.Start();
-
-PrintBanner(server.Port);
-
-var context = new ExampleContext(server.Url, server);
-
-IExample[] examples =
+// 声明式套件：WebAPI/Examples/ 目录（自带另一套演示服务器）
+foreach (var example in Discover(typeof(WebApiExample))
+    .Select(t => (WebApiExample)Activator.CreateInstance(t)!)
+    .OrderBy(e => e.Number))
 {
-    new StaticFacadeExample(),
-    new CreateInstanceExample(),
-    new PostJsonExample(),
-    new PostFormExample(),
-    new ParamsSerializationExample(),
-    new BasicAuthExample(),
-    new DynamicResponseExample(),
-    new DynamicRequestExample(),
-    new ResponseTypesExample(),
-    new InterceptorsExample(),
-    new ErrorHandlingExample(),
-    new ConnectionPoolExample(),
-    new MultipartExample(),
-    new DownloadExample(),
-    new GetUriAndLimitsExample(),
-    new ProgressAndRateExample(),
-    new CustomHandlerExample(),
-    new SingleFileUploadExample(),
-    new NewtonsoftJsonExample(),
-    new DnsRefreshExample(),
-    new BearerTokenExample(),
-    new RequestSigningExample(),
-    new XmlSerializationExample(),
-    new BinarySerializationExample()
-};
+    items.Add(new SampleMenuItem("声明式 API 客户端示例", example.Number, example.GetType().Name, example.Title, () =>
+    {
+        var server = webApiServer ??= DemoApiServer.Start();
+        return example.RunAsync(new WebApiContext(server.Url, server));
+    }));
+}
 
 try
 {
-    foreach (var example in examples)
+    var failed = await SampleMenu.RunAsync($"AxiosNet 示例库（反射发现，共 {items.Count} 项）", items);
+    if (failed)
     {
-        await example.RunAsync(context);
+        Environment.ExitCode = 1;
     }
-
-    Console.WriteLine();
-    Console.WriteLine("== 全部示例运行完成 ==");
 }
-catch (Exception ex)
+finally
 {
-    Console.WriteLine($"[示例执行失败] {ex}");
-    Environment.ExitCode = 1;
+    coreServer?.Dispose();
+    webApiServer?.Dispose();
 }
 
 // ------------------------------------------------------------------
 // 辅助
 // ------------------------------------------------------------------
-static void PrintBanner(int port)
-{
-    Console.WriteLine("AxiosNet 集成调用示例");
-    Console.WriteLine($"本地演示服务器: http://127.0.0.1:{port}/ (HTTP/1.1 Keep-Alive)");
-}
+
+// 反射发现实现 exampleInterface 的全部具体示例类（抽象类与接口自身除外）
+static Type[] Discover(Type exampleInterface)
+    => exampleInterface.Assembly.GetTypes()
+        .Where(t => t is { IsClass: true, IsAbstract: false } && exampleInterface.IsAssignableFrom(t))
+        .ToArray();
