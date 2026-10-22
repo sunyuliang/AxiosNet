@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-549%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-573%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1234,7 +1234,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 549 cases on each runtime (1098 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 573 cases on each runtime (1146 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1247,7 +1247,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 549 xUnit tests (the test project targets net8.0 + net6.0, so 1098 executions)
+# Run all 573 xUnit tests (the test project targets net8.0 + net6.0, so 1146 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1380,7 +1380,7 @@ How the stages map onto the source files (read together with the [project layout
 | 1 Entry & config merge | `AxiosClient.Shortcuts.cs` (assembly), `AxiosClient.Config.cs` (`MergeConfig` / `ApplyHeaders`) |
 | 2 Request interceptors | `Interceptors/RequestInterceptorManager.cs` |
 | 3 TransformRequest | `AxiosClient.cs` request pipeline |
-| 4 URL + request body | `Internal/UrlBuilder.cs`, `Internal/RequestBodyFactory.cs`, `Internal/ProgressHttpContent.cs` |
+| 4 URL + request body | `Internal/UrlBuilder.cs`, `Internal/RequestBodyFactory.cs` (dispatch), `Internal/FormBodyEncoder.cs` (form), `Internal/MultipartBodyBuilder.cs` (multipart), `Internal/ProgressHttpContent.cs` |
 | 5 Headers + connection | `AxiosClient.Config.cs`, `Pooling/HttpConnectionPool.cs` (`LeaseAsync`), `Pooling/PooledEndpoint.cs` |
 | 6 Send | `AxiosClient.cs` (`SendAsync`) → the per-origin `HttpClient` |
 | 7 Response read | `Internal/ResponseReader.cs`, `Internal/ResponseTextDecoder.cs`, `Internal/ScalarParser.cs`, `Internal/DynamicJson.cs`, `Serialization/` |
@@ -1397,7 +1397,7 @@ How the stages map onto the source files (read together with the [project layout
 ├─ src/
 │  └─ AxiosNet/                  # library (net6.0 only, compatible with all runtimes from .NET 6 onward)
 │     ├─ Axios.cs                # static facade (the global axios equivalent)
-│     ├─ AxiosClient.cs          # instance + request pipeline + response reading
+│     ├─ AxiosClient.cs          # instance + request pipeline
 │     ├─ AxiosClient.Shortcuts.cs# all shortcut overloads (get/post/... + form)
 │     ├─ AxiosClient.Config.cs   # config merging and header application
 │     ├─ AxiosJson.cs            # global JSON defaults (JsonSerializerOptions)
@@ -1414,12 +1414,12 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
 │     ├─ Interceptors/           # request/response interceptor management
 │     ├─ Serialization/          # IContentSerializer (2 text methods + 1 byte entry + MediaType) + built-in JSON / XML implementations
-│     ├─ Internal/               # URL/params, body factories, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
+│     ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
 │     └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (549 cases × net6.0 / net8.0 = 1098 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (573 cases × net6.0 / net8.0 = 1146 executions)
 ```
 
 ## License

@@ -45,7 +45,7 @@ internal static class DispositionTokens
 }
 
 /// <summary>
-/// multipart 字段名非法。只在本程序集内部流转，由 <see cref="RequestBodyFactory"/> 转成
+/// multipart 字段名非法。只在本程序集内部流转，由 <see cref="MultipartBodyBuilder"/> 转成
 /// 带配置上下文的 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
 /// </summary>
 internal sealed class InvalidFieldNameException : Exception

@@ -270,7 +270,7 @@ public sealed partial class AxiosClient
                 // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
                 // 覆盖会让正文无法解析，因此保留内容自身的头部。
                 if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
-                    && RequestBodyFactory.HasMultipartBoundary(content.Headers.ContentType))
+                    && RequestContentType.HasMultipartBoundary(content.Headers.ContentType))
                 {
                     continue;
                 }

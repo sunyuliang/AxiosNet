@@ -36,6 +36,13 @@ internal static class MediaTypes
         return main.Length == 0 ? null : main.ToLowerInvariant();
     }
 
+    /// <summary>
+    /// 媒体类型主值是否等于 <paramref name="expected"/>（忽略参数、两端空白与大小写）。
+    /// <paramref name="expected"/> 必须是主值本身，不能带参数。
+    /// </summary>
+    public static bool Is(string? mediaType, string expected)
+        => MainValue(mediaType).Equals(expected, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>是否为文本类媒体类型（<c>null</c> / 空视为文本）。</summary>
     public static bool IsTextual(string? mediaType)
     {

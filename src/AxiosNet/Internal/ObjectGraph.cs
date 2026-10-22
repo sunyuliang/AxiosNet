@@ -57,8 +57,9 @@ internal static class ObjectGraph
 }
 
 /// <summary>
-/// 展平时发现对象图有环。只在本程序集内部流转，由 <see cref="RequestBodyFactory"/> /
-/// <see cref="ParamsSerializer"/> 转成带配置上下文的 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// 展平时发现对象图有环。只在本程序集内部流转，由 <see cref="FormBodyEncoder"/> /
+/// <see cref="MultipartBodyBuilder"/> / <see cref="UrlBuilder"/> 转成带配置上下文的
+/// <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
 /// </summary>
 internal sealed class DataCycleException : Exception
 {
