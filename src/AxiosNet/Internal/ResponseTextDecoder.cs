@@ -11,6 +11,9 @@ internal static class ResponseTextDecoder
     private const string Latin1Name = "iso-8859-1";
 
     public static string Decode(byte[] bytes, string? charSet, Encoding? forced)
+        => Decode(bytes.AsSpan(), charSet, forced);
+
+    public static string Decode(ReadOnlySpan<byte> bytes, string? charSet, Encoding? forced)
     {
         if (bytes.Length == 0)
         {
@@ -24,7 +27,7 @@ internal static class ResponseTextDecoder
 
         // 即便已确定编码，也剥离匹配的 BOM（与 .NET 一致）。
         var bomLength = GetPreambleLength(bytes, encoding);
-        return encoding.GetString(bytes, bomLength, bytes.Length - bomLength);
+        return encoding.GetString(bytes[bomLength..]);
     }
 
     private static Encoding? ResolveFromCharset(string? charSet)
@@ -64,7 +67,7 @@ internal static class ResponseTextDecoder
         }
     }
 
-    private static Encoding? DetectFromBom(byte[] bytes)
+    private static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
         // 注意先判 4 字节的 UTF-32 BOM，再判 2 字节的 UTF-16 BOM。
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
@@ -97,12 +100,12 @@ internal static class ResponseTextDecoder
         return null;
     }
 
-    private static int GetPreambleLength(byte[] bytes, Encoding encoding)
+    private static int GetPreambleLength(ReadOnlySpan<byte> bytes, Encoding encoding)
     {
         var preamble = encoding.GetPreamble();
         if (preamble.Length > 0
             && bytes.Length >= preamble.Length
-            && bytes.AsSpan(0, preamble.Length).SequenceEqual(preamble))
+            && bytes[..preamble.Length].SequenceEqual(preamble))
         {
             return preamble.Length;
         }

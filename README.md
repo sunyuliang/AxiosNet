@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-576%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-578%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -612,9 +612,9 @@ public interface IContentSerializer
     // 与 MediaType 配对：注入一个 protobuf 序列化器，请求头与正文自动对齐。
     ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
-    // 响应入口（Content-Type 声明为非文本）：默认按 UTF-8 解码转调文本入口，二进制格式覆写它
-    object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
-        => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
+    // 响应入口（Content-Type 声明为非文本）：库自带默认实现 —— 按响应字符集解码
+    // （ResponseEncoding → charset → BOM → UTF-8）后转调文本入口；二进制格式覆写它
+    object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);
 }
 ```
 
@@ -735,7 +735,7 @@ AxiosContent.Serializer = new YamlSerializer();          // 全局；也可按�
 
 - **请求头可以由序列化器自报**：`MediaType` 非 `null` 且调用方没显式设 `ContentType` 时，库把它写进请求头（对应 axios 默认 `transformRequest` 里的 `headers.setContentType(..., false)`），文本与字节两条通道都生效。显式设过就绝不覆盖。
 - **文本 / 二进制由响应 `Content-Type` 判定**（只看媒体类型主值，忽略 `charset` / `boundary` 等参数）：`text/*`、`application/json`、`application/xml`、`+json` / `+xml` / `+yaml`、YAML、CSV 等算文本，其余（`application/octet-stream`、`image/png`、`application/x-protobuf`…）算二进制；**没有 Content-Type 视为文本**。响应方向不看 `MediaType`，头是权威。
-- **二进制响应不解码**：业务对象走 `Deserialize(ReadOnlyMemory<byte>)` 拿到原始字节（Protobuf / MessagePack / CBOR 零拷贝接入）；非泛型调用直接给 `byte[]`。字节入口的默认实现按 UTF-8 解码转调文本入口，因此文本序列化器不用实现它（也兼容把 JSON 错标成 `octet-stream` 的服务端）。
+- **二进制响应不解码**：业务对象走 `Deserialize(ReadOnlyMemory<byte>)` 拿到原始字节（Protobuf / MessagePack / CBOR 零拷贝接入）；非泛型调用直接给 `byte[]`。字节入口的默认实现按**响应字符集**解码转调文本入口（优先级与文本响应一致：`ResponseEncoding` → charset → BOM → UTF-8），因此文本序列化器不用实现它（也兼容把 JSON 错标成 `octet-stream` 的服务端，含带 charset / BOM 的非 UTF-8 变体）。
 - **二进制格式的请求出口**：覆写 `SerializeToBytes` 返回线格式字节，库原样发送（不编码、不补 charset），头取自报的 `MediaType`——与响应字节入口配对后，注入一个序列化器就完成整条链路换格式。返回 `null` 回落文本通道；字节的内存必须存活到整条请求结束（不要返回 ArrayPool 租约）。**文本通道无法承载任意字节**，二进制格式的 `Serialize` 实现成抛 `NotSupportedException` 即可。
 - **请求方向的基础类型不进序列化器**：`PostAsync("url", 42)` 发的是 `42`、`true` 发 `true`、枚举发名字。裸标量没有「格式」可言（XML / YAML 无法表达无名的根标量），交给序列化器只会让每个实现都重复一遍标量特判。因此它也不参与 `MediaType` 回写：头保持 `ContentType`（默认 `application/json`，而裸 `42` 恰好是合法 JSON）。日期时间用往返格式（保留 Kind 与 tick），不像表单那样折成毫秒级 UTC。
 - **表单 / multipart 不经过序列化器**：字段名只看 `FormFieldNameSelector` 与属性上的 `[JsonPropertyName]`（忽略用 `[JsonIgnore]`）。
@@ -1257,7 +1257,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 576 个用例（共 1152 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 578 个用例（共 1156 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1270,7 +1270,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 576 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 1152 次）
+# 运行全部 578 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 1156 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1443,7 +1443,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（576 个用例 × net6.0 / net8.0 双目标 = 1152 次执行）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（578 个用例 × net6.0 / net8.0 双目标 = 1156 次执行）
 ```
 
 ## License

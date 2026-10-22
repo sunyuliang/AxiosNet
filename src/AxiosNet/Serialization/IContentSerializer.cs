@@ -1,4 +1,4 @@
-using System.Text;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Serialization;
 
@@ -107,10 +107,12 @@ public interface IContentSerializer
     /// Protobuf / MessagePack / CBOR 因此可以零拷贝接入。
     /// </para>
     /// <para>
-    /// 默认实现按 UTF-8 解码后转调文本入口，所以<b>文本格式的序列化器不需要实现本方法</b>
-    /// （也兼容把 JSON 标成 <c>application/octet-stream</c> 的服务端）。
+    /// 默认实现按<b>响应的字符集</b>解码后转调文本入口（优先级与文本响应一致：
+    /// <see cref="AxiosConfig.ResponseEncoding"/> → charset 参数 → BOM → UTF-8，
+    /// 经由 <c>config.Response.CharSet</c>），所以<b>文本格式的序列化器不需要实现本方法</b>
+    /// （也兼容把 JSON 标成 <c>application/octet-stream</c> 的服务端，含带 charset / BOM 的非 UTF-8 变体）。
     /// </para>
     /// </summary>
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
-        => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
+        => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.ResponseEncoding), type, config);
 }

@@ -191,7 +191,7 @@ public sealed class ContentSerializerTests
     public async Task BinaryContentType_StillWorksForTextSerializers()
     {
         // 现实里大量服务端把 JSON / XML 标成 application/octet-stream：
-        // 接口里字节入口的默认实现按 UTF-8 解码转调文本入口，所以文本序列化器无需实现该方法。
+        // 接口里字节入口的默认实现按响应字符集解码转调文本入口，所以文本序列化器无需实现该方法。
         await using var server = TestHttpServer.Start(_ => new TestResponse(
             200,
             Body: Encoding.UTF8.GetBytes(ToXml(new XmlOrder { Id = 5, Name = "map" }, typeof(XmlOrder))),
@@ -202,6 +202,41 @@ public sealed class ContentSerializerTests
 
         Assert.Equal(5, response.Data!.Id);
         Assert.Equal("map", response.Data.Name);
+    }
+
+    [Fact]
+    public async Task ByteOverloadDefault_FollowsResponseCharset()
+    {
+        // 错标成 octet-stream 且带 charset 的非 UTF-8 文本：DIM 默认实现与文本响应共用同一套解码优先级。
+        // Latin1 的 0xE9 在写死 UTF-8 下会变成 U+FFFD，因此断言原文即证明 charset 生效。
+        var latin1 = Encoding.Latin1.GetBytes(ToXml(new XmlOrder { Id = 6, Name = "café" }, typeof(XmlOrder)));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: latin1,
+            ContentType: "application/octet-stream; charset=iso-8859-1"));
+
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new PlainXmlSerializer() });
+        var response = await client.GetAsync<XmlOrder>(server.Url + "orders/6");
+
+        Assert.Equal(6, response.Data!.Id);
+        Assert.Equal("café", response.Data.Name);
+    }
+
+    [Fact]
+    public async Task ByteOverloadDefault_DetectsBom_WhenCharsetMissing()
+    {
+        // 没有 charset：DIM 按 BOM 探测（UTF-16LE，需手工带上 BOM 前缀），与文本响应同规则
+        var utf16 = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(ToXml(new XmlOrder { Id = 7, Name = "bom" }, typeof(XmlOrder)))).ToArray();
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: utf16,
+            ContentType: AxiosContentType.OctetStream));
+
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new PlainXmlSerializer() });
+        var response = await client.GetAsync<XmlOrder>(server.Url + "orders/7");
+
+        Assert.Equal(7, response.Data!.Id);
+        Assert.Equal("bom", response.Data.Name);
     }
 
     [Fact]
@@ -508,7 +543,15 @@ public sealed class ContentSerializerTests
         Paid
     }
 
-    /// <summary>XML 文本序列化器：接口只有两个方法。</summary>
+    /// <summary>XML 文本序列化器：不覆写字节入口，专门用来测接口 DIM 默认实现的解码行为。</summary>
+    private sealed class PlainXmlSerializer : IContentSerializer
+    {
+        public string Serialize(object? value, Type type, AxiosConfig config) => ToXml(value!, type);
+
+        public object? Deserialize(string text, Type type, AxiosConfig config) => FromXml(text, type);
+    }
+
+    /// <summary>XML 文本序列化器：可注入「字节入口抛异常」用于验证文本响应的路由。</summary>
     private sealed class CustomXmlSerializer : IContentSerializer
     {
         private readonly bool _bytesThrow;

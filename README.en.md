@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-576%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-578%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -598,10 +598,10 @@ public interface IContentSerializer
     // Pairs with MediaType: inject one protobuf serializer and header + body align automatically.
     ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
-    // response inlet (Content-Type declared non-textual): default decodes UTF-8 and
-    // delegates above; binary formats override it
-    object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
-        => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
+    // response inlet (Content-Type declared non-textual): the library ships a default that
+    // decodes with the response charset (ResponseEncoding -> charset -> BOM -> UTF-8) and
+    // delegates to the text entry; binary formats override it
+    object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);
 }
 ```
 
@@ -722,7 +722,7 @@ Boundaries:
 
 - **The request header can be declared by the serializer**: when `MediaType` is non-null and the caller never set `ContentType`, the library writes it into the request (mirroring axios' default `headers.setContentType(..., false)`); it applies to both the text and byte channels. An explicit value always wins. The response direction ignores `MediaType` — the response header is authoritative.
 - **Text vs binary comes from the response `Content-Type`** (only the media type main value; `charset` / `boundary` parameters are ignored): `text/*`, `application/json`, `application/xml`, `+json` / `+xml` / `+yaml`, YAML and CSV count as textual; everything else (`application/octet-stream`, `image/png`, `application/x-protobuf`…) is binary; **a missing Content-Type counts as textual**.
-- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly. The byte inlet's default decodes UTF-8 and delegates to the text entry, so text serializers need not implement it (and servers mislabeling JSON as `octet-stream` keep working).
+- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly. The byte inlet's default decodes with the **response charset** and delegates to the text entry (same priority as textual responses: `ResponseEncoding` → charset → BOM → UTF-8), so text serializers need not implement it (and servers mislabeling JSON as `octet-stream` keep working, including non-UTF-8 variants declared via charset or BOM).
 - **Binary formats get a request outlet**: override `SerializeToBytes` to return the wire-format bytes — the library sends them as-is (no text encoding, no charset appended) and takes the header from the declared `MediaType`. Paired with the response byte inlet, injecting one serializer swaps the whole pipeline's format. Returning `null` falls back to the text channel; the returned memory must stay alive until the whole request completes (never hand back an ArrayPool lease). **The text channel cannot carry arbitrary bytes**, so a binary format's `Serialize` may just throw `NotSupportedException`.
 - **Primitive requests never reach the serializer**: `PostAsync("url", 42)` sends `42`, `true` sends `true`, enums send their name. A bare scalar has no "format" (XML / YAML cannot express an unnamed root scalar), so routing it through the serializer would only force every implementation to special-case scalars again. It therefore does not take part in the `MediaType` header fill either: the header stays at `ContentType` (default `application/json` — and a bare `42` is valid JSON). Date-times use the round-trip format (Kind and ticks preserved) rather than the millisecond UTC form used by forms.
 - **Forms / multipart never go through the serializer**: field names come from `FormFieldNameSelector` and `[JsonPropertyName]` (ignore with `[JsonIgnore]`).
@@ -1244,7 +1244,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 576 cases on each runtime (1152 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 578 cases on each runtime (1156 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1257,7 +1257,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 576 xUnit tests (the test project targets net8.0 + net6.0, so 1152 executions)
+# Run all 578 xUnit tests (the test project targets net8.0 + net6.0, so 1156 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1431,7 +1431,7 @@ How the stages map onto the source files (read together with the [project layout
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (576 cases × net6.0 / net8.0 = 1152 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (578 cases × net6.0 / net8.0 = 1156 executions)
 ```
 
 ## License

@@ -51,6 +51,6 @@ public sealed class BinarySerializationExample : IExample
         Console.WriteLine($"  显式 Content-Type 覆盖自报: {forced.Data!.Length} 字节, 回显头={forced.GetHeader("Content-Type")}");
 
         Console.WriteLine("  提示：文本序列化器两个字节入口都不必实现 —— 请求出口默认 null（走文本），");
-        Console.WriteLine("        响应入口默认按 UTF-8 解码转调文本入口，错标成 octet-stream 的 JSON 服务端也能照常工作。");
+        Console.WriteLine("        响应入口默认按响应字符集解码转调文本入口，错标成 octet-stream 的 JSON 服务端也能照常工作。");
     }
 }
