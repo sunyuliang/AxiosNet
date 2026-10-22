@@ -19,6 +19,13 @@ on:
     tags:
       - 'v[0-9]*'
   pull_request:
+  # 手动复核已发布版本（不构建、不发布）：符号摄入慢于发布时，用它事后补验
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 要核对的版本号；留空则取 src/AxiosNet/AxiosNet.csproj 的 <Version>
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -30,6 +37,8 @@ concurrency:
 jobs:
   build-test:
     name: build & test
+    # 手动复核（workflow_dispatch）只跑 verify-published，不重复构建测试
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       DOTNET_NOLOGO: true
@@ -288,33 +297,38 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "发布状态：state=$STATE，symbols_pushed=$PUSH_SYM"
 
-      - name: 校验符号已在 nuget.org 符号服务器可见
+      - name: 观察符号在 nuget.org 符号服务器可见性
+        id: symbols
         # 1.0.0 的教训：nupkg 与 snupkg 都「推送成功」、job 全绿，但符号从未到达符号服务器，
         # 消费者调试时无法 F11 进源码。推送端点不回报符号摄入结果，唯一权威判据是符号服务器本身。
-        # debug id 直接取上一步核对过的值（那是「线上二进制」的 id，比重新从本地 DLL 算更权威）。
+        # 但符号摄入比包索引滞后得多（snupkg 验证 → 提取 PDB → 边缘同步），官方口径是数分钟到
+        # 数小时：拿一个固定窗口当判据必然误判（1.0.x 的假红就是这么来的）。
+        # 所以这里只做「有界观察」——抢到 200 就当场确认，超时如实告警但不判失败，
+        # 事后用本文件的 verify-published 手动任务补验。
         env:
           DEBUG_ID: ${{ steps.publish.outputs.debug_id }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           if [ -z "${DEBUG_ID:-}" ]; then
             echo "::error::发布步骤没有输出 debug_id，无法校验符号"
             exit 1
           fi
           ID="$(basename "$PACKAGE_PROJECT" .csproj)"
           URL="https://symbols.nuget.org/download/symbols/${ID}.pdb/${DEBUG_ID}FFFFFFFF/${ID}.pdb"
-          # 符号摄入有秒级~分钟级延迟，且 symbols.nuget.org 边缘节点有抖动（302 探测与实际下载
-          # 可能不一致），轮询至多 10 分钟、以实际下载为准；302=已收录，200=直连
-          for i in $(seq 1 60); do
+          # 20 分钟窗口（40 × 30s）足以覆盖常见摄入耗时，又不至于让 job 白等；
+          # 302 探测与实际下载可能不一致，跟随重定向后看最终码，200 即 PDB 可下载
+          for i in $(seq 1 40); do
             code="$(curl -sL -o /dev/null -w '%{http_code}' --max-time 60 -H "SymbolChecksum: SHA256:$DEBUG_ID" "$URL")"
             if [ "$code" = "200" ]; then
               echo "符号已就绪，源码映射可用：$URL"
+              echo "symbols_visible=yes" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "符号尚不可见（HTTP $code，$i/60），10s 后重试…"
-            sleep 10
+            echo "符号尚不可见（HTTP $code，$i/40），30s 后重试…"
+            sleep 30
           done
-          echo "::error::符号推送后 10 分钟仍不可见，源码映射不会生效：$URL"
-          exit 1
+          echo "symbols_visible=no" >> "$GITHUB_OUTPUT"
+          echo "::warning::符号推送后 20 分钟内仍不可见（HTTP $code）。这不是发布失败：符号摄入远比包索引慢，常见 10 分钟到数小时。无需重跑本 job（重跑会走 existing 分支，也不会更快），稍后用 Actions → build-nuget → Run workflow（verify-published）复核：$URL"
 
       - name: 等待包对客户端可拉取（索引生效滞后是正常的）
         id: visibility
@@ -354,7 +368,90 @@ jobs:
             echo "- 符号包本次推送: \`${{ steps.publish.outputs.symbols_pushed }}\`（0=线上已就绪，跳过）"
             echo "- PDB debug id: \`${{ steps.publish.outputs.debug_id }}\`"
             echo "- 客户端可拉取: \`${{ steps.visibility.outputs.ready }}\`（空白=该步未执行；no=索引仍在生效中）"
+            echo "- 符号可见: \`${{ steps.symbols.outputs.symbols_visible }}\`（yes=已确认可下载；no=摄入滞后，属正常，稍后用 verify-published 复核）"
             echo "- 包: https://www.nuget.org/packages/AxiosNet/${{ steps.meta.outputs.version }}"
-            echo "- 符号: https://symbols.nuget.org/download/symbols/AxiosNet.pdb/ （源码映射载体，已由上方步骤校验）"
+            echo "- 符号: https://symbols.nuget.org/download/symbols/AxiosNet.pdb/ （源码映射载体，可见性见上）"
             echo "- commit: \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-published:
+    name: 复核已发布版本（包可拉取 + 符号可见）
+    # 发布时的符号校验只是有界观察，摄入慢于窗口属于常态。事后补验走这里：
+    # Actions → build-nuget → Run workflow → 填版本号。不构建、不发布、不动线上，只打两个权威端点。
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      PACKAGE_PROJECT: src/AxiosNet/AxiosNet.csproj
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 解出要核对的版本
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ inputs.version }}"
+          if [ -z "$ver" ]; then
+            ver="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$PACKAGE_PROJECT" | head -1)"
+          fi
+          if [ -z "$ver" ]; then
+            echo "::error::没有版本可核对（输入为空且 csproj 里取不到 <Version>）"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "核对版本：$ver"
+
+      - name: 探测 flat container 与符号服务器
+        # 两个端点都是「终态事实」：包能下载 = 可消费，PDB 能下载 = 源码映射可用。
+        # 404 一律不判失败——它们只说明摄入还没走完，重跑本流程即可。
+        run: |
+          set -uo pipefail
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
+          ID_LC="${ID,,}"
+          VER="${{ steps.target.outputs.version }}"
+          FLAT="https://api.nuget.org/v3-flatcontainer/${ID_LC}/${VER}/${ID_LC}.${VER}.nupkg"
+
+          pkg="$(curl -sL -o /tmp/published.nupkg -w '%{http_code}' --max-time 180 "$FLAT")"
+          echo "包（flat container）：HTTP $pkg"
+          if [ "$pkg" != "200" ]; then
+            {
+              echo "### $ID $VER 复核"
+              echo ""
+              echo "- 包：HTTP \`$pkg\` — 公开索引尚未生效（或该版本不存在）"
+              echo "- 符号：未核对（包不可拉取时 debug id 无从取得）"
+              echo "- 端点：$FLAT"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::$VER 在 flat container 取不到（HTTP $pkg），无法核对符号。索引滞后通常几分钟到数十分钟，稍后重跑本流程。"
+            exit 0
+          fi
+
+          DEBUG_ID="$(python3 .github/scripts/debug-id.py --nupkg /tmp/published.nupkg)"
+          echo "已发布二进制 PDB debug id：$DEBUG_ID"
+          SYM_URL="https://symbols.nuget.org/download/symbols/${ID}.pdb/${DEBUG_ID}FFFFFFFF/${ID}.pdb"
+          sym=""
+          for i in $(seq 1 6); do
+            sym="$(curl -sL -o /dev/null -w '%{http_code}' --max-time 60 -H "SymbolChecksum: SHA256:$DEBUG_ID" "$SYM_URL")"
+            [ "$sym" = "200" ] && break
+            echo "符号尚不可见（HTTP $sym，$i/6），30s 后重试…"
+            sleep 30
+          done
+          echo "符号：HTTP $sym"
+
+          {
+            echo "### $ID $VER 复核"
+            echo ""
+            echo "- 包：HTTP \`$pkg\`（可拉取）"
+            echo "- PDB debug id：\`$DEBUG_ID\`"
+            if [ "$sym" = "200" ]; then
+              echo "- 符号：HTTP \`$sym\` — 已收录，源码映射可用"
+            else
+              echo "- 符号：HTTP \`$sym\` — 摄入仍未完成（正常现象），过段时间重跑本流程"
+            fi
+            echo "- 符号端点：$SYM_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$sym" != "200" ]; then
+            echo "::warning::符号仍未收录（HTTP $sym）。这不影响包本身可用，只是暂时无法单步调试进库源码；符号摄入滞后是常态，过段时间重跑本流程即可。"
+          fi

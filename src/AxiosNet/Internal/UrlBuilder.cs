@@ -166,62 +166,78 @@ internal static class ParamsSerializer
             return NormalizeRawQuery(rawQuery);
         }
 
-        var pairs = new List<KeyValuePair<string, string>>(8);
-        if (paramsObj is JsonElement rootElement)
+        try
         {
-            // 直接传 JsonElement 必须按 JSON 树展开；走反射兜底只会把 ValueKind / RawText 序列化出去。
-            if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
-                or JsonValueKind.True or JsonValueKind.False)
+            var pairs = new List<KeyValuePair<string, string>>(8);
+            if (paramsObj is JsonElement rootElement)
             {
-                throw InvalidParamsRoot(paramsObj, config);
-            }
-
-            AppendJsonElement(null, rootElement, pairs);
-        }
-        else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
-        {
-            // ExpandoObject（dynamic）等仅实现泛型字典的类型
-            foreach (var entry in stringKeyedDictionary)
-            {
-                Append(EscapeKey(entry.Key), entry.Value, pairs);
-            }
-        }
-        else if (paramsObj is IDictionary dictionary)
-        {
-            foreach (DictionaryEntry entry in dictionary)
-            {
-                if (entry.Key is null)
+                // 直接传 JsonElement 必须按 JSON 树展开；走反射兜底只会把 ValueKind / RawText 序列化出去。
+                if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
+                    or JsonValueKind.True or JsonValueKind.False)
                 {
-                    continue;
+                    throw InvalidParamsRoot(paramsObj, config);
                 }
 
-                Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs);
+                AppendJsonElement(null, rootElement, pairs);
             }
-        }
-        else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
-        {
-            // 根集合（数组 / List）：与表单展平一致，用下标作键；否则反射分支会输出 Array 的 CLR 属性。
-            var index = 0;
-            foreach (var item in items)
+            else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
             {
-                Append("[" + index + "]", item, pairs);
-                index++;
+                // ExpandoObject（dynamic）等仅实现泛型字典的类型
+                foreach (var entry in stringKeyedDictionary)
+                {
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null);
+                }
             }
-        }
-        else if (IsScalar(paramsObj))
-        {
-            // 标量没有可表达的键名：伪造 key 或静默丢弃都会让调用方以为参数发出去了。
-            throw InvalidParamsRoot(paramsObj, config);
-        }
-        else
-        {
-            foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
+            else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
             {
-                Append(EscapeKey(property.Name), property.GetValue(paramsObj), pairs);
+                // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
+                foreach (var entry in readOnlyDictionary)
+                {
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null);
+                }
             }
-        }
+            else if (paramsObj is IDictionary dictionary)
+            {
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key is null)
+                    {
+                        continue;
+                    }
 
-        return string.Join("&", pairs.Select(p => p.Key + "=" + p.Value));
+                    Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null);
+                }
+            }
+            else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
+            {
+                // 根集合（数组 / List）：与表单展平一致，用下标作键；否则反射分支会输出 Array 的 CLR 属性。
+                var index = 0;
+                foreach (var item in items)
+                {
+                    Append("[" + index + "]", item, pairs, visited: null);
+                    index++;
+                }
+            }
+            else if (IsScalar(paramsObj))
+            {
+                // 标量没有可表达的键名：伪造 key 或静默丢弃都会让调用方以为参数发出去了。
+                throw InvalidParamsRoot(paramsObj, config);
+            }
+            else
+            {
+                foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
+                {
+                    Append(EscapeKey(property.Name), property.GetValue(paramsObj), pairs, visited: null);
+                }
+            }
+
+            return string.Join("&", pairs.Select(p => p.Key + "=" + p.Value));
+        }
+        catch (DataCycleException ex)
+        {
+            // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
+            throw AxiosException.InvalidOption(ex.Message, config, ex);
+        }
     }
 
     /// <summary>非法根类型：统一成 <c>ERR_BAD_OPTION_VALUE</c>，并说明可用的形态。</summary>
@@ -238,7 +254,11 @@ internal static class ParamsSerializer
         return trimmed.Length == 0 ? string.Empty : trimmed.TrimStart('?', '&');
     }
 
-    private static void Append(string prefix, object? value, List<KeyValuePair<string, string>> pairs)
+    private static void Append(
+        string prefix,
+        object? value,
+        List<KeyValuePair<string, string>> pairs,
+        HashSet<object>? visited)
     {
         // 与 axios 一致：null 直接跳过
         if (value is null)
@@ -255,9 +275,36 @@ internal static class ParamsSerializer
         if (value is IDictionary<string, object> stringKeyedNested)
         {
             // 嵌套 ExpandoObject（dynamic）：prefix[key]=value
-            foreach (var entry in stringKeyedNested)
+            visited = ObjectGraph.Enter(visited, stringKeyedNested);
+            try
             {
-                Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs);
+                foreach (var entry in stringKeyedNested)
+                {
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, stringKeyedNested);
+            }
+
+            return;
+        }
+
+        // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
+        if (value is IReadOnlyDictionary<string, object> readOnlyNested)
+        {
+            visited = ObjectGraph.Enter(visited, readOnlyNested);
+            try
+            {
+                foreach (var entry in readOnlyNested)
+                {
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, readOnlyNested);
             }
 
             return;
@@ -265,14 +312,22 @@ internal static class ParamsSerializer
 
         if (value is IDictionary dict)
         {
-            foreach (DictionaryEntry entry in dict)
+            visited = ObjectGraph.Enter(visited, dict);
+            try
             {
-                if (entry.Key is null)
+                foreach (DictionaryEntry entry in dict)
                 {
-                    continue;
-                }
+                    if (entry.Key is null)
+                    {
+                        continue;
+                    }
 
-                Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs);
+                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs, visited);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, dict);
             }
 
             return;
@@ -280,9 +335,17 @@ internal static class ParamsSerializer
 
         if (value is not string && value is not byte[] && value is IEnumerable enumerable)
         {
-            foreach (var item in enumerable)
+            visited = ObjectGraph.Enter(visited, value);
+            try
             {
-                Append($"{prefix}[]", item, pairs);
+                foreach (var item in enumerable)
+                {
+                    Append($"{prefix}[]", item, pairs, visited);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, value);
             }
 
             return;
@@ -295,9 +358,17 @@ internal static class ParamsSerializer
         }
 
         // 嵌套对象（匿名类型 / record / POCO）：反射公共属性，序列化为 prefix[prop]=value
-        foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
+        visited = ObjectGraph.Enter(visited, value);
+        try
         {
-            Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs);
+            foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
+            {
+                Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs, visited);
+            }
+        }
+        finally
+        {
+            ObjectGraph.Exit(visited, value);
         }
     }
 

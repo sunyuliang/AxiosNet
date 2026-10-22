@@ -82,6 +82,22 @@ public sealed class HttpConnectionPool : IDisposable
                 "IdleHandlerLifetime 不能为负（0 表示任何空闲节点立即可被驱逐；不限请用 Timeout.InfiniteTimeSpan）。",
                 config);
         }
+
+        if (options.EvictionInterval < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption(
+                "EvictionInterval 不能为负（0 表示不启用后台驱逐定时器；要永不驱逐请设为 0 并手动调用 EvictIdleEndpoints）。",
+                config);
+        }
+
+        // Timer 的 dueTime / period 上限是 uint.MaxValue-1 毫秒（约 49.7 天），越界 BCL 抛裸
+        // ArgumentOutOfRangeException；这里提前收敛到统一错误模型。
+        if (options.EvictionInterval > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
+        {
+            throw AxiosException.InvalidOption(
+                $"EvictionInterval（{options.EvictionInterval}）超出后台计时器上限（约 49.7 天）：请调小，或设为 0 改用手动驱逐。",
+                config);
+        }
     }
 
     /// <summary>
@@ -336,19 +352,32 @@ public sealed class HttpConnectionPool : IDisposable
 
         _evictionTimer?.Dispose();
 
+        List<PooledEndpoint>? pending = null;
         foreach (var pair in _endpoints)
         {
             var endpoint = pair.Value;
             lock (endpoint.SyncRoot)
             {
-                if (endpoint.ActiveLeases == 0 && _endpoints.TryRemove(pair))
+                // 锁内只做判定 + 摘除 + 置位；关闭 Handler 会断开该 origin 的全部 TCP 连接、可能耗时，
+                // 释放必须放到锁外（与 EvictIdle 同一不变式），否则并发的统计 / 租用会被一起拖住。
+                if (endpoint.ActiveLeases == 0
+                    && _endpoints.TryRemove(pair)
+                    && endpoint.MarkDisposed())
                 {
-                    endpoint.Dispose();
+                    (pending ??= new List<PooledEndpoint>(1)).Add(endpoint);
                 }
                 else
                 {
                     endpoint.DisposeWhenIdle = true;
                 }
+            }
+        }
+
+        if (pending is not null)
+        {
+            foreach (var endpoint in pending)
+            {
+                endpoint.ReleaseResources();
             }
         }
     }

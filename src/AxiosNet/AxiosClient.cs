@@ -317,15 +317,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             // 泛型 <dynamic>/<object>：响应自动展开为动态对象图（对标 response.data.xxx）；
             // 显式设置过其他 responseType 时以显式配置为准。
+            // 自动切换不置 ResponseTypeSet：否则回放生效配置时会被当成调用方显式意图。
             if (dataType == typeof(object) && config.ResponseType == ResponseType.Json)
             {
-                config.ResponseType = ResponseType.Dynamic;
+                config.SetResponseTypeAuto(ResponseType.Dynamic);
             }
 
             // 泛型 <Stream>：自动切流式响应（对标 responseType: 'stream'）；显式配置仍然优先。
             if (dataType == typeof(Stream) && config.ResponseType == ResponseType.Json)
             {
-                config.ResponseType = ResponseType.Stream;
+                config.SetResponseTypeAuto(ResponseType.Stream);
             }
 
             // 负值没有合理语义，静默当作「不限制」会让调用方以为限制生效了。

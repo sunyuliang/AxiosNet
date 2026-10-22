@@ -68,8 +68,13 @@ public sealed partial class AxiosClient
         }
 
         merged.Auth = perCall.Auth ?? merged.Auth;
-        // 只在显式设置时覆盖，否则 new AxiosConfig() 的默认值会把实例默认吞掉
-        merged.ResponseType = perCall.ResponseTypeSet ? perCall.ResponseType : merged.ResponseType;
+        // 只在显式设置时覆盖：new AxiosConfig() 的默认值会把实例默认吞掉。
+        // 必须用 if 而不是三元赋值 —— setter 会把 ResponseTypeSet 置 true，回放生效配置时
+        // 连「未设置」也会被记成显式意图（自动切换出的 Dynamic/Stream 就此泄漏到下一次请求）。
+        if (perCall.ResponseTypeSet)
+        {
+            merged.ResponseType = perCall.ResponseType;
+        }
         merged.ValidateStatus = perCall.ValidateStatus ?? merged.ValidateStatus;
         merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
         merged.HttpVersion = perCall.HttpVersion ?? merged.HttpVersion;
@@ -119,24 +124,60 @@ public sealed partial class AxiosClient
         merged.ParamsSerializer = perCall.ParamsSerializer ?? merged.ParamsSerializer;
         merged.FormFieldNameSelector = perCall.FormFieldNameSelector ?? merged.FormFieldNameSelector;
 
-        // transform 链按「实例默认 + 本次追加」组合，顺序稳定
+        // transform 链按「实例默认 + 本次追加」组合，顺序稳定。
+        // 按委托引用跳过 merged 初始链（= 实例默认链）里已有的项：回放 response.Config 时，
+        // 它的链本身已经是「实例默认 + 上次按请求」（Shortcut / MergeConfig 的产出都是 Defaults.Clone() 的副本），
+        // 不去重会让每个实例默认 transform 每回放一次多执行一遍。
+        // 只对初始链去重：本次追加的项保持原样（调用方有意重复注册同一委托时语义不变）。
         if (perCall.HasTransformRequest)
         {
+            var inherited = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
             foreach (var transform in perCall.TransformRequest)
             {
+                if (inherited > 0 && ChainContainsInherited(merged.TransformRequest, inherited, transform))
+                {
+                    continue;
+                }
+
                 merged.TransformRequest.Add(transform);
             }
         }
 
         if (perCall.HasTransformResponse)
         {
+            var inherited = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
             foreach (var transform in perCall.TransformResponse)
             {
+                if (inherited > 0 && ChainContainsInherited(merged.TransformResponse, inherited, transform))
+                {
+                    continue;
+                }
+
                 merged.TransformResponse.Add(transform);
             }
         }
 
         return merged;
+    }
+
+    /// <summary>
+    /// 链的前 <paramref name="count"/> 项里是否已含同一委托实例（按引用）。
+    /// <para>链通常 0–3 项，线性扫描比为主路径建 HashSet 便宜；只比初始链是为了不吞掉本次追加的重复项。</para>
+    /// </summary>
+    private static bool ChainContainsInherited(
+        IList<Func<object?, AxiosConfig, object?>> chain,
+        int count,
+        Func<object?, AxiosConfig, object?> transform)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            if (ReferenceEquals(chain[i], transform))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // 只能挂在正文上的头。Allow / Expires / Last-Modified 看似响应头，但 .NET 把它们登记在

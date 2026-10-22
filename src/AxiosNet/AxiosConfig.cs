@@ -206,6 +206,13 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool ResponseTypeSet { get; private set; }
 
+    /// <summary>
+    /// 管线内部的 responseType 自动切换（泛型 <c>&lt;object&gt;</c> / <c>&lt;Stream&gt;</c>）：
+    /// 只改值、<b>不置</b> <see cref="ResponseTypeSet"/>。自动切换不是调用方意图，
+    /// 置了标记会让回放 <see cref="AxiosResponse.Config"/> 时把它当成显式值合并进下一次请求。
+    /// </summary>
+    internal void SetResponseTypeAuto(ResponseType value) => _responseType = value;
+
     /// <summary>对应 axios validateStatus，返回 false 时抛出异常；null 表示默认（2xx 合法）。</summary>
     public Func<int, bool>? ValidateStatus { get; set; }
 

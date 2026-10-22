@@ -175,7 +175,15 @@ internal static class RequestBodyFactory
         // 表单是独立编码通道，与序列化器无关：直接按对象结构展平（详见 CollectFormPairs），
         // 命名只看 FormFieldNameSelector 与属性上的 [JsonPropertyName]。
         var pairs = new List<KeyValuePair<string, string>>(8);
-        CollectFormPairs(null, data, pairs, encoding, config.FormFieldNameSelector);
+        try
+        {
+            CollectFormPairs(null, data, pairs, encoding, config.FormFieldNameSelector, visited: null);
+        }
+        catch (DataCycleException ex)
+        {
+            // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
+            throw AxiosException.InvalidOption(ex.Message, config, ex);
+        }
 
         // 表单体按已转义的 ASCII 串写入，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
         var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
@@ -205,7 +213,7 @@ internal static class RequestBodyFactory
 
         try
         {
-            CollectParts(null, data, content, encoding, config.FormFieldNameSelector);
+            CollectParts(null, data, content, encoding, config.FormFieldNameSelector, visited: null);
             return content;
         }
         catch (Exception ex)
@@ -219,6 +227,12 @@ internal static class RequestBodyFactory
                 throw AxiosException.InvalidOption(invalid.Message, config, invalid);
             }
 
+            // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
+            if (ex is DataCycleException cycle)
+            {
+                throw AxiosException.InvalidOption(cycle.Message, config, cycle);
+            }
+
             throw;
         }
     }
@@ -228,7 +242,8 @@ internal static class RequestBodyFactory
         object? value,
         MultipartFormDataContent content,
         Encoding encoding,
-        Func<string?, string, string>? nameSelector)
+        Func<string?, string, string>? nameSelector,
+        HashSet<object>? visited)
     {
         switch (value)
         {
@@ -278,31 +293,84 @@ internal static class RequestBodyFactory
                 return;
 
             case IDictionary<string, object?> genericDictionary:
+            {
                 // 含 ExpandoObject（dynamic）
-                foreach (var entry in genericDictionary)
+                visited = ObjectGraph.Enter(visited, genericDictionary);
+                try
                 {
-                    CollectParts(CombineName(nameSelector, name, entry.Key), entry.Value, content, encoding, nameSelector);
+                    foreach (var entry in genericDictionary)
+                    {
+                        CollectParts(
+                            CombineName(nameSelector, name, entry.Key),
+                            entry.Value,
+                            content,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, genericDictionary);
                 }
 
                 return;
+            }
+
+            // 只实现 IReadOnlyDictionary 的字典（如自研只读视图）不命中上面的泛型字典分支，
+            // 落进 IEnumerable 会把每个 KeyValuePair 当 POCO 反射成 Key/Value 两个字段。
+            case IReadOnlyDictionary<string, object?> readOnlyDictionary:
+            {
+                visited = ObjectGraph.Enter(visited, readOnlyDictionary);
+                try
+                {
+                    foreach (var entry in readOnlyDictionary)
+                    {
+                        CollectParts(
+                            CombineName(nameSelector, name, entry.Key),
+                            entry.Value,
+                            content,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, readOnlyDictionary);
+                }
+
+                return;
+            }
 
             case IDictionary dictionary:
-                foreach (DictionaryEntry entry in dictionary)
+            {
+                visited = ObjectGraph.Enter(visited, dictionary);
+                try
                 {
-                    if (entry.Key is null)
+                    foreach (DictionaryEntry entry in dictionary)
                     {
-                        continue;
-                    }
+                        if (entry.Key is null)
+                        {
+                            continue;
+                        }
 
-                    CollectParts(
-                        CombineName(nameSelector, name, entry.Key.ToString() ?? string.Empty),
-                        entry.Value,
-                        content,
-                        encoding,
-                        nameSelector);
+                        CollectParts(
+                            CombineName(nameSelector, name, entry.Key.ToString() ?? string.Empty),
+                            entry.Value,
+                            content,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, dictionary);
                 }
 
                 return;
+            }
         }
 
         var type = value.GetType();
@@ -314,9 +382,17 @@ internal static class RequestBodyFactory
 
         if (value is IEnumerable enumerable)
         {
-            foreach (var item in enumerable)
+            visited = ObjectGraph.Enter(visited, value);
+            try
             {
-                CollectParts(name, item, content, encoding, nameSelector);
+                foreach (var item in enumerable)
+                {
+                    CollectParts(name, item, content, encoding, nameSelector, visited);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, value);
             }
 
             return;
@@ -324,19 +400,28 @@ internal static class RequestBodyFactory
 
         // 嵌套 POCO：public 可读属性；命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
         // 刻意不读 JsonSerializerOptions.PropertyNamingPolicy：表单与序列化器解耦。
-        foreach (var property in ReflectionCache.GetReadableProperties(type))
+        visited = ObjectGraph.Enter(visited, value);
+        try
         {
-            if (IsIgnored(property))
+            foreach (var property in ReflectionCache.GetReadableProperties(type))
             {
-                continue;
-            }
+                if (IsIgnored(property))
+                {
+                    continue;
+                }
 
-            CollectParts(
-                CombineName(nameSelector, name, ResolveFieldName(property)),
-                property.GetValue(value),
-                content,
-                encoding,
-                nameSelector);
+                CollectParts(
+                    CombineName(nameSelector, name, ResolveFieldName(property)),
+                    property.GetValue(value),
+                    content,
+                    encoding,
+                    nameSelector,
+                    visited);
+            }
+        }
+        finally
+        {
+            ObjectGraph.Exit(visited, value);
         }
     }
 
@@ -354,7 +439,8 @@ internal static class RequestBodyFactory
         object? value,
         List<KeyValuePair<string, string>> pairs,
         Encoding encoding,
-        Func<string?, string, string>? nameSelector)
+        Func<string?, string, string>? nameSelector,
+        HashSet<object>? visited)
     {
         switch (value)
         {
@@ -394,36 +480,83 @@ internal static class RequestBodyFactory
                     "application/x-www-form-urlencoded 无法承载文件部件：请改用 multipart/form-data。");
 
             case IDictionary<string, object?> genericDictionary:
+            {
                 // 含 ExpandoObject（dynamic）
-                foreach (var entry in genericDictionary)
+                visited = ObjectGraph.Enter(visited, genericDictionary);
+                try
                 {
-                    CollectFormPairs(
-                        CombineName(nameSelector, prefix, entry.Key),
-                        entry.Value,
-                        pairs,
-                        encoding,
-                        nameSelector);
+                    foreach (var entry in genericDictionary)
+                    {
+                        CollectFormPairs(
+                            CombineName(nameSelector, prefix, entry.Key),
+                            entry.Value,
+                            pairs,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, genericDictionary);
                 }
 
                 return;
+            }
+
+            // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
+            case IReadOnlyDictionary<string, object?> readOnlyDictionary:
+            {
+                visited = ObjectGraph.Enter(visited, readOnlyDictionary);
+                try
+                {
+                    foreach (var entry in readOnlyDictionary)
+                    {
+                        CollectFormPairs(
+                            CombineName(nameSelector, prefix, entry.Key),
+                            entry.Value,
+                            pairs,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, readOnlyDictionary);
+                }
+
+                return;
+            }
 
             case IDictionary dictionary:
-                foreach (DictionaryEntry entry in dictionary)
+            {
+                visited = ObjectGraph.Enter(visited, dictionary);
+                try
                 {
-                    if (entry.Key is null)
+                    foreach (DictionaryEntry entry in dictionary)
                     {
-                        continue;
-                    }
+                        if (entry.Key is null)
+                        {
+                            continue;
+                        }
 
-                    CollectFormPairs(
-                        CombineName(nameSelector, prefix, entry.Key.ToString() ?? string.Empty),
-                        entry.Value,
-                        pairs,
-                        encoding,
-                        nameSelector);
+                        CollectFormPairs(
+                            CombineName(nameSelector, prefix, entry.Key.ToString() ?? string.Empty),
+                            entry.Value,
+                            pairs,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, dictionary);
                 }
 
                 return;
+            }
         }
 
         var type = value.GetType();
@@ -435,31 +568,48 @@ internal static class RequestBodyFactory
 
         if (value is IEnumerable enumerable)
         {
-            var index = 0;
-            foreach (var item in enumerable)
+            visited = ObjectGraph.Enter(visited, value);
+            try
             {
-                // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
-                var name = prefix is null ? "[" + index + "]" : prefix + "[]";
-                CollectFormPairs(name, item, pairs, encoding, nameSelector);
-                index++;
+                var index = 0;
+                foreach (var item in enumerable)
+                {
+                    // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
+                    var name = prefix is null ? "[" + index + "]" : prefix + "[]";
+                    CollectFormPairs(name, item, pairs, encoding, nameSelector, visited);
+                    index++;
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, value);
             }
 
             return;
         }
 
-        foreach (var property in ReflectionCache.GetReadableProperties(type))
+        visited = ObjectGraph.Enter(visited, value);
+        try
         {
-            if (IsIgnored(property))
+            foreach (var property in ReflectionCache.GetReadableProperties(type))
             {
-                continue;
-            }
+                if (IsIgnored(property))
+                {
+                    continue;
+                }
 
-            CollectFormPairs(
-                CombineName(nameSelector, prefix, ResolveFieldName(property)),
-                property.GetValue(value),
-                pairs,
-                encoding,
-                nameSelector);
+                CollectFormPairs(
+                    CombineName(nameSelector, prefix, ResolveFieldName(property)),
+                    property.GetValue(value),
+                    pairs,
+                    encoding,
+                    nameSelector,
+                    visited);
+            }
+        }
+        finally
+        {
+            ObjectGraph.Exit(visited, value);
         }
     }
 
