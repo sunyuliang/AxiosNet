@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 与 AxiosNet 相同：单目标 net6.0，.NET 6 / 7 / 8 / 9 / 10 / 11 一份资产通吃，代码不用 6.0 之后的 BCL API -->
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- ===== NuGet 包元数据 ===== -->
+  <PropertyGroup>
+    <PackageId>AxiosNet.DependencyInjection</PackageId>
+    <Title>AxiosNet.DependencyInjection - AxiosNet 的依赖注入扩展</Title>
+    <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z），与另两个包同 tag 同版本 -->
+    <Version>1.0.0</Version>
+    <Authors>sunyuliang</Authors>
+    <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
+    <Description>AxiosNet / AxiosNet.WebAPI 的 .NET 依赖注入扩展：AddAxiosClient 把 AxiosClient 注册为单例，AddApiClient 把 ApiClient 注册为单例（自建 / 门面 / 命名多站点三种模式），多站点经 IApiClientResolver 按键取用；连接池、拦截器与实例默认值随容器生命周期共享。除两个 AxiosNet 包外仅依赖微软第一方 Microsoft.Extensions.DependencyInjection.Abstractions，无第三方运行时依赖。DI extensions for AxiosNet and AxiosNet.WebAPI: AddAxiosClient and AddApiClient register the clients as singletons (self-built / facade / named multi-site modes), with IApiClientResolver for multi-site resolution.</Description>
+    <PackageTags>axios;http;httpclient;api-client;dependency-injection;di;singleton;multi-site;named-client;aspnetcore;generic-host;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/sunyuliang/AxiosNet</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- ===== 符号包 + XML 文档 ===== -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!-- 打进包的 README（本包自己的说明）/ LICENSE（仓库根目录） -->
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AxiosNet\AxiosNet.csproj" />
+    <ProjectReference Include="..\AxiosNet.WebAPI\AxiosNet.WebAPI.csproj" />
+    <!-- 唯一外部依赖：微软第一方 DI 抽象（IServiceCollection / ServiceDescriptor），不含任何第三方包 -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="6.0.0" />
+  </ItemGroup>
+
+  <!-- SourceLink：与另两个包相同，仅在 GitHub Actions（镜像仓库）里启用 -->
+  <ItemGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

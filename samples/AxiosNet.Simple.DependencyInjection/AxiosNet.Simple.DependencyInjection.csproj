@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AxiosNet.Simple.DependencyInjection</RootNamespace>
+    <AssemblyName>AxiosNet.Simple.DependencyInjection</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DI 扩展包自带对 AxiosNet / AxiosNet.WebAPI 的依赖：示例只需要引用这一个项目 -->
+    <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" />
+    <!-- Generic Host（含 DI 容器实现 / 日志 / 配置）：示例本身需要容器实现，扩展只依赖抽象包 -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- 链接 AxiosNet.Simple.WebAPI 的演示服务器与请求/返回模型：同一份 DemoApiServer，两个示例共用 -->
+  <ItemGroup>
+    <Compile Include="..\AxiosNet.Simple.WebAPI\DemoApiServer.cs" Link="DemoApiServer.cs" />
+    <Compile Include="..\AxiosNet.Simple.WebAPI\ApiModels.cs" Link="ApiModels.cs" />
+  </ItemGroup>
+
+</Project>

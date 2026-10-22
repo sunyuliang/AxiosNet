@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-638%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-681%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -23,6 +23,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Declarative API client: AxiosNet.WebAPI (Refit-style)](#declarative-api-client-axiosnetwebapi-refit-style)
+- [Dependency injection (singleton registration)](#dependency-injection-singleton-registration)
 - [Configuration](#configuration)
 - [Request body data and query params](#request-body-data-and-query-params)
 - [URL encoding: what gets encoded automatically](#url-encoding-what-gets-encoded-automatically)
@@ -54,11 +55,12 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 ### Option 1: NuGet (recommended)
 
 ```bash
-dotnet add package AxiosNet          # core: axios-style HTTP client
-dotnet add package AxiosNet.WebAPI   # optional: declarative API client (depends on the core)
+dotnet add package AxiosNet                          # core: axios-style HTTP client
+dotnet add package AxiosNet.WebAPI                   # optional: declarative API client (depends on the core)
+dotnet add package AxiosNet.DependencyInjection      # optional: DI singleton registration extensions (depends on the first two)
 ```
 
-> Version numbers match Git tags: tagging `v1.2.3` publishes both `AxiosNet 1.2.3` and `AxiosNet.WebAPI 1.2.3`; tagged pre-releases (e.g. `v1.2.3-rc.1`) are published as prerelease versions.
+> Version numbers match Git tags: tagging `v1.2.3` publishes `AxiosNet 1.2.3`, `AxiosNet.WebAPI 1.2.3`, and `AxiosNet.DependencyInjection 1.2.3` together; tagged pre-releases (e.g. `v1.2.3-rc.1`) are published as prerelease versions.
 
 ### Option 2: Project reference (this repository)
 
@@ -161,6 +163,67 @@ Binding rules (parameter semantics aligned with Refit, but applied to **properti
 - Invalid model definitions (missing route attribute, unbound placeholder, multiple bodies, duplicate parameter names) throw `InvalidOperationException` on first use, naming the offending property
 - Authorization runs **after** binding and `Configure`: signing implementations see the final URL and final headers
 - `client.GetUri(request)` builds the URL without sending; `client.Axios` exposes the underlying `AxiosClient` (interceptors / connection pool / handler injection all available)
+
+## Dependency injection (singleton registration)
+
+The DI extensions live in the separate package [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection) (both main libraries stay free of external dependencies): in ASP.NET Core / Generic Host, register the clients as singletons with the extension methods so the connection pool, interceptors, and instance defaults are shared for the container's lifetime.
+
+```bash
+dotnet add package AxiosNet.DependencyInjection
+```
+
+```csharp
+using AxiosNet.DependencyInjection;        // AddAxiosClient (DI extension package)
+using AxiosNet.WebAPI.DependencyInjection; // AddApiClient (DI extension package)
+
+// Option 1: the core client only
+builder.Services.AddAxiosClient(config =>
+{
+    config.BaseAddress = "https://api.example.com";
+    config.Timeout = TimeSpan.FromSeconds(10);
+});
+
+// Option 2: the declarative client with its own underlying client (BaseAddress is the parameter)
+builder.Services.AddApiClient("https://api.example.com",
+    configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
+    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+
+// Option 3: the declarative client as a facade over the registered AxiosClient singleton (pool / interceptors shared)
+builder.Services.AddApiClient(configure: client =>
+    client.Authorization = new BearerAuthorizationProvider(token));
+
+// Option 4: multiple sites (a/b/c) — one named registration per site, resolved via IApiClientResolver
+builder.Services.AddApiClient("a", "https://a.example.com",
+    configure: client => client.Authorization = new BearerAuthorizationProvider(tokenA));
+builder.Services.AddApiClient("b", "https://b.example.com",
+    configure: client => client.Authorization = new BearerAuthorizationProvider(tokenB));
+
+// Then inject and use
+public sealed class UserService(ApiClient client)
+{
+    public Task<User> GetAsync(int id) => client.RequestAsync(new GetUserRequest { Id = id });
+}
+
+// Multi-site consumer: when the site is only known at runtime (config / database), inject the resolver
+public sealed class Dispatcher(IApiClientResolver resolver)
+{
+    public Task<AxiosResponse<T>> SendAsync<T>(string site, IApiRequest<T> request)
+        => resolver.Get(site).RequestAsync(request);
+}
+```
+
+| Extension | Registers | Notes |
+| --- | --- | --- |
+| `AddAxiosClient(configure)` | singleton `AxiosClient` | `configure` sets instance defaults (BaseAddress, timeout, headers, serializer, pool options) |
+| `AddApiClient(baseAddress, configureDefaults, configure)` | singleton `ApiClient` (own client) | carries its own BaseAddress; independent of any registered `AxiosClient` — use the facade overload to share |
+| `AddApiClient(configure)` | singleton `ApiClient` (facade) | reuses the registered `AxiosClient`; throws `InvalidOperationException` on resolve when none is registered |
+| `AddApiClient(name, baseAddress, configureDefaults, configure)` | singleton `IApiClientResolver` + named sites | multi-site: each site carries its own BaseAddress and underlying client, reachable only through `IApiClientResolver` by name; a duplicate name throws at registration time |
+
+- **TryAdd semantics**: both extensions skip registration when one already exists (first wins), so repeated calls never create a second connection pool; remove the old registration to replace it
+- **Authorization from the container**: a registered `IAuthorizationProvider` singleton is picked up as `ApiClient.Authorization` automatically; an explicit `Authorization` set in `configure` wins
+- **The container owns the lifetime**: disposing an injected `ApiClient` does not release the shared underlying client; singletons are released when the container shuts down (self-built clients through an internal holder, named sites through the resolver)
+- **Multi-site resolver**: `Get(name)` throws `InvalidOperationException` when the name is not registered (the message lists all registered sites), `TryGet` never throws, and `Names` lists the site names in registration order; site names are case-sensitive
+- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, five scenarios over real HTTP round-trips); besides the two AxiosNet packages, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## Configuration
 
@@ -1191,6 +1254,7 @@ Key points:
 - 📊 **Traffic governance**: progress callbacks + one-way rate limiting + size caps, all in pure BCL (wrapping `HttpContent.SerializeToStreamAsync` and `Stream`), with no reliance on native `HttpClient` features
 - 🧵 **Custom handler injection**: `ConnectionPoolOptions.HandlerFactory` wraps your `DelegatingHandler` around the default `SocketsHttpHandler` per origin (logging/signing/retries/telemetry) while keeping connection reuse; `new AxiosClient(handler: ...)` takes over the connection layer entirely (bypassing the pool)
 - 📝 **Declarative API client** [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI) (separate package): request models + route/parameter attributes (`[Get("users/{id}")]`, `[Path]` / `[Query]` / `[Header]` / `[Body]`) + the `IAuthorizationProvider` authorization extension point (built-in Bearer), with `client.RequestAsync(request)` inferring its return type from `IApiRequest<TResponse>` — the Refit-style declarative experience on top of the full AxiosNet pipeline
+- 💉 **Singleton DI registration** (separate package [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection)): `AddAxiosClient` / `AddApiClient` (self-built / facade / named multi-site modes) register the clients as singletons in one line, with TryAdd semantics preventing duplicate pools; a registered `IAuthorizationProvider` singleton is picked up as the authorization provider automatically; multiple sites are resolved by name through `IApiClientResolver`
 
 ## axios ↔ AxiosNet mapping
 
@@ -1315,7 +1379,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 578 cases on each runtime (1156 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 681 cases on each runtime (1362 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1328,7 +1392,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 638 xUnit tests (both test projects target net8.0 + net6.0, so 1276 executions)
+# Run all 681 xUnit tests (all three test projects target net8.0 + net6.0, so 1362 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1357,6 +1421,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte inlet (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the binary request outlet (object → byte body + self-declared `MediaType`, no charset appended, explicit `ContentType` wins, forms/scalars never enter the byte channel), the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
 - Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
 - Declarative client (`AxiosNet.WebAPI.Tests`, 66 cases): route/Path/Query/Header/Body binding end-to-end (path escaping, absolute URL overriding BaseAddress, model- and call-site Configure hooks, inherited property bindings), default body (POST/PUT/PATCH + exactly one unannotated non-scalar property; scalar guard, ambiguity with multiple properties stays query, explicit `[Query]` does not block, DELETE excluded), multi-binding (Path+Header, Query+Header, scalar Path+Body+Header in all three places, complex object Query+Body; non-scalar Path/Header rejected at build time), `[ApiIgnore]` (query exclusion, does not block default body, combining with a parameter attribute throws), edge cases (case-variant placeholders, default-body null/scalar-array semantics, Guid and record models, PROPFIND custom verb, direct [HttpApi("delete", …)] normalization, CRLF injection fail-fast, raw byte[]/Stream responses, connection reuse, facade guards), built-in Bearer (static/factory/scheme-prefixed) and custom authorization (skipping by request type, seeing the final config, no half-sent request on auth failure), model definition validation (missing route, unbound/extra placeholders, malformed braces, duplicate placeholder, multiple bodies, duplicate names, null path value) and error caching
+- Singleton DI registration (`AxiosNet.DependencyInjection.Tests`, 37 cases): `AddAxiosClient` registration shape and configure application, TryAdd first-wins, end-to-end requests from a resolved client; `AddApiClient` in both modes (BaseAddress and configureDefaults applied, facade reusing the registered `AxiosClient`, resolve-time error when none is registered, shared client surviving facade disposal, self-built and facade registrations independent), container `IAuthorizationProvider` auto-wiring with explicit `configure` taking precedence, repeated registration first-wins, argument guards; named multi-site (independent client and BaseAddress per site, `Names` in registration order, Get/TryGet and case sensitivity, unknown-name error listing available sites, duplicate name rejected at registration, per-site defaults and authorization, container provider as fallback, named sites exposed only through the resolver, coexistence with the facade overload, end-to-end requests, site clients unusable after resolver disposal)
 
 ## Overall pipeline
 
@@ -1508,12 +1573,19 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ IAuthorizationProvider.cs # authorization extension point + ApiAuthContext
 │     ├─ BearerAuthorizationProvider.cs # built-in Bearer authorization
 │     └─ Internal/RequestModelMetadata.cs # binding metadata (cached per model type, fully validated at build time)
+│  └─ AxiosNet.DependencyInjection/      # DI singleton registration extensions (separate NuGet package, depends on the first two)
+│     ├─ AxiosClientServiceCollectionExtensions.cs # AddAxiosClient: registers a singleton AxiosClient
+│     ├─ ApiClientServiceCollectionExtensions.cs   # AddApiClient: registers a singleton ApiClient (self-built / facade / named multi-site)
+│     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
+│     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
 │  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
-│  └─ AxiosNet.Simple.WebAPI/    # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification)
+│  ├─ AxiosNet.Simple.WebAPI/    # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification)
+│  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, five scenarios: core singleton / self-built / facade / container authorization / named multi-site)
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit tests (578 cases × net6.0 / net8.0 = 1156 executions)
-   └─ AxiosNet.WebAPI.Tests/     # declarative client tests (66 cases × net6.0 / net8.0, reuses the main test server)
+   ├─ AxiosNet.WebAPI.Tests/     # declarative client tests (66 cases × net6.0 / net8.0, reuses the main test server)
+   └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (37 cases × net6.0 / net8.0, reuses the main/WebAPI test infrastructure)
 ```
 
 ## License

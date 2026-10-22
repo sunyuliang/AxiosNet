@@ -2,8 +2,9 @@
 # 普通 push / PR 只做构建 + 测试（不发布），避免回归只能等到打 tag 才暴露。
 # 认证方式：NuGet Trusted Publishing（OIDC），不需要长期 API Key，也不需要 NUGET_API_KEY 密钥。
 #
-# 仓库同时维护两个 NuGet 包：AxiosNet（HTTP 客户端）与 AxiosNet.WebAPI（声明式 API 客户端，依赖前者）。
-# 两个包用同一 tag 同步发版（monorepo 锁步版本）：publish / verify-published 按 matrix 逐包执行同一套流程，
+# 仓库同时维护三个 NuGet 包：AxiosNet（HTTP 客户端）、AxiosNet.WebAPI（声明式 API 客户端，依赖前者）
+# 与 AxiosNet.DependencyInjection（两者的 DI 单例注入扩展，依赖前两个；主库自身零外部依赖）。
+# 三个包用同一 tag 同步发版（monorepo 锁步版本）：publish / verify-published 按 matrix 逐包执行同一套流程，
 # 包项目由 matrix.package 注入 PACKAGE_PROJECT，各步骤内的发布状态机逻辑与单包时代逐字不变。
 #
 # 与 nuget.org「Trusted Publishing」策略必须逐项一致（大小写不敏感，但内容要相同）：
@@ -51,6 +52,7 @@ jobs:
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj
         test/AxiosNet.WebAPI.Tests/AxiosNet.WebAPI.Tests.csproj
+        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -93,13 +95,14 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC：换取 nuget.org 短期 API Key 的前提
-    # 双包锁步发版：两个包项目各起一个 job，跑同一套（逐字未改的）发布状态机
+    # 三包锁步发版：三个包项目各起一个 job，跑同一套（逐字未改的）发布状态机
     strategy:
       fail-fast: false
       matrix:
         package:
           - src/AxiosNet/AxiosNet.csproj
           - src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
+          - src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj
 
     env:
       DOTNET_NOLOGO: true
@@ -110,6 +113,7 @@ jobs:
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj
         test/AxiosNet.WebAPI.Tests/AxiosNet.WebAPI.Tests.csproj
+        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -410,7 +414,7 @@ jobs:
     name: 复核已发布版本（包可拉取 + 符号可见）
     # 发布时的符号校验只是有界观察，摄入慢于窗口属于常态。事后补验走这里：
     # Actions → build-nuget → Run workflow → 填版本号。不构建、不发布、不动线上，只打两个权威端点。
-    # 双包锁步发版：按 matrix 逐包复核（同一版本号）。
+    # 三包锁步发版：按 matrix 逐包复核（同一版本号）。
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
@@ -419,6 +423,7 @@ jobs:
         package:
           - src/AxiosNet/AxiosNet.csproj
           - src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
+          - src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj
     env:
       DOTNET_NOLOGO: true
       PACKAGE_PROJECT: ${{ matrix.package }}

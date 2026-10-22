@@ -16,7 +16,7 @@
     <Version>1.0.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>基于 AxiosNet 的声明式 API 客户端：只定义请求模型（标注 HTTP 方法与路径模板）和返回模型、配好授权，即可 client.RequestAsync(request) 访问任意 API——返回类型由请求模型自动确定（IApiRequest&lt;TResponse&gt;），无需在调用处再写一遍泛型。对标 Refit 的声明式体验，但保留 axios 风格的完整响应（data/status/headers/config/request）。A declarative API client built on AxiosNet: define request models with route attributes, plug in an authorization provider, and call client.RequestAsync(request) — the response type is inferred from the request model.</Description>
+    <Description>基于 AxiosNet 的声明式 API 客户端：只定义请求模型（标注 HTTP 方法与路径模板）和返回模型、配好授权，即可 client.RequestAsync(request) 访问任意 API——返回类型由请求模型自动确定（IApiRequest&lt;TResponse&gt;），无需在调用处再写一遍泛型。对标 Refit 的声明式体验，但保留 axios 风格的完整响应（data/status/headers/config/request）。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。A declarative API client built on AxiosNet: define request models with route attributes, plug in an authorization provider, and call client.RequestAsync(request) — the response type is inferred from the request model. For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
     <PackageTags>axios;http;httpclient;rest;api-client;declarative;refit;restsharp;flurl;typed-client;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>

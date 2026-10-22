@@ -1,14 +1,17 @@
 <Solution>
-  <Folder Name="/samples/">
-    <Project Path="samples/AxiosNet.Simple/AxiosNet.Simple.csproj" />
-    <Project Path="samples/AxiosNet.Simple.WebAPI/AxiosNet.Simple.WebAPI.csproj" />
-  </Folder>
-  <Folder Name="/src/">
-    <Project Path="src/AxiosNet/AxiosNet.csproj" />
-    <Project Path="src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj" />
-  </Folder>
-  <Folder Name="/test/">
-    <Project Path="test/AxiosNet.Tests/AxiosNet.Tests.csproj" />
-    <Project Path="test/AxiosNet.WebAPI.Tests/AxiosNet.WebAPI.Tests.csproj" />
-  </Folder>
+    <Folder Name="/samples/">
+        <Project Path="samples/AxiosNet.Simple/AxiosNet.Simple.csproj" />
+        <Project Path="samples/AxiosNet.Simple.WebAPI/AxiosNet.Simple.WebAPI.csproj" />
+        <Project Path="samples/AxiosNet.Simple.DependencyInjection/AxiosNet.Simple.DependencyInjection.csproj" />
+    </Folder>
+    <Folder Name="/src/">
+        <Project Path="src/AxiosNet/AxiosNet.csproj" />
+        <Project Path="src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj" />
+        <Project Path="src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj" />
+    </Folder>
+    <Folder Name="/test/">
+        <Project Path="test/AxiosNet.Tests/AxiosNet.Tests.csproj" />
+        <Project Path="test/AxiosNet.WebAPI.Tests/AxiosNet.WebAPI.Tests.csproj" />
+        <Project Path="test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj" />
+    </Folder>
 </Solution>

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 与另两个测试项目一致：net8.0;net6.0 双 TFM，验证同一份 lib/net6.0 扩展资产在两种运行时上的行为 -->
+    <TargetFrameworks>net8.0;net6.0</TargetFrameworks>
+    <!-- net6.0 默认 C# 10，测试里用了原始字符串字面量（C# 11），统一用最新语言版本 -->
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <!-- DI 容器实现（ServiceCollection / ServiceProvider）：扩展本身只依赖抽象包，测试需要容器实现 -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" />
+  </ItemGroup>
+
+  <!-- 复用主库/WebAPI 测试的基建（编译进本程序集，internal 成员同样可见） -->
+  <ItemGroup>
+    <Compile Include="..\AxiosNet.Tests\Infrastructure\TestHttpServer.cs" Link="Infrastructure\TestHttpServer.cs" />
+    <Compile Include="..\AxiosNet.Tests\Infrastructure\TestModels.cs" Link="Infrastructure\TestModels.cs" />
+    <Compile Include="..\AxiosNet.WebAPI.Tests\TestApiModels.cs" Link="TestApiModels.cs" />
+  </ItemGroup>
+
+</Project>
