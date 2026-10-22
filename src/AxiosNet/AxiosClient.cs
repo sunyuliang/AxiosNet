@@ -364,9 +364,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 config.SetResponseTypeAuto(ResponseType.Stream);
             }
 
-            // 负值没有合理语义，静默当作「不限制」会让调用方以为限制生效了。
-            ValidateRangeConfig(config);
-
             // 1) 请求拦截器：与 axios 一致，按注册逆序执行
             //    注意：实例级选项（Proxy / Credentials / WithCredentials / MaxRedirects / PoolOptions）
             //    在构造期已固化进连接池，拦截器里改它们不生效也不报错 —— 请新建实例配置
@@ -400,6 +397,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     + "（要做修改请改传入的 config 后端返回它）。",
                     config);
             }
+
+            // 负值没有合理语义，静默当作「不限制」会让调用方以为限制生效了。
+            // 必须校验**拦截器之后**的生效配置：拦截器可以替换 / 改写 config，
+            // 在校验前跑就等于允许「拦截器写 Timeout = -1」绕过护栏（hasTimeout 随后为 false，
+            // 静默变成不超时）。放在这里也允许拦截器修正调用方的非法值。
+            ValidateRangeConfig(config);
 
             // 2) transformRequest：拦截器之后、编码之前依次作用于数据
             // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
@@ -764,8 +767,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造池时已固定：
-    /// 按请求写<b>不同的值</b>报错，写<b>相同的值</b>放行（等价写法）。
-    /// <para>判定对象是合并后的生效配置，因此只需比值，不用追是谁写的。</para>
+    /// 按请求复述实例的等价设置放行，写入别的值报错。
+    /// <para>
+    /// 等价判定分两类：<see cref="AxiosConfig.WithCredentials"/> / <see cref="AxiosConfig.MaxRedirects"/>
+    /// 是值类型，按<b>值</b>比较；<see cref="AxiosConfig.Proxy"/> / <see cref="AxiosConfig.Credentials"/> /
+    /// <see cref="AxiosConfig.PoolOptions"/> 没有可靠的等值定义（代理/凭据/连接选项的「相同」取决于
+    /// 各自实现），按<b>引用</b>比较 —— 即只有「把实例 defaults 上的同一个对象再写一遍」才放行。
+    /// </para>
+    /// <para>判定对象是合并后的生效配置，因此只需比对，不用追是谁写的。</para>
     /// </summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {

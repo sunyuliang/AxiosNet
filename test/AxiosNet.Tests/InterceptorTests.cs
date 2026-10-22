@@ -271,4 +271,46 @@ public sealed class InterceptorTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Profile>(server.Url));
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
+
+    /// <summary>
+    /// 限制类配置的范围校验必须针对**拦截器之后**的生效配置：在校验之后才允许拦截器改写，
+    /// 就等于允许「拦截器写 Timeout = -1」把负值带进管线，而 <c>hasTimeout</c> 随后为 false，
+    /// 静默变成「不超时」——与文档承诺的 fail-fast 相反。
+    /// </summary>
+    [Fact]
+    public async Task RequestInterceptor_NegativeTimeout_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse());
+        using var client = new AxiosClient();
+
+        client.Interceptors.Request.Use(config =>
+        {
+            config.Timeout = TimeSpan.FromSeconds(-1);
+            return config;
+        });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Empty(server.Received);
+    }
+
+    /// <summary>
+    /// 校验只针对最终配置，所以拦截器也可以修正调用方给的非法值（而不是被前置校验提前打死）。
+    /// </summary>
+    [Fact]
+    public async Task RequestInterceptor_MayRepairInvalidValueFromCaller()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse());
+        using var client = new AxiosClient();
+
+        client.Interceptors.Request.Use(config =>
+        {
+            config.Timeout = TimeSpan.FromSeconds(30);
+            return config;
+        });
+
+        await client.GetAsync(server.Url, c => c.Timeout = TimeSpan.FromSeconds(-1));
+
+        Assert.Single(server.Received);
+    }
 }

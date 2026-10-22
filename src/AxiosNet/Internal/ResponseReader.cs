@@ -169,7 +169,14 @@ internal static class ResponseReader
                 filled = 0;
             }
 
-            // 装配：满段整体拷贝 + 末段按实际字节拷贝，得到精确长度的成品（唯一一次全量拷贝）
+            // 装配：满段整体拷贝 + 末段按实际字节拷贝，得到精确长度的成品（唯一一次全量拷贝）。
+            // 先挡一次数组长度上限：超过 Array.MaxLength 时 new byte[total] 只会抛裸 OutOfMemoryException
+            // （没有任何上下文），这里换成统一错误模型并指向可用的逃生口。
+            if (total > Array.MaxLength)
+            {
+                throw AxiosException.ResponseTooLarge(config, request, total);
+            }
+
             var result = new byte[total];
             var offset = 0;
             foreach (var segment in segments)

@@ -15,18 +15,15 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class BodyFields
 {
-    public static bool IsScalar(Type type)
-        => type.IsPrimitive
-            || type.IsEnum
-            || type == typeof(string)
-            || type == typeof(decimal)
-            || type == typeof(DateTime)
-            || type == typeof(DateTimeOffset)
-            || type == typeof(DateOnly)
-            || type == typeof(TimeOnly)
-            || type == typeof(TimeSpan)
-            || type == typeof(Guid)
-            || type == typeof(Uri);
+    /// <summary>
+    /// 表单 / multipart 的标量判定：直接转调 <see cref="ScalarTypes.IsScalarType"/>（唯一权威清单）。
+    /// <para>
+    /// 这里不再维护第二份清单：历史上表单侧与 Path/Header 校验侧各写一份，漂移的结果是
+    /// 「同一个 DateOnly 属性在表单里当标量、在默认 Body 判定里当对象」。运行时传进来的都是装箱后的
+    /// 实际类型，因此 <see cref="Nullable{T}"/> 解包由被调方统一负责。
+    /// </para>
+    /// </summary>
+    public static bool IsScalar(Type type) => ScalarTypes.IsScalarType(type);
 
     /// <summary>表单 / multipart 的标量文本：日期时间折成 UTC 毫秒（与 query 序列化的既有约定一致）。</summary>
     public static string ScalarToString(object value) => value switch

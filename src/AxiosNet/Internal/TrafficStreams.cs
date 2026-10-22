@@ -74,6 +74,12 @@ internal sealed class TrafficMeter
     /// <summary>完成时强制上报一次（loaded == total）。</summary>
     public void Complete(bool upload) => Report(force: true, upload);
 
+    /// <summary>
+    /// 开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，<b>累计值与计时器保留</b> ——
+    /// 307/308 重定向或重试会再次写出同一份正文，共用计量器才能让进度单调推进而不是掉回 0。
+    /// </summary>
+    public void Restart() => _completed = false;
+
     private AxiosProgressEvent BuildEvent(bool upload)
     {
         var seconds = _clock.Elapsed.TotalSeconds;
@@ -176,10 +182,14 @@ internal sealed class ProgressWriteStream : DelegatingStream
 {
     private readonly TrafficMeter _meter;
 
-    public ProgressWriteStream(Stream inner, long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
+    /// <summary>
+    /// 由外部提供计量器：同一个 <see cref="HttpContent"/> 可能被序列化多次（重定向 / 重试重发正文），
+    /// 计量器必须挂在内容上共享，不能每次为包装流新建一个。
+    /// </summary>
+    public ProgressWriteStream(Stream inner, TrafficMeter meter)
         : base(inner)
     {
-        _meter = new TrafficMeter(total, callback, maxRate);
+        _meter = meter;
     }
 
     public override bool CanRead => false;
@@ -202,9 +212,6 @@ internal sealed class ProgressWriteStream : DelegatingStream
 
     /// <summary>底层流由 HttpClient 拥有，不随本包装释放。</summary>
     protected override bool DisposeInnerStream => false;
-
-    /// <summary>所有内容写完时调用，保证最后一次回调一定报告（loaded == total）。</summary>
-    public void Complete() => _meter.Complete(upload: true);
 
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         => throw new NotSupportedException();

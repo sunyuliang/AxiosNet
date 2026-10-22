@@ -192,6 +192,23 @@ public sealed class AxiosException : Exception
             null);
     }
 
+    /// <summary>
+    /// 响应体超过单数组上限（<see cref="Array.MaxLength"/>，约 2GB）：不可能装进 <c>Response.Data</c> 的
+    /// <c>byte[]</c>。不拦的话 <c>new byte[total]</c> 只抛一句无上下文的 <see cref="OutOfMemoryException"/>。
+    /// </summary>
+    internal static AxiosException ResponseTooLarge(AxiosConfig config, HttpRequestMessage request, long actual)
+    {
+        return new AxiosException(
+            $"Response body of {actual} bytes exceeds the maximum array length ({Array.MaxLength}): "
+            + "Response.Data cannot hold it as a single byte[]. "
+            + "Set MaxContentLength to fail earlier, or use ResponseType.Stream to read it incrementally.",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            null);
+    }
+
     internal static AxiosException MaxBodyLength(AxiosConfig config, HttpRequestMessage request, long actual, long limit)
     {
         return new AxiosException(

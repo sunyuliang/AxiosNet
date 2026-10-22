@@ -65,17 +65,44 @@ internal static class MultipartBodyBuilder
 
             case FormFile file:
             {
+                // 先取所有权再校验字段名：FormFile.Content 的契约是「随请求释放」，
+                // 失败路径也一样 —— 否则名字写错就等于把一个已打开的 FileStream 永久留在调用方手里。
                 var part = new StreamContent(file.Content);
-                RequestContentType.Set(part, file.ContentType ?? OctetStreamMediaType);
-                content.Add(part, RequireName(file.FieldName ?? name), file.FileName);
+                try
+                {
+                    var field = RequireName(file.FieldName ?? name);
+                    RequestContentType.Set(part, file.ContentType ?? OctetStreamMediaType);
+                    content.Add(part, field, file.FileName);
+                }
+                catch
+                {
+                    // 部件还没加入容器，容器的 Dispose 覆盖不到它：就地释放才是唯一机会
+                    part.Dispose();
+                    throw;
+                }
+
                 return;
             }
 
             case HttpContent part:
+            {
                 // 调用方自带部件内容：Add 在部件已带 Content-Disposition 时完全不碰它，
                 // 因此这里只补缺失的 Name，其余（尤其 filename）原样保留。
-                AddUserPart(content, part, RequireName(name));
+                string field;
+                try
+                {
+                    field = RequireName(name);
+                }
+                catch
+                {
+                    // 同上：交进来的内容按「随请求释放」处理，装配失败不能把释放责任退回调用方
+                    part.Dispose();
+                    throw;
+                }
+
+                AddUserPart(content, part, field);
                 return;
+            }
 
             case JsonElement element:
                 CollectJsonElementParts(name, element, content, encoding, nameSelector);
@@ -283,11 +310,23 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>二进制内容一律作为文件部件：字段名同时用作文件名（与 byte[] 既有行为一致）。</summary>
+    /// <remarks>
+    /// 名字校验必须在「部件交出所有权」之前完成：<paramref name="part"/> 已经构造好（Stream 形态下
+    /// 它持有调用方的流），校验失败时它还没加入容器，容器的 Dispose 覆盖不到它 —— 就地释放是唯一机会。
+    /// </remarks>
     private static void AddFilePart(MultipartFormDataContent content, string? name, HttpContent part)
     {
-        RequestContentType.Set(part, OctetStreamMediaType);
-        var field = RequireName(name);
-        content.Add(part, field, field);
+        try
+        {
+            var field = RequireName(name);
+            RequestContentType.Set(part, OctetStreamMediaType);
+            content.Add(part, field, field);
+        }
+        catch
+        {
+            part.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -316,7 +355,9 @@ internal static class MultipartBodyBuilder
     {
         if (string.IsNullOrEmpty(name))
         {
-            throw new InvalidOperationException(
+            // 与「名字含非法字符」同属调用方的配置错误，用同一个异常类型：
+            // 上层据此统一转成 ERR_BAD_OPTION_VALUE，而不是误报成 ERR_BAD_REQUEST（请求体序列化失败）。
+            throw new InvalidFieldNameException(
                 "multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
         }
 

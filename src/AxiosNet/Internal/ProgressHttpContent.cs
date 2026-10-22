@@ -9,14 +9,20 @@ namespace AxiosNet.Internal;
 internal sealed class ProgressHttpContent : HttpContent
 {
     private readonly HttpContent _inner;
-    private readonly Action<AxiosProgressEvent>? _callback;
-    private readonly long? _maxRate;
+
+    /// <summary>
+    /// 计量器挂在内容上而不是每次序列化时新建：307/308 重定向或重试会再次调用
+    /// <see cref="SerializeToStreamAsync(Stream, TransportContext?, CancellationToken)"/> 重发同一份正文，
+    /// 共用计量器才能让进度**单调推进**（重发字节继续累加），而不是跳回 0。
+    /// </summary>
+    private readonly TrafficMeter _meter;
 
     public ProgressHttpContent(HttpContent inner, Action<AxiosProgressEvent>? callback, long? maxRate)
     {
         _inner = inner;
-        _callback = callback;
-        _maxRate = maxRate;
+
+        // 内容长度已知时进度才有百分比；未知时只有 loaded。
+        _meter = new TrafficMeter(inner.Headers.ContentLength, callback, maxRate);
 
         foreach (var header in inner.Headers)
         {
@@ -33,15 +39,16 @@ internal sealed class ProgressHttpContent : HttpContent
         TransportContext? context,
         CancellationToken cancellationToken)
     {
-        // 内容长度已知时进度才有百分比；未知时只有 loaded。
-        var total = _inner.Headers.ContentLength;
-        var wrapper = new ProgressWriteStream(stream, total, _callback, _maxRate);
+        // 新的一轮写出：累计值与计时器保留，只解除「已完成」状态
+        _meter.Restart();
+
+        var wrapper = new ProgressWriteStream(stream, _meter);
 
         await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
         await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
 
-        // 保证最后一次回调一定到达（loaded == total）
-        wrapper.Complete();
+        // 保证这一轮结束时最后一次回调一定到达
+        _meter.Complete(upload: true);
     }
 
     protected override bool TryComputeLength(out long length)

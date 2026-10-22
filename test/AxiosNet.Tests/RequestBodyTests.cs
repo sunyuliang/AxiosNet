@@ -288,8 +288,10 @@ public sealed class RequestBodyTests
             42,
             c => c.ContentType = "multipart/form-data"));
 
-        Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
-        Assert.IsType<InvalidOperationException>(ex.Cause);
+        // 缺字段名是调用方的模型装配错误：与「名字含非法字符」同属 ERR_BAD_OPTION_VALUE，
+        // 不是「请求体序列化失败」（ERR_BAD_REQUEST）
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.NotNull(ex.Cause);
         Assert.Contains("字段名", ex.Cause!.Message);
     }
 

@@ -33,8 +33,15 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 
         internal readonly Dictionary<string, string> Map;
 
-        /// <summary>指向本存储的实例数（含自己）。只在持锁或 Interlocked 下改。</summary>
-        internal int Owners = 1;
+        /// <summary>
+        /// 指向本存储的实例数（含自己）。只在 <see cref="Sync"/> 锁内改。
+        /// <para>
+        /// 用 <see cref="long"/> 而不是 <see cref="int"/>：这个计数只在写入时递减（GC 不减），
+        /// 长期高频的「克隆后从不写入」会把计数一路推高；int 在 21 亿次后溢出成负数，
+        /// <see cref="Exclusive"/> 的 <c>Owners == 1</c> 判定随之中毒（返回仍在共享的存储）。
+        /// </para>
+        /// </summary>
+        internal long Owners = 1;
 
         /// <summary>
         /// 惰性生成的只读数组快照：枚举与上送读取都走它，写入时置空。

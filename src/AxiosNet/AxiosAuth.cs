@@ -15,7 +15,33 @@ public sealed class AxiosAuth
         Password = password;
     }
 
-    public string Username { get; set; } = string.Empty;
+    private string _username = string.Empty;
+
+    /// <summary>
+    /// Basic 认证的用户名。
+    /// <para>
+    /// 不允许含冒号：RFC 7617 的 <c>user-id</c> 里冒号是分隔符，服务端会在<b>第一个</b>冒号处切开，
+    /// 含冒号的用户名会让密码整体错位成用户名的一部分 —— 表现为一句无声的 401。
+    /// 密码不受限制（可以含冒号）。
+    /// </para>
+    /// </summary>
+    /// <exception cref="ArgumentException">用户名含 <c>:</c>。</exception>
+    public string Username
+    {
+        get => _username;
+        set
+        {
+            if (value is not null && value.Contains(':'))
+            {
+                throw new ArgumentException(
+                    "Basic 认证的用户名不能包含冒号：RFC 7617 用第一个冒号分隔 user-id 与 password，"
+                    + "含冒号的用户名会让服务端解析出错误的密码。",
+                    nameof(Username));
+            }
+
+            _username = value ?? string.Empty;
+        }
+    }
 
     public string Password { get; set; } = string.Empty;
 

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Serialization;
 
@@ -62,9 +63,13 @@ public sealed class XmlContentSerializer : IContentSerializer
 
         var serializer = For(type);
 
-        // XML 声明里的 encoding 必须与实际写 socket 的字节编码一致：
-        // 正文由 RequestBodyFactory 按 config.RequestEncoding 编码（默认 UTF-8），这里跟着走。
-        var encoding = config.RequestEncoding ?? Encoding.UTF8;
+        // XML 声明里的 encoding 必须与实际写 socket 的字节编码一致。正文由 RequestBodyFactory 编码，
+        // 它的优先级是「ContentType 里声明的 charset → RequestEncoding → UTF-8」——
+        // 这里必须用同一套解析：只看 RequestEncoding 会让「ContentType = application/xml; charset=gb2312」
+        // 这种写法产出「声明 utf-8、正文 gb2312」的损坏文档（非 ASCII 字符还会被替换成 '?'）。
+        var encoding = RequestContentType.GetCharsetEncoding(config.ContentType)
+            ?? config.RequestEncoding
+            ?? Encoding.UTF8;
 
         using var text = new DeclaredEncodingStringWriter(encoding);
         using (var writer = XmlWriter.Create(text, new XmlWriterSettings { Encoding = encoding }))

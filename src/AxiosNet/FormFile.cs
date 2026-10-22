@@ -82,11 +82,36 @@ public sealed class FormFile
     /// <summary>部件 Content-Type，null 表示 <c>application/octet-stream</c>。</summary>
     public string? ContentType { get; }
 
+    private readonly string? _fieldName;
+
     /// <summary>
     /// 覆盖部件字段名（Content-Disposition 的 name）。
     /// 默认取所在字段/键名；同一集合里需要不同字段名时使用。
     /// </summary>
-    public string? FieldName { get; init; }
+    /// <remarks>
+    /// 与 <see cref="FileName"/> 一样在赋值处校验：字段名同样落在 quoted-string 里，
+    /// 带引号 / 反斜杠 / 控制字符的名字会让服务端解析错位。放在这里而不是等到组装 multipart 时，
+    /// 是因为那时部件内容（可能是一个已打开的 <see cref="FileStream"/>）已经取得所有权，
+    /// 迟到报错会把「名字写错」变成「文件句柄不释放」。
+    /// </remarks>
+    /// <exception cref="ArgumentException">字段名含不能出现在 Content-Disposition 里的字符。</exception>
+    public string? FieldName
+    {
+        get => _fieldName;
+        init
+        {
+            if (value is not null && DispositionTokens.FindInvalidCharacter(value) is { } invalid)
+            {
+                throw new ArgumentException(
+                    $"字段名包含不能出现在 Content-Disposition 里的字符（{invalid}）：'{value}'。"
+                    + "双引号、反斜杠、CR/LF 与其它控制字符会破坏头部语法或让服务端收到的字段名错位；"
+                    + "中文可以正常使用（会按 RFC 2047 编码）。",
+                    nameof(FieldName));
+            }
+
+            _fieldName = value;
+        }
+    }
 
     /// <summary>
     /// 打开本地文件；发送给服务端的文件名取 <see cref="Path.GetFileName(string)"/>，

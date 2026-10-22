@@ -356,6 +356,10 @@ public sealed class AxiosConfig
     /// <summary>
     /// 上传进度回调（对应 axios onUploadProgress）。写入请求体时触发，约 50ms 一次；
     /// 回调在请求线程上同步执行，抛异常会中断请求。
+    /// <para>
+    /// 重定向（307/308）或重试重发正文时，<see cref="AxiosProgressEvent.Loaded"/> <b>跨次累计</b>
+    /// （进度不回跳，百分比封顶 100%）。
+    /// </para>
     /// </summary>
     public Action<AxiosProgressEvent>? OnUploadProgress { get; set; }
 
@@ -385,7 +389,7 @@ public sealed class AxiosConfig
     /// <summary>
     /// 对应 axios transformRequest：拦截器之后、请求体编码之前依次作用于 <see cref="Data"/>，
     /// 每个函数返回新的数据（可返回 string / byte[] / Stream / HttpContent 等）。
-    /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
+    /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照；整体赋值任意 <see cref="IList{T}"/> 也会被包装成同一实现。</para>
     /// </summary>
     public IList<Func<object?, AxiosConfig, object?>> TransformRequest
     {
@@ -393,7 +397,9 @@ public sealed class AxiosConfig
         set
         {
             ArgumentNullException.ThrowIfNull(value);
-            _transformRequest = value;
+            // 整体替换时同样保证线程安全：直接存 List<T> 会让「运行期可增删、枚举走快照」的承诺
+            // 变成调用方传入类型决定的行为（List 在并发枚举时抛 InvalidOperationException）。
+            _transformRequest = WrapTransforms(value);
         }
     }
 
@@ -412,7 +418,7 @@ public sealed class AxiosConfig
     /// （例如统一拆包 <c>{code,data}</c>）。流式响应不适用。
     /// <para>可读 <see cref="Response"/> 拿响应头（如把 <c>X-Total-Count</c> 贴到分页对象上）——
     /// 此时解析已完成，适合「加工已造好的对象」，而不是「决定怎么解析」。</para>
-    /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照。</para>
+    /// <para>列表线程安全：可在请求进行中追加/移除，枚举走快照；整体赋值任意 <see cref="IList{T}"/> 也会被包装成同一实现。</para>
     /// </summary>
     public IList<Func<object?, AxiosConfig, object?>> TransformResponse
     {
@@ -420,7 +426,7 @@ public sealed class AxiosConfig
         set
         {
             ArgumentNullException.ThrowIfNull(value);
-            _transformResponse = value;
+            _transformResponse = WrapTransforms(value);
         }
     }
 
@@ -505,6 +511,16 @@ public sealed class AxiosConfig
 
         return clone;
     }
+
+    /// <summary>
+    /// 把外部传入的 transform 集合包成线程安全实现（已是则原样复用）。
+    /// 代价是 <see cref="TransformRequest"/> / <see cref="TransformResponse"/> 不再返回调用方传入的那个实例，
+    /// 换来「无论传入什么集合，运行期增删 + 并发枚举都不抛」的稳定契约。
+    /// </summary>
+    private static SynchronizedList<Func<object?, AxiosConfig, object?>> WrapTransforms(
+        IList<Func<object?, AxiosConfig, object?>> values)
+        => values as SynchronizedList<Func<object?, AxiosConfig, object?>>
+            ?? new SynchronizedList<Func<object?, AxiosConfig, object?>>(values);
 
     /// <summary>transform 链的独立副本；空链返回 <c>null</c>（调用方只在有内容时才创建）。</summary>
     private static IList<Func<object?, AxiosConfig, object?>>? CopiedTransforms(
