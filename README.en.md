@@ -223,7 +223,8 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 - **Authorization from the container**: a registered `IAuthorizationProvider` singleton is picked up as `ApiClient.Authorization` automatically; an explicit `Authorization` set in `configure` wins
 - **The container owns the lifetime**: disposing an injected `ApiClient` does not release the shared underlying client; singletons are released when the container shuts down (self-built clients through an internal holder, named sites through the resolver)
 - **Multi-site resolver**: `Get(name)` throws `InvalidOperationException` when the name is not registered (the message lists all registered sites), `TryGet` never throws, and `Names` lists the site names in registration order; site names are case-sensitive
-- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, five scenarios over real HTTP round-trips); besides the two AxiosNet packages, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
+- **.NET 8+ alternative**: the official keyed services (`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`, enums work as keys too) are semantically equivalent to the named overload — scenario 6 of the sample demonstrates them, and both approaches can coexist
+- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, six scenarios over real HTTP round-trips); besides the two AxiosNet packages, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## Configuration
 
@@ -1581,7 +1582,7 @@ How the stages map onto the source files (read together with the [project layout
 ├─ samples/
 │  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
 │  ├─ AxiosNet.Simple.WebAPI/    # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification)
-│  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, five scenarios: core singleton / self-built / facade / container authorization / named multi-site)
+│  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services)
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit tests (578 cases × net6.0 / net8.0 = 1156 executions)
    ├─ AxiosNet.WebAPI.Tests/     # declarative client tests (66 cases × net6.0 / net8.0, reuses the main test server)

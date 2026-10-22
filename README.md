@@ -222,7 +222,8 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 - **授权从容器来**：注册了 `IAuthorizationProvider` 单例时自动作为 `ApiClient.Authorization`；`configure` 里显式设置的优先
 - **生命周期归容器**：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端；单例随容器退出统一释放（自建模式经内部持有项、命名站点经解析器释放连接池）
 - **多站点解析器**：`Get(name)` 未注册时抛 `InvalidOperationException`（消息列出全部已注册站点），`TryGet` 不抛，`Names` 按注册顺序给出站点名；命名站点区分大小写
-- 可运行示例见 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host 五个场景，跑真实 HTTP 往返）；扩展包除两个 AxiosNet 包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`
+- **.NET 8+ 替代方案**：官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`，enum 亦可作键）与命名重载语义等价，示例场景 6 有完整演示，两种方案可共存
+- 可运行示例见 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host 六个场景，跑真实 HTTP 往返）；扩展包除两个 AxiosNet 包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## 配置项
 
@@ -1592,7 +1593,7 @@ dotnet build AxiosNet.slnx -c Release
 ├─ samples/
 │  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 │  ├─ AxiosNet.Simple.WebAPI/    # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签）
-│  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 五场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册）
+│  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务）
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit 单元测试（578 个用例 × net6.0 / net8.0 双目标 = 1156 次执行）
    ├─ AxiosNet.WebAPI.Tests/     # 声明式客户端测试（66 个用例 × net6.0 / net8.0 双目标，复用主库测试服务器）
