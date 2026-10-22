@@ -1,6 +1,7 @@
 using AxiosNet.Tests.Infrastructure;
+using AxiosNet.WebAPI;
 
-namespace AxiosNet.WebAPI.Tests;
+namespace AxiosNet.Tests.WebAPI;
 
 /// <summary>
 /// 授权链路：内置 Bearer（固定 / 工厂 / 带 scheme）、自定义提供方（按请求类型跳过）、调用时机与异常语义。

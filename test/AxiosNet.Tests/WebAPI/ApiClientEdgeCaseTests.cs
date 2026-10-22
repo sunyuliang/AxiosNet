@@ -1,8 +1,9 @@
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
+using AxiosNet.WebAPI;
 
-namespace AxiosNet.WebAPI.Tests;
+namespace AxiosNet.Tests.WebAPI;
 
 /// <summary>
 /// 边界与特殊场景：大小写匹配变体、默认 Body 的空值/数组语义、原始响应形态、

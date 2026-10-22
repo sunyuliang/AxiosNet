@@ -1,7 +1,7 @@
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 
-namespace AxiosNet.WebAPI.Tests;
+namespace AxiosNet.Tests.WebAPI;
 
 // 声明式请求模型公共样例：路由在类上，参数绑定在属性上（与 README 示例保持同一形态）。
 

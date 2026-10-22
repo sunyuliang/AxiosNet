@@ -3,7 +3,7 @@ using AxiosNet.DependencyInjection;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.DependencyInjection;
-using AxiosNet.WebAPI.Tests;
+using AxiosNet.Tests.WebAPI;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AxiosNet.DependencyInjection.Tests;

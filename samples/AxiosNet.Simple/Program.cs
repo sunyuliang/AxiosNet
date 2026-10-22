@@ -1,10 +1,19 @@
 using AxiosNet.Simple;
 using AxiosNet.Simple.Examples;
+using AxiosNet.Simple.WebAPI;
 
 // AxiosNet.Simple —— AxiosNet 各类集成调用示例
 // 每个示例对应 Examples 目录下的一个类（实现 IExample），此处统一注册并顺序执行。
 // 示例自带本地 HTTP/1.1 Keep-Alive 服务器，离线即可运行：
-//   dotnet run --project samples/AxiosNet.Simple
+//   dotnet run --project samples/AxiosNet.Simple              # 核心集成示例（默认）
+//   dotnet run --project samples/AxiosNet.Simple -- webapi    # 声明式 API 客户端示例（WebAPI/ 目录）
+
+// webapi 参数分派到声明式客户端示例套件（WebAPI/ 目录）
+if (args is { Length: 1 } && string.Equals(args[0], "webapi", StringComparison.OrdinalIgnoreCase))
+{
+    await WebApiSample.RunAsync();
+    return;
+}
 
 using var server = DemoServer.Start();
 

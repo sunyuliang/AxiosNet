@@ -1,8 +1,9 @@
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
+using AxiosNet.WebAPI;
 
-namespace AxiosNet.WebAPI.Tests;
+namespace AxiosNet.Tests.WebAPI;
 
 /// <summary>
 /// 声明式绑定与端到端：路由特性、Path / Query / Header / Body 绑定、泛型返回、Configure 钩子、取消。

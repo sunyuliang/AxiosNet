@@ -33,7 +33,7 @@
   <ItemGroup>
     <Compile Include="..\AxiosNet.Tests\Infrastructure\TestHttpServer.cs" Link="Infrastructure\TestHttpServer.cs" />
     <Compile Include="..\AxiosNet.Tests\Infrastructure\TestModels.cs" Link="Infrastructure\TestModels.cs" />
-    <Compile Include="..\AxiosNet.WebAPI.Tests\TestApiModels.cs" Link="TestApiModels.cs" />
+    <Compile Include="..\AxiosNet.Tests\WebAPI\TestApiModels.cs" Link="TestApiModels.cs" />
   </ItemGroup>
 
 </Project>

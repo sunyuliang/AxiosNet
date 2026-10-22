@@ -1,6 +1,6 @@
 using AxiosNet;
 using AxiosNet.DependencyInjection;
-using AxiosNet.Simple.WebAPI; // 链接自 AxiosNet.Simple.WebAPI 的演示服务器与请求/返回模型
+using AxiosNet.Simple.WebAPI; // 链接自 AxiosNet.Simple/WebAPI 的演示服务器与请求/返回模型
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection;

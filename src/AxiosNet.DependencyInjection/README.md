@@ -2,7 +2,7 @@
 
 [简体中文](#依赖注入扩展) | [English](#dependency-injection-extensions)
 
-**.NET 依赖注入扩展 for [AxiosNet](https://www.nuget.org/packages/AxiosNet) / [AxiosNet.WebAPI](https://www.nuget.org/packages/AxiosNet.WebAPI)** — `AddAxiosClient` / `AddApiClient` 把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。除两个 AxiosNet 包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`。
+**.NET 依赖注入扩展 for [AxiosNet](https://www.nuget.org/packages/AxiosNet)（含包内声明式客户端，命名空间 `AxiosNet.WebAPI`）** — `AddAxiosClient` / `AddApiClient` 把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`。
 
 ## 依赖注入扩展
 

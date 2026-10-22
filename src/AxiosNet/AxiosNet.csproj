@@ -14,13 +14,13 @@
   <!-- ===== NuGet 包元数据 ===== -->
   <PropertyGroup>
     <PackageId>AxiosNet</PackageId>
-    <Title>AxiosNet - axios 风格 HTTP 客户端（.NET 6+）</Title>
+    <Title>AxiosNet - axios 风格 HTTP 客户端 + 声明式 API 客户端（.NET 6+）</Title>
     <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z） -->
     <Version>1.0.1</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。支持 .NET 6 及以上全部运行时（6/7/8/9/10/11）：单目标 net6.0 程序集，一份资产直接引用，无需多目标配置。An axios-style HTTP client for .NET — single net6.0 assembly, runs on .NET 6/7/8/9/10/11. For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
-    <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;connection-pool;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
+    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。同一包内置声明式 API 客户端（AxiosNet.WebAPI 命名空间，对标 Refit）：定义请求模型（路由/参数特性）+ 授权，调用只剩一句 client.RequestAsync(request)，返回类型由请求模型自动确定，底层仍是完整管线。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。支持 .NET 6 及以上全部运行时（6/7/8/9/10/11）：单目标 net6.0 程序集，一份资产直接引用，无需多目标配置。An axios-style HTTP client for .NET — single net6.0 assembly, runs on .NET 6/7/8/9/10/11. The same package also includes a declarative API client (namespace AxiosNet.WebAPI, Refit-style): request models with route/parameter attributes + authorization, one call client.RequestAsync(request). For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
+    <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;declarative;refit;restsharp;flurl;typed-client;connection-pool;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>

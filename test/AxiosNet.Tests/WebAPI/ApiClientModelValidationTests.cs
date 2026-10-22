@@ -1,4 +1,6 @@
-namespace AxiosNet.WebAPI.Tests;
+using AxiosNet.WebAPI;
+
+namespace AxiosNet.Tests.WebAPI;
 
 /// <summary>
 /// 模型定义校验：非法请求模型在首次使用时（构建缓存处）抛 InvalidOperationException，消息指名问题。

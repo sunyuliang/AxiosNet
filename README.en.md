@@ -14,7 +14,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - Runtime support: **.NET 6 and later** (single `net6.0` target, see [Target framework and runtime support](#target-framework-and-runtime-support))
 - Async-first (`Task` / `CancellationToken` / `ConfigureAwait(false)`)
 
-> Repository: **Gitee ([itsm/axios-net](https://gitee.com/itsm/axios-net)) is the primary repository** — issues, PRs, and tags are handled there. [GitHub](https://github.com/sunyuliang/AxiosNet) is a read-only mirror (CI-driven NuGet publishing also runs on the mirror side).
+> Repository: **Gitee ([itsm/axios-net](https://gitee.com/itsm/axios-net)) is the primary repository** —  PRs and tags are handled there. [GitHub](https://github.com/sunyuliang/AxiosNet) is a read-only mirror (CI-driven NuGet publishing also runs on the mirror side).
 
 ---
 
@@ -55,18 +55,16 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 ### Option 1: NuGet (recommended)
 
 ```bash
-dotnet add package AxiosNet                          # core: axios-style HTTP client
-dotnet add package AxiosNet.WebAPI                   # optional: declarative API client (depends on the core)
-dotnet add package AxiosNet.DependencyInjection      # optional: DI singleton registration extensions (depends on the first two)
+dotnet add package AxiosNet                          # axios-style HTTP client + built-in declarative API client
+dotnet add package AxiosNet.DependencyInjection      # optional: DI singleton registration extensions (depends on the main package)
 ```
 
-> Version numbers match Git tags: tagging `v1.2.3` publishes `AxiosNet 1.2.3`, `AxiosNet.WebAPI 1.2.3`, and `AxiosNet.DependencyInjection 1.2.3` together; tagged pre-releases (e.g. `v1.2.3-rc.1`) are published as prerelease versions.
+> Version numbers match Git tags: tagging `v1.2.3` publishes `AxiosNet 1.2.3` and `AxiosNet.DependencyInjection 1.2.3` together; tagged pre-releases (e.g. `v1.2.3-rc.1`) are published as prerelease versions.
 
 ### Option 2: Project reference (this repository)
 
 ```bash
 dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj
-dotnet add your-app.csproj reference src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
 ```
 
 ### Option 3: Source inclusion
@@ -77,7 +75,7 @@ Copy the `src/AxiosNet` folder into your solution:
 dotnet sln YourApp.sln add src/AxiosNet/AxiosNet.csproj
 ```
 
-> The solution file `AxiosNet.slnx` uses the new XML format and requires .NET SDK 8.0.400+ or Visual Studio 2022 17.13+. On older tooling, regenerate a classic `.sln` with `dotnet new sln` and add the two projects manually.
+> The solution file `AxiosNet.slnx` uses the new XML format and requires .NET SDK 8.0.400+ or Visual Studio 2022 17.13+. On older tooling, regenerate a classic `.sln` with `dotnet new sln` and add the projects you need.
 
 ## Quick start
 
@@ -113,7 +111,7 @@ string url = http.GetUri(c =>
 
 ## Declarative API client: AxiosNet.WebAPI (Refit-style)
 
-When you would rather not hand-write URLs and config, use [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI): **define request models + plug in authorization, and the call site is a single `client.RequestAsync(request)`** — the response type is inferred from the request model's generic argument (the RestSharp / Flurl / Refit niche, while keeping the full axios-style response shape and every low-level capability such as the connection pool).
+When you would rather not hand-write URLs and config, use the declarative API client built into AxiosNet (namespace `AxiosNet.WebAPI`, shipped in the same package): **define request models + plug in authorization, and the call site is a single `client.RequestAsync(request)`** — the response type is inferred from the request model's generic argument (the RestSharp / Flurl / Refit niche, while keeping the full axios-style response shape and every low-level capability such as the connection pool).
 
 ```csharp
 using AxiosNet.WebAPI;
@@ -166,7 +164,7 @@ Binding rules (parameter semantics aligned with Refit, but applied to **properti
 
 ## Dependency injection (singleton registration)
 
-The DI extensions live in the separate package [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection) (both main libraries stay free of external dependencies): in ASP.NET Core / Generic Host, register the clients as singletons with the extension methods so the connection pool, interceptors, and instance defaults are shared for the container's lifetime.
+The DI extensions live in the separate package [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection) (the main library itself stays free of external dependencies): in ASP.NET Core / Generic Host, register the clients as singletons with the extension methods so the connection pool, interceptors, and instance defaults are shared for the container's lifetime.
 
 ```bash
 dotnet add package AxiosNet.DependencyInjection
@@ -224,7 +222,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 - **The container owns the lifetime**: disposing an injected `ApiClient` does not release the shared underlying client; singletons are released when the container shuts down (self-built clients through an internal holder, named sites through the resolver)
 - **Multi-site resolver**: `Get(name)` throws `InvalidOperationException` when the name is not registered (the message lists all registered sites), `TryGet` never throws, and `Names` lists the site names in registration order; site names are case-sensitive
 - **.NET 8+ alternative**: the official keyed services (`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`, enums work as keys too) are semantically equivalent to the named overload — scenario 6 of the sample demonstrates them, and both approaches can coexist
-- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, six scenarios over real HTTP round-trips); besides the two AxiosNet packages, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
+- Runnable sample: `samples/AxiosNet.Simple.DependencyInjection` (Generic Host, six scenarios over real HTTP round-trips); besides the AxiosNet main package, the extension package only depends on the first-party `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## Configuration
 
@@ -1254,7 +1252,7 @@ Key points:
 - ⬆️ **File upload**: raw stream passthrough (`Stream`/`byte[]` plus a file `ContentType`) and `multipart/form-data` (`FormFile`, repeated same-name parts); the sample server parses byte-exactly and reports field name/file name/size/SHA256
 - 📊 **Traffic governance**: progress callbacks + one-way rate limiting + size caps, all in pure BCL (wrapping `HttpContent.SerializeToStreamAsync` and `Stream`), with no reliance on native `HttpClient` features
 - 🧵 **Custom handler injection**: `ConnectionPoolOptions.HandlerFactory` wraps your `DelegatingHandler` around the default `SocketsHttpHandler` per origin (logging/signing/retries/telemetry) while keeping connection reuse; `new AxiosClient(handler: ...)` takes over the connection layer entirely (bypassing the pool)
-- 📝 **Declarative API client** [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI) (separate package): request models + route/parameter attributes (`[Get("users/{id}")]`, `[Path]` / `[Query]` / `[Header]` / `[Body]`) + the `IAuthorizationProvider` authorization extension point (built-in Bearer), with `client.RequestAsync(request)` inferring its return type from `IApiRequest<TResponse>` — the Refit-style declarative experience on top of the full AxiosNet pipeline
+- 📝 **Declarative API client** (built into the main package, namespace `AxiosNet.WebAPI`): request models + route/parameter attributes (`[Get("users/{id}")]`, `[Path]` / `[Query]` / `[Header]` / `[Body]`) + the `IAuthorizationProvider` authorization extension point (built-in Bearer), with `client.RequestAsync(request)` inferring its return type from `IApiRequest<TResponse>` — the Refit-style declarative experience on top of the full AxiosNet pipeline
 - 💉 **Singleton DI registration** (separate package [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection)): `AddAxiosClient` / `AddApiClient` (self-built / facade / named multi-site modes) register the clients as singletons in one line, with TryAdd semantics preventing duplicate pools; a registered `IAuthorizationProvider` singleton is picked up as the authorization provider automatically; multiple sites are resolved by name through `IApiClientResolver`
 
 ## axios ↔ AxiosNet mapping
@@ -1355,7 +1353,7 @@ dotnet run --project samples/AxiosNet.Simple
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.
 
-[`samples/AxiosNet.Simple.WebAPI`](samples/AxiosNet.Simple.WebAPI) is the companion sample for the declarative client [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style) (also ready-to-run and offline): request and response models live in `ApiModels.cs`, and 7 examples make real HTTP round-trips:
+The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 7 examples make real HTTP round-trips:
 
 1. **GET detail**: `[Path]` binding + the response generic inferred from the request model
 2. **GET list**: unannotated properties bind as query by default, `ids[]=` array binding, `client.GetUri(request)` preview
@@ -1366,7 +1364,7 @@ dotnet run --project samples/AxiosNet.Simple
 7. **Signing/verification**: the `SigningSerializer` decorator around the built-in JSON — request body HMAC-SHA256 into `X-Signature`, response verified before parsing; the demo server verifies symmetrically and rejects unsigned requests with 401
 
 ```bash
-dotnet run --project samples/AxiosNet.Simple.WebAPI
+dotnet run --project samples/AxiosNet.Simple -- webapi
 ```
 
 ## Target framework and runtime support
@@ -1393,7 +1391,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 681 xUnit tests (all three test projects target net8.0 + net6.0, so 1362 executions)
+# Run all 681 xUnit tests (both test projects target net8.0 + net6.0, so 1362 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1421,7 +1419,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
 - Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte inlet (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the binary request outlet (object → byte body + self-declared `MediaType`, no charset appended, explicit `ContentType` wins, forms/scalars never enter the byte channel), the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
 - Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
-- Declarative client (`AxiosNet.WebAPI.Tests`, 66 cases): route/Path/Query/Header/Body binding end-to-end (path escaping, absolute URL overriding BaseAddress, model- and call-site Configure hooks, inherited property bindings), default body (POST/PUT/PATCH + exactly one unannotated non-scalar property; scalar guard, ambiguity with multiple properties stays query, explicit `[Query]` does not block, DELETE excluded), multi-binding (Path+Header, Query+Header, scalar Path+Body+Header in all three places, complex object Query+Body; non-scalar Path/Header rejected at build time), `[ApiIgnore]` (query exclusion, does not block default body, combining with a parameter attribute throws), edge cases (case-variant placeholders, default-body null/scalar-array semantics, Guid and record models, PROPFIND custom verb, direct [HttpApi("delete", …)] normalization, CRLF injection fail-fast, raw byte[]/Stream responses, connection reuse, facade guards), built-in Bearer (static/factory/scheme-prefixed) and custom authorization (skipping by request type, seeing the final config, no half-sent request on auth failure), model definition validation (missing route, unbound/extra placeholders, malformed braces, duplicate placeholder, multiple bodies, duplicate names, null path value) and error caching
+- Declarative client (`AxiosNet.Tests/WebAPI/`, 66 cases): route/Path/Query/Header/Body binding end-to-end (path escaping, absolute URL overriding BaseAddress, model- and call-site Configure hooks, inherited property bindings), default body (POST/PUT/PATCH + exactly one unannotated non-scalar property; scalar guard, ambiguity with multiple properties stays query, explicit `[Query]` does not block, DELETE excluded), multi-binding (Path+Header, Query+Header, scalar Path+Body+Header in all three places, complex object Query+Body; non-scalar Path/Header rejected at build time), `[ApiIgnore]` (query exclusion, does not block default body, combining with a parameter attribute throws), edge cases (case-variant placeholders, default-body null/scalar-array semantics, Guid and record models, PROPFIND custom verb, direct [HttpApi("delete", …)] normalization, CRLF injection fail-fast, raw byte[]/Stream responses, connection reuse, facade guards), built-in Bearer (static/factory/scheme-prefixed) and custom authorization (skipping by request type, seeing the final config, no half-sent request on auth failure), model definition validation (missing route, unbound/extra placeholders, malformed braces, duplicate placeholder, multiple bodies, duplicate names, null path value) and error caching
 - Singleton DI registration (`AxiosNet.DependencyInjection.Tests`, 37 cases): `AddAxiosClient` registration shape and configure application, TryAdd first-wins, end-to-end requests from a resolved client; `AddApiClient` in both modes (BaseAddress and configureDefaults applied, facade reusing the registered `AxiosClient`, resolve-time error when none is registered, shared client surviving facade disposal, self-built and facade registrations independent), container `IAuthorizationProvider` auto-wiring with explicit `configure` taking precedence, repeated registration first-wins, argument guards; named multi-site (independent client and BaseAddress per site, `Names` in registration order, Get/TryGet and case sensitivity, unknown-name error listing available sites, duplicate name rejected at registration, per-site defaults and authorization, container provider as fallback, named sites exposed only through the resolver, coexistence with the facade overload, end-to-end requests, site clients unusable after resolver disposal)
 
 ## Overall pipeline
@@ -1566,26 +1564,26 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in JSON / XML implementations
 │  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
 │  │  └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
-│  └─ AxiosNet.WebAPI/           # declarative API client (separate NuGet package, depends on AxiosNet)
-│     ├─ ApiClient.cs            # facade: RequestAsync(request) + GetUri(request), a thin wrapper over AxiosClient
-│     ├─ IApiRequest.cs          # request-model contract (IApiRequest<T> determines the response type) + Configure hook
-│     ├─ HttpApiAttribute.cs     # route attributes (Get/Post/Put/Patch/Delete/Head/Options)
-│     ├─ ApiParameterAttributes.cs # parameter-binding attributes (Path / Query / Header / Body)
-│     ├─ IAuthorizationProvider.cs # authorization extension point + ApiAuthContext
-│     ├─ BearerAuthorizationProvider.cs # built-in Bearer authorization
-│     └─ Internal/RequestModelMetadata.cs # binding metadata (cached per model type, fully validated at build time)
-│  └─ AxiosNet.DependencyInjection/      # DI singleton registration extensions (separate NuGet package, depends on the first two)
+│  │  └─ WebAPI/                 # declarative API client (built into the main package, namespace AxiosNet.WebAPI)
+│  │     ├─ ApiClient.cs            # facade: RequestAsync(request) + GetUri(request), a thin wrapper over AxiosClient
+│  │     ├─ IApiRequest.cs          # request-model contract (IApiRequest<T> determines the response type) + Configure hook
+│  │     ├─ HttpApiAttribute.cs     # route attributes (Get/Post/Put/Patch/Delete/Head/Options)
+│  │     ├─ ApiParameterAttributes.cs # parameter-binding attributes (Path / Query / Header / Body)
+│  │     ├─ IAuthorizationProvider.cs # authorization extension point + ApiAuthContext
+│  │     ├─ BearerAuthorizationProvider.cs # built-in Bearer authorization
+│  │     └─ Internal/RequestModelMetadata.cs # binding metadata (cached per model type, fully validated at build time)
+│  └─ AxiosNet.DependencyInjection/      # DI singleton registration extensions (separate NuGet package, depends on the AxiosNet main package)
 │     ├─ AxiosClientServiceCollectionExtensions.cs # AddAxiosClient: registers a singleton AxiosClient
 │     ├─ ApiClientServiceCollectionExtensions.cs   # AddApiClient: registers a singleton ApiClient (self-built / facade / named multi-site)
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
 │  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
-│  ├─ AxiosNet.Simple.WebAPI/    # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification; run with `dotnet run -- webapi`)
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (578 cases × net6.0 / net8.0 = 1156 executions)
-   ├─ AxiosNet.WebAPI.Tests/     # declarative client tests (66 cases × net6.0 / net8.0, reuses the main test server)
+   ├─ AxiosNet.Tests/            # xUnit tests (644 cases × net6.0 / net8.0 = 1288 executions)
+   │  └─ WebAPI/                 # declarative client tests (66 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (37 cases × net6.0 / net8.0, reuses the main/WebAPI test infrastructure)
 ```
 

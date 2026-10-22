@@ -45,7 +45,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AxiosNet\AxiosNet.csproj" />
-    <ProjectReference Include="..\AxiosNet.WebAPI\AxiosNet.WebAPI.csproj" />
     <!-- 唯一外部依赖：微软第一方 DI 抽象（IServiceCollection / ServiceDescriptor），不含任何第三方包 -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="6.0.0" />
   </ItemGroup>

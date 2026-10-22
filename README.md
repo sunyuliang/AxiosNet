@@ -14,7 +14,7 @@
 - 运行时支持：**.NET 6 及以上**（单目标 `net6.0`，详见[目标框架与运行时支持](#目标框架与运行时支持)）
 - 异步优先（`Task` / `CancellationToken` / `ConfigureAwait(false)`）
 
-> 仓库：**Gitee（[itsm/axios-net](https://gitee.com/itsm/axios-net)）是提交主仓**，Issue / PR / tag 以 Gitee 为准；[GitHub](https://github.com/sunyuliang/AxiosNet) 为只读镜像（CI 自动发布 NuGet 也由镜像侧执行）。
+> 仓库：**Gitee（[itsm/axios-net](https://gitee.com/itsm/axios-net)）是提交主仓**， PR / tag 以 Gitee 为准；[GitHub](https://github.com/sunyuliang/AxiosNet) 为只读镜像（CI 自动发布 NuGet 也由镜像侧执行）。
 
 ---
 
@@ -55,18 +55,16 @@
 ### 方式一：NuGet（推荐）
 
 ```bash
-dotnet add package AxiosNet                          # 核心：axios 风格 HTTP 客户端
-dotnet add package AxiosNet.WebAPI                   # 可选：声明式 API 客户端（依赖核心包）
-dotnet add package AxiosNet.DependencyInjection      # 可选：DI 单例注入扩展（依赖前两个包）
+dotnet add package AxiosNet                          # axios 风格 HTTP 客户端 + 内置声明式 API 客户端
+dotnet add package AxiosNet.DependencyInjection      # 可选：DI 单例注入扩展（依赖主包）
 ```
 
-> 版本号与 Git tag 一致：打 `v1.2.3` 即同时发布 `AxiosNet 1.2.3`、`AxiosNet.WebAPI 1.2.3` 与 `AxiosNet.DependencyInjection 1.2.3`；带后缀的 tag（如 `v1.2.3-rc.1`）会作为预发布版本发布。
+> 版本号与 Git tag 一致：打 `v1.2.3` 即同时发布 `AxiosNet 1.2.3` 与 `AxiosNet.DependencyInjection 1.2.3`；带后缀的 tag（如 `v1.2.3-rc.1`）会作为预发布版本发布。
 
 ### 方式二：引用项目（当前仓库）
 
 ```bash
 dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj
-dotnet add your-app.csproj reference src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
 ```
 
 ### 方式三：源码引入
@@ -77,7 +75,7 @@ dotnet add your-app.csproj reference src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
 dotnet sln YourApp.sln add src/AxiosNet/AxiosNet.csproj
 ```
 
-> 解决方案文件 `AxiosNet.slnx` 为新的 XML 格式，需要 .NET SDK 8.0.400+ 或 Visual Studio 2022 17.13+；旧版本可自行执行 `dotnet new sln` 重新生成经典 `.sln` 并添加两个项目。
+> 解决方案文件 `AxiosNet.slnx` 为新的 XML 格式，需要 .NET SDK 8.0.400+ 或 Visual Studio 2022 17.13+；旧版本可自行执行 `dotnet new sln` 重新生成经典 `.sln` 并添加所需项目。
 
 ## 快速开始
 
@@ -113,7 +111,7 @@ string url = http.GetUri(c =>
 
 ## 声明式 API 客户端 AxiosNet.WebAPI（对标 Refit）
 
-不想手写 URL 与配置时，改用 [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI)：**定义请求模型 + 配好授权，调用只剩一句 `client.RequestAsync(request)`**，返回类型由请求模型的泛型自动确定（RestSharp / Flurl / Refit 的定位，但保留 axios 风格的完整响应结构与连接池等全部底层能力）。
+不想手写 URL 与配置时，改用 AxiosNet 内置的声明式 API 客户端（命名空间 `AxiosNet.WebAPI`，与核心同包分发）：**定义请求模型 + 配好授权，调用只剩一句 `client.RequestAsync(request)`**，返回类型由请求模型的泛型自动确定（RestSharp / Flurl / Refit 的定位，但保留 axios 风格的完整响应结构与连接池等全部底层能力）。
 
 ```csharp
 using AxiosNet.WebAPI;
@@ -165,7 +163,7 @@ await client.RequestAsync(new CreateUserRequest { Payload = payload });   // 返
 
 ## 依赖注入（单例注册）
 
-DI 扩展放在独立包 [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection) 里（两个主库自身保持零外部依赖）：ASP.NET Core / Generic Host 里用扩展方法把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。
+DI 扩展放在独立包 [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection) 里（主库自身保持零外部依赖）：ASP.NET Core / Generic Host 里用扩展方法把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。
 
 ```bash
 dotnet add package AxiosNet.DependencyInjection
@@ -223,7 +221,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 - **生命周期归容器**：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端；单例随容器退出统一释放（自建模式经内部持有项、命名站点经解析器释放连接池）
 - **多站点解析器**：`Get(name)` 未注册时抛 `InvalidOperationException`（消息列出全部已注册站点），`TryGet` 不抛，`Names` 按注册顺序给出站点名；命名站点区分大小写
 - **.NET 8+ 替代方案**：官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`，enum 亦可作键）与命名重载语义等价，示例场景 6 有完整演示，两种方案可共存
-- 可运行示例见 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host 六个场景，跑真实 HTTP 往返）；扩展包除两个 AxiosNet 包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`
+- 可运行示例见 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host 六个场景，跑真实 HTTP 往返）；扩展包除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`
 
 ## 配置项
 
@@ -1266,7 +1264,7 @@ using var client3 = Axios.Create(
 - ⬆️ **文件上传**：裸流直传（`Stream`/`byte[]` + 文件类型 `ContentType`）与 `multipart/form-data`（`FormFile`、同名重复部件）；示例服务器按字节精确解析并回报字段名/文件名/大小/SHA256
 - 📊 **流量治理**：进度回调 + 单向限速 + 大小上限，均为纯 BCL 实现（包装 `HttpContent.SerializeToStreamAsync` 与 `Stream`），不依赖 `HttpClient` 原生能力
 - 🧵 **自定义 Handler 注入**：`ConnectionPoolOptions.HandlerFactory` 在每个 origin 的默认 `SocketsHttpHandler` 外套你的 `DelegatingHandler`（日志/签名/重试/埋点），保留连接复用；`new AxiosClient(handler: ...)` 则完全接管连接层（不走池）
-- 📝 **声明式 API 客户端** [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI)（独立包）：请求模型 + 路由/参数特性（`[Get("users/{id}")]`、`[Path]` / `[Query]` / `[Header]` / `[Body]`）+ `IAuthorizationProvider` 授权扩展点（内置 Bearer），`client.RequestAsync(request)` 返回类型由 `IApiRequest<TResponse>` 自动确定——对标 Refit 的声明式体验，底层仍是完整的 AxiosNet 管线
+- 📝 **声明式 API 客户端**（主包内置，`AxiosNet.WebAPI` 命名空间）：请求模型 + 路由/参数特性（`[Get("users/{id}")]`、`[Path]` / `[Query]` / `[Header]` / `[Body]`）+ `IAuthorizationProvider` 授权扩展点（内置 Bearer），`client.RequestAsync(request)` 返回类型由 `IApiRequest<TResponse>` 自动确定——对标 Refit 的声明式体验，底层仍是完整的 AxiosNet 管线
 - 💉 **依赖注入单例注册**（独立包 [`AxiosNet.DependencyInjection`](https://www.nuget.org/packages/AxiosNet.DependencyInjection)）：`AddAxiosClient` / `AddApiClient`（自建 / 门面 / 命名多站点三种模式）一行把客户端注册为单例，TryAdd 语义防止重复建池；容器里的 `IAuthorizationProvider` 单例自动作为授权提供方；多站点经 `IApiClientResolver` 按键取用
 
 ## axios ↔ AxiosNet 对照表
@@ -1367,7 +1365,7 @@ dotnet run --project samples/AxiosNet.Simple
 >
 > 第 19 项是唯一需要额外 NuGet 包（`Newtonsoft.Json`）的示例，仅用于演示**引擎替换**——类库本身仍然零第三方运行时依赖；不需要自定义序列化时可以把 `Newtonsoft.Json` 从示例项目里删掉。
 
-[`samples/AxiosNet.Simple.WebAPI`](samples/AxiosNet.Simple.WebAPI) 是声明式客户端 [`AxiosNet.WebAPI`](#声明式-api-客户端-axiosnetwebapi对标-refit) 的配套示例（同样开箱即用、离线可运行）：请求模型与返回模型集中在 `ApiModels.cs`，7 个示例走真实 HTTP 往返：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 的 `WebAPI/` 目录是声明式客户端（[`AxiosNet.WebAPI`](#声明式-api-客户端-axiosnetwebapi对标-refit) 命名空间）的配套示例（同样开箱即用、离线可运行）：请求模型与返回模型集中在 `WebAPI/ApiModels.cs`，7 个示例走真实 HTTP 往返：
 
 1. **GET 详情**：`[Path]` 绑定 + 返回泛型由请求模型自动确定
 2. **GET 列表**：无标注属性默认 Query、数组 `ids[]=` 绑定、`client.GetUri(request)` 预览 URL
@@ -1378,7 +1376,7 @@ dotnet run --project samples/AxiosNet.Simple
 7. **签名/验签**：`SigningSerializer` 装饰内置 JSON——请求体 HMAC-SHA256 写 `X-Signature`，响应先验签再解析；演示服务器对称校验，未签名请求被 401 拒绝
 
 ```bash
-dotnet run --project samples/AxiosNet.Simple.WebAPI
+dotnet run --project samples/AxiosNet.Simple -- webapi
 ```
 
 ## 目标框架与运行时支持
@@ -1405,7 +1403,7 @@ dotnet run --project samples/AxiosNet.Simple.WebAPI
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 681 个 xUnit 单元测试（三个测试项目均为 net8.0 + net6.0 双目标，实际执行 1362 次）
+# 运行全部 681 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1362 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1433,7 +1431,7 @@ dotnet build AxiosNet.slnx -c Release
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 - 序列化可插拔（`JsonCustomizationTests` / `ContentSerializerTests`）：自定义 `IContentSerializer` 驱动请求/响应、实例级 `JsonSerializerOptions`、transform 列表并发增删；`IContentSerializer` 的 XML 端到端、基础类型不经过序列化器、非泛型 `JsonElement`/原文、表单与序列化器解耦、XML 下 dynamic 明确失败、二进制响应走字节入口（非 UTF-8 尾字节原样到达、零解码）与文本序列化器在 `octet-stream` 下的默认兜底、二进制请求出口（对象 → 字节正文 + 自报 `MediaType`、不补 charset、显式 `ContentType` 优先、表单/标量不进字节通道）、内置 XML 序列化器（UTF-8 声明 / 无命名空间噪音 / `[XmlRoot]` 命名空间 / 拒绝 DTD）、`JsonDocument` 目标与序列化器绑定的边界、标量请求体与字典归属、序列化器自报 `MediaType` 回填请求头（显式/实例默认 ContentType 优先、默认 null 零破坏）
 - 安全与加固（`HardeningTests`）：请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖、流式正文截断与 `Timeout=0` 下的统一 `ERR_NETWORK`、超大 `Timeout` 收敛到 49.7 天、负值限制项 fail-fast、params 落在 fragment 之前、`PostAsync(url, null)` 的 `ArgumentNullException`、流式与 chunked 的 `maxContentLength`、跨 origin 共享 Cookie、取消异常保留 `Cause`、params 传 `JsonElement`、params 传 `byte[]`（base64）、池 origin 上限与优雅 `Dispose`（在途请求不被关闭打断、关闭竞态不漏裸 `ObjectDisposedException`）
-- 声明式客户端（`AxiosNet.WebAPI.Tests`，66 个用例）：路由/Path/Query/Header/Body 绑定与端到端（含路径转义、绝对 URL 覆盖 BaseAddress、模型与调用处 Configure 钩子、继承属性绑定）、默认 Body（POST/PUT/PATCH + 恰一个未标注非标量属性；标量护栏、多属性歧义维持 Query、显式 [Query] 不阻断、DELETE 不参与）、多特性并存（Path+Header、Query+Header、标量 Path+Body+Header 三处、复杂对象 Query+Body；Path/Header 非标量构建期拒绝）、[ApiIgnore]（查询串排除、不阻断默认 Body、与参数特性同用报错）、边界场景（大小写变体占位符、默认 Body 空值/标量数组语义、Guid 与 record 模型、PROPFIND 自定义谓词、直用 [HttpApi("delete", …)] 归一化、CRLF 注入头 fail-fast、原始响应 byte[]/Stream、连接复用、门面守卫）、内置 Bearer（固定/工厂/带 scheme）与自定义授权（按请求类型跳过、可见最终配置、失败不发出半个请求）、模型定义校验（缺路由、占位符未绑定/多余绑定、花括号非法、重复占位符、多个请求体、同名参数、null 路径值）与错误缓存
+- 声明式客户端（`AxiosNet.Tests/WebAPI/`，66 个用例）：路由/Path/Query/Header/Body 绑定与端到端（含路径转义、绝对 URL 覆盖 BaseAddress、模型与调用处 Configure 钩子、继承属性绑定）、默认 Body（POST/PUT/PATCH + 恰一个未标注非标量属性；标量护栏、多属性歧义维持 Query、显式 [Query] 不阻断、DELETE 不参与）、多特性并存（Path+Header、Query+Header、标量 Path+Body+Header 三处、复杂对象 Query+Body；Path/Header 非标量构建期拒绝）、[ApiIgnore]（查询串排除、不阻断默认 Body、与参数特性同用报错）、边界场景（大小写变体占位符、默认 Body 空值/标量数组语义、Guid 与 record 模型、PROPFIND 自定义谓词、直用 [HttpApi("delete", …)] 归一化、CRLF 注入头 fail-fast、原始响应 byte[]/Stream、连接复用、门面守卫）、内置 Bearer（固定/工厂/带 scheme）与自定义授权（按请求类型跳过、可见最终配置、失败不发出半个请求）、模型定义校验（缺路由、占位符未绑定/多余绑定、花括号非法、重复占位符、多个请求体、同名参数、null 路径值）与错误缓存
 - DI 单例注入（`AxiosNet.DependencyInjection.Tests`，37 个用例）：`AddAxiosClient` 注册形态与 configure 生效、TryAdd 先到先得、容器解析后端到端请求；`AddApiClient` 自建 / 门面两种模式（BaseAddress 与 configureDefaults 生效、门面复用已注册的 AxiosClient、缺注册时解析期报错、共享客户端不随门面释放、自建与门面互不相干）、容器 `IAuthorizationProvider` 自动装配与 configure 显式优先、重复注册先到先得、参数守卫；命名多站点（每站点独立客户端与 BaseAddress、`Names` 注册序、Get/TryGet 与大小写敏感、未注册名报错并列可用站点、重名注册期报错、per-site 默认值与授权、容器授权兜底、只经解析器暴露不注册未命名 ApiClient、与门面重载共存、端到端请求、解析器释放后站点客户端不可用）
 
 ## 整体流程
@@ -1577,26 +1575,26 @@ dotnet build AxiosNet.slnx -c Release
 │  │  ├─ Serialization/          # IContentSerializer（2 个文本方法 + 一对字节通道 + MediaType）+ 内置 JSON / XML 实现
 │  │  ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON、反射缓存、媒体类型判定、状态码文本
 │  │  └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
-│  └─ AxiosNet.WebAPI/           # 声明式 API 客户端（独立 NuGet 包，依赖 AxiosNet）
-│     ├─ ApiClient.cs            # 门面：RequestAsync(request) + GetUri(request)，薄封装 AxiosClient
-│     ├─ IApiRequest.cs          # 请求模型契约（IApiRequest<T> 决定返回泛型）+ Configure 钩子
-│     ├─ HttpApiAttribute.cs     # 路由特性（Get/Post/Put/Patch/Delete/Head/Options）
-│     ├─ ApiParameterAttributes.cs # 参数绑定特性（Path / Query / Header / Body）
-│     ├─ IAuthorizationProvider.cs # 授权扩展点 + ApiAuthContext
-│     ├─ BearerAuthorizationProvider.cs # 内置 Bearer 授权
-│     └─ Internal/RequestModelMetadata.cs # 绑定元数据（按模型类型缓存，构建期完成全部校验）
-│  └─ AxiosNet.DependencyInjection/      # DI 单例注入扩展（独立 NuGet 包，依赖前两个包）
+│  │  └─ WebAPI/                 # 声明式 API 客户端（主包内置，命名空间 AxiosNet.WebAPI）
+│  │     ├─ ApiClient.cs            # 门面：RequestAsync(request) + GetUri(request)，薄封装 AxiosClient
+│  │     ├─ IApiRequest.cs          # 请求模型契约（IApiRequest<T> 决定返回泛型）+ Configure 钩子
+│  │     ├─ HttpApiAttribute.cs     # 路由特性（Get/Post/Put/Patch/Delete/Head/Options）
+│  │     ├─ ApiParameterAttributes.cs # 参数绑定特性（Path / Query / Header / Body）
+│  │     ├─ IAuthorizationProvider.cs # 授权扩展点 + ApiAuthContext
+│  │     ├─ BearerAuthorizationProvider.cs # 内置 Bearer 授权
+│  │     └─ Internal/RequestModelMetadata.cs # 绑定元数据（按模型类型缓存，构建期完成全部校验）
+│  └─ AxiosNet.DependencyInjection/      # DI 单例注入扩展（独立 NuGet 包，依赖 AxiosNet 主包）
 │     ├─ AxiosClientServiceCollectionExtensions.cs # AddAxiosClient：注册单例 AxiosClient
 │     ├─ ApiClientServiceCollectionExtensions.cs   # AddApiClient：注册单例 ApiClient（自建 / 门面 / 命名多站点）
 │     ├─ ApiClientResolver.cs            # IApiClientResolver 解析器 + 站点定义/创建（命名站点属主）
 │     └─ ApiClientOwnedAxiosClient.cs     # 自建模式与命名站点持有底层客户端的内部注册项（容器退出时释放）
 ├─ samples/
 │  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
-│  ├─ AxiosNet.Simple.WebAPI/    # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签）
+│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签；dotnet run -- webapi 运行）
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（578 个用例 × net6.0 / net8.0 双目标 = 1156 次执行）
-   ├─ AxiosNet.WebAPI.Tests/     # 声明式客户端测试（66 个用例 × net6.0 / net8.0 双目标，复用主库测试服务器）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（644 个用例 × net6.0 / net8.0 双目标 = 1288 次执行）
+   │  └─ WebAPI/                 # 声明式客户端测试（66 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（37 个用例 × net6.0 / net8.0 双目标，复用主库/WebAPI 测试基建）
 ```
 
