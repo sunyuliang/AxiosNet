@@ -65,6 +65,10 @@ public sealed class ConnectionPoolOptions
     /// 每个节点都会建一个 Handler（持有连接池与定时器），目标若来自用户输入（短链解析、多租户域名），
     /// 节点数就是可被放大的资源面。达到上限时先驱逐最久未使用的空闲节点，全在途则拒绝新 origin。
     /// </para>
+    /// <para>
+    /// 软上限：容量检查与字典插入非原子，逼近上限时突发多个新 origin 的并发请求可能让节点数短暂超出
+    /// （超限量约等于并发建节点的线程数）；需要精确控制请自行串行化首批请求。
+    /// </para>
     /// </summary>
     public int MaxEndpointCount { get; set; } = 1024;
 

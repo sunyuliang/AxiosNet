@@ -51,18 +51,22 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     private readonly IServiceProvider _services;
     private readonly ApiClientDefinition[] _definitions;
     private readonly string[] _names;
+    private readonly IReadOnlyList<string> _namesReadOnly;
     private readonly Dictionary<string, ApiClient> _clients = new(StringComparer.Ordinal);
     private readonly List<ApiClientOwnedAxiosClient> _owned = new();
     private readonly object _gate = new();
+    private int _disposed;
 
     public ApiClientResolver(IServiceProvider services, IEnumerable<ApiClientDefinition> definitions)
     {
         _services = services;
         _definitions = definitions.ToArray();
         _names = _definitions.Select(definition => definition.Name).ToArray();
+        // 内部数组不外泄：调用方拿到 IReadOnlyList 后强转 string[] 就能改写解析器状态
+        _namesReadOnly = Array.AsReadOnly(_names);
     }
 
-    public IReadOnlyList<string> Names => _names;
+    public IReadOnlyList<string> Names => _namesReadOnly;
 
     public ApiClient Get(string name)
     {
@@ -92,6 +96,11 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     {
         lock (_gate)
         {
+            if (Volatile.Read(ref _disposed) == 1)
+            {
+                throw new ObjectDisposedException(nameof(ApiClientResolver));
+            }
+
             if (_clients.TryGetValue(name, out client))
             {
                 return true;
@@ -104,11 +113,26 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
                 return false;
             }
 
-            // 每站点自建底层客户端（与容器里的 AxiosClient 注册互不相干），由本解析器持有并在容器退出时释放
+            // 每站点自建底层客户端（与容器里的 AxiosClient 注册互不相干），由本解析器持有并在容器退出时释放。
+            // 先创建后登记：configure 抛错或 IAuthorizationProvider 解析失败（如注册成 Scoped，
+            // 单例解析器从根容器取不到）时，holder 不能留在 _owned —— 每次重试都会新建一个
+            // 连接池，直到容器退出才释放；失败路径当场释放。
             var holder = new ApiClientOwnedAxiosClient(definition.Defaults);
+
+            ApiClient created;
+            try
+            {
+                created = ApiClientFactory.Create(_services, holder.Client, definition.Configure);
+            }
+            catch
+            {
+                holder.Dispose();
+                throw;
+            }
+
             _owned.Add(holder);
-            client = ApiClientFactory.Create(_services, holder.Client, definition.Configure);
-            _clients[name] = client;
+            _clients[name] = created;
+            client = created;
             return true;
         }
     }
@@ -118,6 +142,9 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         ApiClientOwnedAxiosClient[] holders;
         lock (_gate)
         {
+            Volatile.Write(ref _disposed, 1);
+            // 释放后 Get 未解析过的站点会新建客户端：没有属主释放它，连接池直接泄漏
+            _clients.Clear();
             holders = _owned.ToArray();
             _owned.Clear();
         }
@@ -133,6 +160,8 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         ApiClientOwnedAxiosClient[] holders;
         lock (_gate)
         {
+            Volatile.Write(ref _disposed, 1);
+            _clients.Clear();
             holders = _owned.ToArray();
             _owned.Clear();
         }

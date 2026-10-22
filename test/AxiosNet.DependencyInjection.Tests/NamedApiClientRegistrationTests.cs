@@ -37,6 +37,27 @@ public sealed class NamedApiClientRegistrationTests
     }
 
     [Fact]
+    public void AddApiClient_Named_ConfigureThrows_PropagatesWithoutCorruptingOtherSites()
+    {
+        using var provider = BuildProvider(services =>
+        {
+            services.AddApiClient("good", "https://good.example.com");
+            services.AddApiClient("bad", "https://bad.example.com",
+                configure: _ => throw new InvalidOperationException("boom"));
+        });
+
+        var resolver = provider.GetRequiredService<IApiClientResolver>();
+
+        // 站点 configure 抛错原样透出（此前 holder 先登记后创建，失败时每次重试
+        // 都新建一个连接池留在 _owned 里直到容器退出才释放）
+        var ex = Assert.Throws<InvalidOperationException>(() => resolver.Get("bad"));
+        Assert.Equal("boom", ex.Message);
+
+        // 失败不污染其他站点：好站点照常可取可用
+        Assert.Equal("https://good.example.com", resolver.Get("good").Axios.Defaults.BaseAddress);
+    }
+
+    [Fact]
     public void AddApiClient_NamedSites_ResolveToDistinctClientsWithOwnBaseAddress()
     {
         using var provider = BuildProvider(services =>
@@ -289,10 +310,12 @@ public sealed class NamedApiClientRegistrationTests
         // 解析器是各站点自建客户端的属主：释放后站点客户端不再可用（连接池不泄漏）
         ((IDisposable)resolver).Dispose();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => resolver.Get("a").RequestAsync(new GetUserRequest { Id = 5 }));
+        // 释放后 Get 已解析站点：直接抛 ObjectDisposedException，不返回已销毁的客户端
+        // （此前返回死客户端，错误要到发送请求时才以 ObjectDisposedException 形式漏出）
+        Assert.Throws<ObjectDisposedException>(() => resolver.Get("a"));
 
-        Assert.IsType<ObjectDisposedException>(ex.Cause);
+        // 释放后 Get 从未解析过的站点同样抛错：否则会新建一个没有属主的客户端，连接池直接泄漏
+        Assert.Throws<ObjectDisposedException>(() => resolver.Get("never-resolved"));
     }
 
     // ---- 参数守卫与链式返回 ----

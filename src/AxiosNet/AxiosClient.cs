@@ -20,7 +20,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private int _inFlight;
     private int _resourcesDisposed;
 
-    /// <summary>对应 axios instance.defaults。</summary>
+    /// <summary>
+    /// 对应 axios instance.defaults。
+    /// <para>
+    /// 连接级选项（<see cref="AxiosConfig.WithCredentials"/> / <see cref="AxiosConfig.MaxRedirects"/> /
+    /// <see cref="AxiosConfig.Proxy"/> / <see cref="AxiosConfig.Credentials"/> /
+    /// <see cref="AxiosConfig.PoolOptions"/>）在<b>构造时已固化</b>进连接池 / Handler，
+    /// 构造后再修改不生效（校验与池配置都以构造期快照为准，不会有任何报错提示）——
+    /// 要改变它们请新建实例。其余配置（头、transform、超时等）随时可改。
+    /// </para>
+    /// </summary>
     public AxiosConfig Defaults { get; }
 
     /// <summary>对应 axios instance.interceptors。</summary>
@@ -96,6 +105,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
         else
         {
+            // 同时传入时静默取一个不如明确报错（共享池 / 注入 handler 两个分支同样抛错）
+            if (poolOptions is not null && Defaults.PoolOptions is not null)
+            {
+                throw AxiosException.InvalidOption(
+                    "不能同时传入 poolOptions 和 defaults.PoolOptions：两者描述的是同一个自建连接池，请只在一处配置。",
+                    Defaults);
+            }
+
             var effective = (poolOptions ?? Defaults.PoolOptions ?? new ConnectionPoolOptions()).Clone();
 
             // 池选项非法时在构造期就带配置抛错（池自身的校验没有 config 可挂），
@@ -119,6 +136,24 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 else
                 {
                     effective.MaxAutomaticRedirections = Defaults.MaxRedirects;
+                }
+            }
+
+            // defaults 上的代理 / 凭据是自建池的合法输入（与共享池分支的报错策略不同），
+            // 但两处都写时按请求校验比对的是 defaults，静默取一个会让写入方以为生效了
+            if (poolOptions is not null)
+            {
+                if (poolOptions.Proxy is not null && Defaults.Proxy is not null)
+                {
+                    throw AxiosException.InvalidOption(
+                        "不能同时在 poolOptions.Proxy 和 defaults.Proxy 上配置代理：请只在一处设置。", Defaults);
+                }
+
+                if (poolOptions.Credentials is not null && Defaults.Credentials is not null)
+                {
+                    throw AxiosException.InvalidOption(
+                        "不能同时在 poolOptions.Credentials 和 defaults.Credentials 上配置凭据：请只在一处设置。",
+                        Defaults);
                 }
             }
 
@@ -333,12 +368,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             ValidateRangeConfig(config);
 
             // 1) 请求拦截器：与 axios 一致，按注册逆序执行
+            //    注意：实例级选项（Proxy / Credentials / WithCredentials / MaxRedirects / PoolOptions）
+            //    在构造期已固化进连接池，拦截器里改它们不生效也不报错 —— 请新建实例配置
             foreach (var interceptor in Interceptors.Request.SnapshotReversed())
             {
                 AxiosConfig next;
                 try
                 {
-                    next = await interceptor.OnFulfilled(config).ConfigureAwait(false);
+                    // 返回 null Task 与下面返回 null 结果同罪：提前给出可定位的错误，
+                    // 不让 await null 炸成裸 NullReferenceException（同步结果请用 Task.FromResult）
+                    var pending = interceptor.OnFulfilled(config)
+                        ?? throw AxiosException.InvalidOption(
+                            "请求拦截器返回了 null Task：OnFulfilled / OnRejected 必须返回 Task<AxiosConfig> 实例"
+                            + "（同步结果请用 Task.FromResult 包装）。",
+                            config);
+                    next = await pending.ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -797,7 +841,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return;
         }
 
-        if (config.MaxRedirects == Defaults.MaxRedirects)
+        // 未显式写过（含快捷方法从 Defaults.Clone() 继承的未设置态）直接放行；
+        // 显式写过必须与池的生效值比对。不能拿属性默认值 5 做相等短路：
+        // poolOptions 配了别的重定向策略时，Defaults.MaxRedirects（未设置 = 5）与池生效值背离，
+        // 按请求显式写的值会被静默放行（文档承诺抛 ERR_BAD_OPTION_VALUE）。
+        if (!config.MaxRedirectsSet)
         {
             return;
         }

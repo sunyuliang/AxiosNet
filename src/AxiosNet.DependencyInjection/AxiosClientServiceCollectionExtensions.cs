@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -25,6 +26,13 @@ public static class AxiosClientServiceCollectionExtensions
     public static IServiceCollection AddAxiosClient(this IServiceCollection services, Action<AxiosConfig>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // TryAdd 语义必须连 configure 的副作用一起跳过：已有注册时「本次调用不生效」是完整的，
+        // 不能只丢注册却把 configure 跑一遍（序列化器注册、诊断埋点这类副作用会重复生效）
+        if (services.Any(d => d.ServiceType == typeof(AxiosClient)))
+        {
+            return services;
+        }
 
         var defaults = new AxiosConfig();
         configure?.Invoke(defaults);

@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text;
 
 namespace AxiosNet.Internal;
 
@@ -33,6 +34,45 @@ internal static class RequestContentType
         }
 
         return mediaType + "; charset=" + encoding.WebName;
+    }
+
+    /// <summary>
+    /// 解析媒体类型参数里显式声明的 charset 对应的 <see cref="Encoding"/>；
+    /// 未声明、平台无法识别该 charset 名时为 <c>null</c>（无法判定的不拦截、不替换）。
+    /// </summary>
+    public static Encoding? GetCharsetEncoding(string mediaType)
+    {
+        if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed))
+        {
+            return null;
+        }
+
+        foreach (var parameter in parsed.Parameters)
+        {
+            if (!parameter.Name.Equals("charset", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // 参数值可能带引号（charset="utf-8"）；charset 名本身不含引号，直接剥
+            var name = parameter.Value?.Trim().Trim('"');
+            if (string.IsNullOrEmpty(name))
+            {
+                return null;
+            }
+
+            try
+            {
+                return Encoding.GetEncoding(name);
+            }
+            catch (ArgumentException)
+            {
+                // 平台不识别的 charset 名（如自定义私有编码）：不在此判定
+                return null;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>从媒体类型参数里取 boundary（支持带引号的形式）；没有则返回 <c>null</c>。</summary>

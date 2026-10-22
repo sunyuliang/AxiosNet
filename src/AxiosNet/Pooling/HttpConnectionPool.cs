@@ -239,7 +239,14 @@ public sealed class HttpConnectionPool : IDisposable
         var now = DateTime.UtcNow;
         List<PooledEndpoint>? pending = null;
 
-        foreach (var pair in _endpoints)
+        // 按 LastUsedUtc 升序扫：EnsureCapacity 的 limit: 1 要驱逐的是「最久未使用」的空闲节点，
+        // ConcurrentDictionary 的枚举顺序是桶结构序，直接取第一个等于随机挑（可能驱逐刚空闲的热节点）。
+        // 这里的读值只决定顺序；是否可驱逐仍以锁内的复核为准（并发下读到旧值无正确性影响）。
+        // 快照 + 排序只跑在驱逐路径（达到上限或手动清理），不在租用热路径上。
+        var candidates = _endpoints.ToArray();
+        Array.Sort(candidates, static (a, b) => a.Value.LastUsedUtc.CompareTo(b.Value.LastUsedUtc));
+
+        foreach (var pair in candidates)
         {
             if (evicted >= limit)
             {
@@ -325,7 +332,9 @@ public sealed class HttpConnectionPool : IDisposable
             })
             .ToArray();
 
-        return new ConnectionPoolStatistics(_endpoints.Count, Interlocked.Read(ref _totalLeases), endpoints);
+        // EndpointCount 与 Endpoints 必须来自同一次快照：分两次读会在并发租用 / 驱逐 /
+        // 新建之间拿到自相矛盾的统计（计数大于或小于数组长度）
+        return new ConnectionPoolStatistics(endpoints.Length, Interlocked.Read(ref _totalLeases), endpoints);
     }
 
     /// <summary>

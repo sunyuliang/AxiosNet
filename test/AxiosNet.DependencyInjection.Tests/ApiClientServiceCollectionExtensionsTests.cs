@@ -51,6 +51,20 @@ public sealed class ApiClientServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddApiClient_CalledTwice_SecondConfigureDefaultsDoesNotRun()
+    {
+        // 与 AddAxiosClient 同一契约：第二次注册被 TryAdd 抑制时，configureDefaults 的
+        // 副作用（序列化器注册、诊断埋点）也不应发生
+        var calls = 0;
+        var services = new ServiceCollection();
+
+        services.AddApiClient("https://first.example.com", _ => calls++);
+        services.AddApiClient("https://second.example.com", _ => calls++);
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task AddApiClient_ConfigureAuthorization_HeaderSentWithRequest()
     {
         await using var server = TestHttpServer.Start(_ =>

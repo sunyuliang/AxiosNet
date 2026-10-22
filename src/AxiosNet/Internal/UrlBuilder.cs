@@ -86,6 +86,17 @@ internal static class UrlBuilder
             return baseAddress!.TrimEnd('/');
         }
 
+        // 协议相对 URL（//host/path）：axios 的 isAbsoluteURL 把它算绝对地址，浏览器按页面协议补全。
+        // 库没有页面协议，但有 baseAddress 时按它的 scheme 补全（两者都缺时原样返回，
+        // 交给 Build 抛 ERR_INVALID_URL —— 没有 scheme 的 //host 在任何 HTTP 栈里都解析不了）。
+        if (url.StartsWith("//", StringComparison.Ordinal))
+        {
+            var separator = baseAddress?.IndexOf("://", StringComparison.Ordinal) ?? -1;
+            return separator > 0
+                ? string.Concat(baseAddress.AsSpan(0, separator), ":".AsSpan(), url.AsSpan())
+                : url;
+        }
+
         if (string.IsNullOrWhiteSpace(baseAddress) || IsAbsoluteUrl(url))
         {
             return url;
@@ -431,21 +442,8 @@ internal static class ParamsSerializer
     };
 
     private static bool IsScalar(object value)
-    {
-        var type = value.GetType();
-        return type.IsPrimitive
-            || type.IsEnum
-            || value is string
-            || value is byte[]
-            || value is decimal
-            || value is DateTime
-            || value is DateTimeOffset
-            || value is DateOnly
-            || value is TimeOnly
-            || value is TimeSpan
-            || value is Guid
-            || value is Uri;
-    }
+        // byte[] 在 query 里走 base64（可逆），不算「标量」参与 Path/Header 校验
+        => value is byte[] || ScalarTypes.IsScalarType(value.GetType());
 
     private static string ScalarToString(object value)
     {

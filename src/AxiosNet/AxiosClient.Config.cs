@@ -35,10 +35,20 @@ public sealed partial class AxiosClient
         }
 
         // 合并之后再删：这样「按请求摘掉实例默认头」才有表达方式。
-        // 两边都没内容时跳过 —— Delete 对空集合是 no-op，却会把空集合创建出来。
-        if (perCall.HasRemoveHeaders && merged.HasHeaders)
+        // 实例默认（Defaults）自己的 RemoveHeaders 也在此生效 —— 否则同一份默认配置，
+        // 快捷方法会摘、RequestAsync 入口不摘，两条入口行为相反；Defaults 上写
+        // 「永远摘掉某个头」也才有意义。两边都没内容时跳过（空集合删除是 no-op）。
+        if (perCall.HasRemoveHeaders)
         {
             foreach (var name in perCall.RemoveHeaders)
+            {
+                merged.RemoveHeaders.Add(name);
+            }
+        }
+
+        if (merged.HasRemoveHeaders && merged.HasHeaders)
+        {
+            foreach (var name in merged.RemoveHeaders)
             {
                 merged.Headers.Delete(name);
             }

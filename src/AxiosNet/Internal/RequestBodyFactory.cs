@@ -26,6 +26,26 @@ internal static class RequestBodyFactory
         var appendCharset = config.RequestEncoding is not null;
         var mediaType = config.ContentType;
 
+        // 显式声明的 charset 是比 RequestEncoding 更具体的编码声明（ContentType「显式设置过以本项为准」）：
+        // 声明了就用它编码正文。仅对「本库会编成文本」的正文生效（string / 结构化数据）；
+        // 原始字节与 HttpContent 原样发送，编码不适用。
+        // 两者矛盾时无法同时满足 —— 头声明一个编码、正文是另一个编码，服务端按头解出的就是
+        // 乱码且没有任何报错，明确拦下（与 Content-Length 不一致的拦策一致）。
+        if (data is not null
+            && EncodesText(data)
+            && RequestContentType.GetCharsetEncoding(mediaType) is { } declared)
+        {
+            if (config.RequestEncoding is { } requested && declared.CodePage != requested.CodePage)
+            {
+                throw AxiosException.InvalidOption(
+                    $"ContentType 声明的 charset（{declared.WebName}）与 RequestEncoding（{requested.WebName}）不一致："
+                    + "两者描述的是同一个请求体的字符编码，请只保留一处（或改成一致）。",
+                    config);
+            }
+
+            encoding = declared;
+        }
+
         // multipart + 原始内容是矛盾的组合：没有 boundary 服务端无从解析，有条 boundary 也说明不了字段名。
         // 要发预序列化的 multipart 正文，请用 HttpContent 作为 data。
         if (data is not null and not HttpContent
@@ -165,4 +185,17 @@ internal static class RequestBodyFactory
     /// <summary>「内容原样发送」的类型：与结构化数据相对，不经过任何展平/序列化。</summary>
     private static bool IsRawContent(object data)
         => data is string or byte[] or ReadOnlyMemory<byte> or Memory<byte> or ArraySegment<byte> or Stream;
+
+    /// <summary>
+    /// 正文是否会由本库按 <see cref="Encoding"/> 编成文本（<see cref="string"/> 与结构化数据）；
+    /// 原始字节（byte[] / Memory / ArraySegment / Stream）与 <see cref="HttpContent"/> 原样发送，不算。
+    /// </summary>
+    private static bool EncodesText(object data)
+        => data is string
+            || (data is not HttpContent
+                && data is not byte[]
+                && data is not ReadOnlyMemory<byte>
+                && data is not Memory<byte>
+                && data is not ArraySegment<byte>
+                && data is not Stream);
 }

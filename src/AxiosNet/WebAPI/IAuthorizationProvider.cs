@@ -18,7 +18,7 @@ public sealed class ApiAuthContext
     /// <summary>本次请求模型实例（发送前，可读取其属性做条件授权）。</summary>
     public object Request { get; }
 
-    /// <summary>本次请求的模型类型（等价于 <c>Request.GetType()</c>，省一次虚调用）。</summary>
+    /// <summary>本次请求的模型类型（即 <c>Request.GetType()</c> 的结果；请求模型实例非空，可直接取）。</summary>
     public Type RequestType => Request.GetType();
 
     /// <summary>

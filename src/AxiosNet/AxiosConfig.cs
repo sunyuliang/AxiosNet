@@ -113,14 +113,18 @@ public sealed class AxiosConfig
         get => _contentType;
         set
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                _contentType = JsonContentType;
-                ContentTypeSet = true;
-                return;
-            }
+            // 非 null 引用类型：赋 null 是编程错误，不能静默变成「显式设置 application/json」
+            // —— 那会把序列化器自报的 MediaType 压掉（合并层只认 ContentTypeSet）
+            ArgumentNullException.ThrowIfNull(value);
 
             var trimmed = value.Trim();
+
+            if (trimmed.Length == 0)
+            {
+                throw new ArgumentException(
+                    "ContentType 不能为空白；不设置时头由序列化器自报（见 IContentSerializer.MediaType），请不要赋值。",
+                    nameof(value));
+            }
 
             // 注入的第一道闸：这个值最终经 TryAddWithoutValidation 写进 Content-Type，
             // 而 .NET 该 API 不拦 CR/LF（已抓包证实能注入任意额外请求头）。

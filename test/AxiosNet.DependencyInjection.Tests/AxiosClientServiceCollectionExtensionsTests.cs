@@ -90,6 +90,20 @@ public sealed class AxiosClientServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddAxiosClient_CalledTwice_SecondConfigureDoesNotRun()
+    {
+        // TryAdd 语义必须连 configure 的副作用一起跳过：第二次「不生效」是完整的，
+        // 不能只丢注册却把 configure 跑一遍（序列化器注册、诊断埋点会重复生效）
+        var calls = 0;
+        var services = new ServiceCollection();
+
+        services.AddAxiosClient(_ => calls++);
+        services.AddAxiosClient(_ => calls++);
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public void AddAxiosClient_ReturnsSameServiceCollection()
     {
         var services = new ServiceCollection();

@@ -430,7 +430,7 @@ internal static class ResponseReader
             {
                 return AxiosContent.Get(config, mediaType).Deserialize(bytes, dataType, config);
             }
-            catch (Exception ex) when (ex is not AxiosException)
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
                 // lenient（状态码不合法）：解析失败不抛，原样回字节——此时没有「文本」可回退。
                 if (lenient)
@@ -456,7 +456,7 @@ internal static class ResponseReader
         {
             return AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
         }
-        catch (Exception ex) when (ex is not AxiosException)
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
             if (lenient)
             {

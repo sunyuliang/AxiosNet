@@ -75,9 +75,10 @@ if (resolver.TryGet("b", out var b)) { /* b 站点已注册 */ }
 ```
 
 - `Get(name)`：未注册时抛 `InvalidOperationException`，消息列出全部已注册站点；`TryGet` 不抛
-- `Names`：已注册站点名，按注册顺序排列
+- `Names`：已注册站点名，按注册顺序排列（只读副本，外部无法改写解析器状态）
 - 命名站点**只经解析器暴露**，不注册未命名的 `ApiClient`（单站点场景用不带 name 的重载）
 - 站点名重复在**注册期**即抛 `InvalidOperationException`；各站点的底层客户端由解析器持有，随容器退出统一释放
+- 解析器**释放后**调 `Get` / `TryGet` 抛 `ObjectDisposedException`（已解析与未解析过的站点一致）；站点创建失败（`configure` 抛错、授权提供方解析失败）当场释放已建的连接池并原样透出异常
 - .NET 8+ 消费方也可完全用官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`），示例场景 6 有完整演示；两种方案可共存
 
 ### 容器授权：IAuthorizationProvider 单例自动装配
@@ -93,7 +94,7 @@ builder.Services.AddApiClient("https://api.example.com");
 
 ### 语义要点
 
-- **TryAdd 语义**：两者都是「已注册则不重复注册」（保留首次），重复调用不会建出第二个连接池；要替换请先移除原注册
+- **TryAdd 语义**：两者都是「已注册则不重复注册」（保留首次），重复调用不会建出第二个连接池，`configure` / `configureDefaults` 的回调也不再执行（不会留下「副作用生效、配置被丢弃」的半生效状态）；要替换请先移除原注册
 - **多站点（a/b/c）**：命名重载 `AddApiClient(name, baseAddress, ...)` + `IApiClientResolver`（见上节，全 TFM 可用）；.NET 8+ 亦可用官方键名服务 `AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]`（示例场景 6）
 - **生命周期归容器**：`using` 掉注入的客户端不会释放共享实例；单例随容器退出统一释放（自建模式与命名站点经内部持有项/解析器释放连接池）
 - **门面模式缺注册**：容器中没有 `AxiosClient` 时解析 `ApiClient` 抛 `InvalidOperationException`（与注册顺序无关）

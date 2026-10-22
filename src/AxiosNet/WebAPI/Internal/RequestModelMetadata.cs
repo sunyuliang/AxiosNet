@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using AxiosNet.Internal;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -95,6 +96,11 @@ internal sealed partial class RequestModelMetadata
     /// <summary>
     /// 汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定）；
     /// 没有任何查询参数时返回 <c>null</c>（省掉空字典）。
+    /// <para>
+    /// 「有绑定但值全为 null」同样返回 <c>null</c>：此时与「没有任何绑定」一样没有参数要发，
+    /// 两种模型形态必须行为一致。合并层对非 null <c>Params</c> 做整体替换，
+    /// 返回空字典会静默清掉实例默认参数（如 DI 场景配在 defaults 上的 api_key）。
+    /// </para>
     /// </summary>
     public Dictionary<string, object?>? ResolveQuery(object request)
     {
@@ -116,7 +122,7 @@ internal sealed partial class RequestModelMetadata
             }
         }
 
-        return query;
+        return query.Count > 0 ? query : null;
     }
 
     /// <summary>请求体的原始值；没有 <see cref="BodyAttribute"/> 属性或值为 <c>null</c> 时返回 <c>null</c>（不发请求体）。</summary>
@@ -152,10 +158,11 @@ internal sealed partial class RequestModelMetadata
         {
             return BuildCore(requestType);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
         {
-            // GetCustomAttribute 遇到特性构造函数抛错会原样透出 ArgumentException；
-            // 连同校验错误一起缓存，让 Get() 每次抛同一份消息
+            // GetCustomAttribute 遇到特性构造函数抛错会原样透出 ArgumentException / FormatException
+            // （如 [HttpApi("GE(T", ...)] 的 HttpMethod 构造）；连同校验错误一起缓存，
+            // 让 Get() 每次抛同一份消息，不把裸 FormatException 漏出统一错误模型
             return new RequestModelMetadata(ex.Message);
         }
     }
@@ -203,7 +210,8 @@ internal sealed partial class RequestModelMetadata
             }
 
             // 多特性并存：同一属性可同时绑定多处（路径 + 头 + 查询 + 请求体），
-            // 值只读一次，分别按各处的 null 规则应用
+            // 按各处的 null 规则分别应用。注意每个目标各读一次属性（getter 有副作用时
+            // 各处拿到的值可能不一致）—— 绑定是构建期的，请求期按目标分发
             if (path is not null)
             {
                 var name = ResolveBindingName(path.Name, property, "Path");
@@ -239,8 +247,8 @@ internal sealed partial class RequestModelMetadata
 
             if (kinds == 0)
             {
-                // 无标注 → 默认 Query；显式 QueryAttribute 也走这里取名
-                var name = ResolveBindingName(query?.Name ?? "", property, "Query");
+                // 无标注 → 默认 Query（ kinds == 0 时没有任何参数特性，名字只能回退属性名）
+                var name = ResolveBindingName(string.Empty, property, "Query");
                 if (!seenQueryNames.Add(name))
                 {
                     throw DuplicateBinding(requestType, name, "Query");
@@ -249,10 +257,7 @@ internal sealed partial class RequestModelMetadata
                 queries.Add(new PropertyBinding(name, property));
 
                 // 「未标注」与「显式 [Query]」要区分：默认 Body 只认前者
-                if (query is null)
-                {
-                    unannotated.Add(property);
-                }
+                unannotated.Add(property);
             }
             else if (query is not null)
             {
@@ -400,22 +405,10 @@ internal sealed partial class RequestModelMetadata
         => method == HttpMethod.Post || method == HttpMethod.Put || method == HttpMethod.Patch;
 
     /// <summary>
-    /// 标量判定（默认 Body 的护栏）：基元类型、枚举、string、decimal、DateTime/DateTimeOffset、
-    /// TimeSpan、Guid 及其可空形态。这些值作为「整个请求体」没有合理语义，保持 Query。
+    /// 标量判定（默认 Body 的护栏）：见 <see cref="ScalarTypes.IsScalarType"/>。
+    /// 这些值作为「整个请求体」没有合理语义，保持 Query。
     /// </summary>
-    private static bool IsScalarType(Type type)
-    {
-        var t = Nullable.GetUnderlyingType(type) ?? type;
-
-        return t.IsPrimitive
-            || t.IsEnum
-            || t == typeof(string)
-            || t == typeof(decimal)
-            || t == typeof(DateTime)
-            || t == typeof(DateTimeOffset)
-            || t == typeof(TimeSpan)
-            || t == typeof(Guid);
-    }
+    private static bool IsScalarType(Type type) => ScalarTypes.IsScalarType(type);
 
     /// <summary>基础类型之外统一走 ToString（带 culture 的类型少见；声明式模型不为它们引入 format 配置面）。</summary>
     private static string ToText(object value)

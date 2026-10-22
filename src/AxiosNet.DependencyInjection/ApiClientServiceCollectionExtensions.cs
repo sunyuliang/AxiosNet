@@ -1,3 +1,4 @@
+using System.Linq;
 using AxiosNet.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -37,6 +38,12 @@ public static class ApiClientServiceCollectionExtensions
         if (string.IsNullOrWhiteSpace(baseAddress))
         {
             throw new ArgumentException("baseAddress 不能为空白。", nameof(baseAddress));
+        }
+
+        // 与 AddAxiosClient 一致：已有 ApiClient 注册时整体不生效（含 configureDefaults 的副作用）
+        if (services.Any(d => d.ServiceType == typeof(ApiClient)))
+        {
+            return services;
         }
 
         var defaults = new AxiosConfig { BaseAddress = baseAddress };
