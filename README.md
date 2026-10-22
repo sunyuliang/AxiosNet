@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-573%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-576%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -238,7 +238,7 @@ await http.GetAsync("search", c => c.Params = "a=1&b=2");   // ?a=1&b=2
 await http.GetAsync("search", c => c.Params = new[] { 1, 2 }); // ?[0]=1&[1]=2
 ```
 
-> 默认媒体类型是 JSON，因此发送二进制载荷时请显式设置 `c.ContentType = "application/octet-stream"`（库不会根据 `byte[]`/`Stream` 猜测类型）。
+> 默认媒体类型是 JSON，因此发送二进制载荷时请显式设置 `c.ContentType = "application/octet-stream"`（库不会根据 `byte[]`/`Stream` 猜测类型）。如果整个应用都固定用某种二进制格式（Protobuf / MessagePack…），更省事的做法是注入实现了 `SerializeToBytes` + `MediaType` 的序列化器（见[自定义序列化](#自定义序列化与数据转换)）——对象直接传，头与正文自动对齐。
 
 multipart 补充说明：
 
@@ -592,13 +592,13 @@ await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 
 ### 内容序列化（默认 JSON，任意格式可注入）
 
-请求体 / 响应体的编解码由 `IContentSerializer` 决定，默认实现是 System.Text.Json。接口是 **2 + 1** 个方法：文本格式实现前两个，二进制格式覆写第三个（它自带默认实现，文本序列化器不用管）。另有一个**可选**属性 `MediaType`（同样带默认实现）：序列化器自报「我用哪个媒体类型」，调用方没设 `ContentType` 时库就拿它写请求头：
+请求体 / 响应体的编解码由 `IContentSerializer` 决定，默认实现是 System.Text.Json。接口是 **2 + 2** 个方法：文本格式实现前两个；二进制格式（Protobuf / MessagePack / CBOR…）改用一对字节通道——请求出口 `SerializeToBytes` + 响应入口 `Deserialize(ReadOnlyMemory<byte>)`（都自带默认实现，文本序列化器不用管）。另有一个**可选**属性 `MediaType`（同样带默认实现）：序列化器自报「我用哪个媒体类型」，调用方没设 `ContentType` 时库就拿它写请求头（文本与字节两条通道共用这次决策）：
 
 ```csharp
 public interface IContentSerializer
 {
     // 可选：本格式的媒体类型。null（默认）= 不自报，沿用 config.ContentType。
-    // 只影响请求头，且只在调用方没显式设置 ContentType 时生效。
+    // 只影响请求头，且只在调用方没显式设置 ContentType 时生效（文本 / 字节两条通道都算）。
     string? MediaType => null;
 
     string Serialize(object? value, Type type, AxiosConfig config);
@@ -606,7 +606,13 @@ public interface IContentSerializer
     // 文本响应（含无 Content-Type）
     object? Deserialize(string text, Type type, AxiosConfig config);
 
-    // 二进制响应（Content-Type 声明为非文本）：默认按 UTF-8 解码转调上面那个，二进制格式覆写它
+    // ── 以下两个是二进制格式的字节通道，默认实现 = 「本格式没有字节形态」，文本序列化器不用管 ──
+
+    // 请求出口：返回 null 走 Serialize 的文本通道；返回字节则原样发送（不编码、不补 charset）。
+    // 与 MediaType 配对：注入一个 protobuf 序列化器，请求头与正文自动对齐。
+    ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
+
+    // 响应入口（Content-Type 声明为非文本）：默认按 UTF-8 解码转调文本入口，二进制格式覆写它
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
 }
@@ -619,7 +625,8 @@ public interface IContentSerializer
 | 请求 `string` / `byte[]` / `Stream` / `HttpContent` | 原样发送，只套 `ContentType` |
 | 请求 表单 / multipart | 库按 `ContentType` 组装（**不经过序列化器**） |
 | 请求 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…） | 框架直接取文本写入（**不经过序列化器**） |
-| 请求 对象 / 字典 / dynamic / 集合 | `Serialize`（字典与对象是同一套逻辑，不会被展平或当成标量） |
+| 请求 对象 / 字典 / dynamic / 集合（文本格式） | `Serialize`（字典与对象是同一套逻辑，不会被展平或当成标量） |
+| 请求 对象 / 字典 / dynamic / 集合（二进制格式） | `SerializeToBytes`，字节原样发送；返回 `null` 才走文本 |
 | 响应 `Stream` / `byte[]` | 框架直接给 |
 | 响应 `string` | 框架直接给文本 |
 | 响应 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…） | 框架直接解析文本 |
@@ -704,7 +711,7 @@ var user = (await http.GetAsync<User>("users/1")).Data;                         
 - 反序列化**禁用 DTD**（防 XXE / 十亿笑声），失败统一是 `ERR_BAD_RESPONSE`；
 - XmlSerializer 本身的限制照旧：目标类型要 **public + 公开无参构造**、只序列化公开可读写属性/字段；匿名类型、接口、`Dictionary<,>` 不支持 —— 请用 DTO。
 
-其它格式（YAML / CSV / MessagePack…）自己实现两个方法即可：
+其它文本格式（YAML / CSV …）自己实现两个方法即可：
 
 ```csharp
 using AxiosNet.Serialization;
@@ -726,10 +733,10 @@ AxiosContent.Serializer = new YamlSerializer();          // 全局；也可按�
 
 边界说明：
 
-- **请求头可以由序列化器自报**：`MediaType` 非 `null` 且调用方没显式设 `ContentType` 时，库把它写进请求头（对应 axios 默认 `transformRequest` 里的 `headers.setContentType(..., false)`）。显式设过就绝不覆盖。
+- **请求头可以由序列化器自报**：`MediaType` 非 `null` 且调用方没显式设 `ContentType` 时，库把它写进请求头（对应 axios 默认 `transformRequest` 里的 `headers.setContentType(..., false)`），文本与字节两条通道都生效。显式设过就绝不覆盖。
 - **文本 / 二进制由响应 `Content-Type` 判定**（只看媒体类型主值，忽略 `charset` / `boundary` 等参数）：`text/*`、`application/json`、`application/xml`、`+json` / `+xml` / `+yaml`、YAML、CSV 等算文本，其余（`application/octet-stream`、`image/png`、`application/x-protobuf`…）算二进制；**没有 Content-Type 视为文本**。响应方向不看 `MediaType`，头是权威。
-- **二进制响应不解码**：业务对象走 `Deserialize(ReadOnlyMemory<byte>)` 拿到原始字节（Protobuf / MessagePack / CBOR 零拷贝接入）；非泛型调用直接给 `byte[]`。
-- **请求方向的二进制**由调用方自己序列化成 `byte[]` 作为 `data` 传入（原样发送），`Serialize` 只承载文本。
+- **二进制响应不解码**：业务对象走 `Deserialize(ReadOnlyMemory<byte>)` 拿到原始字节（Protobuf / MessagePack / CBOR 零拷贝接入）；非泛型调用直接给 `byte[]`。字节入口的默认实现按 UTF-8 解码转调文本入口，因此文本序列化器不用实现它（也兼容把 JSON 错标成 `octet-stream` 的服务端）。
+- **二进制格式的请求出口**：覆写 `SerializeToBytes` 返回线格式字节，库原样发送（不编码、不补 charset），头取自报的 `MediaType`——与响应字节入口配对后，注入一个序列化器就完成整条链路换格式。返回 `null` 回落文本通道；字节的内存必须存活到整条请求结束（不要返回 ArrayPool 租约）。**文本通道无法承载任意字节**，二进制格式的 `Serialize` 实现成抛 `NotSupportedException` 即可。
 - **请求方向的基础类型不进序列化器**：`PostAsync("url", 42)` 发的是 `42`、`true` 发 `true`、枚举发名字。裸标量没有「格式」可言（XML / YAML 无法表达无名的根标量），交给序列化器只会让每个实现都重复一遍标量特判。因此它也不参与 `MediaType` 回写：头保持 `ContentType`（默认 `application/json`，而裸 `42` 恰好是合法 JSON）。日期时间用往返格式（保留 Kind 与 tick），不像表单那样折成毫秒级 UTC。
 - **表单 / multipart 不经过序列化器**：字段名只看 `FormFieldNameSelector` 与属性上的 `[JsonPropertyName]`（忽略用 `[JsonIgnore]`）。
 - **`dynamic` 依赖 JSON**：非 JSON 响应下 `GetAsync<dynamic>` 会抛 `ERR_BAD_RESPONSE`；要原文请用 `ResponseType.Text` 或非泛型 `GetAsync()`。
@@ -1127,7 +1134,7 @@ using var client3 = Axios.Create(
 - `maxRate`：上传、下载单向限速（字节/秒）
 - `paramsSerializer` / `formFieldNameSelector`：自定义查询串与表单字段名（对应 axios `formSerializer` 的字段名定制）
 - `transformRequest` / `transformResponse`：请求前、响应后数据变换链（线程安全，可在运行期增删）
-- 🔧 **可插拔内容序列化**：默认 JSON（System.Text.Json），**内置 XML**（`XmlContentSerializer`）；`JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；实现 `IContentSerializer`（文本格式两个方法 + 二进制格式一个字节入口 + 可选的 `MediaType` 自报媒体类型）即可换成 YAML / Protobuf / 换掉 JSON 引擎（`AxiosContent.Serializer` 全局注入），请求头由序列化器自动对齐
+- 🔧 **可插拔内容序列化**：默认 JSON（System.Text.Json），**内置 XML**（`XmlContentSerializer`）；`JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；实现 `IContentSerializer`（文本格式两个方法 + 二进制格式一对字节通道 `SerializeToBytes` / `Deserialize(bytes)` + 可选的 `MediaType` 自报媒体类型）即可换成 YAML / Protobuf / 换掉 JSON 引擎（`AxiosContent.Serializer` 全局注入），请求头由序列化器自动对齐
 - `postForm` / `putForm` / `patchForm`：一行发 `multipart/form-data` 或表单
 - 完整响应结构：`Data / Status / StatusText / Headers / Config / Request`
 
@@ -1229,8 +1236,7 @@ using var client3 = Axios.Create(
 21. **Bearer Token 认证**：登录签发、请求拦截器自动携带 `Authorization`、服务端验签端点，以及 401 后「刷新令牌 → 重试一次」的完整闭环（含登出吊销后刷新失败向上抛错）
 22. **请求签名**：HMAC-SHA256(token + 时间戳 + nonce + 方法 + 路径 + 请求体哈希)，演示防篡改（改请求体）与防重放（nonce 一次性 + 时间戳窗口）
 23. **XML 序列化（内置）**：换上 `XmlContentSerializer.Instance` —— 请求体、强类型响应、非泛型原文三条路径，标量请求体不经过序列化器，`AxiosContent.Register` 的自动模式（按 Content-Type 选序列化器），以及表单/multipart 与序列化器解耦
-24. **二进制格式（字节入口）**：实现 `IContentSerializer` 的字节入口解析 `application/octet-stream`（零解码，Protobuf / MessagePack 同理），对比非泛型 / `byte[]` 两条路径，并演示二进制请求体由调用方序列化后原样发送
-24. **二进制格式（字节入口）**：实现 `IContentSerializer` 的字节入口解析 `application/octet-stream`（零解码，Protobuf / MessagePack 同理），对比非泛型 `/ byte[]` 两条路径，并演示二进制请求体由调用方序列化后原样发送
+24. **二进制格式（字节通道双向）**：序列化器覆写 `SerializeToBytes` + 字节入口 —— 请求对象自动变字节正文并自报 `application/octet-stream`，响应零解码直达字节入口；对比非泛型 / `byte[]` 路径，并演示调用方显式 `ContentType` 覆盖自报头
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1251,7 +1257,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 573 个用例（共 1146 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 576 个用例（共 1152 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1264,7 +1270,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.slnx
 
-# 运行全部 573 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 1146 次）
+# 运行全部 576 个 xUnit 单元测试（测试项目为 net8.0 + net6.0 双目标，实际执行 1152 次）
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1290,7 +1296,7 @@ dotnet build AxiosNet.slnx -c Release
 - 泛型路由：`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
 - 自定义 Handler：`PROPFIND` 等自定义 `HttpMethod` 透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
 - 故障与并发回归（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
-- 序列化可插拔（`JsonCustomizationTests` / `ContentSerializerTests`）：自定义 `IContentSerializer` 驱动请求/响应、实例级 `JsonSerializerOptions`、transform 列表并发增删；`IContentSerializer` 的 XML 端到端、基础类型不经过序列化器、非泛型 `JsonElement`/原文、表单与序列化器解耦、XML 下 dynamic 明确失败、二进制响应走字节入口（非 UTF-8 尾字节原样到达、零解码）与文本序列化器在 `octet-stream` 下的默认兜底、内置 XML 序列化器（UTF-8 声明 / 无命名空间噪音 / `[XmlRoot]` 命名空间 / 拒绝 DTD）、`JsonDocument` 目标与序列化器绑定的边界、标量请求体与字典归属、序列化器自报 `MediaType` 回填请求头（显式/实例默认 ContentType 优先、默认 null 零破坏）
+- 序列化可插拔（`JsonCustomizationTests` / `ContentSerializerTests`）：自定义 `IContentSerializer` 驱动请求/响应、实例级 `JsonSerializerOptions`、transform 列表并发增删；`IContentSerializer` 的 XML 端到端、基础类型不经过序列化器、非泛型 `JsonElement`/原文、表单与序列化器解耦、XML 下 dynamic 明确失败、二进制响应走字节入口（非 UTF-8 尾字节原样到达、零解码）与文本序列化器在 `octet-stream` 下的默认兜底、二进制请求出口（对象 → 字节正文 + 自报 `MediaType`、不补 charset、显式 `ContentType` 优先、表单/标量不进字节通道）、内置 XML 序列化器（UTF-8 声明 / 无命名空间噪音 / `[XmlRoot]` 命名空间 / 拒绝 DTD）、`JsonDocument` 目标与序列化器绑定的边界、标量请求体与字典归属、序列化器自报 `MediaType` 回填请求头（显式/实例默认 ContentType 优先、默认 null 零破坏）
 - 安全与加固（`HardeningTests`）：请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖、流式正文截断与 `Timeout=0` 下的统一 `ERR_NETWORK`、超大 `Timeout` 收敛到 49.7 天、负值限制项 fail-fast、params 落在 fragment 之前、`PostAsync(url, null)` 的 `ArgumentNullException`、流式与 chunked 的 `maxContentLength`、跨 origin 共享 Cookie、取消异常保留 `Cause`、params 传 `JsonElement`、params 传 `byte[]`（base64）、池 origin 上限与优雅 `Dispose`（在途请求不被关闭打断、关闭竞态不漏裸 `ObjectDisposedException`）
 
 ## 整体流程
@@ -1329,7 +1335,8 @@ dotnet build AxiosNet.slnx -c Release
 │ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
 │ UrlBuilder：baseURL ⊕ url ⊕ params 序列化                    │
 │ RequestBodyFactory 按 ContentType 分派：                     │
-│   对象/字典/dynamic/集合 → Serialize（JSON / XML / 自定义）  │
+│   对象/字典/dynamic/集合 → SerializeToBytes 或 Serialize     │
+│     （字节通道优先，null 回落文本；头取 MediaType 自报）     │
 │   标量 → 直取文本（不经过序列化器）                          │
 │   表单/multipart → 库内组装（不经过序列化器）                │
 │   string/byte[]/Stream/HttpContent → 原样透传                │
@@ -1430,13 +1437,13 @@ dotnet build AxiosNet.slnx -c Release
 │     ├─ FormFile.cs             # multipart 文件部件
 │     ├─ ResponseType.cs / AxiosAuth.cs          # 响应形态 / Basic 认证
 │     ├─ Interceptors/           # 请求/响应拦截器管理
-│     ├─ Serialization/          # IContentSerializer（2 个文本方法 + 1 个字节入口 + MediaType）+ 内置 JSON / XML 实现
+│     ├─ Serialization/          # IContentSerializer（2 个文本方法 + 一对字节通道 + MediaType）+ 内置 JSON / XML 实现
 │     ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON、反射缓存、媒体类型判定、状态码文本
 │     └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit 单元测试（573 个用例 × net6.0 / net8.0 双目标 = 1146 次执行）
+   └─ AxiosNet.Tests/            # xUnit 单元测试（576 个用例 × net6.0 / net8.0 双目标 = 1152 次执行）
 ```
 
 ## License

@@ -35,7 +35,7 @@ public sealed class BinaryOrder
 
 /// <summary>
 /// 格式无关序列化抽象（<see cref="IContentSerializer"/>）：
-/// 文本格式两个方法，二进制格式再加一个字节入口；基础类型 / 字节 / 流 / dynamic 由框架处理。
+/// 文本格式两个方法，二进制格式再加一对字节通道（请求出口 + 响应入口）；基础类型 / 字节 / 流 / dynamic 由框架处理。
 /// </summary>
 public sealed class ContentSerializerTests
 {
@@ -202,6 +202,59 @@ public sealed class ContentSerializerTests
 
         Assert.Equal(5, response.Data!.Id);
         Assert.Equal("map", response.Data.Name);
+    }
+
+    [Fact]
+    public async Task BinarySerializer_ObjectRequest_GoesThroughByteChannel_WithSelfReportedContentType()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: AxiosContentType.OctetStream));
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new BinaryOrderSerializer() });
+
+        // RequestEncoding 只作用于文本通道：字节正文不做编码，Content-Type 也不补 charset
+        var response = await client.PostAsync<BinaryOrder>(
+            server.Url + "echo",
+            new BinaryOrder { Id = 3, Name = "cat", Tail = 0xAB },
+            c => c.RequestEncoding = Encoding.UTF32);
+
+        var sent = server.Received[0];
+        Assert.Equal(BinaryOrderSerializer.Write(new BinaryOrder { Id = 3, Name = "cat", Tail = 0xAB }), sent.Body);
+        Assert.Equal(AxiosContentType.OctetStream, sent.Headers["Content-Type"]);
+
+        // 回显响应同样是 octet-stream → 字节入口解析回对象：一个序列化器覆盖请求与响应两个方向
+        Assert.Equal(3, response.Data!.Id);
+        Assert.Equal("cat", response.Data.Name);
+        Assert.Equal(0xAB, response.Data.Tail);
+    }
+
+    [Fact]
+    public async Task ByteChannel_ExplicitContentType_WinsOverSelfReported()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: "application/x-custom"));
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new BinaryOrderSerializer() });
+
+        await client.PostAsync(
+            server.Url + "echo",
+            new BinaryOrder { Id = 1, Name = "x", Tail = 1 },
+            c => c.ContentType = "application/x-custom");
+
+        // 正文仍是序列化器产出的字节，但头以调用方为准（与文本通道的 ContentTypeSet 优先级一致）
+        Assert.Equal("application/x-custom", server.Received[0].Headers["Content-Type"]);
+        Assert.Equal(BinaryOrderSerializer.Write(new BinaryOrder { Id = 1, Name = "x", Tail = 1 }), server.Received[0].Body);
+    }
+
+    [Fact]
+    public async Task ByteChannel_NotUsedForFormMultipartAndScalars()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        // SerializeToBytes 对一切都返回字节：只要表单 / 标量误入序列化器，正文就会变成 1,2,3
+        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new GreedyByteSerializer() });
+
+        await client.PostAsync(server.Url + "form", new Dictionary<string, object?> { ["a"] = 1 },
+            c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
+        Assert.Equal("a=1", Body(server.Received[0]));
+
+        await client.PostAsync(server.Url + "scalar", 42);
+        Assert.Equal("42", Body(server.Received[1]));
     }
 
     [Fact]
@@ -487,11 +540,16 @@ public sealed class ContentSerializerTests
             => throw new NotSupportedException();
     }
 
-    /// <summary>二进制格式（这里用「int32 + 长度前缀 + 尾部字节」代替 protobuf）。</summary>
+    /// <summary>二进制格式（这里用「int32 + 长度前缀 + 尾部字节」代替 protobuf）：请求出口 + 响应入口都是字节。</summary>
     private sealed class BinaryOrderSerializer : IContentSerializer
     {
+        public string? MediaType => AxiosContentType.OctetStream;
+
         public string Serialize(object? value, Type type, AxiosConfig config)
-            => throw new NotSupportedException("二进制格式由调用方序列化成 byte[] 后直接作为 data 发送。");
+            => throw new NotSupportedException("二进制格式不支持文本序列化。");
+
+        public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config)
+            => value is BinaryOrder order ? Write(order) : null;
 
         public object? Deserialize(string text, Type type, AxiosConfig config)
             => throw new InvalidOperationException("二进制响应不应进入文本入口。");
@@ -507,6 +565,27 @@ public sealed class ContentSerializerTests
                 Tail = span[5 + length]
             };
         }
+
+        internal static byte[] Write(BinaryOrder order)
+        {
+            var name = Encoding.UTF8.GetBytes(order.Name);
+            var buffer = new byte[5 + name.Length + 1];
+            BitConverter.GetBytes(order.Id).CopyTo(buffer, 0);
+            buffer[4] = (byte)name.Length;
+            name.CopyTo(buffer, 5);
+            buffer[5 + name.Length] = order.Tail;
+            return buffer;
+        }
+    }
+
+    /// <summary>对一切结构化数据都产出固定字节：用来证明表单 / multipart / 标量不会进入序列化器。</summary>
+    private sealed class GreedyByteSerializer : IContentSerializer
+    {
+        public string Serialize(object? value, Type type, AxiosConfig config) => throw new NotSupportedException();
+
+        public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => new byte[] { 1, 2, 3 };
+
+        public object? Deserialize(string text, Type type, AxiosConfig config) => throw new NotSupportedException();
     }
 
     [Fact]

@@ -8,15 +8,22 @@ namespace AxiosNet.Simple;
 /// 24 号示例用的极简二进制格式序列化器（真实项目里换成 Protobuf / MessagePack / CBOR）。
 /// <para>
 /// 线格式（小端）：<c>[int32 Id][uint8 NameLen][Name(UTF-8)][int32 Quantity][int32 AmountCents]</c>。
-/// 这里不引第三方依赖，只为演示 <see cref="IContentSerializer"/> 的<b>字节入口</b>：
-/// 响应 Content-Type 非文本时，库不做任何解码，原始字节直达 <see cref="Deserialize(ReadOnlyMemory{byte},Type,AxiosConfig)"/>。
+/// 请求方向覆写 <see cref="IContentSerializer.SerializeToBytes"/>（对象 → 字节正文 + 自报媒体类型），
+/// 响应方向覆写字节入口 —— 两个方向都不经过文本，整条链路换格式只需这一处注入。
 /// </para>
 /// </summary>
 public sealed class OrderBinarySerializer : IContentSerializer
 {
-    /// <summary>请求方向的二进制体由调用方自己序列化成 byte[] 后作为 data 传入，本方法不会被调用。</summary>
+    /// <summary>本格式的媒体类型：请求方向自报为 Content-Type（调用方显式设置过时以调用方为准）。</summary>
+    public string? MediaType => AxiosContentType.OctetStream;
+
+    /// <summary>二进制格式没有文本形态，文本入口不该被触达。</summary>
     public string Serialize(object? value, Type type, AxiosConfig config)
-        => throw new NotSupportedException("二进制请求体请调用方自行序列化成 byte[] 后作为 data 传入（库原样发送）。");
+        => throw new NotSupportedException("二进制格式不支持文本序列化，请覆写 SerializeToBytes。");
+
+    /// <summary>请求出口：结构化数据 → 线格式字节。返回 null 的类型回落文本入口（本实现里必然抛出）。</summary>
+    public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config)
+        => value is BinaryOrder order ? Write(order) : null;
 
     /// <summary>二进制格式没有文本形态，文本入口不该被触达（Content-Type 声明非文本时库走字节入口）。</summary>
     public object? Deserialize(string text, Type type, AxiosConfig config)
@@ -25,7 +32,7 @@ public sealed class OrderBinarySerializer : IContentSerializer
     public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Parse(data.Span);
 
-    /// <summary>编码（服务端与「请求方向」示例共用）。</summary>
+    /// <summary>编码（服务端与「请求方向」共用）。</summary>
     public static byte[] Write(BinaryOrder order)
     {
         var name = Encoding.UTF8.GetBytes(order.Name);

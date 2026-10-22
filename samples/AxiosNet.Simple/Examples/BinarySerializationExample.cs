@@ -3,14 +3,15 @@ using AxiosNet;
 namespace AxiosNet.Simple.Examples;
 
 /// <summary>
-/// 24. 二进制格式：响应 Content-Type 非文本时，库<b>不解码</b>，原始字节直达序列化器的字节入口
-/// （Protobuf / MessagePack / CBOR / Avro 同理）；请求方向的二进制体由调用方自己序列化。
+/// 24. 二进制格式：请求与响应全程不经过文本（Protobuf / MessagePack / CBOR / Avro 同理）——
+/// 请求对象 → <see cref="IContentSerializer.SerializeToBytes"/> + 自报 Content-Type；
+/// 响应 Content-Type 非文本 → 原始字节直达 <see cref="IContentSerializer.Deserialize(ReadOnlyMemory{byte},Type,AxiosConfig)"/>。
 /// </summary>
 public sealed class BinarySerializationExample : IExample
 {
     public int Number => 24;
 
-    public string Title => "二进制格式：字节入口（protobuf / MessagePack 同理）";
+    public string Title => "二进制格式：字节通道双向（protobuf / MessagePack 同理）";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -32,27 +33,24 @@ public sealed class BinarySerializationExample : IExample
         var bytes = (byte[])raw.Data!;
         Console.WriteLine($"  非泛型响应: {bytes.Length} 字节, 首字节 0x{bytes[0]:X2}, Content-Type={raw.GetHeader("Content-Type")}");
 
-        // 3) 显式 byte[]：同样零解码（对比：文本响应才需要解码成字符串）
-        var explicitBytes = await client.GetAsync<byte[]>("orders/1/binary");
-        Console.WriteLine($"  显式 byte[]: {explicitBytes.Data!.Length} 字节");
-
-        // 4) 请求方向：二进制体由调用方自己序列化，库只套媒体类型原样发送（/echo 原样回显）
-        var payload = OrderBinarySerializer.Write(new BinaryOrder
+        // 3) 请求方向：对象 → 字节正文，Content-Type 由序列化器自报（无需手动设置），/echo 原样回显
+        var echoed = await client.PostAsync<BinaryOrder>("echo", new BinaryOrder
         {
             Id = 9,
             Name = "bob",
             Quantity = 1,
             AmountCents = 500
         });
+        Console.WriteLine($"  二进制往返: Id={echoed.Data!.Id}, Name={echoed.Data.Name}, Qty={echoed.Data.Quantity}, Amount={echoed.Data.AmountCents / 100m:0.00}");
 
-        var echoed = await client.PostAsync<byte[]>(
+        // 4) 调用方显式设置过 Content-Type 时以调用方为准：序列化器照常产出字节正文
+        var forced = await client.PostAsync<byte[]>(
             "echo",
-            payload,
-            c => c.ContentType = AxiosContentType.OctetStream);
+            new BinaryOrder { Id = 10, Name = "cat", Quantity = 2, AmountCents = 900 },
+            c => c.ContentType = "application/x-custom-binary");
+        Console.WriteLine($"  显式 Content-Type 覆盖自报: {forced.Data!.Length} 字节, 回显头={forced.GetHeader("Content-Type")}");
 
-        Console.WriteLine($"  二进制请求体回显: {echoed.Data!.Length} 字节（与发送一致: {echoed.Data.AsSpan().SequenceEqual(payload)}）");
-
-        Console.WriteLine("  提示：文本序列化器不必实现字节入口 —— 接口里默认按 UTF-8 解码转调文本入口，");
-        Console.WriteLine("        所以把 JSON 错标成 octet-stream 的服务端也能照常工作。");
+        Console.WriteLine("  提示：文本序列化器两个字节入口都不必实现 —— 请求出口默认 null（走文本），");
+        Console.WriteLine("        响应入口默认按 UTF-8 解码转调文本入口，错标成 octet-stream 的 JSON 服务端也能照常工作。");
     }
 }

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-573%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-576%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -234,7 +234,7 @@ await http.GetAsync("search", c =>
     });
 ```
 
-> The default media type is JSON, so set `c.ContentType = "application/octet-stream"` explicitly when sending a binary payload — the library never guesses from `byte[]`/`Stream`.
+> The default media type is JSON, so set `c.ContentType = "application/octet-stream"` explicitly when sending a binary payload — the library never guesses from `byte[]`/`Stream`. When the whole app speaks one binary format (Protobuf / MessagePack…), the easier route is injecting a serializer with `SerializeToBytes` + `MediaType` (see [Custom serialization](#custom-serialization-and-data-transforms)) — pass objects directly and the header + body align automatically.
 
 Additional notes on multipart:
 
@@ -575,13 +575,14 @@ await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 
 ### Content serialization (JSON by default, any format pluggable)
 
-Request/response encoding is owned by `IContentSerializer`; the default implementation is System.Text.Json. The interface is **2 + 1** methods: text formats implement the first two, binary formats override the third (it ships a default body, so text serializers can ignore it). There is also an **optional** `MediaType` property (defaulted too): the serializer declares which media type it speaks, and the library writes it into the request header when the caller did not set `ContentType`:
+Request/response encoding is owned by `IContentSerializer`; the default implementation is System.Text.Json. The interface is **2 + 2** methods: text formats implement the first two; binary formats (Protobuf / MessagePack / CBOR…) use a pair of byte-channel hooks instead — the request outlet `SerializeToBytes` plus the response inlet `Deserialize(ReadOnlyMemory<byte>)` (both ship default bodies, so text serializers can ignore them). There is also an **optional** `MediaType` property (defaulted too): the serializer declares which media type it speaks, and the library writes it into the request header when the caller did not set `ContentType` (one decision shared by the text and byte channels):
 
 ```csharp
 public interface IContentSerializer
 {
     // optional: this format's media type. null (default) = do not self-declare.
-    // Affects the request header only, and only when the caller never set ContentType.
+    // Affects the request header only, and only when the caller never set ContentType
+    // (applies to both the text and byte channels).
     string? MediaType => null;
 
     string Serialize(object? value, Type type, AxiosConfig config);
@@ -589,7 +590,15 @@ public interface IContentSerializer
     // textual responses (no Content-Type counts as textual)
     object? Deserialize(string text, Type type, AxiosConfig config);
 
-    // binary responses (Content-Type declared non-textual): default decodes UTF-8 and
+    // ── the byte channel for binary formats; both defaults mean "this format has no
+//    byte form", so text serializers can ignore them ──
+
+    // request outlet: return null to fall back to the text channel (Serialize);
+    // return bytes and they are sent as-is (no text encoding, no charset appended).
+    // Pairs with MediaType: inject one protobuf serializer and header + body align automatically.
+    ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
+
+    // response inlet (Content-Type declared non-textual): default decodes UTF-8 and
     // delegates above; binary formats override it
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
@@ -603,7 +612,8 @@ Only **business objects** enter the serializer; everything else is dispatched by
 | Request `string` / `byte[]` / `Stream` / `HttpContent` | Sent as-is, only the `ContentType` header is applied |
 | Request form / multipart | Assembled by the library from `ContentType` (**never through the serializer**) |
 | Request primitives (numbers / bool / enum / Guid / date-time / Uri…) | The framework writes the value's text (**never through the serializer**) |
-| Request objects / dictionaries / dynamic / collections | `Serialize` (a dictionary follows the same logic as an object; it is neither flattened nor treated as a scalar) |
+| Request objects / dictionaries / dynamic / collections (text format) | `Serialize` (a dictionary follows the same logic as an object; it is neither flattened nor treated as a scalar) |
+| Request objects / dictionaries / dynamic / collections (binary format) | `SerializeToBytes`, bytes sent as-is; text only when it returns `null` |
 | Response `Stream` / `byte[]` | Given directly by the framework |
 | Response `string` | Raw text from the framework |
 | Response primitives (numbers / bool / enum / Guid / date-time / Uri…) | Parsed from text by the framework |
@@ -688,7 +698,7 @@ Details and limits of the built-in XML implementation:
 - deserialization **prohibits DTDs** (XXE / billion laughs), and failures surface as `ERR_BAD_RESPONSE`;
 - XmlSerializer's own limits still apply: the target type needs a **public parameterless constructor** and only public read/write properties/fields are serialized; anonymous types, interfaces and `Dictionary<,>` are unsupported — use a DTO.
 
-For other formats (YAML / CSV / MessagePack…) implement the two methods yourself:
+For other textual formats (YAML / CSV …) implement the two methods yourself:
 
 ```csharp
 using AxiosNet.Serialization;
@@ -710,10 +720,10 @@ AxiosContent.Serializer = new YamlSerializer();          // global; or per insta
 
 Boundaries:
 
-- **The request header can be declared by the serializer**: when `MediaType` is non-null and the caller never set `ContentType`, the library writes it into the request (mirroring axios' default `headers.setContentType(..., false)`). An explicit value always wins. The response direction ignores `MediaType` — the response header is authoritative.
+- **The request header can be declared by the serializer**: when `MediaType` is non-null and the caller never set `ContentType`, the library writes it into the request (mirroring axios' default `headers.setContentType(..., false)`); it applies to both the text and byte channels. An explicit value always wins. The response direction ignores `MediaType` — the response header is authoritative.
 - **Text vs binary comes from the response `Content-Type`** (only the media type main value; `charset` / `boundary` parameters are ignored): `text/*`, `application/json`, `application/xml`, `+json` / `+xml` / `+yaml`, YAML and CSV count as textual; everything else (`application/octet-stream`, `image/png`, `application/x-protobuf`…) is binary; **a missing Content-Type counts as textual**.
-- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly.
-- **Binary requests** are serialized to `byte[]` by the caller and passed as `data` (sent as-is); `Serialize` only carries text.
+- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly. The byte inlet's default decodes UTF-8 and delegates to the text entry, so text serializers need not implement it (and servers mislabeling JSON as `octet-stream` keep working).
+- **Binary formats get a request outlet**: override `SerializeToBytes` to return the wire-format bytes — the library sends them as-is (no text encoding, no charset appended) and takes the header from the declared `MediaType`. Paired with the response byte inlet, injecting one serializer swaps the whole pipeline's format. Returning `null` falls back to the text channel; the returned memory must stay alive until the whole request completes (never hand back an ArrayPool lease). **The text channel cannot carry arbitrary bytes**, so a binary format's `Serialize` may just throw `NotSupportedException`.
 - **Primitive requests never reach the serializer**: `PostAsync("url", 42)` sends `42`, `true` sends `true`, enums send their name. A bare scalar has no "format" (XML / YAML cannot express an unnamed root scalar), so routing it through the serializer would only force every implementation to special-case scalars again. It therefore does not take part in the `MediaType` header fill either: the header stays at `ContentType` (default `application/json` — and a bare `42` is valid JSON). Date-times use the round-trip format (Kind and ticks preserved) rather than the millisecond UTC form used by forms.
 - **Forms / multipart never go through the serializer**: field names come from `FormFieldNameSelector` and `[JsonPropertyName]` (ignore with `[JsonIgnore]`).
 - **`dynamic` depends on JSON**: with a non-JSON response `GetAsync<dynamic>` throws `ERR_BAD_RESPONSE`; use `ResponseType.Text` or the non-generic `GetAsync()` for raw text.
@@ -1111,7 +1121,7 @@ Key points:
 - `maxRate`: one-way upload/download throttling (bytes/second)
 - `paramsSerializer` / `formFieldNameSelector`: custom query string and form field naming (the field-name customization of axios's `formSerializer`)
 - `transformRequest` / `transformResponse`: pre-request and post-response transform chains (thread-safe, mutable at runtime)
-- 🔧 **Pluggable content serialization**: JSON (System.Text.Json) by default with **XML built in** (`XmlContentSerializer`); `JsonSerializerOptions` overridden per "global → instance → request"; implement `IContentSerializer` (two text methods + one byte entry for binary formats + an optional `MediaType` self-declaration) to switch to YAML / Protobuf or replace the JSON engine via `AxiosContent.Serializer`, with the request header aligned automatically
+- 🔧 **Pluggable content serialization**: JSON (System.Text.Json) by default with **XML built in** (`XmlContentSerializer`); `JsonSerializerOptions` overridden per "global → instance → request"; implement `IContentSerializer` (two text methods + a pair of byte-channel hooks `SerializeToBytes` / `Deserialize(bytes)` for binary formats + an optional `MediaType` self-declaration) to switch to YAML / Protobuf or replace the JSON engine via `AxiosContent.Serializer`, with the request header aligned automatically
 - `postForm` / `putForm` / `patchForm`: one-liners for `multipart/form-data` or forms
 - Full response shape: `Data / Status / StatusText / Headers / Config / Request`
 
@@ -1213,7 +1223,7 @@ Intentional differences driven by the .NET platform:
 21. **Bearer token auth**: login issues tokens, an request interceptor attaches them automatically, the server verifies them, and a 401 triggers the refresh-and-retry loop
 22. **Request signing**: HMAC-SHA256(token + timestamp + nonce + method + path + body hash), demonstrating tamper protection and replay protection
 23. **XML serialization (built in)**: switch to `XmlContentSerializer.Instance` — request body, strongly-typed response, non-generic raw text, scalar request bodies bypassing the serializer, the `AxiosContent.Register` auto mode (serializer picked by Content-Type), and the decoupling of forms/multipart from the serializer
-24. **Binary formats (byte entry)**: implement the byte entry of `IContentSerializer` to parse `application/octet-stream` with zero decoding (same shape as Protobuf / MessagePack), compare it with the non-generic / `byte[]` paths, and show a binary request body serialized by the caller and sent as-is
+24. **Binary formats (byte channel both ways)**: the serializer overrides `SerializeToBytes` + the byte inlet — request objects become byte bodies with a self-declared `application/octet-stream`, and responses reach the byte inlet with zero decoding; compared against the non-generic / `byte[]` paths, plus the caller's explicit `ContentType` overriding the self-declared header
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1234,7 +1244,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 573 cases on each runtime (1146 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 576 cases on each runtime (1152 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1247,7 +1257,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 573 xUnit tests (the test project targets net8.0 + net6.0, so 1146 executions)
+# Run all 576 xUnit tests (the test project targets net8.0 + net6.0, so 1152 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1273,7 +1283,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Generic routing: `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
-- Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte entry (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
+- Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte inlet (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the binary request outlet (object → byte body + self-declared `MediaType`, no charset appended, explicit `ContentType` wins, forms/scalars never enter the byte channel), the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
 - Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
 
 ## Overall pipeline
@@ -1312,7 +1322,9 @@ caller
 │ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
 │ UrlBuilder: baseURL + url + serialized params                          │
 │ RequestBodyFactory dispatches on ContentType:                          │
-│   object/dictionary/dynamic/collection -> Serialize (JSON/XML/custom)  │
+│   object/dictionary/dynamic/collection -> SerializeToBytes             │
+│     or Serialize (byte channel first, null falls back to text;         │
+│     header from the declared MediaType)                                │
 │   scalars -> text as-is (bypasses the serializer)                      │
 │   form/multipart -> assembled in-library (bypasses it too)             │
 │   string/byte[]/Stream/HttpContent -> passed through untouched         │
@@ -1413,13 +1425,13 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ FormFile.cs             # multipart file part
 │     ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
 │     ├─ Interceptors/           # request/response interceptor management
-│     ├─ Serialization/          # IContentSerializer (2 text methods + 1 byte entry + MediaType) + built-in JSON / XML implementations
+│     ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in JSON / XML implementations
 │     ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
 │     └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
 ├─ samples/
 │  └─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (573 cases × net6.0 / net8.0 = 1146 executions)
+   └─ AxiosNet.Tests/            # xUnit tests (576 cases × net6.0 / net8.0 = 1152 executions)
 ```
 
 ## License

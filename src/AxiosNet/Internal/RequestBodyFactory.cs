@@ -11,7 +11,7 @@ namespace AxiosNet.Internal;
 /// <list type="bullet">
 /// <item>string / byte[] / Memory / ArraySegment / Stream / HttpContent：原样发送，只应用 Content-Type。</item>
 /// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，<b>不经过序列化器</b>。</item>
-/// <item>结构化数据：json → 序列化器；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
+/// <item>结构化数据：json → 序列化器（有字节形态则发字节，否则发文本）；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
 /// </list>
 /// </summary>
 internal static class RequestBodyFactory
@@ -143,14 +143,20 @@ internal static class RequestBodyFactory
         }
 
         // 其余结构化数据交给生效序列化器：显式注入优先，未注入时按 mediaType 自动匹配（再回落内置 JSON）。
-        // 二进制载荷请由调用方序列化成 byte[] / Stream 传入。
         var serializer = AxiosContent.Get(config, mediaType);
 
         // 头由正文的产出者自报，与 axios 的 headers.setContentType('application/json', false) 同构：
         // 调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
+        // 文本与字节两条通道共用这次决策，先于通道分派完成。
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
         {
             mediaType = declared.Trim();
+        }
+
+        // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送（不编码文本、不补 charset）。
+        if (serializer.SerializeToBytes(data, type, config) is { } bytes)
+        {
+            return CreateBinary(bytes, mediaType);
         }
 
         return CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset);

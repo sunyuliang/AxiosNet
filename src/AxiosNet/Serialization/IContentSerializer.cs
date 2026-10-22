@@ -7,7 +7,8 @@ namespace AxiosNet.Serialization;
 /// <para>边界只有一条：<b>业务对象 ↔ 该格式的内容</b>。库负责分派，不解释格式：</para>
 /// <list type="bullet">
 /// <item>请求：string / byte[] / Stream / HttpContent 原样发送（只套媒体类型）；表单与 multipart 是独立通道，
-/// 不经过本接口；基础类型由框架直接取文本；其余（对象、字典、dynamic、集合）交给 <see cref="Serialize"/>。</item>
+/// 不经过本接口；基础类型由框架直接取文本；其余（对象、字典、dynamic、集合）先问 <see cref="SerializeToBytes"/>，
+/// 没有字节形态才交给 <see cref="Serialize"/>。</item>
 /// <item>响应：byte[] / Stream / string / 基础类型由框架直接转换；只有<b>业务对象</b>才调用 <c>Deserialize</c>。</item>
 /// <item>响应形态由响应 <c>Content-Type</c> 判定：文本走 string 入口，非文本走字节入口且不做解码。</item>
 /// </list>
@@ -39,14 +40,18 @@ public interface IContentSerializer
     /// </para>
     /// <para>
     /// 默认 <c>null</c> = <b>不自报</b>，沿用 <see cref="AxiosConfig.ContentType"/>；调用方显式设置过时永远以调用方为准。
+    /// 请求方向的两条通道（<see cref="Serialize"/> 的文本、<see cref="SerializeToBytes"/> 的字节）都按本值写头。
     /// 响应方向不看本值：解析用哪个序列化器由<b>响应的</b> <c>Content-Type</c> 决定。
     /// </para>
     /// </summary>
     string? MediaType => null;
 
     /// <summary>
-    /// 把业务对象序列化为该格式的文本。库按 <see cref="AxiosConfig.RequestEncoding"/> 编码成字节并补 charset；
-    /// 二进制格式请由调用方自行序列化成 <c>byte[]</c> 作为 <see cref="AxiosConfig.Data"/> 传入。
+    /// 把业务对象序列化为该格式的文本。库按 <see cref="AxiosConfig.RequestEncoding"/> 编码成字节并补 charset。
+    /// <para>
+    /// <b>二进制格式不要用本方法承载正文</b>（文本通道会破坏任意字节）：覆写 <see cref="SerializeToBytes"/>，
+    /// 本方法实现成抛 <see cref="NotSupportedException"/> 即可。
+    /// </para>
     /// <para>
     /// 只会收到「对象 / 字典 / dynamic / 集合」；<b>基础类型不会进来</b> —— 框架直接取其文本发送
     /// （裸标量没有格式可言，XML / YAML 也无法表达无名根标量）。
@@ -62,6 +67,24 @@ public interface IContentSerializer
     /// </para>
     /// </summary>
     string Serialize(object? value, Type type, AxiosConfig config);
+
+    /// <summary>
+    /// 把业务对象序列化为该格式的<b>字节</b>（二进制格式的请求出口）。
+    /// <para>
+    /// 返回 <c>null</c>（默认）= 本格式没有字节形态，库改用 <see cref="Serialize"/> 产出文本。
+    /// 返回字节时库<b>原样发送</b>：不做文本编码、不补 charset，头取 <see cref="MediaType"/>
+    /// （调用方显式设置过 <see cref="AxiosConfig.ContentType"/> 时一律以调用方为准）。
+    /// </para>
+    /// <para>
+    /// 与字节入口 <see cref="Deserialize(ReadOnlyMemory{byte},Type,AxiosConfig)"/> 配对：Protobuf / MessagePack / CBOR
+    /// 实现这一个方法 + 字节入口即可让整条链路换格式，文本入口可以抛。
+    /// </para>
+    /// <para>
+    /// 返回的内存会被直接交给请求内容，<b>生命周期必须覆盖到整条请求结束</b>（响应释放时）；
+    /// 不要返回 ArrayPool 租约或复用的缓冲区。
+    /// </para>
+    /// </summary>
+    ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
     /// <summary>
     /// 把该格式的文本反序列化为业务对象，返回值原样进入 <c>Response.Data</c>。
