@@ -32,6 +32,12 @@ internal static class FormBodyEncoder
             // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
+        catch (UnsupportedFormValueException ex)
+        {
+            // 「表单装不下文件部件」是调用方的编码选择错误，不是请求体内容有问题：
+            // 与 multipart 侧（InvalidFieldNameException → ERR_BAD_OPTION_VALUE）保持同一分类。
+            throw AxiosException.InvalidOption(ex.Message, config, ex);
+        }
 
         // 表单体按已转义的 ASCII 串写入，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
         var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
@@ -86,7 +92,7 @@ internal static class FormBodyEncoder
             case FormFile:
             case Stream:
             case HttpContent:
-                throw new InvalidOperationException(
+                throw new UnsupportedFormValueException(
                     "application/x-www-form-urlencoded 无法承载文件部件：请改用 multipart/form-data。");
 
             case IDictionary<string, object?> genericDictionary:
@@ -301,6 +307,13 @@ internal static class FormBodyEncoder
 
     private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding);
 
+    /// <summary>
+    /// 按<b>字节流</b>做百分号编码：可保留的 ASCII 字节直出，其余转义。
+    /// <para>
+    /// 直出是字节级可逆的（<c>%A4T</c> 解码回来就是 <c>A4 54</c>），所以多字节序列的尾字节
+    /// 即便落在可打印 ASCII 区间也不会损坏正文 —— 不要"按字符"重写这段去避免"看起来像裸 ASCII"的输出。
+    /// </para>
+    /// </summary>
     private static string PercentEncode(string value, Encoding encoding)
     {
         if (encoding.CodePage == Encoding.UTF8.CodePage)
@@ -337,4 +350,16 @@ internal static class FormBodyEncoder
         || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~';
 
     private static char HexUpper(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
+}
+
+/// <summary>
+/// 表单通道装不下某个值（文件部件）。只在本程序集内部流转，由
+/// <see cref="FormBodyEncoder"/> 转成带配置上下文的 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// </summary>
+internal sealed class UnsupportedFormValueException : Exception
+{
+    public UnsupportedFormValueException(string message)
+        : base(message)
+    {
+    }
 }

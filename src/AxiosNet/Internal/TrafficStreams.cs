@@ -16,6 +16,14 @@ internal sealed class TrafficMeter
     private readonly long? _maxRate;
 
     private long _loaded;
+
+    /// <summary>
+    /// 本轮实际传输的起点（累计值的快照）。重发正文时 <see cref="Restart"/> 把它推到当前累计值，
+    /// 「已传满声明长度」的判定按<b>本轮</b>增量算 —— 否则第二轮一开始
+    /// <c>_loaded &gt;= _total</c> 就恒真，第一次上报就把计量器锁死，终值远小于真实发送量。
+    /// </summary>
+    private long _roundStart;
+
     private long _lastReportMs = -ReportIntervalMs;
     private bool _completed;
 
@@ -64,11 +72,11 @@ internal sealed class TrafficMeter
         _lastReportMs = elapsedMs;
         _callback(BuildEvent(upload));
 
-        // 已经传满<b>声明</b>长度：后续 EOF / Complete 不再重复报一次 100%。
+        // 已经传满<b>本轮</b>的声明长度：后续 EOF / Complete 不再重复报一次 100%。
         // 必须要求 total > 0：total 为 0（服务端把 Content-Length 写成 0 却仍有正文，
         // 或注入的 Handler 不按声明长度截断）时，0 >= 0 恒真 —— 第一次上报就会把计量器锁死，
         // 之后几百 KB 全部静默，调用方只看到一次「loaded=第一块 / total=0」。
-        if (_total is long total && total > 0 && _loaded >= total)
+        if (_total is long total && total > 0 && _loaded - _roundStart >= total)
         {
             _completed = true;
         }
@@ -80,8 +88,13 @@ internal sealed class TrafficMeter
     /// <summary>
     /// 开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，<b>累计值与计时器保留</b> ——
     /// 307/308 重定向或重试会再次写出同一份正文，共用计量器才能让进度单调推进而不是掉回 0。
+    /// <para>同时把「本轮起点」推到当前累计值：完成判定按增量算，第二轮才不会一开始就判成已传满。</para>
     /// </summary>
-    public void Restart() => _completed = false;
+    public void Restart()
+    {
+        _completed = false;
+        _roundStart = _loaded;
+    }
 
     private AxiosProgressEvent BuildEvent(bool upload)
     {

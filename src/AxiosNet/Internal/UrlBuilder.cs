@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Globalization;
 using System.Text.Json;
 
 namespace AxiosNet.Internal;
@@ -25,6 +24,17 @@ internal static class UrlBuilder
         if (string.IsNullOrWhiteSpace(url) && string.IsNullOrWhiteSpace(baseAddress))
         {
             throw AxiosException.InvalidUrl(url ?? string.Empty, config);
+        }
+
+        // 空白（非 null）url 是调用方的失误：静默解释成「请求 baseAddress 本身」会让
+        // 一次「变量忘赋值」变成向根路径发出的意外请求（POST / 可能带副作用）。
+        // null 仍然合法（= 请求 baseAddress，与快捷方法显式传 "/" 的语义并存）。
+        if (url is { Length: > 0 } && string.IsNullOrWhiteSpace(url))
+        {
+            throw AxiosException.InvalidUrl(
+                url,
+                config,
+                message: "url 不能为空白字符串：要请求 baseAddress 本身请显式传 \"/\"（或把 Url 置为 null）。");
         }
 
         var combined = Combine(baseAddress, url);
@@ -456,29 +466,18 @@ internal static class ParamsSerializer
         // byte[] 在 query 里走 base64（可逆），不算「标量」参与 Path/Header 校验
         => value is byte[] || ScalarTypes.IsScalarType(value.GetType());
 
-    private static string ScalarToString(object value)
+    /// <summary>
+    /// 标量 → 线上文本。查询串、路径段、请求头共用这一份规则：
+    /// bool 是 <c>true</c> / <c>false</c>，日期时间是 UTC 毫秒 ISO 8601 ——
+    /// 三处各写一份时 bool 会退化成 <c>True</c>（Boolean 不实现 IFormattable），
+    /// 同一个值在 <c>[Query]</c> 与 <c>[Path]</c> 上因此发出两种形态。
+    /// </summary>
+    internal static string ScalarToString(object value) => value switch
     {
-        switch (value)
-        {
-            case string s:
-                return s;
-            case bool b:
-                return b ? "true" : "false";
-            case byte[] bytes:
-                // query 里没有 byte[] 的标准形态；base64 至少可逆且能完整还原
-                return Convert.ToBase64String(bytes);
-            case DateTime dt:
-                return dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
-            case DateTimeOffset dto:
-                return dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
-            case Enum e:
-                return e.ToString();
-            case IFormattable formattable:
-                return formattable.ToString(null, CultureInfo.InvariantCulture);
-            default:
-                return value.ToString() ?? string.Empty;
-        }
-    }
+        // query 里没有 byte[] 的标准形态；base64 至少可逆且能完整还原
+        byte[] bytes => Convert.ToBase64String(bytes),
+        _ => BodyFields.ScalarToString(value)
+    };
 
     // axios 默认 encoder 用 encodeURIComponent，并把 %5B / %5D 还原成 [ ]
     private static string EscapeKey(string key)

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-740%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-754%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -357,7 +357,7 @@ await http.GetAsync("search", c => c.Params = new[] { 1, 2 }); // ?[0]=1&[1]=2
 
 multipart 补充说明：
 
-- **字段名**：取所在对象的属性名或字典的键（遵循 `JsonSerializerOptions.PropertyNamingPolicy`，并识别 `[JsonPropertyName]` / `[JsonIgnore]`）；嵌套对象写成 `meta[author]`；数组/集合展开为**同名重复部件**（ASP.NET Core `IFormFileCollection`、FastAPI、PHP 都能直接绑定）。
+- **字段名**：取所在对象的属性名或字典的键（识别 `[JsonPropertyName]` / `[JsonIgnore]`；**不读** `JsonSerializerOptions.PropertyNamingPolicy`——表单与序列化器解耦，命名规则只有 `FormFieldNameSelector` 一个入口）；嵌套对象写成 `meta[author]`；数组/集合展开为**同名重复部件**（ASP.NET Core `IFormFileCollection`、FastAPI、PHP 都能直接绑定）。
 - **根节点是文件数组**时没有键名，用 `FormFile.FieldName` 指定部件名：`new[] { new FormFile(...) { FieldName = "files" } }`。
 - **文件名**：`FormFile.FileName` 决定 `filename`；直接用 `Stream`/`byte[]`/`Memory<byte>` 也会作为文件部件发送（零拷贝，文件名回退为字段名）。
 - **自带 `HttpContent` 部件**：部件已带 `Content-Disposition` 时原样保留（含 `filename`），只补缺失的 `name`——否则服务端无法绑定该字段。
@@ -703,7 +703,7 @@ await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 ```
 
 - `MaxContentLength` 对普通（缓冲）响应是**边读边累计**：越界立即中止并释放连接，不会先把 8 MB 全读进内存再判断；对 `ResponseType.Stream` 则是"声明长度先预检 + 读取时边读边计数"两层：声明超限时连响应头都不读正文就失败，chunked / 未声明长度的响应也会在累计越界的那一刻让 `Read`/`ReadAsync` 抛出 `ERR_BAD_RESPONSE`。
-- `MaxBodyLength` 在发送前按 `Content.Headers.ContentLength` 判断，只对能算出长度的请求体生效（JSON / 表单 / `byte[]` / `FormFile`）；自定义的未知长度 `HttpContent` 不做拦截。
+- `MaxBodyLength` 在发送前按 `Content.Headers.ContentLength` 判断，只对能算出长度的请求体生效（JSON / 表单 / `byte[]` / 裸 `Stream`（可 seek 时有长度））；`multipart/form-data`（`FormFile`）与自定义的未知长度 `HttpContent` 不算长度，不做拦截。
 - 这四个限制项的**负值会抛 `ERR_BAD_OPTION_VALUE`**（此前的实现把负值静默当作"不限制"，调用方会以为限制生效了）。`MaxRate = 0` 等价于不限速，`Timeout = TimeSpan.Zero` 表示不超时。
 
 ## 自定义序列化与数据转换
@@ -1395,7 +1395,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 740 个用例（共 1480 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑 754 个用例（共 1508 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1408,7 +1408,7 @@ dotnet run --project samples/AxiosNet.Simple
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 740 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1480 次）
+# 运行全部 754 个 xUnit 单元测试（两个测试项目均为 net8.0 + net6.0 双目标，实际执行 1508 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1604,7 +1604,7 @@ dotnet build AxiosNet.sln -c Release
 │  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：7 类示例走真实 HTTP 往返，含全局日志与 HMAC 签名/验签，菜单第 25-31 项）
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Scenarios/ 下 IScenario 零注册进菜单）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（700 个用例 × net6.0 / net8.0 双目标 = 1400 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（714 个用例 × net6.0 / net8.0 双目标 = 1428 次执行）
    │  └─ WebAPI/                 # 声明式客户端测试（66 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（40 个用例 × net6.0 / net8.0 双目标，复用主库/WebAPI 测试基建）
 ```

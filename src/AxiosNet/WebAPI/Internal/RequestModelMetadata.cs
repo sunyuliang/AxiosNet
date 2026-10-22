@@ -203,7 +203,11 @@ internal sealed partial class RequestModelMetadata
 
             if (ignore)
             {
-                if (kinds > 0)
+                // [ApiIgnore] 加在 override 属性上时，基类的参数特性会被 GetCustomAttribute 继承进来
+                // （这些特性都是 Inherited = true）—— 那正是调用方想「解绑」的绑定，不能算二义性。
+                // 只有本属性<b>自己</b>声明的参数特性才算真冲突。
+                var ownKinds = CountOwnParameterAttributes(property);
+                if (ownKinds > 0)
                 {
                     throw new InvalidOperationException(
                         $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / Body）："
@@ -313,6 +317,13 @@ internal sealed partial class RequestModelMetadata
             ? property.Name
             : explicitName.Trim();
 
+    /// <summary>本属性自身（不含基类继承）声明了几个参数特性。</summary>
+    private static int CountOwnParameterAttributes(PropertyInfo property)
+        => (property.GetCustomAttribute<PathAttribute>(inherit: false) is not null ? 1 : 0)
+            + (property.GetCustomAttribute<QueryAttribute>(inherit: false) is not null ? 1 : 0)
+            + (property.GetCustomAttribute<HeaderAttribute>(inherit: false) is not null ? 1 : 0)
+            + (property.GetCustomAttribute<BodyAttribute>(inherit: false) is not null ? 1 : 0);
+
     /// <summary>
     /// 校验路径模板与 <see cref="PathAttribute"/> 绑定一一对应（占位符与绑定的名字大小写不敏感匹配），
     /// 返回按模板出现顺序排列的（占位符原文, 属性）序列，供 <see cref="ResolveUrl"/> 逐个替换。
@@ -415,14 +426,12 @@ internal sealed partial class RequestModelMetadata
     /// </summary>
     private static bool IsScalarType(Type type) => ScalarTypes.IsScalarType(type);
 
-    /// <summary>基础类型之外统一走 ToString（带 culture 的类型少见；声明式模型不为它们引入 format 配置面）。</summary>
-    private static string ToText(object value)
-        => value switch
-        {
-            string text => text,
-            IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
-            _ => value.ToString() ?? string.Empty
-        };
+    /// <summary>
+    /// 基础类型的线上文本：<b>转调查询串 / 表单的同一份规则</b>（<see cref="ParamsSerializer.ScalarToString"/>）——
+    /// 三处各写一份时 <c>bool</c> 会退化成 <c>True</c>（Boolean 不实现 IFormattable）、
+    /// <c>DateTime</c> 会变成带空格的短日期，同一个值在 <c>[Query]</c> 与 <c>[Path]</c> 上发出两种形态。
+    /// </summary>
+    private static string ToText(object value) => ParamsSerializer.ScalarToString(value);
 
     /// <summary>路径占位符：字母/下划线开头，字母/数字/下划线组成。</summary>
     /// <remarks>GeneratedRegexAttribute 是 .NET 7+ API（net6.0 目标禁用），用编译正则：构建每类型只跑一次。</remarks>

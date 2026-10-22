@@ -91,7 +91,20 @@ public static class AxiosContent
             ?? SystemTextJsonSerializer.Instance;
 
     /// <summary>
-    /// 自动模式的查表：精确匹配 → 结构化后缀回落到 <c>application/&lt;suffix&gt;</c>。
+    /// 同一格式的常见别名：注册一次 canonical，别名头也要命中。
+    /// <para>
+    /// 现实中大量老服务端把 XML 标成 <c>text/xml</c>、把 JSON 标成 <c>text/json</c>；
+    /// 只做精确匹配会让「注册了 <c>application/xml</c>」在响应方向完全落空（转而用内置 JSON 解析 XML → 报错）。
+    /// </para>
+    /// </summary>
+    private static readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal)
+    {
+        ["text/xml"] = AxiosContentType.Xml,
+        ["text/json"] = AxiosContentType.Json
+    };
+
+    /// <summary>
+    /// 自动模式的查表：精确匹配 → 别名 → 结构化后缀回落到 <c>application/&lt;suffix&gt;</c>。
     /// 未注册返回 <c>null</c>，由调用方回落内置 JSON。
     /// </summary>
     private static IContentSerializer? Lookup(string? mediaType)
@@ -105,6 +118,11 @@ public static class AxiosContent
         if (Registry.TryGetValue(main, out var exact))
         {
             return exact;
+        }
+
+        if (Aliases.TryGetValue(main, out var canonical) && Registry.TryGetValue(canonical, out var aliased))
+        {
+            return aliased;
         }
 
         var plus = main.LastIndexOf('+');

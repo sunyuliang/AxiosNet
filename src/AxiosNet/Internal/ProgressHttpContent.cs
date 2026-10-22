@@ -45,19 +45,16 @@ internal sealed class ProgressHttpContent : HttpContent
         _meter.Restart();
 
         var wrapper = new ProgressWriteStream(stream, _meter, MapCallbackError);
-        try
-        {
-            await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
-            await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
 
-            // 保证这一轮结束时最后一次回调一定到达
-            Complete();
-        }
-        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-        {
-            // 兜底：回调可能在 Flush / 完成上报时抛（TrackAsync 已翻译过一次，这里覆盖其余路径）
-            throw MapCallbackError(ex);
-        }
+        // 这里<b>不能</b>把整段 CopyToAsync 的异常都翻译成「进度回调失败」：
+        // 写正文时的 IOException / HttpRequestException 是网络故障，必须原样冒泡到
+        // AxiosClient 的错误模型（ERR_NETWORK）。回调本身抛的异常已由
+        // ProgressWriteStream.TrackAsync / Complete() 就地翻译成 AxiosException。
+        await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
+        await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+        // 保证这一轮结束时最后一次回调一定到达
+        Complete();
     }
 
     /// <summary>把进度回调的任意异常翻译成统一错误模型（<c>ERR_BAD_REQUEST</c>，原始异常进 Cause）。</summary>

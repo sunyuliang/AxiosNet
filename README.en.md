@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-740%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-754%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -354,7 +354,7 @@ await http.GetAsync("search", c =>
 
 Additional notes on multipart:
 
-- **Field names** come from the object's property names or the dictionary's keys (honoring `JsonSerializerOptions.PropertyNamingPolicy` and recognizing `[JsonPropertyName]` / `[JsonIgnore]`); nested objects become `meta[author]`; arrays/collections expand into **repeated same-name parts** (bindable directly by ASP.NET Core `IFormFileCollection`, FastAPI, and PHP).
+- **Field names** come from the object's property names or the dictionary's keys (recognizing `[JsonPropertyName]` / `[JsonIgnore]`; `JsonSerializerOptions.PropertyNamingPolicy` is **not** consulted — forms are decoupled from the serializer, and `FormFieldNameSelector` is the only naming entry point); nested objects become `meta[author]`; arrays/collections expand into **repeated same-name parts** (bindable directly by ASP.NET Core `IFormFileCollection`, FastAPI, and PHP).
 - **When the root is an array of files** there is no key name; use `FormFile.FieldName` to name the part: `new[] { new FormFile(...) { FieldName = "files" } }`.
 - **File names**: `FormFile.FileName` determines `filename`; a bare `Stream`/`byte[]`/`Memory<byte>` is also sent as a file part (zero-copy, file name falls back to the field name).
 - **Your own `HttpContent` part**: when the part already carries a `Content-Disposition` it is preserved as-is (including `filename`) and only a missing `name` is filled in — otherwise the server cannot bind the field.
@@ -687,7 +687,7 @@ await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
 ```
 
 - `MaxContentLength` accumulates **while reading** for ordinary (buffered) responses: it aborts and releases the connection as soon as the limit is crossed, rather than reading all 8 MB into memory first. For `ResponseType.Stream` it works in two layers: the declared `Content-Length` is pre-checked when the headers arrive, and the bytes read are counted as they arrive — so a chunked / length-less response also fails on the read that crosses the limit.
-- `MaxBodyLength` checks `Content.Headers.ContentLength` before sending, so it only applies to bodies whose length is known (JSON / forms / `byte[]` / `FormFile`); custom `HttpContent` of unknown length is not intercepted.
+- `MaxBodyLength` checks `Content.Headers.ContentLength` before sending, so it only applies to bodies whose length is known (JSON / forms / `byte[]` / a seekable raw `Stream`); `multipart/form-data` (with `FormFile`) and custom `HttpContent` of unknown length are not intercepted.
 - **Negative** values for these four limits throw `ERR_BAD_OPTION_VALUE` (they used to be silently treated as "unlimited", so callers believed a limit was in force). `MaxRate = 0` means "unthrottled" and `Timeout = TimeSpan.Zero` means "no timeout".
 
 ## Custom serialization and data transforms
@@ -1383,7 +1383,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 740 cases on each runtime (1480 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 754 cases on each runtime (1508 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1396,7 +1396,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 740 xUnit tests (both test projects target net8.0 + net6.0, so 1480 executions)
+# Run all 754 xUnit tests (both test projects target net8.0 + net6.0, so 1508 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1593,7 +1593,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  └─ WebAPI/                 # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification; menu items 25-31)
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IScenario classes under Scenarios/ need no registration to appear in the menu)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (700 cases × net6.0 / net8.0 = 1400 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (714 cases × net6.0 / net8.0 = 1428 executions)
    │  └─ WebAPI/                 # declarative client tests (66 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (40 cases × net6.0 / net8.0, reuses the main/WebAPI test infrastructure)
 ```

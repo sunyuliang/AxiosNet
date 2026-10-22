@@ -89,9 +89,10 @@ internal sealed class TimeoutStream : DelegatingStream
             ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
         {
-            // 正文读到一半连接断了（HttpIOException / RST / 长度不符）：与非流式路径保持同一错误模型。
+            // 正文读到一半连接断了（HttpIOException / RST / 长度不符，或自定义流直接抛
+            // HttpRequestException）：与非流式路径保持同一错误模型。
             throw AxiosException.Network(_config, _request, ex);
         }
         finally
@@ -114,7 +115,7 @@ internal sealed class TimeoutStream : DelegatingStream
             ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
         {
             throw AxiosException.Network(_config, _request, ex);
         }
@@ -138,7 +139,7 @@ internal sealed class TimeoutStream : DelegatingStream
             ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
         {
             throw AxiosException.Network(_config, _request, ex);
         }

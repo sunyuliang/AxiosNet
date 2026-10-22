@@ -70,7 +70,12 @@ public sealed class HeaderAttribute : Attribute
 
 /// <summary>
 /// 把属性值作为请求体发送（序列化规则与 AxiosNet 的 <c>data</c> 完全一致：对象按 Content-Type 编码，
-/// string / byte[] / Stream / HttpContent 原样发送；含 FormFile 的对象默认按 multipart 编码）。
+/// string / byte[] / Stream / HttpContent 原样发送）。
+/// <para>
+/// 编码格式<b>只由 <see cref="AxiosConfig.ContentType"/> 决定</b>，库不按 data 的运行时类型猜格式：
+/// 请求体里含 <see cref="FormFile"/> 时必须显式把 ContentType 设为 <c>multipart/form-data</c>
+/// （或改用 <c>PostFormAsync</c>），否则默认的 JSON 编码无法承载文件流。
+/// </para>
 /// <para>
 /// 每个请求模型最多一个 <see cref="BodyAttribute"/> 属性；值为 <c>null</c> 时不发送请求体。
 /// </para>

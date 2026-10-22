@@ -14,6 +14,11 @@ public sealed partial class AxiosClient
     {
         var merged = Defaults.Clone();
 
+        // 合并结果的起点是实例默认值：它自己的「显式赋值过」标记不能当成按请求意图带下去，
+        // 否则「构造之后改 Defaults.MaxRedirects」会让每个请求都在校验层抛错
+        // （文档承诺的是：连接级选项构造后修改不生效，但不会有任何报错）。
+        merged.ClearInstanceOptionFlags();
+
         // 合并结果里的实例级选项来自本实例默认值（按请求改写的已被校验拦掉），
         // 因此同样标成「来源是实例」：回放到另一个实例时不能再被当成按请求项搬过去。
         merged.InstanceOptionsInherited = true;
@@ -86,7 +91,13 @@ public sealed partial class AxiosClient
             merged.Timeout = perCall.Timeout;
         }
 
-        merged.Auth = perCall.Auth ?? merged.Auth;
+        // 显式赋过值才覆盖：Auth = null 的语义是「本次请求不带认证」，
+        // 必须能压住实例默认的凭据（用 ?? 会把实例凭据发到本应匿名的端点）。
+        if (perCall.AuthSet)
+        {
+            merged.Auth = perCall.Auth;
+        }
+
         // 只在显式设置时覆盖：new AxiosConfig() 的默认值会把实例默认吞掉。
         // 必须用 if 而不是三元赋值 —— setter 会把 ResponseTypeSet 置 true，回放生效配置时
         // 连「未设置」也会被记成显式意图（自动切换出的 Dynamic/Stream 就此泄漏到下一次请求）。
@@ -222,6 +233,11 @@ public sealed partial class AxiosClient
     {
         var content = request.Content;
 
+        // 这次调用是否为了承载 Content-* 头而临时造了一个空正文。
+        // 它只用于让头能上线，不能被当成「真实正文」参与长度校验 ——
+        // 否则 Content-Type 与 Content-Length 的先后顺序会决定「报错」还是「静默改成 0」。
+        var contentIsSynthetic = false;
+
         // 没有头就整段跳过：Headers 延迟创建，为「遍历空集合」把它建出来是每请求的白分配。
         if (config.HasHeaders)
         {
@@ -250,7 +266,7 @@ public sealed partial class AxiosClient
                 // 最终只表现为一句 ERR_NETWORK。
                 if (string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (content is null)
+                    if (content is null || contentIsSynthetic)
                     {
                         // 没有正文时写它没有意义（传输层会自己补 Content-Length: 0），也不能为了它造一个正文。
                         continue;
@@ -283,6 +299,7 @@ public sealed partial class AxiosClient
                 if (content is null)
                 {
                     content = new ByteArrayContent(Array.Empty<byte>());
+                    contentIsSynthetic = true;
                     request.Content = content;
                 }
 

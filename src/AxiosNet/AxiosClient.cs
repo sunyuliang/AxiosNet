@@ -599,6 +599,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                             responseMessage.Dispose();
                             throw AxiosException.Network(config, request, ex);
                         }
+                        catch (HttpRequestException ex)
+                        {
+                            // 自定义 Handler 的正文流可能直接抛 HttpRequestException（BCL 抛 HttpIOException）：
+                            // 与上面的 IO 失败同一错误码，不能让裸异常穿过统一错误模型。
+                            responseMessage.Dispose();
+                            throw AxiosException.Network(config, request, ex);
+                        }
                         catch
                         {
                             // 读取/解析失败（含长度超限、反序列化失败）：先释放响应，避免连接泄漏

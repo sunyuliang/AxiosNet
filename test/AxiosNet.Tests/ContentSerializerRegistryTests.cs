@@ -157,10 +157,61 @@ public sealed class ContentSerializerRegistryTests
         }
     }
 
+    // ---------------------------------------------------------------
+    // 同一格式的常见别名：注册 application/xml 后，老服务端写 text/xml 也要命中
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task TextXmlAlias_FallsBackToRegisteredApplicationXml_ForResponse()
+    {
+        AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
+        try
+        {
+            await using var server = TestHttpServer.Start(_ => new TestResponse(
+                200,
+                Body: Encoding.UTF8.GetBytes("<XmlOrder><Id>7</Id><Name>book</Name></XmlOrder>"),
+                ContentType: "text/xml; charset=utf-8"));
+
+            using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+            // 只注册了 application/xml，响应头是 text/xml（大量老服务端如此）
+            var response = await client.GetAsync<XmlOrder>("orders/1");
+
+            Assert.Equal(7, response.Data!.Id);
+            Assert.Equal("book", response.Data.Name);
+        }
+        finally
+        {
+            AxiosContent.Unregister(AxiosContentType.Xml);
+        }
+    }
+
+    [Fact]
+    public async Task TextXmlAlias_FallsBackToRegisteredApplicationXml_ForRequest()
+    {
+        RegisterForTest(AxiosContentType.Xml, new MarkerSerializer("by-text-xml-alias"));
+        try
+        {
+            await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+            using var client = new AxiosClient();
+
+            await client.PostAsync(
+                server.Url + "x",
+                new XmlOrder { Id = 1 },
+                c => c.ContentType = "text/xml");
+
+            // 请求头保持 text/xml（调用方显式设置优先），正文由注册在 application/xml 上的序列化器产出
+            Assert.Equal("by-text-xml-alias", Body(server.Received[0]));
+        }
+        finally
+        {
+            AxiosContent.Unregister(AxiosContentType.Xml);
+        }
+    }
+
     [Fact]
     public void Register_ValidatesArguments()
-    {
-        Assert.Throws<ArgumentNullException>(() => AxiosContent.Register("application/x-test-null", null!));
+    {        Assert.Throws<ArgumentNullException>(() => AxiosContent.Register("application/x-test-null", null!));
         Assert.Throws<ArgumentException>(() => AxiosContent.Register("   ", new MarkerSerializer("x")));
         Assert.Throws<ArgumentException>(() => AxiosContent.Register("; charset=utf-8", new MarkerSerializer("x")));
         Assert.False(AxiosContent.Unregister("application/x-never-registered"));

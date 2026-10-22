@@ -191,8 +191,26 @@ public sealed class AxiosConfig
     /// </summary>
     internal bool InstanceOptionsInherited { get; set; }
 
+    private AxiosAuth? _auth;
+
     /// <summary>对应 axios auth（HTTP Basic）。</summary>
-    public AxiosAuth? Auth { get; set; }
+    /// <remarks>
+    /// 手写属性是为了记住「显式赋过值」：<c>Auth = null</c> 的语义是「本次请求不带认证」，
+    /// 必须在合并时压住实例默认的凭据 —— 用 <c>perCall.Auth ?? merged.Auth</c> 会让
+    /// 实例凭据静默发到本应匿名的端点。
+    /// </remarks>
+    public AxiosAuth? Auth
+    {
+        get => _auth;
+        set
+        {
+            _auth = value;
+            AuthSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
+    internal bool AuthSet { get; private set; }
 
     private ResponseType _responseType = ResponseType.Json;
 
@@ -479,6 +497,20 @@ public sealed class AxiosConfig
     /// </summary>
     public ConnectionPoolOptions? PoolOptions { get; set; }
 
+    /// <summary>
+    /// 清掉<b>实例级选项</b>的「显式赋值过」标记。
+    /// <para>
+    /// 合并起点是 <c>Defaults.Clone()</c>，克隆会把这些标记一起带过来；而校验层（
+    /// <c>ValidatePerRequestOptions</c>）只看标记 —— 不清理的话「构造之后改 Defaults」
+    /// 会被当成「本次按请求写了不同的值」，每个请求都抛错（文档承诺的是静默不生效）。
+    /// </para>
+    /// </summary>
+    internal void ClearInstanceOptionFlags()
+    {
+        WithCredentialsSet = false;
+        MaxRedirectsSet = false;
+    }
+
     /// <summary>深拷贝（Headers / transform 链独立，Params / Data 等引用成员按引用共享）。</summary>
     /// <remarks>
     /// 用 <see cref="object.MemberwiseClone"/> 而非 new + 逐属性赋值：构造函数会创建 4 个集合，
@@ -498,6 +530,10 @@ public sealed class AxiosConfig
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;
+
+        // 「显式赋过 Auth」属于那一次赋值，不属于「这份配置的内容」：
+        // 回放 response.Config（或任何克隆）时，Auth 的值已是生效结果，不能再被当成按请求意图。
+        clone.AuthSet = false;
 
         // 合并标记属于「那一次合并」：克隆出来的是新请求的输入，尚未合并。
         if (clone.EffectiveMerged)

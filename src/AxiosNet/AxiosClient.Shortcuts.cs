@@ -269,6 +269,10 @@ public sealed partial class AxiosClient
         var config = Defaults.Clone();
         config.EffectiveMerged = true;
 
+        // 这份副本是「本次请求的生效配置」：实例默认值上的显式赋值标记不能冒充
+        // 「本次按请求写了实例级选项」，否则构造后改 Defaults.MaxRedirects 会让每次调用都抛错。
+        config.ClearInstanceOptionFlags();
+
         // url 是必填参数：null / 空白不能静默解释成「请求 baseAddress 本身」——
         // 那会让一次「变量忘赋值」变成向根路径发出的意外请求（POST / 可能带副作用）。
         // 要请求基地址本身请显式写 "/"。
