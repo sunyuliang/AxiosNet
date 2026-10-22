@@ -1,0 +1,432 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Text.RegularExpressions;
+
+namespace AxiosNet.WebAPI.Internal;
+
+/// <summary>
+/// 一个路径占位符 / 查询参数 / 请求头绑定的统一描述。
+/// </summary>
+internal sealed record PropertyBinding(string Name, PropertyInfo Property);
+
+/// <summary>
+/// 请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）。
+/// <para>
+/// 校验失败同样进入缓存：每次调用都抛同一份错误 —— 模型定义错误是编程错误，
+/// 报一次和报 N 次的修复动作相同，不值得为「只报一次」引入 TryGet 双路径。
+/// </para>
+/// </summary>
+internal sealed partial class RequestModelMetadata
+{
+    private static readonly ConcurrentDictionary<Type, RequestModelMetadata> Cache = new();
+
+    private readonly string? _buildError;
+    private readonly string _pathTemplate;
+
+    /// <summary>按模板出现顺序排列的路径占位符绑定：Token 是模板中的原文（替换用），Property 提供值。</summary>
+    private readonly (string Token, PropertyInfo Property)[] _pathTokens;
+    private readonly PropertyBinding[] _queryBindings;
+    private readonly PropertyBinding[] _headerBindings;
+    private readonly PropertyInfo? _bodyProperty;
+
+    private RequestModelMetadata(
+        HttpMethod method,
+        string pathTemplate,
+        (string Token, PropertyInfo Property)[] pathTokens,
+        PropertyBinding[] queryBindings,
+        PropertyBinding[] headerBindings,
+        PropertyInfo? bodyProperty)
+    {
+        Method = method;
+        _pathTemplate = pathTemplate;
+        _pathTokens = pathTokens;
+        _queryBindings = queryBindings;
+        _headerBindings = headerBindings;
+        _bodyProperty = bodyProperty;
+    }
+
+    private RequestModelMetadata(string buildError)
+    {
+        _buildError = buildError;
+        _pathTemplate = string.Empty;
+        _pathTokens = [];
+        _queryBindings = [];
+        _headerBindings = [];
+    }
+
+    /// <summary>本次请求的 HTTP 方法（来自路由特性；仅构建错误的缓存实例上为占位值，<see cref="Get"/> 会先抛错）。</summary>
+    public HttpMethod Method { get; } = null!;
+
+    /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
+    public static RequestModelMetadata Get(Type requestType)
+    {
+        var metadata = Cache.GetOrAdd(requestType, static t => Build(t));
+
+        if (metadata._buildError is not null)
+        {
+            throw new InvalidOperationException(metadata._buildError);
+        }
+
+        return metadata;
+    }
+
+    /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
+    public string ResolveUrl(object request)
+    {
+        if (_pathTokens.Length == 0)
+        {
+            return _pathTemplate;
+        }
+
+        var url = _pathTemplate;
+
+        foreach (var (token, property) in _pathTokens)
+        {
+            var value = property.GetValue(request)
+                ?? throw new InvalidOperationException(
+                    $"路径参数 {property.DeclaringType!.Name}.{property.Name}（占位符 {{{token}}}）为 null：路径缺段无法成行。");
+
+            url = url.Replace("{" + token + "}", Uri.EscapeDataString(ToText(value)));
+        }
+
+        return url;
+    }
+
+    /// <summary>
+    /// 汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定）；
+    /// 没有任何查询参数时返回 <c>null</c>（省掉空字典）。
+    /// </summary>
+    public Dictionary<string, object?>? ResolveQuery(object request)
+    {
+        if (_queryBindings.Length == 0)
+        {
+            return null;
+        }
+
+        var query = new Dictionary<string, object?>();
+
+        foreach (var binding in _queryBindings)
+        {
+            var value = binding.Property.GetValue(request);
+
+            // 与 axios params 一致：null 参数跳过
+            if (value is not null)
+            {
+                query.Add(binding.Name, value);
+            }
+        }
+
+        return query;
+    }
+
+    /// <summary>请求体的原始值；没有 <see cref="BodyAttribute"/> 属性或值为 <c>null</c> 时返回 <c>null</c>（不发请求体）。</summary>
+    public object? ResolveBody(object request) => _bodyProperty?.GetValue(request);
+
+    /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置（不建集合）。</summary>
+    public void ApplyHeaders(object request, AxiosConfig config)
+    {
+        if (_headerBindings.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var binding in _headerBindings)
+        {
+            var value = binding.Property.GetValue(request);
+
+            // 与 query 一致：null 头跳过
+            if (value is not null)
+            {
+                config.Headers.Set(binding.Name, ToText(value));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 构建：反射只发生在这里，之后全部是数组遍历
+    // ------------------------------------------------------------------
+
+    private static RequestModelMetadata Build(Type requestType)
+    {
+        try
+        {
+            return BuildCore(requestType);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            // GetCustomAttribute 遇到特性构造函数抛错会原样透出 ArgumentException；
+            // 连同校验错误一起缓存，让 Get() 每次抛同一份消息
+            return new RequestModelMetadata(ex.Message);
+        }
+    }
+
+    private static RequestModelMetadata BuildCore(Type requestType)
+    {
+        var route = requestType.GetCustomAttribute<HttpApiAttribute>(inherit: false)
+            ?? throw new InvalidOperationException(
+                $"请求模型 {requestType.Name} 缺少路由特性：请在类上标注 [Get(\"...\")] / [Post(\"...\")] 等 HttpApiAttribute 子类。");
+
+        var paths = new List<PropertyBinding>();
+        var queries = new List<PropertyBinding>();
+        var headers = new List<PropertyBinding>();
+        var unannotated = new List<PropertyInfo>();
+        PropertyInfo? body = null;
+        // Path 占位符是本库自己的模板语言：与模板 token 的大小写不敏感匹配（属性名回退如 Id ↔ {id}）；
+        // Header 名按 RFC 3986 语义大小写不敏感，同名不同写法同样算重复。
+        // Query 键名发到服务端是区分大小写的，保持 Ordinal。
+        var seenPathNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenQueryNames = new HashSet<string>(StringComparer.Ordinal);
+        var seenHeaderNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var property in EnumerateBindableProperties(requestType))
+        {
+            var path = property.GetCustomAttribute<PathAttribute>();
+            var query = property.GetCustomAttribute<QueryAttribute>();
+            var header = property.GetCustomAttribute<HeaderAttribute>();
+            var isBody = property.GetCustomAttribute<BodyAttribute>() is not null;
+            var ignore = property.GetCustomAttribute<ApiIgnoreAttribute>() is not null;
+
+            var kinds = (path is not null ? 1 : 0) + (query is not null ? 1 : 0)
+                + (header is not null ? 1 : 0) + (isBody ? 1 : 0);
+
+            if (ignore)
+            {
+                if (kinds > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / Body）："
+                        + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
+                }
+
+                // 完全排除：不进任何绑定，也不算「未标注」（不阻断默认 Body 判定）
+                continue;
+            }
+
+            // 多特性并存：同一属性可同时绑定多处（路径 + 头 + 查询 + 请求体），
+            // 值只读一次，分别按各处的 null 规则应用
+            if (path is not null)
+            {
+                var name = ResolveBindingName(path.Name, property, "Path");
+                if (!seenPathNames.Add(name))
+                {
+                    throw DuplicateBinding(requestType, name, "Path");
+                }
+
+                paths.Add(new PropertyBinding(name, property));
+            }
+
+            if (header is not null)
+            {
+                var name = ResolveBindingName(header.Name, property, "Header");
+                if (!seenHeaderNames.Add(name))
+                {
+                    throw DuplicateBinding(requestType, name, "Header");
+                }
+
+                headers.Add(new PropertyBinding(name, property));
+            }
+
+            if (isBody)
+            {
+                if (body is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"请求模型 {requestType.Name} 有多个 [Body] 属性（{body.Name} 与 {property.Name}）：一个请求最多一个请求体。");
+                }
+
+                body = property;
+            }
+
+            if (kinds == 0)
+            {
+                // 无标注 → 默认 Query；显式 QueryAttribute 也走这里取名
+                var name = ResolveBindingName(query?.Name ?? "", property, "Query");
+                if (!seenQueryNames.Add(name))
+                {
+                    throw DuplicateBinding(requestType, name, "Query");
+                }
+
+                queries.Add(new PropertyBinding(name, property));
+
+                // 「未标注」与「显式 [Query]」要区分：默认 Body 只认前者
+                if (query is null)
+                {
+                    unannotated.Add(property);
+                }
+            }
+            else if (query is not null)
+            {
+                // 已有其他绑定的属性再显式 [Query]：追加一处查询绑定
+                var name = ResolveBindingName(query.Name, property, "Query");
+                if (!seenQueryNames.Add(name))
+                {
+                    throw DuplicateBinding(requestType, name, "Query");
+                }
+
+                queries.Add(new PropertyBinding(name, property));
+            }
+        }
+
+        // 默认 Body：body 方法 + 恰好一个未标注属性 + 非标量类型 → 该属性即请求体。
+        // 标量护栏防止「POST 只想带一个查询参数」被静默变成 JSON 请求体；
+        // 多个未标注属性时维持 Query（歧义时宁可保持现状，[Body] 永远可以显式表态）。
+        if (body is null
+            && unannotated.Count == 1
+            && IsBodyMethod(route.Method)
+            && !IsScalarType(unannotated[0].PropertyType))
+        {
+            body = unannotated[0];
+            queries.RemoveAll(q => ReferenceEquals(q.Property, body));
+        }
+
+        var pathTokens = ValidatePathTemplate(requestType, route.Path, paths);
+        ValidateScalarBindings(requestType, paths, headers);
+
+        return new RequestModelMetadata(
+            route.Method,
+            route.Path,
+            pathTokens,
+            [.. queries],
+            [.. headers],
+            body);
+    }
+
+    /// <summary>公共可读实例属性（跳过索引器），按声明顺序遍历。</summary>
+    private static IEnumerable<PropertyInfo> EnumerateBindableProperties(Type requestType)
+        => requestType
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanRead && p.GetIndexParameters().Length == 0);
+
+    /// <summary>特性上没写名字就用属性名；显式给了空白串同样回退到属性名（与「省略参数」语义一致）。</summary>
+    private static string ResolveBindingName(string explicitName, PropertyInfo property, string kind)
+        => string.IsNullOrWhiteSpace(explicitName)
+            ? property.Name
+            : explicitName.Trim();
+
+    /// <summary>
+    /// 校验路径模板与 <see cref="PathAttribute"/> 绑定一一对应（占位符与绑定的名字大小写不敏感匹配），
+    /// 返回按模板出现顺序排列的（占位符原文, 属性）序列，供 <see cref="ResolveUrl"/> 逐个替换。
+    /// </summary>
+    private static (string Token, PropertyInfo Property)[] ValidatePathTemplate(
+        Type requestType,
+        string template,
+        List<PropertyBinding> pathBindings)
+    {
+        var matches = PathTokenRegex.Matches(template);
+        var tokenSpellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var bindingsByName = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var match in matches.Cast<Match>())
+        {
+            var name = match.Groups[1].Value;
+            if (!tokenSpellings.TryAdd(name, name))
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {requestType.Name} 的路径模板重复使用占位符 {{{name}}}：一个占位符只能出现一次。");
+            }
+        }
+
+        // 模板里识别不了的花括号（空占位符、非法字符、未闭合）单独指出，避免用户对着静默的原始模板排查；
+        // 放在绑定核对之前：模板本身写坏了时，报「模板非法」比报「绑定对不上」更接近根因
+        var leftover = template;
+        foreach (var match in matches.Cast<Match>())
+        {
+            leftover = leftover.Replace(match.Value, string.Empty);
+        }
+
+        if (leftover.Contains('{') || leftover.Contains('}'))
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {requestType.Name} 的路径模板 \"{template}\" 含无法识别的花括号："
+                + "占位符只支持 {{name}} 形式的标识符（字母/下划线开头，字母/数字/下划线组成）。");
+        }
+
+        foreach (var binding in pathBindings)
+        {
+            if (!bindingsByName.TryAdd(binding.Name, binding.Property))
+            {
+                // 上面 seenPathNames 已拦同名绑定，这里实际到不了
+                throw DuplicateBinding(requestType, binding.Name, "Path");
+            }
+        }
+
+        foreach (var name in tokenSpellings.Keys)
+        {
+            if (!bindingsByName.ContainsKey(name))
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {requestType.Name} 的路径模板 \"{template}\" 含占位符 {{{name}}}，"
+                    + "但没有属性标注 [Path] 绑定它。");
+            }
+        }
+
+        foreach (var binding in pathBindings)
+        {
+            if (!tokenSpellings.ContainsKey(binding.Name))
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {requestType.Name} 的属性 {binding.Property.Name} 标注了 [Path(\"{binding.Name}\")]，"
+                    + $"但路径模板 \"{template}\" 中没有 {{{binding.Name}}} 占位符（多余绑定多为改名后的拼写遗漏）。");
+            }
+        }
+
+        return [.. matches.Cast<Match>().Select(m => (m.Groups[1].Value, bindingsByName[m.Groups[1].Value]))];
+    }
+
+    private static InvalidOperationException DuplicateBinding(Type requestType, string name, string kind)
+        => new($"请求模型 {requestType.Name} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个属性（集合值走 AxiosNet 的数组规则）。");
+
+    /// <summary>
+    /// 路径占位符与请求头的值必须是标量：两者在线上的形态就是一段文本，
+    /// 复杂对象只能得到 ToString() 垃圾值（多特性并存时尤其容易误标），构建期直接拒绝。
+    /// 查询参数不受限（复杂对象走 a[b]=v 嵌套规则），请求体不受限（交给序列化器）。
+    /// </summary>
+    private static void ValidateScalarBindings(Type requestType, List<PropertyBinding> paths, List<PropertyBinding> headers)
+    {
+        foreach (var binding in paths.Concat(headers))
+        {
+            if (!IsScalarType(binding.Property.PropertyType))
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {requestType.Name} 的属性 {binding.Property.Name} 绑定到了 {nameof(PathAttribute)} / {nameof(HeaderAttribute)}，"
+                    + $"但类型 {binding.Property.PropertyType.Name} 不是标量：路径段与请求头在线上就是文本，"
+                    + "复杂对象只会得到 ToString() 垃圾值。请绑定标量属性（或把复杂对象放进 [Body] / [Query]）。");
+            }
+        }
+    }
+
+    /// <summary>约定上携带请求体的方法（默认 Body 只在这些方法上生效；其余方法未标注属性一律 Query）。</summary>
+    private static bool IsBodyMethod(HttpMethod method)
+        => method == HttpMethod.Post || method == HttpMethod.Put || method == HttpMethod.Patch;
+
+    /// <summary>
+    /// 标量判定（默认 Body 的护栏）：基元类型、枚举、string、decimal、DateTime/DateTimeOffset、
+    /// TimeSpan、Guid 及其可空形态。这些值作为「整个请求体」没有合理语义，保持 Query。
+    /// </summary>
+    private static bool IsScalarType(Type type)
+    {
+        var t = Nullable.GetUnderlyingType(type) ?? type;
+
+        return t.IsPrimitive
+            || t.IsEnum
+            || t == typeof(string)
+            || t == typeof(decimal)
+            || t == typeof(DateTime)
+            || t == typeof(DateTimeOffset)
+            || t == typeof(TimeSpan)
+            || t == typeof(Guid);
+    }
+
+    /// <summary>基础类型之外统一走 ToString（带 culture 的类型少见；声明式模型不为它们引入 format 配置面）。</summary>
+    private static string ToText(object value)
+        => value switch
+        {
+            string text => text,
+            IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? string.Empty
+        };
+
+    /// <summary>路径占位符：字母/下划线开头，字母/数字/下划线组成。</summary>
+    /// <remarks>GeneratedRegexAttribute 是 .NET 7+ API（net6.0 目标禁用），用编译正则：构建每类型只跑一次。</remarks>
+    private static readonly Regex PathTokenRegex = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
+}

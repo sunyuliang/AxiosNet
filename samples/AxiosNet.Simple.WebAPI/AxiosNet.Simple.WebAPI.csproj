@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AxiosNet.Simple.WebAPI</RootNamespace>
+    <AssemblyName>AxiosNet.Simple.WebAPI</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 声明式包自带对 AxiosNet 的依赖：示例只需要引用这一个项目 -->
+    <ProjectReference Include="..\..\src\AxiosNet.WebAPI\AxiosNet.WebAPI.csproj" />
+  </ItemGroup>
+
+</Project>

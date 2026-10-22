@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-578%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-638%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -22,6 +22,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [Declarative API client: AxiosNet.WebAPI (Refit-style)](#declarative-api-client-axiosnetwebapi-refit-style)
 - [Configuration](#configuration)
 - [Request body data and query params](#request-body-data-and-query-params)
 - [URL encoding: what gets encoded automatically](#url-encoding-what-gets-encoded-automatically)
@@ -53,15 +54,17 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 ### Option 1: NuGet (recommended)
 
 ```bash
-dotnet add package AxiosNet
+dotnet add package AxiosNet          # core: axios-style HTTP client
+dotnet add package AxiosNet.WebAPI   # optional: declarative API client (depends on the core)
 ```
 
-> Version numbers match Git tags: tagging `v1.2.3` publishes `1.2.3`; tagged pre-releases (e.g. `v1.2.3-rc.1`) are published as prerelease versions.
+> Version numbers match Git tags: tagging `v1.2.3` publishes both `AxiosNet 1.2.3` and `AxiosNet.WebAPI 1.2.3`; tagged pre-releases (e.g. `v1.2.3-rc.1`) are published as prerelease versions.
 
 ### Option 2: Project reference (this repository)
 
 ```bash
 dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj
+dotnet add your-app.csproj reference src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
 ```
 
 ### Option 3: Source inclusion
@@ -105,6 +108,59 @@ string url = http.GetUri(c =>
 ```
 
 > `GetUri` returns the **actual wire form**: percent-encoded unreserved characters in the query (`%41`→`A`, `%7E`→`~`) are normalized by `System.Uri` per RFC 3986, exactly like the request line that goes out; use the `GetUri` result as the signing input for pre-signed URLs.
+
+## Declarative API client: AxiosNet.WebAPI (Refit-style)
+
+When you would rather not hand-write URLs and config, use [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI): **define request models + plug in authorization, and the call site is a single `client.RequestAsync(request)`** — the response type is inferred from the request model's generic argument (the RestSharp / Flurl / Refit niche, while keeping the full axios-style response shape and every low-level capability such as the connection pool).
+
+```csharp
+using AxiosNet.WebAPI;
+
+// 1) Request model: route on the class, parameter bindings on properties;
+//    the IApiRequest<TResponse> generic IS the response type
+[Get("users/{id}")]
+public sealed class GetUserRequest : IApiRequest<User>
+{
+    [Path] public int Id { get; set; }                        // fills {id} (URL-escaped, case-insensitive token match)
+    [Query("verbose")] public string? Verbose { get; set; }   // query string
+    [Header("X-Trace")] public string? Trace { get; set; }    // request header
+}
+
+[Post("users")]
+public sealed class CreateUserRequest : IApiRequest<User>
+{
+    [Body] public UserPayload Payload { get; set; } = null!;  // body (JSON / form / multipart / raw — same encoding rules as the core package's data)
+}
+
+// 2) Client + authorization: IAuthorizationProvider is the extension point (built-in Bearer; implement your own for token caching / refresh / signing)
+var client = new ApiClient("https://api.example.com/")
+{
+    Authorization = new BearerAuthorizationProvider(() => GetTokenAsync())
+};
+
+// 3) Call: response.Data is already a User
+var response = await client.RequestAsync(new GetUserRequest { Id = 5, Trace = "t-1" });
+Console.WriteLine($"{response.Status} {response.Data!.Name}");
+await client.RequestAsync(new CreateUserRequest { Payload = payload });   // returns AxiosResponse<User>
+```
+
+Binding rules (parameter semantics aligned with Refit, but applied to **properties**):
+
+| Binding | Attribute | Notes |
+| --- | --- | --- |
+| Path segment | `[Path]` | substitutes template `{name}`, URL-escaped; `null` throws |
+| Query | `[Query]` / unannotated property | unannotated properties bind as query by default (**exception: default body below**); arrays `a[]=v`, nested `a[b]=v` follow the core package's params rules |
+| Header | `[Header]` | `null` is skipped |
+| Body | `[Body]` | at most one per model; `null` sends no body |
+| Exclusion | `[ApiIgnore]` | the property is excluded from binding entirely (no path/query/header/body), for internal state or sensitive data; combining with a parameter attribute throws |
+
+- **`[Body]` is optional for single-payload models**: on POST/PUT/PATCH, if the model has exactly one unannotated **non-scalar** property (excluding primitives, enums, string, decimal, DateTime/DateTimeOffset, TimeSpan, Guid and their nullable forms), that property binds as the body by default; the scalar guard keeps "POST with only a query parameter" from silently becoming a request body, and multiple unannotated properties all stay query — ambiguous cases keep the status quo, and `[Body]` can always be stated explicitly
+- **One property can bind to several places (multi-binding)**: e.g. `[Path("id")]` + `[Header("X-Id")]` + `[Body]` on the same property — the value is read once and applied to each binding. Guard: `[Path]` / `[Header]` properties must be scalars (path segments and headers are plain text on the wire; a complex object would only produce a garbage `ToString()` — rejected at build time); `[Query]` / `[Body]` are unrestricted
+- **Properties you don't want to send**: `[ApiIgnore]` excludes the property from binding entirely (it also does not count toward the default body's "exactly one unannotated" check); note this only affects binding — serialization of properties **inside** the request body is the body type's own business (that is STJ's `[JsonIgnore]`)
+- Per-request tweaks (timeout / Content-Type / serializer / responseType): derive from `ApiRequest<T>` and override `Configure(config)`, or call `RequestAsync(request, config => ...)` (runs after model binding, so it can override headers written by the model)
+- Invalid model definitions (missing route attribute, unbound placeholder, multiple bodies, duplicate parameter names) throw `InvalidOperationException` on first use, naming the offending property
+- Authorization runs **after** binding and `Configure`: signing implementations see the final URL and final headers
+- `client.GetUri(request)` builds the URL without sending; `client.Axios` exposes the underlying `AxiosClient` (interceptors / connection pool / handler injection all available)
 
 ## Configuration
 
@@ -1134,6 +1190,7 @@ Key points:
 - ⬆️ **File upload**: raw stream passthrough (`Stream`/`byte[]` plus a file `ContentType`) and `multipart/form-data` (`FormFile`, repeated same-name parts); the sample server parses byte-exactly and reports field name/file name/size/SHA256
 - 📊 **Traffic governance**: progress callbacks + one-way rate limiting + size caps, all in pure BCL (wrapping `HttpContent.SerializeToStreamAsync` and `Stream`), with no reliance on native `HttpClient` features
 - 🧵 **Custom handler injection**: `ConnectionPoolOptions.HandlerFactory` wraps your `DelegatingHandler` around the default `SocketsHttpHandler` per origin (logging/signing/retries/telemetry) while keeping connection reuse; `new AxiosClient(handler: ...)` takes over the connection layer entirely (bypassing the pool)
+- 📝 **Declarative API client** [`AxiosNet.WebAPI`](https://www.nuget.org/packages/AxiosNet.WebAPI) (separate package): request models + route/parameter attributes (`[Get("users/{id}")]`, `[Path]` / `[Query]` / `[Header]` / `[Body]`) + the `IAuthorizationProvider` authorization extension point (built-in Bearer), with `client.RequestAsync(request)` inferring its return type from `IApiRequest<TResponse>` — the Refit-style declarative experience on top of the full AxiosNet pipeline
 
 ## axios ↔ AxiosNet mapping
 
@@ -1233,6 +1290,20 @@ dotnet run --project samples/AxiosNet.Simple
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.
 
+[`samples/AxiosNet.Simple.WebAPI`](samples/AxiosNet.Simple.WebAPI) is the companion sample for the declarative client [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style) (also ready-to-run and offline): request and response models live in `ApiModels.cs`, and 7 examples make real HTTP round-trips:
+
+1. **GET detail**: `[Path]` binding + the response generic inferred from the request model
+2. **GET list**: unannotated properties bind as query by default, `ids[]=` array binding, `client.GetUri(request)` preview
+3. **POST create**: `[Body]` request body + the model's `Configure` hook (the server echoes X-Trace back to prove the header arrived)
+4. **Authorization**: a custom `IAuthorizationProvider` skipping the login request by type (login carries no credentials, token injected after login), plus the built-in `BearerAuthorizationProvider` one-liner
+5. **DELETE + error handling**: the method comes from the route attribute; a 404 throws `AxiosException` (`ERR_BAD_REQUEST`) with the `ToJson` structured snapshot
+6. **Global logging**: `client.Axios.Interceptors` with request/response/error branches (plus a global header)
+7. **Signing/verification**: the `SigningSerializer` decorator around the built-in JSON — request body HMAC-SHA256 into `X-Signature`, response verified before parsing; the demo server verifies symmetrically and rejects unsigned requests with 401
+
+```bash
+dotnet run --project samples/AxiosNet.Simple.WebAPI
+```
+
 ## Target framework and runtime support
 
 The library **targets `net6.0` only**; a single assembly covers every runtime from .NET 6 onward:
@@ -1257,7 +1328,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.slnx
 
-# Run all 578 xUnit tests (the test project targets net8.0 + net6.0, so 1156 executions)
+# Run all 638 xUnit tests (both test projects target net8.0 + net6.0, so 1276 executions)
 dotnet test AxiosNet.slnx
 
 # Release
@@ -1285,6 +1356,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Failure and concurrency regressions (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
 - Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`): a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists; end-to-end XML via `IContentSerializer`, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies, binary responses going through the byte inlet (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`, the binary request outlet (object → byte body + self-declared `MediaType`, no charset appended, explicit `ContentType` wins, forms/scalars never enter the byte channel), the built-in XML serializer (UTF-8 declaration / no namespace noise / `[XmlRoot]` namespace / DTD rejected), the boundary around `JsonDocument` targets, scalar request bodies and dictionary routing, self-declared `MediaType` filling the request header (explicit / instance-default `ContentType` wins, `null` is non-breaking)
 - Security & hardening (`HardeningTests`): header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard), `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default, truncated streaming body (and `Timeout=0`) reported as `ERR_NETWORK`, oversized `Timeout` clamped to ~49.7 days, negative limits fail fast, params appended before the URL fragment, `PostAsync(url, null)` throwing `ArgumentNullException`, `maxContentLength` enforced for streaming and chunked responses, cookies shared across origins, cancellation keeping its `Cause`, `JsonElement` params, `byte[]` params (base64), pool origin cap and graceful `Dispose` (in-flight requests are not killed by closing the client; dispose races never leak a raw `ObjectDisposedException`)
+- Declarative client (`AxiosNet.WebAPI.Tests`, 66 cases): route/Path/Query/Header/Body binding end-to-end (path escaping, absolute URL overriding BaseAddress, model- and call-site Configure hooks, inherited property bindings), default body (POST/PUT/PATCH + exactly one unannotated non-scalar property; scalar guard, ambiguity with multiple properties stays query, explicit `[Query]` does not block, DELETE excluded), multi-binding (Path+Header, Query+Header, scalar Path+Body+Header in all three places, complex object Query+Body; non-scalar Path/Header rejected at build time), `[ApiIgnore]` (query exclusion, does not block default body, combining with a parameter attribute throws), edge cases (case-variant placeholders, default-body null/scalar-array semantics, Guid and record models, PROPFIND custom verb, direct [HttpApi("delete", …)] normalization, CRLF injection fail-fast, raw byte[]/Stream responses, connection reuse, facade guards), built-in Bearer (static/factory/scheme-prefixed) and custom authorization (skipping by request type, seeing the final config, no half-sent request on auth failure), model definition validation (missing route, unbound/extra placeholders, malformed braces, duplicate placeholder, multiple bodies, duplicate names, null path value) and error caching
 
 ## Overall pipeline
 
@@ -1407,31 +1479,41 @@ How the stages map onto the source files (read together with the [project layout
 .
 ├─ AxiosNet.slnx
 ├─ src/
-│  └─ AxiosNet/                  # library (net6.0 only, compatible with all runtimes from .NET 6 onward)
-│     ├─ Axios.cs                # static facade (the global axios equivalent)
-│     ├─ AxiosClient.cs          # instance + request pipeline
-│     ├─ AxiosClient.Shortcuts.cs# all shortcut overloads (get/post/... + form)
-│     ├─ AxiosClient.Config.cs   # config merging and header application
-│     ├─ AxiosJson.cs            # global JSON defaults (JsonSerializerOptions)
-│     ├─ AxiosContent.cs         # global injection point for content serialization
-│     ├─ AxiosConfig.cs          # request/instance configuration
-│     ├─ AxiosContentType.cs     # common Content-Type presets
-│     ├─ AxiosUrl.cs             # path-segment escaping (AxiosUrl.EncodePathSegment)
-│     ├─ AxiosHeaders.cs         # case-insensitive headers
-│     ├─ AxiosResponse.cs        # response (generic/non-generic)
-│     ├─ AxiosResponseInfo.cs    # read-only response context for deserialization (status/headers/media type)
-│     ├─ AxiosException.cs       # aligned with AxiosError
-│     ├─ AxiosProgressEvent.cs   # upload/download progress events
-│     ├─ FormFile.cs             # multipart file part
-│     ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
-│     ├─ Interceptors/           # request/response interceptor management
-│     ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in JSON / XML implementations
-│     ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
-│     └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
+│  ├─ AxiosNet/                  # library (net6.0 only, compatible with all runtimes from .NET 6 onward)
+│  │  ├─ Axios.cs                # static facade (the global axios equivalent)
+│  │  ├─ AxiosClient.cs          # instance + request pipeline
+│  │  ├─ AxiosClient.Shortcuts.cs# all shortcut overloads (get/post/... + form)
+│  │  ├─ AxiosClient.Config.cs   # config merging and header application
+│  │  ├─ AxiosJson.cs            # global JSON defaults (JsonSerializerOptions)
+│  │  ├─ AxiosContent.cs         # global injection point for content serialization
+│  │  ├─ AxiosConfig.cs          # request/instance configuration
+│  │  ├─ AxiosContentType.cs     # common Content-Type presets
+│  │  ├─ AxiosUrl.cs             # path-segment escaping (AxiosUrl.EncodePathSegment)
+│  │  ├─ AxiosHeaders.cs         # case-insensitive headers
+│  │  ├─ AxiosResponse.cs        # response (generic/non-generic)
+│  │  ├─ AxiosResponseInfo.cs    # read-only response context for deserialization (status/headers/media type)
+│  │  ├─ AxiosException.cs       # aligned with AxiosError
+│  │  ├─ AxiosProgressEvent.cs   # upload/download progress events
+│  │  ├─ FormFile.cs             # multipart file part
+│  │  ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
+│  │  ├─ Interceptors/           # request/response interceptor management
+│  │  ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in JSON / XML implementations
+│  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type classification, status text
+│  │  └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
+│  └─ AxiosNet.WebAPI/           # declarative API client (separate NuGet package, depends on AxiosNet)
+│     ├─ ApiClient.cs            # facade: RequestAsync(request) + GetUri(request), a thin wrapper over AxiosClient
+│     ├─ IApiRequest.cs          # request-model contract (IApiRequest<T> determines the response type) + Configure hook
+│     ├─ HttpApiAttribute.cs     # route attributes (Get/Post/Put/Patch/Delete/Head/Options)
+│     ├─ ApiParameterAttributes.cs # parameter-binding attributes (Path / Query / Header / Body)
+│     ├─ IAuthorizationProvider.cs # authorization extension point + ApiAuthContext
+│     ├─ BearerAuthorizationProvider.cs # built-in Bearer authorization
+│     └─ Internal/RequestModelMetadata.cs # binding metadata (cached per model type, fully validated at build time)
 ├─ samples/
-│  └─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
+│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing)
+│  └─ AxiosNet.Simple.WebAPI/    # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification)
 └─ test/
-   └─ AxiosNet.Tests/            # xUnit tests (578 cases × net6.0 / net8.0 = 1156 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (578 cases × net6.0 / net8.0 = 1156 executions)
+   └─ AxiosNet.WebAPI.Tests/     # declarative client tests (66 cases × net6.0 / net8.0, reuses the main test server)
 ```
 
 ## License

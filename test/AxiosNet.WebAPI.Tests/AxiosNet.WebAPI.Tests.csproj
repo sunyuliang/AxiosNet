@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 与主库测试一致：net8.0;net6.0 双 TFM，验证同一份 lib/net6.0 资产在两种运行时上的行为 -->
+    <TargetFrameworks>net8.0;net6.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AxiosNet.WebAPI\AxiosNet.WebAPI.csproj" />
+  </ItemGroup>
+
+  <!-- 复用主库测试的内存 HTTP 服务器与 JSON 工具（编译进本程序集，internal 成员同样可见） -->
+  <ItemGroup>
+    <Compile Include="..\AxiosNet.Tests\Infrastructure\TestHttpServer.cs" Link="Infrastructure\TestHttpServer.cs" />
+    <Compile Include="..\AxiosNet.Tests\Infrastructure\TestModels.cs" Link="Infrastructure\TestModels.cs" />
+  </ItemGroup>
+
+</Project>

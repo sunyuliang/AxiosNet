@@ -2,6 +2,10 @@
 # 普通 push / PR 只做构建 + 测试（不发布），避免回归只能等到打 tag 才暴露。
 # 认证方式：NuGet Trusted Publishing（OIDC），不需要长期 API Key，也不需要 NUGET_API_KEY 密钥。
 #
+# 仓库同时维护两个 NuGet 包：AxiosNet（HTTP 客户端）与 AxiosNet.WebAPI（声明式 API 客户端，依赖前者）。
+# 两个包用同一 tag 同步发版（monorepo 锁步版本）：publish / verify-published 按 matrix 逐包执行同一套流程，
+# 包项目由 matrix.package 注入 PACKAGE_PROJECT，各步骤内的发布状态机逻辑与单包时代逐字不变。
+#
 # 与 nuget.org「Trusted Publishing」策略必须逐项一致（大小写不敏感，但内容要相同）：
 #   Repository Owner : sunyuliang        ← 仓库：https://github.com/sunyuliang/AxiosNet
 #   Repository       : AxiosNet
@@ -44,7 +48,9 @@ jobs:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-      TEST_PROJECT: test/AxiosNet.Tests/AxiosNet.Tests.csproj
+      TEST_PROJECTS: |
+        test/AxiosNet.Tests/AxiosNet.Tests.csproj
+        test/AxiosNet.WebAPI.Tests/AxiosNet.WebAPI.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -60,13 +66,22 @@ jobs:
             6.0.x
 
       - name: 还原依赖
-        run: dotnet restore "$TEST_PROJECT"
+        run: |
+          for project in $TEST_PROJECTS; do
+            dotnet restore "$project"
+          done
 
       - name: 构建
-        run: dotnet build "$TEST_PROJECT" --configuration Release --no-restore
+        run: |
+          for project in $TEST_PROJECTS; do
+            dotnet build "$project" --configuration Release --no-restore
+          done
 
       - name: 运行单元测试
-        run: dotnet test "$TEST_PROJECT" --configuration Release --no-build --no-restore --logger "console;verbosity=normal"
+        run: |
+          for project in $TEST_PROJECTS; do
+            dotnet test "$project" --configuration Release --no-build --no-restore --logger "console;verbosity=normal"
+          done
 
   publish:
     name: pack & push
@@ -78,14 +93,23 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC：换取 nuget.org 短期 API Key 的前提
+    # 双包锁步发版：两个包项目各起一个 job，跑同一套（逐字未改的）发布状态机
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - src/AxiosNet/AxiosNet.csproj
+          - src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
 
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
       NUGET_SOURCE: https://api.nuget.org/v3/index.json
-      PACKAGE_PROJECT: src/AxiosNet/AxiosNet.csproj
-      TEST_PROJECT: test/AxiosNet.Tests/AxiosNet.Tests.csproj
+      PACKAGE_PROJECT: ${{ matrix.package }}
+      TEST_PROJECTS: |
+        test/AxiosNet.Tests/AxiosNet.Tests.csproj
+        test/AxiosNet.WebAPI.Tests/AxiosNet.WebAPI.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -121,23 +145,30 @@ jobs:
           echo "解析出版本：$ver（来自 tag $tag，commit ${GITHUB_SHA:0:7}）"
 
       - name: 还原依赖
-        run: dotnet restore "$TEST_PROJECT"
+        run: |
+          for project in $TEST_PROJECTS; do
+            dotnet restore "$project"
+          done
 
       - name: 构建
         run: |
-          dotnet build "$TEST_PROJECT" \
-            --configuration Release \
-            --no-restore \
-            -p:Version="${{ steps.meta.outputs.version }}" \
-            -p:ContinuousIntegrationBuild=true
+          for project in $TEST_PROJECTS; do
+            dotnet build "$project" \
+              --configuration Release \
+              --no-restore \
+              -p:Version="${{ steps.meta.outputs.version }}" \
+              -p:ContinuousIntegrationBuild=true
+          done
 
       - name: 运行单元测试
         run: |
-          dotnet test "$TEST_PROJECT" \
-            --configuration Release \
-            --no-build \
-            --no-restore \
-            --logger "console;verbosity=normal"
+          for project in $TEST_PROJECTS; do
+            dotnet test "$project" \
+              --configuration Release \
+              --no-build \
+              --no-restore \
+              --logger "console;verbosity=normal"
+          done
 
       - name: 打包 nupkg + snupkg
         run: |
@@ -359,8 +390,9 @@ jobs:
       - name: 写入运行摘要
         if: always()
         run: |
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
           {
-            echo "### AxiosNet ${{ steps.meta.outputs.version }}"
+            echo "### $ID ${{ steps.meta.outputs.version }}"
             echo ""
             echo "- tag: \`${{ github.ref_name }}\`"
             echo "- 预发布: \`${{ steps.meta.outputs.is_prerelease }}\`"
@@ -369,8 +401,8 @@ jobs:
             echo "- PDB debug id: \`${{ steps.publish.outputs.debug_id }}\`"
             echo "- 客户端可拉取: \`${{ steps.visibility.outputs.ready }}\`（空白=该步未执行；no=索引仍在生效中）"
             echo "- 符号可见: \`${{ steps.symbols.outputs.symbols_visible }}\`（yes=已确认可下载；no=摄入滞后，属正常，稍后用 verify-published 复核）"
-            echo "- 包: https://www.nuget.org/packages/AxiosNet/${{ steps.meta.outputs.version }}"
-            echo "- 符号: https://symbols.nuget.org/download/symbols/AxiosNet.pdb/ （源码映射载体，可见性见上）"
+            echo "- 包: https://www.nuget.org/packages/$ID/${{ steps.meta.outputs.version }}"
+            echo "- 符号: https://symbols.nuget.org/download/symbols/$ID.pdb/ （源码映射载体，可见性见上）"
             echo "- commit: \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -378,11 +410,18 @@ jobs:
     name: 复核已发布版本（包可拉取 + 符号可见）
     # 发布时的符号校验只是有界观察，摄入慢于窗口属于常态。事后补验走这里：
     # Actions → build-nuget → Run workflow → 填版本号。不构建、不发布、不动线上，只打两个权威端点。
+    # 双包锁步发版：按 matrix 逐包复核（同一版本号）。
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - src/AxiosNet/AxiosNet.csproj
+          - src/AxiosNet.WebAPI/AxiosNet.WebAPI.csproj
     env:
       DOTNET_NOLOGO: true
-      PACKAGE_PROJECT: src/AxiosNet/AxiosNet.csproj
+      PACKAGE_PROJECT: ${{ matrix.package }}
 
     steps:
       - name: 检出代码
