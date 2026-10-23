@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 using AxiosNet.Internal;
 
@@ -39,18 +40,32 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         => JsonSerializer.Deserialize(json, type, AxiosJson.GetOptions(config));
 
     /// <summary>
-    /// 二进制入口：直接按 UTF-8 字节反序列化，不做 <c>byte[] → string</c> 中转。
+    /// 二进制入口：默认按 UTF-8 字节反序列化，不做 <c>byte[] → string</c> 中转。
     /// 触达路径是「Content-Type 声明非文本」（如服务端把 JSON 标成 <c>application/octet-stream</c>）。
     /// <para>
-    /// 与接口默认实现（经 <c>ResponseTextDecoder</c> 解码）保持同一语义：剥掉 BOM 后再交给 STJ。
+    /// 与接口默认实现（经 <c>ResponseTextDecoder</c> 解码）保持同一语义：声明了非 UTF-8
+    /// <c>charset</c> 或调用方强制了 <see cref="AxiosConfig.ResponseEncoding"/> 时先按该编码解码；
+    /// 否则走 UTF-8 快路径，并按 BOM 处理 UTF-16 / UTF-32 变体。
     /// net6.0 的 <c>JsonSerializer.Deserialize(ReadOnlySpan&lt;byte&gt;)</c> 自己不剥 BOM，
     /// 带 BOM 的正文会被首字节 0xEF 判成非法 JSON 起始；UTF-16 / UTF-32 的 BOM（首字节 0xFF / 0xFE）
-    /// 更是直接无法按 UTF-8 解析 —— 这类按 BOM 解码后转文本入口。
+    /// 更是直接无法按 UTF-8 解析。
     /// </para>
     /// </summary>
     public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
     {
         var span = data.Span;
+
+        // 非文本 Content-Type 也可能声明 charset（或调用方强制了 ResponseEncoding）。
+        // 接口默认实现会先按这套优先级解码，这里必须保持一致；否则同一份字节走
+        // 「text/json」能读对、走「application/octet-stream」却按 UTF-8 解析失败。
+        var forced = config.ResponseEncoding;
+        var charSet = config.Response?.CharSet;
+        if (forced is not null
+            || (ResponseTextDecoder.ResolveFromCharset(charSet) is { } declared
+                && declared.CodePage != Encoding.UTF8.CodePage))
+        {
+            return Deserialize(ResponseTextDecoder.Decode(span, charSet, forced), type, config);
+        }
 
         if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF)
         {

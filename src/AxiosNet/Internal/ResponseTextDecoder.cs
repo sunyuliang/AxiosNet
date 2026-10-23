@@ -35,9 +35,14 @@ internal static class ResponseTextDecoder
     /// 且换行就是 <c>0x0A</c> 本身。UTF-16 / UTF-32 等宽编码返回 <c>false</c>。
     /// <para>空 charset（默认 UTF-8）与未知 charset（解码时回落默认编码）都返回 <c>true</c>。</para>
     /// </summary>
-    public static bool IsAsciiCompatible(string? charSet)
+    public static bool IsAsciiCompatible(string? charSet) => IsAsciiCompatible(ResolveFromCharset(charSet));
+
+    /// <summary>
+    /// 已解析编码的版本，供「强制 <see cref="AxiosConfig.ResponseEncoding"/> 优先于 charset」的调用方判断
+    /// 最终生效的编码；<c>null</c> 表示未指定（按 UTF-8），返回 <c>true</c>。
+    /// </summary>
+    public static bool IsAsciiCompatible(Encoding? encoding)
     {
-        var encoding = ResolveFromCharset(charSet);
         if (encoding is null)
         {
             return true;
@@ -48,7 +53,7 @@ internal static class ResponseTextDecoder
         return written == 2 && probe[0] == (byte)'A' && probe[1] == (byte)'\n';
     }
 
-    private static Encoding? ResolveFromCharset(string? charSet)
+    internal static Encoding? ResolveFromCharset(string? charSet)
     {
         if (string.IsNullOrWhiteSpace(charSet))
         {

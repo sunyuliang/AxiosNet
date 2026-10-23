@@ -6,8 +6,8 @@ namespace AxiosNet.WebAPI.Internal;
 /// <summary>
 /// 把响应流按行切成帧、逐帧反序列化成 <typeparamref name="T"/>（NDJSON / SSE）。
 /// <para>
-/// <b>分帧在字节层做</b>：先找 <c>0x0A</c> 再解码整行。反过来（先把字节流解码成文本再切行）会在
-/// 块边界撞上半个 UTF-8 序列，解出不可恢复的 U+FFFD —— 而 <c>0x0A</c> 不会出现在多字节序列内部，
+/// <b>分帧在字节层做</b>：先找 <c>0x0A</c> / <c>0x0D</c> 再解码整行。反过来（先把字节流解码成文本再切行）会在
+/// 块边界撞上半个 UTF-8 序列，解出不可恢复的 U+FFFD —— 而 CR / LF 不会出现在多字节序列内部，
 /// 按字节切分天然安全。
 /// </para>
 /// <para>
@@ -47,15 +47,18 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         string? charSet,
         string? mediaType)
     {
-        if (!ResponseTextDecoder.IsAsciiCompatible(charSet))
+        // 强制 ResponseEncoding 优先于 charset（与 Decode 的优先级一致），按最终生效的编码判断；
+        // 只看 charSet 会漏掉「未声明 charset + 调用方强制 UTF-16」，那种配置同样无法按字节分帧。
+        var framingEncoding = config.ResponseEncoding ?? ResponseTextDecoder.ResolveFromCharset(charSet);
+        if (!ResponseTextDecoder.IsAsciiCompatible(framingEncoding))
         {
-            // 分帧按字节找 0x0A：UTF-16 / UTF-32 把换行编成多字节序列，切出来的「行」必然错位。
+            // 分帧按字节找 CR / LF：UTF-16 / UTF-32 把换行编成多字节序列，切出来的「行」必然错位。
             // 与其让调用方拿到一串乱码帧，不如在取流这一步报出可定位的错误（同时释放响应流归还连接）。
             stream.Dispose();
             throw AxiosException.BadResponse(
                 config,
                 request,
-                $"stream frames in charset '{charSet}' (only ASCII-compatible encodings can be byte-framed)",
+                $"stream frames in charset '{framingEncoding!.WebName}' (only ASCII-compatible encodings can be byte-framed)",
                 new NotSupportedException("stream framing requires an ASCII-compatible charset"));
         }
 
@@ -222,22 +225,33 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     private static bool IsDone(string frame)
         => string.Equals(frame, DoneSentinel, StringComparison.Ordinal);
 
-    /// <summary>读取一行（不含行尾 <c>\n</c> 与 <c>\r</c>）；<c>null</c> 表示流已结束。</summary>
+    /// <summary>读取一行（不含行尾 CR / LF）；<c>null</c> 表示流已结束。</summary>
     private async ValueTask<string?> TryReadLineAsync()
     {
         while (true)
         {
-            var newline = IndexOfNewline();
-            if (newline >= 0)
+            var terminator = IndexOfLineTerminator();
+            if (terminator >= 0)
             {
-                var length = newline - _start;
-                if (length > 0 && _buffer[newline - 1] == (byte)'\r')
+                // CRLF 的 CR 恰好落在缓冲区末尾：再读一块确认后随的 LF，
+                // 否则会把 LF 当成下一行的空行（SSE 会多交付一个空帧）。
+                if (_buffer[terminator] == (byte)'\r' && terminator == _end - 1 && !_eof)
                 {
-                    length--;
+                    await FillAsync().ConfigureAwait(false);
+                    continue;
                 }
 
-                var line = Decode(_start, length);
-                _start = newline + 1;
+                var line = Decode(_start, terminator - _start);
+                _start = terminator + 1;
+
+                // 裸 CR / 裸 LF 只前进 1 字节；CRLF 再吃掉 LF。
+                if (_buffer[terminator] == (byte)'\r'
+                    && _start < _end
+                    && _buffer[_start] == (byte)'\n')
+                {
+                    _start++;
+                }
+
                 return line;
             }
 
@@ -257,10 +271,20 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    private int IndexOfNewline()
+    /// <summary>
+    /// 行尾判定：LF / CR / CRLF 都是合法行分隔符（WHATWG SSE 明确允许三种），
+    /// 返回最早出现的 CR 或 LF 的下标，没有则返回 -1。
+    /// </summary>
+    private int IndexOfLineTerminator()
     {
         var length = _end - _start;
-        return length <= 0 ? -1 : Array.IndexOf(_buffer, (byte)'\n', _start, length);
+        if (length <= 0)
+        {
+            return -1;
+        }
+
+        var index = _buffer.AsSpan(_start, length).IndexOfAny((byte)'\r', (byte)'\n');
+        return index < 0 ? -1 : _start + index;
     }
 
     private string Decode(int offset, int length)
