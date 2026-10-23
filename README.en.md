@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-835%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-839%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -682,7 +682,13 @@ await http.GetAsync<dynamic>("search", c => c.Params = query);
 
 ## Form shortcuts: postForm / putForm / patchForm
 
-`PostFormAsync` / `PutFormAsync` / `PatchFormAsync` correspond to `axios.postForm(...)` from axios v1.5+: **they send `multipart/form-data` by default when `ContentType` is not set explicitly**, and `FormFile` / `Stream` / `byte[]` inside the object expand into file parts automatically.
+`PostFormAsync` / `PutFormAsync` / `PatchFormAsync` correspond to `axios.postForm(...)` from axios v1.5+: **they send `multipart/form-data` by default**, and `FormFile` / `Stream` / `byte[]` inside the object expand into file parts automatically.
+
+Effective encoding precedence: **`configure` callback > method default (`multipart/form-data`) > instance `Defaults.ContentType`**:
+
+- Setting `Defaults.ContentType = "application/json"` for a JSON API on the instance does **not** affect these three methods — the method name is this call's encoding promise; otherwise form fields would silently be sent as JSON;
+- The one exception is an instance default that is **already a form encoding** (`application/x-www-form-urlencoded`, or `multipart/form-data` with a `boundary` parameter): that means the client speaks forms exclusively, so the instance value wins and a fixed `boundary` is preserved verbatim;
+- To change the encoding for a single call, set `ContentType` inside `configure` (highest priority).
 
 ```csharp
 // Send multipart in one line: fields + files (no manual ContentType)
@@ -1465,7 +1471,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **791** core/declarative cases plus **40** DI-extension cases — **831** in total (**1662** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **799** core/declarative cases plus **40** DI-extension cases — **839** in total (**1678** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1524,7 +1530,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 831 xUnit tests (791 core/declarative + 40 DI; both test projects target net8.0 + net6.0, so 1662 executions)
+# Run all 839 xUnit tests (799 core/declarative + 40 DI; both test projects target net8.0 + net6.0, so 1678 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1533,9 +1539,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 127 under `WebAPI/`) | 791 | `net8.0` / `net6.0` | 1582 |
+| `AxiosNet.Tests` (core + declarative, incl. 127 under `WebAPI/`) | 799 | `net8.0` / `net6.0` | 1598 |
 | `AxiosNet.DependencyInjection.Tests` | 40 | `net8.0` / `net6.0` | 80 |
-| **Total** | **831** | | **1662** |
+| **Total** | **839** | | **1678** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1549,6 +1555,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - `GetUri`: relative/absolute, arrays and nested params, Chinese characters and spaces escaped, custom serializer
 - Limits and progress: `maxContentLength` / `maxBodyLength` / `maxRedirects: 0`; upload/download progress (100% uniqueness) and `maxRate` throttling (up/down)
 - Serialization extension points: `paramsSerializer` / `formFieldNameSelector` / `transformRequest` / `transformResponse` / `PostForm*` shortcuts
+- Form-shortcut encoding precedence: `configure` > method default `multipart/form-data` > instance `Defaults.ContentType` — with an instance default of `application/json` the three form methods still send multipart, while an instance default that is already `application/x-www-form-urlencoded` or `multipart/form-data` with a `boundary` is preserved (boundary included); `configure` always wins
 - File download: `GetAsync<Stream>` to disk, `ResponseType.ArrayBuffer`, connection reuse after stream disposal, Content-Disposition file name, download timeout
 - `dynamic`: response graphs and dynamic requests (9 dedicated tests covering `GetAsync<dynamic>` / `PostAsync<dynamic>` / static facade / explicit responseType precedence)
 - Connection pool: connection reuse, max-connection throttling, sharing across instances, idle eviction, multi-origin isolation, dispose semantics; shared-pool fail-fast (connection-level defaults and `pool`/`poolOptions` exclusivity); origin key IDNA normalization (unicode/punycode as the same node, IPv6 brackets preserved); `pool.Options` option isolation
@@ -1776,7 +1783,7 @@ How the stages map onto the source files (read together with the [project layout
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (791 cases × net6.0 / net8.0 = 1582 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (799 cases × net6.0 / net8.0 = 1598 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (127 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (40 cases × net6.0 / net8.0 = 80 executions, reuses the main/WebAPI test infrastructure)

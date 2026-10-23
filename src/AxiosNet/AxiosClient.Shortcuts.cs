@@ -196,6 +196,10 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
         => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null));
 
+    /// <summary>
+    /// 表单快捷方法的公共入口：把「默认 multipart」交给 <see cref="Shortcut"/>，
+    /// 由它决定这个默认值与实例默认值谁生效（见 <see cref="IsFormContentType"/>）。
+    /// </summary>
     private AxiosConfig FormShortcut(
         string url,
         HttpMethod method,
@@ -288,8 +292,13 @@ public sealed partial class AxiosClient
         config.Url = url;
         config.Method = method;
 
-        // 表单快捷方法：没人表态时默认 multipart。放在 configure 之前，回调里显式设的值仍然优先。
-        if (defaultContentType is not null && !config.ContentTypeSet)
+        // 表单快捷方法：编码由方法名承诺，优先级 configure > 方法默认 > 实例默认值。
+        // 这里不能看 ContentTypeSet —— 它是 Defaults.Clone() 带进来的，为 true 只说明「实例上设过默认值」，
+        // 不说明本次调用方有意见：实例为了 JSON 接口设过 application/json 之后，PostFormAsync
+        // 会把表单字段按 JSON 发出去，与方法文档相反且毫无提示。
+        // 例外：实例默认值本身就是表单编码（urlencoded，或带自定义 boundary 的 multipart），
+        // 那是「这个客户端专发表单」的选择，保留它（含 boundary 参数）。
+        if (defaultContentType is not null && !IsFormContentType(config.ContentType))
         {
             config.ContentType = defaultContentType;
         }
@@ -326,6 +335,14 @@ public sealed partial class AxiosClient
 
         return config;
     }
+
+    /// <summary>
+    /// 媒体类型是否已经是一种<b>表单编码</b>（<c>application/x-www-form-urlencoded</c> 或 <c>multipart/form-data</c>，
+    /// 后者允许带 <c>boundary</c> 等参数）。表单快捷方法只在这种默认值上让步。
+    /// </summary>
+    private static bool IsFormContentType(string contentType)
+        => MediaTypes.Is(contentType, AxiosContentType.FormUrlEncoded)
+            || MediaTypes.Is(contentType, AxiosContentType.MultipartFormData);
 
     /// <summary>把 url/method 填进调用方传入的配置，交给管线按常规路径合并到实例默认值。</summary>
     private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)

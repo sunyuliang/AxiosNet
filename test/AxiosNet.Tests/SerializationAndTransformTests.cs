@@ -131,6 +131,72 @@ public sealed class SerializationAndTransformTests
         Assert.Equal("name=alice", Body(server.Received[0]));
     }
 
+    [Fact]
+    public async Task PostForm_IgnoresNonFormInstanceContentType()
+    {
+        // 实例默认值为 JSON 接口设置过 ContentType：它是「默认值」，不是本次调用的意见，
+        // 不能把 PostFormAsync 的 multipart 承诺压掉（否则字段被按 JSON 发出去，且没有任何提示）。
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+        client.Defaults.ContentType = AxiosContentType.Json;
+
+        await client.PostFormAsync(server.Url + "upload", new { name = "alice" });
+
+        var sent = server.Received[0];
+        Assert.StartsWith("multipart/form-data", sent.Headers.GetValueOrDefault("content-type"));
+        Assert.Contains("name=name", Body(sent));
+        Assert.Contains("alice", Body(sent));
+    }
+
+    [Fact]
+    public async Task PostForm_KeepsInstanceFormUrlEncodedDefault()
+    {
+        // 实例默认值本身就是表单编码＝「这个客户端专发表单」的选择，方法默认值不抢它。
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+        client.Defaults.ContentType = AxiosConfig.FormUrlEncodedContentType;
+
+        await client.PostFormAsync(server.Url + "form", new { name = "alice" });
+
+        Assert.Equal("application/x-www-form-urlencoded", server.Received[0].Headers.GetValueOrDefault("content-type"));
+        Assert.Equal("name=alice", Body(server.Received[0]));
+    }
+
+    [Fact]
+    public async Task PostForm_KeepsInstanceMultipartDefaultWithBoundary()
+    {
+        // 实例默认值里的 multipart 参数（固定 boundary）同样保留：覆盖会把调用方指定的边界换掉。
+        const string boundary = "----axios-net-form";
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+        client.Defaults.ContentType = AxiosContentType.MultipartFormData + "; boundary=" + boundary;
+
+        await client.PostFormAsync(server.Url + "upload", new { name = "alice" });
+
+        var sent = server.Received[0];
+        var contentType = sent.Headers.GetValueOrDefault("content-type")!;
+        Assert.StartsWith("multipart/form-data; boundary=", contentType);
+        Assert.Contains(boundary, contentType);
+        Assert.Contains("--" + boundary, Body(sent));
+    }
+
+    [Fact]
+    public async Task PostForm_ConfigureStillBeatsInstanceContentType()
+    {
+        // configure 是本次调用的显式意见，优先级高于方法默认值与实例默认值。
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+        client.Defaults.ContentType = AxiosConfig.FormUrlEncodedContentType;
+
+        await client.PostFormAsync(
+            server.Url + "json",
+            new { name = "alice" },
+            c => c.ContentType = AxiosContentType.Json);
+
+        Assert.Equal("application/json", server.Received[0].Headers.GetValueOrDefault("content-type"));
+        Assert.Equal("{\"name\":\"alice\"}", Body(server.Received[0]));
+    }
+
     [Theory]
     [InlineData("PUT")]
     [InlineData("PATCH")]
