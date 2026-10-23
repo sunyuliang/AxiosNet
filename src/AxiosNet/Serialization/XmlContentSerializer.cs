@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 using System.Xml;
@@ -36,7 +37,15 @@ namespace AxiosNet.Serialization;
 /// 跟随 <see cref="AxiosConfig.RequestEncoding"/>（必须与实际写 socket 的编码一致）；
 /// 默认命名空间为空以免请求体里塞满 <c>xmlns:xsi</c> 噪音；反序列化禁用 DTD（防 XXE / 十亿笑声）。
 /// </para>
+/// <para>
+/// Native AOT / 裁剪：<see cref="XmlSerializer"/> 依赖运行时反射生成序列化器，本类<b>不支持 AOT</b>；
+/// 需要 AOT 请改用 JSON + 源生成上下文。
+/// </para>
 /// </summary>
+[UnconditionalSuppressMessage(
+    "Trimming",
+    "IL2026",
+    Justification = "XmlSerializer 依赖运行时反射生成序列化器，不支持 Native AOT；内部已抑制但不承诺裁剪安全。")]
 public sealed class XmlContentSerializer : IContentSerializer
 {
     /// <summary>无状态单例，可安全并发共享（内部按类型缓存 <see cref="XmlSerializer"/>）。</summary>

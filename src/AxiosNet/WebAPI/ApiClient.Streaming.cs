@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
@@ -44,6 +45,10 @@ public sealed partial class ApiClient
     /// <param name="format">帧格式。</param>
     /// <param name="configure">按请求微调配置（在模型绑定之后、授权之前调用）。</param>
     /// <param name="cancellationToken">外部取消令牌（贯穿整个枚举过程）。</param>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "请求模型的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     public async Task<AxiosResponse<IAsyncEnumerable<TItem>>> RequestStreamAsync<TItem>(
         IApiRequest<TItem> request,
         AxiosStreamFormat format,

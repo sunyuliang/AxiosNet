@@ -9,6 +9,9 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- 声明本程序集可被裁剪（消费方 PublishTrimmed / PublishAot 时按需裁剪），
+         同时启用裁剪分析器：反射入口的 DynamicallyAccessedMembers 标注与抑制理由必须始终自洽。 -->
+    <IsTrimmable>true</IsTrimmable>
   </PropertyGroup>
 
   <!-- ===== NuGet 包元数据 ===== -->

@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace AxiosNet.Internal;
@@ -50,6 +51,10 @@ internal static class FormBodyEncoder
     /// <summary>
     /// 把结构化数据展平为表单键值对；传入 <see cref="JsonElement"/> 时按树语义展平（<see cref="Flatten"/>）。
     /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "表单值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void CollectFormPairs(
         string? prefix,
         object? value,

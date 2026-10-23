@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
@@ -109,6 +110,10 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <param name="request">请求模型实例。</param>
     /// <param name="configure">在参数绑定与 <see cref="IApiRequestConfigurable.Configure"/> 之后、授权之前调用。</param>
     /// <param name="cancellationToken">外部取消令牌。</param>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "请求模型的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     public async Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
@@ -128,6 +133,10 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// 按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。
     /// 可用于日志与签名；返回实际发送形态（已转义）。
     /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "请求模型的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     public string GetUri<TResponse>(IApiRequest<TResponse> request)
     {
         ArgumentNullException.ThrowIfNull(request);

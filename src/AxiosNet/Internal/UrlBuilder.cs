@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace AxiosNet.Internal;
@@ -185,6 +186,10 @@ internal static class ParamsSerializer
 {
     /// <param name="paramsObj">查询参数：对象 / 字典 / 集合 / 已序列化的查询串（string）。</param>
     /// <param name="config">用于把「params 类型非法」的错误挂上配置。</param>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "params 的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     public static string Serialize(object? paramsObj, AxiosConfig? config = null)
     {
         if (paramsObj is null)
@@ -287,6 +292,10 @@ internal static class ParamsSerializer
         return trimmed.Length == 0 ? string.Empty : trimmed.TrimStart('?', '&');
     }
 
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "嵌套对象的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void Append(
         string prefix,
         object? value,

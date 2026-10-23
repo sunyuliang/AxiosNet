@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using AxiosNet.Internal;
@@ -84,9 +85,12 @@ internal sealed partial class RequestModelMetadata
     internal PartBinding[] PartBindings { get; init; } = [];
 
     /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
-    public static RequestModelMetadata Get(Type requestType)
+    /// <param name="requestType">请求模型类型；标注要求裁剪器保留其公开属性（绑定与取值都靠反射）。</param>
+    public static RequestModelMetadata Get(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
     {
-        var metadata = Cache.GetOrAdd(requestType, static t => Build(t));
+        // 用捕获的 requestType（带标注）而不是工厂参数：缓存字典的 Type 键本身不携带裁剪标注。
+        var metadata = Cache.GetOrAdd(requestType, _ => Build(requestType));
 
         if (metadata._buildError is not null)
         {
@@ -272,7 +276,8 @@ internal sealed partial class RequestModelMetadata
     // 构建：反射只发生在这里，之后全部是数组遍历
     // ------------------------------------------------------------------
 
-    private static RequestModelMetadata Build(Type requestType)
+    private static RequestModelMetadata Build(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
     {
         try
         {
@@ -287,7 +292,8 @@ internal sealed partial class RequestModelMetadata
         }
     }
 
-    private static RequestModelMetadata BuildCore(Type requestType)
+    private static RequestModelMetadata BuildCore(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
     {
         var route = requestType.GetCustomAttribute<HttpApiAttribute>(inherit: false)
             ?? throw new InvalidOperationException(
@@ -548,7 +554,8 @@ internal sealed partial class RequestModelMetadata
     /// <summary>
     /// 取最近一层的授权声明（派生类优先于基类）；两个特性同标一层属二义性。
     /// </summary>
-    private static ApiAuthorization BuildAuthorization(Type requestType)
+    private static ApiAuthorization BuildAuthorization(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
     {
         for (var type = requestType; type is not null && type != typeof(object); type = type.BaseType)
         {
@@ -579,7 +586,9 @@ internal sealed partial class RequestModelMetadata
     /// 解析类级静态头声明（基类在前、派生类在后，同名后者覆盖）。
     /// <para>无冒号 = 摘除同名头；有冒号 = 固定值（冒号后允许为空 = 空值头）。</para>
     /// </summary>
-    private static void ParseStaticHeaders(Type requestType, List<(string Name, string? Value)> target)
+    private static void ParseStaticHeaders(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType,
+        List<(string Name, string? Value)> target)
     {
         var chain = new List<Type>();
         for (var type = requestType; type is not null && type != typeof(object); type = type.BaseType)
@@ -629,7 +638,8 @@ internal sealed partial class RequestModelMetadata
     }
 
     /// <summary>公共可读实例属性（跳过索引器），按声明顺序遍历。</summary>
-    private static IEnumerable<PropertyInfo> EnumerateBindableProperties(Type requestType)
+    private static IEnumerable<PropertyInfo> EnumerateBindableProperties(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
         => requestType
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.GetIndexParameters().Length == 0);
@@ -654,7 +664,7 @@ internal sealed partial class RequestModelMetadata
     /// 返回按模板出现顺序排列的（占位符原文, 属性）序列，供 <see cref="ResolveUrl"/> 逐个替换。
     /// </summary>
     private static (string Token, PropertyInfo Property)[] ValidatePathTemplate(
-        Type requestType,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType,
         string template,
         List<PropertyBinding> pathBindings)
     {

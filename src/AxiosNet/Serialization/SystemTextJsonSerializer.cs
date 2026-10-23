@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace AxiosNet.Serialization;
@@ -8,7 +9,16 @@ namespace AxiosNet.Serialization;
 /// <para>
 /// <c>dynamic</c> 展开与非泛型响应的 <c>JsonElement</c> 形态由库自己处理，不经过本类。
 /// </para>
+/// <para>
+/// Native AOT / 裁剪：内部使用 STJ 的反射重载，AOT 下必须由消费方通过
+/// <see cref="AxiosConfig.JsonSerializerOptions"/> 的 <c>TypeInfoResolver</c> 提供源生成上下文，
+/// 否则运行时抛 <c>NotSupportedException</c>。
+/// </para>
 /// </summary>
+[UnconditionalSuppressMessage(
+    "Trimming",
+    "IL2026",
+    Justification = "STJ 反射重载；AOT 下由消费方通过 JsonSerializerOptions.TypeInfoResolver 提供源生成上下文（README「Native AOT / 裁剪」）。")]
 public sealed class SystemTextJsonSerializer : IContentSerializer
 {
     /// <summary>无状态单例，可安全并发共享。</summary>

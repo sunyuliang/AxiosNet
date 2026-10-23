@@ -1447,6 +1447,42 @@ dotnet run --project samples/AxiosNet.Simple
 <PackageReference Include="AxiosNet" Version="1.0.1" />
 ```
 
+### Native AOT / 裁剪
+
+类库已声明 `IsTrimmable`，自身在裁剪分析下 **0 警告**。声明式 API 客户端仍使用反射读取模型元数据，因此 AOT 发布时消费方需要额外做两件事。
+
+**1. 保留模型程序集**（否则属性 getter 与特性可能被裁掉）：
+
+```xml
+<ItemGroup>
+  <!-- 模型与请求写在应用自身程序集时，root 应用程序集即可 -->
+  <TrimmerRootAssembly Include="MyApp.Models" />
+</ItemGroup>
+```
+
+**2. 给 System.Text.Json 提供源生成上下文**（AOT 下 STJ 的反射回退默认关闭）：
+
+```csharp
+[JsonSerializable(typeof(Person))]
+internal partial class ApiJsonContext : JsonSerializerContext { }
+
+var client = new AxiosClient(new AxiosConfig
+{
+    BaseAddress = "https://api.example.com",
+    JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    {
+        TypeInfoResolver = ApiJsonContext.Default,
+    },
+});
+```
+
+边界（这些路径在 AOT 下不可用）：
+
+- `dynamic` 响应、非泛型 `object` 载荷上运行时才确定的类型：依赖 `RuntimeBinder` / 反射。
+- `XmlContentSerializer`：`XmlSerializer` 需要在运行时生成序列化器，请改用 JSON + 源生成上下文。
+- 匿名对象作为 params 或表单值：类型无法静态保留，建议改用 `Dictionary<string, object?>` 或强类型 POCO。
+- `ValidateModels(Assembly)` 会枚举程序集全部类型，已标注 `RequiresUnreferencedCode`；AOT 下请改用 `ValidateModels(typeof(A), typeof(B))`。
+
 ## 构建与测试
 
 ```bash

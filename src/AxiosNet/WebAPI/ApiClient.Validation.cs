@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
 
@@ -29,6 +30,8 @@ public sealed partial class ApiClient
     /// </summary>
     /// <param name="assembly">待扫描的程序集。</param>
     /// <exception cref="ArgumentNullException"><paramref name="assembly"/> 为 <c>null</c>。</exception>
+    [RequiresUnreferencedCode(
+        "按程序集枚举类型（Assembly.GetTypes）在裁剪后可能漏掉模型类型；AOT 下请改用 ValidateModels(Type[]) 显式传入模型类型。")]
     public static IReadOnlyList<string> ValidateModels(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
@@ -47,6 +50,11 @@ public sealed partial class ApiClient
         return ValidateCore(types.Where(ImplementsApiRequest));
     }
 
+    // params Type[] 上的裁剪标注经过 IEnumerable<Type> 传递后会丢失，这里按「运行时类型」放宽。
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "类型由调用方以 typeof(T) 传入；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static IReadOnlyList<string> ValidateCore(IEnumerable<Type> types)
     {
         var errors = new List<string>();
@@ -85,7 +93,8 @@ public sealed partial class ApiClient
         return errors;
     }
 
-    private static bool ImplementsApiRequest(Type type)
+    private static bool ImplementsApiRequest(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type type)
         => type.GetInterfaces().Any(candidate
             => candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(IApiRequest<>));
 

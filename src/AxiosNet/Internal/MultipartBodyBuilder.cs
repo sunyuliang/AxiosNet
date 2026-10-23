@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace AxiosNet.Internal;
@@ -50,6 +51,10 @@ internal static class MultipartBodyBuilder
         }
     }
 
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "multipart 值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void CollectParts(
         string? name,
         object? value,

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace AxiosNet.WebAPI.Internal;
@@ -23,6 +24,10 @@ internal static class QueryMap
         => FindStringKeyedPair(type, typeof(string)) is not null;
 
     /// <summary>按键值对枚举字典；键统一转成字符串，值保持原始对象（由调用方决定怎么用）。</summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "仅对自定义只读字典的键值对类型读取 Key/Value；AOT 下需由消费方 root 类型所在程序集（README「Native AOT / 裁剪」）。")]
     public static IEnumerable<KeyValuePair<string, object?>> Enumerate(object dictionary)
     {
         switch (dictionary)
@@ -109,6 +114,10 @@ internal static class QueryMap
         return null;
     }
 
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "字典类型由调用方运行时提供；AOT 下需由消费方 root 类型所在程序集（README「Native AOT / 裁剪」）。")]
     private static IEnumerable<Type> EnumerateSelfAndInterfaces(Type type)
     {
         yield return type;

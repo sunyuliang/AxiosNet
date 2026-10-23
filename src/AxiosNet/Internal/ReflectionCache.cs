@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace AxiosNet.Internal;
@@ -12,9 +13,21 @@ internal static class ReflectionCache
 {
     private static readonly ConcurrentDictionary<Type, PropertyInfo[]> Cache = new();
 
-    public static PropertyInfo[] GetReadableProperties(Type type)
-        => Cache.GetOrAdd(type, static t => t
+    /// <param name="type">待展平的类型；标注要求裁剪器保留其公开属性（含 getter）。</param>
+    public static PropertyInfo[] GetReadableProperties(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
+    {
+        if (Cache.TryGetValue(type, out var cached))
+        {
+            return cached;
+        }
+
+        // 用带标注的 type 直接反射；缓存字典的键本身不携带裁剪标注，不能把反射放进工厂 lambda。
+        var properties = type
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(static p => p.CanRead && p.GetIndexParameters().Length == 0)
-            .ToArray());
+            .ToArray();
+
+        return Cache.GetOrAdd(type, properties);
+    }
 }
