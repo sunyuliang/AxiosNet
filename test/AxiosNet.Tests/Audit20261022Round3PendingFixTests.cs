@@ -99,7 +99,7 @@ public sealed class Audit20261022Round3PendingFixTests
         var events = new List<AxiosProgressEvent>();
         var response = await client.GetAsync<byte[]>(
             "http://fixed.local/blob",
-            c => c.OnDownloadProgress = events.Add);
+            c => c.Callbacks.OnDownloadProgress = events.Add);
 
         // 正文本身一直是完整的（进度计量不参与数据读取）
         Assert.Equal(body.Length, response.Data!.Length);

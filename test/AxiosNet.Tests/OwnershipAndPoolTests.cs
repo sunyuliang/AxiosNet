@@ -41,7 +41,7 @@ public sealed class OwnershipAndPoolTests
 
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.MaxContentLength = 4);
+        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.Limits.MaxContentLength = 4);
         await using var stream = response.Data!;
 
         // ReadByte 不覆写，靠基类换算成 Read(byte[],int,int)：必须落到同一条计数路径上

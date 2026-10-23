@@ -27,7 +27,7 @@ internal static class MultipartBodyBuilder
 
         try
         {
-            CollectParts(null, data, content, encoding, config.FormFieldNameSelector, visited: null);
+            CollectParts(null, data, content, encoding, config.SerializationOrNull?.FormFieldNameSelector, visited: null);
             return content;
         }
         catch (Exception ex)

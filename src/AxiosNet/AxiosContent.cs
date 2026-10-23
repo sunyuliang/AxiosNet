@@ -8,7 +8,7 @@ namespace AxiosNet;
 /// 请求体 / 响应体的<b>内容格式</b>入口（对应「用哪种格式说话」）。内置 JSON（默认）与 XML 两个实现。
 /// <para>选择规则按优先级：</para>
 /// <list type="number">
-/// <item>单次请求 / 实例 defaults 的 <see cref="AxiosConfig.ContentSerializer"/>（最强）；</item>
+/// <item>单次请求 / 实例 defaults 的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>（最强）；</item>
 /// <item><see cref="Serializer"/>（全局显式注入；<c>null</c> = 未注入，即自动模式）；</item>
 /// <item>自动模式：按媒体类型查注册表（<see cref="Register"/>）；</item>
 /// <item>仍未命中 → 内置 JSON。</item>
@@ -85,7 +85,7 @@ public static class AxiosContent
     /// <param name="config">请求配置（读取单次/实例注入）。</param>
     /// <param name="mediaType">请求的 <see cref="AxiosConfig.ContentType"/> 或响应的 <c>Content-Type</c>。</param>
     internal static IContentSerializer Get(AxiosConfig config, string? mediaType)
-        => config.ContentSerializer
+        => config.SerializationOrNull?.ContentSerializer
             ?? Volatile.Read(ref _serializer)
             ?? Lookup(mediaType)
             ?? SystemTextJsonSerializer.Instance;

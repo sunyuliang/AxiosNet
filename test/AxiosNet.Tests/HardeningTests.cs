@@ -78,7 +78,13 @@ public sealed class HardeningTests
     public void ExplicitMaxRedirects_OverridesPoolOptions()
     {
         using var client = new AxiosClient(
-            new AxiosConfig { MaxRedirects = 12 },
+            new AxiosConfig
+            {
+                Connection = new()
+                {
+                    MaxRedirects = 12,
+                },
+            },
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 10 });
 
         Assert.Equal(12, client.Pool!.Options.MaxAutomaticRedirections);
@@ -88,7 +94,13 @@ public sealed class HardeningTests
     public void MaxRedirectsZero_DisablesRedirect_ButKeepsPoolLimit()
     {
         using var client = new AxiosClient(
-            new AxiosConfig { MaxRedirects = 0 },
+            new AxiosConfig
+            {
+                Connection = new()
+                {
+                    MaxRedirects = 0,
+                },
+            },
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 10 });
 
         Assert.False(client.Pool!.Options.AllowAutoRedirect);
@@ -98,7 +110,13 @@ public sealed class HardeningTests
     [Fact]
     public void NegativeMaxRedirects_ThrowsBadOptionValue()
     {
-        var ex = Assert.Throws<AxiosException>(() => new AxiosClient(new AxiosConfig { MaxRedirects = -1 }));
+        var ex = Assert.Throws<AxiosException>(() => new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                MaxRedirects = -1,
+            },
+        }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -199,17 +217,17 @@ public sealed class HardeningTests
         Assert.Equal(
             AxiosException.ErrBadOptionValue,
             (await Assert.ThrowsAsync<AxiosException>(() =>
-                client.GetAsync("http://127.0.0.1:1/x", c => c.MaxRate = -1))).Code);
+                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxRate = -1))).Code);
 
         Assert.Equal(
             AxiosException.ErrBadOptionValue,
             (await Assert.ThrowsAsync<AxiosException>(() =>
-                client.GetAsync("http://127.0.0.1:1/x", c => c.MaxContentLength = -1))).Code);
+                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxContentLength = -1))).Code);
 
         Assert.Equal(
             AxiosException.ErrBadOptionValue,
             (await Assert.ThrowsAsync<AxiosException>(() =>
-                client.GetAsync("http://127.0.0.1:1/x", c => c.MaxBodyLength = -1))).Code);
+                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxBodyLength = -1))).Code);
     }
 
     // ---------------------------------------------------------------
@@ -287,7 +305,7 @@ public sealed class HardeningTests
 
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.MaxContentLength = 1024);
+        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024);
         await using var stream = response.Data!;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => stream.CopyToAsync(Stream.Null));
@@ -306,7 +324,7 @@ public sealed class HardeningTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<byte[]>(server.Url + "chunked", c => c.MaxContentLength = 1024));
+            client.GetAsync<byte[]>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
@@ -339,10 +357,16 @@ public sealed class HardeningTests
     public async Task PerRequestMaxRedirects_EqualToEffectiveValue_IsAccepted()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { MaxRedirects = 5 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                MaxRedirects = 5,
+            },
+        });
 
         // 把 defaults 抄一遍到每个请求上是常见写法：值相同就是等价写法，不该炸
-        var response = await client.GetAsync(server.Url + "x", c => c.MaxRedirects = 5);
+        var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 5);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);

@@ -165,7 +165,7 @@ public sealed class HeadersAndAuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c => c.Auth = new AxiosAuth("user", "pass:word"));
+        await client.GetAsync(server.Url, c => c.Connection.Auth = new AxiosAuth("user", "pass:word"));
 
         Assert.Equal(TestJson.BasicAuth("user", "pass:word"), server.Received[0].Headers["authorization"]);
     }
@@ -176,7 +176,7 @@ public sealed class HeadersAndAuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c => c.Auth = new AxiosAuth("用户名", "密码"));
+        await client.GetAsync(server.Url, c => c.Connection.Auth = new AxiosAuth("用户名", "密码"));
 
         var header = server.Received[0].Headers["authorization"];
         Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("用户名:密码")), header);
@@ -189,7 +189,7 @@ public sealed class HeadersAndAuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c => c.Auth = new AxiosAuth("user", string.Empty));
+        await client.GetAsync(server.Url, c => c.Connection.Auth = new AxiosAuth("user", string.Empty));
 
         Assert.Equal(TestJson.BasicAuth("user", string.Empty), server.Received[0].Headers["authorization"]);
     }
@@ -198,9 +198,15 @@ public sealed class HeadersAndAuthTests
     public async Task Auth_PerRequest_OverridesInstanceDefault()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { Auth = new AxiosAuth("instance", "secret") });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                Auth = new AxiosAuth("instance", "secret"),
+            },
+        });
 
-        await client.GetAsync(server.Url, c => c.Auth = new AxiosAuth("percall", "other"));
+        await client.GetAsync(server.Url, c => c.Connection.Auth = new AxiosAuth("percall", "other"));
 
         Assert.Equal(TestJson.BasicAuth("percall", "other"), server.Received[0].Headers["authorization"]);
     }
@@ -213,7 +219,7 @@ public sealed class HeadersAndAuthTests
 
         await client.GetAsync(server.Url, c =>
         {
-            c.Auth = new AxiosAuth("user", "secret");
+            c.Connection.Auth = new AxiosAuth("user", "secret");
             c.Headers.Set("Authorization", "Bearer token");
         });
 

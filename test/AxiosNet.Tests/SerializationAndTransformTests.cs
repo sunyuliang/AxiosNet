@@ -20,7 +20,7 @@ public sealed class SerializationAndTransformTests
         await client.GetAsync(server.Url + "search", c =>
         {
             c.Params = new Dictionary<string, object?> { ["ids"] = new[] { 1, 2, 3 }, ["q"] = "x y" };
-            c.ParamsSerializer = p =>
+            c.Serialization.ParamsSerializer = p =>
             {
                 var dict = (Dictionary<string, object?>)p!;
                 return $"ids={string.Join(",", (int[])dict["ids"]!)}&q={Uri.EscapeDataString((string)dict["q"]!)}";
@@ -42,7 +42,7 @@ public sealed class SerializationAndTransformTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.FormFieldNameSelector = (prefix, key) => prefix is null ? key : $"{prefix}.{key}";
+                c.Serialization.FormFieldNameSelector = (prefix, key) => prefix is null ? key : $"{prefix}.{key}";
             });
 
         Assert.Equal("name=alice&filter.kind=book", Body(server.Received[0]));
@@ -60,7 +60,7 @@ public sealed class SerializationAndTransformTests
             c =>
             {
                 c.ContentType = "multipart/form-data";
-                c.FormFieldNameSelector = (prefix, key) => prefix is null ? key : $"{prefix}_{key}";
+                c.Serialization.FormFieldNameSelector = (prefix, key) => prefix is null ? key : $"{prefix}_{key}";
             });
 
         var body = Body(server.Received[0]);

@@ -26,14 +26,16 @@ internal static class ResponseReader
         AxiosConfig config)
     {
         var declared = message.Content.Headers.ContentLength;
+        var limits = config.LimitsOrNull;
+        var callbacks = config.CallbacksOrNull;
 
-        if (config.MaxContentLength is long limit && declared is long length && length > limit)
+        if (limits?.MaxContentLength is long limit && declared is long length && length > limit)
         {
             stream.Dispose();
             throw AxiosException.MaxContentLength(config, request, length, limit);
         }
 
-        if (config.OnDownloadProgress is null && config.MaxRate is not > 0 && config.MaxContentLength is null)
+        if (callbacks?.OnDownloadProgress is null && limits?.MaxRate is not > 0 && limits?.MaxContentLength is null)
         {
             return stream;
         }
@@ -41,9 +43,9 @@ internal static class ResponseReader
         return new ProgressReadStream(
             stream,
             declared,
-            config.OnDownloadProgress,
-            config.MaxRate,
-            config.MaxContentLength,
+            callbacks?.OnDownloadProgress,
+            limits?.MaxRate,
+            limits?.MaxContentLength,
             config,
             request);
     }
@@ -75,7 +77,7 @@ internal static class ResponseReader
     /// 服务端提前结束时裁剪成实际长度。
     /// <para>
     /// 上限安全：<paramref name="capacity"/> 来自声明长度，读取量又被 capacity 封顶；
-    /// 声明长度超过 <see cref="AxiosConfig.MaxContentLength"/> 的情况已在
+    /// 声明长度超过 <see cref="AxiosConfig.LimitSettings.MaxContentLength"/> 的情况已在
     /// <see cref="WrapDownloadStream"/> 里拦下，所以这里无需重复判定。
     /// </para>
     /// </summary>
@@ -155,7 +157,7 @@ internal static class ResponseReader
                 filled += read;
                 total += read;
 
-                if (config.MaxContentLength is long limit && total > limit)
+                if (config.LimitsOrNull?.MaxContentLength is long limit && total > limit)
                 {
                     throw AxiosException.MaxContentLength(config, request, total, limit);
                 }
@@ -263,7 +265,7 @@ internal static class ResponseReader
             // 只要字节的调用（arraybuffer / byte[] / 二进制业务对象）不解码；
             // 其余只解码一次，文本在 ConvertData 里按需使用。
             var text = NeedsText(config, dataType, textual)
-                ? ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding)
+                ? ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding)
                 : null;
             rawText = text;
             data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
@@ -351,7 +353,7 @@ internal static class ResponseReader
         bool lenient)
     {
         // 按需解码：只要字节的分支永远不付 bytes → UTF-16 的代价。
-        string Text() => text ??= ResponseTextDecoder.Decode(bytes, charSet, config.ResponseEncoding);
+        string Text() => text ??= ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding);
 
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
         if (config.ResponseType == ResponseType.ArrayBuffer)

@@ -47,7 +47,7 @@ public interface IContentSerializer
     string? MediaType => null;
 
     /// <summary>
-    /// 把业务对象序列化为该格式的文本。库按 <see cref="AxiosConfig.RequestEncoding"/> 编码成字节并补 charset。
+    /// 把业务对象序列化为该格式的文本。库按 <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> 编码成字节并补 charset。
     /// <para>
     /// <b>二进制格式不要用本方法承载正文</b>（文本通道会破坏任意字节）：覆写 <see cref="SerializeToBytes"/>，
     /// 本方法实现成抛 <see cref="NotSupportedException"/> 即可。
@@ -69,7 +69,7 @@ public interface IContentSerializer
     /// ⚠️ 这样写的 Content-Type 若带 <c>charset</c>，必须与正文实际编码一致，否则请求会被拦下（<c>ERR_BAD_OPTION_VALUE</c>）：
     /// 头声明一个编码、正文是另一个编码，服务端只会解出乱码。要让正文按指定 charset 编码，
     /// 请让调用方在构造正文之前设置 <see cref="AxiosConfig.ContentType"/>（其 charset 驱动编码）或
-    /// <see cref="AxiosConfig.RequestEncoding"/>；二进制格式则实现
+    /// <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/>；二进制格式则实现
     /// <see cref="SerializeToBytes"/> 走字节出口。
     /// </para>
     /// </summary>
@@ -115,11 +115,11 @@ public interface IContentSerializer
     /// </para>
     /// <para>
     /// 默认实现按<b>响应的字符集</b>解码后转调文本入口（优先级与文本响应一致：
-    /// <see cref="AxiosConfig.ResponseEncoding"/> → charset 参数 → BOM → UTF-8，
+    /// <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/> → charset 参数 → BOM → UTF-8，
     /// 经由 <c>config.Response.CharSet</c>），所以<b>文本格式的序列化器不需要实现本方法</b>
     /// （也兼容把 JSON 标成 <c>application/octet-stream</c> 的服务端，含带 charset / BOM 的非 UTF-8 变体）。
     /// </para>
     /// </summary>
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
-        => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.ResponseEncoding), type, config);
+        => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding), type, config);
 }

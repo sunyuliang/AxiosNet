@@ -34,7 +34,7 @@ public sealed class CoverageExtensionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.HttpVersion = new Version(1, 0));
+        var response = await client.GetAsync(server.Url, c => c.Connection.HttpVersion = new Version(1, 0));
 
         Assert.Equal(200, response.Status);
         Assert.Equal("HTTP/1.0", server.Received[0].Version);
@@ -97,7 +97,13 @@ public sealed class CoverageExtensionTests
     [Fact]
     public void WithCredentials_EnablesCookiesAndDefaultCredentialsOnPool()
     {
-        using var client = new AxiosClient(new AxiosConfig { WithCredentials = true });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                WithCredentials = true,
+            },
+        });
 
         Assert.True(client.Pool!.Options.UseCookies);
         Assert.NotNull(client.Pool.Options.Credentials);
@@ -124,7 +130,7 @@ public sealed class CoverageExtensionTests
         const string body = """{"name":"bob"}""";
         var limit = Encoding.UTF8.GetByteCount(body);
 
-        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.MaxBodyLength = limit);
+        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxBodyLength = limit);
 
         Assert.Equal(body, Encoding.UTF8.GetString(server.Received[0].Body));
     }
@@ -139,7 +145,7 @@ public sealed class CoverageExtensionTests
         var limit = Encoding.UTF8.GetByteCount(body) - 1;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.MaxBodyLength = limit));
+            client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxBodyLength = limit));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Empty(server.Received);
@@ -153,7 +159,7 @@ public sealed class CoverageExtensionTests
             new TestResponse(Body: payload, ContentType: "application/octet-stream"));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<byte[]>(server.Url + "exact", c => c.MaxContentLength = payload.Length);
+        var response = await client.GetAsync<byte[]>(server.Url + "exact", c => c.Limits.MaxContentLength = payload.Length);
 
         Assert.Equal(payload, response.Data);
     }
@@ -167,7 +173,7 @@ public sealed class CoverageExtensionTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<byte[]>(server.Url + "over", c => c.MaxContentLength = payload.Length - 1));
+            client.GetAsync<byte[]>(server.Url + "over", c => c.Limits.MaxContentLength = payload.Length - 1));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Single(server.Received);

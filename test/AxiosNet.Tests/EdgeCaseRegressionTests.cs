@@ -304,7 +304,7 @@ public sealed class EdgeCaseRegressionTests
         using var client = new AxiosClient();
 
         var calls = 0;
-        await client.GetAsync(server.Url, c => c.ValidateStatus = _ =>
+        await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = _ =>
         {
             calls++;
             return true;
@@ -321,7 +321,7 @@ public sealed class EdgeCaseRegressionTests
 
         var calls = 0;
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
-            c.ValidateStatus = _ =>
+            c.Callbacks.ValidateStatus = _ =>
             {
                 calls++;
                 return false;
@@ -568,7 +568,7 @@ public sealed class EdgeCaseRegressionTests
         using var client = new AxiosClient(
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
 
-        var response = await client.GetAsync(server.Url + "x", c => c.MaxRedirects = 3);
+        var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 3);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -583,7 +583,7 @@ public sealed class EdgeCaseRegressionTests
         using var client = new AxiosClient(
             poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
 
-        var response = await client.GetAsync(server.Url + "x", c => c.MaxRedirects = 0);
+        var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 0);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -593,11 +593,17 @@ public sealed class EdgeCaseRegressionTests
     public async Task PerRequestMaxRedirects_DiffersFromEffectiveValue_Throws()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { MaxRedirects = 5 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                MaxRedirects = 5,
+            },
+        });
 
         // 4 与生效值 5 不同：不会生效，必须响亮报错，而不是静默丢弃
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.MaxRedirects = 4));
+            client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 4));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -610,7 +616,7 @@ public sealed class EdgeCaseRegressionTests
         using var client = new AxiosClient();
 
         // 实例没开 WithCredentials（false），按请求写 false 是等价写法
-        var response = await client.GetAsync(server.Url + "x", c => c.WithCredentials = false);
+        var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -620,10 +626,16 @@ public sealed class EdgeCaseRegressionTests
     public async Task PerRequestWithCredentials_DiffersFromInstance_Throws()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { WithCredentials = true });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                WithCredentials = true,
+            },
+        });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.WithCredentials = false));
+            client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -636,7 +648,7 @@ public sealed class EdgeCaseRegressionTests
         using var client = new AxiosClient(handler: new HttpClientHandler());
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.WithCredentials = false));
+            client.GetAsync("http://127.0.0.1:1/x", c => c.Connection.WithCredentials = false));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -651,7 +663,13 @@ public sealed class EdgeCaseRegressionTests
     public async Task PerRequestOptions_Omitted_WithCredentialsTrue_Instance_StillWorks()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { WithCredentials = true });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                WithCredentials = true,
+            },
+        });
 
         var response = await client.GetAsync(server.Url + "x");
 

@@ -62,7 +62,7 @@ internal sealed class ProgressHttpContent : HttpContent
         => AxiosException.ProgressCallbackFailed(
             _config,
             null,
-            nameof(AxiosConfig.OnUploadProgress),
+            nameof(AxiosConfig.CallbackSettings.OnUploadProgress),
             ex,
             upload: true);
 

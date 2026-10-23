@@ -72,7 +72,13 @@ public sealed class ContentSerializerRegistryTests
         try
         {
             await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-            using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new MarkerSerializer("injected") });
+            using var client = new AxiosClient(new AxiosConfig
+{
+                Serialization = new()
+                {
+                    ContentSerializer = new MarkerSerializer("injected"),
+                },
+            });
 
             await client.PostAsync(
                 server.Url + "x",

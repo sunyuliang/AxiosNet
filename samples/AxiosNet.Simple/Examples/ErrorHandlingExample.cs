@@ -52,7 +52,7 @@ public sealed class ErrorHandlingExample : IExample
         }
 
         // validateStatus：自己定义合法状态码，404 也可以正常返回
-        var accepted = await http.GetAsync(context.BaseUrl + "not-found", c => c.ValidateStatus = s => s is >= 200 and < 500);
+        var accepted = await http.GetAsync(context.BaseUrl + "not-found", c => c.Callbacks.ValidateStatus = s => s is >= 200 and < 500);
         Console.WriteLine($"  validateStatus 放行 404: status={accepted.Status}");
     }
 }

@@ -83,7 +83,7 @@ public sealed class Audit20261022Round3FixTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.OnDownloadProgress = _ => throw new InvalidOperationException("boom")));
+            client.GetAsync("x", c => c.Callbacks.OnDownloadProgress = _ => throw new InvalidOperationException("boom")));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
@@ -100,7 +100,7 @@ public sealed class Audit20261022Round3FixTests
             client.PostAsync(
                 "x",
                 new string('a', 200_000),
-                c => c.OnUploadProgress = _ => throw new InvalidOperationException("boom")));
+                c => c.Callbacks.OnUploadProgress = _ => throw new InvalidOperationException("boom")));
 
         // 此前被 HttpClient 包成 HttpRequestException，再翻译成 ERR_NETWORK —— 回调写错被误报成网络故障
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
@@ -146,7 +146,7 @@ public sealed class Audit20261022Round3FixTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.ParamsSerializer = _ => throw new InvalidOperationException("bad params")));
+            client.GetAsync("x", c => c.Serialization.ParamsSerializer = _ => throw new InvalidOperationException("bad params")));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
@@ -258,7 +258,7 @@ public sealed class Audit20261022Round3FixTests
         await client.PostAsync(
             "x",
             42,
-            c => c.ContentSerializer = AxiosNet.Serialization.XmlContentSerializer.Instance);
+            c => c.Serialization.ContentSerializer = AxiosNet.Serialization.XmlContentSerializer.Instance);
 
         var received = Assert.Single(server.Received);
         Assert.StartsWith(AxiosContentType.Xml, received.Headers["Content-Type"]);

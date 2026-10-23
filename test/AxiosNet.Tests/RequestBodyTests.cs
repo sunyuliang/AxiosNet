@@ -114,7 +114,7 @@ public sealed class RequestBodyTests
             c =>
             {
                 c.ContentType = "application/x-www-form-urlencoded; charset=iso-8859-1";
-                c.RequestEncoding = Encoding.Latin1;
+                c.Serialization.RequestEncoding = Encoding.Latin1;
             });
 
         var sent = server.Received[0];

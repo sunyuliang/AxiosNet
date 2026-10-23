@@ -58,7 +58,7 @@ public sealed class ApiErrorContext
         null => null,
         string text => text,
         JsonElement element => element.ValueKind == JsonValueKind.String ? element.GetString() : element.GetRawText(),
-        byte[] bytes => ResponseTextDecoder.Decode(bytes, charSet: null, Config.ResponseEncoding),
+        byte[] bytes => ResponseTextDecoder.Decode(bytes, charSet: null, Config.SerializationOrNull?.ResponseEncoding),
         _ => null
     };
 

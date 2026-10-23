@@ -24,9 +24,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>
     /// 对应 axios instance.defaults。
     /// <para>
-    /// 连接级选项（<see cref="AxiosConfig.WithCredentials"/> / <see cref="AxiosConfig.MaxRedirects"/> /
-    /// <see cref="AxiosConfig.Proxy"/> / <see cref="AxiosConfig.Credentials"/> /
-    /// <see cref="AxiosConfig.PoolOptions"/>）在<b>构造时已固化</b>进连接池 / Handler，
+    /// 连接级选项（<see cref="AxiosConfig.ConnectionSettings.WithCredentials"/> /
+    /// <see cref="AxiosConfig.ConnectionSettings.MaxRedirects"/> /
+    /// <see cref="AxiosConfig.ConnectionSettings.Proxy"/> / <see cref="AxiosConfig.ConnectionSettings.Credentials"/> /
+    /// <see cref="AxiosConfig.ConnectionSettings.PoolOptions"/>）在<b>构造时已固化</b>进连接池 / Handler，
     /// 构造后再修改不生效（校验与池配置都以构造期快照为准，不会有任何报错提示）——
     /// 要改变它们请新建实例。其余配置（头、transform、超时等）随时可改。
     /// </para>
@@ -70,7 +71,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     "不能同时注入 handler 和 pool：注入 handler 时不使用连接池，请二选一。", Defaults);
             }
 
-            if (poolOptions is not null || Defaults.PoolOptions is not null)
+            if (poolOptions is not null || Defaults.ConnectionOrNull?.PoolOptions is not null)
             {
                 throw AxiosException.InvalidOption(
                     "不能同时注入 handler 和连接池选项（poolOptions / defaults.PoolOptions）："
@@ -90,7 +91,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         if (pool is not null)
         {
-            if (poolOptions is not null || Defaults.PoolOptions is not null)
+            if (poolOptions is not null || Defaults.ConnectionOrNull?.PoolOptions is not null)
             {
                 throw AxiosException.InvalidOption(
                     "不能同时传入 pool 和 poolOptions / defaults.PoolOptions："
@@ -107,14 +108,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         else
         {
             // 同时传入时静默取一个不如明确报错（共享池 / 注入 handler 两个分支同样抛错）
-            if (poolOptions is not null && Defaults.PoolOptions is not null)
+            if (poolOptions is not null && Defaults.ConnectionOrNull?.PoolOptions is not null)
             {
                 throw AxiosException.InvalidOption(
                     "不能同时传入 poolOptions 和 defaults.PoolOptions：两者描述的是同一个自建连接池，请只在一处配置。",
                     Defaults);
             }
 
-            var effective = (poolOptions ?? Defaults.PoolOptions ?? new ConnectionPoolOptions()).Clone();
+            var effective = (poolOptions ?? Defaults.ConnectionOrNull?.PoolOptions ?? new ConnectionPoolOptions()).Clone();
 
             // 池选项非法时在构造期就带配置抛错（池自身的校验没有 config 可挂），
             // 而不是等池内部抛出 config 为 null 的同类异常。
@@ -125,18 +126,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 无条件生效会把调用方在 poolOptions 上配好的 MaxAutomaticRedirections 悄悄改回 5。
             if (Defaults.MaxRedirectsSet)
             {
-                if (Defaults.MaxRedirects < 0)
+                var maxRedirects = Defaults.ConnectionOrNull?.MaxRedirects ?? 5;
+
+                if (maxRedirects < 0)
                 {
                     throw AxiosException.InvalidOption("MaxRedirects 不能为负数；不跟随重定向请设为 0。", Defaults);
                 }
 
-                if (Defaults.MaxRedirects == 0)
+                if (maxRedirects == 0)
                 {
                     effective.AllowAutoRedirect = false;
                 }
                 else
                 {
-                    effective.MaxAutomaticRedirections = Defaults.MaxRedirects;
+                    effective.MaxAutomaticRedirections = maxRedirects;
                 }
             }
 
@@ -144,13 +147,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 但两处都写时按请求校验比对的是 defaults，静默取一个会让写入方以为生效了
             if (poolOptions is not null)
             {
-                if (poolOptions.Proxy is not null && Defaults.Proxy is not null)
+                if (poolOptions.Proxy is not null && Defaults.ConnectionOrNull?.Proxy is not null)
                 {
                     throw AxiosException.InvalidOption(
                         "不能同时在 poolOptions.Proxy 和 defaults.Proxy 上配置代理：请只在一处设置。", Defaults);
                 }
 
-                if (poolOptions.Credentials is not null && Defaults.Credentials is not null)
+                if (poolOptions.Credentials is not null && Defaults.ConnectionOrNull?.Credentials is not null)
                 {
                     throw AxiosException.InvalidOption(
                         "不能同时在 poolOptions.Credentials 和 defaults.Credentials 上配置凭据：请只在一处设置。",
@@ -158,9 +161,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
             }
 
-            effective.Proxy ??= Defaults.Proxy;
-            effective.Credentials ??= Defaults.Credentials;
-            if (Defaults.WithCredentials)
+            effective.Proxy ??= Defaults.ConnectionOrNull?.Proxy;
+            effective.Credentials ??= Defaults.ConnectionOrNull?.Credentials;
+            if (Defaults.ConnectionOrNull?.WithCredentials is true)
             {
                 effective.UseCookies = true;
                 effective.Credentials ??= CredentialCache.DefaultCredentials;
@@ -196,7 +199,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             throw AxiosException.InvalidOption(messages.WithCredentials, config);
         }
 
-        if (defaults.Proxy is not null || defaults.Credentials is not null)
+        if (defaults.ConnectionOrNull?.Proxy is not null || defaults.ConnectionOrNull?.Credentials is not null)
         {
             throw AxiosException.InvalidOption(messages.ProxyCredentials, config);
         }
@@ -236,7 +239,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(config);
         var merged = MergeConfig(config);
-        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.ParamsSerializer, config: merged)
+        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.ParamsSerializer, config: merged)
             .AbsoluteUri;
     }
 
@@ -423,10 +426,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
 
             // 3) 构造 URI 与 HttpRequestMessage
-            var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.ParamsSerializer, config: config);
+            var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
             var request = new HttpRequestMessage(config.Method, uri)
             {
-                Version = config.HttpVersion ?? HttpVersion.Version11
+                Version = config.ConnectionOrNull?.HttpVersion ?? HttpVersion.Version11
             };
 
             // request 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
@@ -449,14 +452,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
 
                 // 上传进度 / 限速：包一层流量统计（头部复制，序列化逻辑不变）
-                if (content is not null && (config.OnUploadProgress is not null || config.MaxRate is > 0))
+                var callbacks = config.CallbacksOrNull;
+                var maxRate = config.LimitsOrNull?.MaxRate;
+                if (content is not null && (callbacks?.OnUploadProgress is not null || maxRate is > 0))
                 {
-                    content = new ProgressHttpContent(content, config.OnUploadProgress, config.MaxRate, config);
+                    content = new ProgressHttpContent(content, callbacks?.OnUploadProgress, maxRate, config);
                 }
 
                 if (content is not null)
                 {
-                    if (config.MaxBodyLength is long maxBody
+                    if (config.LimitsOrNull?.MaxBodyLength is long maxBody
                         && content.Headers.ContentLength is long bodyLength
                         && bodyLength > maxBody)
                     {
@@ -682,7 +687,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 {
                     // 状态码接受性只判定一次：它同时决定宽松解析与是否抛错，
                     // 判两次会让有副作用的 validateStatus（计数、日志）执行两遍。
-                    var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
+                    var validateStatus = config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
                     statusAccepted = validateStatus((int)responseMessage.StatusCode);
 
                     // 状态码不合法时宽松解析：否则 404 + HTML 会在反序列化处抛错，
@@ -755,7 +760,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 {
                     // 流式正文的超时口径：显式 StreamIdleTimeout 时「Timeout 只到响应头」，
                     // 正文按空闲超时（或完全不限）；未设置时保持「整条流共享剩余预算」。
-                    Stream wrapped = config.StreamIdleTimeout is { } idleTimeout
+                    Stream wrapped = config.LimitsOrNull?.StreamIdleTimeout is { } idleTimeout
                         ? new TimeoutStream(
                             body,
                             remaining: null,
@@ -849,7 +854,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return null;
         }
 
-        var limit = config.MaxContentLength is long max && max < StreamErrorBodyLimit
+        var limit = config.LimitsOrNull?.MaxContentLength is long max && max < StreamErrorBodyLimit
             ? (int)max
             : StreamErrorBodyLimit;
         if (limit <= 0)
@@ -879,7 +884,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         return total == 0
             ? null
-            : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.ResponseEncoding);
+            : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding);
     }
 
     private static void ValidateRangeConfig(AxiosConfig config)
@@ -890,28 +895,30 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 $"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。", config);
         }
 
-        if (config.StreamIdleTimeout is { } idleTimeout && idleTimeout < TimeSpan.Zero)
+        var limits = config.LimitsOrNull;
+
+        if (limits?.StreamIdleTimeout is { } idleTimeout && idleTimeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption(
                 $"StreamIdleTimeout 不能为负（当前 {idleTimeout}）：要不设空闲超时请显式设为 TimeSpan.Zero。", config);
         }
 
-        if (config.MaxRate is < 0)
+        if (limits?.MaxRate is < 0)
         {
             throw AxiosException.InvalidOption(
-                $"MaxRate 不能为负（当前 {config.MaxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
+                $"MaxRate 不能为负（当前 {limits.MaxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
         }
 
-        if (config.MaxContentLength is < 0)
+        if (limits?.MaxContentLength is < 0)
         {
             throw AxiosException.InvalidOption(
-                $"MaxContentLength 不能为负（当前 {config.MaxContentLength}）：不限制请设为 null。", config);
+                $"MaxContentLength 不能为负（当前 {limits.MaxContentLength}）：不限制请设为 null。", config);
         }
 
-        if (config.MaxBodyLength is < 0)
+        if (limits?.MaxBodyLength is < 0)
         {
             throw AxiosException.InvalidOption(
-                $"MaxBodyLength 不能为负（当前 {config.MaxBodyLength}）：不限制请设为 null。", config);
+                $"MaxBodyLength 不能为负（当前 {limits.MaxBodyLength}）：不限制请设为 null。", config);
         }
     }
 
@@ -919,30 +926,34 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造池时已固定：
     /// 按请求复述实例的等价设置放行，写入别的值报错。
     /// <para>
-    /// 等价判定分两类：<see cref="AxiosConfig.WithCredentials"/> / <see cref="AxiosConfig.MaxRedirects"/>
-    /// 是值类型，按<b>值</b>比较；<see cref="AxiosConfig.Proxy"/> / <see cref="AxiosConfig.Credentials"/> /
-    /// <see cref="AxiosConfig.PoolOptions"/> 没有可靠的等值定义（代理/凭据/连接选项的「相同」取决于
+    /// 等价判定分两类：<see cref="AxiosConfig.ConnectionSettings.WithCredentials"/> /
+    /// <see cref="AxiosConfig.ConnectionSettings.MaxRedirects"/> 是值类型，按<b>值</b>比较；
+    /// <see cref="AxiosConfig.ConnectionSettings.Proxy"/> / <see cref="AxiosConfig.ConnectionSettings.Credentials"/> /
+    /// <see cref="AxiosConfig.ConnectionSettings.PoolOptions"/> 没有可靠的等值定义（代理/凭据/连接选项的「相同」取决于
     /// 各自实现），按<b>引用</b>比较 —— 即只有「把实例 defaults 上的同一个对象再写一遍」才放行。
     /// </para>
     /// <para>判定对象是合并后的生效配置，因此只需比对，不用追是谁写的。</para>
     /// </summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {
-        if (config.Proxy is not null && !ReferenceEquals(config.Proxy, Defaults.Proxy))
+        var requested = config.ConnectionOrNull;
+        var defaultsConnection = Defaults.ConnectionOrNull;
+
+        if (requested?.Proxy is not null && !ReferenceEquals(requested.Proxy, defaultsConnection?.Proxy))
         {
             throw AxiosException.InvalidOption(
-                "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Proxy = ... }) "
+                "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Connection = new() { Proxy = ... } }) "
                 + "或 ConnectionPoolOptions.Proxy。", config);
         }
 
-        if (config.Credentials is not null && !ReferenceEquals(config.Credentials, Defaults.Credentials))
+        if (requested?.Credentials is not null && !ReferenceEquals(requested.Credentials, defaultsConnection?.Credentials))
         {
             throw AxiosException.InvalidOption(
                 "Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。", config);
         }
 
         // 池在构造时已经建好，按请求改它只会被静默丢弃 —— 与 Proxy/MaxRedirects 保持一致地报错。
-        if (config.PoolOptions is not null && !ReferenceEquals(config.PoolOptions, Defaults.PoolOptions))
+        if (requested?.PoolOptions is not null && !ReferenceEquals(requested.PoolOptions, defaultsConnection?.PoolOptions))
         {
             throw AxiosException.InvalidOption(
                 "PoolOptions 是实例级配置（连接池在构造 AxiosClient 时创建），"
@@ -971,14 +982,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return;
         }
 
-        if (config.WithCredentials == Defaults.WithCredentials)
+        var requestedValue = config.ConnectionOrNull?.WithCredentials ?? false;
+        var defaultsValue = Defaults.ConnectionOrNull?.WithCredentials ?? false;
+
+        if (requestedValue == defaultsValue)
         {
             return;
         }
 
         throw AxiosException.InvalidOption(
             $"WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {config.WithCredentials}，实例生效值为 {Defaults.WithCredentials}。"
+            + $"当前按请求为 {requestedValue}，实例生效值为 {defaultsValue}。"
             + "要改变它请新建 AxiosClient 并在 defaults 上设置。", config);
     }
 
@@ -1012,14 +1026,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         var options = _pool!.EffectiveOptions;
         var effective = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
 
-        if (config.MaxRedirects == effective)
+        var requestedMaxRedirects = config.ConnectionOrNull?.MaxRedirects ?? 5;
+
+        if (requestedMaxRedirects == effective)
         {
             return;
         }
 
         throw AxiosException.InvalidOption(
             $"MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {config.MaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
+            + $"当前按请求为 {requestedMaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
             + "要改变它请新建 AxiosClient 并在 defaults 或 ConnectionPoolOptions 上设置。", config);
     }
 

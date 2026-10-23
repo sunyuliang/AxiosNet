@@ -100,13 +100,16 @@ public sealed class Audit20261021P1P2FixTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            ContentSerializer = XmlContentSerializer.Instance
+            Serialization = new()
+            {
+                ContentSerializer = XmlContentSerializer.Instance,
+            },
         });
 
         await client.PostAsync(
             server.Url + "xml",
             new XmlProbeDto { Name = "中文" },
-            c => c.RequestEncoding = Encoding.Unicode);
+            c => c.Serialization.RequestEncoding = Encoding.Unicode);
 
         var request = server.Received[0];
 

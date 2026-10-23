@@ -49,7 +49,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     {
         // 强制 ResponseEncoding 优先于 charset（与 Decode 的优先级一致），按最终生效的编码判断；
         // 只看 charSet 会漏掉「未声明 charset + 调用方强制 UTF-16」，那种配置同样无法按字节分帧。
-        var framingEncoding = config.ResponseEncoding ?? ResponseTextDecoder.ResolveFromCharset(charSet);
+        var framingEncoding = config.SerializationOrNull?.ResponseEncoding ?? ResponseTextDecoder.ResolveFromCharset(charSet);
         if (!ResponseTextDecoder.IsAsciiCompatible(framingEncoding))
         {
             // 分帧按字节找 CR / LF：UTF-16 / UTF-32 把换行编成多字节序列，切出来的「行」必然错位。
@@ -288,7 +288,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     }
 
     private string Decode(int offset, int length)
-        => length <= 0 ? string.Empty : ResponseTextDecoder.Decode(_buffer.AsSpan(offset, length), _charSet, _config.ResponseEncoding);
+        => length <= 0 ? string.Empty : ResponseTextDecoder.Decode(_buffer.AsSpan(offset, length), _charSet, _config.SerializationOrNull?.ResponseEncoding);
 
     /// <summary>压缩未消费字节后补读一块；缓冲区到达单帧上限时抛错而不是无限增长。</summary>
     private async ValueTask FillAsync()

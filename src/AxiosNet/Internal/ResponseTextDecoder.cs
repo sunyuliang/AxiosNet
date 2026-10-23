@@ -1,7 +1,7 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.ResponseEncoding"/> → Content-Type charset
+/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/> → Content-Type charset
 /// → BOM → UTF-8，与 .NET 内置 HttpContent 一致，但可强制覆盖且未知 charset 不抛异常。
 /// </summary>
 internal static class ResponseTextDecoder
@@ -38,7 +38,7 @@ internal static class ResponseTextDecoder
     public static bool IsAsciiCompatible(string? charSet) => IsAsciiCompatible(ResolveFromCharset(charSet));
 
     /// <summary>
-    /// 已解析编码的版本，供「强制 <see cref="AxiosConfig.ResponseEncoding"/> 优先于 charset」的调用方判断
+    /// 已解析编码的版本，供「强制 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/> 优先于 charset」的调用方判断
     /// 最终生效的编码；<c>null</c> 表示未指定（按 UTF-8），返回 <c>true</c>。
     /// </summary>
     public static bool IsAsciiCompatible(Encoding? encoding)

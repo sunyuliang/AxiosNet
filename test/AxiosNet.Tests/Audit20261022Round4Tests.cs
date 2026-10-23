@@ -31,7 +31,7 @@ public sealed class Audit20261022Round4Tests
         using var client = new AxiosClient();
 
         // AxiosClient.Defaults 的 XML 文档：连接级选项构造后修改不生效，但不会有任何报错。
-        client.Defaults.MaxRedirects = 3;
+        client.Defaults.Connection.MaxRedirects = 3;
 
         var response = await client.GetAsync(server.Url + "items");
 
@@ -46,7 +46,7 @@ public sealed class Audit20261022Round4Tests
         using var client = new AxiosClient();
 
         // 构造之后再改：与快捷方法入口是同一个根因（*Set 标记随 Clone 泄漏进生效配置）
-        client.Defaults.MaxRedirects = 2;
+        client.Defaults.Connection.MaxRedirects = 2;
 
         var response = await client.RequestAsync(new AxiosConfig
         {
@@ -68,7 +68,7 @@ public sealed class Audit20261022Round4Tests
         using var client = new AxiosClient(handler: new FailingBodyWriteHandler(), disposeHandler: false);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.OnUploadProgress = _ => { }));
+            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Callbacks.OnUploadProgress = _ => { }));
 
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
     }
@@ -80,7 +80,7 @@ public sealed class Audit20261022Round4Tests
 
         // 只有 MaxRate 没有回调：旧实现仍报「OnUploadProgress 回调抛出异常」，文案完全失真。
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.MaxRate = 1_000_000));
+            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Limits.MaxRate = 1_000_000));
 
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
         Assert.DoesNotContain("OnUploadProgress", ex.Message);
@@ -110,7 +110,7 @@ public sealed class Audit20261022Round4Tests
         await client.PostAsync("redirect", new SlowChunkedContent(chunks: 8, chunkSize: size / 8), c =>
         {
             c.ContentType = AxiosContentType.OctetStream;
-            c.OnUploadProgress = e => events.Add(e.Loaded);
+            c.Callbacks.OnUploadProgress = e => events.Add(e.Loaded);
         });
 
         Assert.Equal(2, server.Received.Count);
@@ -195,9 +195,22 @@ public sealed class Audit20261022Round4Tests
     public async Task RequestScopedNullAuth_ClearsInstanceAuth()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-        using var client = new AxiosClient(new AxiosConfig { Auth = new AxiosAuth("user", "pass") });
+        using var client = new AxiosClient(new AxiosConfig
+{
+            Connection = new()
+            {
+                Auth = new AxiosAuth("user", "pass"),
+            },
+        });
 
-        await client.RequestAsync(new AxiosConfig { Url = server.Url + "public", Auth = null });
+        await client.RequestAsync(new AxiosConfig
+{
+            Url = server.Url + "public",
+            Connection = new()
+            {
+                Auth = null,
+            },
+        });
 
         Assert.False(server.Received[0].Headers.ContainsKey("authorization"));
     }

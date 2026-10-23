@@ -8,7 +8,7 @@ namespace AxiosNet;
 /// 常量还能让 IDE 补全、避免拼错，并可直接用于 <c>switch</c> / 特性。
 /// </para>
 /// <para>
-/// 参数直接拼在本值后面即可；<see cref="AxiosConfig.RequestEncoding"/> 非空时库会自动补 <c>charset=</c>，
+/// 参数直接拼在本值后面即可；<see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> 非空时库会自动补 <c>charset=</c>，
 /// 已经写了的不会重复追加。
 /// </para>
 /// </summary>

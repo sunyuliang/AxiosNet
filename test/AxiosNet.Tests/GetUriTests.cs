@@ -39,11 +39,14 @@ public sealed class GetUriTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "https://api.example.com/",
-            ParamsSerializer = p =>
+            Serialization = new()
+            {
+                ParamsSerializer = p =>
             {
                 var d = (Dictionary<string, object?>)p!;
                 return "ids=" + string.Join(",", (int[])d["ids"]!);
-            }
+            },
+            },
         });
 
         var uri = client.GetUri(c =>

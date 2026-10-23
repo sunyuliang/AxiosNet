@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-831%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-835%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -41,7 +41,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Custom serialization and data transforms](#custom-serialization-and-data-transforms)
   - [Content serialization (JSON by default, any format pluggable)](#content-serialization-json-by-default-any-format-pluggable)
   - [paramsSerializer](#paramsserializer)
-  - [FormFieldNameSelector](#formfieldnameselector)
+  - [Serialization.FormFieldNameSelector](#serializationformfieldnameselector)
   - [transformRequest / transformResponse](#transformrequest--transformresponse)
 - [Interceptors](#interceptors)
 - [Error handling](#error-handling)
@@ -284,6 +284,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 ```csharp
 var config = new AxiosConfig
 {
+    // —— The request itself (stays flat) ——
     BaseAddress = "https://api.example.com/", // same as baseURL
     Url = "users",                            // relative or absolute
     Method = HttpMethod.Post,                 // BCL HttpMethod directly, defaults to Get
@@ -292,35 +293,53 @@ var config = new AxiosConfig
     Data = new { name = "bob" },              // request body (encoded per ContentType)
     ContentType = "application/json",         // default; can be set to application/x-www-form-urlencoded etc.
     Timeout = TimeSpan.FromSeconds(10),       // 0/Zero = no timeout
-    StreamIdleTimeout = null,                 // streaming body idle timeout: null = share Timeout; Zero = unlimited
-    Auth = new AxiosAuth("user", "pass"),     // Basic
     ResponseType = ResponseType.Json,         // Json/Text/ArrayBuffer/Stream/Dynamic
-    ValidateStatus = s => s is >= 200 and < 300,
     CancellationToken = cancellationToken,
-    MaxRedirects = 5,
-    WithCredentials = false,
-    RequestEncoding = null,                   // request body text encoding, null = UTF-8
-    ResponseEncoding = null,                  // response body text encoding, null = auto-detect
-
-    // —— Size, rate limiting, and progress ——
-    MaxContentLength = 10 * 1024 * 1024,      // response body cap (bytes), null = unlimited
-    MaxBodyLength = 50 * 1024 * 1024,         // request body cap (bytes), null = unlimited
-    MaxRate = 2 * 1024 * 1024,                // one-way rate limit (bytes/second), null = unlimited
-    TimeoutMessage = "Upstream response timed out", // custom timeout error message
-    OnUploadProgress = e => Console.WriteLine($"↑ {e}"),
-    OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
-
-    // —— Serialization and transforms ——
-    JsonSerializerOptions = myJsonOptions,    // System.Text.Json options for this request/instance
-    ContentSerializer = mySerializer,         // content serializer for any format (null = default JSON)
-    ParamsSerializer = p => MyQuery(p),       // Func<object?, string>: custom ?a=1&b=2
-    CollectionFormat = AxiosCollectionFormat.Csv, // collection form: Brackets(default)/Multi/Csv/Ssv/Tsv/Pipes
-    FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     // TransformRequest / TransformResponse: IList<Func<object?, AxiosConfig, object?>>
 
-    // Proxy / Credentials / HttpVersion / JsonSerializerOptions / PoolOptions ...
+    // —— Connection (instance-level) ——
+    Connection = new()
+    {
+        Auth = new AxiosAuth("user", "pass"), // Basic
+        MaxRedirects = 5,
+        WithCredentials = false,
+        // Proxy / Credentials / HttpVersion / PoolOptions ...
+    },
+
+    // —— Size, rate limiting, and streaming timeout ——
+    Limits = new()
+    {
+        StreamIdleTimeout = null,             // streaming body idle timeout: null = share Timeout; Zero = unlimited
+        MaxContentLength = 10 * 1024 * 1024,  // response body cap (bytes), null = unlimited
+        MaxBodyLength = 50 * 1024 * 1024,     // request body cap (bytes), null = unlimited
+        MaxRate = 2 * 1024 * 1024,            // one-way rate limit (bytes/second), null = unlimited
+    },
+
+    // —— Callbacks and status validation ——
+    Callbacks = new()
+    {
+        ValidateStatus = s => s is >= 200 and < 300,
+        TimeoutMessage = "Upstream response timed out", // custom timeout error message
+        OnUploadProgress = e => Console.WriteLine($"↑ {e}"),
+        OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
+    },
+
+    // —— Serialization ——
+    Serialization = new()
+    {
+        JsonSerializerOptions = myJsonOptions, // System.Text.Json options for this request/instance
+        ContentSerializer = mySerializer,      // content serializer for any format (null = default JSON)
+        RequestEncoding = null,                // request body text encoding, null = UTF-8
+        ResponseEncoding = null,               // response body text encoding, null = auto-detect
+        ParamsSerializer = p => MyQuery(p),    // Func<object?, string>: custom ?a=1&b=2
+        CollectionFormat = AxiosCollectionFormat.Csv, // collection form: Brackets(default)/Multi/Csv/Ssv/Tsv/Pipes
+        FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
+    },
 };
 ```
+
+> Optional settings are grouped into four sub-objects: `Serialization` / `Connection` / `Limits` / `Callbacks`.
+> They are **created lazily on first access**: configs that never touch these four objects allocate nothing extra, and internal reads go straight to the backing field (zero allocation on the hot path).
 
 > See [Progress callbacks, rate limiting, and size limits](#progress-callbacks-rate-limiting-and-size-limits) for the progress/rate-limit details.
 
@@ -328,9 +347,9 @@ The default JSON options are **web-style** (camelCase output, case-insensitive i
 
 > `withCredentials` / `proxy` / `credentials` / `maxRedirects` / `poolOptions` are **instance-level** settings: the pool handler is created when the `AxiosClient` is constructed, so these only take effect on instance defaults. To avoid silent misconfiguration, setting any of them on a **single request** throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) immediately, telling you to move it into the instance defaults passed to `Axios.Create(...)`. To drop one of the instance default headers on a single request, use `config.RemoveHeaders.Add("X-Foo")`.
 >
-> The same applies to an `AxiosClient(pool: ...)` sharing a pool: these four settings and `PoolOptions` apply to the **pool**, not to an individual instance, so setting them on a shared-pool client's defaults also throws `ERR_BAD_OPTION_VALUE` immediately. Configure them on the `ConnectionPoolOptions` used to create the pool instead (see [Connection pool](#connection-pool)).
+> The same applies to an `AxiosClient(pool: ...)` sharing a pool: these four settings and `Connection.PoolOptions` apply to the **pool**, not to an individual instance, so setting them on a shared-pool client's defaults also throws `ERR_BAD_OPTION_VALUE` immediately. Configure them on the `ConnectionPoolOptions` used to create the pool instead (see [Connection pool](#connection-pool)).
 >
-> Settings that are meant to be per-request (`timeout`, `headers`, `params`, `responseType`, `maxContentLength`, `maxRate`, `onUploadProgress`/`onDownloadProgress`, `transformRequest`/`transformResponse`, `validateStatus`, `auth`, `cancellationToken`, `RequestEncoding`/`ResponseEncoding`, and so on) are not affected. `cancellationToken` may be set either as an instance default or per request; the per-request value wins when both are present.
+> Settings that are meant to be per-request (`timeout`, `headers`, `params`, `responseType`, `maxContentLength`, `maxRate`, `onUploadProgress`/`onDownloadProgress`, `transformRequest`/`transformResponse`, `validateStatus`, `auth`, `cancellationToken`, `Serialization.RequestEncoding`/`Serialization.ResponseEncoding`, and so on) are not affected. `cancellationToken` may be set either as an instance default or per request; the per-request value wins when both are present.
 
 ## Request body data and query params
 
@@ -413,7 +432,7 @@ await http.GetAsync("search", c =>
 
 Additional notes on multipart:
 
-- **Field names** come from the object's property names or the dictionary's keys (recognizing `[JsonPropertyName]` / `[JsonIgnore]`; `JsonSerializerOptions.PropertyNamingPolicy` is **not** consulted — forms are decoupled from the serializer, and `FormFieldNameSelector` is the only naming entry point); nested objects become `meta[author]`; arrays/collections expand into **repeated same-name parts** (bindable directly by ASP.NET Core `IFormFileCollection`, FastAPI, and PHP).
+- **Field names** come from the object's property names or the dictionary's keys (recognizing `[JsonPropertyName]` / `[JsonIgnore]`; `JsonSerializerOptions.PropertyNamingPolicy` is **not** consulted — forms are decoupled from the serializer, and `Serialization.FormFieldNameSelector` is the only naming entry point); nested objects become `meta[author]`; arrays/collections expand into **repeated same-name parts** (bindable directly by ASP.NET Core `IFormFileCollection`, FastAPI, and PHP).
 - **When the root is an array of files** there is no key name; use `FormFile.FieldName` to name the part: `new[] { new FormFile(...) { FieldName = "files" } }`.
 - **File names**: `FormFile.FileName` determines `filename`; a bare `Stream`/`byte[]`/`Memory<byte>` is also sent as a file part (zero-copy, file name falls back to the field name).
 - **Your own `HttpContent` part**: when the part already carries a `Content-Disposition` it is preserved as-is (including `filename`) and only a missing `name` is filled in — otherwise the server cannot bind the field.
@@ -528,15 +547,15 @@ public async Task<IActionResult> Upload(IFormFile file, [FromForm] string? note)
 await http.PostAsync("api/files/raw", File.OpenRead(path), c =>
 {
     c.ContentType = "application/octet-stream";
-    c.MaxBodyLength = 200 * 1024 * 1024;   // client-side cap: rejected before sending when the length is known
-    c.MaxRate = 8 * 1024 * 1024;           // throttle to 8 MB/s (optional)
-    c.OnUploadProgress = e => Console.WriteLine($"{e.Progress:P0} {e.Rate / 1024:F0} KB/s");
+    c.Limits.MaxBodyLength = 200 * 1024 * 1024;   // client-side cap: rejected before sending when the length is known
+    c.Limits.MaxRate = 8 * 1024 * 1024;           // throttle to 8 MB/s (optional)
+    c.Callbacks.OnUploadProgress = e => Console.WriteLine($"{e.Progress:P0} {e.Rate / 1024:F0} KB/s");
 });
 ```
 
 - Kestrel's default request body limit is **30 MB** and returns 413 beyond that: `builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 50 * 1024 * 1024)`, or per-endpoint `.DisableRequestSizeLimit()`.
 - Stream to disk with `request.Body.CopyToAsync(fileStream)`; **avoid** `[FromBody] byte[]` (it loads the whole payload into memory).
-- `FileStream` is seekable and `Content-Length` is known, so both the progress `Total` and `MaxBodyLength` are exact.
+- `FileStream` is seekable and `Content-Length` is known, so both the progress `Total` and `Limits.MaxBodyLength` are exact.
 
 Runnable sample: item 18 of `samples/AxiosNet.Simple` (`dotnet run --project samples/AxiosNet.Simple`, then type 18 at the menu) — `DemoServer` exposes `/upload/raw` and `/upload/single`, parses byte-exactly, and reports file name/byte count/SHA256, which the client verifies one by one.
 
@@ -591,8 +610,8 @@ Key points:
 - Download timeouts/cancellation behave like any other request: `c.Timeout` covers **through the end of body reading** (timeout throws `ECONNABORTED`, external cancellation throws `ERR_CANCELED`); with many concurrent downloads, watch the pool's `MaxConnectionsPerServer`.
 - On a non-2xx response to a streaming request, the library **discards the body immediately and returns the connection** (`ex.Response.Data` is `null`, `Status`/`Headers` remain usable) — otherwise an unread error stream would occupy the connection for a long time.
 - The lease for that origin is held for the whole download (`ActiveLeases` in `GetStatistics()` reflects in-flight downloads), so idle eviction cannot interrupt long downloads; the lease is released when the stream is disposed.
-- Use `c.OnDownloadProgress` for download progress, `c.MaxRate` for throttling, and `c.MaxContentLength` for the size cap (details in the next section).
-- When writing the response stream straight to disk, `OnDownloadProgress` reports are throttled to every 50 ms so frequent callbacks cannot slow the copy down.
+- Use `c.Callbacks.OnDownloadProgress` for download progress, `c.Limits.MaxRate` for throttling, and `c.Limits.MaxContentLength` for the size cap (details in the next section).
+- When writing the response stream straight to disk, `Callbacks.OnDownloadProgress` reports are throttled to every 50 ms so frequent callbacks cannot slow the copy down.
 - With `ResponseType.Stream` the body is not decoded at all, while `response.Status/Headers` remain available (validate the status code before writing to disk).
 
 Every shortcut supports `<dynamic>`: `GetAsync<dynamic>` / `PostAsync<dynamic>` / `PutAsync<dynamic>` / `PatchAsync<dynamic>` / `DeleteAsync<dynamic>` (including `RequestAsync<dynamic>` and the static facade `Axios.GetAsync<dynamic>`). You can also set `c.ResponseType = ResponseType.Dynamic` explicitly on a non-generic request. An explicitly specified `ResponseType.Text/ArrayBuffer/Stream` takes precedence over the default dynamic expansion for `<dynamic>`.
@@ -618,15 +637,15 @@ var raw = (await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayB
 
 ### Content encoding
 
-- **Request body**: `RequestEncoding` decides the bytes written (UTF-8 by default); when set explicitly, the `charset` of `Content-Type` is written too. A `charset` declared explicitly in `Content-Type` takes precedence over `RequestEncoding` (the body is encoded with the declared charset, so header and body always agree); writing both with contradicting values throws `ERR_BAD_OPTION_VALUE`. `byte[]` / `Stream` / `HttpContent` pass through untouched and are unaffected.
-- **Response body**: auto-detected by default — the `Content-Type` `charset` → BOM → UTF-8; `ResponseEncoding` forces a specific encoding for servers with a missing or wrong charset.
+- **Request body**: `Serialization.RequestEncoding` decides the bytes written (UTF-8 by default); when set explicitly, the `charset` of `Content-Type` is written too. A `charset` declared explicitly in `Content-Type` takes precedence over `Serialization.RequestEncoding` (the body is encoded with the declared charset, so header and body always agree); writing both with contradicting values throws `ERR_BAD_OPTION_VALUE`. `byte[]` / `Stream` / `HttpContent` pass through untouched and are unaffected.
+- **Response body**: auto-detected by default — the `Content-Type` `charset` → BOM → UTF-8; `Serialization.ResponseEncoding` forces a specific encoding for servers with a missing or wrong charset.
 
 ```csharp
 // Send the request in GBK
-await http.PostAsync("legacy", "中文", c => c.RequestEncoding = Encoding.GetEncoding("gbk"));
+await http.PostAsync("legacy", "中文", c => c.Serialization.RequestEncoding = Encoding.GetEncoding("gbk"));
 
 // Force GBK decoding for the response
-await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gbk"));
+await http.GetAsync("legacy", c => c.Serialization.ResponseEncoding = Encoding.GetEncoding("gbk"));
 ```
 
 > On .NET Core, code pages such as GBK require registering `CodePagesEncodingProvider` first, otherwise `Encoding.GetEncoding("gbk")` throws; in that case auto-detection silently falls back to BOM/UTF-8.
@@ -693,9 +712,9 @@ All three capabilities can be set either in instance defaults or per request.
 ```csharp
 await http.PostAsync("upload", new { files }, c =>
 {
-    c.OnUploadProgress = e =>
+    c.Callbacks.OnUploadProgress = e =>
         Console.WriteLine($"↑ {e.Loaded}/{e.Total} ({e.Progress:P0}) {e.Rate / 1024:F1} KB/s ETA {e.Estimated}");
-    c.OnDownloadProgress = e =>
+    c.Callbacks.OnDownloadProgress = e =>
         Console.WriteLine($"↓ {e.Loaded}/{e.Total} ({e.Progress:P0}) {e.Rate / 1024:F1} KB/s");
 });
 ```
@@ -722,7 +741,7 @@ await http.PostAsync("upload", new { files }, c =>
 
 ```csharp
 // Limit each request to 1 MB/s (bytes/second); upload and download are limited independently
-await http.GetAsync("big", c => c.MaxRate = 1024 * 1024);
+await http.GetAsync("big", c => c.Limits.MaxRate = 1024 * 1024);
 ```
 
 The implementation derives the "expected elapsed time" from the bytes transferred and `Delay`s to make up any shortfall, so it limits the **average rate** (small bursts allowed) rather than being a strict token bucket.
@@ -733,7 +752,7 @@ The implementation derives the "expected elapsed time" from the bytes transferre
 // Fail immediately when the response body exceeds 1 MB
 try
 {
-    await http.GetAsync("big", c => c.MaxContentLength = 1024 * 1024);
+    await http.GetAsync("big", c => c.Limits.MaxContentLength = 1024 * 1024);
 }
 catch (AxiosException ex)
 {
@@ -742,12 +761,12 @@ catch (AxiosException ex)
 }
 
 // Reject a request body over 5 MB before sending
-await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
+await http.PostAsync("upload", bytes, c => c.Limits.MaxBodyLength = 5 * 1024 * 1024);
 ```
 
-- `MaxContentLength` accumulates **while reading** for ordinary (buffered) responses: it aborts and releases the connection as soon as the limit is crossed, rather than reading all 8 MB into memory first. For `ResponseType.Stream` it works in two layers: the declared `Content-Length` is pre-checked when the headers arrive, and the bytes read are counted as they arrive — so a chunked / length-less response also fails on the read that crosses the limit.
-- `MaxBodyLength` checks `Content.Headers.ContentLength` before sending, so it only applies to bodies whose length is known (JSON / forms / `byte[]` / a seekable raw `Stream`); `multipart/form-data` (with `FormFile`) and custom `HttpContent` of unknown length are not intercepted.
-- **Negative** values for these four limits throw `ERR_BAD_OPTION_VALUE` (they used to be silently treated as "unlimited", so callers believed a limit was in force). `MaxRate = 0` means "unthrottled" and `Timeout = TimeSpan.Zero` means "no timeout".
+- `Limits.MaxContentLength` accumulates **while reading** for ordinary (buffered) responses: it aborts and releases the connection as soon as the limit is crossed, rather than reading all 8 MB into memory first. For `ResponseType.Stream` it works in two layers: the declared `Content-Length` is pre-checked when the headers arrive, and the bytes read are counted as they arrive — so a chunked / length-less response also fails on the read that crosses the limit.
+- `Limits.MaxBodyLength` checks `Content.Headers.ContentLength` before sending, so it only applies to bodies whose length is known (JSON / forms / `byte[]` / a seekable raw `Stream`); `multipart/form-data` (with `FormFile`) and custom `HttpContent` of unknown length are not intercepted.
+- **Negative** values for these four limits throw `ERR_BAD_OPTION_VALUE` (they used to be silently treated as "unlimited", so callers believed a limit was in force). `Limits.MaxRate = 0` means "unthrottled" and `Timeout = TimeSpan.Zero` means "no timeout".
 
 ## Custom serialization and data transforms
 
@@ -777,7 +796,7 @@ public interface IContentSerializer
     ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
     // response inlet (Content-Type declared non-textual): the library ships a default that
-    // decodes with the response charset (ResponseEncoding -> charset -> BOM -> UTF-8) and
+    // decodes with the response charset (Serialization.ResponseEncoding -> charset -> BOM -> UTF-8) and
     // delegates to the text entry; binary formats override it
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);
 }
@@ -837,7 +856,7 @@ Two boundaries: it is **only populated during the response phase** (`Serialize` 
 
 | Order | Source | Notes |
 | --- | --- | --- |
-| 1 | `AxiosConfig.ContentSerializer` (per request / instance defaults) | **explicit injection, highest priority** |
+| 1 | `AxiosConfig.SerializationSettings.ContentSerializer` (per request / instance defaults) | **explicit injection, highest priority** |
 | 2 | `AxiosContent.Serializer` (global explicit injection) | **`null` (default) = not injected** → auto mode |
 | 3 | Auto mode: registry lookup by media type (`AxiosContent.Register`) | request uses `ContentType`, response uses its `Content-Type`; **a miss returns `null`** |
 | 4 | Built-in JSON (`SystemTextJsonSerializer.Instance`) | final fallback |
@@ -849,7 +868,7 @@ using AxiosNet.Serialization;
 
 // A: explicit injection — one client (or the whole app) speaks a single format
 AxiosContent.Serializer = XmlContentSerializer.Instance;                        // global
-// or new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance })   // instance only
+// or new AxiosClient(new AxiosConfig { Serialization = new() { ContentSerializer = XmlContentSerializer.Instance } })   // instance only
 
 // B: auto mode + registry — one app mixes formats by Content-Type
 AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
@@ -864,7 +883,7 @@ var user = (await http.GetAsync<User>("users/1")).Data;                         
 Registry matching: only the media-type main value is compared (case-insensitive, `; charset=...` and friends ignored); **structured suffixes** such as `application/vnd.api+xml` fall back to `application/xml` (same for `+json` / `+yaml`), so one registration covers its vendor variants — an exact registration for a vendor type still wins.
 
 > Header/body pairing works **both ways**: auto mode *picks the format from the header*, and a serializer can *declare the header*.
-> 1. **Injection path** (A): `ContentSerializer = XmlContentSerializer.Instance` is the only change needed — the request header becomes `application/xml` automatically, no `ContentType` required;
+> 1. **Injection path** (A): `Serialization.ContentSerializer = XmlContentSerializer.Instance` is the only change needed — the request header becomes `application/xml` automatically, no `ContentType` required;
 > 2. **Registry path** (B): the registry key *is* the media type, so you must set `ContentType`, otherwise the lookup misses and JSON is used;
 > 3. once `ContentType` was set explicitly (per request or on instance defaults), the serializer's `MediaType` never overrides it — that value is the caller's judgement about its server;
 > 4. `ContentType = Xml` with neither injection nor registration leaves the body as JSON (the mismatch is not auto-corrected).
@@ -872,7 +891,7 @@ Registry matching: only the media-type main value is compared (case-insensitive,
 Details and limits of the built-in XML implementation:
 
 - `XmlSerializer` instances are cached per target type (construction is expensive) and shared safely across threads;
-- the declared `encoding` **always matches** the bytes actually written: the priority is the `charset` declared in `ContentType` → `RequestEncoding` → UTF-8 (the same resolution the body encoder uses, so you never get the triangle of "declared utf-8, body gb2312, header declaring a third thing"); the root element drops the `xmlns:xsi` / `xmlns:xsd` noise, while `[XmlRoot(Namespace = ...)]` is honoured;
+- the declared `encoding` **always matches** the bytes actually written: the priority is the `charset` declared in `ContentType` → `Serialization.RequestEncoding` → UTF-8 (the same resolution the body encoder uses, so you never get the triangle of "declared utf-8, body gb2312, header declaring a third thing"); the root element drops the `xmlns:xsi` / `xmlns:xsd` noise, while `[XmlRoot(Namespace = ...)]` is honoured;
 - deserialization **prohibits DTDs** (XXE / billion laughs), and failures surface as `ERR_BAD_RESPONSE`;
 - XmlSerializer's own limits still apply: the target type needs a **public parameterless constructor** and only public read/write properties/fields are serialized; anonymous types, interfaces and `Dictionary<,>` are unsupported — use a DTO.
 
@@ -900,10 +919,10 @@ Boundaries:
 
 - **The request header can be declared by the serializer**: when `MediaType` is non-null and the caller never set `ContentType`, the library writes it into the request (mirroring axios' default `headers.setContentType(..., false)`); it applies to both the text and byte channels. An explicit value always wins. The response direction ignores `MediaType` — the response header is authoritative.
 - **Text vs binary comes from the response `Content-Type`** (only the media type main value; `charset` / `boundary` parameters are ignored): `text/*`, `application/json`, `application/xml`, `+json` / `+xml` / `+yaml`, YAML and CSV count as textual; everything else (`application/octet-stream`, `image/png`, `application/x-protobuf`…) is binary; **a missing Content-Type counts as textual**.
-- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly. The byte inlet's default decodes with the **response charset** and delegates to the text entry (same priority as textual responses: `ResponseEncoding` → charset → BOM → UTF-8), so text serializers need not implement it (and servers mislabeling JSON as `octet-stream` keep working, including non-UTF-8 variants declared via charset or BOM).
+- **Binary responses are never decoded**: business objects receive the raw bytes via `Deserialize(ReadOnlyMemory<byte>)` (zero-copy access for Protobuf / MessagePack / CBOR); non-generic calls get `byte[]` directly. The byte inlet's default decodes with the **response charset** and delegates to the text entry (same priority as textual responses: `Serialization.ResponseEncoding` → charset → BOM → UTF-8), so text serializers need not implement it (and servers mislabeling JSON as `octet-stream` keep working, including non-UTF-8 variants declared via charset or BOM).
 - **Binary formats get a request outlet**: override `SerializeToBytes` to return the wire-format bytes — the library sends them as-is (no text encoding, no charset appended) and takes the header from the declared `MediaType`. Paired with the response byte inlet, injecting one serializer swaps the whole pipeline's format. Returning `null` falls back to the text channel; the returned memory must stay alive until the whole request completes (never hand back an ArrayPool lease). **The text channel cannot carry arbitrary bytes**, so a binary format's `Serialize` may just throw `NotSupportedException`.
 - **Primitive requests never reach the serializer**: `PostAsync("url", 42)` sends `42`, `true` sends `true`, enums send their name. A bare scalar has no "format" (XML / YAML cannot express an unnamed root scalar), so routing it through the serializer would only force every implementation to special-case scalars again. It therefore does not take part in the `MediaType` header fill either: the header stays at `ContentType` (default `application/json` — and a bare `42` is valid JSON). Date-times use the round-trip format (Kind and ticks preserved) rather than the millisecond UTC form used by forms.
-- **Forms / multipart never go through the serializer**: field names come from `FormFieldNameSelector` and `[JsonPropertyName]` (ignore with `[JsonIgnore]`).
+- **Forms / multipart never go through the serializer**: field names come from `Serialization.FormFieldNameSelector` and `[JsonPropertyName]` (ignore with `[JsonIgnore]`).
 - **`dynamic` depends on JSON**: with a non-JSON response `GetAsync<dynamic>` throws `ERR_BAD_RESPONSE`; use `ResponseType.Text` or the non-generic `GetAsync()` for raw text.
 - **Non-generic responses**: textual bodies become a `JsonElement` (raw text on failure), binary bodies come back as `byte[]`, independent of the serializer.
 - **`GetAsync<JsonDocument>` works, but it counts as a business object**: it is not the framework's document shape — it goes through the active serializer (STJ supports it natively). So the caller **must `Dispose` it** (pooled buffers underneath), and it fails outright under the XML serializer. For read-only JSON tree access prefer `GetAsync<JsonElement>` (framework-provided, nothing to dispose) or the non-generic `GetAsync()`.
@@ -916,8 +935,8 @@ JSON behavior has three layers, each overriding the previous one:
 | Layer | Entry point | Typical use |
 | --- | --- | --- |
 | Global | `AxiosJson.Options` | One naming strategy and number/date handling for the whole app |
-| Instance | `Axios.Create(c => c.JsonSerializerOptions = ...)` | One backend that speaks PascalCase / snake_case |
-| Per request | `c => c.JsonSerializerOptions = ...` | Special contracts for individual endpoints |
+| Instance | `Axios.Create(c => c.Serialization.JsonSerializerOptions = ...)` | One backend that speaks PascalCase / snake_case |
+| Per request | `c => c.Serialization.JsonSerializerOptions = ...` | Special contracts for individual endpoints |
 
 ```csharp
 // 1) Global: stop using camelCase (e.g. the backend fields really are PascalCase) and allow stringified numbers
@@ -931,14 +950,14 @@ AxiosJson.Options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
 var http = Axios.Create(c =>
 {
     c.BaseAddress = "https://api.example.com/";
-    c.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    c.Serialization.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
 });
 
 // 3) Per request: highest precedence
-await http.PostAsync("users", user, c => c.JsonSerializerOptions = specialOptions);
+await http.PostAsync("users", user, c => c.Serialization.JsonSerializerOptions = specialOptions);
 ```
 
 > When replacing `AxiosJson.Options`, always assign a **new instance**; System.Text.Json freezes an options instance once it has been used, and mutating it afterwards throws `InvalidOperationException`. Setting it once at startup is recommended.
@@ -963,7 +982,7 @@ public sealed class NewtonsoftJsonSerializer : IContentSerializer
 }
 
 AxiosContent.Serializer = new NewtonsoftJsonSerializer();         // global
-// or: new AxiosClient(new AxiosConfig { JsonSerializer = ... })   // instance only
+// or: new AxiosClient(new AxiosConfig { Serialization = new() { ContentSerializer = ... } })   // instance only
 ```
 
 Conventions and boundaries:
@@ -974,14 +993,14 @@ Conventions and boundaries:
 
 ### paramsSerializer
 
-`ParamsSerializer` receives **the entire `Params` object** and returns the encoded query string (leading `?` / `&` are stripped automatically):
+`Serialization.ParamsSerializer` receives **the entire `Params` object** and returns the encoded query string (leading `?` / `&` are stripped automatically):
 
 ```csharp
 // Comma-separated arrays: ids=1,2,3&q=a%20b
 await http.GetAsync("items", c =>
 {
     c.Params = new ItemQuery { Ids = new[] { 1, 2, 3 }, Q = "a b" };
-    c.ParamsSerializer = p =>
+    c.Serialization.ParamsSerializer = p =>
     {
         var q = (ItemQuery)p!;
         return $"ids={string.Join(",", q.Ids)}&q={Uri.EscapeDataString(q.Q)}";
@@ -989,9 +1008,9 @@ await http.GetAsync("items", c =>
 });
 ```
 
-> The first parameter is `object?`; cast to your own DTO when you need strong typing. The default serializer already follows axios conventions (arrays `a[]=1&a[]=2`, nested `o[k]=v`, nulls skipped), so most scenarios need no customization. To change the collection shape (`a=1&a=2`, `a=1,2`, space / tab / pipe separated) use `CollectionFormat`: it works per request, and a custom `ParamsSerializer` overrides it.
+> The first parameter is `object?`; cast to your own DTO when you need strong typing. The default serializer already follows axios conventions (arrays `a[]=1&a[]=2`, nested `o[k]=v`, nulls skipped), so most scenarios need no customization. To change the collection shape (`a=1&a=2`, `a=1,2`, space / tab / pipe separated) use `Serialization.CollectionFormat`: it works per request, and a custom `Serialization.ParamsSerializer` overrides it.
 
-### FormFieldNameSelector
+### Serialization.FormFieldNameSelector
 
 Decides **how field names are joined** in multipart/urlencoded forms. Signature: `Func<string?, string, string>` (parent name, current name):
 
@@ -999,7 +1018,7 @@ Decides **how field names are joined** in multipart/urlencoded forms. Signature:
 // The default is prefix[name]; switch to dot style: user.name
 await http.PostFormAsync("submit", new { user = new { name = "bob" } }, c =>
 {
-    c.FormFieldNameSelector = (prefix, name) =>
+    c.Serialization.FormFieldNameSelector = (prefix, name) =>
         string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}";
 });
 ```
@@ -1041,7 +1060,7 @@ await http.GetAsync("users/1", c =>
 - The chain is an `IList<Func<object?, AxiosConfig, object?>>`; returning `null` is legal (it simply flows on).
 - The return value of `TransformRequest` is still encoded according to `ContentType` — the transform chain does not change the iron rule that "the format is decided by ContentType".
 - `TransformResponse` runs for `ResponseType.Json` / `Text` / `ArrayBuffer` / `Dynamic`; it does not run for `Stream` (the data has not been read yet).
-- The `data` handed to `TransformResponse` is already the **target type**: for non-generic requests it is a `JsonElement` (or text), while `GetAsync<User>` yields a `User`. To process uniformly at the JSON level (e.g. unwrapping a `{code,data}` envelope), use a non-generic request plus `TransformResponse`, or use a custom converter in `JsonSerializerOptions`.
+- The `data` handed to `TransformResponse` is already the **target type**: for non-generic requests it is a `JsonElement` (or text), while `GetAsync<User>` yields a `User`. To process uniformly at the JSON level (e.g. unwrapping a `{code,data}` envelope), use a non-generic request plus `TransformResponse`, or use a custom converter in `Serialization.JsonSerializerOptions`.
 
 ## Interceptors
 
@@ -1104,9 +1123,9 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | Trigger | axios equivalent |
 | --- | --- | --- |
-| `ERR_BAD_REQUEST` | Response status is 4xx (default validation failure); request body exceeds `MaxBodyLength`; request body serialization failed (cycles, converter exceptions — see `ex.Cause`); the upload progress callback (`OnUploadProgress`) threw | ✅ |
-| `ERR_BAD_RESPONSE` | Response status is 5xx; response body cannot be deserialized to the target type (including `dynamic` receiving non-JSON); response body exceeds `MaxContentLength`; generic argument and `responseType` mismatch (e.g. `GetAsync<Stream>` combined with `text`/`arraybuffer`); the download progress callback (`OnDownloadProgress`) or `transformResponse` threw | ✅ |
-| `ECONNABORTED` | The request exceeded `Timeout` (the message can be replaced via `TimeoutMessage`) | ✅ |
+| `ERR_BAD_REQUEST` | Response status is 4xx (default validation failure); request body exceeds `Limits.MaxBodyLength`; request body serialization failed (cycles, converter exceptions — see `ex.Cause`); the upload progress callback (`Callbacks.OnUploadProgress`) threw | ✅ |
+| `ERR_BAD_RESPONSE` | Response status is 5xx; response body cannot be deserialized to the target type (including `dynamic` receiving non-JSON); response body exceeds `Limits.MaxContentLength`; generic argument and `responseType` mismatch (e.g. `GetAsync<Stream>` combined with `text`/`arraybuffer`); the download progress callback (`Callbacks.OnDownloadProgress`) or `transformResponse` threw | ✅ |
+| `ECONNABORTED` | The request exceeded `Timeout` (the message can be replaced via `Callbacks.TimeoutMessage`) | ✅ |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped mid-flight / truncated response, i.e. network-layer failures (see `ex.Cause` for the inner exception) | ✅ |
 | `ERR_CANCELED` | `CancellationToken` cancellation | ✅ |
 | `ERR_INVALID_URL` | Invalid URL (including a relative URL with no `baseURL`, a scheme other than `http`/`https`, or a `null` / blank `url` passed to a shortcut method) | ✅ |
@@ -1188,7 +1207,7 @@ ConnectionPoolStatistics stats = sharedPool.GetStatistics();
 sharedPool.EvictIdleEndpoints();
 ```
 
-> Fail-fast: a shared pool's connection behavior (redirects / proxy / credentials / cookies / pool options) is fixed when the pool is created. Setting `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` / `PoolOptions` on a shared-pool client's defaults, or passing both `pool` and `poolOptions` to `AxiosClient`, throws `ERR_BAD_OPTION_VALUE` instead of being silently ignored — configure these on the `ConnectionPoolOptions` used to create the pool, or let that client build its own pool (do not pass `pool`).
+> Fail-fast: a shared pool's connection behavior (redirects / proxy / credentials / cookies / pool options) is fixed when the pool is created. Setting `Connection.MaxRedirects` / `Connection.WithCredentials` / `Connection.Proxy` / `Connection.Credentials` / `Connection.PoolOptions` on a shared-pool client's defaults, or passing both `pool` and `poolOptions` to `AxiosClient`, throws `ERR_BAD_OPTION_VALUE` instead of being silently ignored — configure these on the `ConnectionPoolOptions` used to create the pool, or let that client build its own pool (do not pass `pool`).
 >
 > Two defaults: when `Proxy` is not set explicitly the pool **does not use system/environment proxies** (avoiding surprising routing from environment variables); set `Proxy = HttpClient.DefaultProxy` to opt into the system proxy. When `EvictionInterval ≤ 0` the background eviction timer is not started (only manual `EvictIdleEndpoints()` then). The pool clones the options passed in, and `pool.Options` returns a copy too — mutating the object you hold afterwards does not affect an already-created pool.
 >
@@ -1275,9 +1294,9 @@ using var client3 = Axios.Create(
 Key points:
 
 - Once a handler is injected **no connection pool is created**: `client.Pool` is `null`, `client.UsesConnectionPool` is `false`, and all origins share that one handler (`SocketsHttpHandler` still reuses TCP per host on its own).
-- Connection behavior is entirely up to the handler, so setting `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` on the defaults throws `ERR_BAD_OPTION_VALUE` (to prevent "configured but not applied").
+- Connection behavior is entirely up to the handler, so setting `Connection.MaxRedirects` / `Connection.WithCredentials` / `Connection.Proxy` / `Connection.Credentials` on the defaults throws `ERR_BAD_OPTION_VALUE` (to prevent "configured but not applied").
 - It is mutually exclusive with `pool` / `poolOptions`; passing both also throws `ERR_BAD_OPTION_VALUE`.
-- Timeouts are still managed per request by the library (`HttpClient.Timeout` is set to Infinite internally, so `c.Timeout` works as usual); data-layer features such as `OnUploadProgress` / `maxRate` / `maxContentLength` are unaffected.
+- Timeouts are still managed per request by the library (`HttpClient.Timeout` is set to Infinite internally, so `c.Timeout` works as usual); data-layer features such as `Callbacks.OnUploadProgress` / `maxRate` / `maxContentLength` are unaffected.
 
 ## Features
 
@@ -1299,7 +1318,7 @@ Key points:
 - `maxRate`: one-way upload/download throttling (bytes/second)
 - `paramsSerializer` / `formFieldNameSelector`: custom query string and form field naming (the field-name customization of axios's `formSerializer`)
 - `transformRequest` / `transformResponse`: pre-request and post-response transform chains (thread-safe, mutable at runtime; assigning any `IList` wraps it into the thread-safe implementation, so enumeration always sees a snapshot)
-- 🔧 **Pluggable content serialization**: JSON (System.Text.Json) by default with **XML built in** (`XmlContentSerializer`); `JsonSerializerOptions` overridden per "global → instance → request"; implement `IContentSerializer` (two text methods + a pair of byte-channel hooks `SerializeToBytes` / `Deserialize(bytes)` for binary formats + an optional `MediaType` self-declaration) to switch to YAML / Protobuf or replace the JSON engine via `AxiosContent.Serializer`, with the request header aligned automatically
+- 🔧 **Pluggable content serialization**: JSON (System.Text.Json) by default with **XML built in** (`XmlContentSerializer`); `Serialization.JsonSerializerOptions` overridden per "global → instance → request"; implement `IContentSerializer` (two text methods + a pair of byte-channel hooks `SerializeToBytes` / `Deserialize(bytes)` for binary formats + an optional `MediaType` self-declaration) to switch to YAML / Protobuf or replace the JSON engine via `AxiosContent.Serializer`, with the request header aligned automatically
 - `postForm` / `putForm` / `patchForm`: one-liners for `multipart/form-data` or forms
 - Full response shape: `Data / Status / StatusText / Headers / Config / Request`
 
@@ -1337,17 +1356,17 @@ Key points:
 | — (no equivalent) | `AxiosContentType` presets: `Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml` |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
 | — (natively dynamic in JS) | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
-| — (no equivalent setting) | `RequestEncoding` / `ResponseEncoding` (request/response text encoding) |
-| `validateStatus` | `c.ValidateStatus = status => ...` |
+| — (no equivalent setting) | `Serialization.RequestEncoding` / `Serialization.ResponseEncoding` (request/response text encoding) |
+| `validateStatus` | `c.Callbacks.ValidateStatus = status => ...` |
 | `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
-| `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
-| `withCredentials` / `proxy` / `maxRedirects` | Same-named properties (**instance-level only**, see below) |
-| `maxContentLength` / `maxBodyLength` | Same-named properties (`long?`, bytes; exceeding them throws `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`) |
-| `maxRate` | `c.MaxRate` (bytes/second, shared by upload and download) |
-| `onUploadProgress` / `onDownloadProgress` | Same-named properties (`Action<AxiosProgressEvent>`) |
-| `timeoutMessage` | `c.TimeoutMessage` |
-| `paramsSerializer` | `c.ParamsSerializer` or the instance-level `Defaults.ParamsSerializer` (returns an already-encoded query string) |
-| `formSerializer` (field naming/nesting style) | `c.FormFieldNameSelector` (`Func<string?, string, string>`, `(parentName, currentName) => finalName`; defaults to `prefix[name]`) |
+| `auth: {username,password}` | `c.Connection.Auth = new AxiosAuth(user, pass)` |
+| `withCredentials` / `proxy` / `maxRedirects` | Same-named properties on the `Connection` sub-object (**instance-level only**, see below) |
+| `maxContentLength` / `maxBodyLength` | Same-named properties on the `Limits` sub-object (`long?`, bytes; exceeding them throws `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`) |
+| `maxRate` | `c.Limits.MaxRate` (bytes/second, shared by upload and download) |
+| `onUploadProgress` / `onDownloadProgress` | Same-named properties on the `Callbacks` sub-object (`Action<AxiosProgressEvent>`) |
+| `timeoutMessage` | `c.Callbacks.TimeoutMessage` |
+| `paramsSerializer` | `c.Serialization.ParamsSerializer` or the instance-level `Defaults.Serialization.ParamsSerializer` (returns an already-encoded query string) |
+| `formSerializer` (field naming/nesting style) | `c.Serialization.FormFieldNameSelector` (`Func<string?, string, string>`, `(parentName, currentName) => finalName`; defaults to `prefix[name]`) |
 | `transformRequest` / `transformResponse` | Same-named properties (`IList<Func<object?, AxiosConfig, object?>>`, executed in order, appendable) |
 | `AxiosError.code` | `AxiosException.Code` (same string values), plus `Status` / `Cause` / `ToJson()` |
 | `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
@@ -1363,15 +1382,15 @@ Intentional differences driven by the .NET platform:
 4. Cancellation uses `CancellationToken` (semantically equivalent to `AbortController`);
 5. **The request body encoding is decided by `ContentType`** (JSON by default) and is never inferred from the data type: dictionaries are not automatically turned into forms, so you must set `ContentType = AxiosConfig.FormUrlEncodedContentType` explicitly when you need a form;
 6. The connection pool is an extension of this library; axios (browser/XHR, Node http) has no isomorphic implementation;
-7. Request/response text encoding can be controlled explicitly via `RequestEncoding` / `ResponseEncoding` (axios has no equivalent setting);
+7. Request/response text encoding can be controlled explicitly via `Serialization.RequestEncoding` / `Serialization.ResponseEncoding` (axios has no equivalent setting);
 8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` can only be set at the instance level; setting them on a single request **throws immediately** with `ERR_BAD_OPTION_VALUE` (axios silently ignores them — this library chooses fail-fast). **Repeating the instance's own equivalent setting** is allowed and means "write nothing" (`withCredentials` / `maxRedirects` compare by **value**; `proxy` / `credentials` / `poolOptions` have no dependable equality, so they compare by **reference** — only the exact object from the instance defaults is accepted). Setting them on a shared-pool client's defaults also throws immediately, because connection behavior is decided by the pool and must be configured on `ConnectionPoolOptions`;
 9. `maxRate`, `onUploadProgress` / `onDownloadProgress` are implemented by the library at the `HttpContent` and `Stream` layers (`HttpClient` has no native support), so for custom `HttpContent` the "encoded bytes" counted are the bytes actually written to the network stream;
 10. `transformRequest` / `transformResponse` take `object?` rather than a generic chain (C# cannot discard a type and narrow it back as freely as JS can); cast inside the delegate when you need strong typing;
 11. `config.method` uses the BCL `HttpMethod` directly (there is no bespoke enum here), so any custom verb can be sent; axios's adapter corresponds to `HttpMessageHandler` on the .NET side, with `ConnectionPoolOptions.HandlerFactory` or `new AxiosClient(handler: ...)` as the entry points.
 12. **Headers are validated on write**: a header name must be an RFC 7230 token and its value must not contain `CR` / `LF` / `NUL`, otherwise `AxiosHeaders.Set` throws `ArgumentException` (axios/JS does no such check). Browser/Node HTTP stacks split CRLF themselves; .NET's `TryAddWithoutValidation` does not — without this check the library would leave an HTTP request-splitting (CWE-113) door open;
-13. **`WithCredentials` cookies are shared per domain** (one container for the whole pool instead of one per origin), so sessions across sub-domains / alternate ports behave like a browser;
+13. **`Connection.WithCredentials` cookies are shared per domain** (one container for the whole pool instead of one per origin), so sessions across sub-domains / alternate ports behave like a browser;
 14. `Timeout` is capped at about 49.7 days; larger values are clamped to the cap instead of throwing (`Timeout = 0` is the real unlimited timeout);
-15. **`params` uses strict RFC 3986 encoding** (`Uri.EscapeDataString`), whose character set differs from axios's default `encode()`: spaces become `%20` instead of `+`, and `!'()*` plus `,:$` are encoded too. That encoding is actually a better fit for OSS/S3-style pre-signing; pass a custom `ParamsSerializer` when you need axios's exact form;
+15. **`params` uses strict RFC 3986 encoding** (`Uri.EscapeDataString`), whose character set differs from axios's default `encode()`: spaces become `%20` instead of `+`, and `!'()*` plus `,:$` are encoded too. That encoding is actually a better fit for OSS/S3-style pre-signing; pass a custom `Serialization.ParamsSerializer` when you need axios's exact form;
 16. **Multipart field names and file names are validated before sending**: `"`, `\`, `CR`/`LF` and control characters would break the quoted-string in `Content-Disposition`, so they throw `ERR_BAD_OPTION_VALUE` (both `FormFile.FileName` and `FormFile.FieldName` throw `ArgumentException` **at construction time**, not when the request is issued) instead of letting the server silently receive a garbled key (browser `FormData` handles these inconsistently, so axios cannot rely on any particular behavior); assembly failures (including a root node with no field name) also report `ERR_BAD_OPTION_VALUE` and **dispose any `Stream` already handed in** (`FormFile.Content` / a bare `Stream` part) — an already-open handle is never pushed back onto the caller;
 17. **`ContentType` is a `string`, not an enum** (a `Content-Type` is media type + `charset`/`boundary` parameters, which an enum cannot express). Common values ship as `AxiosContentType` constants — the same "presets plus arbitrary custom values" idea as `HttpMethod.Get` together with `new HttpMethod("PROPFIND")`.
 
@@ -1473,9 +1492,12 @@ internal partial class ApiJsonContext : JsonSerializerContext { }
 var client = new AxiosClient(new AxiosConfig
 {
     BaseAddress = "https://api.example.com",
-    JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    Serialization = new()
     {
-        TypeInfoResolver = ApiJsonContext.Default,
+        JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            TypeInfoResolver = ApiJsonContext.Default,
+        },
     },
 });
 ```
@@ -1534,11 +1556,11 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 **Serialization and security**
 
 - Pluggable serialization (`JsonCustomizationTests` / `ContentSerializerTests`)
-  - a custom `IContentSerializer` driving request/response, instance-level `JsonSerializerOptions`, concurrent add/remove on transform lists
+  - a custom `IContentSerializer` driving request/response, instance-level `Serialization.JsonSerializerOptions`, concurrent add/remove on transform lists
   - end-to-end XML, primitives bypassing the serializer, non-generic `JsonElement`/raw text, forms decoupled from the serializer, dynamic failing loudly on XML bodies
   - binary responses going through the byte inlet (non-UTF-8 trailing byte delivered untouched, no decoding), text serializers falling back gracefully on `octet-stream`
   - the binary request outlet (object → byte body + self-declared `MediaType`, no charset appended, explicit `ContentType` wins, forms/scalars never enter the byte channel)
-  - the built-in XML serializer: declaration encoding follows the declared `ContentType` charset / `RequestEncoding`, no namespace noise, `[XmlRoot]` namespace, DTD rejected
+  - the built-in XML serializer: declaration encoding follows the declared `ContentType` charset / `Serialization.RequestEncoding`, no namespace noise, `[XmlRoot]` namespace, DTD rejected
   - releasing the caller's `Stream` when multipart assembly fails; the boundary around `JsonDocument` targets; scalar request bodies and dictionary routing; self-declared `MediaType` filling the request header
 - Security and hardening (`HardeningTests`)
   - header values/names with CR/LF or non-token characters rejected (HTTP request smuggling guard); `poolOptions.MaxAutomaticRedirections` no longer overwritten by an implicit default
@@ -1551,18 +1573,18 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 
 - Failure and concurrency (`ReviewRegressionTests`): streaming 4xx releasing the connection, truncated responses / error codes for non-JSON dynamic, concurrent mutation of default request headers, the params indexer, `Timeout = 0` override, streaming body timeout, leases not evicted during download
 - Global audit (`Audit20261022GlobalAuditFixTests`, 25 cases)
-  - per-request `MaxRedirects` validated against the pool's effective value (no more short-circuit against the property default 5); the built-in JSON byte inlet strips the UTF-8 BOM; all-null query bindings no longer wipe instance-default `params`
+  - per-request `Connection.MaxRedirects` validated against the pool's effective value (no more short-circuit against the property default 5); the built-in JSON byte inlet strips the UTF-8 BOM; all-null query bindings no longer wipe instance-default `params`
   - protocol-relative URLs (`//host`) resolve against the baseURL scheme; a serializer throwing `OperationCanceledException` surfaces as `ERR_CANCELED`; an invalid HTTP method token is normalized to `InvalidOperationException` and cached
   - `DateOnly` / `TimeOnly` / `Uri` scalar classification (one shared list with params serialization, so default-body and Path/Header checks no longer drift); `Defaults.RemoveHeaders` behaves identically on the shortcut and `RequestAsync` paths; a request interceptor returning a null Task fails with a clear error
-  - `GetStatistics` taken from a single snapshot; capacity eviction picks the least-recently-used endpoint; blank `ContentType` fails fast; a declared `ContentType` charset wins the encoding (fail-fast when it contradicts `RequestEncoding`); duplicated connection-level options on a self-built pool fail fast
-- Second audit round (`Audit20261022MultipartXmlFixTests`, 12 cases): multipart failures release the caller's `Stream` (both paths reporting `ERR_BAD_OPTION_VALUE`), `FormFile.FieldName` fails fast at assignment like `FileName`, the success path keeps the same stream ownership, and the XML declaration encoding follows the declared `ContentType` charset / `RequestEncoding` (utf-8 by default); `InterceptorTests` adds two more checks: range validation targets the config after the interceptors (an interceptor writing `Timeout = -1` is rejected, repairing a caller's invalid value is allowed)
+  - `GetStatistics` taken from a single snapshot; capacity eviction picks the least-recently-used endpoint; blank `ContentType` fails fast; a declared `ContentType` charset wins the encoding (fail-fast when it contradicts `Serialization.RequestEncoding`); duplicated connection-level options on a self-built pool fail fast
+- Second audit round (`Audit20261022MultipartXmlFixTests`, 12 cases): multipart failures release the caller's `Stream` (both paths reporting `ERR_BAD_OPTION_VALUE`), `FormFile.FieldName` fails fast at assignment like `FileName`, the success path keeps the same stream ownership, and the XML declaration encoding follows the declared `ContentType` charset / `Serialization.RequestEncoding` (utf-8 by default); `InterceptorTests` adds two more checks: range validation targets the config after the interceptors (an interceptor writing `Timeout = -1` is rejected, repairing a caller's invalid value is allowed)
 - P2 fixes (`Audit20261022P2FixTests`, 5 cases): upload progress accumulates across a 307 redirect and stays monotonic with the percentage capped at 100%; assigning any `IList` to a transform chain wraps it into the thread-safe implementation (already-wrapped instances are not double-wrapped); a Basic username containing a colon is rejected at construction while the password may contain one
 - Third audit round (`Audit20261022Round3FixTests`, 10 cases)
   - a `null` / blank `url` on shortcut methods now fails fast with `ERR_INVALID_URL`; exceptions thrown by upload/download progress callbacks and by a custom `paramsSerializer` are normalized to `AxiosException` (the upload side is no longer wrapped by HttpClient into `HttpRequestException` and misreported as `ERR_NETWORK`; download reports `ERR_BAD_RESPONSE`, config errors report `ERR_BAD_OPTION_VALUE`, and the original exception goes into `Cause`)
   - replaying `response.Config` onto another instance uses the target instance's `BaseAddress`; a scalar request body takes its `Content-Type` from the effective serializer; `AxiosHeaders` copy-on-write matches a plain-dictionary model across 3000 random operations; built-in Bearer scheme handling
 - Third-round pending items (`Audit20261022Round3PendingFixTests`, 2 cases): `AxiosHeaders`' "take an exclusive store" retries when the old store was already replaced by another thread (the interleaving is pinned down with reflection plus a held lock, so it belongs in the regular suite); download progress no longer locks itself after the first report when the declared `Content-Length` is 0 while the body keeps coming (previously 512 KB produced a single `loaded=first chunk / total=0` report)
 - 2026-10-23 second audit (`Audit20261023Round2Tests`, 5 cases)
-  - the STJ byte inlet decodes with a declared `charset` / forced `ResponseEncoding` (UTF-16 without a BOM reads correctly), matching the interface default semantics
+  - the STJ byte inlet decodes with a declared `charset` / forced `Serialization.ResponseEncoding` (UTF-16 without a BOM reads correctly), matching the interface default semantics
   - SSE framing accepts bare CR, LF, and CRLF line endings (WHATWG); CRLF split across two reads does not emit a spurious empty frame; a forced non-ASCII-compatible encoding fails with `ERR_BAD_RESPONSE` when the stream is obtained
 
 **Declarative client and DI**

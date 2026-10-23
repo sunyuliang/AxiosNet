@@ -318,7 +318,7 @@ public sealed class StreamCancellationTests
         var response = await client.GetAsync<Stream>("http://probe.invalid/file", c =>
         {
             c.Timeout = ShortTimeout;
-            c.MaxRate = 8 * 1024; // 8KB/s：读完 64KB 需要约 8 秒，必须被 250ms 的超时打断
+            c.Limits.MaxRate = 8 * 1024; // 8KB/s：读完 64KB 需要约 8 秒，必须被 250ms 的超时打断
         });
         await using var stream = response.Data!;
 
@@ -380,7 +380,7 @@ public sealed class StreamCancellationTests
         var clock = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "upload", payload, c =>
         {
-            c.MaxRate = 64 * 1024; // 4 秒才能传完，必须被 250ms 的超时打断
+            c.Limits.MaxRate = 64 * 1024; // 4 秒才能传完，必须被 250ms 的超时打断
             c.Timeout = ShortTimeout;
         }));
         clock.Stop();
@@ -397,7 +397,7 @@ public sealed class StreamCancellationTests
         using var cts = new CancellationTokenSource();
 
         var payload = new byte[256 * 1024];
-        var upload = client.PostAsync(server.Url + "upload", payload, c => c.MaxRate = 64 * 1024, cts.Token);
+        var upload = client.PostAsync(server.Url + "upload", payload, c => c.Limits.MaxRate = 64 * 1024, cts.Token);
 
         await Task.Delay(150);
         cts.Cancel();
@@ -421,7 +421,7 @@ public sealed class StreamCancellationTests
         // 16 块 × 50ms ≈ 800ms：远长于 150ms 的取消点，保证取消一定落在上传中途
         var content = new SyncWritingContent(new byte[128 * 1024], chunkSize: 8 * 1024, chunkDelay: TimeSpan.FromMilliseconds(50));
 
-        var upload = client.PostAsync(server.Url + "upload", content, c => c.OnUploadProgress = events.Add, cts.Token);
+        var upload = client.PostAsync(server.Url + "upload", content, c => c.Callbacks.OnUploadProgress = events.Add, cts.Token);
 
         await Task.Delay(150);
         cts.Cancel();

@@ -36,7 +36,13 @@ public sealed class ConfigMergeContractTests
             Body: payload,
             ContentType: "application/octet-stream"));
 
-        using var client = new AxiosClient(new AxiosConfig { MaxContentLength = 16 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Limits = new()
+            {
+                MaxContentLength = 16,
+            },
+        });
 
         // 实例默认上限对 4KB 响应生效（声明了长度 → 读正文前就拒绝）
         var blocked = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(server.Url + "file"));
@@ -44,7 +50,7 @@ public sealed class ConfigMergeContractTests
 
         // 按请求显式设 null 必须清掉它：这条路径完全依赖 MaxContentLengthSet，
         // 一旦合并退化成「null 即未设置」，这里会继续被实例默认拦住。
-        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.MaxContentLength = null);
+        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Limits.MaxContentLength = null);
 
         Assert.Equal(payload.Length, response.Data!.Length);
     }
@@ -55,13 +61,19 @@ public sealed class ConfigMergeContractTests
         var payload = new byte[1024];
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 
-        using var client = new AxiosClient(new AxiosConfig { MaxBodyLength = 16 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Limits = new()
+            {
+                MaxBodyLength = 16,
+            },
+        });
 
         var blocked = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "up", payload));
         Assert.Equal(AxiosException.ErrBadRequest, blocked.Code);
         Assert.Empty(server.Received);
 
-        var response = await client.PostAsync(server.Url + "up", payload, c => c.MaxBodyLength = null);
+        var response = await client.PostAsync(server.Url + "up", payload, c => c.Limits.MaxBodyLength = null);
 
         Assert.Equal(200, response.Status);
         Assert.Equal(payload.Length, server.Received[^1].Body.Length);
@@ -79,12 +91,15 @@ public sealed class ConfigMergeContractTests
         // 清不掉实例限速时本用例会以 ECONNABORTED 失败，而不是变慢。
         using var client = new AxiosClient(new AxiosConfig
         {
-            MaxRate = 32,
-            Timeout = TimeSpan.FromSeconds(3)
+            Limits = new()
+            {
+                MaxRate = 32,
+            },
+            Timeout = TimeSpan.FromSeconds(3),
         });
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.MaxRate = null);
+        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Limits.MaxRate = null);
         stopwatch.Stop();
 
         Assert.Equal(size, response.Data!.Length);
@@ -156,8 +171,8 @@ public sealed class ConfigMergeContractTests
         // 一旦复制漏了，content.Headers.ContentLength 为 null，这个上限就静默失效了。
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "up", payload, c =>
         {
-            c.MaxBodyLength = 16;
-            c.OnUploadProgress = _ => { };
+            c.Limits.MaxBodyLength = 16;
+            c.Callbacks.OnUploadProgress = _ => { };
         }));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
@@ -197,7 +212,7 @@ public sealed class ConfigMergeContractTests
         using var client = new AxiosClient();
 
         var events = new List<AxiosProgressEvent>();
-        await client.GetAsync<byte[]>(server.Url + "chunked", c => c.OnDownloadProgress = events.Add);
+        await client.GetAsync<byte[]>(server.Url + "chunked", c => c.Callbacks.OnDownloadProgress = events.Add);
 
         Assert.NotEmpty(events);
         Assert.All(events, e => Assert.Null(e.Total));
@@ -401,7 +416,10 @@ public sealed class ConfigMergeContractTests
         using var first = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            PoolOptions = new ConnectionPoolOptions()
+            Connection = new()
+            {
+                PoolOptions = new ConnectionPoolOptions(),
+            },
         });
         first.Defaults.Headers.Set("X-First", "1");
         var response = await first.GetAsync("one");

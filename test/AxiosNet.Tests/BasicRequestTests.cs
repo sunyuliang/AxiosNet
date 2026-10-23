@@ -198,7 +198,7 @@ public sealed class BasicRequestTests
         var forced = await client.GetAsync(server.Url, c =>
         {
             c.ResponseType = ResponseType.Text;
-            c.ResponseEncoding = Encoding.Latin1;
+            c.Serialization.ResponseEncoding = Encoding.Latin1;
         });
         Assert.Equal("café", forced.Data);
     }

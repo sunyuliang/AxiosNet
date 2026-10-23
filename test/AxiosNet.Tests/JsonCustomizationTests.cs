@@ -20,7 +20,13 @@ public sealed class JsonCustomizationTests
             ? TestJson.Response(new { user_name = "bob", age = 30 })
             : TestJson.Echo(req));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = SnakeCaseSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+{
+            Serialization = new()
+            {
+                ContentSerializer = SnakeCaseSerializer.Instance,
+            },
+        });
 
         await client.PostAsync(server.Url + "users", new User { UserName = "alice", Age = 20 });
 
@@ -37,7 +43,13 @@ public sealed class JsonCustomizationTests
     public async Task FormFlattening_IgnoresCustomSerializer()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = SnakeCaseSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+{
+            Serialization = new()
+            {
+                ContentSerializer = SnakeCaseSerializer.Instance,
+            },
+        });
 
         await client.PostAsync(
             server.Url + "form",
@@ -55,7 +67,13 @@ public sealed class JsonCustomizationTests
     public async Task CustomSerializer_DrivesDynamicResponse()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { user_name = "bob", age = 30 }));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = SnakeCaseSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+{
+            Serialization = new()
+            {
+                ContentSerializer = SnakeCaseSerializer.Instance,
+            },
+        });
 
         dynamic data = (await client.GetAsync<dynamic>(server.Url + "users/1")).Data!;
 
@@ -69,11 +87,14 @@ public sealed class JsonCustomizationTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 
         using var client = new AxiosClient(new AxiosConfig
-        {
-            JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+{
+            Serialization = new()
+            {
+                JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             {
                 PropertyNamingPolicy = SnakeCase
-            }
+            },
+            },
         });
 
         await client.PostAsync(server.Url + "users", new User { UserName = "alice", Age = 20 });

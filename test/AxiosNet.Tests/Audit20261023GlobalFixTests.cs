@@ -65,7 +65,10 @@ public sealed class Audit20261023GlobalFixTests
         var defaults = new AxiosConfig
         {
             BaseAddress = "http://stream.test/",
-            StreamIdleTimeout = TimeSpan.FromSeconds(20)
+            Limits = new()
+            {
+                StreamIdleTimeout = TimeSpan.FromSeconds(20),
+            },
         };
 
         using var api = CreateStreamApiClient(defaults);
@@ -73,7 +76,7 @@ public sealed class Audit20261023GlobalFixTests
         var response = await api.RequestStreamAsync(new IdleStreamRequest());
 
         // 底层客户端显式配了 20s，ApiClient 没显式设置时不得把它压成「不限时」
-        Assert.Equal(TimeSpan.FromSeconds(20), response.Config!.StreamIdleTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(20), response.Config!.Limits.StreamIdleTimeout);
         await DrainAsync(response.Data);
     }
 
@@ -83,7 +86,10 @@ public sealed class Audit20261023GlobalFixTests
         var defaults = new AxiosConfig
         {
             BaseAddress = "http://stream.test/",
-            StreamIdleTimeout = TimeSpan.FromSeconds(20)
+            Limits = new()
+            {
+                StreamIdleTimeout = TimeSpan.FromSeconds(20),
+            },
         };
 
         using var api = CreateStreamApiClient(defaults);
@@ -91,7 +97,7 @@ public sealed class Audit20261023GlobalFixTests
 
         var response = await api.RequestStreamAsync(new IdleStreamRequest());
 
-        Assert.Equal(TimeSpan.FromSeconds(3), response.Config!.StreamIdleTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(3), response.Config!.Limits.StreamIdleTimeout);
         await DrainAsync(response.Data);
     }
 
@@ -107,7 +113,7 @@ public sealed class Audit20261023GlobalFixTests
 
         var response = await api.RequestStreamAsync(new IdleStreamRequest());
 
-        Assert.Equal(TimeSpan.Zero, response.Config!.StreamIdleTimeout);
+        Assert.Equal(TimeSpan.Zero, response.Config!.Limits.StreamIdleTimeout);
         await DrainAsync(response.Data);
     }
 
@@ -119,14 +125,17 @@ public sealed class Audit20261023GlobalFixTests
         var defaults = new AxiosConfig
         {
             BaseAddress = "http://stream.test/",
-            StreamIdleTimeout = null
+            Limits = new()
+            {
+                StreamIdleTimeout = null,
+            },
         };
 
         using var api = CreateStreamApiClient(defaults);
 
         var response = await api.RequestStreamAsync(new IdleStreamRequest());
 
-        Assert.Null(response.Config!.StreamIdleTimeout);
+        Assert.Null(response.Config!.Limits.StreamIdleTimeout);
         await DrainAsync(response.Data);
     }
 
@@ -260,7 +269,7 @@ public sealed class Audit20261023GlobalFixTests
         await client.PostAsync("x", "hi", c =>
         {
             c.ContentType = "text/plain; charset = utf-8";
-            c.RequestEncoding = Encoding.UTF8;
+            c.Serialization.RequestEncoding = Encoding.UTF8;
         });
 
         var contentType = Assert.Single(server.Received).Headers["content-type"];

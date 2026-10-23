@@ -71,7 +71,13 @@ public sealed class ContentSerializerTests
             ? XmlResponse(new XmlOrder { Id = 7, Name = "book" })
             : TestJson.Echo(req, contentType: "application/xml; charset=utf-8"));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(),
+            },
+        });
 
         await client.PostAsync(
             server.Url + "orders",
@@ -98,7 +104,13 @@ public sealed class ContentSerializerTests
             ContentType: "text/plain; charset=utf-8"));
 
         // 序列化器一旦被调用就炸：基础类型走框架 ScalarParser，不该碰到它
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new ThrowingSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new ThrowingSerializer(),
+            },
+        });
 
         Assert.Equal(42, (await client.GetAsync<int>(server.Url + "n")).Data);
         Assert.Equal("42", (await client.GetAsync<string>(server.Url + "n")).Data);
@@ -109,7 +121,13 @@ public sealed class ContentSerializerTests
     public async Task NonGenericJsonResponse_ReturnsJsonElement()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { id = 3 }));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(),
+            },
+        });
 
         // 「无目标类型」是框架形态：JSON 解析成功给 JsonElement，与序列化器是谁无关
         var response = await client.GetAsync(server.Url + "x");
@@ -121,7 +139,13 @@ public sealed class ContentSerializerTests
     public async Task NonGenericResponse_FallsBackToRawTextWhenNotJson()
     {
         await using var server = TestHttpServer.Start(_ => XmlResponse(new XmlOrder { Id = 2, Name = "cup" }));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(),
+            },
+        });
 
         var response = await client.GetAsync(server.Url + "orders/2");
         var text = Assert.IsType<string>(response.Data);
@@ -134,7 +158,13 @@ public sealed class ContentSerializerTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 
         // 换成 XML 序列化器后，表单请求仍然正常：表单不走序列化器
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(),
+            },
+        });
 
         await client.PostAsync(
             server.Url + "form",
@@ -148,7 +178,13 @@ public sealed class ContentSerializerTests
     public async Task Dynamic_StillRequiresJsonBody()
     {
         await using var server = TestHttpServer.Start(_ => XmlResponse(new XmlOrder { Id = 4, Name = "pen" }));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(),
+            },
+        });
 
         // dynamic 是 JSON 便利能力（框架内解析），XML 响应下必然失败；
         // 要拿 XML 原文请显式 ResponseType.Text 或用非泛型 GetAsync()。
@@ -167,7 +203,13 @@ public sealed class ContentSerializerTests
             Body: payload,
             ContentType: AxiosContentType.OctetStream));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new BinaryOrderSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new BinaryOrderSerializer(),
+            },
+        });
         var response = await client.GetAsync<BinaryOrder>(server.Url + "orders/7.bin");
 
         Assert.Equal(7, response.Data!.Id);
@@ -181,7 +223,13 @@ public sealed class ContentSerializerTests
         await using var server = TestHttpServer.Start(_ => XmlResponse(new XmlOrder { Id = 9, Name = "ink" }));
 
         // 字节入口一旦被调用就炸：XML 响应必须走文本入口
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer(bytesThrow: true) });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(bytesThrow: true),
+            },
+        });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/9");
 
         Assert.Equal(9, response.Data!.Id);
@@ -197,7 +245,13 @@ public sealed class ContentSerializerTests
             Body: Encoding.UTF8.GetBytes(ToXml(new XmlOrder { Id = 5, Name = "map" }, typeof(XmlOrder))),
             ContentType: AxiosContentType.OctetStream));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CustomXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CustomXmlSerializer(),
+            },
+        });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/5");
 
         Assert.Equal(5, response.Data!.Id);
@@ -215,7 +269,13 @@ public sealed class ContentSerializerTests
             Body: latin1,
             ContentType: "application/octet-stream; charset=iso-8859-1"));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new PlainXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new PlainXmlSerializer(),
+            },
+        });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/6");
 
         Assert.Equal(6, response.Data!.Id);
@@ -232,7 +292,13 @@ public sealed class ContentSerializerTests
             Body: utf16,
             ContentType: AxiosContentType.OctetStream));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new PlainXmlSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new PlainXmlSerializer(),
+            },
+        });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/7");
 
         Assert.Equal(7, response.Data!.Id);
@@ -243,13 +309,19 @@ public sealed class ContentSerializerTests
     public async Task BinarySerializer_ObjectRequest_GoesThroughByteChannel_WithSelfReportedContentType()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: AxiosContentType.OctetStream));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new BinaryOrderSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new BinaryOrderSerializer(),
+            },
+        });
 
         // RequestEncoding 只作用于文本通道：字节正文不做编码，Content-Type 也不补 charset
         var response = await client.PostAsync<BinaryOrder>(
             server.Url + "echo",
             new BinaryOrder { Id = 3, Name = "cat", Tail = 0xAB },
-            c => c.RequestEncoding = Encoding.UTF32);
+            c => c.Serialization.RequestEncoding = Encoding.UTF32);
 
         var sent = server.Received[0];
         Assert.Equal(BinaryOrderSerializer.Write(new BinaryOrder { Id = 3, Name = "cat", Tail = 0xAB }), sent.Body);
@@ -265,7 +337,13 @@ public sealed class ContentSerializerTests
     public async Task ByteChannel_ExplicitContentType_WinsOverSelfReported()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: "application/x-custom"));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new BinaryOrderSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new BinaryOrderSerializer(),
+            },
+        });
 
         await client.PostAsync(
             server.Url + "echo",
@@ -282,7 +360,13 @@ public sealed class ContentSerializerTests
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         // SerializeToBytes 对一切都返回字节：只要表单 / 标量误入序列化器，正文就会变成 1,2,3
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new GreedyByteSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new GreedyByteSerializer(),
+            },
+        });
 
         await client.PostAsync(server.Url + "form", new Dictionary<string, object?> { ["a"] = 1 },
             c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
@@ -318,7 +402,13 @@ public sealed class ContentSerializerTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 
         // 序列化器一旦被调用就炸：基础数据类型由框架直接取文本
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new ThrowingSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new ThrowingSerializer(),
+            },
+        });
 
         await client.PostAsync(server.Url + "x", 42);
         Assert.Equal("42", Body(server.Received[0]));
@@ -338,7 +428,13 @@ public sealed class ContentSerializerTests
     public async Task ScalarRequestBody_DateTimeKeepsKindAndTicks()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new ThrowingSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new ThrowingSerializer(),
+            },
+        });
 
         // 往返格式：不折成 UTC、不截断到毫秒（表单/查询串的标量规则不复用在请求体上）
         var utc = new DateTime(2024, 1, 2, 3, 4, 5, 678, DateTimeKind.Utc).AddTicks(9);
@@ -354,7 +450,13 @@ public sealed class ContentSerializerTests
     public async Task ScalarRequestBody_WorksForNonJsonFormats()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new ThrowingSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new ThrowingSerializer(),
+            },
+        });
 
         // XML / YAML 序列化器对「无名的根标量」本来也无从下手：框架直接写文本，与 ContentType 无关
         await client.PostAsync(server.Url + "x", 42, c => c.ContentType = AxiosContentType.Xml);
@@ -368,7 +470,13 @@ public sealed class ContentSerializerTests
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         var serializer = new RecordingSerializer();
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = serializer });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = serializer,
+            },
+        });
 
         await client.PostAsync(server.Url + "x", new Dictionary<string, object?> { ["a"] = 1 });
 
@@ -387,7 +495,13 @@ public sealed class ContentSerializerTests
                 ContentType: "application/xml; charset=utf-8")
             : TestJson.Echo(req, contentType: "application/xml; charset=utf-8"));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = XmlContentSerializer.Instance,
+            },
+        });
 
         await client.PostAsync(
             server.Url + "orders",
@@ -409,7 +523,13 @@ public sealed class ContentSerializerTests
     public async Task BuiltInXmlSerializer_HonoursDeclaredRootNamespace()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = XmlContentSerializer.Instance,
+            },
+        });
 
         await client.PostAsync(
             server.Url + "x",
@@ -432,7 +552,13 @@ public sealed class ContentSerializerTests
             Body: Encoding.UTF8.GetBytes(payload),
             ContentType: "application/xml; charset=utf-8"));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = XmlContentSerializer.Instance,
+            },
+        });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<XmlOrder>(server.Url + "x"));
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
@@ -458,7 +584,13 @@ public sealed class ContentSerializerTests
     public async Task JsonDocumentTarget_DependsOnTheActiveSerializer()
     {
         await using var server = TestHttpServer.Start(_ => XmlResponse(new XmlOrder { Id = 2, Name = "cup" }));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = XmlContentSerializer.Instance,
+            },
+        });
 
         // 换成 XML 序列化器后 JsonDocument 目标没有意义（XmlSerializer 建不出 JsonDocument）
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<JsonDocument>(server.Url + "x"));
@@ -469,7 +601,13 @@ public sealed class ContentSerializerTests
     public async Task SerializerDeclaredMediaType_FillsContentType_WhenCallerDidNotSetIt()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CsvLikeSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CsvLikeSerializer(),
+            },
+        });
 
         // 调用方没设 ContentType：头跟着序列化器自报的媒体类型走
         // （对应 axios 默认 transformRequest 的 headers.setContentType(..., false)）
@@ -483,7 +621,13 @@ public sealed class ContentSerializerTests
     public async Task ExplicitContentType_WinsOverSerializerDeclaredMediaType()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new CsvLikeSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new CsvLikeSerializer(),
+            },
+        });
 
         await client.PostAsync(
             server.Url + "x",
@@ -499,7 +643,13 @@ public sealed class ContentSerializerTests
     public async Task BuiltInXmlSerializer_FillsContentType_ByItself()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = XmlContentSerializer.Instance,
+            },
+        });
 
         // 只注入序列化器、不设 ContentType：头自动变成 application/xml
         // （修复前这里会发出「头 application/json、正文 XML」的自相矛盾请求）
@@ -513,7 +663,13 @@ public sealed class ContentSerializerTests
     public async Task SerializerWithoutDeclaredMediaType_KeepsConfiguredContentType()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new RecordingSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new RecordingSerializer(),
+            },
+        });
 
         await client.PostAsync(server.Url + "x", new XmlOrder { Id = 1, Name = "a" });
 
@@ -528,7 +684,10 @@ public sealed class ContentSerializerTests
         using var client = new AxiosClient(new AxiosConfig
         {
             ContentType = "application/x-team-json",
-            ContentSerializer = new CsvLikeSerializer()
+            Serialization = new()
+            {
+                ContentSerializer = new CsvLikeSerializer(),
+            },
         });
 
         await client.PostAsync(server.Url + "x", new XmlOrder { Id = 1, Name = "a" });
@@ -635,7 +794,13 @@ public sealed class ContentSerializerTests
     public async Task Serializer_CanWriteRequestHeaders_WithoutPollutingInstanceDefaults()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new HeaderWritingSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new HeaderWritingSerializer(),
+            },
+        });
 
         await client.PostAsync(server.Url + "x", new XmlOrder { Id = 1, Name = "a" });
 
@@ -660,7 +825,13 @@ public sealed class ContentSerializerTests
                 ["X-Schema-Version"] = req.Path.EndsWith("/v2") ? "2" : "1"
             }));
 
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new VersionAwareSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new VersionAwareSerializer(),
+            },
+        });
 
         // 同一份 DTO、同样的响应体，仅凭响应头选择解析规则
         var v1 = await client.GetAsync<XmlOrder>(server.Url + "v1");
@@ -678,7 +849,13 @@ public sealed class ContentSerializerTests
     public async Task Serialize_SeesNoResponseContext()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { ContentSerializer = new VersionAwareSerializer() });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new VersionAwareSerializer(),
+            },
+        });
 
         // 请求阶段 config.Response 必须是 null（夹具见到非 null 就抛，会变成 ERR_BAD_REQUEST）
         await client.PostAsync(server.Url + "x", new XmlOrder { Id = 1, Name = "a" }, c => c.ResponseType = ResponseType.Text);

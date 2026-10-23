@@ -48,7 +48,7 @@ public sealed class ErrorAndCancellationTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(503));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = _ => true);
 
         Assert.Equal(503, response.Status);
     }
@@ -60,12 +60,12 @@ public sealed class ErrorAndCancellationTests
         using var client = new AxiosClient();
 
         // 只接受 404
-        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = status => status == 404);
+        var response = await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = status => status == 404);
         Assert.Equal(404, response.Status);
 
         await using var server2 = TestHttpServer.Start(_ => new TestResponse(400));
         await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server2.Url, c => c.ValidateStatus = status => status == 404));
+            client.GetAsync(server2.Url, c => c.Callbacks.ValidateStatus = status => status == 404));
     }
 
     [Fact]

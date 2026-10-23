@@ -22,7 +22,7 @@ namespace AxiosNet.Tests;
 /// <item>Bug 10：GetStatistics 的 EndpointCount 与 Endpoints 快照来自两次独立读取，并发下自相矛盾；</item>
 /// <item>Bug 11：容量驱逐声称 LRU 实际按字典枚举序（任意序）取第一个空闲节点；</item>
 /// <item>Bug 12：ContentType 赋 null / 空白静默重置为 application/json 并标记为显式设置；</item>
-/// <item>Bug 13：自建池分支对 poolOptions 与 defaults.PoolOptions / Proxy / Credentials 同时传入静默取一个；</item>
+/// <item>Bug 13：自建池分支对 poolOptions 与 defaults.Connection.PoolOptions / Proxy / Credentials 同时传入静默取一个；</item>
 /// <item>Bug 14：ContentType 声明的 charset 与 RequestEncoding 矛盾时静默产出「头一个编码、正文另一个编码」的错误字节。</item>
 /// </list>
 /// </summary>
@@ -49,7 +49,7 @@ public sealed class Audit20261022GlobalAuditFixTests
 
         // 按请求显式写 5：此前 5 == Defaults.MaxRedirects(5) 直接放行，实际只会跟随 3 次
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.MaxRedirects = 5));
+            client.GetAsync("x", c => c.Connection.MaxRedirects = 5));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("MaxRedirects", ex.Message);
@@ -67,7 +67,7 @@ public sealed class Audit20261022GlobalAuditFixTests
             poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.MaxRedirects = 5));
+            client.GetAsync("x", c => c.Connection.MaxRedirects = 5));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -194,7 +194,10 @@ public sealed class Audit20261022GlobalAuditFixTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            ContentSerializer = new CancelingSerializer()
+            Serialization = new()
+            {
+                ContentSerializer = new CancelingSerializer(),
+            },
         });
 
         // 取消语义必须归一为 ERR_CANCELED（外层管线对 OCE 的统一包装），
@@ -215,7 +218,10 @@ public sealed class Audit20261022GlobalAuditFixTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            ContentSerializer = new CancelingSerializer()
+            Serialization = new()
+            {
+                ContentSerializer = new CancelingSerializer(),
+            },
         });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
@@ -426,7 +432,7 @@ public sealed class Audit20261022GlobalAuditFixTests
             c =>
             {
                 c.ContentType = "text/plain; charset=utf-8";
-                c.RequestEncoding = Encoding.Latin1;
+                c.Serialization.RequestEncoding = Encoding.Latin1;
             }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -459,7 +465,13 @@ public sealed class Audit20261022GlobalAuditFixTests
     public void Constructor_PoolOptionsAndDefaultsPoolOptions_Throws()
     {
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(
-            new AxiosConfig { PoolOptions = new ConnectionPoolOptions() },
+            new AxiosConfig
+            {
+                Connection = new()
+                {
+                    PoolOptions = new ConnectionPoolOptions(),
+                },
+            },
             poolOptions: new ConnectionPoolOptions()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -470,7 +482,13 @@ public sealed class Audit20261022GlobalAuditFixTests
     public void Constructor_ProxyOnBothPoolOptionsAndDefaults_Throws()
     {
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(
-            new AxiosConfig { Proxy = new WebProxy("http://127.0.0.1:9") },
+            new AxiosConfig
+            {
+                Connection = new()
+                {
+                    Proxy = new WebProxy("http://127.0.0.1:9"),
+                },
+            },
             poolOptions: new ConnectionPoolOptions { Proxy = new WebProxy("http://127.0.0.1:10") }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);

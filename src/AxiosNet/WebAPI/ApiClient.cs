@@ -51,7 +51,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <para>大于零表示「连续这么久没有收到数据」才失败（<c>ECONNABORTED</c>）。</para>
     /// <para>
     /// 没显式设置过本属性时，<see cref="Axios.Defaults"/> 上显式配置的
-    /// <see cref="AxiosConfig.StreamIdleTimeout"/> 会照常生效（本属性只兜底「两边都没表态」的场景）；
+    /// <see cref="AxiosConfig.LimitSettings.StreamIdleTimeout"/> 会照常生效（本属性只兜底「两边都没表态」的场景）；
     /// 设置过本属性则本属性优先。
     /// </para>
     /// </summary>

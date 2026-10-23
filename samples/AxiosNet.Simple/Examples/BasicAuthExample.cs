@@ -19,7 +19,7 @@ public sealed class BasicAuthExample : IExample
         using var http = new AxiosClient();
 
         var response = await http.GetAsync<JsonElement>(context.BaseUrl + "secure", c
-            => c.Auth = new AxiosAuth("user", "pass"));
+            => c.Connection.Auth = new AxiosAuth("user", "pass"));
 
         Console.WriteLine($"  {response.Status} -> authenticated={response.Data.GetProperty("authenticated").GetBoolean()}");
         Console.WriteLine($"  Authorization = {response.Data.GetProperty("authorization").GetString()}");

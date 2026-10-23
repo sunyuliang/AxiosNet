@@ -18,7 +18,7 @@ public sealed class LimitsAndRedirectTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "big", c => c.MaxContentLength = 1024));
+            client.GetAsync(server.Url + "big", c => c.Limits.MaxContentLength = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Contains("maxContentLength", ex.Message);
@@ -32,7 +32,7 @@ public sealed class LimitsAndRedirectTests
             new TestResponse(Body: payload, ContentType: "application/octet-stream"));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<byte[]>(server.Url + "small", c => c.MaxContentLength = 1024);
+        var response = await client.GetAsync<byte[]>(server.Url + "small", c => c.Limits.MaxContentLength = 1024);
 
         Assert.Equal(payload, response.Data);
     }
@@ -46,7 +46,7 @@ public sealed class LimitsAndRedirectTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<Stream>(server.Url + "big", c => c.MaxContentLength = 1024));
+            client.GetAsync<Stream>(server.Url + "big", c => c.Limits.MaxContentLength = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
@@ -60,7 +60,7 @@ public sealed class LimitsAndRedirectTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             server.Url + "echo",
             new { name = new string('x', 4096) },
-            c => c.MaxBodyLength = 512));
+            c => c.Limits.MaxBodyLength = 512));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("maxBodyLength", ex.Message);
@@ -73,7 +73,7 @@ public sealed class LimitsAndRedirectTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.MaxBodyLength = 4096);
+        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxBodyLength = 4096);
 
         Assert.Equal("""{"name":"bob"}""", Encoding.UTF8.GetString(server.Received[0].Body));
     }
@@ -82,7 +82,13 @@ public sealed class LimitsAndRedirectTests
     public async Task MaxRedirectsZero_DoesNotFollowRedirect()
     {
         await using var server = StartRedirectServer();
-        using var client = new AxiosClient(new AxiosConfig { MaxRedirects = 0 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                MaxRedirects = 0,
+            },
+        });
 
         // 3xx 在默认 validateStatus 下视为非法，异常里应带回 302 响应本身
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "redir"));
@@ -111,7 +117,7 @@ public sealed class LimitsAndRedirectTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "redir", c => c.MaxRedirects = 0));
+            client.GetAsync(server.Url + "redir", c => c.Connection.MaxRedirects = 0));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -125,7 +131,7 @@ public sealed class LimitsAndRedirectTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
             server.Url + "x",
-            c => c.Proxy = new System.Net.WebProxy("http://127.0.0.1:9")));
+            c => c.Connection.Proxy = new System.Net.WebProxy("http://127.0.0.1:9")));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }

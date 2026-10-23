@@ -32,7 +32,7 @@ public sealed class Audit20261022P2FixTests
         await client.PostAsync("redirect", payload, c =>
         {
             c.ContentType = AxiosContentType.OctetStream;
-            c.OnUploadProgress = e =>
+            c.Callbacks.OnUploadProgress = e =>
             {
                 loaded.Add(e.Loaded);
                 progresses.Add(e.Progress);
@@ -140,7 +140,7 @@ public sealed class Audit20261022P2FixTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         // 用 "/" 显式请求 baseAddress 本身（空串 / null 现在按非法地址拒绝）
-        await client.GetAsync("/", c => c.Auth = new AxiosAuth("user", "p@ss:word"));
+        await client.GetAsync("/", c => c.Connection.Auth = new AxiosAuth("user", "p@ss:word"));
 
         var expected = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("user:p@ss:word"));
         Assert.Equal(expected, server.Received[0].Headers["Authorization"]);

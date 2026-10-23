@@ -9,7 +9,7 @@ namespace AxiosNet.Internal;
 /// 请求体展平（表单 / multipart）共用的「值分类 + 字段命名」：
 /// 哪些类型算标量、标量怎么取文本、嵌套字段名怎么拼。
 /// <para>
-/// 命名只看 <see cref="AxiosConfig.FormFieldNameSelector"/> 与属性上的 <see cref="JsonPropertyNameAttribute"/>，
+/// 命名只看 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 与属性上的 <see cref="JsonPropertyNameAttribute"/>，
 /// 忽略看 <see cref="JsonIgnoreAttribute"/>（<c>Always</c>）；<b>刻意不读</b> 序列化器的命名策略 —— 表单与序列化器解耦。
 /// </para>
 /// </summary>
@@ -68,7 +68,7 @@ internal static class BodyFields
         _ => element.GetRawText()
     };
 
-    /// <summary>字段名生成：默认 <c>prefix[key]</c>，可通过 <see cref="AxiosConfig.FormFieldNameSelector"/> 覆盖。</summary>
+    /// <summary>字段名生成：默认 <c>prefix[key]</c>，可通过 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖。</summary>
     public static string CombineName(Func<string?, string, string>? selector, string? prefix, string name)
         => selector is not null
             ? selector(prefix, name)

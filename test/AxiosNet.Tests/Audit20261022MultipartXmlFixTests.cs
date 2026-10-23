@@ -122,7 +122,7 @@ public sealed class Audit20261022MultipartXmlFixTests
             new XmlPayload { Name = "hello" },
             c =>
             {
-                c.ContentSerializer = XmlContentSerializer.Instance;
+                c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
                 c.ContentType = AxiosContentType.Xml + "; charset=iso-8859-1";
             });
 
@@ -146,9 +146,9 @@ public sealed class Audit20261022MultipartXmlFixTests
             new XmlPayload { Name = "hello" },
             c =>
             {
-                c.ContentSerializer = XmlContentSerializer.Instance;
+                c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
                 c.ContentType = AxiosContentType.Xml;
-                c.RequestEncoding = Encoding.Latin1;
+                c.Serialization.RequestEncoding = Encoding.Latin1;
             });
 
         var document = Encoding.Latin1.GetString(server.Received[0].Body);
@@ -165,7 +165,7 @@ public sealed class Audit20261022MultipartXmlFixTests
         await client.PostAsync(
             "xml",
             new XmlPayload { Name = "中文" },
-            c => c.ContentSerializer = XmlContentSerializer.Instance);
+            c => c.Serialization.ContentSerializer = XmlContentSerializer.Instance);
 
         var request = server.Received[0];
         var document = Encoding.UTF8.GetString(request.Body);

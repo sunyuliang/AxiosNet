@@ -19,7 +19,7 @@ public sealed class SigningExample : IExample
         // 挂载方式：实例默认 ContentSerializer 换成装饰器（本客户端的全部请求/响应都过签名）
         using var client = new ApiClient(
             context.BaseUrl,
-            defaults => defaults.ContentSerializer = new SigningSerializer(
+            defaults => defaults.Serialization.ContentSerializer = new SigningSerializer(
                 AxiosNet.Serialization.SystemTextJsonSerializer.Instance,
                 DemoApiServer.SigningKey));
 

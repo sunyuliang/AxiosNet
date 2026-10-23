@@ -11,6 +11,61 @@ namespace AxiosNet;
 /// </summary>
 public sealed class AxiosConfig
 {
+    // 按领域分组的可选设置：平时不用的功能项不占对象本体，首次写入才分配，Clone 时按需复制。
+    private SerializationSettings? _serialization;
+    private ConnectionSettings? _connection;
+    private LimitSettings? _limits;
+    private CallbackSettings? _callbacks;
+
+    /// <summary>
+    /// 序列化相关设置：JSON 选项、内容序列化器、文本编码、查询串与表单字段命名。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public SerializationSettings Serialization
+    {
+        get => _serialization ??= new SerializationSettings();
+        set => _serialization = value;
+    }
+
+    /// <summary>
+    /// 连接相关设置：代理 / 凭据 / 连接池选项 / HTTP 版本 / Basic 认证 / 凭据开关 / 重定向次数。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public ConnectionSettings Connection
+    {
+        get => _connection ??= new ConnectionSettings();
+        set => _connection = value;
+    }
+
+    /// <summary>
+    /// 体积、速率与流式超时限制。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public LimitSettings Limits
+    {
+        get => _limits ??= new LimitSettings();
+        set => _limits = value;
+    }
+
+    /// <summary>
+    /// 进度回调、状态校验与超时文案。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public CallbackSettings Callbacks
+    {
+        get => _callbacks ??= new CallbackSettings();
+        set => _callbacks = value;
+    }
+
+    // 库内读取一律走这四个访问器：公共 getter 会懒创建，热路径上每次请求都建对象。
+    internal SerializationSettings? SerializationOrNull => _serialization;
+
+    internal ConnectionSettings? ConnectionOrNull => _connection;
+
+    internal LimitSettings? LimitsOrNull => _limits;
+
+    internal CallbackSettings? CallbacksOrNull => _callbacks;
+
     /// <summary>对应 axios baseURL。</summary>
     public string? BaseAddress { get; set; }
 
@@ -100,7 +155,7 @@ public sealed class AxiosConfig
     /// <para>
     /// 编码格式由本项决定，<b>与 <see cref="Data"/> 的运行时类型无关</b>：
     /// <c>application/x-www-form-urlencoded</c> 转键值对表单，<c>multipart/form-data</c> 构建字段 + 文件部件，
-    /// 其余类型交给当前 <see cref="ContentSerializer"/> 编码（XML / YAML 需配套序列化器）。
+    /// 其余类型交给当前 <see cref="SerializationSettings.ContentSerializer"/> 编码（XML / YAML 需配套序列化器）。
     /// </para>
     /// <para>
     /// 不设置本项时头由序列化器自报（见 <see cref="IContentSerializer.MediaType"/>），
@@ -155,7 +210,7 @@ public sealed class AxiosConfig
     /// 需要空闲超时请用 <see cref="CancellationToken"/> 自行控制。
     /// </para>
     /// <para>
-    /// 例外：设置了 <see cref="StreamIdleTimeout"/> 时，流式正文不再计入本预算
+    /// 例外：设置了 <see cref="LimitSettings.StreamIdleTimeout"/> 时，流式正文不再计入本预算
     /// （本项只覆盖到响应头），正文改按空闲超时或完全不限时。
     /// </para>
     /// <para>
@@ -195,26 +250,8 @@ public sealed class AxiosConfig
     /// </summary>
     internal bool InstanceOptionsInherited { get; set; }
 
-    private AxiosAuth? _auth;
-
-    /// <summary>对应 axios auth（HTTP Basic）。</summary>
-    /// <remarks>
-    /// 手写属性是为了记住「显式赋过值」：<c>Auth = null</c> 的语义是「本次请求不带认证」，
-    /// 必须在合并时压住实例默认的凭据 —— 用 <c>perCall.Auth ?? merged.Auth</c> 会让
-    /// 实例凭据静默发到本应匿名的端点。
-    /// </remarks>
-    public AxiosAuth? Auth
-    {
-        get => _auth;
-        set
-        {
-            _auth = value;
-            AuthSet = true;
-        }
-    }
-
     /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
-    internal bool AuthSet { get; private set; }
+    internal bool AuthSet => _connection?.AuthSet ?? false;
 
     private ResponseType _responseType = ResponseType.Json;
 
@@ -239,9 +276,6 @@ public sealed class AxiosConfig
     /// </summary>
     internal void SetResponseTypeAuto(ResponseType value) => _responseType = value;
 
-    /// <summary>对应 axios validateStatus，返回 false 时抛出异常；null 表示默认（2xx 合法）。</summary>
-    public Func<int, bool>? ValidateStatus { get; set; }
-
     private CancellationToken _cancellationToken;
 
     /// <summary>外部取消令牌。未显式设置时沿用实例默认（与 timeout 共同构成取消来源）。</summary>
@@ -258,202 +292,26 @@ public sealed class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool CancellationTokenSet { get; private set; }
 
-    /// <summary>HTTP 版本，默认 1.1。</summary>
-    public Version? HttpVersion { get; set; }
-
-    private bool _withCredentials;
-
-    /// <summary>
-    /// 对应 axios withCredentials（使用系统默认凭据 / Cookie）。
-    /// 仅实例级生效：构造 AxiosClient 时应用到连接池；按请求写<b>不同的值</b>抛异常（相同的值放行）。
-    /// 注入自定义 Handler 时由 Handler 自己处理。
-    /// </summary>
-    public bool WithCredentials
-    {
-        get => _withCredentials;
-        set
-        {
-            _withCredentials = value;
-            WithCredentialsSet = true;
-        }
-    }
+    /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
+    internal bool WithCredentialsSet => _connection?.WithCredentialsSet ?? false;
 
     /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-    internal bool WithCredentialsSet { get; private set; }
-
-    /// <summary>
-    /// 代理设置。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>；
-    /// 注入自定义 Handler 时由 Handler 决定。
-    /// </summary>
-    public IWebProxy? Proxy { get; set; }
-
-    /// <summary>
-    /// 显式凭据。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>；
-    /// 注入自定义 Handler 时由 Handler 决定。
-    /// </summary>
-    public ICredentials? Credentials { get; set; }
-
-    private int _maxRedirects = 5;
-
-    /// <summary>
-    /// 对应 axios maxRedirects，默认 5；<b>0 表示不跟随重定向</b>（返回 3xx 响应本身，默认 validateStatus 视为错误）。
-    /// 仅实例级生效：按请求写<b>不同的值</b>抛异常（相同的值放行）；注入自定义 Handler 时由 Handler 决定。
-    /// </summary>
-    public int MaxRedirects
-    {
-        get => _maxRedirects;
-        set
-        {
-            _maxRedirects = value;
-            MaxRedirectsSet = true;
-        }
-    }
-
-    /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-    internal bool MaxRedirectsSet { get; private set; }
-
-    private long? _maxContentLength;
-
-    /// <summary>
-    /// 对应 axios maxContentLength：响应体最大字节数，null 不限。
-    /// 声明了 Content-Length 时在读取正文前拒绝，否则边读边计数，超出抛 <see cref="AxiosException"/>。
-    /// 按请求显式设为 null 可清除实例默认上限。
-    /// </summary>
-    public long? MaxContentLength
-    {
-        get => _maxContentLength;
-        set
-        {
-            _maxContentLength = value;
-            MaxContentLengthSet = true;
-        }
-    }
+    internal bool MaxRedirectsSet => _connection?.MaxRedirectsSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxContentLengthSet { get; private set; }
-
-    private long? _maxBodyLength;
-
-    /// <summary>
-    /// 对应 axios maxBodyLength：请求体最大字节数，null 不限。
-    /// 仅在长度可确定时校验（未知长度的 Stream 不校验），超出抛 <see cref="AxiosException"/>。
-    /// 按请求显式设为 null 可清除实例默认上限。
-    /// </summary>
-    public long? MaxBodyLength
-    {
-        get => _maxBodyLength;
-        set
-        {
-            _maxBodyLength = value;
-            MaxBodyLengthSet = true;
-        }
-    }
+    internal bool MaxContentLengthSet => _limits?.MaxContentLengthSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxBodyLengthSet { get; private set; }
-
-    private long? _maxRate;
-
-    /// <summary>
-    /// 限速（字节/秒），null 不限速；同时作用于上传与下载。
-    /// 按请求显式设为 null 可清除实例默认限速。
-    /// <para>契约：响应流须单线程顺序读取（进度计量非线程安全）。</para>
-    /// </summary>
-    public long? MaxRate
-    {
-        get => _maxRate;
-        set
-        {
-            _maxRate = value;
-            MaxRateSet = true;
-        }
-    }
+    internal bool MaxBodyLengthSet => _limits?.MaxBodyLengthSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxRateSet { get; private set; }
-
-    private TimeSpan? _streamIdleTimeout;
-
-    /// <summary>
-    /// 流式响应（<see cref="ResponseType.Stream"/>）正文的超时口径：
-    /// <list type="bullet">
-    /// <item><c>null</c>（默认）：沿用 <see cref="Timeout"/> 的「全程总预算」，正文与响应头共享同一份预算；</item>
-    /// <item><c>TimeSpan.Zero</c>：正文不设超时，<see cref="Timeout"/> 只覆盖到响应头；</item>
-    /// <item>大于零：正文按<b>空闲超时</b>计——只在实际读写期间计时，单次读写连续这么久没有数据才失败；
-    /// 调用方处理帧的停顿不计入（错误码仍是 <c>ECONNABORTED</c>），<see cref="Timeout"/> 只覆盖到响应头。</item>
-    /// </list>
-    /// <para>只影响流式响应；非流式请求的正文读取始终在 <see cref="Timeout"/> 之内。负值非法。</para>
-    /// </summary>
-    public TimeSpan? StreamIdleTimeout
-    {
-        get => _streamIdleTimeout;
-        set
-        {
-            _streamIdleTimeout = value;
-            StreamIdleTimeoutSet = true;
-        }
-    }
+    internal bool MaxRateSet => _limits?.MaxRateSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool StreamIdleTimeoutSet { get; private set; }
-
-    private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;
-
-    /// <summary>
-    /// <see cref="Params"/> 里集合值的编码形态，默认 <see cref="AxiosCollectionFormat.Brackets"/>（<c>a[]=1&amp;a[]=2</c>）。
-    /// <para>
-    /// 按请求显式赋值即可覆盖实例默认值；设置了 <see cref="ParamsSerializer"/> 时本项不参与
-    /// （自定义序列化器接管整条查询串）。
-    /// </para>
-    /// </summary>
-    public AxiosCollectionFormat CollectionFormat
-    {
-        get => _collectionFormat;
-        set
-        {
-            _collectionFormat = value;
-            CollectionFormatSet = true;
-        }
-    }
+    internal bool StreamIdleTimeoutSet => _limits?.StreamIdleTimeoutSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool CollectionFormatSet { get; private set; }
-
-    /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
-    public string? TimeoutMessage { get; set; }
-
-    /// <summary>
-    /// 上传进度回调（对应 axios onUploadProgress）。写入请求体时触发，约 50ms 一次；
-    /// 回调在请求线程上同步执行，抛异常会中断请求。
-    /// <para>
-    /// 重定向（307/308）或重试重发正文时，<see cref="AxiosProgressEvent.Loaded"/> <b>跨次累计</b>
-    /// （进度不回跳，百分比封顶 100%）。
-    /// </para>
-    /// </summary>
-    public Action<AxiosProgressEvent>? OnUploadProgress { get; set; }
-
-    /// <summary>
-    /// 下载进度回调（对应 axios onDownloadProgress）。读取响应体时触发；
-    /// 流式响应（<see cref="ResponseType.Stream"/>）在调用方读取流的过程中触发。
-    /// <para>契约：同一请求的响应流须单线程顺序读取（进度计量非线程安全）。</para>
-    /// </summary>
-    public Action<AxiosProgressEvent>? OnDownloadProgress { get; set; }
-
-    /// <summary>
-    /// 对应 axios paramsSerializer：自定义 query string 生成方式，返回不含前导 <c>?</c> 的查询串。
-    /// null 时使用内置规则（数组 <c>a[]=v</c>、嵌套 <c>a[b]=v</c>、null 跳过）。
-    /// </summary>
-    public Func<object?, string>? ParamsSerializer { get; set; }
-
-    /// <summary>
-    /// 表单 / multipart 字段名生成规则：参数为（父级前缀, 键名），返回实际字段名。
-    /// 默认 <c>prefix[key]</c>（无前缀即 key）；可改成 <c>prefix.key</c> 或忽略前缀。
-    /// <para>
-    /// 表单不走序列化器，所以这是字段命名的<b>唯一入口</b>（属性级覆盖用 <c>[JsonPropertyName]</c>）：
-    /// 与 <see cref="JsonSerializerOptions"/> / <see cref="ContentSerializer"/> 完全无关，换序列化器不影响字段名。
-    /// </para>
-    /// </summary>
-    public Func<string?, string, string>? FormFieldNameSelector { get; set; }
+    internal bool CollectionFormatSet => _serialization?.CollectionFormatSet ?? false;
 
     /// <summary>
     /// 对应 axios transformRequest：拦截器之后、请求体编码之前依次作用于 <see cref="Data"/>，
@@ -500,36 +358,6 @@ public sealed class AxiosConfig
     }
 
     /// <summary>
-    /// JSON 序列化选项，<b>只对默认 JSON 序列化器生效</b>（请求序列化 / 响应反序列化）。
-    /// <para>表单与 multipart 的字段命名与本项无关，见 <see cref="FormFieldNameSelector"/>。</para>
-    /// </summary>
-    public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-
-    /// <summary>
-    /// 本次请求（或本实例默认）使用的内容序列化器，<b>优先级最高</b>：
-    /// 高于 <see cref="AxiosContent.Serializer"/>，也高于按媒体类型的自动匹配。
-    /// <para>null 表示不覆盖，继续走「全局注入 → 按 Content-Type 自动匹配 → 内置 JSON」。</para>
-    /// <para>
-    /// 只有<b>业务对象</b>经过它：string / byte[] / Stream / HttpContent 请求体原样发送，
-    /// 响应侧 string / byte[] / Stream / 基础类型 / dynamic 由库自己处理。
-    /// 响应侧走文本还是字节入口，由响应 <c>Content-Type</c> 判定。
-    /// </para>
-    /// </summary>
-    public IContentSerializer? ContentSerializer { get; set; }
-
-    /// <summary>
-    /// 请求体文本编码（string / 对象 / 表单），决定写入 socket 的字节与 Content-Type 的 charset。
-    /// null 时使用 UTF-8（axios 的默认行为）。byte[] / Stream 原样透传，不受该项影响。
-    /// </summary>
-    public Encoding? RequestEncoding { get; set; }
-
-    /// <summary>
-    /// 响应体文本编码。null 时自动识别（Content-Type charset → BOM → UTF-8）；
-    /// 设置后强制按指定编码解码原始字节（用于服务端 charset 缺失/错误的情况）。
-    /// </summary>
-    public Encoding? ResponseEncoding { get; set; }
-
-    /// <summary>
     /// 响应阶段的只读上下文：状态码、响应头、媒体类型与字符集。
     /// <para>
     /// <b>只在响应方向有值</b>：请求阶段（<see cref="IContentSerializer.Serialize"/>）读到的是 <c>null</c>；
@@ -543,12 +371,6 @@ public sealed class AxiosConfig
     public AxiosResponseInfo? Response { get; internal set; }
 
     /// <summary>
-    /// 连接池选项。仅在构造 AxiosClient（自建池）时生效；
-    /// 单次请求上设置会抛 <see cref="AxiosException"/>（池此时已建好）。
-    /// </summary>
-    public ConnectionPoolOptions? PoolOptions { get; set; }
-
-    /// <summary>
     /// 清掉<b>实例级选项</b>的「显式赋值过」标记。
     /// <para>
     /// 合并起点是 <c>Defaults.Clone()</c>，克隆会把这些标记一起带过来；而校验层（
@@ -558,8 +380,11 @@ public sealed class AxiosConfig
     /// </summary>
     internal void ClearInstanceOptionFlags()
     {
-        WithCredentialsSet = false;
-        MaxRedirectsSet = false;
+        if (_connection is not null)
+        {
+            _connection.WithCredentialsSet = false;
+            _connection.MaxRedirectsSet = false;
+        }
     }
 
     /// <summary>深拷贝（Headers / transform 链独立，Params / Data 等引用成员按引用共享）。</summary>
@@ -578,13 +403,20 @@ public sealed class AxiosConfig
             : null;
         clone._transformRequest = CopiedTransforms(_transformRequest);
         clone._transformResponse = CopiedTransforms(_transformResponse);
+        clone._serialization = _serialization?.Clone();
+        clone._connection = _connection?.Clone();
+        clone._limits = _limits?.Clone();
+        clone._callbacks = _callbacks?.Clone();
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;
 
         // 「显式赋过 Auth」属于那一次赋值，不属于「这份配置的内容」：
         // 回放 response.Config（或任何克隆）时，Auth 的值已是生效结果，不能再被当成按请求意图。
-        clone.AuthSet = false;
+        if (clone._connection is not null)
+        {
+            clone._connection.AuthSet = false;
+        }
 
         // 合并标记属于「那一次合并」：克隆出来的是新请求的输入，尚未合并。
         if (clone.EffectiveMerged)
@@ -615,4 +447,293 @@ public sealed class AxiosConfig
         => source is { Count: > 0 }
             ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(source)
             : null;
+
+    /// <summary>
+    /// 序列化相关设置（<see cref="AxiosConfig.Serialization"/>）。
+    /// </summary>
+    public sealed class SerializationSettings
+    {
+        /// <summary>
+        /// JSON 序列化选项，<b>只对默认 JSON 序列化器生效</b>（请求序列化 / 响应反序列化）。
+        /// <para>表单与 multipart 的字段命名与本项无关，见 <see cref="FormFieldNameSelector"/>。</para>
+        /// </summary>
+        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
+
+        /// <summary>
+        /// 本次请求（或本实例默认）使用的内容序列化器，<b>优先级最高</b>：
+        /// 高于 <see cref="AxiosContent.Serializer"/>，也高于按媒体类型的自动匹配。
+        /// <para>null 表示不覆盖，继续走「全局注入 → 按 Content-Type 自动匹配 → 内置 JSON」。</para>
+        /// <para>
+        /// 只有<b>业务对象</b>经过它：string / byte[] / Stream / HttpContent 请求体原样发送，
+        /// 响应侧 string / byte[] / Stream / 基础类型 / dynamic 由库自己处理。
+        /// 响应侧走文本还是字节入口，由响应 <c>Content-Type</c> 判定。
+        /// </para>
+        /// </summary>
+        public IContentSerializer? ContentSerializer { get; set; }
+
+        /// <summary>
+        /// 请求体文本编码（string / 对象 / 表单），决定写入 socket 的字节与 Content-Type 的 charset。
+        /// null 时使用 UTF-8（axios 的默认行为）。byte[] / Stream 原样透传，不受该项影响。
+        /// </summary>
+        public Encoding? RequestEncoding { get; set; }
+
+        /// <summary>
+        /// 响应体文本编码。null 时自动识别（Content-Type charset → BOM → UTF-8）；
+        /// 设置后强制按指定编码解码原始字节（用于服务端 charset 缺失/错误的情况）。
+        /// </summary>
+        public Encoding? ResponseEncoding { get; set; }
+
+        /// <summary>
+        /// 对应 axios paramsSerializer：自定义 query string 生成方式，返回不含前导 <c>?</c> 的查询串。
+        /// null 时使用内置规则（数组 <c>a[]=v</c>、嵌套 <c>a[b]=v</c>、null 跳过）。
+        /// </summary>
+        public Func<object?, string>? ParamsSerializer { get; set; }
+
+        /// <summary>
+        /// 表单 / multipart 字段名生成规则：参数为（父级前缀, 键名），返回实际字段名。
+        /// 默认 <c>prefix[key]</c>（无前缀即 key）；可改成 <c>prefix.key</c> 或忽略前缀。
+        /// <para>
+        /// 表单不走序列化器，所以这是字段命名的<b>唯一入口</b>（属性级覆盖用 <c>[JsonPropertyName]</c>）：
+        /// 与 <see cref="JsonSerializerOptions"/> / <see cref="ContentSerializer"/> 完全无关，换序列化器不影响字段名。
+        /// </para>
+        /// </summary>
+        public Func<string?, string, string>? FormFieldNameSelector { get; set; }
+
+        private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;
+
+        /// <summary>
+        /// <see cref="AxiosConfig.Params"/> 里集合值的编码形态，默认 <see cref="AxiosCollectionFormat.Brackets"/>（<c>a[]=1&amp;a[]=2</c>）。
+        /// <para>
+        /// 按请求显式赋值即可覆盖实例默认值；设置了 <see cref="ParamsSerializer"/> 时本项不参与
+        /// （自定义序列化器接管整条查询串）。
+        /// </para>
+        /// </summary>
+        public AxiosCollectionFormat CollectionFormat
+        {
+            get => _collectionFormat;
+            set
+            {
+                _collectionFormat = value;
+                CollectionFormatSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool CollectionFormatSet { get; set; }
+
+        internal SerializationSettings Clone() => (SerializationSettings)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// 连接相关设置（<see cref="AxiosConfig.Connection"/>）。
+    /// </summary>
+    public sealed class ConnectionSettings
+    {
+        /// <summary>
+        /// 代理设置。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>；
+        /// 注入自定义 Handler 时由 Handler 决定。
+        /// </summary>
+        public IWebProxy? Proxy { get; set; }
+
+        /// <summary>
+        /// 显式凭据。仅实例级生效，按请求设置会抛 <see cref="AxiosException"/>；
+        /// 注入自定义 Handler 时由 Handler 决定。
+        /// </summary>
+        public ICredentials? Credentials { get; set; }
+
+        /// <summary>
+        /// 连接池选项。仅在构造 AxiosClient（自建池）时生效；
+        /// 单次请求上设置会抛 <see cref="AxiosException"/>（池此时已建好）。
+        /// </summary>
+        public ConnectionPoolOptions? PoolOptions { get; set; }
+
+        /// <summary>HTTP 版本，默认 1.1。</summary>
+        public Version? HttpVersion { get; set; }
+
+        private AxiosAuth? _auth;
+
+        /// <summary>对应 axios auth（HTTP Basic）。</summary>
+        /// <remarks>
+        /// 手写属性是为了记住「显式赋过值」：<c>Auth = null</c> 的语义是「本次请求不带认证」，
+        /// 必须在合并时压住实例默认的凭据 —— 用 <c>perCall.Auth ?? merged.Auth</c> 会让
+        /// 实例凭据静默发到本应匿名的端点。
+        /// </remarks>
+        public AxiosAuth? Auth
+        {
+            get => _auth;
+            set
+            {
+                _auth = value;
+                AuthSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
+        internal bool AuthSet { get; set; }
+
+        private bool _withCredentials;
+
+        /// <summary>
+        /// 对应 axios withCredentials（使用系统默认凭据 / Cookie）。
+        /// 仅实例级生效：构造 AxiosClient 时应用到连接池；按请求写<b>不同的值</b>抛异常（相同的值放行）。
+        /// 注入自定义 Handler 时由 Handler 自己处理。
+        /// </summary>
+        public bool WithCredentials
+        {
+            get => _withCredentials;
+            set
+            {
+                _withCredentials = value;
+                WithCredentialsSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
+        internal bool WithCredentialsSet { get; set; }
+
+        private int _maxRedirects = 5;
+
+        /// <summary>
+        /// 对应 axios maxRedirects，默认 5；<b>0 表示不跟随重定向</b>（返回 3xx 响应本身，默认 validateStatus 视为错误）。
+        /// 仅实例级生效：按请求写<b>不同的值</b>抛异常（相同的值放行）；注入自定义 Handler 时由 Handler 决定。
+        /// </summary>
+        public int MaxRedirects
+        {
+            get => _maxRedirects;
+            set
+            {
+                _maxRedirects = value;
+                MaxRedirectsSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
+        internal bool MaxRedirectsSet { get; set; }
+
+        internal ConnectionSettings Clone() => (ConnectionSettings)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// 体积、速率与流式超时限制（<see cref="AxiosConfig.Limits"/>）。
+    /// </summary>
+    public sealed class LimitSettings
+    {
+        private long? _maxContentLength;
+
+        /// <summary>
+        /// 对应 axios maxContentLength：响应体最大字节数，null 不限。
+        /// 声明了 Content-Length 时在读取正文前拒绝，否则边读边计数，超出抛 <see cref="AxiosException"/>。
+        /// 按请求显式设为 null 可清除实例默认上限。
+        /// </summary>
+        public long? MaxContentLength
+        {
+            get => _maxContentLength;
+            set
+            {
+                _maxContentLength = value;
+                MaxContentLengthSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool MaxContentLengthSet { get; set; }
+
+        private long? _maxBodyLength;
+
+        /// <summary>
+        /// 对应 axios maxBodyLength：请求体最大字节数，null 不限。
+        /// 仅在长度可确定时校验（未知长度的 Stream 不校验），超出抛 <see cref="AxiosException"/>。
+        /// 按请求显式设为 null 可清除实例默认上限。
+        /// </summary>
+        public long? MaxBodyLength
+        {
+            get => _maxBodyLength;
+            set
+            {
+                _maxBodyLength = value;
+                MaxBodyLengthSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool MaxBodyLengthSet { get; set; }
+
+        private long? _maxRate;
+
+        /// <summary>
+        /// 限速（字节/秒），null 不限速；同时作用于上传与下载。
+        /// 按请求显式设为 null 可清除实例默认限速。
+        /// <para>契约：响应流须单线程顺序读取（进度计量非线程安全）。</para>
+        /// </summary>
+        public long? MaxRate
+        {
+            get => _maxRate;
+            set
+            {
+                _maxRate = value;
+                MaxRateSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool MaxRateSet { get; set; }
+
+        private TimeSpan? _streamIdleTimeout;
+
+        /// <summary>
+        /// 流式响应（<see cref="ResponseType.Stream"/>）正文的超时口径：
+        /// <list type="bullet">
+        /// <item><c>null</c>（默认）：沿用 <see cref="AxiosConfig.Timeout"/> 的「全程总预算」，正文与响应头共享同一份预算；</item>
+        /// <item><c>TimeSpan.Zero</c>：正文不设超时，<see cref="AxiosConfig.Timeout"/> 只覆盖到响应头；</item>
+        /// <item>大于零：正文按<b>空闲超时</b>计——只在实际读写期间计时，单次读写连续这么久没有数据才失败；
+        /// 调用方处理帧的停顿不计入（错误码仍是 <c>ECONNABORTED</c>），<see cref="AxiosConfig.Timeout"/> 只覆盖到响应头。</item>
+        /// </list>
+        /// <para>只影响流式响应；非流式请求的正文读取始终在 <see cref="AxiosConfig.Timeout"/> 之内。负值非法。</para>
+        /// </summary>
+        public TimeSpan? StreamIdleTimeout
+        {
+            get => _streamIdleTimeout;
+            set
+            {
+                _streamIdleTimeout = value;
+                StreamIdleTimeoutSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool StreamIdleTimeoutSet { get; set; }
+
+        internal LimitSettings Clone() => (LimitSettings)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// 进度回调、状态校验与超时文案（<see cref="AxiosConfig.Callbacks"/>）。
+    /// </summary>
+    public sealed class CallbackSettings
+    {
+        /// <summary>
+        /// 上传进度回调（对应 axios onUploadProgress）。写入请求体时触发，约 50ms 一次；
+        /// 回调在请求线程上同步执行，抛异常会中断请求。
+        /// <para>
+        /// 重定向（307/308）或重试重发正文时，<see cref="AxiosProgressEvent.Loaded"/> <b>跨次累计</b>
+        /// （进度不回跳，百分比封顶 100%）。
+        /// </para>
+        /// </summary>
+        public Action<AxiosProgressEvent>? OnUploadProgress { get; set; }
+
+        /// <summary>
+        /// 下载进度回调（对应 axios onDownloadProgress）。读取响应体时触发；
+        /// 流式响应（<see cref="ResponseType.Stream"/>）在调用方读取流的过程中触发。
+        /// <para>契约：同一请求的响应流须单线程顺序读取（进度计量非线程安全）。</para>
+        /// </summary>
+        public Action<AxiosProgressEvent>? OnDownloadProgress { get; set; }
+
+        /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
+        public string? TimeoutMessage { get; set; }
+
+        /// <summary>对应 axios validateStatus，返回 false 时抛出异常；null 表示默认（2xx 合法）。</summary>
+        public Func<int, bool>? ValidateStatus { get; set; }
+
+        internal CallbackSettings Clone() => (CallbackSettings)MemberwiseClone();
+    }
 }

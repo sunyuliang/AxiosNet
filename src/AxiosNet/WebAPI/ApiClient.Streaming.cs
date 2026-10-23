@@ -69,7 +69,7 @@ public sealed partial class ApiClient
         config.SetResponseTypeAuto(ResponseType.Stream);
         if (!config.StreamIdleTimeoutSet && (_streamIdleTimeoutSet || !Axios.Defaults.StreamIdleTimeoutSet))
         {
-            config.StreamIdleTimeout = _streamIdleTimeout;
+            config.Limits.StreamIdleTimeout = _streamIdleTimeout;
         }
 
         await ApplyAuthorizationAsync(metadata, request, config, cancellationToken).ConfigureAwait(false);

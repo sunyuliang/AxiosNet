@@ -138,7 +138,7 @@ public sealed class ApiClientP0Tests
 
         await client.RequestAsync(
             new ListUsersRequest { Ids = [1, 2], Role = null },
-            config => config.CollectionFormat = AxiosCollectionFormat.Csv);
+            config => config.Serialization.CollectionFormat = AxiosCollectionFormat.Csv);
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
         Assert.Contains("Ids=1,2", query);
@@ -150,7 +150,7 @@ public sealed class ApiClientP0Tests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new[] { new Person("alice", 1) }));
         using var client = new ApiClient(server.Url,
-            defaults => defaults.CollectionFormat = AxiosCollectionFormat.Multi);
+            defaults => defaults.Serialization.CollectionFormat = AxiosCollectionFormat.Multi);
 
         await client.RequestAsync(new ListUsersRequest { Ids = [1, 2], Role = null });
 
@@ -169,7 +169,7 @@ public sealed class ApiClientP0Tests
         await client.GetAsync<Person>("items", config =>
         {
             config.Params = new { tags = new[] { "a", "b" } };
-            config.CollectionFormat = AxiosCollectionFormat.Pipes;
+            config.Serialization.CollectionFormat = AxiosCollectionFormat.Pipes;
         });
 
         Assert.Equal("tags=a|b", Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty));
@@ -177,7 +177,7 @@ public sealed class ApiClientP0Tests
         await client.GetAsync<Person>("items", config =>
         {
             config.Params = new { tags = new[] { "a", "b" } };
-            config.CollectionFormat = AxiosCollectionFormat.Ssv;
+            config.Serialization.CollectionFormat = AxiosCollectionFormat.Ssv;
         });
 
         Assert.Equal("tags=a b", Uri.UnescapeDataString(server.Received[1].Query ?? string.Empty));

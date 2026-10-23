@@ -42,7 +42,7 @@ public sealed class Audit20261023Round2Tests
 
         var response = await client.GetAsync<Payload>(
             "payload",
-            config => config.ResponseEncoding = Encoding.Unicode);
+            config => config.Serialization.ResponseEncoding = Encoding.Unicode);
 
         Assert.Equal("强编码", response.Data!.Name);
     }
@@ -96,7 +96,7 @@ public sealed class Audit20261023Round2Tests
             client.RequestStreamAsync(
                 new StreamRequest(),
                 AxiosStreamFormat.ServerSentEvents,
-                config => config.ResponseEncoding = Encoding.Unicode));
+                config => config.Serialization.ResponseEncoding = Encoding.Unicode));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }

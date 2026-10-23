@@ -7,13 +7,13 @@ namespace AxiosNet.Serialization;
 
 /// <summary>
 /// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：
-/// 使用 <see cref="AxiosConfig.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
+/// 使用 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
 /// <para>
 /// <c>dynamic</c> 展开与非泛型响应的 <c>JsonElement</c> 形态由库自己处理，不经过本类。
 /// </para>
 /// <para>
 /// Native AOT / 裁剪：内部使用 STJ 的反射重载，AOT 下必须由消费方通过
-/// <see cref="AxiosConfig.JsonSerializerOptions"/> 的 <c>TypeInfoResolver</c> 提供源生成上下文，
+/// <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/> 的 <c>TypeInfoResolver</c> 提供源生成上下文，
 /// 否则运行时抛 <c>NotSupportedException</c>。
 /// </para>
 /// </summary>
@@ -44,7 +44,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     /// 触达路径是「Content-Type 声明非文本」（如服务端把 JSON 标成 <c>application/octet-stream</c>）。
     /// <para>
     /// 与接口默认实现（经 <c>ResponseTextDecoder</c> 解码）保持同一语义：声明了非 UTF-8
-    /// <c>charset</c> 或调用方强制了 <see cref="AxiosConfig.ResponseEncoding"/> 时先按该编码解码；
+    /// <c>charset</c> 或调用方强制了 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/> 时先按该编码解码；
     /// 否则走 UTF-8 快路径，并按 BOM 处理 UTF-16 / UTF-32 变体。
     /// net6.0 的 <c>JsonSerializer.Deserialize(ReadOnlySpan&lt;byte&gt;)</c> 自己不剥 BOM，
     /// 带 BOM 的正文会被首字节 0xEF 判成非法 JSON 起始；UTF-16 / UTF-32 的 BOM（首字节 0xFF / 0xFE）
@@ -58,7 +58,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         // 非文本 Content-Type 也可能声明 charset（或调用方强制了 ResponseEncoding）。
         // 接口默认实现会先按这套优先级解码，这里必须保持一致；否则同一份字节走
         // 「text/json」能读对、走「application/octet-stream」却按 UTF-8 解析失败。
-        var forced = config.ResponseEncoding;
+        var forced = config.SerializationOrNull?.ResponseEncoding;
         var charSet = config.Response?.CharSet;
         if (forced is not null
             || (ResponseTextDecoder.ResolveFromCharset(charSet) is { } declared

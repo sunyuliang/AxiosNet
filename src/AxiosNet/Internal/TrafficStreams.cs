@@ -4,7 +4,7 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 上传/下载共用的流量计量与进度上报：
-/// 累计字节、按 50ms 节流回调、按 <see cref="AxiosConfig.MaxRate"/> 反算应等待的时间。
+/// 累计字节、按 50ms 节流回调、按 <see cref="AxiosConfig.LimitSettings.MaxRate"/> 反算应等待的时间。
 /// </summary>
 internal sealed class TrafficMeter
 {
@@ -109,9 +109,9 @@ internal sealed class TrafficMeter
 }
 
 /// <summary>
-/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.OnDownloadProgress"/> 回报进度、
-/// 按 <see cref="AxiosConfig.MaxRate"/> 限速（读满配额后按速率等待），
-/// 并在累计字节超出 <see cref="AxiosConfig.MaxContentLength"/> 时立刻中断。
+/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.CallbackSettings.OnDownloadProgress"/> 回报进度、
+/// 按 <see cref="AxiosConfig.LimitSettings.MaxRate"/> 限速（读满配额后按速率等待），
+/// 并在累计字节超出 <see cref="AxiosConfig.LimitSettings.MaxContentLength"/> 时立刻中断。
 /// </summary>
 internal sealed class ProgressReadStream : DelegatingStream
 {
@@ -204,7 +204,7 @@ internal sealed class ProgressReadStream : DelegatingStream
             throw AxiosException.ProgressCallbackFailed(
                 _config,
                 _request,
-                nameof(AxiosConfig.OnDownloadProgress),
+                nameof(AxiosConfig.CallbackSettings.OnDownloadProgress),
                 ex,
                 upload: false);
         }

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-831%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-835%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -41,7 +41,7 @@
 - [自定义序列化与数据转换](#自定义序列化与数据转换)
   - [内容序列化（默认 JSON，任意格式可注入）](#内容序列化默认-json任意格式可注入)
   - [paramsSerializer](#paramsserializer)
-  - [FormFieldNameSelector](#formfieldnameselector)
+  - [Serialization.FormFieldNameSelector](#serializationformfieldnameselector)
   - [transformRequest / transformResponse](#transformrequest--transformresponse)
 - [拦截器](#拦截器)
 - [错误处理](#错误处理)
@@ -284,6 +284,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 ```csharp
 var config = new AxiosConfig
 {
+    // —— 请求本身（保持扁平）——
     BaseAddress = "https://api.example.com/", // 等同 baseURL
     Url = "users",                            // 相对或绝对地址
     Method = HttpMethod.Post,                 // 直接用 BCL HttpMethod，默认 Get
@@ -292,35 +293,53 @@ var config = new AxiosConfig
     Data = new { name = "bob" },              // 请求体（按 ContentType 编码）
     ContentType = "application/json",         // 默认；可设为 application/x-www-form-urlencoded 等
     Timeout = TimeSpan.FromSeconds(10),       // 0/Zero = 不超时
-    StreamIdleTimeout = null,                 // 流式正文空闲超时：null = 沿用 Timeout 总预算；Zero = 正文不限时
-    Auth = new AxiosAuth("user", "pass"),     // Basic
     ResponseType = ResponseType.Json,         // Json/Text/ArrayBuffer/Stream/Dynamic
-    ValidateStatus = s => s is >= 200 and < 300,
     CancellationToken = cancellationToken,
-    MaxRedirects = 5,
-    WithCredentials = false,
-    RequestEncoding = null,                   // 请求体文本编码，null = UTF-8
-    ResponseEncoding = null,                  // 响应体文本编码，null = 自动识别
-
-    // —— 大小、限速与进度 ——
-    MaxContentLength = 10 * 1024 * 1024,      // 响应体上限（字节），null = 不限
-    MaxBodyLength = 50 * 1024 * 1024,         // 请求体上限（字节），null = 不限
-    MaxRate = 2 * 1024 * 1024,                // 单向限速（字节/秒），null = 不限
-    TimeoutMessage = "上游响应超时",           // 自定义超时错误消息
-    OnUploadProgress = e => Console.WriteLine($"↑ {e}"),
-    OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
-
-    // —— 序列化与转换 ——
-    JsonSerializerOptions = myJsonOptions,    // 本次/本实例的 System.Text.Json 选项
-    ContentSerializer = mySerializer,         // 内容序列化器，任意格式（null = 全局默认 JSON）
-    ParamsSerializer = p => MyQuery(p),       // Func<object?, string>：自定义 ?a=1&b=2
-    CollectionFormat = AxiosCollectionFormat.Csv, // 集合形态：Brackets(默认)/Multi/Csv/Ssv/Tsv/Pipes
-    FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     // TransformRequest / TransformResponse：IList<Func<object?, AxiosConfig, object?>>
 
-    // Proxy / Credentials / HttpVersion / JsonSerializerOptions / PoolOptions ...
+    // —— 连接（实例级）——
+    Connection = new()
+    {
+        Auth = new AxiosAuth("user", "pass"), // Basic
+        MaxRedirects = 5,
+        WithCredentials = false,
+        // Proxy / Credentials / HttpVersion / PoolOptions ...
+    },
+
+    // —— 体积、限速与流式超时 ——
+    Limits = new()
+    {
+        StreamIdleTimeout = null,             // 流式正文空闲超时：null = 沿用 Timeout 总预算；Zero = 正文不限时
+        MaxContentLength = 10 * 1024 * 1024,  // 响应体上限（字节），null = 不限
+        MaxBodyLength = 50 * 1024 * 1024,     // 请求体上限（字节），null = 不限
+        MaxRate = 2 * 1024 * 1024,            // 单向限速（字节/秒），null = 不限
+    },
+
+    // —— 回调与状态校验 ——
+    Callbacks = new()
+    {
+        ValidateStatus = s => s is >= 200 and < 300,
+        TimeoutMessage = "上游响应超时",       // 自定义超时错误消息
+        OnUploadProgress = e => Console.WriteLine($"↑ {e}"),
+        OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
+    },
+
+    // —— 序列化 ——
+    Serialization = new()
+    {
+        JsonSerializerOptions = myJsonOptions, // 本次/本实例的 System.Text.Json 选项
+        ContentSerializer = mySerializer,      // 内容序列化器，任意格式（null = 全局默认 JSON）
+        RequestEncoding = null,                // 请求体文本编码，null = UTF-8
+        ResponseEncoding = null,               // 响应体文本编码，null = 自动识别
+        ParamsSerializer = p => MyQuery(p),    // Func<object?, string>：自定义 ?a=1&b=2
+        CollectionFormat = AxiosCollectionFormat.Csv, // 集合形态：Brackets(默认)/Multi/Csv/Ssv/Tsv/Pipes
+        FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
+    },
 };
 ```
+
+> 可选项按领域分成四个子对象：`Serialization` / `Connection` / `Limits` / `Callbacks`。
+> 子对象在**首次访问时懒创建**：完全不碰这四个子对象的配置不会多分配；库内热路径直接访问内部字段，零分配。
 
 > 进度与限速的小节见 [进度回调、限速与大小限制](#进度回调限速与大小限制)。
 
@@ -328,9 +347,9 @@ var config = new AxiosConfig
 
 > `withCredentials` / `proxy` / `credentials` / `maxRedirects` 属于**实例级**配置：连接池 Handler 在构造 `AxiosClient` 时创建，因此这些项只在实例默认值上生效。为避免"设了却没生效"的静默错误，在**单次请求**上写**与实例生效值不同**的值会立即抛出 `AxiosException`（`ERR_BAD_OPTION_VALUE`），提示改为在 `Axios.Create(...)` 的实例 defaults 中设置。判定依据是"值是否与生效值不同"而不是"是否写过"：把 defaults 里的值原样抄到单次请求上属于等价写法，不会报错（`maxRedirects` 的生效值取自池的实际策略——`AllowAutoRedirect = false` 时为 `0`，`poolOptions.MaxAutomaticRedirections` 为多少就是多少）。`proxy` / `credentials` / `poolOptions` 按引用与 defaults 比较，传入不同实例即视为不同值。
 >
-> 共享连接池的 `AxiosClient(pool: ...)` 同理：这四项与 `PoolOptions` 作用于**池**而非单个实例，在共享池 client 的 defaults 上设置同样立即抛 `ERR_BAD_OPTION_VALUE`，应改为在创建池的 `ConnectionPoolOptions` 上配置（详见[网络连接池](#网络连接池)）。
+> 共享连接池的 `AxiosClient(pool: ...)` 同理：这四项与 `Connection.PoolOptions` 作用于**池**而非单个实例，在共享池 client 的 defaults 上设置同样立即抛 `ERR_BAD_OPTION_VALUE`，应改为在创建池的 `ConnectionPoolOptions` 上配置（详见[网络连接池](#网络连接池)）。
 >
-> 需要按请求生效的项（`timeout`、`headers`、`params`、`responseType`、`maxContentLength`、`maxRate`、`onUploadProgress`/`onDownloadProgress`、`transformRequest`/`transformResponse`、`validateStatus`、`auth`、`cancellationToken`、`RequestEncoding`/`ResponseEncoding` 等）不受此限制；其中 `cancellationToken` 既可设在实例默认，也可按请求传入，按请求传入时以后者为准。
+> 需要按请求生效的项（`timeout`、`headers`、`params`、`responseType`、`maxContentLength`、`maxRate`、`onUploadProgress`/`onDownloadProgress`、`transformRequest`/`transformResponse`、`validateStatus`、`auth`、`cancellationToken`、`Serialization.RequestEncoding`/`Serialization.ResponseEncoding` 等）不受此限制；其中 `cancellationToken` 既可设在实例默认，也可按请求传入，按请求传入时以后者为准。
 
 ## 请求体 data 与查询参数 params
 
@@ -417,7 +436,7 @@ await http.GetAsync("search", c => c.Params = new[] { 1, 2 }); // ?[0]=1&[1]=2
 
 multipart 补充说明：
 
-- **字段名**：取所在对象的属性名或字典的键（识别 `[JsonPropertyName]` / `[JsonIgnore]`；**不读** `JsonSerializerOptions.PropertyNamingPolicy`——表单与序列化器解耦，命名规则只有 `FormFieldNameSelector` 一个入口）；嵌套对象写成 `meta[author]`；数组/集合展开为**同名重复部件**（ASP.NET Core `IFormFileCollection`、FastAPI、PHP 都能直接绑定）。
+- **字段名**：取所在对象的属性名或字典的键（识别 `[JsonPropertyName]` / `[JsonIgnore]`；**不读** `JsonSerializerOptions.PropertyNamingPolicy`——表单与序列化器解耦，命名规则只有 `Serialization.FormFieldNameSelector` 一个入口）；嵌套对象写成 `meta[author]`；数组/集合展开为**同名重复部件**（ASP.NET Core `IFormFileCollection`、FastAPI、PHP 都能直接绑定）。
 - **根节点是文件数组**时没有键名，用 `FormFile.FieldName` 指定部件名：`new[] { new FormFile(...) { FieldName = "files" } }`。
 - **文件名**：`FormFile.FileName` 决定 `filename`；直接用 `Stream`/`byte[]`/`Memory<byte>` 也会作为文件部件发送（零拷贝，文件名回退为字段名）。
 - **自带 `HttpContent` 部件**：部件已带 `Content-Disposition` 时原样保留（含 `filename`），只补缺失的 `name`——否则服务端无法绑定该字段。
@@ -532,15 +551,15 @@ public async Task<IActionResult> Upload(IFormFile file, [FromForm] string? note)
 await http.PostAsync("api/files/raw", File.OpenRead(path), c =>
 {
     c.ContentType = "application/octet-stream";
-    c.MaxBodyLength = 200 * 1024 * 1024;   // 客户端上限：长度可算时在发送前就拦截
-    c.MaxRate = 8 * 1024 * 1024;           // 限速 8 MB/s（可选）
-    c.OnUploadProgress = e => Console.WriteLine($"{e.Progress:P0} {e.Rate / 1024:F0} KB/s");
+    c.Limits.MaxBodyLength = 200 * 1024 * 1024;   // 客户端上限：长度可算时在发送前就拦截
+    c.Limits.MaxRate = 8 * 1024 * 1024;           // 限速 8 MB/s（可选）
+    c.Callbacks.OnUploadProgress = e => Console.WriteLine($"{e.Progress:P0} {e.Rate / 1024:F0} KB/s");
 });
 ```
 
 - 服务端 Kestrel 默认请求体上限 **30 MB**，超出直接 413：`builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 50 * 1024 * 1024)`，或端点级 `.DisableRequestSizeLimit()`。
 - 服务端用 `request.Body.CopyToAsync(fileStream)` 边收边写；**避免** `[FromBody] byte[]`（整包进内存）。
-- `FileStream` 可 Seek，`Content-Length` 确定，因此进度回调的 `Total` 与 `MaxBodyLength` 都准确。
+- `FileStream` 可 Seek，`Content-Length` 确定，因此进度回调的 `Total` 与 `Limits.MaxBodyLength` 都准确。
 
 可运行示例：`samples/AxiosNet.Simple` 的第 18 项（`dotnet run --project samples/AxiosNet.Simple` 启动后输入 18）—— `DemoServer` 提供 `/upload/raw` 与 `/upload/single`，按字节精确解析并回报文件名/字节数/SHA256，客户端逐个校验。
 
@@ -595,8 +614,8 @@ var fileName = (disposition.FileNameStar ?? disposition.FileName)?.Trim('"') ?? 
 - 下载超时/取消与普通请求一致：`c.Timeout` 覆盖到**正文读取结束**（超时抛 `ECONNABORTED`，外部取消抛 `ERR_CANCELED`）；并发下载量大时注意连接池 `MaxConnectionsPerServer`。
 - 流式请求遇到非 2xx 时，库会**立即丢弃响应体并归还连接**（`ex.Response.Data` 为 `null`，`Status` / `Headers` 仍可用）——否则一个没人读的错误响应流会长期占住连接。
 - 下载期间该 origin 的租约保持占用（`GetStatistics()` 的 `ActiveLeases` 会反映正在下载的数量），因此空闲驱逐不会中断长下载；流释放后租约才归还。
-- 下载进度用 `c.OnDownloadProgress`，下载限速用 `c.MaxRate`，大小上限用 `c.MaxContentLength`（详见下一节）。
-- 需要把响应流直接存盘的场景，`OnDownloadProgress` 的报告节流为 50 ms，不会因为回调过频拖慢拷贝。
+- 下载进度用 `c.Callbacks.OnDownloadProgress`，下载限速用 `c.Limits.MaxRate`，大小上限用 `c.Limits.MaxContentLength`（详见下一节）。
+- 需要把响应流直接存盘的场景，`Callbacks.OnDownloadProgress` 的报告节流为 50 ms，不会因为回调过频拖慢拷贝。
 - `ResponseType.Stream` 时响应体不做任何解码，`response.Status/Headers` 照常可用（先校验状态码再落盘）。
 
 所有快捷方法都支持 `<dynamic>`：`GetAsync<dynamic>` / `PostAsync<dynamic>` / `PutAsync<dynamic>` / `PatchAsync<dynamic>` / `DeleteAsync<dynamic>`（含 `RequestAsync<dynamic>` 与静态门面 `Axios.GetAsync<dynamic>`）；也可以在非泛型请求上显式设置 `c.ResponseType = ResponseType.Dynamic`。显式指定 `ResponseType.Text/ArrayBuffer/Stream` 时优先于 `<dynamic>` 的默认动态展开。
@@ -622,15 +641,15 @@ var raw = (await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayB
 
 ### 内容编码
 
-- **请求体**：`RequestEncoding` 决定写入的字节（默认 UTF-8），显式设置时同时写入 `Content-Type` 的 `charset`；`Content-Type` 里显式声明的 `charset` 优先于 `RequestEncoding`（正文按声明的 charset 编码，头与正文永远一致），两者都写且互相矛盾时抛 `ERR_BAD_OPTION_VALUE`；`byte[]` / `Stream` / `HttpContent` 原样透传，不受该项影响。
-- **响应体**：默认自动识别 —— `Content-Type` 的 `charset` → BOM → UTF-8；`ResponseEncoding` 可强制指定，用于服务端 charset 缺失或错误的情况。
+- **请求体**：`Serialization.RequestEncoding` 决定写入的字节（默认 UTF-8），显式设置时同时写入 `Content-Type` 的 `charset`；`Content-Type` 里显式声明的 `charset` 优先于 `Serialization.RequestEncoding`（正文按声明的 charset 编码，头与正文永远一致），两者都写且互相矛盾时抛 `ERR_BAD_OPTION_VALUE`；`byte[]` / `Stream` / `HttpContent` 原样透传，不受该项影响。
+- **响应体**：默认自动识别 —— `Content-Type` 的 `charset` → BOM → UTF-8；`Serialization.ResponseEncoding` 可强制指定，用于服务端 charset 缺失或错误的情况。
 
 ```csharp
 // 请求按 GBK 发送
-await http.PostAsync("legacy", "中文", c => c.RequestEncoding = Encoding.GetEncoding("gbk"));
+await http.PostAsync("legacy", "中文", c => c.Serialization.RequestEncoding = Encoding.GetEncoding("gbk"));
 
 // 响应强制按 GBK 解码
-await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gbk"));
+await http.GetAsync("legacy", c => c.Serialization.ResponseEncoding = Encoding.GetEncoding("gbk"));
 ```
 
 > **GBK / GB2312 / Big5 等代码页编码必须先注册提供程序**（`utf-8` / `utf-16` / `ascii` / `iso-8859-1` 之外都算）。
@@ -641,7 +660,7 @@ await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gb
 > Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 >
 > // 之后两种用法都有效
-> await http.GetAsync("legacy", c => c.ResponseEncoding = Encoding.GetEncoding("gbk"));  // 强制按 GBK 解码
+> await http.GetAsync("legacy", c => c.Serialization.ResponseEncoding = Encoding.GetEncoding("gbk"));  // 强制按 GBK 解码
 > // 或什么都不配：服务端 Content-Type: text/html; charset=gbk 时自动识别就能解对
 > ```
 >
@@ -710,9 +729,9 @@ var res2 = await Axios.PostFormAsync<UploadResult>("https://api.example.com/uplo
 ```csharp
 await http.PostAsync("upload", new { files }, c =>
 {
-    c.OnUploadProgress = e =>
+    c.Callbacks.OnUploadProgress = e =>
         Console.WriteLine($"↑ {e.Loaded}/{e.Total} ({e.Progress:P0}) {e.Rate / 1024:F1} KB/s 剩余 {e.Estimated}");
-    c.OnDownloadProgress = e =>
+    c.Callbacks.OnDownloadProgress = e =>
         Console.WriteLine($"↓ {e.Loaded}/{e.Total} ({e.Progress:P0}) {e.Rate / 1024:F1} KB/s");
 });
 ```
@@ -739,7 +758,7 @@ await http.PostAsync("upload", new { files }, c =>
 
 ```csharp
 // 每个请求限制到 1 MB/s（字节/秒），上传和下载各自受限
-await http.GetAsync("big", c => c.MaxRate = 1024 * 1024);
+await http.GetAsync("big", c => c.Limits.MaxRate = 1024 * 1024);
 ```
 
 实现按已传字节数反算"应耗时"，超前就 `Delay` 补差，限的是**平均速率**（允许小段突发），不是严格令牌桶。
@@ -750,7 +769,7 @@ await http.GetAsync("big", c => c.MaxRate = 1024 * 1024);
 // 响应体超过 1 MB 直接失败
 try
 {
-    await http.GetAsync("big", c => c.MaxContentLength = 1024 * 1024);
+    await http.GetAsync("big", c => c.Limits.MaxContentLength = 1024 * 1024);
 }
 catch (AxiosException ex)
 {
@@ -759,12 +778,12 @@ catch (AxiosException ex)
 }
 
 // 请求体超过 5 MB 在发送前就拒绝
-await http.PostAsync("upload", bytes, c => c.MaxBodyLength = 5 * 1024 * 1024);
+await http.PostAsync("upload", bytes, c => c.Limits.MaxBodyLength = 5 * 1024 * 1024);
 ```
 
-- `MaxContentLength` 对普通（缓冲）响应是**边读边累计**：越界立即中止并释放连接，不会先把 8 MB 全读进内存再判断；对 `ResponseType.Stream` 则是"声明长度先预检 + 读取时边读边计数"两层：声明超限时连响应头都不读正文就失败，chunked / 未声明长度的响应也会在累计越界的那一刻让 `Read`/`ReadAsync` 抛出 `ERR_BAD_RESPONSE`。
-- `MaxBodyLength` 在发送前按 `Content.Headers.ContentLength` 判断，只对能算出长度的请求体生效（JSON / 表单 / `byte[]` / 裸 `Stream`（可 seek 时有长度））；`multipart/form-data`（`FormFile`）与自定义的未知长度 `HttpContent` 不算长度，不做拦截。
-- 这四个限制项的**负值会抛 `ERR_BAD_OPTION_VALUE`**（此前的实现把负值静默当作"不限制"，调用方会以为限制生效了）。`MaxRate = 0` 等价于不限速，`Timeout = TimeSpan.Zero` 表示不超时。
+- `Limits.MaxContentLength` 对普通（缓冲）响应是**边读边累计**：越界立即中止并释放连接，不会先把 8 MB 全读进内存再判断；对 `ResponseType.Stream` 则是"声明长度先预检 + 读取时边读边计数"两层：声明超限时连响应头都不读正文就失败，chunked / 未声明长度的响应也会在累计越界的那一刻让 `Read`/`ReadAsync` 抛出 `ERR_BAD_RESPONSE`。
+- `Limits.MaxBodyLength` 在发送前按 `Content.Headers.ContentLength` 判断，只对能算出长度的请求体生效（JSON / 表单 / `byte[]` / 裸 `Stream`（可 seek 时有长度））；`multipart/form-data`（`FormFile`）与自定义的未知长度 `HttpContent` 不算长度，不做拦截。
+- 这四个限制项的**负值会抛 `ERR_BAD_OPTION_VALUE`**（此前的实现把负值静默当作"不限制"，调用方会以为限制生效了）。`Limits.MaxRate = 0` 等价于不限速，`Timeout = TimeSpan.Zero` 表示不超时。
 
 ## 自定义序列化与数据转换
 
@@ -791,7 +810,7 @@ public interface IContentSerializer
     ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
     // 响应入口（Content-Type 声明为非文本）：库自带默认实现 —— 按响应字符集解码
-    // （ResponseEncoding → charset → BOM → UTF-8）后转调文本入口；二进制格式覆写它
+    // （Serialization.ResponseEncoding → charset → BOM → UTF-8）后转调文本入口；二进制格式覆写它
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);
 }
 ```
@@ -850,7 +869,7 @@ public object? Deserialize(string text, Type type, AxiosConfig config)
 
 | 顺序 | 来源 | 说明 |
 | --- | --- | --- |
-| 1 | `AxiosConfig.ContentSerializer`（单次请求 / 实例 defaults） | **显式注入，最高优先级** |
+| 1 | `AxiosConfig.SerializationSettings.ContentSerializer`（单次请求 / 实例 defaults） | **显式注入，最高优先级** |
 | 2 | `AxiosContent.Serializer`（全局显式注入） | **`null`（默认）= 未注入** → 进自动模式 |
 | 3 | 自动模式：按媒体类型查注册表（`AxiosContent.Register`） | 请求看 `ContentType`，响应看响应 `Content-Type`；**未注册查表得到 `null`** |
 | 4 | 内置 JSON（`SystemTextJsonSerializer.Instance`） | 兜底 |
@@ -862,7 +881,7 @@ using AxiosNet.Serialization;
 
 // 方式 A：显式注入 —— 一个 client（或整个应用）只说一种格式
 AxiosContent.Serializer = XmlContentSerializer.Instance;                        // 全局
-// 或 new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance })   // 仅实例
+// 或 new AxiosClient(new AxiosConfig { Serialization = new() { ContentSerializer = XmlContentSerializer.Instance } })   // 仅实例
 
 // 方式 B：自动模式 + 注册 —— 同一个应用按 Content-Type 混用多种格式
 AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
@@ -877,7 +896,7 @@ var user = (await http.GetAsync<User>("users/1")).Data;                         
 注册表匹配规则：只看媒体类型主值（忽略大小写、忽略 `; charset=` 等参数）精确匹配；`application/vnd.api+xml` 这类**结构化后缀**会回落到 `application/xml`（`+json` / `+yaml` 同理），因此给一种格式注册一次就覆盖它的厂商变体——只有显式为某个厂商类型注册过才精确优先。
 
 > 头体配对是**双向**的：自动模式「按头选格式」，序列化器又能「自报头」。
-> ① **注入路径**（方式 A）：`ContentSerializer = XmlContentSerializer.Instance` 一处改动即可，请求头自动变 `application/xml`，不用再设 `ContentType`；
+> ① **注入路径**（方式 A）：`Serialization.ContentSerializer = XmlContentSerializer.Instance` 一处改动即可，请求头自动变 `application/xml`，不用再设 `ContentType`；
 > ② **注册路径**（方式 B）：注册表的键就是媒体类型，所以 `ContentType` 必须自己设，否则查不到表、回落内置 JSON；
 > ③ 一旦显式设置过 `ContentType`（单次或实例 defaults），序列化器的 `MediaType` 一律不覆盖它——那是调用方对服务端的判断；
 > ④ `ContentType = Xml` 但既没注入也没注册 XML 时，正文仍是 JSON（头体不一致不会被自动纠正）。
@@ -885,7 +904,7 @@ var user = (await http.GetAsync<User>("users/1")).Data;                         
 内置 XML 实现的细节与约束：
 
 - 按目标类型缓存 `XmlSerializer`（构造开销大），线程安全可共享；
-- 输出声明的 `encoding` 与正文实际编码**始终一致**：优先级为 `ContentType` 里显式声明的 `charset` → `RequestEncoding` → UTF-8（与正文编码共用同一套解析，不会出现「声明 utf-8、正文 gb2312、头再声明第三个」的三角矛盾）；根元素不带 `xmlns:xsi` / `xmlns:xsd` 噪音，`[XmlRoot(Namespace = ...)]` 照常生效；
+- 输出声明的 `encoding` 与正文实际编码**始终一致**：优先级为 `ContentType` 里显式声明的 `charset` → `Serialization.RequestEncoding` → UTF-8（与正文编码共用同一套解析，不会出现「声明 utf-8、正文 gb2312、头再声明第三个」的三角矛盾）；根元素不带 `xmlns:xsi` / `xmlns:xsd` 噪音，`[XmlRoot(Namespace = ...)]` 照常生效；
 - 反序列化**禁用 DTD**（防 XXE / 十亿笑声），失败统一是 `ERR_BAD_RESPONSE`；
 - XmlSerializer 本身的限制照旧：目标类型要 **public + 公开无参构造**、只序列化公开可读写属性/字段；匿名类型、接口、`Dictionary<,>` 不支持 —— 请用 DTO。
 
@@ -913,10 +932,10 @@ AxiosContent.Serializer = new YamlSerializer();          // 全局；也可按�
 
 - **请求头可以由序列化器自报**：`MediaType` 非 `null` 且调用方没显式设 `ContentType` 时，库把它写进请求头（对应 axios 默认 `transformRequest` 里的 `headers.setContentType(..., false)`），文本与字节两条通道都生效。显式设过就绝不覆盖。
 - **文本 / 二进制由响应 `Content-Type` 判定**（只看媒体类型主值，忽略 `charset` / `boundary` 等参数）：`text/*`、`application/json`、`application/xml`、`+json` / `+xml` / `+yaml`、YAML、CSV 等算文本，其余（`application/octet-stream`、`image/png`、`application/x-protobuf`…）算二进制；**没有 Content-Type 视为文本**。响应方向不看 `MediaType`，头是权威。
-- **二进制响应不解码**：业务对象走 `Deserialize(ReadOnlyMemory<byte>)` 拿到原始字节（Protobuf / MessagePack / CBOR 零拷贝接入）；非泛型调用直接给 `byte[]`。字节入口的默认实现按**响应字符集**解码转调文本入口（优先级与文本响应一致：`ResponseEncoding` → charset → BOM → UTF-8），因此文本序列化器不用实现它（也兼容把 JSON 错标成 `octet-stream` 的服务端，含带 charset / BOM 的非 UTF-8 变体）。
+- **二进制响应不解码**：业务对象走 `Deserialize(ReadOnlyMemory<byte>)` 拿到原始字节（Protobuf / MessagePack / CBOR 零拷贝接入）；非泛型调用直接给 `byte[]`。字节入口的默认实现按**响应字符集**解码转调文本入口（优先级与文本响应一致：`Serialization.ResponseEncoding` → charset → BOM → UTF-8），因此文本序列化器不用实现它（也兼容把 JSON 错标成 `octet-stream` 的服务端，含带 charset / BOM 的非 UTF-8 变体）。
 - **二进制格式的请求出口**：覆写 `SerializeToBytes` 返回线格式字节，库原样发送（不编码、不补 charset），头取自报的 `MediaType`——与响应字节入口配对后，注入一个序列化器就完成整条链路换格式。返回 `null` 回落文本通道；字节的内存必须存活到整条请求结束（不要返回 ArrayPool 租约）。**文本通道无法承载任意字节**，二进制格式的 `Serialize` 实现成抛 `NotSupportedException` 即可。
 - **请求方向的基础类型不进序列化器**：`PostAsync("url", 42)` 发的是 `42`、`true` 发 `true`、枚举发名字。裸标量没有「格式」可言（XML / YAML 无法表达无名的根标量），交给序列化器只会让每个实现都重复一遍标量特判。因此它也不参与 `MediaType` 回写：头保持 `ContentType`（默认 `application/json`，而裸 `42` 恰好是合法 JSON）。日期时间用往返格式（保留 Kind 与 tick），不像表单那样折成毫秒级 UTC。
-- **表单 / multipart 不经过序列化器**：字段名只看 `FormFieldNameSelector` 与属性上的 `[JsonPropertyName]`（忽略用 `[JsonIgnore]`）。
+- **表单 / multipart 不经过序列化器**：字段名只看 `Serialization.FormFieldNameSelector` 与属性上的 `[JsonPropertyName]`（忽略用 `[JsonIgnore]`）。
 - **`dynamic` 依赖 JSON**：非 JSON 响应下 `GetAsync<dynamic>` 会抛 `ERR_BAD_RESPONSE`；要原文请用 `ResponseType.Text` 或非泛型 `GetAsync()`。
 - **非泛型响应**：文本按 JSON 文档形态给 `JsonElement`（解析失败给原文），二进制给原始 `byte[]`，与用哪个序列化器无关。
 - **`GetAsync<JsonDocument>` 也能用，但它算「业务对象」**：不做框架的文档形态，而是交给当前序列化器（默认 STJ 原生支持）。因此它 **需要调用方 `Dispose`**（背后是池化缓冲），换成 XML 序列化器会直接失败 —— 只想读 JSON 树时优先用 `GetAsync<JsonElement>`（框架给、免释放）或非泛型 `GetAsync()`。
@@ -929,8 +948,8 @@ JSON 行为分三层，后者覆盖前者：
 | 层级 | 入口 | 典型用途 |
 | --- | --- | --- |
 | 全局 | `AxiosJson.Options` | 整个应用统一命名策略、数字/日期处理 |
-| 实例 | `Axios.Create(c => c.JsonSerializerOptions = ...)` | 某个后端对接 PascalCase / snake_case |
-| 单次请求 | `c => c.JsonSerializerOptions = ...` | 个别接口的特殊契约 |
+| 实例 | `Axios.Create(c => c.Serialization.JsonSerializerOptions = ...)` | 某个后端对接 PascalCase / snake_case |
+| 单次请求 | `c => c.Serialization.JsonSerializerOptions = ...` | 个别接口的特殊契约 |
 
 ```csharp
 // 1) 全局：不再 camelCase（例如后端字段就是 PascalCase），并允许字符串化的数字
@@ -944,14 +963,14 @@ AxiosJson.Options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
 var http = Axios.Create(c =>
 {
     c.BaseAddress = "https://api.example.com/";
-    c.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    c.Serialization.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
 });
 
 // 3) 单次请求：优先级最高
-await http.PostAsync("users", user, c => c.JsonSerializerOptions = specialOptions);
+await http.PostAsync("users", user, c => c.Serialization.JsonSerializerOptions = specialOptions);
 ```
 
 > 替换 `AxiosJson.Options` 时请给一个**新实例**；System.Text.Json 会冻结已使用过的选项实例，之后再修改会抛 `InvalidOperationException`。建议在启动期设置一次。
@@ -976,7 +995,7 @@ public sealed class NewtonsoftJsonSerializer : IContentSerializer
 }
 
 AxiosContent.Serializer = new NewtonsoftJsonSerializer();         // 全局
-// 或：new AxiosClient(new AxiosConfig { JsonSerializer = ... })   // 仅实例
+// 或：new AxiosClient(new AxiosConfig { Serialization = new() { ContentSerializer = ... } })   // 仅实例
 ```
 
 约定与边界：
@@ -987,14 +1006,14 @@ AxiosContent.Serializer = new NewtonsoftJsonSerializer();         // 全局
 
 ### paramsSerializer
 
-`ParamsSerializer` 收到**整个 `Params` 对象**，返回编码好的查询串（前导 `?` / `&` 会被自动去掉）：
+`Serialization.ParamsSerializer` 收到**整个 `Params` 对象**，返回编码好的查询串（前导 `?` / `&` 会被自动去掉）：
 
 ```csharp
 // 逗号分隔的数组：ids=1,2,3&q=a%20b
 await http.GetAsync("items", c =>
 {
     c.Params = new ItemQuery { Ids = new[] { 1, 2, 3 }, Q = "a b" };
-    c.ParamsSerializer = p =>
+    c.Serialization.ParamsSerializer = p =>
     {
         var q = (ItemQuery)p!;
         return $"ids={string.Join(",", q.Ids)}&q={Uri.EscapeDataString(q.Q)}";
@@ -1002,9 +1021,9 @@ await http.GetAsync("items", c =>
 });
 ```
 
-> 第一个参数是 `object?`，需要强类型时先转成自己的 DTO。默认序列化器已是 axios 兼容风格（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过），大多数场景不需要自定义。需要换集合形态（`a=1&a=2` / `a=1,2` / 空格 / 制表符 / 竖线）用 `CollectionFormat`，它按请求可用、也受 `ParamsSerializer` 覆盖。
+> 第一个参数是 `object?`，需要强类型时先转成自己的 DTO。默认序列化器已是 axios 兼容风格（数组 `a[]=1&a[]=2`、嵌套 `o[k]=v`、null 跳过），大多数场景不需要自定义。需要换集合形态（`a=1&a=2` / `a=1,2` / 空格 / 制表符 / 竖线）用 `Serialization.CollectionFormat`，它按请求可用、也受 `Serialization.ParamsSerializer` 覆盖。
 
-### FormFieldNameSelector
+### Serialization.FormFieldNameSelector
 
 决定 multipart / urlencoded 表单中**字段名如何拼接**，签名 `Func<string?, string, string>`（父级名, 当前名）：
 
@@ -1012,7 +1031,7 @@ await http.GetAsync("items", c =>
 // 默认是 prefix[name]；改成 dot 风格：user.name
 await http.PostFormAsync("submit", new { user = new { name = "bob" } }, c =>
 {
-    c.FormFieldNameSelector = (prefix, name) =>
+    c.Serialization.FormFieldNameSelector = (prefix, name) =>
         string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}";
 });
 ```
@@ -1054,7 +1073,7 @@ await http.GetAsync("users/1", c =>
 - 链是 `IList<Func<object?, AxiosConfig, object?>>`，返回 `null` 是合法的（会继续往后传）。
 - `TransformRequest` 的返回值仍由 `ContentType` 决定编码方式——转换链不改变"格式由 ContentType 决定"这条铁律。
 - `TransformResponse` 在 `ResponseType.Json` / `Text` / `ArrayBuffer` / `Dynamic` 下都会执行；`Stream` 不执行（数据尚未读取）。
-- `TransformResponse` 拿到的 `data` 已经是**目标类型**：非泛型请求是 `JsonElement`（或文本），`GetAsync<User>` 就是 `User`。想在 JSON 层统一加工（如剥 `{code,data}` 外壳），用非泛型请求 + `TransformResponse`，或改用 `JsonSerializerOptions` 里的自定义转换器。
+- `TransformResponse` 拿到的 `data` 已经是**目标类型**：非泛型请求是 `JsonElement`（或文本），`GetAsync<User>` 就是 `User`。想在 JSON 层统一加工（如剥 `{code,data}` 外壳），用非泛型请求 + `TransformResponse`，或改用 `Serialization.JsonSerializerOptions` 里的自定义转换器。
 
 ## 拦截器
 
@@ -1117,9 +1136,9 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | 触发场景 | 对应 axios |
 | --- | --- | --- |
-| `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `MaxBodyLength`；请求体序列化失败（循环引用、转换器抛错等，底层异常见 `ex.Cause`）；上传进度回调（`OnUploadProgress`）抛异常 | ✅ |
-| `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型（含 `dynamic` 拿到非 JSON）；响应体超过 `MaxContentLength`；泛型参数与 `responseType` 不匹配（如 `GetAsync<Stream>` 却配 `text`/`arraybuffer`）；下载进度回调（`OnDownloadProgress`）或 `transformResponse` 抛异常 | ✅ |
-| `ECONNABORTED` | 请求超过 `Timeout`（消息可用 `TimeoutMessage` 覆盖） | ✅ |
+| `ERR_BAD_REQUEST` | 响应状态码为 4xx（默认 validate 失败）；请求体超过 `Limits.MaxBodyLength`；请求体序列化失败（循环引用、转换器抛错等，底层异常见 `ex.Cause`）；上传进度回调（`Callbacks.OnUploadProgress`）抛异常 | ✅ |
+| `ERR_BAD_RESPONSE` | 响应状态码为 5xx；响应体无法反序列化为目标类型（含 `dynamic` 拿到非 JSON）；响应体超过 `Limits.MaxContentLength`；泛型参数与 `responseType` 不匹配（如 `GetAsync<Stream>` 却配 `text`/`arraybuffer`）；下载进度回调（`Callbacks.OnDownloadProgress`）或 `transformResponse` 抛异常 | ✅ |
+| `ECONNABORTED` | 请求超过 `Timeout`（消息可用 `Callbacks.TimeoutMessage` 覆盖） | ✅ |
 | `ERR_NETWORK` | 连接被拒绝/DNS 失败/连接中途断开/响应体被截断等网络层异常（底层异常见 `ex.Cause`） | ✅ |
 | `ERR_CANCELED` | `CancellationToken` 取消 | ✅ |
 | `ERR_INVALID_URL` | URL 非法（含相对 URL 且未提供 `baseURL`、非 `http`/`https` 的 scheme、快捷方法的 `url` 为 `null` / 空白） | ✅ |
@@ -1201,7 +1220,7 @@ ConnectionPoolStatistics stats = sharedPool.GetStatistics();
 sharedPool.EvictIdleEndpoints();
 ```
 
-> fail-fast：共享池的连接行为（重定向 / 代理 / 凭据 / Cookie / 池选项）在创建池时已固定。在共享池 client 的 defaults 上设置 `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` / `PoolOptions`，或给 `AxiosClient` 同时传 `pool` 与 `poolOptions`，都会抛 `ERR_BAD_OPTION_VALUE` 而不是静默忽略——这些项请在创建池的 `ConnectionPoolOptions` 上配置，或让该 client 自建池（不传 `pool`）。
+> fail-fast：共享池的连接行为（重定向 / 代理 / 凭据 / Cookie / 池选项）在创建池时已固定。在共享池 client 的 defaults 上设置 `Connection.MaxRedirects` / `Connection.WithCredentials` / `Connection.Proxy` / `Connection.Credentials` / `Connection.PoolOptions`，或给 `AxiosClient` 同时传 `pool` 与 `poolOptions`，都会抛 `ERR_BAD_OPTION_VALUE` 而不是静默忽略——这些项请在创建池的 `ConnectionPoolOptions` 上配置，或让该 client 自建池（不传 `pool`）。
 >
 > 两个默认行为：未显式设置 `Proxy` 时池**不使用系统/环境代理**（避免环境变量带来的意外路由），需要显式走系统代理时设 `Proxy = HttpClient.DefaultProxy`；`EvictionInterval ≤ 0` 时不启动后台驱逐定时器（只能手动 `EvictIdleEndpoints()`）。池构造时会克隆传入的 options，`pool.Options` 也返回副本——事后修改自己持有的对象不影响已建成的池。
 >
@@ -1288,9 +1307,9 @@ using var client3 = Axios.Create(
 要点：
 
 - 注入后**不创建连接池**：`client.Pool` 为 `null`、`client.UsesConnectionPool` 为 `false`，所有 origin 共用这一个 Handler（`SocketsHttpHandler` 自身仍会按 host 复用 TCP）。
-- 连接层行为完全由 Handler 决定，因此在 defaults 上设置 `MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` 会抛 `ERR_BAD_OPTION_VALUE`（避免"设了没生效"）。
+- 连接层行为完全由 Handler 决定，因此在 defaults 上设置 `Connection.MaxRedirects` / `Connection.WithCredentials` / `Connection.Proxy` / `Connection.Credentials` 会抛 `ERR_BAD_OPTION_VALUE`（避免"设了没生效"）。
 - 与 `pool` / `poolOptions` 互斥，同时传入同样抛 `ERR_BAD_OPTION_VALUE`。
-- 超时仍由库按请求控制（`HttpClient.Timeout` 内部设为 Infinite，`c.Timeout` 照常生效）；`OnUploadProgress` / `maxRate` / `maxContentLength` 等数据层能力不受影响。
+- 超时仍由库按请求控制（`HttpClient.Timeout` 内部设为 Infinite，`c.Timeout` 照常生效）；`Callbacks.OnUploadProgress` / `maxRate` / `maxContentLength` 等数据层能力不受影响。
 
 ## 特性
 
@@ -1312,7 +1331,7 @@ using var client3 = Axios.Create(
 - `maxRate`：上传、下载单向限速（字节/秒）
 - `paramsSerializer` / `formFieldNameSelector`：自定义查询串与表单字段名（对应 axios `formSerializer` 的字段名定制）
 - `transformRequest` / `transformResponse`：请求前、响应后数据变换链（线程安全，可在运行期增删；整体赋值任意 `IList` 也会被包装成线程安全实现，枚举始终走快照）
-- 🔧 **可插拔内容序列化**：默认 JSON（System.Text.Json），**内置 XML**（`XmlContentSerializer`）；`JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；实现 `IContentSerializer`（文本格式两个方法 + 二进制格式一对字节通道 `SerializeToBytes` / `Deserialize(bytes)` + 可选的 `MediaType` 自报媒体类型）即可换成 YAML / Protobuf / 换掉 JSON 引擎（`AxiosContent.Serializer` 全局注入），请求头由序列化器自动对齐
+- 🔧 **可插拔内容序列化**：默认 JSON（System.Text.Json），**内置 XML**（`XmlContentSerializer`）；`Serialization.JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；实现 `IContentSerializer`（文本格式两个方法 + 二进制格式一对字节通道 `SerializeToBytes` / `Deserialize(bytes)` + 可选的 `MediaType` 自报媒体类型）即可换成 YAML / Protobuf / 换掉 JSON 引擎（`AxiosContent.Serializer` 全局注入），请求头由序列化器自动对齐
 - `postForm` / `putForm` / `patchForm`：一行发 `multipart/form-data` 或表单
 - 完整响应结构：`Data / Status / StatusText / Headers / Config / Request`
 
@@ -1350,17 +1369,17 @@ using var client3 = Axios.Create(
 | —（无对应） | `AxiosContentType` 预置常量：`Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml` |
 | `responseType: 'json'/'text'/'arraybuffer'/'stream'` | `ResponseType.Json/Text/ArrayBuffer/Stream` |
 | —（JS 天然动态） | `GetAsync<dynamic>` / `ResponseType.Dynamic` |
-| —（无对应配置） | `RequestEncoding` / `ResponseEncoding`（请求/响应文本编码） |
-| `validateStatus` | `c.ValidateStatus = status => ...` |
+| —（无对应配置） | `Serialization.RequestEncoding` / `Serialization.ResponseEncoding`（请求/响应文本编码） |
+| `validateStatus` | `c.Callbacks.ValidateStatus = status => ...` |
 | `timeout` / `AbortController` | `c.Timeout` / `c.CancellationToken` |
-| `auth: {username,password}` | `c.Auth = new AxiosAuth(user, pass)` |
-| `withCredentials` / `proxy` / `maxRedirects` | 同名属性（**仅实例级**生效：按请求写与实例不同的值会抛 `ERR_BAD_OPTION_VALUE`，见下） |
-| `maxContentLength` / `maxBodyLength` | 同名属性（`long?`，字节；超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`） |
-| `maxRate` | `c.MaxRate`（字节/秒，上传下载共用） |
-| `onUploadProgress` / `onDownloadProgress` | 同名属性（`Action<AxiosProgressEvent>`） |
-| `timeoutMessage` | `c.TimeoutMessage` |
-| `paramsSerializer` | `c.ParamsSerializer` 或实例级 `Defaults.ParamsSerializer`（返回已编码查询串） |
-| `formSerializer`（字段名/嵌套风格） | `c.FormFieldNameSelector`（`Func<string?, string, string>`，`(父级名, 当前名) => 最终名`；默认 `prefix[name]`） |
+| `auth: {username,password}` | `c.Connection.Auth = new AxiosAuth(user, pass)` |
+| `withCredentials` / `proxy` / `maxRedirects` | `Connection` 子对象上的同名属性（**仅实例级**生效：按请求写与实例不同的值会抛 `ERR_BAD_OPTION_VALUE`，见下） |
+| `maxContentLength` / `maxBodyLength` | `Limits` 子对象上的同名属性（`long?`，字节；超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`） |
+| `maxRate` | `c.Limits.MaxRate`（字节/秒，上传下载共用） |
+| `onUploadProgress` / `onDownloadProgress` | `Callbacks` 子对象上的同名属性（`Action<AxiosProgressEvent>`） |
+| `timeoutMessage` | `c.Callbacks.TimeoutMessage` |
+| `paramsSerializer` | `c.Serialization.ParamsSerializer` 或实例级 `Defaults.Serialization.ParamsSerializer`（返回已编码查询串） |
+| `formSerializer`（字段名/嵌套风格） | `c.Serialization.FormFieldNameSelector`（`Func<string?, string, string>`，`(父级名, 当前名) => 最终名`；默认 `prefix[name]`） |
 | `transformRequest` / `transformResponse` | 同名属性（`IList<Func<object?, AxiosConfig, object?>>`，顺序执行、可追加） |
 | `AxiosError.code` | `AxiosException.Code`（同名字符串），另有 `Status` / `Cause` / `ToJson()` |
 | `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
@@ -1376,15 +1395,15 @@ using var client3 = Axios.Create(
 4. 取消使用 `CancellationToken`（语义等同 `AbortController`）；
 5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
-7. 请求/响应文本编码可通过 `RequestEncoding` / `ResponseEncoding` 显式控制（axios 无对应配置项）；
+7. 请求/响应文本编码可通过 `Serialization.RequestEncoding` / `Serialization.ResponseEncoding` 显式控制（axios 无对应配置项）；
 8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上写**与实例生效值不同**的值会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast），**复述实例的等价设置**则等价于不写、正常放行（`withCredentials` / `maxRedirects` 按**值**比较；`proxy` / `credentials` / `poolOptions` 没有可靠的等值定义，按**引用**比较 —— 只认实例 defaults 上的同一个对象）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头用 `config.RemoveHeaders.Add("X-Foo")`；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
 12. **请求头写入即校验**：头部名必须是 RFC 7230 token，取值不允许出现 C0 控制字符（`HTAB` 除外）与 `DEL`，否则 `AxiosHeaders.Set`（以及 `AxiosConfig.ContentType`）抛 `ArgumentException`（axios/JS 侧不做这层校验）。浏览器/Node 的 HTTP 栈会自行拆分 CRLF，.NET 的 `TryAddWithoutValidation` 不会——不校验就等于把请求拆分（CWE-113）的口子开着；
-13. **`WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
+13. **`Connection.WithCredentials` 的 Cookie 容器按域共享**（整个池一份，不再每个 origin 一份），这样跨子域/换端口的会话与浏览器行为一致；
 14. `Timeout` 上限约 49.7 天，超出会收敛到上限而不是抛异常（`Timeout = 0` 才是真正的无限超时）；
-15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `ParamsSerializer`；
+15. **`params` 用 RFC 3986 严格编码**（`Uri.EscapeDataString`），与 axios 默认 `encode()` 的字符集不同：空格是 `%20` 而不是 `+`，`!'()*` 与 `,:$` 也会被编码。这套编码对 OSS/S3 一类预签名反而更合适；需要 axios 的原始形态时传自定义 `Serialization.ParamsSerializer`；
 16. **multipart 的字段名/文件名发送前就校验**：`"`、`\`、`CR`/`LF` 与控制字符会破坏 `Content-Disposition` 的 quoted-string，直接抛 `ERR_BAD_OPTION_VALUE`（`FormFile` 的 `FileName` 与 `FieldName` **都在构造时**抛 `ArgumentException`，不留到发布期），而不是让服务端静默收到错位的键名（浏览器 `FormData` 对这些字符的处理各不相同，axios 侧无法依赖）；装配失败（含根节点缺字段名）同样报 `ERR_BAD_OPTION_VALUE`，并**释放已交进来的 `Stream`**（`FormFile.Content` / 裸 `Stream` 部件）—— 不会把已打开的句柄退回给调用方；
 17. **`ContentType` 是 `string` 而非枚举**（`Content-Type` 由媒体类型 + `charset`/`boundary` 参数组成，枚举表达不了），常用值以 `AxiosContentType` 常量提供——与 BCL 的 `HttpMethod.Get` + `new HttpMethod("PROPFIND")` 是同一套「预置常量 + 任意自定义」思路。
 
@@ -1486,9 +1505,12 @@ internal partial class ApiJsonContext : JsonSerializerContext { }
 var client = new AxiosClient(new AxiosConfig
 {
     BaseAddress = "https://api.example.com",
-    JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    Serialization = new()
     {
-        TypeInfoResolver = ApiJsonContext.Default,
+        JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            TypeInfoResolver = ApiJsonContext.Default,
+        },
     },
 });
 ```
@@ -1545,11 +1567,11 @@ dotnet build AxiosNet.sln -c Release
 **序列化与安全**
 
 - **序列化可插拔**（`JsonCustomizationTests` / `ContentSerializerTests`）
-  - 自定义 `IContentSerializer` 驱动请求/响应、实例级 `JsonSerializerOptions`、transform 列表并发增删
+  - 自定义 `IContentSerializer` 驱动请求/响应、实例级 `Serialization.JsonSerializerOptions`、transform 列表并发增删
   - XML 端到端、基础类型不经过序列化器、非泛型 `JsonElement`/原文、表单与序列化器解耦、XML 下 dynamic 明确失败
   - 二进制响应走字节入口（非 UTF-8 尾字节原样到达、零解码）、文本序列化器在 `octet-stream` 下的默认兜底
   - 二进制请求出口（对象 → 字节正文 + 自报 `MediaType`、不补 charset、显式 `ContentType` 优先、表单/标量不进字节通道）
-  - 内置 XML 序列化器：声明编码跟随 `ContentType` 的 charset / `RequestEncoding`、无命名空间噪音、`[XmlRoot]` 命名空间、拒绝 DTD
+  - 内置 XML 序列化器：声明编码跟随 `ContentType` 的 charset / `Serialization.RequestEncoding`、无命名空间噪音、`[XmlRoot]` 命名空间、拒绝 DTD
   - multipart 装配失败时释放调用方 `Stream`（非法字段名 / 根节点缺名两条路径都是 `ERR_BAD_OPTION_VALUE`）；`JsonDocument` 目标与序列化器绑定的边界；标量请求体与字典归属；序列化器自报 `MediaType` 回填请求头（显式/实例默认 ContentType 优先、默认 null 零破坏）
 - **安全与加固**（`HardeningTests`）
   - 请求头 CRLF/控制字符与非法名称拦截（防 HTTP 请求拆分）、`poolOptions.MaxAutomaticRedirections` 不被未显式设置的默认值覆盖
@@ -1562,11 +1584,11 @@ dotnet build AxiosNet.sln -c Release
 
 - **故障与并发**（`ReviewRegressionTests`）：流式 4xx 释放连接、截断响应 / 非 JSON dynamic 的错误码、并发修改默认请求头、params 索引器、`Timeout = 0` 覆盖、流式正文超时、下载期间租约不被驱逐
 - **全局审查**（`Audit20261022GlobalAuditFixTests`，25 个用例）
-  - `MaxRedirects` 按请求校验对齐池生效值（不再用属性默认值 5 短路）、内置 JSON 字节入口剥 UTF-8 BOM、查询绑定值全为 null 时不再清空实例默认 `params`
+  - `Connection.MaxRedirects` 按请求校验对齐池生效值（不再用属性默认值 5 短路）、内置 JSON 字节入口剥 UTF-8 BOM、查询绑定值全为 null 时不再清空实例默认 `params`
   - 协议相对 URL（`//host`）按 baseURL 的 scheme 补全、序列化器抛 `OperationCanceledException` 归一为 `ERR_CANCELED` 而非 `ERR_BAD_RESPONSE`、非法 HTTP 方法 token 统一 `InvalidOperationException` 并入错误缓存
   - `DateOnly` / `TimeOnly` / `Uri` 的标量判定（与 params 序列化共用一份清单）、`Defaults.RemoveHeaders` 在快捷与 `RequestAsync` 两条入口一致、拦截器返回 null Task 的明确报错
-  - `GetStatistics` 取自同一快照、容量驱逐按最久未使用、`ContentType` 空值 fail-fast、`ContentType` charset 与 `RequestEncoding` 矛盾时 fail-fast、自建池连接级选项重复传入 fail-fast
-- **第二轮排查**（`Audit20261022MultipartXmlFixTests`，12 个用例）：multipart 字段名校验失败时释放调用方 `Stream`（非法字段名与根节点缺名两条路径，错误码统一 `ERR_BAD_OPTION_VALUE`）、`FormFile.FieldName` 与 `FileName` 一样在赋值处 fail-fast、成功路径的流所有权不变、XML 声明编码跟随 `ContentType` 声明的 charset / `RequestEncoding`（默认仍是 utf-8）；`InterceptorTests` 另补两条：限制类配置的范围校验针对拦截器之后的生效配置（拦截器写 `Timeout = -1` 被拒、拦截器修正调用方的非法值可通过）
+  - `GetStatistics` 取自同一快照、容量驱逐按最久未使用、`ContentType` 空值 fail-fast、`ContentType` charset 与 `Serialization.RequestEncoding` 矛盾时 fail-fast、自建池连接级选项重复传入 fail-fast
+- **第二轮排查**（`Audit20261022MultipartXmlFixTests`，12 个用例）：multipart 字段名校验失败时释放调用方 `Stream`（非法字段名与根节点缺名两条路径，错误码统一 `ERR_BAD_OPTION_VALUE`）、`FormFile.FieldName` 与 `FileName` 一样在赋值处 fail-fast、成功路径的流所有权不变、XML 声明编码跟随 `ContentType` 声明的 charset / `Serialization.RequestEncoding`（默认仍是 utf-8）；`InterceptorTests` 另补两条：限制类配置的范围校验针对拦截器之后的生效配置（拦截器写 `Timeout = -1` 被拒、拦截器修正调用方的非法值可通过）
 - **P2 修复**（`Audit20261022P2FixTests`，5 个用例）：307 重定向下上传进度跨次累计且单调、百分比封顶 100%；transform 链整体赋值任意 `IList` 后被包装成线程安全实现、已包装实例不重复包装；Basic 用户名含冒号构造期拒绝、密码可含冒号
 - **第三轮排查**（`Audit20261022Round3FixTests`，10 个用例）
   - 快捷方法 `url` 为 null / 空白时 fail-fast 为 `ERR_INVALID_URL`；上传 / 下载进度回调与 `paramsSerializer` 抛出的异常统一成 `AxiosException`（上传侧不再被 HttpClient 包成 `HttpRequestException` 而误报 `ERR_NETWORK`，下载侧为 `ERR_BAD_RESPONSE`、配置侧为 `ERR_BAD_OPTION_VALUE`，原始异常进 `Cause`）
@@ -1574,7 +1596,7 @@ dotnet build AxiosNet.sln -c Release
   - `AxiosHeaders` 写时复制在 3000 步随机操作下与朴素字典模型逐实例一致；内置 Bearer 的 scheme 处理
 - **第三轮待修项**（`Audit20261022Round3PendingFixTests`，2 个用例）：`AxiosHeaders` 的「取独占存储」改用重试消除并发克隆污染（用反射 + 持锁钉死线程交错）；`Content-Length: 0` 却有正文时下载进度持续上报到 EOF（修复前 512 KB 只报一次 `loaded=首块 / total=0`）
 - **2026-10-23 第二轮审查**（`Audit20261023Round2Tests`，5 个用例）
-  - STJ 字节入口按声明的 `charset` / 强制 `ResponseEncoding` 解码（UTF-16 无 BOM 也能读对），与接口默认语义一致
+  - STJ 字节入口按声明的 `charset` / 强制 `Serialization.ResponseEncoding` 解码（UTF-16 无 BOM 也能读对），与接口默认语义一致
   - SSE 分帧支持裸 CR、LF、CRLF 三种行尾（WHATWG）；CRLF 跨两次读取时不会多交付空帧；强制非 ASCII 兼容编码在取流时即报 `ERR_BAD_RESPONSE`
 
 **声明式客户端与 DI**

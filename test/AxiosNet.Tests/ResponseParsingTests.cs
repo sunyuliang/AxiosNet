@@ -214,7 +214,7 @@ public sealed class ResponseParsingTests
         var forced = await client.GetAsync(server.Url, c =>
         {
             c.ResponseType = ResponseType.Text;
-            c.ResponseEncoding = Encoding.Unicode;
+            c.Serialization.ResponseEncoding = Encoding.Unicode;
         });
         Assert.Equal("你好", forced.Data);
     }
@@ -234,7 +234,7 @@ public sealed class ResponseParsingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }, statusCode));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = _ => true);
 
         Assert.Equal(statusCode, response.Status);
         Assert.Equal(expected, response.StatusText);
@@ -246,7 +246,7 @@ public sealed class ResponseParsingTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }, 599));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = _ => true);
 
         Assert.Equal(599, response.Status);
         Assert.Equal(string.Empty, response.StatusText);

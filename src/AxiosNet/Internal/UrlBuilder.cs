@@ -206,7 +206,7 @@ internal static class ParamsSerializer
         try
         {
             var pairs = new List<KeyValuePair<string, string>>(8);
-            var format = config?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
+            var format = config?.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
             if (paramsObj is JsonElement rootElement)
             {
                 // 直接传 JsonElement 必须按 JSON 树展开；走反射兜底只会把 ValueKind / RawText 序列化出去。

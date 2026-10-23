@@ -22,8 +22,9 @@ internal static class RequestBodyFactory
     {
         // 请求体文本编码：默认 UTF-8；charset 只在显式设置 RequestEncoding 时写入，
         // 避免给 json 强加 charset 参数。
-        var encoding = config.RequestEncoding ?? Encoding.UTF8;
-        var appendCharset = config.RequestEncoding is not null;
+        var requestEncoding = config.SerializationOrNull?.RequestEncoding;
+        var encoding = requestEncoding ?? Encoding.UTF8;
+        var appendCharset = requestEncoding is not null;
         var mediaType = config.ContentType;
 
         // 显式声明的 charset 是比 RequestEncoding 更具体的编码声明（ContentType「显式设置过以本项为准」）：
@@ -35,7 +36,7 @@ internal static class RequestBodyFactory
             && EncodesText(data)
             && RequestContentType.GetCharsetEncoding(mediaType) is { } declared)
         {
-            if (config.RequestEncoding is { } requested && declared.CodePage != requested.CodePage)
+            if (requestEncoding is { } requested && declared.CodePage != requested.CodePage)
             {
                 throw AxiosException.InvalidOption(
                     $"ContentType 声明的 charset（{declared.WebName}）与 RequestEncoding（{requested.WebName}）不一致："

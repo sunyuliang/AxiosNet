@@ -86,15 +86,15 @@ public sealed class AxiosException : Exception
 
     internal static AxiosException Timeout(AxiosConfig config, HttpRequestMessage request, Exception? inner = null)
     {
-        var message = string.IsNullOrWhiteSpace(config.TimeoutMessage)
+        var message = string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage)
             ? $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded"
-            : config.TimeoutMessage!;
+            : config.CallbacksOrNull!.TimeoutMessage!;
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner);
     }
 
     /// <summary>
-    /// 流式正文的空闲超时（<see cref="AxiosConfig.StreamIdleTimeout"/>）：连续一段时间没读到数据。
+    /// 流式正文的空闲超时（<see cref="AxiosConfig.LimitSettings.StreamIdleTimeout"/>）：连续一段时间没读到数据。
     /// 与整体 <see cref="Timeout"/> 分开报，避免把「流挂了」说成「请求超时」。
     /// </summary>
     internal static AxiosException StreamIdleTimeout(AxiosConfig config, HttpRequestMessage? request, TimeSpan idle, Exception? inner = null)
@@ -211,7 +211,8 @@ public sealed class AxiosException : Exception
     }
 
     /// <summary>
-    /// 进度回调（<see cref="AxiosConfig.OnUploadProgress"/> / <see cref="AxiosConfig.OnDownloadProgress"/>）抛出异常：
+    /// 进度回调（<see cref="AxiosConfig.CallbackSettings.OnUploadProgress"/> /
+    /// <see cref="AxiosConfig.CallbackSettings.OnDownloadProgress"/>）抛出异常：
     /// 回调是请求管线的一部分，异常不能以裸类型漏给调用方。
     /// <para>
     /// 错误码按方向取：上传阶段正文还没发出去 → <c>ERR_BAD_REQUEST</c>；

@@ -48,7 +48,7 @@ public sealed class LowPriorityRegressionTests
         var uri = client.GetUri(c =>
         {
             c.Url = "http://host/p";
-            c.ParamsSerializer = _ => "q=%41%7E%2B";
+            c.Serialization.ParamsSerializer = _ => "q=%41%7E%2B";
         });
 
         // %41/%7E 是非保留字符（归一化为 A/~），%2B 是保留字符（保持转义）
@@ -288,7 +288,10 @@ public sealed class LowPriorityRegressionTests
     {
         var defaults = new AxiosConfig
         {
-            PoolOptions = new ConnectionPoolOptions { MaxConnectionsPerServer = 0 }
+            Connection = new()
+            {
+                PoolOptions = new ConnectionPoolOptions { MaxConnectionsPerServer = 0 },
+            },
         };
 
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(defaults));

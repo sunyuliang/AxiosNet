@@ -95,7 +95,7 @@ public sealed partial class AxiosClient
         // 必须能压住实例默认的凭据（用 ?? 会把实例凭据发到本应匿名的端点）。
         if (perCall.AuthSet)
         {
-            merged.Auth = perCall.Auth;
+            merged.Connection.Auth = perCall.ConnectionOrNull?.Auth;
         }
 
         // 只在显式设置时覆盖：new AxiosConfig() 的默认值会把实例默认吞掉。
@@ -105,38 +105,72 @@ public sealed partial class AxiosClient
         {
             merged.ResponseType = perCall.ResponseType;
         }
-        merged.ValidateStatus = perCall.ValidateStatus ?? merged.ValidateStatus;
+        // 回调 / 序列化项只在有值时写回：无条件赋值会在每个请求上把分组对象建出来，
+        // 正抵消「不用的功能项不占对象」的收益。
+        var perCallCallbacks = perCall.CallbacksOrNull;
+        var mergedCallbacks = merged.CallbacksOrNull;
+
+        if ((perCallCallbacks?.ValidateStatus ?? mergedCallbacks?.ValidateStatus) is { } validateStatus)
+        {
+            merged.Callbacks.ValidateStatus = validateStatus;
+        }
+
         merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
-        merged.HttpVersion = perCall.HttpVersion ?? merged.HttpVersion;
-        merged.JsonSerializerOptions = perCall.JsonSerializerOptions ?? merged.JsonSerializerOptions;
-        merged.ContentSerializer = perCall.ContentSerializer ?? merged.ContentSerializer;
-        merged.RequestEncoding = perCall.RequestEncoding ?? merged.RequestEncoding;
-        merged.ResponseEncoding = perCall.ResponseEncoding ?? merged.ResponseEncoding;
+
+        var perCallConnection = perCall.ConnectionOrNull;
+        if ((perCallConnection?.HttpVersion ?? merged.ConnectionOrNull?.HttpVersion) is { } httpVersion)
+        {
+            merged.Connection.HttpVersion = httpVersion;
+        }
+
+        var perCallSerialization = perCall.SerializationOrNull;
+        var mergedSerialization = merged.SerializationOrNull;
+
+        if ((perCallSerialization?.JsonSerializerOptions ?? mergedSerialization?.JsonSerializerOptions) is { } jsonOptions)
+        {
+            merged.Serialization.JsonSerializerOptions = jsonOptions;
+        }
+
+        if ((perCallSerialization?.ContentSerializer ?? mergedSerialization?.ContentSerializer) is { } serializer)
+        {
+            merged.Serialization.ContentSerializer = serializer;
+        }
+
+        if ((perCallSerialization?.RequestEncoding ?? mergedSerialization?.RequestEncoding) is { } requestEncoding)
+        {
+            merged.Serialization.RequestEncoding = requestEncoding;
+        }
+
+        if ((perCallSerialization?.ResponseEncoding ?? mergedSerialization?.ResponseEncoding) is { } responseEncoding)
+        {
+            merged.Serialization.ResponseEncoding = responseEncoding;
+        }
 
         // 后加的配置：Proxy/Credentials 已按「按请求设置」拦掉，WithCredentials/MaxRedirects 属实例级，均不参与合并。
         if (perCall.MaxContentLengthSet)
         {
-            merged.MaxContentLength = perCall.MaxContentLength;
+            merged.Limits.MaxContentLength = perCall.LimitsOrNull?.MaxContentLength;
         }
 
         if (perCall.MaxBodyLengthSet)
         {
-            merged.MaxBodyLength = perCall.MaxBodyLength;
+            merged.Limits.MaxBodyLength = perCall.LimitsOrNull?.MaxBodyLength;
         }
 
         if (perCall.MaxRateSet)
         {
-            merged.MaxRate = perCall.MaxRate;
+            merged.Limits.MaxRate = perCall.LimitsOrNull?.MaxRate;
         }
 
         if (perCall.CollectionFormatSet)
         {
-            merged.CollectionFormat = perCall.CollectionFormat;
+            merged.Serialization.CollectionFormat =
+                perCall.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
         }
 
         if (perCall.StreamIdleTimeoutSet)
         {
-            merged.StreamIdleTimeout = perCall.StreamIdleTimeout;
+            merged.Limits.StreamIdleTimeout = perCall.LimitsOrNull?.StreamIdleTimeout;
         }
 
         // 实例级选项必须合并进来，否则按请求写的值到不了 ValidatePerRequestOptions（它判的是生效配置）。
@@ -145,24 +179,55 @@ public sealed partial class AxiosClient
         {
             if (perCall.WithCredentialsSet)
             {
-                merged.WithCredentials = perCall.WithCredentials;
+                merged.Connection.WithCredentials = perCallConnection?.WithCredentials ?? false;
             }
 
             if (perCall.MaxRedirectsSet)
             {
-                merged.MaxRedirects = perCall.MaxRedirects;
+                merged.Connection.MaxRedirects = perCallConnection?.MaxRedirects ?? 5;
             }
 
-            merged.Proxy = perCall.Proxy ?? merged.Proxy;
-            merged.Credentials = perCall.Credentials ?? merged.Credentials;
-            merged.PoolOptions = perCall.PoolOptions ?? merged.PoolOptions;
+            if (perCallConnection?.Proxy is { } proxy)
+            {
+                merged.Connection.Proxy = proxy;
+            }
+
+            if (perCallConnection?.Credentials is { } credentials)
+            {
+                merged.Connection.Credentials = credentials;
+            }
+
+            if (perCallConnection?.PoolOptions is { } poolOptions)
+            {
+                merged.Connection.PoolOptions = poolOptions;
+            }
         }
 
-        merged.TimeoutMessage = perCall.TimeoutMessage ?? merged.TimeoutMessage;
-        merged.OnUploadProgress = perCall.OnUploadProgress ?? merged.OnUploadProgress;
-        merged.OnDownloadProgress = perCall.OnDownloadProgress ?? merged.OnDownloadProgress;
-        merged.ParamsSerializer = perCall.ParamsSerializer ?? merged.ParamsSerializer;
-        merged.FormFieldNameSelector = perCall.FormFieldNameSelector ?? merged.FormFieldNameSelector;
+        if ((perCallCallbacks?.TimeoutMessage ?? mergedCallbacks?.TimeoutMessage) is { } timeoutMessage)
+        {
+            merged.Callbacks.TimeoutMessage = timeoutMessage;
+        }
+
+        if ((perCallCallbacks?.OnUploadProgress ?? mergedCallbacks?.OnUploadProgress) is { } onUploadProgress)
+        {
+            merged.Callbacks.OnUploadProgress = onUploadProgress;
+        }
+
+        if ((perCallCallbacks?.OnDownloadProgress ?? mergedCallbacks?.OnDownloadProgress) is { } onDownloadProgress)
+        {
+            merged.Callbacks.OnDownloadProgress = onDownloadProgress;
+        }
+
+        if ((perCallSerialization?.ParamsSerializer ?? mergedSerialization?.ParamsSerializer) is { } paramsSerializer)
+        {
+            merged.Serialization.ParamsSerializer = paramsSerializer;
+        }
+
+        if ((perCallSerialization?.FormFieldNameSelector ?? mergedSerialization?.FormFieldNameSelector)
+            is { } formFieldNameSelector)
+        {
+            merged.Serialization.FormFieldNameSelector = formFieldNameSelector;
+        }
 
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定。
         // 按委托引用跳过 merged 初始链（= 实例默认链）里已有的项：回放 response.Config 时，
@@ -328,11 +393,11 @@ public sealed partial class AxiosClient
         }
 
         // HasHeaders 先判：没有自定义头时不必为一次「有没有 Authorization」的检查建出集合。
-        if (config.Auth is not null
+        if (config.ConnectionOrNull?.Auth is { } auth
             && !(config.HasHeaders && config.Headers.Has("Authorization"))
             && !request.Headers.Contains("Authorization"))
         {
-            request.Headers.TryAddWithoutValidation("Authorization", config.Auth.ToBasicHeaderValue());
+            request.Headers.TryAddWithoutValidation("Authorization", auth.ToBasicHeaderValue());
         }
     }
 

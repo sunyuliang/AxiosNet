@@ -22,7 +22,7 @@ public sealed class ErrorModelTests
             c =>
             {
                 c.Timeout = TimeSpan.FromMilliseconds(100);
-                c.TimeoutMessage = "上游响应超时，请稍后重试";
+                c.Callbacks.TimeoutMessage = "上游响应超时，请稍后重试";
             }));
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);

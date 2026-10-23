@@ -28,7 +28,7 @@ public sealed class NewtonsoftJsonExample : IExample
         using var newtonsoft = Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
-            c.ContentSerializer = new NewtonsoftJsonSerializer();
+            c.Serialization.ContentSerializer = new NewtonsoftJsonSerializer();
         });
 
         // 对比用的默认实例（System.Text.Json，Web 默认 camelCase）

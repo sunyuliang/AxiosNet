@@ -74,7 +74,7 @@ public sealed class RedirectSemanticsTests
         });
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url + "redir", c => c.Auth = new AxiosAuth("user", "secret"));
+        await client.GetAsync(server.Url + "redir", c => c.Connection.Auth = new AxiosAuth("user", "secret"));
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(TestJson.BasicAuth("user", "secret"), server.Received[0].Headers["authorization"]);
@@ -92,7 +92,13 @@ public sealed class RedirectSemanticsTests
             "/final" => TestJson.Response(new { ok = true }),
             _ => new TestResponse(404)
         });
-        using var client = new AxiosClient(new AxiosConfig { MaxRedirects = 0 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Connection = new()
+            {
+                MaxRedirects = 0,
+            },
+        });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "redir"));
 

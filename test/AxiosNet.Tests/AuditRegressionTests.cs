@@ -312,7 +312,7 @@ public sealed class AuditRegressionTests
             {
                 c.ContentType = "multipart/form-data";
                 c.Headers.Set("Content-Type", "multipart/form-data");
-                c.OnUploadProgress = _ => events++;
+                c.Callbacks.OnUploadProgress = _ => events++;
             });
 
         Assert.Contains("boundary=", server.Received[0].Headers["Content-Type"]);
@@ -327,7 +327,7 @@ public sealed class AuditRegressionTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.PoolOptions = new ConnectionPoolOptions()));
+            client.GetAsync(server.Url + "x", c => c.Connection.PoolOptions = new ConnectionPoolOptions()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);

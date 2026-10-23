@@ -21,7 +21,7 @@ public sealed class ProgressAndRateTests
         var events = new List<AxiosProgressEvent>();
 
         await client.GetAsync<byte[]>(server.Url + "file", c =>
-            c.OnDownloadProgress = events.Add);
+            c.Callbacks.OnDownloadProgress = events.Add);
 
         Assert.NotEmpty(events);
         var last = events[^1];
@@ -44,7 +44,7 @@ public sealed class ProgressAndRateTests
         var payload = new byte[size];
 
         await client.PostAsync(server.Url + "upload", payload, c =>
-            c.OnUploadProgress = events.Add);
+            c.Callbacks.OnUploadProgress = events.Add);
 
         Assert.NotEmpty(events);
         var last = events[^1];
@@ -67,7 +67,7 @@ public sealed class ProgressAndRateTests
 
         var events = new List<AxiosProgressEvent>();
         var response = await client.GetAsync<Stream>(server.Url + "file", c =>
-            c.OnDownloadProgress = events.Add);
+            c.Callbacks.OnDownloadProgress = events.Add);
 
         // 返回流时还没开始读，进度可能为 0 条
         await using (var stream = response.Data!)
@@ -90,7 +90,7 @@ public sealed class ProgressAndRateTests
         using var client = new AxiosClient();
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.MaxRate = rate);
+        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Limits.MaxRate = rate);
         stopwatch.Stop();
 
         Assert.Equal(size, response.Data!.Length);
@@ -112,7 +112,7 @@ public sealed class ProgressAndRateTests
 
         var events = new List<AxiosProgressEvent>();
         var response = await client.GetAsync<Stream>(server.Url + "file", c =>
-            c.OnDownloadProgress = events.Add);
+            c.Callbacks.OnDownloadProgress = events.Add);
 
         await using var stream = response.Data!;
         using var buffer = new MemoryStream();
@@ -143,7 +143,7 @@ public sealed class ProgressAndRateTests
         await using var server = TestHttpServer.Start(_ => Binary(size));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<Stream>(server.Url + "file", c => c.MaxRate = rate);
+        var response = await client.GetAsync<Stream>(server.Url + "file", c => c.Limits.MaxRate = rate);
 
         var stopwatch = Stopwatch.StartNew();
         await using var stream = response.Data!;
@@ -173,7 +173,7 @@ public sealed class ProgressAndRateTests
         using var client = new AxiosClient();
 
         var stopwatch = Stopwatch.StartNew();
-        await client.PostAsync(server.Url + "upload", new byte[size], c => c.MaxRate = rate);
+        await client.PostAsync(server.Url + "upload", new byte[size], c => c.Limits.MaxRate = rate);
         stopwatch.Stop();
 
         Assert.Equal(size, server.Received[0].Body.Length);
@@ -192,7 +192,7 @@ public sealed class ProgressAndRateTests
         var done = new List<AxiosProgressEvent>();
 
         await client.GetAsync<byte[]>(server.Url + "file", c =>
-            c.OnDownloadProgress = e =>
+            c.Callbacks.OnDownloadProgress = e =>
             {
                 if (e.Loaded >= size)
                 {
@@ -215,7 +215,7 @@ public sealed class ProgressAndRateTests
         var done = new List<AxiosProgressEvent>();
 
         await client.PostAsync(server.Url + "upload", new byte[size], c =>
-            c.OnUploadProgress = e =>
+            c.Callbacks.OnUploadProgress = e =>
             {
                 if (e.Loaded >= size)
                 {

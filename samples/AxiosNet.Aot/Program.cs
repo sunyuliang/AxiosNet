@@ -29,7 +29,7 @@ if (modelErrors.Count > 0)
 var http = new AxiosClient(new AxiosConfig
 {
     BaseAddress = server.BaseAddress,
-    JsonSerializerOptions = jsonOptions,
+    Serialization = new() { JsonSerializerOptions = jsonOptions },
 });
 
 var payload = new Person("alice", 30, new Address("Shanghai", "200000"));
@@ -38,7 +38,7 @@ var posted = await http.PostAsync<Person>("/echo", payload);
 // 2) 声明式：请求模型上的路由 / 参数特性由反射绑定
 var api = new ApiClient(server.BaseAddress, defaults =>
 {
-    defaults.JsonSerializerOptions = jsonOptions;
+    defaults.Serialization.JsonSerializerOptions = jsonOptions;
 });
 
 var fetched = await api.RequestAsync(new GetPersonRequest { Id = 7 });

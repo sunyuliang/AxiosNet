@@ -34,7 +34,7 @@ namespace AxiosNet.Serialization;
 /// </para>
 /// <para>
 /// 实现说明：<see cref="XmlSerializer"/> 构造开销很大，按类型缓存且线程安全；XML 声明的 <c>encoding</c>
-/// 跟随 <see cref="AxiosConfig.RequestEncoding"/>（必须与实际写 socket 的编码一致）；
+/// 跟随 <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/>（必须与实际写 socket 的编码一致）；
 /// 默认命名空间为空以免请求体里塞满 <c>xmlns:xsi</c> 噪音；反序列化禁用 DTD（防 XXE / 十亿笑声）。
 /// </para>
 /// <para>
@@ -77,7 +77,7 @@ public sealed class XmlContentSerializer : IContentSerializer
         // 这里必须用同一套解析：只看 RequestEncoding 会让「ContentType = application/xml; charset=gb2312」
         // 这种写法产出「声明 utf-8、正文 gb2312」的损坏文档（非 ASCII 字符还会被替换成 '?'）。
         var encoding = RequestContentType.GetCharsetEncoding(config.ContentType)
-            ?? config.RequestEncoding
+            ?? config.SerializationOrNull?.RequestEncoding
             ?? Encoding.UTF8;
 
         using var text = new DeclaredEncodingStringWriter(encoding);

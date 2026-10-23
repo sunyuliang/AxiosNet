@@ -21,7 +21,7 @@ public sealed class XmlSerializationExample : IExample
         using var xml = Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
-            c.ContentSerializer = XmlContentSerializer.Instance;
+            c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
         });
 
         var user = new XmlUser { Id = 1, Name = "alice", Age = 30 };

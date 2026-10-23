@@ -32,7 +32,14 @@ public sealed class Audit20261021P0FixTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig { Url = "x", MaxRedirects = 0 }));
+            client.RequestAsync(new AxiosConfig
+            {
+                Url = "x",
+                Connection = new()
+                {
+                    MaxRedirects = 0,
+                },
+            }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
     }
@@ -44,7 +51,14 @@ public sealed class Audit20261021P0FixTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig { Url = "x", WithCredentials = true }));
+            client.RequestAsync(new AxiosConfig
+            {
+                Url = "x",
+                Connection = new()
+                {
+                    WithCredentials = true,
+                },
+            }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
     }
@@ -56,7 +70,14 @@ public sealed class Audit20261021P0FixTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig { Url = "x", Proxy = new WebProxy("http://127.0.0.1:1") }));
+            client.RequestAsync(new AxiosConfig
+            {
+                Url = "x",
+                Connection = new()
+                {
+                    Proxy = new WebProxy("http://127.0.0.1:1"),
+                },
+            }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
     }
@@ -71,7 +92,10 @@ public sealed class Audit20261021P0FixTests
             client.RequestAsync(new AxiosConfig
             {
                 Url = "x",
-                PoolOptions = new ConnectionPoolOptions { MaxConnectionsPerServer = 1 }
+                Connection = new()
+                {
+                    PoolOptions = new ConnectionPoolOptions { MaxConnectionsPerServer = 1 },
+                },
             }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
@@ -82,9 +106,23 @@ public sealed class Audit20261021P0FixTests
     {
         // 写与实例相同的值等价于不写：不能因为「写了」就报错。
         await using var server = TestHttpServer.Start(_ => Json());
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url, MaxRedirects = 3 });
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Connection = new()
+            {
+                MaxRedirects = 3,
+            },
+        });
 
-        var response = await client.RequestAsync(new AxiosConfig { Url = "x", MaxRedirects = 3 });
+        var response = await client.RequestAsync(new AxiosConfig
+        {
+            Url = "x",
+            Connection = new()
+            {
+                MaxRedirects = 3,
+            },
+        });
 
         Assert.Equal(200, response.Status);
     }
@@ -132,7 +170,14 @@ public sealed class Audit20261021P0FixTests
         await using var server = TestHttpServer.Start(_ => Json());
 
         // 源实例把 maxRedirects 定为 3（实例级，进的是连接池 Handler）
-        using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url, MaxRedirects = 3 });
+        using var source = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Connection = new()
+            {
+                MaxRedirects = 3,
+            },
+        });
         var first = await source.GetAsync("x");
 
         // 目标实例用默认值 5：回放不是「按请求写 MaxRedirects」，不得报 ERR_BAD_OPTION_VALUE，
@@ -141,7 +186,7 @@ public sealed class Audit20261021P0FixTests
         var replayed = await target.RequestAsync(first.Config!);
 
         Assert.Equal(200, replayed.Status);
-        Assert.Equal(5, replayed.Config!.MaxRedirects);
+        Assert.Equal(5, replayed.Config!.Connection.MaxRedirects);
     }
 
     // ------------------------------------------------------------------

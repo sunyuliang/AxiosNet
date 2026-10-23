@@ -11,7 +11,7 @@ namespace AxiosNet.Internal;
 /// </para>
 /// <para>
 /// 直接读对象结构、<b>不经过序列化器</b>：表单是独立编码通道，命名只看
-/// <see cref="AxiosConfig.FormFieldNameSelector"/> 与 <c>[JsonPropertyName]</c>（见 <see cref="BodyFields"/>）。
+/// <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 与 <c>[JsonPropertyName]</c>（见 <see cref="BodyFields"/>）。
 /// </para>
 /// </summary>
 internal static class FormBodyEncoder
@@ -26,7 +26,7 @@ internal static class FormBodyEncoder
         var pairs = new List<KeyValuePair<string, string>>(8);
         try
         {
-            CollectFormPairs(null, data, pairs, encoding, config.FormFieldNameSelector, visited: null);
+            CollectFormPairs(null, data, pairs, encoding, config.SerializationOrNull?.FormFieldNameSelector, visited: null);
         }
         catch (DataCycleException ex)
         {

@@ -119,7 +119,7 @@ public sealed class ParamsAndContentTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: "text/plain"));
         using var client = new AxiosClient();
 
-        await client.PostAsync(server.Url + "raw", "你好", c => c.RequestEncoding = Encoding.Unicode);
+        await client.PostAsync(server.Url + "raw", "你好", c => c.Serialization.RequestEncoding = Encoding.Unicode);
 
         var sent = server.Received[0];
         Assert.Equal("你好", Encoding.Unicode.GetString(sent.Body));
@@ -139,7 +139,7 @@ public sealed class ParamsAndContentTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.RequestEncoding = Encoding.Latin1;
+                c.Serialization.RequestEncoding = Encoding.Latin1;
             });
 
         var sent = server.Received[0];
@@ -161,7 +161,7 @@ public sealed class ParamsAndContentTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.RequestEncoding = Encoding.Unicode;
+                c.Serialization.RequestEncoding = Encoding.Unicode;
             });
 
         var sent = server.Received[0];
@@ -200,7 +200,7 @@ public sealed class ParamsAndContentTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url + "secure", c => c.Auth = new AxiosAuth("user", "pass"));
+        await client.GetAsync(server.Url + "secure", c => c.Connection.Auth = new AxiosAuth("user", "pass"));
 
         Assert.Equal(
             TestJson.BasicAuth("user", "pass"),
