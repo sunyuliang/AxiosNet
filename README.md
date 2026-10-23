@@ -166,7 +166,7 @@ public sealed class GetUserRequest : IApiRequest<User>
 }
 ```
 
-- **单负载模型可省 `[Body]`**：POST/PUT/PATCH 且模型恰好有一个未标注的**非标量**属性（基元类型、枚举、string、decimal、DateTime/DateTimeOffset、TimeSpan、Guid 及其可空形态除外）时，该属性默认按 Body 绑定；标量护栏保证「POST 只想带查询参数」不会被静默变成请求体，多个未标注属性时也全部维持 Query——歧义场景一律维持现状，需要 Body 时显式标注
+- **单负载模型可省 `[Body]`**：POST/PUT/PATCH 且模型恰好有一个未标注的**非标量**属性（基元类型、枚举、string、decimal、DateTime/DateTimeOffset、TimeSpan、Guid 及其可空形态除外）时，该属性默认按 Body 绑定；标量护栏保证「POST 只想带查询参数」不会被静默变成请求体，多个未标注属性时也全部维持 Query——歧义场景一律维持现状，需要 Body 时显式标注。**未标注的字典属性除外**：它始终按「平铺查询串」处理，不会被默认 Body 吞掉
 - **一个属性可绑定到多处（多特性并存）**：如 `[Path("id")]` + `[Header("X-Id")]` + `[Body]` 同标一个属性，值只读一次、分别应用。护栏：`[Path]` / `[Header]` 的属性必须是标量（路径段与请求头在线上就是文本，复杂对象只有 ToString 垃圾值，构建期报错）；`[Query]` / `[Body]` 不限
 - **不希望发送的属性**：`[ApiIgnore]` 完全排除出绑定（也不参与默认 Body 的「唯一未标注」判定）；注意它只影响绑定层面，请求体**内部**的属性序列化是请求体类型自己的事（那是 STJ 的 `[JsonIgnore]`）
 - 需要按请求微调（超时 / Content-Type / 序列化器 / responseType）：继承 `ApiRequest<T>` 覆写 `Configure(config)`，或调用 `RequestAsync(request, config => ...)`（后者在模型绑定之后执行，可覆盖模型写入的头）
@@ -194,8 +194,9 @@ await foreach (var chunk in response.Data!)
 }
 ```
 
-- **超时口径**：`Timeout` 对流式请求<b>只覆盖到响应头</b>；正文由 `client.StreamIdleTimeout` 控制——默认 `Zero` 表示不限时（只受取消令牌约束），大于零表示「连续这么久没收到数据」才失败（`ECONNABORTED`，消息里写明 idle）
+- **超时口径**：`Timeout` 对流式请求<b>只覆盖到响应头</b>；正文由 `client.StreamIdleTimeout` 控制——默认 `Zero` 表示不限时（只受取消令牌约束），大于零表示「连续这么久没收到数据」才失败（`ECONNABORTED`，消息里写明 idle）。计时只发生在真实的读写期间：调用方处理上一帧、隔很久才读下一帧不算空闲
 - **分帧在字节层**：按 `\n` 切开后再解码，跨块的多字节字符不会被破坏（反过来先解码再切行会解出 `U+FFFD`）
+- **charset 限制**：分帧依赖 `0x0A` 与字符边界对齐，因此响应 `Content-Type` 声明的 charset 必须是 ASCII 兼容（UTF-8 / US-ASCII / ISO-8859-1 / GBK 等）；`charset=utf-16` / `utf-32` 这类宽字符编码在取流时直接抛 `ERR_BAD_RESPONSE`，而不是静默切出错位的帧
 - **SSE**：多行 `data:` 以换行拼接、`:` 开头的注释当心跳忽略、`event:` / `id:` / `retry:` 忽略、`data: [DONE]` 视为流结束；**NDJSON**：每行一个 JSON，空行跳过
 - **所有权**：流只能枚举一次；`await foreach` 结束或 `break` 时枚举器被释放并归还连接，手动 `MoveNextAsync` 的调用方必须自己 `DisposeAsync`，否则该连接会一直被占用
 - **错误**：状态码错误在 `await` 抛出（`ErrorFactory` 同样接管，流式失败响应最多保留 64KB 错误体原文）；帧解析失败 `ERR_BAD_RESPONSE`，中途断流 `ERR_NETWORK`，取消 `ERR_CANCELED`

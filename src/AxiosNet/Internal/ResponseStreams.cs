@@ -47,8 +47,8 @@ internal sealed class TimeoutStream : DelegatingStream
     /// 包装流式正文。<paramref name="remaining"/> 为剩余超时预算，<c>null</c> 表示不超时
     /// （仍处理外部取消与 IO 异常翻译）。
     /// <para>
-    /// <paramref name="idleTimeout"/> 大于零时改为<b>空闲超时</b>：每次读到数据就重置计时器，
-    /// <paramref name="remaining"/> 不再参与（此时整体 timeout 只管到响应头）。
+    /// <paramref name="idleTimeout"/> 大于零时改为<b>空闲超时</b>：只在实际读写期间计时，
+    /// 单次读写连续这么久没有数据才失败；<paramref name="remaining"/> 不再参与（此时整体 timeout 只管到响应头）。
     /// </para>
     /// </summary>
     public TimeoutStream(
@@ -66,11 +66,12 @@ internal sealed class TimeoutStream : DelegatingStream
 
         _timeoutCts = new CancellationTokenSource();
 
-        // 空闲超时优先：它把整体预算从正文阶段摘出去（只剩响应头阶段由请求级计时器覆盖）
+        // 空闲超时优先：它把整体预算从正文阶段摘出去（只剩响应头阶段由请求级计时器覆盖）。
+        // 计时器不在构造时启动：调用方拿到流后可能先处理上一帧、隔很久才读下一帧，
+        // 那段时间没有网络 I/O，不能算「流不动了」。计时只在真实读写期间进行。
         if (idleTimeout is { } idle && idle > TimeSpan.Zero)
         {
             _idleTimeout = idle;
-            _timeoutCts.CancelAfter(Timeouts.Clamp(idle));
         }
         else if (remaining is TimeSpan budget)
         {
@@ -95,11 +96,10 @@ internal sealed class TimeoutStream : DelegatingStream
         ThrowIfBudgetExhausted();
 
         var (token, perCallCts) = Link(callerToken);
+        ArmIdleTimer();
         try
         {
-            var read = await Inner.ReadAsync(buffer, token).ConfigureAwait(false);
-            ResetIdleTimer();
-            return read;
+            return await Inner.ReadAsync(buffer, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
         {
@@ -114,16 +114,25 @@ internal sealed class TimeoutStream : DelegatingStream
         }
         finally
         {
+            DisarmIdleTimer();
             perCallCts?.Dispose();
         }
     }
 
-    /// <summary>空闲超时：每次读到数据（含 0 字节的 EOF）后重新计时。</summary>
-    private void ResetIdleTimer()
+    /// <summary>空闲计时只在一次真实 I/O 期间进行：开始读写时启动，完成（含异常）时撤销。</summary>
+    private void ArmIdleTimer()
     {
         if (_idleTimeout > TimeSpan.Zero && !_timeoutCts.IsCancellationRequested)
         {
             _timeoutCts.CancelAfter(Timeouts.Clamp(_idleTimeout));
+        }
+    }
+
+    private void DisarmIdleTimer()
+    {
+        if (_idleTimeout > TimeSpan.Zero && !_timeoutCts.IsCancellationRequested)
+        {
+            _timeoutCts.CancelAfter(Timeout.InfiniteTimeSpan);
         }
     }
 
@@ -132,6 +141,7 @@ internal sealed class TimeoutStream : DelegatingStream
         ThrowIfBudgetExhausted();
 
         var (token, perCallCts) = Link(callerToken);
+        ArmIdleTimer();
         try
         {
             await Inner.WriteAsync(buffer, token).ConfigureAwait(false);
@@ -147,6 +157,7 @@ internal sealed class TimeoutStream : DelegatingStream
         }
         finally
         {
+            DisarmIdleTimer();
             perCallCts?.Dispose();
         }
     }
@@ -156,6 +167,7 @@ internal sealed class TimeoutStream : DelegatingStream
         ThrowIfBudgetExhausted();
 
         var (token, perCallCts) = Link(callerToken);
+        ArmIdleTimer();
         try
         {
             await Inner.FlushAsync(token).ConfigureAwait(false);
@@ -171,6 +183,7 @@ internal sealed class TimeoutStream : DelegatingStream
         }
         finally
         {
+            DisarmIdleTimer();
             perCallCts?.Dispose();
         }
     }

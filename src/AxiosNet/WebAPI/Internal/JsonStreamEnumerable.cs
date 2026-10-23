@@ -47,6 +47,18 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         string? charSet,
         string? mediaType)
     {
+        if (!ResponseTextDecoder.IsAsciiCompatible(charSet))
+        {
+            // 分帧按字节找 0x0A：UTF-16 / UTF-32 把换行编成多字节序列，切出来的「行」必然错位。
+            // 与其让调用方拿到一串乱码帧，不如在取流这一步报出可定位的错误（同时释放响应流归还连接）。
+            stream.Dispose();
+            throw AxiosException.BadResponse(
+                config,
+                request,
+                $"stream frames in charset '{charSet}' (only ASCII-compatible encodings can be byte-framed)",
+                new NotSupportedException("stream framing requires an ASCII-compatible charset"));
+        }
+
         _stream = stream;
         _config = config;
         _request = request;
@@ -89,7 +101,19 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 throw AxiosException.Canceled(_config, _request, new OperationCanceledException(_token));
             }
 
-            var payload = await ReadPayloadAsync().ConfigureAwait(false);
+            string? payload;
+            try
+            {
+                payload = await ReadPayloadAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException ex) when (_token.IsCancellationRequested)
+            {
+                // 枚举令牌在挂起的 ReadAsync 里取消：这条路径的令牌是「调用方自己的」，
+                // TimeoutStream 按契约原样抛出 OCE；在流式 API 层仍要满足
+                // 「取消一律 ERR_CANCELED」，否则同一取消动作会因时机不同给出两种异常类型。
+                throw AxiosException.Canceled(_config, _request, ex);
+            }
+
             if (payload is null)
             {
                 _finished = true;
@@ -286,7 +310,21 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         {
             var serializer = AxiosContent.Get(_config, _mediaType);
             var value = serializer.Deserialize(payload, typeof(T), _config);
-            return value is T typed ? typed : default!;
+
+            // null 是合法帧（JSON 的 null）；非 null 却不是 T 说明序列化器与目标类型不匹配，
+            // 静默返回 default! 会把编程错误伪装成一帧空数据。
+            if (value is null)
+            {
+                return default!;
+            }
+
+            if (value is T typed)
+            {
+                return typed;
+            }
+
+            throw new InvalidCastException(
+                $"stream item expected '{typeof(T)}' but the serializer returned '{value.GetType()}'");
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {

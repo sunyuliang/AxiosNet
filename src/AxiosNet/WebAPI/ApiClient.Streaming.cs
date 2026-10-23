@@ -62,7 +62,8 @@ public sealed partial class ApiClient
 
         // 正文按帧消费：responseType 固定 Stream；Timeout 只到响应头，正文口径交给 StreamIdleTimeout
         // （按请求 configure 里显式写过的值优先，客户端默认值只兜底）。
-        config.ResponseType = ResponseType.Stream;
+        // 用自动切换而非 setter：这不是调用方意图，回放 response.Config 时不能把 Stream 泄漏给下一次请求。
+        config.SetResponseTypeAuto(ResponseType.Stream);
         if (!config.StreamIdleTimeoutSet)
         {
             config.StreamIdleTimeout = StreamIdleTimeout;

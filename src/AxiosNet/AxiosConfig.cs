@@ -379,8 +379,8 @@ public sealed class AxiosConfig
     /// <list type="bullet">
     /// <item><c>null</c>（默认）：沿用 <see cref="Timeout"/> 的「全程总预算」，正文与响应头共享同一份预算；</item>
     /// <item><c>TimeSpan.Zero</c>：正文不设超时，<see cref="Timeout"/> 只覆盖到响应头；</item>
-    /// <item>大于零：正文按<b>空闲超时</b>计——每次读到数据就重置，连续这么久没有数据才失败
-    /// （错误码仍是 <c>ECONNABORTED</c>），<see cref="Timeout"/> 只覆盖到响应头。</item>
+    /// <item>大于零：正文按<b>空闲超时</b>计——只在实际读写期间计时，单次读写连续这么久没有数据才失败；
+    /// 调用方处理帧的停顿不计入（错误码仍是 <c>ECONNABORTED</c>），<see cref="Timeout"/> 只覆盖到响应头。</item>
     /// </list>
     /// <para>只影响流式响应；非流式请求的正文读取始终在 <see cref="Timeout"/> 之内。负值非法。</para>
     /// </summary>

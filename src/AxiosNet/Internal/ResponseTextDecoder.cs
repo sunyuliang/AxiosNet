@@ -30,6 +30,24 @@ internal static class ResponseTextDecoder
         return encoding.GetString(bytes[bomLength..]);
     }
 
+    /// <summary>
+    /// charset 能否用于「按字节找 <c>0x0A</c>」的流式分帧：ASCII 文本编码后必须仍是单字节，
+    /// 且换行就是 <c>0x0A</c> 本身。UTF-16 / UTF-32 等宽编码返回 <c>false</c>。
+    /// <para>空 charset（默认 UTF-8）与未知 charset（解码时回落默认编码）都返回 <c>true</c>。</para>
+    /// </summary>
+    public static bool IsAsciiCompatible(string? charSet)
+    {
+        var encoding = ResolveFromCharset(charSet);
+        if (encoding is null)
+        {
+            return true;
+        }
+
+        Span<byte> probe = stackalloc byte[16];
+        var written = encoding.GetBytes("A\n", probe);
+        return written == 2 && probe[0] == (byte)'A' && probe[1] == (byte)'\n';
+    }
+
     private static Encoding? ResolveFromCharset(string? charSet)
     {
         if (string.IsNullOrWhiteSpace(charSet))

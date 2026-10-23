@@ -268,7 +268,34 @@ internal sealed partial class RequestModelMetadata
                 continue;
             }
 
+            // 值声明（派生类）优先于更早的删除声明（基类）：删除先入队，
+            // 合并完成后再执行会把这个值一并摘掉，必须在写值的同时撤销待删除项。
+            ClearPendingRemoval(config, name);
             config.Headers.Set(name, value);
+        }
+    }
+
+    /// <summary>从待删除集合里摘掉匹配的名字（头名大小写不敏感）；没有匹配项时不动集合。</summary>
+    private static void ClearPendingRemoval(AxiosConfig config, string name)
+    {
+        if (!config.HasRemoveHeaders)
+        {
+            return;
+        }
+
+        string? matched = null;
+        foreach (var pending in config.RemoveHeaders)
+        {
+            if (string.Equals(pending, name, StringComparison.OrdinalIgnoreCase))
+            {
+                matched = pending;
+                break;
+            }
+        }
+
+        if (matched is not null)
+        {
+            config.RemoveHeaders.Remove(matched);
         }
     }
 
@@ -450,49 +477,60 @@ internal sealed partial class RequestModelMetadata
 
                 // 无标注 → 默认 Query（ kinds == 0 时没有任何参数特性，名字只能回退属性名）
                 var name = ResolveBindingName(string.Empty, property, "Query");
-                if (!seenQueryNames.Add(name))
-                {
-                    throw DuplicateBinding(requestType, name, "Query");
-                }
-
-                queries.Add(new PropertyBinding(name, property));
 
                 // 「未标注」与「显式 [Query]」要区分：默认 Body 只认前者
                 unannotated.Add(property);
 
                 if (QueryMap.IsMapType(property.PropertyType))
                 {
+                    // 平铺映射只产出字典里的键，不产出属性名这个参数：
+                    // 登记属性名会让另一处 [Query("同名")] 被误判成重复绑定。
                     mapProperties.Add(property);
+                }
+                else
+                {
+                    if (!seenQueryNames.Add(name))
+                    {
+                        throw DuplicateBinding(requestType, name, "Query");
+                    }
+
+                    queries.Add(new PropertyBinding(name, property));
                 }
             }
             else if (query is not null)
             {
                 // 已有其他绑定的属性再显式 [Query]：追加一处查询绑定
                 var name = ResolveBindingName(query.Name, property, "Query");
-                if (!seenQueryNames.Add(name))
-                {
-                    throw DuplicateBinding(requestType, name, "Query");
-                }
-
-                queries.Add(new PropertyBinding(name, property));
 
                 // 字典 + 未显式命名 → 平铺；显式命名保留嵌套（?name[key]=v）
                 if (string.IsNullOrWhiteSpace(query.Name) && QueryMap.IsMapType(property.PropertyType))
                 {
+                    // 同上：平铺映射不占用具名查询绑定的名字。
                     mapProperties.Add(property);
+                }
+                else
+                {
+                    if (!seenQueryNames.Add(name))
+                    {
+                        throw DuplicateBinding(requestType, name, "Query");
+                    }
+
+                    queries.Add(new PropertyBinding(name, property));
                 }
             }
         }
 
         // 默认 Body：body 方法 + 恰好一个未标注属性 + 非标量类型 → 该属性即请求体。
         // 标量护栏防止「POST 只想带一个查询参数」被静默变成 JSON 请求体；
+        // 平铺字典同样不能默认成请求体：它的契约是「键直接进查询串」，吞进 body 会改变线上形态。
         // 多个未标注属性时维持 Query（歧义时宁可保持现状，[Body] 永远可以显式表态）。
         // multipart 模型不参与：未标注属性已经按部件绑定，不存在「默认 JSON 请求体」。
         if (body is null
             && !isMultipart
             && unannotated.Count == 1
             && IsBodyMethod(route.Method)
-            && !IsScalarType(unannotated[0].PropertyType))
+            && !IsScalarType(unannotated[0].PropertyType)
+            && !QueryMap.IsMapType(unannotated[0].PropertyType))
         {
             body = unannotated[0];
             queries.RemoveAll(q => ReferenceEquals(q.Property, body));
