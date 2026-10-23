@@ -85,7 +85,7 @@ internal static class ResponseTextDecoder
         }
     }
 
-    private static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
+    internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
         // 注意先判 4 字节的 UTF-32 BOM，再判 2 字节的 UTF-16 BOM。
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)

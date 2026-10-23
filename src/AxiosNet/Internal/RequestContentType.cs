@@ -27,13 +27,41 @@ internal static class RequestContentType
     public static string Compose(string mediaType, Encoding encoding, bool appendCharset)
     {
         if (!appendCharset
-            || mediaType.Contains("charset=", StringComparison.OrdinalIgnoreCase)
+            || HasCharsetParameter(mediaType)
             || !MediaTypes.IsTextual(mediaType))
         {
             return mediaType;
         }
 
         return mediaType + "; charset=" + encoding.WebName;
+    }
+
+    /// <summary>
+    /// 媒体类型是否已声明 charset。按标准解析（容忍 <c>charset = utf-8</c> / 带引号等写法），
+    /// 与 <see cref="GetCharsetEncoding"/> 同一口径 —— 否则「解析得到 charset」与「判重看不出 charset」
+    /// 会把同一个编码写两遍。
+    /// </summary>
+    private static bool HasCharsetParameter(string mediaType)
+    {
+        // 快速排除：连 "charset" 字样都没有（补 charset 的常见情形）时不必建解析对象。
+        if (!mediaType.Contains("charset", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (MediaTypeHeaderValue.TryParse(mediaType, out var parsed))
+        {
+            foreach (var parameter in parsed.Parameters)
+            {
+                if (parameter.Name.Equals("charset", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // 解析不出来（例如参数写法非标准）时退回朴素查找：宁可少补一次，也不要写出重复 charset
+        return mediaType.Contains("charset=", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

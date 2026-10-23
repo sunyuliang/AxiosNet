@@ -49,8 +49,26 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// 流式请求（<c>RequestStreamAsync</c>）正文的空闲超时，默认 <see cref="TimeSpan.Zero"/>
     /// （正文不设超时，只受取消令牌约束）；<see cref="AxiosConfig.Timeout"/> 对流式请求只覆盖到响应头。
     /// <para>大于零表示「连续这么久没有收到数据」才失败（<c>ECONNABORTED</c>）。</para>
+    /// <para>
+    /// 没显式设置过本属性时，<see cref="Axios.Defaults"/> 上显式配置的
+    /// <see cref="AxiosConfig.StreamIdleTimeout"/> 会照常生效（本属性只兜底「两边都没表态」的场景）；
+    /// 设置过本属性则本属性优先。
+    /// </para>
     /// </summary>
-    public TimeSpan StreamIdleTimeout { get; set; } = TimeSpan.Zero;
+    public TimeSpan StreamIdleTimeout
+    {
+        get => _streamIdleTimeout;
+        set
+        {
+            _streamIdleTimeout = value;
+            _streamIdleTimeoutSet = true;
+        }
+    }
+
+    private TimeSpan _streamIdleTimeout = TimeSpan.Zero;
+
+    /// <summary>是否显式给 <see cref="StreamIdleTimeout"/> 赋过值（默认值本身代表不了调用方意图）。</summary>
+    private bool _streamIdleTimeoutSet;
 
     /// <summary>
     /// URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本

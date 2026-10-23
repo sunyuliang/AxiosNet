@@ -60,13 +60,16 @@ public sealed partial class ApiClient
         var metadata = RequestModelMetadata.Get(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        // 正文按帧消费：responseType 固定 Stream；Timeout 只到响应头，正文口径交给 StreamIdleTimeout
-        // （按请求 configure 里显式写过的值优先，客户端默认值只兜底）。
+        // 正文按帧消费：responseType 固定 Stream；Timeout 只到响应头，正文口径交给 StreamIdleTimeout。
+        // 优先级：按请求 configure 显式写过的值 > 本门面显式设置过的值 > 底层客户端默认值 > 本门面默认值。
+        // 「底层客户端配过、本门面没表态」时必须让它生效，不能被本门面的默认 Zero 静默压成「不限时」。
         // 用自动切换而非 setter：这不是调用方意图，回放 response.Config 时不能把 Stream 泄漏给下一次请求。
+        // 必须按「显式设置过」判断，不能看值：未设置时读到的也是 null，而显式设成 null
+        // 表示「正文与响应头共享 Timeout 预算」，是有效意图（与 AxiosClient 构造期判 MaxRedirectsSet 同理）。
         config.SetResponseTypeAuto(ResponseType.Stream);
-        if (!config.StreamIdleTimeoutSet)
+        if (!config.StreamIdleTimeoutSet && (_streamIdleTimeoutSet || !Axios.Defaults.StreamIdleTimeoutSet))
         {
-            config.StreamIdleTimeout = StreamIdleTimeout;
+            config.StreamIdleTimeout = _streamIdleTimeout;
         }
 
         await ApplyAuthorizationAsync(metadata, request, config, cancellationToken).ConfigureAwait(false);

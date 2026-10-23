@@ -70,6 +70,17 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption("ConnectTimeout 必须大于 0；不限请用 Timeout.InfiniteTimeSpan。", config);
         }
 
+        // SocketsHttpHandler.ConnectTimeout 的上限是 int.MaxValue 毫秒（约 24.85 天，实测含端点可用，
+        // +1 毫秒即抛），越界 BCL 抛裸 ArgumentOutOfRangeException；且 Handler 是惰性创建 ——
+        // 异常会从首次租用连接处冒出来（没有配置上下文）。这里只拦 BCL 真正会拒的值，不多拦 1 毫秒。
+        if (options.ConnectTimeout > TimeSpan.FromMilliseconds(int.MaxValue))
+        {
+            throw AxiosException.InvalidOption(
+                $"ConnectTimeout（{options.ConnectTimeout}）超出底层 Handler 上限（约 24.85 天）：请调小，"
+                + "或不限请用 Timeout.InfiniteTimeSpan。",
+                config);
+        }
+
         if (options.MaxAutomaticRedirections <= 0)
         {
             throw AxiosException.InvalidOption(

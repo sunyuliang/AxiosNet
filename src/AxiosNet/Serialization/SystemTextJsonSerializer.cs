@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Serialization;
 
@@ -41,9 +42,10 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     /// 二进制入口：直接按 UTF-8 字节反序列化，不做 <c>byte[] → string</c> 中转。
     /// 触达路径是「Content-Type 声明非文本」（如服务端把 JSON 标成 <c>application/octet-stream</c>）。
     /// <para>
-    /// 与接口默认实现（经 <c>ResponseTextDecoder</c> 解码）保持同一语义：剥掉 UTF-8 BOM 后再交给 STJ
-    /// —— net6.0 的 <c>JsonSerializer.Deserialize(ReadOnlySpan&lt;byte&gt;)</c> 自己不剥 BOM，
-    /// 带 BOM 的正文会被首字节 0xEF 判成非法 JSON 起始。
+    /// 与接口默认实现（经 <c>ResponseTextDecoder</c> 解码）保持同一语义：剥掉 BOM 后再交给 STJ。
+    /// net6.0 的 <c>JsonSerializer.Deserialize(ReadOnlySpan&lt;byte&gt;)</c> 自己不剥 BOM，
+    /// 带 BOM 的正文会被首字节 0xEF 判成非法 JSON 起始；UTF-16 / UTF-32 的 BOM（首字节 0xFF / 0xFE）
+    /// 更是直接无法按 UTF-8 解析 —— 这类按 BOM 解码后转文本入口。
     /// </para>
     /// </summary>
     public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
@@ -53,6 +55,10 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF)
         {
             span = span[3..];
+        }
+        else if (ResponseTextDecoder.DetectFromBom(span) is { } bomEncoding)
+        {
+            return Deserialize(ResponseTextDecoder.Decode(span, charSet: null, forced: bomEncoding), type, config);
         }
 
         return JsonSerializer.Deserialize(span, type, AxiosJson.GetOptions(config));

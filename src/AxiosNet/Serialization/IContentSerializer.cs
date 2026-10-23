@@ -65,6 +65,13 @@ public interface IContentSerializer
     /// 声明格式请用 <see cref="MediaType"/>，或写 <c>config.Headers.Set("Content-Type", ...)</c>；
     /// 与格式无关的头（追踪 ID、租户）用 <see cref="AxiosConfig.TransformRequest"/>。
     /// </para>
+    /// <para>
+    /// ⚠️ 这样写的 Content-Type 若带 <c>charset</c>，必须与正文实际编码一致，否则请求会被拦下（<c>ERR_BAD_OPTION_VALUE</c>）：
+    /// 头声明一个编码、正文是另一个编码，服务端只会解出乱码。要让正文按指定 charset 编码，
+    /// 请让调用方在构造正文之前设置 <see cref="AxiosConfig.ContentType"/>（其 charset 驱动编码）或
+    /// <see cref="AxiosConfig.RequestEncoding"/>；二进制格式则实现
+    /// <see cref="SerializeToBytes"/> 走字节出口。
+    /// </para>
     /// </summary>
     string Serialize(object? value, Type type, AxiosConfig config);
 

@@ -46,6 +46,25 @@ internal static class RequestBodyFactory
             encoding = declared;
         }
 
+        // 请求头里显式声明的 Content-Type（ApplyHeaders 最终会用它覆盖正文的 Content-Type）若带 charset，
+        // 同样必须与正文实际编码一致：头声明一个编码、正文是另一个编码时，服务端按头解出的就是乱码
+        // 且没有任何报错。这里只做校验，正文编码仍由 ContentType / RequestEncoding 决定。
+        // multipart 的 Content-Type 由库自己带 boundary 写头（headers 覆盖会被跳过），不参与。
+        if (data is not null
+            && EncodesText(data)
+            && !MediaTypes.Is(mediaType, MultipartMediaType)
+            && config.HasHeaders
+            && config.Headers.Get("Content-Type") is { Length: > 0 } headerContentType
+            && RequestContentType.GetCharsetEncoding(headerContentType) is { } headerCharset
+            && headerCharset.CodePage != encoding.CodePage)
+        {
+            throw AxiosException.InvalidOption(
+                $"请求头里的 Content-Type 声明 charset={headerCharset.WebName}，但正文实际按 {encoding.WebName} 编码："
+                + "两者不一致会让服务端按头解出乱码。请改用 AxiosConfig.ContentType 声明编码"
+                + "（它的 charset 会驱动正文编码），或去掉请求头里的 charset。",
+                config);
+        }
+
         // multipart + 原始内容是矛盾的组合：没有 boundary 服务端无从解析，有条 boundary 也说明不了字段名。
         // 要发预序列化的 multipart 正文，请用 HttpContent 作为 data。
         if (data is not null and not HttpContent

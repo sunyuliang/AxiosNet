@@ -56,7 +56,9 @@ internal sealed class PooledEndpoint : IDisposable
             return DefaultHandlerFactory.Create(options, cookieContainer);
         }
 
-        var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options, cookieContainer);
+        // 给工厂一份快照：HandlerFactory 拿到的 Options 是「按这个 origin 建 Handler 时的配置」，
+        // 若直接交池的实例本体，工厂里的一次赋值就会改掉整个池的实时行为（且与 Options 属性返回 Clone 的口径不一致）。
+        var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options.Clone(), cookieContainer);
         var handler = options.HandlerFactory(context);
 
         if (handler is null)
