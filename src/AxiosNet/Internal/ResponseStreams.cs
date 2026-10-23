@@ -46,13 +46,18 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>
     /// 包装流式正文。<paramref name="remaining"/> 为剩余超时预算，<c>null</c> 表示不超时
     /// （仍处理外部取消与 IO 异常翻译）。
+    /// <para>
+    /// <paramref name="idleTimeout"/> 大于零时改为<b>空闲超时</b>：每次读到数据就重置计时器，
+    /// <paramref name="remaining"/> 不再参与（此时整体 timeout 只管到响应头）。
+    /// </para>
     /// </summary>
     public TimeoutStream(
         Stream inner,
         TimeSpan? remaining,
         CancellationToken externalToken,
         AxiosConfig config,
-        HttpRequestMessage request)
+        HttpRequestMessage request,
+        TimeSpan? idleTimeout = null)
         : base(inner)
     {
         _config = config;
@@ -60,7 +65,14 @@ internal sealed class TimeoutStream : DelegatingStream
         _externalToken = externalToken;
 
         _timeoutCts = new CancellationTokenSource();
-        if (remaining is TimeSpan budget)
+
+        // 空闲超时优先：它把整体预算从正文阶段摘出去（只剩响应头阶段由请求级计时器覆盖）
+        if (idleTimeout is { } idle && idle > TimeSpan.Zero)
+        {
+            _idleTimeout = idle;
+            _timeoutCts.CancelAfter(Timeouts.Clamp(idle));
+        }
+        else if (remaining is TimeSpan budget)
         {
             if (budget > TimeSpan.Zero)
             {
@@ -75,6 +87,9 @@ internal sealed class TimeoutStream : DelegatingStream
         _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken, _timeoutCts.Token);
     }
 
+    /// <summary>每次成功读到数据后重置的空闲计时；<see cref="TimeSpan.Zero"/> 表示未启用。</summary>
+    private readonly TimeSpan _idleTimeout;
+
     protected override async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
         ThrowIfBudgetExhausted();
@@ -82,7 +97,9 @@ internal sealed class TimeoutStream : DelegatingStream
         var (token, perCallCts) = Link(callerToken);
         try
         {
-            return await Inner.ReadAsync(buffer, token).ConfigureAwait(false);
+            var read = await Inner.ReadAsync(buffer, token).ConfigureAwait(false);
+            ResetIdleTimer();
+            return read;
         }
         catch (OperationCanceledException ex)
         {
@@ -98,6 +115,15 @@ internal sealed class TimeoutStream : DelegatingStream
         finally
         {
             perCallCts?.Dispose();
+        }
+    }
+
+    /// <summary>空闲超时：每次读到数据（含 0 字节的 EOF）后重新计时。</summary>
+    private void ResetIdleTimer()
+    {
+        if (_idleTimeout > TimeSpan.Zero && !_timeoutCts.IsCancellationRequested)
+        {
+            _timeoutCts.CancelAfter(Timeouts.Clamp(_idleTimeout));
         }
     }
 
@@ -207,6 +233,12 @@ internal sealed class TimeoutStream : DelegatingStream
 
         if (_timeoutCts.IsCancellationRequested)
         {
+            // 空闲超时与整体预算的超时分开报：前者是「流不动了」，后者是「整条请求超了」
+            if (_idleTimeout > TimeSpan.Zero)
+            {
+                throw AxiosException.StreamIdleTimeout(_config, _request, _idleTimeout, inner);
+            }
+
             throw AxiosException.Timeout(_config, _request, inner);
         }
     }

@@ -3,72 +3,111 @@ using AxiosNet.WebAPI;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 4. 授权：自定义 IAuthorizationProvider 按请求类型跳过登录、其余请求自动补 Bearer；
-/// 固定令牌场景用内置 BearerAuthorizationProvider 一行搞定。
+/// 4. 授权：<c>[AllowAnonymous]</c> / <c>[Authorize]</c> 声明 + <see cref="IAccessTokenProvider"/> 取令牌
+/// （拼头交给库），并与完全自定义的 <see cref="IAuthorizationProvider"/> 叠加对比。
 /// </summary>
 public sealed class AuthorizationExample : IExample
 {
     public int Number => 4;
 
-    public string Title => "授权：自定义提供方按请求类型跳过（登录不带凭据）+ 内置 Bearer";
+    public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方（对比自定义 IAuthorizationProvider）";
 
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
 
-        // 登录接口不需要凭据：提供方看到 LoginRequest 就放行；
-        // 登录成功后把令牌交给提供方，后续请求自动加 Authorization: Bearer xxx
-        var auth = new SessionAuthorizationProvider();
-
+        // 令牌提供方只负责「取令牌」，Authorization: Bearer xxx 由库按 scheme 拼
+        var tokens = new SessionTokenProvider();
         using var client = new ApiClient(context.BaseUrl)
         {
-            Authorization = auth
+            AccessTokenProvider = tokens
         };
 
+        // 1) 登录模型标了 [AllowAnonymous]：整条授权链路跳过（提供方不会被调用），也不带 Authorization 头
         var login = await client.RequestAsync(new LoginRequest
         {
             Credentials = new LoginPayload("alice", "wonderland")
         });
 
-        Console.WriteLine($"  登录（跳过授权）-> token = {login.Data!.Token}，有效期 {login.Data.ExpiresIn}s");
-        auth.SetToken(login.Data.Token);
+        Console.WriteLine($"  登录（[AllowAnonymous]）-> token = {login.Data!.Token}");
+        Console.WriteLine($"    实际头 Authorization = {Header(login.Request, "Authorization")}，"
+            + $"令牌提供方被调用 {tokens.Calls} 次");
 
+        tokens.SetToken(login.Data.Token);
+
+        // 2) [Authorize]：库自动拼 Authorization: Bearer {token}
         var profile = await client.RequestAsync(new SecureProfileRequest());
-        Console.WriteLine($"  受保护端点（自动 Bearer）-> {ExampleConsole.Pretty(profile.Data)}");
-        Console.WriteLine($"  实际请求头 = {profile.Request!.Headers.Authorization} / X-Device = {GetHeader(profile.Request, "X-Device")}");
+        Console.WriteLine($"  受保护端点（[Authorize] 自动 Bearer）-> {ExampleConsole.Pretty(profile.Data)}");
+        Console.WriteLine($"    实际头 Authorization = {Header(profile.Request, "Authorization")}");
 
-        // 固定令牌的最短写法：不需要自建类
-        using var staticClient = new ApiClient(context.BaseUrl)
+        // 3) 令牌为空时不写头：服务端 401 照常走统一错误模型（[Authorize] 不会伪造凭据）
+        tokens.SetToken(null);
+        try
+        {
+            await client.RequestAsync(new SecureProfileRequest());
+        }
+        catch (AxiosException ex)
+        {
+            Console.WriteLine($"  令牌为空 -> {ex.Code} / HTTP {ex.Status}（未写 Authorization 头）");
+        }
+
+        // 4) 叠加自定义 IAuthorizationProvider：它最后执行，能看到令牌提供方写的头，也可以覆盖
+        //    （签名、多凭据轮换这类完全自定义的场景走这条；纯取令牌不必自建提供方）
+        tokens.SetToken(DemoApiServer.DemoToken);
+        var observer = new HeaderObserver();
+        using var layered = new ApiClient(context.BaseUrl)
+        {
+            AccessTokenProvider = tokens,
+            Authorization = observer
+        };
+
+        await layered.RequestAsync(new SecureProfileRequest());
+        Console.WriteLine($"  IAuthorizationProvider 最后执行，看到的 Authorization = {observer.Seen}");
+
+        // 5) 固定令牌的最短写法：不需要任何提供方
+        using var fixedClient = new ApiClient(context.BaseUrl)
         {
             Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
         };
 
-        var same = await staticClient.RequestAsync(new SecureProfileRequest());
+        var same = await fixedClient.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  固定令牌写法 -> {same.Status} {same.Data!.User}");
     }
 
-    private static string GetHeader(System.Net.Http.HttpRequestMessage request, string name)
-        => request.Headers.TryGetValues(name, out var values) ? string.Join(",", values!) : "none";
+    private static string Header(System.Net.Http.HttpRequestMessage? request, string name)
+        => request is not null && request.Headers.TryGetValues(name, out var values)
+            ? string.Join(",", values!)
+            : "none";
 
     /// <summary>
-    /// 演示用的会话授权：登录请求原样放行，其余请求补 Bearer 头。
-    /// 生产实现（令牌缓存 / 过期刷新 / 单飞刷新）同样只需实现 IAuthorizationProvider；
-    /// 注意授权发生在发送前，拿不到响应，令牌由调用方在登录后注入。
+    /// 演示用的会话令牌：登录前返回 null（不写头），登录后返回服务端下发的令牌。
+    /// 生产实现的缓存 / 过期刷新 / 单飞刷新都在这里做——库不缓存令牌。
     /// </summary>
-    private sealed class SessionAuthorizationProvider : IAuthorizationProvider
+    private sealed class SessionTokenProvider : IAccessTokenProvider
     {
         private volatile string? _token;
+        private int _calls;
 
-        public void SetToken(string token) => _token = token;
+        /// <summary>被调用次数（用于证明 [AllowAnonymous] 真的跳过了授权链路）。</summary>
+        public int Calls => Volatile.Read(ref _calls);
+
+        public void SetToken(string? token) => _token = token;
+
+        public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            return new ValueTask<string?>(_token);
+        }
+    }
+
+    /// <summary>只观察不修改：证明 <see cref="IAuthorizationProvider"/> 在令牌提供方之后执行。</summary>
+    private sealed class HeaderObserver : IAuthorizationProvider
+    {
+        public string? Seen { get; private set; }
 
         public ValueTask ApplyAsync(ApiAuthContext context, CancellationToken cancellationToken)
         {
-            if (context.Request is LoginRequest)
-            {
-                return ValueTask.CompletedTask;
-            }
-
-            context.Config.Headers.Set("Authorization", $"Bearer {_token}");
+            Seen = context.Config.Headers.Get("Authorization");
             return ValueTask.CompletedTask;
         }
     }

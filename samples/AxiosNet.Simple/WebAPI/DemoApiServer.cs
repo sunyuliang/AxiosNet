@@ -9,7 +9,7 @@ namespace AxiosNet.Simple.WebAPI;
 /// <summary>
 /// 示例专用的极简 HTTP/1.1 Keep-Alive 服务器（TcpListener 实现，零外部依赖，离线可运行）。
 /// 提供一组典型的 REST 端点：列表（含过滤）、详情、创建、删除、登录、受保护资源，
-/// 供 5 个声明式示例做真实 HTTP 往返。
+/// 以及一个 SSE 流式端点（分块下发），供声明式示例做真实 HTTP 往返。
 /// </summary>
 public sealed class DemoApiServer : IDisposable
 {
@@ -82,6 +82,13 @@ public sealed class DemoApiServer : IDisposable
                     var (method, path, query, headers, body) = await ReadRequestAsync(stream);
                     if (method is null)
                     {
+                        break;
+                    }
+
+                    // SSE 端点：分块下发（chunked），每帧之间留 80ms 让流式效果可见
+                    if (method == "GET" && path == "/api/stream/events")
+                    {
+                        await WriteEventStreamAsync(stream);
                         break;
                     }
 
@@ -289,6 +296,44 @@ public sealed class DemoApiServer : IDisposable
             Role = "new",
             Trace = trace
         });
+    }
+
+    /// <summary>
+    /// 流式响应（SSE）：<c>Transfer-Encoding: chunked</c> 分帧下发，每帧之间停 80ms，
+    /// 最后以 <c>data: [DONE]</c> 结束（通用约定，客户端遇到它就停止枚举）。
+    /// </summary>
+    private static async Task WriteEventStreamAsync(NetworkStream stream)
+    {
+        var header =
+            "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: text/event-stream; charset=utf-8\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            "Connection: close\r\n" +
+            "Transfer-Encoding: chunked\r\n\r\n";
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header)).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+
+        var frames = new[] { (1, "first"), (2, "second"), (3, "third") };
+        foreach (var (index, text) in frames)
+        {
+            // 多字节字符直接写在 data: 里，客户端按字节分帧后解码；空行结束一帧
+            var payload = "data: {\"index\":" + index + ",\"text\":\"" + text + " · 第" + index + "帧\"}\n\n";
+            await WriteChunkAsync(stream, Encoding.UTF8.GetBytes(payload)).ConfigureAwait(false);
+            await Task.Delay(80).ConfigureAwait(false);
+        }
+
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("data: [DONE]\n\n")).ConfigureAwait(false);
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("0\r\n\r\n")).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+    }
+
+    private static async Task WriteChunkAsync(NetworkStream stream, byte[] data)
+    {
+        await stream.WriteAsync(Encoding.ASCII.GetBytes($"{data.Length:x}\r\n")).ConfigureAwait(false);
+        await stream.WriteAsync(data).ConfigureAwait(false);
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("\r\n")).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
     }
 
     private static async Task WriteResponseAsync(

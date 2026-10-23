@@ -5,12 +5,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace AxiosNet.Simple.DependencyInjection.Scenarios;
+namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 4. 容器授权 —— IAuthorizationProvider 单例自动装配。
 /// </summary>
-public sealed class ContainerAuthorizationScenario : IScenario
+public sealed class ContainerAuthorizationExample : IExample
 {
     public int Number => 4;
 

@@ -6,12 +6,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace AxiosNet.Simple.DependencyInjection.Scenarios;
+namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 5. AddApiClient(name, ...) —— 多站点命名注册 + IApiClientResolver 按站点名取用。
 /// </summary>
-public sealed class NamedSitesScenario : IScenario
+public sealed class NamedSitesExample : IExample
 {
     public int Number => 5;
 

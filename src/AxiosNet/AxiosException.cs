@@ -93,6 +93,35 @@ public sealed class AxiosException : Exception
         return new AxiosException(message, ErrConnAborted, config, request, null, inner);
     }
 
+    /// <summary>
+    /// 流式正文的空闲超时（<see cref="AxiosConfig.StreamIdleTimeout"/>）：连续一段时间没读到数据。
+    /// 与整体 <see cref="Timeout"/> 分开报，避免把「流挂了」说成「请求超时」。
+    /// </summary>
+    internal static AxiosException StreamIdleTimeout(AxiosConfig config, HttpRequestMessage? request, TimeSpan idle, Exception? inner = null)
+    {
+        return new AxiosException(
+            $"stream idle timeout of {idle.TotalMilliseconds:0}ms exceeded: no data received",
+            ErrConnAborted,
+            config,
+            request,
+            null,
+            inner);
+    }
+
+    /// <summary>
+    /// 流式响应的单帧超过内部上限（没有分帧符的畸形流会把缓冲区撑到不可控）。
+    /// </summary>
+    internal static AxiosException StreamFrameTooLarge(AxiosConfig config, HttpRequestMessage? request, string format, int limit)
+    {
+        return new AxiosException(
+            $"{format} frame exceeded the {limit} byte limit: the stream is missing its frame delimiter",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            null);
+    }
+
     internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, Exception? inner = null)
     {
         return new AxiosException("Request canceled", ErrCanceled, config, request, null, inner);

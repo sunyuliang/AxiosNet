@@ -30,8 +30,26 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>
     /// 授权提供方：每次请求发送前调用（在模型绑定与 <see cref="IApiRequestConfigurable.Configure"/> 之后），
     /// 把凭据写进最终配置。null 表示不授权（匿名访问）。
+    /// <para>标注了 <see cref="AllowAnonymousAttribute"/> 的模型会跳过它。</para>
     /// </summary>
     public IAuthorizationProvider? Authorization { get; set; }
+
+    /// <summary>
+    /// 访问令牌来源：在 <see cref="Authorization"/> <b>之前</b>调用，库按
+    /// <c>Authorization: {scheme} {token}</c> 写头（scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。
+    /// <para>
+    /// 令牌为 <c>null</c> / 空白时不写头；模型已显式写了 <c>Authorization</c> 头时不覆盖。
+    /// 之后 <see cref="Authorization"/> 仍会执行，因此它可以覆盖这里写的值。
+    /// </para>
+    /// </summary>
+    public IAccessTokenProvider? AccessTokenProvider { get; set; }
+
+    /// <summary>
+    /// 流式请求（<c>RequestStreamAsync</c>）正文的空闲超时，默认 <see cref="TimeSpan.Zero"/>
+    /// （正文不设超时，只受取消令牌约束）；<see cref="AxiosConfig.Timeout"/> 对流式请求只覆盖到响应头。
+    /// <para>大于零表示「连续这么久没有收到数据」才失败（<c>ECONNABORTED</c>）。</para>
+    /// </summary>
+    public TimeSpan StreamIdleTimeout { get; set; } = TimeSpan.Zero;
 
     /// <summary>
     /// URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本
@@ -101,33 +119,9 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var metadata = RequestModelMetadata.Get(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        // 授权最后做：凭据反映的是绑定与 Configure 之后的最终形态（如按最终 URL 签名才不会漏参数）
-        if (Authorization is not null)
-        {
-            await Authorization
-                .ApplyAsync(new ApiAuthContext(request, config), cancellationToken)
-                .ConfigureAwait(false);
-        }
+        await ApplyAuthorizationAsync(metadata, request, config, cancellationToken).ConfigureAwait(false);
 
-        try
-        {
-            return await Axios.RequestAsync<TResponse>(config).ConfigureAwait(false);
-        }
-        catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
-        {
-            // 只接管「服务端给了响应」的错误：网络 / 超时 / 取消 / 配置错误保持原样，
-            // 调用方的 catch (AxiosException) 仍然成立（工厂返回 null 时原样再抛）。
-            var replacement = await ErrorFactory
-                .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
-                .ConfigureAwait(false);
-
-            if (replacement is not null)
-            {
-                throw replacement;
-            }
-
-            throw;
-        }
+        return await SendAsync<TResponse>(request, config, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -174,6 +168,70 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         configure?.Invoke(config);
 
         return config;
+    }
+
+    /// <summary>
+    /// 授权链路：<see cref="AllowAnonymousAttribute"/> 直接跳过；否则 <see cref="AccessTokenProvider"/> 先写头
+    /// （不覆盖模型显式写的 <c>Authorization</c>），<see cref="Authorization"/> 最后执行（可覆盖前者）。
+    /// </summary>
+    private async ValueTask ApplyAuthorizationAsync(
+        RequestModelMetadata metadata,
+        object request,
+        AxiosConfig config,
+        CancellationToken cancellationToken)
+    {
+        if (metadata.Authorization.Mode == ApiAuthorizationMode.Anonymous)
+        {
+            return;
+        }
+
+        var context = new ApiAuthContext(request, config);
+
+        if (AccessTokenProvider is not null && !HasExplicitAuthorization(config))
+        {
+            var token = await AccessTokenProvider.GetTokenAsync(context, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                config.Headers.Set("Authorization", metadata.Authorization.Scheme + " " + token);
+            }
+        }
+
+        if (Authorization is not null)
+        {
+            await Authorization.ApplyAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>模型或实例默认值里是否已经写了 <c>Authorization</c> 头（显式配置优先于令牌提供方）。</summary>
+    private bool HasExplicitAuthorization(AxiosConfig config)
+        => (config.HasHeaders && config.Headers.Has("Authorization"))
+            || (Axios.Defaults.HasHeaders && Axios.Defaults.Headers.Has("Authorization"));
+
+    /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>。</summary>
+    private async Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
+        object request,
+        AxiosConfig config,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await Axios.RequestAsync<TResponse>(config).ConfigureAwait(false);
+        }
+        catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
+        {
+            // 只接管「服务端给了响应」的错误：网络 / 超时 / 取消 / 配置错误保持原样，
+            // 调用方的 catch (AxiosException) 仍然成立（工厂返回 null 时原样再抛）。
+            var replacement = await ErrorFactory
+                .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
+                .ConfigureAwait(false);
+
+            if (replacement is not null)
+            {
+                throw replacement;
+            }
+
+            throw;
+        }
     }
 
     /// <summary>释放底层 AxiosClient（仅当本门面拥有它）。</summary>

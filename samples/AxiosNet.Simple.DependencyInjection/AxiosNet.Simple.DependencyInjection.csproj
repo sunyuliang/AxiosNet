@@ -21,7 +21,7 @@
     <Compile Include="..\AxiosNet.Simple\WebAPI\DemoApiServer.cs" Link="DemoApiServer.cs" />
     <Compile Include="..\AxiosNet.Simple\WebAPI\ApiModels.cs" Link="ApiModels.cs" />
     <!-- 交互菜单与 AxiosNet.Simple 同一份源码：启动反射列出、选择执行、完毕继续选 -->
-    <Compile Include="..\AxiosNet.Simple\Examples\SampleMenu.cs" Link="SampleMenu.cs" />
+    <Compile Include="..\AxiosNet.Simple\SampleMenu.cs" Link="SampleMenu.cs" />
   </ItemGroup>
 
 </Project>

@@ -36,3 +36,20 @@ public interface IAuthorizationProvider
     /// <summary>在请求发送前把凭据写进 <paramref name="context"/>.Config。</summary>
     ValueTask ApplyAsync(ApiAuthContext context, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// 访问令牌扩展点（Refit 的 <c>AuthorizationHeaderValueGetter</c> 等价能力）：
+/// 只负责<b>取令牌</b>，拼头由库来做（<c>Authorization: {scheme} {token}</c>），scheme 来自
+/// <see cref="AuthorizeAttribute"/>，未标注时为 <c>Bearer</c>。
+/// <para>
+/// 返回 <c>null</c> 或空白表示本次不带令牌（不写头）；抛出的异常原样冒泡（与授权实现一致）。
+/// 模型已显式写了 <c>Authorization</c> 头时不会被覆盖。
+/// </para>
+/// <para>适用于「刷新/缓存自己管、只想少写拼头代码」的场景；要完全控制头部（签名、多凭据）请用
+/// <see cref="IAuthorizationProvider"/>。</para>
+/// </summary>
+public interface IAccessTokenProvider
+{
+    /// <summary>取本次请求的访问令牌；<c>null</c> / 空白表示不写 <c>Authorization</c> 头。</summary>
+    ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken);
+}

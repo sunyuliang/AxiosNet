@@ -155,6 +155,10 @@ public sealed class AxiosConfig
     /// 需要空闲超时请用 <see cref="CancellationToken"/> 自行控制。
     /// </para>
     /// <para>
+    /// 例外：设置了 <see cref="StreamIdleTimeout"/> 时，流式正文不再计入本预算
+    /// （本项只覆盖到响应头），正文改按空闲超时或完全不限时。
+    /// </para>
+    /// <para>
     /// 超过计时器上限（约 49.7 天）会收敛到上限而不抛异常；负值非法，抛
     /// <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
     /// </para>
@@ -367,6 +371,31 @@ public sealed class AxiosConfig
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MaxRateSet { get; private set; }
+
+    private TimeSpan? _streamIdleTimeout;
+
+    /// <summary>
+    /// 流式响应（<see cref="ResponseType.Stream"/>）正文的超时口径：
+    /// <list type="bullet">
+    /// <item><c>null</c>（默认）：沿用 <see cref="Timeout"/> 的「全程总预算」，正文与响应头共享同一份预算；</item>
+    /// <item><c>TimeSpan.Zero</c>：正文不设超时，<see cref="Timeout"/> 只覆盖到响应头；</item>
+    /// <item>大于零：正文按<b>空闲超时</b>计——每次读到数据就重置，连续这么久没有数据才失败
+    /// （错误码仍是 <c>ECONNABORTED</c>），<see cref="Timeout"/> 只覆盖到响应头。</item>
+    /// </list>
+    /// <para>只影响流式响应；非流式请求的正文读取始终在 <see cref="Timeout"/> 之内。负值非法。</para>
+    /// </summary>
+    public TimeSpan? StreamIdleTimeout
+    {
+        get => _streamIdleTimeout;
+        set
+        {
+            _streamIdleTimeout = value;
+            StreamIdleTimeoutSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool StreamIdleTimeoutSet { get; private set; }
 
     private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;
 

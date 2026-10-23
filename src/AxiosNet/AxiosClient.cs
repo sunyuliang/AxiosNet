@@ -623,8 +623,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         {
                             if (streamResponse)
                             {
-                                // 失败响应没人读正文：立即释放内容把连接还回池，
-                                // 否则这条连接会被一个永远不会被读取的流一直占住（重试几次就能打满池）。
+                                // 失败响应没人读正文：先把一段错误体抢救成文本（ApiErrorContext 的唯一来源），
+                                // 再立即释放内容把连接还回池，否则这条连接会被一个永远不会被读取的流一直占住。
+                                response.RawText = await ReadStreamErrorBodyAsync(
+                                        response.Data as Stream, config, sendToken)
+                                    .ConfigureAwait(false);
+
                                 (response.Data as IDisposable)?.Dispose();
                                 response.Data = null;
                                 responseMessage.Dispose();
@@ -635,12 +639,22 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
                         if (streamResponse && response.Data is Stream body)
                         {
-                            // 无条件包装（Timeout=0 也包）：让外部取消与正文 I/O 异常在不同 Timeout 下给出同一类异常。
-                            var remaining = clock is not null
-                                ? config.Timeout - clock.Elapsed
-                                : (TimeSpan?)null;
-
-                            Stream wrapped = new TimeoutStream(body, remaining, externalToken, config, request);
+                            // 流式正文的超时口径：显式 StreamIdleTimeout 时「Timeout 只到响应头」，
+                            // 正文按空闲超时（或完全不限）；未设置时保持「整条流共享剩余预算」。
+                            Stream wrapped = config.StreamIdleTimeout is { } idleTimeout
+                                ? new TimeoutStream(
+                                    body,
+                                    remaining: null,
+                                    externalToken,
+                                    config,
+                                    request,
+                                    idleTimeout > TimeSpan.Zero ? idleTimeout : null)
+                                : new TimeoutStream(
+                                    body,
+                                    clock is not null ? config.Timeout - clock.Elapsed : null,
+                                    externalToken,
+                                    config,
+                                    request);
 
                             // 租约与 HttpResponseMessage 一并转移给流：下载期间该 origin 仍算活跃，
                             // 流 Dispose 时统一释放（否则消息本体永久悬空）。
@@ -770,12 +784,71 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 限制类配置的取值范围校验：负值一律报错，不静默当作「不限制」。
     /// <c>Timeout=0</c> 不超时；<c>MaxRate=0</c> 等价不限速；<c>null</c> 不限。
     /// </summary>
+    /// <summary>流式失败响应保留的错误体上限：错误详情通常很小，超过这个量说明不是给人看的信息。</summary>
+    private const int StreamErrorBodyLimit = 64 * 1024;
+
+    /// <summary>
+    /// 把流式失败响应的正文读成文本（最多 <see cref="StreamErrorBodyLimit"/> 字节）。
+    /// <para>
+    /// 状态码错误时正文里通常就是错误详情；不读的话调用方只能看到一句 "status code 400"。
+    /// 读取失败 / 超时 / 超限都只保留已读部分，不掩盖原始 HTTP 错误。
+    /// </para>
+    /// </summary>
+    private static async Task<string?> ReadStreamErrorBodyAsync(
+        Stream? body,
+        AxiosConfig config,
+        CancellationToken cancellationToken)
+    {
+        if (body is null)
+        {
+            return null;
+        }
+
+        var limit = config.MaxContentLength is long max && max < StreamErrorBodyLimit
+            ? (int)max
+            : StreamErrorBodyLimit;
+        if (limit <= 0)
+        {
+            return null;
+        }
+
+        var buffer = new byte[limit];
+        var total = 0;
+        try
+        {
+            while (total < buffer.Length)
+            {
+                var read = await body.ReadAsync(buffer.AsMemory(total), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                total += read;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or AxiosException or OperationCanceledException)
+        {
+            // 错误体读不完不影响「这是一次失败响应」，保留已读部分
+        }
+
+        return total == 0
+            ? null
+            : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.ResponseEncoding);
+    }
+
     private static void ValidateRangeConfig(AxiosConfig config)
     {
         if (config.Timeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption(
                 $"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。", config);
+        }
+
+        if (config.StreamIdleTimeout is { } idleTimeout && idleTimeout < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption(
+                $"StreamIdleTimeout 不能为负（当前 {idleTimeout}）：要不设空闲超时请显式设为 TimeSpan.Zero。", config);
         }
 
         if (config.MaxRate is < 0)

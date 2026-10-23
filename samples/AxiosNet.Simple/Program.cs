@@ -1,9 +1,8 @@
 using AxiosNet.Simple;
-using AxiosNet.Simple.Examples;
 using AxiosNet.Simple.WebAPI;
 using AxiosNet.Simple.WebAPI.Examples;
 using CoreExample = AxiosNet.Simple.Examples.IExample;
-using CoreContext = AxiosNet.Simple.Examples.ExampleContext;
+using CoreContext = AxiosNet.Simple.ExampleContext;
 using WebApiExample = AxiosNet.Simple.WebAPI.Examples.IExample;
 using WebApiContext = AxiosNet.Simple.WebAPI.Examples.ExampleContext;
 

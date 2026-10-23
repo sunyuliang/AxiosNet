@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace AxiosNet.Simple.Examples;
+namespace AxiosNet.Simple;
 
 /// <summary>
 /// 示例共用的控制台输出辅助方法。

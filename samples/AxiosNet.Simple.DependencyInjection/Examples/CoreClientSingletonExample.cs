@@ -3,12 +3,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace AxiosNet.Simple.DependencyInjection.Scenarios;
+namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 1. AddAxiosClient —— 核心包客户端单例（AxiosNet.DependencyInjection）。
 /// </summary>
-public sealed class CoreClientSingletonScenario : IScenario
+public sealed class CoreClientSingletonExample : IExample
 {
     public int Number => 1;
 

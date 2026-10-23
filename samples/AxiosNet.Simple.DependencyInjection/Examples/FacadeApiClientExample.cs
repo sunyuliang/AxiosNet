@@ -6,12 +6,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace AxiosNet.Simple.DependencyInjection.Scenarios;
+namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 3. AddApiClient(configure) —— 门面复用已注册的 AxiosClient。
 /// </summary>
-public sealed class FacadeApiClientScenario : IScenario
+public sealed class FacadeApiClientExample : IExample
 {
     public int Number => 3;
 

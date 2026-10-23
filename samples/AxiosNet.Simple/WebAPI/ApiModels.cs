@@ -46,16 +46,25 @@ public sealed class CreateUserRequest : ApiRequest<CreatedUser>
     }
 }
 
-/// <summary>POST /api/auth/login：登录本身不应带凭据，授权示例据此演示「按请求类型跳过」。</summary>
+/// <summary>
+/// POST /api/auth/login：登录本身不应带凭据——<c>[AllowAnonymous]</c> 让整条授权链路跳过
+/// （令牌提供方与自定义提供方都不会被调用），不再需要在提供方里按请求类型分支。
+/// </summary>
 [Post("api/auth/login")]
+[AllowAnonymous]
 public sealed class LoginRequest : IApiRequest<TokenResult>
 {
     [Body]
     public LoginPayload Credentials { get; set; } = null!;
 }
 
-/// <summary>GET /api/secure/profile：需要 Bearer 令牌的受保护端点（授权示例）。</summary>
+/// <summary>
+/// GET /api/secure/profile：需要 Bearer 令牌的受保护端点（授权示例）。
+/// <c>[Authorize]</c> 声明后，客户端配了 <c>AccessTokenProvider</c> 就会自动拼
+/// <c>Authorization: Bearer {token}</c>；要换方案写 <c>[Authorize("Basic")]</c>。
+/// </summary>
 [Get("api/secure/profile")]
+[Authorize]
 public sealed class SecureProfileRequest : IApiRequest<SecureProfile>
 {
     [Header("X-Device")]
@@ -91,6 +100,18 @@ public sealed class SignedEchoRequest : IApiRequest<SignedEchoResult>
 
 /// <summary>签名端点的响应：Verified 表示服务器已确认请求签名有效。</summary>
 public sealed record SignedEchoResult(bool Verified, string Name, int Age);
+
+/// <summary>
+/// GET /api/stream/events：SSE 流式端点（演示服务器按 <c>text/event-stream</c> 分帧下发）。
+/// 流式请求的泛型参数是<b>单帧</b>类型，不是整个集合。
+/// </summary>
+[Get("api/stream/events")]
+public sealed class StreamEventsRequest : IApiRequest<StreamChunk>
+{
+}
+
+/// <summary>SSE 每帧的载荷（<c>data: {"index":1,"text":"..."}</c>）。</summary>
+public sealed record StreamChunk(int Index, string Text);
 
 // =====================================================================
 // 返回模型：与请求模型一一对应（也可直接用 string / byte[] / Stream 等原始形态）。

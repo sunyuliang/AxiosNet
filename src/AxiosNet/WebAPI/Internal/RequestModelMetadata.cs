@@ -74,6 +74,9 @@ internal sealed partial class RequestModelMetadata
     /// <summary>本次请求的 HTTP 方法（来自路由特性；仅构建错误的缓存实例上为占位值，<see cref="Get"/> 会先抛错）。</summary>
     public HttpMethod Method { get; } = null!;
 
+    /// <summary>授权策略（最近一层声明优先；都没标时为 <see cref="ApiAuthorizationMode.Inherit"/>）。</summary>
+    internal ApiAuthorization Authorization { get; init; } = ApiAuthorization.Inherit;
+
     /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
     public static RequestModelMetadata Get(Type requestType)
     {
@@ -416,7 +419,40 @@ internal sealed partial class RequestModelMetadata
             [.. headers],
             [.. headerCollections],
             [.. staticHeaders],
-            body);
+            body)
+        {
+            Authorization = BuildAuthorization(requestType)
+        };
+    }
+
+    /// <summary>
+    /// 取最近一层的授权声明（派生类优先于基类）；两个特性同标一层属二义性。
+    /// </summary>
+    private static ApiAuthorization BuildAuthorization(Type requestType)
+    {
+        for (var type = requestType; type is not null && type != typeof(object); type = type.BaseType)
+        {
+            var anonymous = type.GetCustomAttribute<AllowAnonymousAttribute>(inherit: false) is not null;
+            var authorize = type.GetCustomAttribute<AuthorizeAttribute>(inherit: false);
+
+            if (anonymous && authorize is not null)
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {type.Name} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。");
+            }
+
+            if (anonymous)
+            {
+                return new ApiAuthorization(ApiAuthorizationMode.Anonymous, "Bearer");
+            }
+
+            if (authorize is not null)
+            {
+                return new ApiAuthorization(ApiAuthorizationMode.Required, authorize.Scheme);
+            }
+        }
+
+        return ApiAuthorization.Inherit;
     }
 
     /// <summary>

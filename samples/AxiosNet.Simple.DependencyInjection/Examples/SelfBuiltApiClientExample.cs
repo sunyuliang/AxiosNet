@@ -5,12 +5,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace AxiosNet.Simple.DependencyInjection.Scenarios;
+namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 2. AddApiClient(baseAddress, ...) —— 自带 BaseAddress 自建底层客户端。
 /// </summary>
-public sealed class SelfBuiltApiClientScenario : IScenario
+public sealed class SelfBuiltApiClientExample : IExample
 {
     public int Number => 2;
 

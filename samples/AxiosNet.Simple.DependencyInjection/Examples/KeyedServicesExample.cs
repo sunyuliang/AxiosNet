@@ -5,14 +5,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace AxiosNet.Simple.DependencyInjection.Scenarios;
+namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 6. 键名服务（.NET 8+ 官方机制）—— AddKeyedSingleton + [FromKeyedServices] / GetRequiredKeyedService。
 /// 与场景 5 等价的多站点方案：不经过扩展包的命名重载，直接用容器官方的键名服务。
 /// 适合消费方已是 .NET 8+、且希望完全走官方 API（键可以是字符串，也可以是 enum）。
 /// </summary>
-public sealed class KeyedServicesScenario : IScenario
+public sealed class KeyedServicesExample : IExample
 {
     public int Number => 6;
 

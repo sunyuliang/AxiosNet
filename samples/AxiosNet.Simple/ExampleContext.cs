@@ -1,4 +1,4 @@
-namespace AxiosNet.Simple.Examples;
+namespace AxiosNet.Simple;
 
 /// <summary>
 /// 示例运行上下文：所有示例共享的演示服务器信息。

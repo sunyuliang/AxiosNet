@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-773%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-792%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -175,8 +175,30 @@ public sealed class GetUserRequest : IApiRequest<User>
 - Authorization runs **after** binding and `Configure`: signing implementations see the final URL and final headers
 - **Typed errors**: with `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code errors throw `ApiError<TError>` (`Error` / `Status` / `Response` / `Original`, with the original `AxiosException` as `InnerException`); if the factory returns `null` or is not set, `AxiosException` is thrown as before. Network errors / timeouts / cancellation never go through the factory
 - **Reading error bodies**: `ApiErrorContext.Body` exposes the raw error response text (regardless of whether the declared response type could parse it), and `TryReadAsync<TError>()` deserializes it with the serializer selected by the response `Content-Type`; a parse failure only yields `default` and never hides the original HTTP error
+- **Authorization declarations**: `[Authorize]` (or `[Authorize("Basic")]`) marks the model as requiring authorization — the scheme decides the `Authorization: {scheme} {token}` prefix; `[AllowAnonymous]` skips the whole authorization chain (login, health checks). `client.AccessTokenProvider` only obtains the token, the library writes the header; an `Authorization` header already written by the model or the instance defaults is never overwritten, and `Authorization` (`IAuthorizationProvider`) still runs afterwards and may override it
 - **URL parameter formatting**: `client.UrlParameterFormatter = value => ...` takes over the text form of `[Path]` / `[Query]` values (enum spellings, date formats, ...); returning `null` falls back to the default rules
 - `client.GetUri(request)` builds the URL without sending; `client.Axios` exposes the underlying `AxiosClient` (interceptors / connection pool / handler injection all available)
+
+### Streaming responses (SSE / NDJSON)
+
+`RequestStreamAsync` turns the response stream into a frame-by-frame `IAsyncEnumerable<T>`; **the status code and headers are available at `await` time** (same shape as a normal response), frames are read during enumeration:
+
+```csharp
+var response = await client.RequestStreamAsync(
+    new ChatStreamRequest { Prompt = "hi" },
+    AxiosStreamFormat.ServerSentEvents);          // RequestStreamAsync(request) uses NDJSON by default
+
+await foreach (var chunk in response.Data!)
+{
+    Console.Write(chunk.Text);
+}
+```
+
+- **Timeout semantics**: for streaming requests `Timeout` **only covers the response headers**; the body is governed by `client.StreamIdleTimeout` — the default `Zero` means no limit (only the cancellation token applies), while a positive value fails when no data arrives for that long (`ECONNABORTED`, with "idle" in the message)
+- **Framing happens at the byte level**: split on `\n` first, then decode — a multi-byte character split across chunks survives (decoding first and splitting lines afterwards produces `U+FFFD`)
+- **SSE**: multi-line `data:` joined with newlines, `:` comment lines treated as heartbeats and ignored, `event:` / `id:` / `retry:` ignored, `data: [DONE]` ends the stream; **NDJSON**: one JSON value per line, empty lines skipped
+- **Ownership**: a stream can be enumerated once; ending or `break`ing an `await foreach` disposes the enumerator and returns the connection, while manual `MoveNextAsync` callers must call `DisposeAsync` themselves or the connection stays occupied
+- **Errors**: status-code errors throw at `await` (honoring `ErrorFactory`; up to 64 KB of the failing response body is preserved), frame parse failures are `ERR_BAD_RESPONSE`, mid-stream disconnects are `ERR_NETWORK`, cancellation is `ERR_CANCELED`
 
 ## Dependency injection (singleton registration)
 
@@ -234,7 +256,7 @@ public sealed class Dispatcher(IApiClientResolver resolver)
 | `AddApiClient(name, baseAddress, configureDefaults, configure)` | singleton `IApiClientResolver` + named sites | multi-site: each site carries its own BaseAddress and underlying client, reachable only through `IApiClientResolver` by name; a duplicate name throws at registration time |
 
 - **TryAdd semantics**: both extensions skip registration when one already exists (first wins), so repeated calls never create a second connection pool; remove the old registration to replace it
-- **Authorization and error factory from the container**: registered `IAuthorizationProvider` / `IApiErrorFactory` singletons are attached to the `ApiClient` automatically; anything set explicitly in `configure` wins
+- **Authorization and error factory from the container**: registered `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` singletons are attached to the `ApiClient` automatically; anything set explicitly in `configure` wins
 - **The container owns the lifetime**: disposing an injected `ApiClient` does not release the shared underlying client; singletons are released when the container shuts down (self-built clients through an internal holder, named sites through the resolver)
 - **Multi-site resolver**: `Get(name)` throws `InvalidOperationException` when the name is not registered (the message lists all registered sites), `TryGet` never throws, and `Names` lists the site names in registration order; site names are case-sensitive
 - **.NET 8+ alternative**: the official keyed services (`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`, enums work as keys too) are semantically equivalent to the named overload — scenario 6 of the sample demonstrates them, and both approaches can coexist
@@ -253,6 +275,7 @@ var config = new AxiosConfig
     Data = new { name = "bob" },              // request body (encoded per ContentType)
     ContentType = "application/json",         // default; can be set to application/x-www-form-urlencoded etc.
     Timeout = TimeSpan.FromSeconds(10),       // 0/Zero = no timeout
+    StreamIdleTimeout = null,                 // streaming body idle timeout: null = share Timeout; Zero = unlimited
     Auth = new AxiosAuth("user", "pass"),     // Basic
     ResponseType = ResponseType.Json,         // Json/Text/ArrayBuffer/Stream/Dynamic
     ValidateStatus = s => s is >= 200 and < 300,
@@ -1369,23 +1392,24 @@ Intentional differences driven by the .NET platform:
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 7 declarative = 31 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
+The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 8 declarative = 32 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
 
 > Items 13 and 18 above cover uploads: `DemoServer` uses `MultipartReader` to parse multipart **byte-exactly** and reports each part's field name, file name, content type, byte count, and SHA256; the single-file scenario also provides `/upload/raw` (raw stream) and `/upload/single` (multipart single file).
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.
 
-The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 7 examples make real HTTP round-trips:
+The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 8 examples make real HTTP round-trips:
 
 1. **GET detail**: `[Path]` binding + the response generic inferred from the request model
 2. **GET list**: unannotated properties bind as query by default, `ids[]=` array binding, `client.GetUri(request)` preview
 3. **POST create**: `[Body]` request body + the model's `Configure` hook (the server echoes X-Trace back to prove the header arrived)
-4. **Authorization**: a custom `IAuthorizationProvider` skipping the login request by type (login carries no credentials, token injected after login), plus the built-in `BearerAuthorizationProvider` one-liner
+4. **Authorization**: `[AllowAnonymous]` (login skips the whole authorization chain — the provider is never called) + `[Authorize]` (automatic `Bearer` header) + `IAccessTokenProvider` (token only), compared against a layered `IAuthorizationProvider` (runs last, may override) and the built-in `BearerAuthorizationProvider` fixed-token one-liner
 5. **DELETE + error handling**: the method comes from the route attribute; a 404 throws `AxiosException` (`ERR_BAD_REQUEST`) with the `ToJson` structured snapshot
 6. **Global logging**: `client.Axios.Interceptors` with request/response/error branches (plus a global header)
 7. **Signing/verification**: the `SigningSerializer` decorator around the built-in JSON — request body HMAC-SHA256 into `X-Signature`, response verified before parsing; the demo server verifies symmetrically and rejects unsigned requests with 401
+8. **Streaming (SSE)**: `RequestStreamAsync` returns `AxiosResponse<IAsyncEnumerable<T>>` — `await` gives you the status code and headers, `await foreach` consumes frames one by one; the demo server streams with `chunked` encoding (terminated by `[DONE]`)
 
-These 7 items live in the same startup menu as the 24 above (menu items 25-31, with their own demo server started lazily on first use):
+These 8 items live in the same startup menu as the 24 above (menu items 25-32, with their own demo server started lazily on first use):
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1402,7 +1426,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 773 cases on each runtime (1546 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running the same shipped assembly's 792 cases on each runtime (1584 executions in total, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1415,7 +1439,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 773 xUnit tests (both test projects target net8.0 + net6.0, so 1546 executions)
+# Run all 792 xUnit tests (both test projects target net8.0 + net6.0, so 1584 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1607,9 +1631,9 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 7 declarative samples under WebAPI/; the startup menu lists all 31 by reflection — type a number to run, a = all, q = quit
+│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 8 declarative samples under WebAPI/; the startup menu lists all 32 by reflection — type a number to run, a = all, q = quit
 │  │  ├─ Examples/               # core integration samples (24 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 7 examples over real HTTP round-trips, incl. global logging and HMAC signing/verification; menu items 25-31)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 8 examples over real HTTP round-trips, incl. authorization declarations, global logging, HMAC signing/verification and SSE streaming; menu items 25-32)
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IScenario classes under Scenarios/ need no registration to appear in the menu)
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit tests (714 cases × net6.0 / net8.0 = 1428 executions)

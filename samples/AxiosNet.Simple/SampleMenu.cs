@@ -1,4 +1,4 @@
-namespace AxiosNet.Simple.Examples;
+namespace AxiosNet.Simple;
 
 /// <summary>
 /// 菜单条目：组名（套件名）+ 套件内编号 + 类名 + 标题 + 执行委托（演示服务器与上下文由调用方捕获）。
