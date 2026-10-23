@@ -472,20 +472,23 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 var externalToken = config.CancellationToken;
                 var hasTimeout = config.Timeout > TimeSpan.Zero;
 
-                // 无超时且外部令牌不可取消时 linkedCts.Token 恒为 None，建 CTS 换不来任何行为差异。
-                using CancellationTokenSource? linkedCts = hasTimeout || externalToken.CanBeCanceled
-                    ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
+                // 只有「有超时」才需要独立令牌源：无超时时 sendToken 直接复用调用方令牌，
+                // 建 linked CTS 换不来任何行为差异，却要每请求付一次 CTS + 注册。
+                using CancellationTokenSource? timeoutCts = hasTimeout
+                    ? (externalToken.CanBeCanceled
+                        ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
+                        : new CancellationTokenSource())
                     : null;
 
-                if (hasTimeout)
+                if (timeoutCts is not null)
                 {
                     // CancelAfter 上限约 49.7 天（uint.MaxValue-1 毫秒），越界抛裸 ArgumentOutOfRangeException：
                     // 收敛到上限，语义等价于「极长但有限」。
-                    linkedCts!.CancelAfter(Timeouts.Clamp(config.Timeout));
+                    timeoutCts.CancelAfter(Timeouts.Clamp(config.Timeout));
                 }
 
-                // 交给底层每次 I/O 的令牌：无超时且无外部取消时就是 None（不注册、不分配）。
-                var sendToken = linkedCts?.Token ?? CancellationToken.None;
+                // 交给底层每次 I/O 的令牌：无超时时就是调用方令牌（None 时不注册、不分配）。
+                var sendToken = timeoutCts?.Token ?? externalToken;
 
                 var streamResponse = config.ResponseType == ResponseType.Stream;
 
@@ -514,7 +517,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                             }
                             catch (OperationCanceledException ex)
                             {
-                                if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                                if (!externalToken.IsCancellationRequested && timeoutCts is { IsCancellationRequested: true })
                                 {
                                     throw AxiosException.Timeout(config, request, ex);
                                 }
@@ -534,7 +537,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         }
                         catch (OperationCanceledException ex)
                         {
-                            if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                            if (!externalToken.IsCancellationRequested && timeoutCts is { IsCancellationRequested: true })
                             {
                                 throw AxiosException.Timeout(config, request, ex);
                             }
@@ -586,7 +589,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         catch (OperationCanceledException ex)
                         {
                             responseMessage.Dispose();
-                            if (!externalToken.IsCancellationRequested && linkedCts is { IsCancellationRequested: true })
+                            if (!externalToken.IsCancellationRequested && timeoutCts is { IsCancellationRequested: true })
                             {
                                 throw AxiosException.Timeout(config, request, ex);
                             }

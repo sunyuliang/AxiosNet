@@ -1711,6 +1711,8 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ AxiosContent.cs         # global injection point for content serialization
 │  │  ├─ AxiosConfig.cs          # request/instance configuration
 │  │  ├─ AxiosContentType.cs     # common Content-Type presets
+│  │  ├─ AxiosCollectionFormat.cs# params collection encoding (Brackets/Multi/Csv/Ssv/Tsv/Pipes)
+│  │  ├─ AxiosStreamFormat.cs    # streaming frame format (NDJSON / SSE)
 │  │  ├─ AxiosUrl.cs             # path-segment escaping (AxiosUrl.EncodePathSegment)
 │  │  ├─ AxiosHeaders.cs         # case-insensitive headers
 │  │  ├─ AxiosResponse.cs        # response (generic/non-generic)
@@ -1718,19 +1720,26 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ AxiosException.cs       # aligned with AxiosError
 │  │  ├─ AxiosProgressEvent.cs   # upload/download progress events
 │  │  ├─ FormFile.cs             # multipart file part
+│  │  ├─ GlobalUsings.cs         # global usings
 │  │  ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
-│  │  ├─ Interceptors/           # request/response interceptor management
-│  │  ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in JSON / XML implementations
-│  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type and scalar classification, status text
-│  │  └─ Pooling/                # HttpConnectionPool + PooledHandlerContext (handler injection)
+│  │  ├─ Interceptors/           # interceptor container (AxiosInterceptors) + request/response interceptor management
+│  │  ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in System.Text.Json / XML implementations
+│  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type and scalar classification, status text, timeouts and stream wrappers
+│  │  ├─ Pooling/                # HttpConnectionPool + pool options/statistics/PoolLease + PooledHandlerContext (handler injection)
 │  │  └─ WebAPI/                 # declarative API client (built into the main package, namespace AxiosNet.WebAPI)
 │  │     ├─ ApiClient.cs            # facade: RequestAsync(request) + GetUri(request), a thin wrapper over AxiosClient
+│  │     ├─ ApiClient.Streaming.cs  # streaming responses: RequestStreamAsync (NDJSON / SSE)
+│  │     ├─ ApiClient.Validation.cs # startup validation: ValidateModels(...)
 │  │     ├─ IApiRequest.cs          # request-model contract (IApiRequest<T> determines the response type) + Configure hook
 │  │     ├─ HttpApiAttribute.cs     # route attributes (Get/Post/Put/Patch/Delete/Head/Options)
 │  │     ├─ ApiParameterAttributes.cs # parameter-binding attributes (Path / Query / Header / Body)
+│  │     ├─ ApiHeaderAttributes.cs   # class/method-level Headers / HeaderCollection
+│  │     ├─ PartAttributes.cs       # multipart parts (Multipart / Part)
+│  │     ├─ AuthorizeAttributes.cs  # authorization declarations (Authorize / AllowAnonymous)
 │  │     ├─ IAuthorizationProvider.cs # authorization extension point + ApiAuthContext
 │  │     ├─ BearerAuthorizationProvider.cs # built-in Bearer authorization
-│  │     └─ Internal/RequestModelMetadata.cs # binding metadata (cached per model type, fully validated at build time)
+│  │     ├─ ApiError.cs             # strongly-typed errors (IApiErrorFactory / ApiError<TError>)
+│  │     └─ Internal/               # binding metadata, authorization resolution, query mapping, multipart part assembly, JSON stream enumeration
 │  └─ AxiosNet.DependencyInjection/      # DI singleton registration extensions (separate NuGet package, depends on the AxiosNet main package)
 │     ├─ AxiosClientServiceCollectionExtensions.cs # AddAxiosClient: registers a singleton AxiosClient
 │     ├─ ApiClientServiceCollectionExtensions.cs   # AddApiClient: registers a singleton ApiClient (self-built / facade / named multi-site)
@@ -1740,9 +1749,11 @@ How the stages map onto the source files (read together with the [project layout
 │  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 9 declarative samples under WebAPI/; the startup menu lists all 33 by reflection — type a number to run, a = all, q = quit
 │  │  ├─ Examples/               # core integration samples (24 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
 │  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE streaming; menu items 25-33)
-│  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
+│  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
+│  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit tests (791 cases × net6.0 / net8.0 = 1582 executions)
+   │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (127 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (40 cases × net6.0 / net8.0 = 80 executions, reuses the main/WebAPI test infrastructure)
 ```

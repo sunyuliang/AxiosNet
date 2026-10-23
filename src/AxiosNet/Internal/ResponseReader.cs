@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Collections;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using AxiosNet.Serialization;
 
@@ -64,52 +66,52 @@ internal static class ResponseReader
         // 上限 8MB：Content-Length 不可信，不替大额声明预付；超出视为未知长度走段式累积。
         const long maxPreallocated = 8 * 1024 * 1024;
         return declaredLength is > 0 and <= maxPreallocated
-            ? ReadPreallocatedAsync(stream, config, request, cancellationToken, (int)declaredLength.Value)
+            ? ReadPreallocatedAsync(stream, cancellationToken, (int)declaredLength.Value)
             : ReadSegmentedAsync(stream, config, request, cancellationToken);
     }
 
     /// <summary>
-    /// 已知长度（≤ 信任上限）的读取：按声明值整段读进 MemoryStream，
-    /// 精确写满时直接交底层数组，少发退化为一次精确拷贝。
+    /// 已知长度（≤ 信任上限）的读取：直接分配精确长度的数组并读满，读满即交出（1× 分配、零拷贝）；
+    /// 服务端提前结束时裁剪成实际长度。
+    /// <para>
+    /// 上限安全：<paramref name="capacity"/> 来自声明长度，读取量又被 capacity 封顶；
+    /// 声明长度超过 <see cref="AxiosConfig.MaxContentLength"/> 的情况已在
+    /// <see cref="WrapDownloadStream"/> 里拦下，所以这里无需重复判定。
+    /// </para>
     /// </summary>
     private static async Task<byte[]> ReadPreallocatedAsync(
         Stream stream,
-        AxiosConfig config,
-        HttpRequestMessage request,
         CancellationToken cancellationToken,
         int capacity)
     {
-        const int chunkSize = 81920;
-        var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
-
         try
         {
-            using var body = new MemoryStream(capacity);
-            int read;
-            while ((read = await stream.ReadAsync(buffer.AsMemory(0, chunkSize), cancellationToken).ConfigureAwait(false)) > 0)
+            var buffer = new byte[capacity];
+            var filled = 0;
+
+            while (filled < buffer.Length)
             {
-                if (config.MaxContentLength is long limit && body.Length + read > limit)
+                var read = await stream.ReadAsync(buffer.AsMemory(filled), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
                 {
-                    throw AxiosException.MaxContentLength(config, request, body.Length + read, limit);
+                    break;
                 }
 
-                body.Write(buffer, 0, read);
+                filled += read;
             }
 
-            // 精确预分配且刚好写满时直接交出底层数组，省掉 ToArray 的第二次拷贝。
-            // 必须同时确认底层数组长度 == 已读字节：ArraySegment.Array 是完整数组（容量可能大于 Count），
-            // 只比 Count 会把扩容路径的零填充一起交出去。任一不吻合就退回拷贝。
-            return body.TryGetBuffer(out var segment)
-                && segment.Count == body.Length
-                && segment.Array is { Length: var arrayLength }
-                && arrayLength == segment.Count
-                ? segment.Array
-                : body.ToArray();
+            if (filled == buffer.Length)
+            {
+                return buffer;
+            }
+
+            // 声明长度大于实际字节（连接提前关闭）：裁剪掉尾部零填充，不把未写区域交给调用方。
+            var trimmed = new byte[filled];
+            buffer.AsSpan(0, filled).CopyTo(trimmed);
+            return trimmed;
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
-
             // 本方法拥有流的释放（分派器不做成 async，见 ReadAllBytesAsync）
             stream.Dispose();
         }
@@ -216,16 +218,10 @@ internal static class ResponseReader
         AxiosResponse? target,
         bool lenient)
     {
-        var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in message.Headers)
-        {
-            headers[header.Key] = header.Value;
-        }
-
-        foreach (var header in message.Content.Headers)
-        {
-            headers[header.Key] = header.Value;
-        }
+        // 响应头不在这里展开：多数请求根本不读 Headers，而展开要枚举两套头集合、逐个把头值装箱，
+        // 还会触发 BCL 的惰性头值解析（每头约 0.2 µs）。改为保留两套头集合的惰性只读视图，
+        // 首次访问 Headers 时才物化成字典。HttpResponseMessage.Dispose() 只释放正文，头集合仍可读。
+        var headers = new ResponseHeadersView(message.Headers, message.Content.Headers);
 
         var status = (int)message.StatusCode;
         var statusText = StatusTextMap.Get(status);
@@ -480,4 +476,73 @@ internal static class ResponseReader
             throw AxiosException.BadResponse(config, request, dataType, ex);
         }
     }
+}
+
+/// <summary>
+/// 响应头的惰性只读视图：保留 BCL 的两套头集合，首次访问时才展开成大小写不敏感的字典并缓存。
+/// <para>
+/// 存在意义：展开响应头要枚举响应头 + 内容头两套集合、逐个把头值装箱，还会触发 BCL 的惰性头值解析
+/// （<c>Content-Type</c> → <c>MediaTypeHeaderValue</c> 等），实测每头约 0.2 µs；
+/// 而绝大多数调用方从不读 <see cref="AxiosResponse.Headers"/>，这份开销原先每请求都要白付。
+/// </para>
+/// <para>
+/// 约定保持不变：合并顺序仍是「响应头在前、内容头覆盖同名键」；
+/// <see cref="AxiosResponseInfo.Headers"/> 与 <see cref="AxiosResponse.Headers"/> 仍是同一实例。
+/// 头集合在 <c>HttpResponseMessage.Dispose()</c> 之后依然可读（释放的只是正文），
+/// 所以视图可以安全地持有它们。
+/// </para>
+/// </summary>
+internal sealed class ResponseHeadersView : IReadOnlyDictionary<string, IEnumerable<string>>
+{
+    private readonly HttpHeaders? _responseHeaders;
+    private readonly HttpContentHeaders? _contentHeaders;
+    private Dictionary<string, IEnumerable<string>>? _map;
+
+    public ResponseHeadersView(HttpHeaders? responseHeaders, HttpContentHeaders? contentHeaders)
+    {
+        _responseHeaders = responseHeaders;
+        _contentHeaders = contentHeaders;
+    }
+
+    private Dictionary<string, IEnumerable<string>> Map => Volatile.Read(ref _map) ?? Build();
+
+    private Dictionary<string, IEnumerable<string>> Build()
+    {
+        var map = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+
+        if (_responseHeaders is not null)
+        {
+            foreach (var header in _responseHeaders)
+            {
+                map[header.Key] = header.Value;
+            }
+        }
+
+        if (_contentHeaders is not null)
+        {
+            foreach (var header in _contentHeaders)
+            {
+                map[header.Key] = header.Value;
+            }
+        }
+
+        // 并发首次访问可能重复构建一次，但只发布一份；不用锁是为了不把锁对象暴露给持有 Headers 的外部代码。
+        return Interlocked.CompareExchange(ref _map, map, null) ?? map;
+    }
+
+    public IEnumerable<string> this[string key] => Map[key];
+
+    public IEnumerable<string> Keys => Map.Keys;
+
+    public IEnumerable<IEnumerable<string>> Values => Map.Values;
+
+    public int Count => Map.Count;
+
+    public bool ContainsKey(string key) => Map.ContainsKey(key);
+
+    public bool TryGetValue(string key, out IEnumerable<string> value) => Map.TryGetValue(key, out value!);
+
+    public IEnumerator<KeyValuePair<string, IEnumerable<string>>> GetEnumerator() => Map.GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }

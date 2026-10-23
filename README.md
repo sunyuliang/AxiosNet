@@ -1722,6 +1722,8 @@ dotnet build AxiosNet.sln -c Release
 │  │  ├─ AxiosContent.cs         # 内容序列化全局注入点（AxiosContent.Serializer）
 │  │  ├─ AxiosConfig.cs          # 请求/实例配置
 │  │  ├─ AxiosContentType.cs     # 常用 Content-Type 预置常量
+│  │  ├─ AxiosCollectionFormat.cs# params 集合编码形态（Brackets/Multi/Csv/Ssv/Tsv/Pipes）
+│  │  ├─ AxiosStreamFormat.cs    # 流式帧格式（NDJSON / SSE）
 │  │  ├─ AxiosUrl.cs             # 路径段转义（AxiosUrl.EncodePathSegment）
 │  │  ├─ AxiosHeaders.cs         # 大小写不敏感请求头
 │  │  ├─ AxiosResponse.cs        # 响应（泛型/非泛型）
@@ -1729,19 +1731,26 @@ dotnet build AxiosNet.sln -c Release
 │  │  ├─ AxiosException.cs       # AxiosError 对齐
 │  │  ├─ AxiosProgressEvent.cs   # 上传/下载进度事件
 │  │  ├─ FormFile.cs             # multipart 文件部件
+│  │  ├─ GlobalUsings.cs         # 全局 using
 │  │  ├─ ResponseType.cs / AxiosAuth.cs          # 响应形态 / Basic 认证
-│  │  ├─ Interceptors/           # 请求/响应拦截器管理
-│  │  ├─ Serialization/          # IContentSerializer（2 个文本方法 + 一对字节通道 + MediaType）+ 内置 JSON / XML 实现
-│  │  ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON、反射缓存、媒体类型与标量判定、状态码文本
-│  │  └─ Pooling/                # HttpConnectionPool 连接池 + PooledHandlerContext（Handler 注入）
+│  │  ├─ Interceptors/           # 拦截器容器（AxiosInterceptors）+ 请求/响应拦截器管理
+│  │  ├─ Serialization/          # IContentSerializer（2 个文本方法 + 一对字节通道 + MediaType）+ 内置 System.Text.Json / XML 实现
+│  │  ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON、反射缓存、媒体类型与标量判定、状态码文本、超时与流包装
+│  │  ├─ Pooling/                # HttpConnectionPool + 连接池选项/统计/PoolLease + PooledHandlerContext（Handler 注入）
 │  │  └─ WebAPI/                 # 声明式 API 客户端（主包内置，命名空间 AxiosNet.WebAPI）
 │  │     ├─ ApiClient.cs            # 门面：RequestAsync(request) + GetUri(request)，薄封装 AxiosClient
+│  │     ├─ ApiClient.Streaming.cs  # 流式响应：RequestStreamAsync（NDJSON / SSE）
+│  │     ├─ ApiClient.Validation.cs # 启动期体检：ValidateModels(...)
 │  │     ├─ IApiRequest.cs          # 请求模型契约（IApiRequest<T> 决定返回泛型）+ Configure 钩子
 │  │     ├─ HttpApiAttribute.cs     # 路由特性（Get/Post/Put/Patch/Delete/Head/Options）
 │  │     ├─ ApiParameterAttributes.cs # 参数绑定特性（Path / Query / Header / Body）
+│  │     ├─ ApiHeaderAttributes.cs   # 类/方法级 Headers / HeaderCollection
+│  │     ├─ PartAttributes.cs       # multipart 部件（Multipart / Part）
+│  │     ├─ AuthorizeAttributes.cs  # 授权声明（Authorize / AllowAnonymous）
 │  │     ├─ IAuthorizationProvider.cs # 授权扩展点 + ApiAuthContext
 │  │     ├─ BearerAuthorizationProvider.cs # 内置 Bearer 授权
-│  │     └─ Internal/RequestModelMetadata.cs # 绑定元数据（按模型类型缓存，构建期完成全部校验）
+│  │     ├─ ApiError.cs             # 强类型错误（IApiErrorFactory / ApiError<TError>）
+│  │     └─ Internal/               # 绑定元数据、授权解析、Query 映射、multipart 部件装配、JSON 流式枚举
 │  └─ AxiosNet.DependencyInjection/      # DI 单例注入扩展（独立 NuGet 包，依赖 AxiosNet 主包）
 │     ├─ AxiosClientServiceCollectionExtensions.cs # AddAxiosClient：注册单例 AxiosClient
 │     ├─ ApiClientServiceCollectionExtensions.cs   # AddApiClient：注册单例 ApiClient（自建 / 门面 / 命名多站点）
@@ -1751,9 +1760,11 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 9 项声明式示例；启动菜单反射列出全部 33 项，输入编号运行，a = 全部，q = 退出
 │  │  ├─ Examples/               # 核心集成示例（24 项，IExample 零注册自动进菜单；SampleMenu.cs 为交互菜单，两个示例程序共用）
 │  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：9 类示例走真实 HTTP 往返，含授权声明、multipart、全局日志、HMAC 签名/验签与 SSE 流式，菜单第 25-33 项）
-│  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
+│  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
+│  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit 单元测试（791 个用例 × net6.0 / net8.0 双目标 = 1582 次执行）
+   │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（127 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（40 个用例 × net6.0 / net8.0 双目标 = 80 次执行，复用主库/WebAPI 测试基建）
 ```
