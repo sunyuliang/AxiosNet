@@ -35,10 +35,13 @@ internal static class SampleMenu
 
             Console.Write("输入编号运行，a = 顺序运行全部，q = 退出 > ");
             var line = Console.ReadLine();
+           
             if (line is null)
             {
                 break; // 标准输入结束（重定向 / 管道）：退出
             }
+
+            Console.Clear();
 
             var command = line.Trim();
             if (command.Length == 0)
@@ -66,8 +69,10 @@ internal static class SampleMenu
                 Console.WriteLine($"无效输入「{command}」：有效范围 1-{items.Count}，a = 全部，q = 退出");
                 continue;
             }
-
+           
             failed |= await RunItemAsync(choice, items[choice - 1]);
+            Console.WriteLine($"{items[choice - 1].Name}执行完毕、按任意键继续");
+            Console.ReadKey();
         }
 
         return failed;

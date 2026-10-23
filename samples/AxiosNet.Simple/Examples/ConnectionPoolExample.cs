@@ -16,6 +16,9 @@ public sealed class ConnectionPoolExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
+        // 本示例的客户端与池故意每次运行新建：三个场景都要用「全新池」数连接数与峰值并发，
+        // 静态复用会让第二次运行的统计从上一轮的热连接开始，期望值不再成立
+
         var baseUrl = context.BaseUrl;
         var server = context.Server;
 

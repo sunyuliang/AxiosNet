@@ -25,6 +25,9 @@ public sealed class DnsRefreshExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
+        // 本示例的服务器、假 DNS 与客户端故意每次运行新建：两个「地址」是每轮新起的本地实例，
+        // 池的收敛过程必须在全新连接上复现，静态复用会把上一轮的连接与解析结果带进来
+
         // 两个本地实例 = 同一个域名的旧 / 新两个地址
         using var oldServer = DemoServer.Start();
         using var newServer = DemoServer.Start();

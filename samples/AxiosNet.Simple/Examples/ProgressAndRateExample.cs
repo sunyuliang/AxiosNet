@@ -7,6 +7,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class ProgressAndRateExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 16;
 
     public string Title => "下载/上传进度回调 + maxRate 限速";
@@ -15,7 +18,8 @@ public sealed class ProgressAndRateExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
         var lastStep = 0;
 

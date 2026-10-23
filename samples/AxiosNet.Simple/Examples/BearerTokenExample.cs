@@ -9,6 +9,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class BearerTokenExample : IExample
 {
+    /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 21;
 
     public string Title => "Bearer Token：登录签发、自动携带、服务端验证、401 刷新重试";
@@ -17,7 +20,10 @@ public sealed class BearerTokenExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        // 静态复用：首次运行创建；拦截器每次运行重挂（会话是每轮新建的），先清掉上一轮的
+        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        http.Interceptors.Request.Clear();
+        http.Interceptors.Response.Clear();
         var session = new TokenSession(http);
 
         InstallInterceptors(http, session);

@@ -8,6 +8,9 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class LoggingExample : IExample
 {
+    /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空（不能用共享客户端，否则日志拦截器会漏进其它示例）。</summary>
+    private static ApiClient? _client;
+
     public int Number => 6;
 
     public string Title => "全局日志：AxiosClient 拦截器（请求 / 响应 / 错误三个分支）";
@@ -16,7 +19,10 @@ public sealed class LoggingExample : IExample
     {
         ExampleConsole.Section(Number, Title);
 
-        using var client = new ApiClient(context.BaseUrl);
+        // 静态复用：首次运行创建；拦截器每次运行重挂，先清掉上一轮的，避免重复执行
+        var client = _client ??= new ApiClient(context.BaseUrl);
+        client.Axios.Interceptors.Request.Clear();
+        client.Axios.Interceptors.Response.Clear();
 
         // 拦截器在授权之后执行：这里看到的 config 已是最终形态（含授权头）
         client.Axios.Interceptors.Request.Use(config =>

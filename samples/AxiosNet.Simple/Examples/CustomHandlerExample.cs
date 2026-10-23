@@ -10,6 +10,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class CustomHandlerExample : IExample
 {
+    /// <summary>本示例专用客户端（PROPFIND 演示）：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 17;
 
     public string Title => "HttpMethod 直用 + 自定义 Handler 注入";
@@ -18,7 +21,8 @@ public sealed class CustomHandlerExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
         // 1) Method 就是 System.Net.Http.HttpMethod：内置谓词与自定义谓词一视同仁
         var propfind = await http.RequestAsync<JsonElement>(c =>
@@ -29,6 +33,8 @@ public sealed class CustomHandlerExample : IExample
 
         Console.WriteLine($"  custom method: HttpMethod(\"PROPFIND\") -> status={propfind.Status}, data={propfind.Data.GetRawText()}");
 
+        // 下面两个客户端都带「每轮从零开始」的计数器（拦截次数 / 工厂调用次数），故意每次运行新建——
+        // 静态复用会把上一轮的计数累加进来，演示输出就不再是确定值
         // 2) 直接注入 Handler：整个实例共用这一个 Handler，不创建连接池
         var singleTrace = new TraceHandler("single");
         singleTrace.InnerHandler = new SocketsHttpHandler();

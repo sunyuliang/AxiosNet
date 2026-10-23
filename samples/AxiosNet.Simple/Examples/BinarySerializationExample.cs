@@ -9,6 +9,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class BinarySerializationExample : IExample
 {
+    /// <summary>本示例专用客户端（二进制序列化器）：序列化器无状态，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _binary;
+
     public int Number => 24;
 
     public string Title => "二进制格式：字节通道双向（protobuf / MessagePack 同理）";
@@ -17,7 +20,8 @@ public sealed class BinarySerializationExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var client = Axios.Create(c =>
+        // 静态复用：首次运行创建，之后所有次运行复用同一实例与连接池
+        var client = _binary ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
             c.Serialization.ContentSerializer = new OrderBinarySerializer();

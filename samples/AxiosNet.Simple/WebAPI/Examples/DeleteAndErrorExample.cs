@@ -8,6 +8,9 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class DeleteAndErrorExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static ApiClient? _client;
+
     public int Number => 5;
 
     public string Title => "DELETE + 错误处理：非 2xx 抛 AxiosException（ERR_BAD_REQUEST，带 Response）";
@@ -16,7 +19,8 @@ public sealed class DeleteAndErrorExample : IExample
     {
         ExampleConsole.Section(Number, Title);
 
-        using var client = new ApiClient(context.BaseUrl);
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var client = _client ??= new ApiClient(context.BaseUrl);
 
         var deleted = await client.RequestAsync(new DeleteUserRequest { Id = 2 });
         Console.WriteLine($"  {deleted.Status} -> {ExampleConsole.Pretty(deleted.Data)}");

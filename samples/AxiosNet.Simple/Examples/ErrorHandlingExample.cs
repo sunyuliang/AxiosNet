@@ -8,6 +8,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class ErrorHandlingExample : IExample
 {
+    /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 11;
 
     public string Title => "错误码语义、超时 ECONNABORTED、取消 ERR_CANCELED、validateStatus";
@@ -16,7 +19,8 @@ public sealed class ErrorHandlingExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient();
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var http = _http ??= new AxiosClient();
 
         // 4xx -> ERR_BAD_REQUEST，异常上带完整 response
         try

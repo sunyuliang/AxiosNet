@@ -9,6 +9,12 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class XmlSerializationExample : IExample
 {
+    /// <summary>本示例专用客户端（XML 引擎）：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _xml;
+
+    /// <summary>本示例专用客户端（自动模式，按 Content-Type 选序列化器）：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _auto;
+
     public int Number => 23;
 
     public string Title => "XML 序列化：内置 XmlContentSerializer";
@@ -18,7 +24,8 @@ public sealed class XmlSerializationExample : IExample
         SampleConsole.Section(Number, Title);
 
         // 实例级注入：只影响这个 client，不污染全局默认（全局入口是 AxiosContent.Serializer）
-        using var xml = Axios.Create(c =>
+        // 静态复用：首次运行创建，之后所有次运行复用
+        var xml = _xml ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
             c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
@@ -62,7 +69,8 @@ public sealed class XmlSerializationExample : IExample
         AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
         try
         {
-            using var auto = Axios.Create(c => c.BaseAddress = context.BaseUrl);
+            // 自动模式：注册表挂在全局序列化器注册表上，与用哪个客户端无关（静态复用：首次运行创建，之后所有次运行复用）
+            var auto = _auto ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
             var byRegistry = await auto.GetAsync<XmlUser>("users/1/xml");
             Console.WriteLine($"  自动模式(按 Content-Type 注册): Id={byRegistry.Data!.Id}, Name={byRegistry.Data.Name}, Age={byRegistry.Data.Age}");

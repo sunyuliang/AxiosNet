@@ -7,6 +7,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class ResponseTypesExample : IExample
 {
+    /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 9;
 
     public string Title => "responseType：text / arraybuffer";
@@ -15,7 +18,8 @@ public sealed class ResponseTypesExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient();
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var http = _http ??= new AxiosClient();
 
         var textResponse = await http.GetAsync(context.BaseUrl, c => c.ResponseType = ResponseType.Text);
         Console.WriteLine($"  text: {textResponse.Data}");

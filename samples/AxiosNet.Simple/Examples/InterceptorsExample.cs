@@ -7,6 +7,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class InterceptorsExample : IExample
 {
+    /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 10;
 
     public string Title => "拦截器：请求改写配置、响应改写数据、错误分支恢复";
@@ -15,7 +18,10 @@ public sealed class InterceptorsExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        // 静态复用：首次运行创建；拦截器每次运行重挂，先清掉上一轮的，避免重复执行
+        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        http.Interceptors.Request.Clear();
+        http.Interceptors.Response.Clear();
 
         http.Interceptors.Request.Use(config =>
         {

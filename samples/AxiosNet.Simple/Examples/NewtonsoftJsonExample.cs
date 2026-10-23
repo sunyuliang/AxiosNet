@@ -8,6 +8,12 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class NewtonsoftJsonExample : IExample
 {
+    /// <summary>本示例专用客户端（Newtonsoft 引擎）：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _newtonsoft;
+
+    /// <summary>本示例专用客户端（默认 System.Text.Json 引擎，用于对比）：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _systemTextJson;
+
     public int Number => 19;
 
     public string Title => "自定义 JSON 序列化：用 Newtonsoft.Json 替换 System.Text.Json";
@@ -24,15 +30,15 @@ public sealed class NewtonsoftJsonExample : IExample
             Roles = ["admin", "user"]
         };
 
-        // 实例级替换：只影响这个 client，不污染全局
-        using var newtonsoft = Axios.Create(c =>
+        // 实例级替换：只影响这个 client，不污染全局（静态复用：首次运行创建，之后所有次运行复用）
+        var newtonsoft = _newtonsoft ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
             c.Serialization.ContentSerializer = new NewtonsoftJsonSerializer();
         });
 
         // 对比用的默认实例（System.Text.Json，Web 默认 camelCase）
-        using var systemTextJson = Axios.Create(c => c.BaseAddress = context.BaseUrl);
+        var systemTextJson = _systemTextJson ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
         // 1) 请求方向：同一份对象，两种引擎写出不同的属性名（/echo 原样回显请求体）
         var newtonsoftBody = await newtonsoft.PostAsync<string>(

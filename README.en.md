@@ -1430,6 +1430,8 @@ dotnet run --project samples/AxiosNet.Simple
 
 The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 9 declarative = 33 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
 
+Client usage follows production conventions: **each sample keeps one static client, created only when null and reused by every later run** (a `private static` field in the sample class with `??=` — no shared-client registry layered on top) — every `AxiosClient` owns a connection pool, so creating a client per run means rebuilding TCP connections every time; samples that install interceptors clear them first on each run, so re-runs behave identically. Item 12 (pool statistics), the handler-injection/pooled scenarios of item 17 (per-run counters), and item 20 (DNS switchover) deliberately create fresh clients: what they demonstrate is "brand-new connections / counters" itself.
+
 > Items 13 and 18 above cover uploads: `DemoServer` uses `MultipartReader` to parse multipart **byte-exactly** and reports each part's field name, file name, content type, byte count, and SHA256; the single-file scenario also provides `/upload/raw` (raw stream) and `/upload/single` (multipart single file).
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.

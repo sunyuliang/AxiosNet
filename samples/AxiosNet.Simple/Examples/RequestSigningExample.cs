@@ -11,6 +11,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class RequestSigningExample : IExample
 {
+    /// <summary>本示例专用客户端：签名拦截器只由本示例挂载，跨运行复用前先清空。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 22;
 
     public string Title => "请求签名：HMAC-SHA256(token + 请求内容)，防篡改、防重放";
@@ -19,7 +22,10 @@ public sealed class RequestSigningExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        // 静态复用：首次运行创建；签名拦截器每次运行重挂（令牌/密钥是每轮登录取回的），先清掉上一轮的
+        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        http.Interceptors.Request.Clear();
+        http.Interceptors.Response.Clear();
 
         // 登录同时取回 appSecret。真实系统里密钥按 app 预共享、不会随登录下发，这里只是为了演示闭环。
         var login = await http.PostAsync<JsonElement>(

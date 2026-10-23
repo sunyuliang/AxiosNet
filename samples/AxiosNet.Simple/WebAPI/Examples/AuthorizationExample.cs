@@ -8,6 +8,15 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class AuthorizationExample : IExample
 {
+    /// <summary>令牌提供方客户端：客户端静态复用，提供方按运行重新挂载。</summary>
+    private static ApiClient? _tokenClient;
+
+    /// <summary>叠加自定义授权客户端：客户端静态复用，两个提供方按运行重新挂载。</summary>
+    private static ApiClient? _layered;
+
+    /// <summary>固定令牌客户端：令牌固定，首次运行创建后跨运行复用。</summary>
+    private static ApiClient? _fixedToken;
+
     public int Number => 4;
 
     public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方（对比自定义 IAuthorizationProvider）";
@@ -18,10 +27,10 @@ public sealed class AuthorizationExample : IExample
 
         // 令牌提供方只负责「取令牌」，Authorization: Bearer xxx 由库按 scheme 拼
         var tokens = new SessionTokenProvider();
-        using var client = new ApiClient(context.BaseUrl)
-        {
-            AccessTokenProvider = tokens
-        };
+
+        // 三个客户端都静态复用（首次运行创建）；授权提供方是每轮新建的演示实例（要数调用次数），运行前重新挂上
+        var client = _tokenClient ??= new ApiClient(context.BaseUrl);
+        client.AccessTokenProvider = tokens;
 
         // 1) 登录模型标了 [AllowAnonymous]：整条授权链路跳过（提供方不会被调用），也不带 Authorization 头
         var login = await client.RequestAsync(new LoginRequest
@@ -55,17 +64,15 @@ public sealed class AuthorizationExample : IExample
         //    （签名、多凭据轮换这类完全自定义的场景走这条；纯取令牌不必自建提供方）
         tokens.SetToken(DemoApiServer.DemoToken);
         var observer = new HeaderObserver();
-        using var layered = new ApiClient(context.BaseUrl)
-        {
-            AccessTokenProvider = tokens,
-            Authorization = observer
-        };
+        var layered = _layered ??= new ApiClient(context.BaseUrl);
+        layered.AccessTokenProvider = tokens;
+        layered.Authorization = observer;
 
         await layered.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  IAuthorizationProvider 最后执行，看到的 Authorization = {observer.Seen}");
 
-        // 5) 固定令牌的最短写法：不需要任何提供方
-        using var fixedClient = new ApiClient(context.BaseUrl)
+        // 5) 固定令牌的最短写法：不需要任何提供方（令牌固定，创建一次即可）
+        var fixedClient = _fixedToken ??= new ApiClient(context.BaseUrl)
         {
             Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
         };

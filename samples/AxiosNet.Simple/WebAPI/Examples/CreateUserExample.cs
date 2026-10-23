@@ -7,6 +7,9 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class CreateUserExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static ApiClient? _client;
+
     public int Number => 3;
 
     public string Title => "POST 创建：[Body] 请求体 + 模型 Configure 钩子（X-Trace 回显验证）";
@@ -15,7 +18,8 @@ public sealed class CreateUserExample : IExample
     {
         ExampleConsole.Section(Number, Title);
 
-        using var client = new ApiClient(context.BaseUrl);
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var client = _client ??= new ApiClient(context.BaseUrl);
 
         var response = await client.RequestAsync(new CreateUserRequest
         {

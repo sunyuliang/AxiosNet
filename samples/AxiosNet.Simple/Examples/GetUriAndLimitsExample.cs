@@ -7,6 +7,12 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class GetUriAndLimitsExample : IExample
 {
+    /// <summary>1 MB 上限的专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _limited;
+
+    /// <summary>不跟随重定向的专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _noRedirect;
+
     public int Number => 15;
 
     public string Title => "getUri 预览 / maxContentLength / maxRedirects: 0";
@@ -15,7 +21,8 @@ public sealed class GetUriAndLimitsExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig
+        // 静态复用：首次运行创建，之后复用（两个客户端配置都是构造期固化的，跨运行语义不变）
+        var http = _limited ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
             Limits = new() { MaxContentLength = 1024 * 1024 } // 1 MB 上限
@@ -41,7 +48,7 @@ public sealed class GetUriAndLimitsExample : IExample
         }
 
         // 3) maxRedirects = 0：不跟随重定向（实例级配置，构造时就固定）
-        using var noRedirect = new AxiosClient(new AxiosConfig
+        var noRedirect = _noRedirect ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
             Connection = new() { MaxRedirects = 0 }

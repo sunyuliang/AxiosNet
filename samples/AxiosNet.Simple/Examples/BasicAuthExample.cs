@@ -8,6 +8,7 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class BasicAuthExample : IExample
 {
+
     public int Number => 6;
 
     public string Title => "config.auth 发送 HTTP Basic 认证";
@@ -16,10 +17,11 @@ public sealed class BasicAuthExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient();
-
-        var response = await http.GetAsync<JsonElement>(context.BaseUrl + "secure", c
-            => c.Connection.Auth = new AxiosAuth("user", "pass"));
+        var response = await Axios.GetAsync<JsonElement>("secure", c =>
+        {
+            c.BaseAddress = context.BaseUrl;
+            c.Connection.Auth = new AxiosAuth("user", "pass");
+        });
 
         Console.WriteLine($"  {response.Status} -> authenticated={response.Data.GetProperty("authenticated").GetBoolean()}");
         Console.WriteLine($"  Authorization = {response.Data.GetProperty("authorization").GetString()}");

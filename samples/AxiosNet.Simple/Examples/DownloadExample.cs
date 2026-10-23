@@ -8,6 +8,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class DownloadExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 14;
 
     public string Title => "文件下载：GetAsync<Stream> 流式落盘 / GetAsync<byte[]>";
@@ -16,7 +19,8 @@ public sealed class DownloadExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var http = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
         // 1) 大文件：<Stream> 自动切到 ResponseType.Stream，响应头一到就返回，边读边写盘
         var streamResponse = await http.GetAsync<Stream>("download");

@@ -7,6 +7,9 @@ namespace AxiosNet.Simple.Examples;
 /// </summary>
 public sealed class CreateInstanceExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _http;
+
     public int Number => 2;
 
     public string Title => "Axios.Create 创建实例（baseURL、默认头、强类型响应）";
@@ -15,7 +18,8 @@ public sealed class CreateInstanceExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        var http = Axios.Create(c =>
+        // 静态复用：首次运行创建，之后所有次运行复用同一实例（连接池随之复用）
+        var http = _http ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
             c.Timeout = TimeSpan.FromSeconds(10);

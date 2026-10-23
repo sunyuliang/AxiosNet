@@ -8,6 +8,9 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class StreamingExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static ApiClient? _client;
+
     public int Number => 8;
 
     public string Title => "流式响应（SSE）：RequestStreamAsync + IAsyncEnumerable 逐帧消费";
@@ -16,7 +19,8 @@ public sealed class StreamingExample : IExample
     {
         ExampleConsole.Section(Number, Title);
 
-        using var client = new ApiClient(context.BaseUrl);
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var client = _client ??= new ApiClient(context.BaseUrl);
 
         // 默认（不传格式）按 NDJSON 解析；这里是 SSE，显式指定
         var response = await client.RequestStreamAsync(

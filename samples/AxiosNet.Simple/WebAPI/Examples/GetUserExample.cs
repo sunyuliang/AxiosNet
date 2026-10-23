@@ -7,6 +7,9 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class GetUserExample : IExample
 {
+    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static ApiClient? _client;
+
     public int Number => 1;
 
     public string Title => "GET 详情：[Path] 绑定 + 泛型自动确定（api/users/{id}）";
@@ -16,7 +19,8 @@ public sealed class GetUserExample : IExample
         ExampleConsole.Section(Number, Title);
 
         // BaseAddress 之外零配置；授权在示例 4 才引入，匿名端点直接可用
-        using var client = new ApiClient(context.BaseUrl);
+        // 静态复用：首次运行创建，之后复用同一实例与连接池
+        var client = _client ??= new ApiClient(context.BaseUrl);
 
         var response = await client.RequestAsync(new GetUserRequest { Id = 1 });
 
