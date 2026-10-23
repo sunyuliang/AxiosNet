@@ -34,7 +34,7 @@ public sealed class RequestInterceptorManager
         {
             var id = ++_nextId;
             _interceptors.Add(new RequestInterceptor(id, onFulfilled, onRejected));
-            _snapshot = null;
+            Volatile.Write(ref _snapshot, null);
             return id;
         }
     }
@@ -58,7 +58,7 @@ public sealed class RequestInterceptorManager
             var removed = _interceptors.RemoveAll(i => i.Id == id) > 0;
             if (removed)
             {
-                _snapshot = null;
+                Volatile.Write(ref _snapshot, null);
             }
 
             return removed;
@@ -70,7 +70,7 @@ public sealed class RequestInterceptorManager
         lock (_interceptors)
         {
             _interceptors.Clear();
-            _snapshot = null;
+            Volatile.Write(ref _snapshot, null);
         }
     }
 
@@ -88,16 +88,20 @@ public sealed class RequestInterceptorManager
     /// <summary>快照并按 axios 规则逆序（后注册的先执行）；无变更时复用缓存。</summary>
     internal RequestInterceptor[] SnapshotReversed()
     {
+        // 稳态零锁：快照是不可变数组，写侧只在注册 / 弹出 / 清空时换引用。
+        // 只在快照失效后的第一次读取才进锁重建（每次请求都会走这里，锁是热路径开销）。
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (snapshot is not null)
+        {
+            return snapshot;
+        }
+
         lock (_interceptors)
         {
-            if (_snapshot is null)
-            {
-                var copy = _interceptors.ToArray();
-                Array.Reverse(copy);
-                _snapshot = copy;
-            }
-
-            return _snapshot;
+            snapshot = _interceptors.ToArray();
+            Array.Reverse(snapshot);
+            Volatile.Write(ref _snapshot, snapshot);
+            return snapshot;
         }
     }
 }

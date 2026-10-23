@@ -14,7 +14,7 @@ namespace AxiosNet.Pooling;
 /// </summary>
 public sealed class HttpConnectionPool : IDisposable
 {
-    private readonly ConcurrentDictionary<string, PooledEndpoint> _endpoints = new();
+    private readonly ConcurrentDictionary<OriginKey, PooledEndpoint> _endpoints = new();
     private readonly ConnectionPoolOptions _options;
     private readonly CookieContainer? _cookies;
     private readonly Timer? _evictionTimer;
@@ -184,7 +184,7 @@ public sealed class HttpConnectionPool : IDisposable
             }
 
             // 节点恰好在获取到锁之前被驱逐：移除后重试，会新建新节点
-            _endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(origin, endpoint));
+            _endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(origin, endpoint));
         }
     }
 
@@ -207,7 +207,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>节点退租时把自己从字典摘掉（池已关闭的优雅回收路径）。</summary>
     internal void Forget(PooledEndpoint endpoint)
     {
-        _endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(endpoint.Origin, endpoint));
+        _endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(endpoint.Key, endpoint));
     }
 
     /// <summary>手动驱逐空闲超过 IdleHandlerLifetime 的 origin 节点。</summary>
@@ -218,7 +218,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// 先驱逐最久未使用的空闲节点，一个都驱逐不掉（全部在途）才拒绝。
     /// <para><c>ContainsKey</c> 放在 <c>Count</c> 前面：后者要拿全桶锁逐表统计，而这里多数情况已提前返回。</para>
     /// </summary>
-    private void EnsureCapacity(string origin, AxiosConfig? config)
+    private void EnsureCapacity(OriginKey origin, AxiosConfig? config)
     {
         var max = _options.MaxEndpointCount;
         if (max <= 0 || _endpoints.ContainsKey(origin) || _endpoints.Count < max)
@@ -276,7 +276,7 @@ public sealed class HttpConnectionPool : IDisposable
 
                 // 先摘字典再置标记：两步都成功才收集起来、锁外统一释放；
                 // 标记返回 false 说明该节点已被其它路径（Clear / Dispose）接管。
-                if (_endpoints.TryRemove(new KeyValuePair<string, PooledEndpoint>(pair.Key, endpoint))
+                if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(pair.Key, endpoint))
                     && endpoint.MarkDisposed())
                 {
                     (pending ??= new List<PooledEndpoint>(1)).Add(endpoint);
@@ -349,15 +349,16 @@ public sealed class HttpConnectionPool : IDisposable
     }
 
     /// <summary>
-    /// 生成 origin 池 key（<c>scheme://host:port</c>）。
+    /// 生成 origin 池 key（scheme / host / port 三段，不再拼接字符串）。
     /// <para>
     /// 主机名用 <see cref="Uri.IdnHost"/>（IDNA/punycode）：unicode 主机名发送前会被规范化成 punycode，
     /// 服务端看到的是同一个站；池 key 保留原始拼写会把同一站点分裂成两个节点。
     /// IPv6 例外：<see cref="Uri.IdnHost"/> 不带方括号，因此回退用 <see cref="Uri.Host"/>。
     /// </para>
+    /// <para>用结构体而不是 <c>"scheme://host:port"</c> 字符串：租用是热路径，拼接字符串每请求都要分配一次。</para>
     /// </summary>
-    private static string BuildOrigin(Uri uri)
-        => $"{uri.Scheme}://{(uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost)}:{uri.Port}";
+    private static OriginKey BuildOrigin(Uri uri)
+        => new(uri.Scheme, uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost, uri.Port);
 
     /// <summary>
     /// 优雅关闭：空闲节点立即释放；仍有租约在途的节点先打标记，最后一条租约归还时自行回收
@@ -401,4 +402,38 @@ public sealed class HttpConnectionPool : IDisposable
             }
         }
     }
+}
+
+/// <summary>
+/// origin 池 key：scheme / host / port 三段直接比较。
+/// <para>
+/// 用结构体而不是 <c>"scheme://host:port"</c> 字符串，是因为租用是每请求都走的热路径，
+/// 拼接 key 会让每个请求多分配一个字符串、并按整串哈希。
+/// </para>
+/// </summary>
+internal readonly struct OriginKey : IEquatable<OriginKey>
+{
+    public OriginKey(string scheme, string host, int port)
+    {
+        Scheme = scheme;
+        Host = host;
+        Port = port;
+    }
+
+    public string Scheme { get; }
+
+    public string Host { get; }
+
+    public int Port { get; }
+
+    public bool Equals(OriginKey other)
+        => Port == other.Port
+            && string.Equals(Scheme, other.Scheme, StringComparison.Ordinal)
+            && string.Equals(Host, other.Host, StringComparison.Ordinal);
+
+    public override bool Equals(object? obj) => obj is OriginKey other && Equals(other);
+
+    public override int GetHashCode() => HashCode.Combine(Scheme, Host, Port);
+
+    public override string ToString() => $"{Scheme}://{Host}:{Port}";
 }

@@ -9,6 +9,9 @@ internal sealed class PooledEndpoint : IDisposable
 {
     private readonly HttpConnectionPool _owner;
 
+    /// <summary>池 key（scheme / host / port）。</summary>
+    public OriginKey Key { get; }
+
     public string Origin { get; }
 
     public HttpMessageHandler Handler { get; }
@@ -32,13 +35,14 @@ internal sealed class PooledEndpoint : IDisposable
 
     public PooledEndpoint(
         HttpConnectionPool owner,
-        string origin,
+        OriginKey key,
         ConnectionPoolOptions options,
         CookieContainer? cookieContainer)
     {
         _owner = owner;
-        Origin = origin;
-        Handler = CreateHandler(origin, options, cookieContainer);
+        Key = key;
+        Origin = key.ToString();
+        Handler = CreateHandler(Origin, options, cookieContainer);
         Client = new HttpClient(Handler, disposeHandler: false)
         {
             // 超时由 AxiosClient 按请求统一控制，避免 Handler 级超时干扰

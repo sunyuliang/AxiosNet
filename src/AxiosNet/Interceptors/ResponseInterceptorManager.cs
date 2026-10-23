@@ -27,7 +27,7 @@ public sealed class ResponseInterceptorManager
         {
             var id = ++_nextId;
             _interceptors.Add(new ResponseInterceptor(id, onFulfilled, onRejected));
-            _snapshot = null;
+            Volatile.Write(ref _snapshot, null);
             return id;
         }
     }
@@ -51,7 +51,7 @@ public sealed class ResponseInterceptorManager
             var removed = _interceptors.RemoveAll(i => i.Id == id) > 0;
             if (removed)
             {
-                _snapshot = null;
+                Volatile.Write(ref _snapshot, null);
             }
 
             return removed;
@@ -63,7 +63,7 @@ public sealed class ResponseInterceptorManager
         lock (_interceptors)
         {
             _interceptors.Clear();
-            _snapshot = null;
+            Volatile.Write(ref _snapshot, null);
         }
     }
 
@@ -80,14 +80,19 @@ public sealed class ResponseInterceptorManager
 
     internal ResponseInterceptor[] Snapshot()
     {
+        // 稳态零锁：快照是不可变数组，写侧只在注册 / 弹出 / 清空时换引用。
+        // 只在快照失效后的第一次读取才进锁重建（每次请求都会走这里，锁是热路径开销）。
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (snapshot is not null)
+        {
+            return snapshot;
+        }
+
         lock (_interceptors)
         {
-            if (_snapshot is null)
-            {
-                _snapshot = _interceptors.ToArray();
-            }
-
-            return _snapshot;
+            snapshot = _interceptors.ToArray();
+            Volatile.Write(ref _snapshot, snapshot);
+            return snapshot;
         }
     }
 }

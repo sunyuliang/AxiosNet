@@ -314,6 +314,229 @@ public sealed class OwnershipAndPoolTests
         }
     }
 
+    // ---------------------------------------------------------------
+    // 并发压测：驱逐 / 清空 / 关闭 vs 并发租用
+    //
+    // 三条路径都会「摘字典 + 置关闭标记」，而租用路径靠 TryAcquire 的返回值重试：
+    // 这里把两侧真正叠在一起跑，锁的是不变量（不抛、不漏、不重复释放、计数不为负），
+    // 后续把租约计数改成 CAS 状态字时必须仍然满足。
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task Pool_EvictIdle_ConcurrentWithLeasing_ReleasesEveryHandlerExactlyOnce()
+    {
+        var ledger = new HandlerLedger();
+        using var pool = NewStressPool(ledger);
+
+        var stop = 0;
+        var leasers = StartLeasers(pool, firstPort: 9300, originCount: 8, workers: 4, () => Volatile.Read(ref stop) == 0);
+
+        for (var round = 0; round < 200; round++)
+        {
+            pool.EvictIdleEndpoints();
+            await Task.Delay(1);
+        }
+
+        Volatile.Write(ref stop, 1);
+        await Task.WhenAll(leasers).WaitAsync(TimeSpan.FromSeconds(20));
+
+        // 全部归还后：没有残留租约，最后一次性驱逐能把池清空
+        Assert.All(pool.GetStatistics().Endpoints, e => Assert.Equal(0, e.ActiveLeases));
+        var remaining = pool.GetStatistics().EndpointCount;
+        Assert.Equal(remaining, pool.EvictIdleEndpoints());
+        Assert.Equal(0, pool.GetStatistics().EndpointCount);
+
+        // 每个被驱逐的节点都必须释放自己的 Handler，且只释放一次
+        Assert.True(ledger.Created > 0, "压测期间没有创建任何 Handler，租用路径未被覆盖。");
+        Assert.Equal(ledger.Created, ledger.Disposed);
+    }
+
+    [Fact]
+    public async Task Pool_Clear_ConcurrentWithLeasing_ReleasesEveryHandlerExactlyOnce()
+    {
+        var ledger = new HandlerLedger();
+        using var pool = NewStressPool(ledger);
+
+        var stop = 0;
+        var leasers = StartLeasers(pool, firstPort: 9310, originCount: 8, workers: 4, () => Volatile.Read(ref stop) == 0);
+
+        // Clear 是强制版：可能直接 Dispose 掉别人正持有的节点，归还租约时必须安全
+        for (var round = 0; round < 200; round++)
+        {
+            pool.Clear();
+            await Task.Delay(1);
+        }
+
+        Volatile.Write(ref stop, 1);
+        await Task.WhenAll(leasers).WaitAsync(TimeSpan.FromSeconds(20));
+
+        pool.Clear();
+
+        Assert.Equal(0, pool.GetStatistics().EndpointCount);
+        Assert.True(ledger.Created > 0, "压测期间没有创建任何 Handler，租用路径未被覆盖。");
+        Assert.Equal(ledger.Created, ledger.Disposed);
+    }
+
+    [Fact]
+    public async Task Pool_Dispose_ConcurrentWithLeasing_InFlightLeasesFinishAndPoolDrains()
+    {
+        var ledger = new HandlerLedger();
+        var pool = NewStressPool(ledger);
+
+        var stop = 0;
+        var rejected = 0;
+        var leasers = StartLeasers(
+            pool,
+            firstPort: 9320,
+            originCount: 8,
+            workers: 4,
+            () => Volatile.Read(ref stop) == 0,
+            onRejected: () => Interlocked.Increment(ref rejected));
+
+        // 先确保租用已经跑起来，再持有确定的在途租约去触发优雅关闭
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (ledger.Created == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(1);
+        }
+
+        Assert.True(ledger.Created > 0, "压测期间没有创建任何 Handler，租用路径未被覆盖。");
+
+        var inFlight = pool.Lease(new Uri("http://127.0.0.1:9330/x"));
+        pool.Dispose();
+
+        // 优雅关闭不能打断在途租约：归还必须安全，且节点在最后一条租约归还时自行摘除
+        inFlight.Dispose();
+        inFlight.Dispose();
+
+        // 关闭后再放租用线程跑一会儿：它们必须全部拿到 ObjectDisposedException 并收手，
+        // 而不是卡在重试循环里或把异常留给 WhenAll 之外的调用方。
+        await Task.Delay(50);
+        Volatile.Write(ref stop, 1);
+        await Task.WhenAll(leasers).WaitAsync(TimeSpan.FromSeconds(20));
+
+        // 关闭后的新租用一律被拒
+        Assert.Throws<ObjectDisposedException>(() => pool.Lease(new Uri("http://127.0.0.1:9330/x")));
+        Assert.Equal(leasers.Length, rejected);
+
+        // 所有租约归还后池必须排空，Handler 全部释放（包含「关闭后才插入」的节点）
+        Assert.Equal(0, pool.GetStatistics().EndpointCount);
+        Assert.Equal(ledger.Created, ledger.Disposed);
+    }
+
+    [Fact]
+    public async Task Pool_GetStatistics_StaysSelfConsistent_WhileEvictingAndLeasing()
+    {
+        var ledger = new HandlerLedger();
+        using var pool = NewStressPool(ledger);
+
+        var stop = 0;
+        var leasers = StartLeasers(pool, firstPort: 9340, originCount: 8, workers: 4, () => Volatile.Read(ref stop) == 0);
+
+        var evictor = Task.Run(async () =>
+        {
+            while (Volatile.Read(ref stop) == 0)
+            {
+                pool.EvictIdleEndpoints();
+                await Task.Delay(1);
+            }
+        });
+
+        for (var round = 0; round < 500; round++)
+        {
+            var stats = pool.GetStatistics();
+
+            // EndpointCount 与 Endpoints 必须来自同一次快照，租约计数不允许为负
+            Assert.Equal(stats.Endpoints.Count, stats.EndpointCount);
+            Assert.All(stats.Endpoints, e => Assert.True(e.ActiveLeases >= 0));
+        }
+
+        Volatile.Write(ref stop, 1);
+        await Task.WhenAll(leasers).WaitAsync(TimeSpan.FromSeconds(20));
+        await evictor.WaitAsync(TimeSpan.FromSeconds(20));
+    }
+
+    private static HttpConnectionPool NewStressPool(HandlerLedger ledger)
+        => new(new ConnectionPoolOptions
+        {
+            HandlerFactory = _ => ledger.Create(),
+            // 全程关闭后台驱逐：用例自己控制驱逐节奏，避免时间因素带来的不确定性
+            EvictionInterval = TimeSpan.Zero,
+            IdleHandlerLifetime = TimeSpan.Zero
+        });
+
+    /// <summary>
+    /// 起若干个持续「租用→归还」的线程；驱逐/清空/关闭可能把节点从脚下摘掉，
+    /// 租用必须靠重试透明恢复，除了关闭场景的 <see cref="ObjectDisposedException"/> 外不得抛异常。
+    /// </summary>
+    private static Task[] StartLeasers(
+        HttpConnectionPool pool,
+        int firstPort,
+        int originCount,
+        int workers,
+        Func<bool> shouldContinue,
+        Action? onRejected = null)
+        => Enumerable.Range(0, workers).Select(worker => Task.Run(() =>
+        {
+            var i = worker;
+            while (shouldContinue())
+            {
+                PoolLease lease;
+                try
+                {
+                    lease = pool.Lease(new Uri($"http://127.0.0.1:{firstPort + (i++ % originCount)}/x"));
+                }
+                catch (ObjectDisposedException)
+                {
+                    onRejected?.Invoke();
+                    return;
+                }
+
+                // 租约持有期间池可能被驱逐 / 清空 / 关闭：归还必须幂等且不抛（抛了任务就失败）
+                lease.Dispose();
+            }
+        })).ToArray();
+
+    /// <summary>记录 Handler 创建/释放次数：用于断言驱逐与关闭「不漏释放、不重复释放」。</summary>
+    private sealed class HandlerLedger
+    {
+        private int _created;
+        private int _disposed;
+
+        public int Created => Volatile.Read(ref _created);
+
+        public int Disposed => Volatile.Read(ref _disposed);
+
+        public HttpMessageHandler Create()
+        {
+            Interlocked.Increment(ref _created);
+            return new LedgerHandler(this);
+        }
+
+        private sealed class LedgerHandler : HttpMessageHandler
+        {
+            private readonly HandlerLedger _owner;
+            private int _disposed;
+
+            public LedgerHandler(HandlerLedger owner) => _owner = owner;
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+                => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
+                {
+                    Interlocked.Increment(ref _owner._disposed);
+                }
+
+                base.Dispose(disposing);
+            }
+        }
+    }
+
     [Fact]
     public void Pool_MaxEndpointCountZero_MeansUnlimited()
     {
