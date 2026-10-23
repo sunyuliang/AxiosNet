@@ -58,6 +58,14 @@ internal sealed class TrafficMeter
             return;
         }
 
+        // 读满本轮声明长度：这一次上报必须发出去，不受 50ms 节流。
+        // 预分配读取在「恰好读满声明长度」时不会再读一次 EOF（没有 read == 0 的 force 上报机会），
+        // 若最后一块恰好落在节流窗口内，100% 就会被吞掉 —— 调用方永远看不到终值。
+        if (_total is long declared && declared > 0 && _loaded - _roundStart >= declared)
+        {
+            force = true;
+        }
+
         var elapsedMs = (long)_clock.Elapsed.TotalMilliseconds;
         if (!force && elapsedMs - _lastReportMs < ReportIntervalMs)
         {
