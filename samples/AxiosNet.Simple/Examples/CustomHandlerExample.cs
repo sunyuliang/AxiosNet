@@ -51,7 +51,7 @@ public sealed class CustomHandlerExample : IExample
 
         // 3) 连接池 + HandlerFactory：既保留"按 origin 一个 Handler + 连接复用"，又能插入自定义 Handler
         var factoryCalls = 0;
-        var poolTrace = new TraceHandler("pool");
+        var intercepted = 0;
 
         using (var pooled = new AxiosClient(poolOptions: new ConnectionPoolOptions
         {
@@ -62,9 +62,14 @@ public sealed class CustomHandlerExample : IExample
                 Console.WriteLine(
                     $"  [HandlerFactory] origin={ctx.Origin}, base={ctx.BaseAddress}, maxConnections={ctx.Options.MaxConnectionsPerServer}");
 
+                // 每次调用都必须给一个「独立」的 Handler：返回值按 origin 长期持有，
+                // 复用同一个 DelegatingHandler 会在第二个 origin 上把它的 InnerHandler 顶掉，
+                // 前一个 origin 的请求随即挂在一个内层已被替换的实例上。
+                var trace = new TraceHandler("pool", () => Interlocked.Increment(ref intercepted));
+
                 // CreateDefaultHandler 拿到的是按池选项配好的 SocketsHttpHandler，直接作为内层即可
-                poolTrace.InnerHandler = ctx.CreateDefaultHandler();
-                return poolTrace;
+                trace.InnerHandler = ctx.CreateDefaultHandler();
+                return trace;
             }
         }))
         {
@@ -75,7 +80,7 @@ public sealed class CustomHandlerExample : IExample
 
             var stats = pooled.Pool!.GetStatistics();
             Console.WriteLine(
-                $"  HandlerFactory: 工厂调用 {factoryCalls} 次（3 个请求同 origin）, 拦截 {poolTrace.Count} 次, 池节点 {stats.EndpointCount}");
+                $"  HandlerFactory: 工厂调用 {factoryCalls} 次（3 个请求同 origin）, 拦截 {intercepted} 次, 池节点 {stats.EndpointCount}");
         }
     }
 
@@ -83,9 +88,14 @@ public sealed class CustomHandlerExample : IExample
     private sealed class TraceHandler : DelegatingHandler
     {
         private readonly string _name;
+        private readonly Action? _onSend;
         private int _count;
 
-        public TraceHandler(string name) => _name = name;
+        public TraceHandler(string name, Action? onSend = null)
+        {
+            _name = name;
+            _onSend = onSend;
+        }
 
         public int Count => Volatile.Read(ref _count);
 
@@ -93,6 +103,7 @@ public sealed class CustomHandlerExample : IExample
         {
             var seq = Interlocked.Increment(ref _count);
             request.Headers.TryAddWithoutValidation("X-Trace-Id", $"{_name}-{seq}");
+            _onSend?.Invoke();
             return base.SendAsync(request, cancellationToken);
         }
     }

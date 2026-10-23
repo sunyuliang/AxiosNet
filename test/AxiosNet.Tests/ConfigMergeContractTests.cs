@@ -107,6 +107,61 @@ public sealed class ConfigMergeContractTests
     }
 
     // ---------------------------------------------------------------
+    // 头集合的增删：configure 拿到的就是生效配置，删除 / 清空必须真的生效
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task Configure_CanDeleteInstanceDefaultHeader_OnBothEntries()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Headers = new AxiosHeaders(new Dictionary<string, string> { ["Authorization"] = "Bearer secret" })
+        });
+
+        // 快捷入口：configure 在实例默认值的副本上改
+        await client.GetAsync("a", c => c.Headers.Delete("Authorization"));
+
+        // 主入口：起点必须与快捷入口相同 —— 从空配置起会让 Delete 在空集合上返回 false，
+        // 凭据静默残留，两条入口行为正好相反
+        await client.RequestAsync(c =>
+        {
+            c.Url = "b";
+            c.Headers.Delete("Authorization");
+        });
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.All(server.Received, r => Assert.DoesNotContain(
+            "Authorization",
+            r.Headers.Keys,
+            StringComparer.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Configure_HeadersClear_DropsInstanceDefaults()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Headers = new AxiosHeaders(new Dictionary<string, string> { ["X-Api-Key"] = "k" })
+        });
+
+        // Clear 同理：空配置上 Clear 什么也清不掉，生效配置上才是「这次一个默认头都不带」
+        await client.RequestAsync(c =>
+        {
+            c.Url = "a";
+            c.Headers.Clear();
+            c.Headers.Set("X-Only", "1");
+        });
+
+        var received = Assert.Single(server.Received);
+        Assert.DoesNotContain("X-Api-Key", received.Headers.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("X-Only", received.Headers.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // ---------------------------------------------------------------
     // transform 链：顺序固定为「实例默认 → 本次追加」，且不写回实例
     // ---------------------------------------------------------------
 

@@ -258,9 +258,6 @@ public sealed partial class AxiosClient
     /// <summary>
     /// 组装一次快捷调用的<b>生效配置</b>：直接在实例默认值的副本上填写本次请求项，
     /// 并用 <see cref="AxiosConfig.EffectiveMerged"/> 告诉管线不必再合并。
-    /// <para>
-    /// 唯一的行为差异：<paramref name="configure"/> 回调里读到的 config 已带实例默认值。
-    /// </para>
     /// </summary>
     private AxiosConfig Shortcut(
         string url,
@@ -270,12 +267,7 @@ public sealed partial class AxiosClient
         object? data = null,
         string? defaultContentType = null)
     {
-        var config = Defaults.Clone();
-        config.EffectiveMerged = true;
-
-        // 这份副本是「本次请求的生效配置」：实例默认值上的显式赋值标记不能冒充
-        // 「本次按请求写了实例级选项」，否则构造后改 Defaults.MaxRedirects 会让每次调用都抛错。
-        config.ClearInstanceOptionFlags();
+        var config = NewEffectiveConfig();
 
         // url 是必填参数：null / 空白不能静默解释成「请求 baseAddress 本身」——
         // 那会让一次「变量忘赋值」变成向根路径发出的意外请求（POST / 可能带副作用）。
@@ -322,9 +314,38 @@ public sealed partial class AxiosClient
         }
 
         configure?.Invoke(config);
+        ApplyRemoveHeaders(config);
 
-        // 合并语义是「先并头，再摘掉要删除的」：这里没有可并的，
-        // 但 configure 里写的 RemoveHeaders 必须在它写完之后才生效。
+        return config;
+    }
+
+    /// <summary>
+    /// 「本次请求的生效配置」的起点：实例默认值的副本。
+    /// <para>
+    /// 所有 <c>Action&lt;AxiosConfig&gt;</c> 入口（快捷方法与 <c>RequestAsync(configure)</c>）都从这里开始，
+    /// 回调因此能看到并修改实例默认值——<c>config.Headers.Delete("Authorization")</c> 这类
+    /// 「删掉就没有了」的操作才能真的摘掉默认头。另一种起点是空配置 + 事后合并：
+    /// 删除落在空集合上会被静默吞掉（凭据残留），两条入口的表现还会正好相反。
+    /// </para>
+    /// <para>
+    /// 副本上的实例级选项标记必须清掉：它们是「实例的值」而非「本次按请求写的意图」，
+    /// 否则构造后改 <c>Defaults.MaxRedirects</c> 会让每次调用都在校验层抛错。
+    /// </para>
+    /// </summary>
+    private AxiosConfig NewEffectiveConfig()
+    {
+        var config = Defaults.Clone();
+        config.EffectiveMerged = true;
+        config.ClearInstanceOptionFlags();
+        return config;
+    }
+
+    /// <summary>
+    /// 应用 <see cref="AxiosConfig.RemoveHeaders"/>：生效配置里没有可并的头，
+    /// 但「先并头、再摘掉要删除的」这条语义要求删除发生在 configure 写完头之后。
+    /// </summary>
+    private static void ApplyRemoveHeaders(AxiosConfig config)
+    {
         if (config.HasRemoveHeaders && config.HasHeaders)
         {
             foreach (var name in config.RemoveHeaders)
@@ -332,8 +353,6 @@ public sealed partial class AxiosClient
                 config.Headers.Delete(name);
             }
         }
-
-        return config;
     }
 
     /// <summary>

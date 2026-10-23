@@ -19,6 +19,13 @@ public sealed class StreamCancellationTests
     /// <summary>期望在 250ms 内被打断；给 2 秒的宽松上限，避免 CI 抖动导致假失败。</summary>
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// 同步入口阻塞的是线程池线程，超时计时器的回调同样要线程池：CI 满载时回调可能晚到数秒（实测约 3.3s）。
+    /// 对「限速等待必须被超时打断」的用例，预算只需远小于「限速自己等完」的时间
+    /// （64KB @1KB/s ≈ 64s），2 秒的 <see cref="Budget"/> 在这里过于接近调度抖动幅度。
+    /// </summary>
+    private static readonly TimeSpan BlockingReadBudget = TimeSpan.FromSeconds(10);
+
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromMilliseconds(250);
 
     /// <summary>足够大、不参与断言的超时：只用于让 TimeoutStream 把外部令牌接进链路。</summary>
@@ -318,7 +325,9 @@ public sealed class StreamCancellationTests
         var response = await client.GetAsync<Stream>("http://probe.invalid/file", c =>
         {
             c.Timeout = ShortTimeout;
-            c.Limits.MaxRate = 8 * 1024; // 8KB/s：读完 64KB 需要约 8 秒，必须被 250ms 的超时打断
+            // 1KB/s：读完 64KB 需要 64 秒，必须被 250ms 的超时打断。
+            // 速率压得足够低，才能把「被打断」和「限速自己等完」清楚地区分开（后者远大于 BlockingReadBudget）。
+            c.Limits.MaxRate = 1024;
         });
         await using var stream = response.Data!;
 
@@ -329,7 +338,7 @@ public sealed class StreamCancellationTests
         clock.Stop();
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.True(clock.Elapsed < Budget, $"限速等待没有响应超时，耗时 {clock.Elapsed}");
+        Assert.True(clock.Elapsed < BlockingReadBudget, $"限速等待没有响应超时，耗时 {clock.Elapsed}");
     }
 
     // ------------------------------------------------------------------
@@ -418,16 +427,30 @@ public sealed class StreamCancellationTests
         using var cts = new CancellationTokenSource();
 
         var events = new List<AxiosProgressEvent>();
-        // 16 块 × 50ms ≈ 800ms：远长于 150ms 的取消点，保证取消一定落在上传中途
+        var firstEvent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // 16 块 × 50ms ≈ 800ms：远长于取消点，保证取消落在上传中途
         var content = new SyncWritingContent(new byte[128 * 1024], chunkSize: 8 * 1024, chunkDelay: TimeSpan.FromMilliseconds(50));
 
-        var upload = client.PostAsync(server.Url + "upload", content, c => c.Callbacks.OnUploadProgress = events.Add, cts.Token);
+        // 取消点必须是「正文确实开始写了」，而不是固定 150ms：CI 上建连 + 序列化启动可能超过 150ms，
+        // 那样取消落在正文之前，进度回调一次都不会触发 —— 断言失败于机器调度，而不是同步桥的实现。
+        var upload = client.PostAsync(server.Url + "upload", content, c => c.Callbacks.OnUploadProgress = e =>
+        {
+            lock (events)
+            {
+                events.Add(e);
+            }
 
-        await Task.Delay(150);
+            firstEvent.TrySetResult();
+        }, cts.Token);
+
+        await firstEvent.Task.WaitAsync(TimeSpan.FromSeconds(15));
         cts.Cancel();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => upload);
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
-        Assert.NotEmpty(events);
+        lock (events)
+        {
+            Assert.NotEmpty(events);
+        }
     }
 }

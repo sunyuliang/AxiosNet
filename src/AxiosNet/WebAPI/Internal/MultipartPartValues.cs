@@ -157,8 +157,14 @@ internal static class MultipartPartValues
                     content.Dispose();
                     break;
 
+                // 未声明 FileName/ContentType 的裸 Stream 由 Normalize 原样透传（尚未被 builder 包成 StreamContent），
+                // 容器的 Dispose 同样覆盖不到：模型里的流从装配开始就归库，失败路径必须在这里关掉。
+                case Stream stream:
+                    stream.Dispose();
+                    break;
+
                 // Normalize 的集合产物：逐项回收
-                case List<object?> items:
+                case IEnumerable<object?> items:
                     DisposeOwned(items);
                     break;
             }

@@ -238,7 +238,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public string GetUri(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        var merged = MergeConfig(config);
+
+        // 已经是生效配置（RequestAsync/GetUri 的 configure 入口产出）时不必再合并一遍：
+        // 它的头集合就是最终形态，重新合并会把回调里删掉的头（Delete/Clear）又加回来。
+        var merged = config.EffectiveMerged ? config : MergeConfig(config);
         return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.ParamsSerializer, config: merged)
             .AbsoluteUri;
     }
@@ -247,8 +250,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public string GetUri(Action<AxiosConfig> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        var config = new AxiosConfig();
+
+        // 与 RequestAsync(configure) 同一份起点：回调看到的 config 已带实例默认值。
+        var config = NewEffectiveConfig();
         configure(config);
+        ApplyRemoveHeaders(config);
         return GetUri(config);
     }
 
@@ -274,8 +280,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public Task<AxiosResponse> RequestAsync(Action<AxiosConfig> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        var config = new AxiosConfig();
+
+        // 起点与快捷方法一致（见 NewEffectiveConfig）：回调在实例默认值的副本上增删改，
+        // 删头 / 清空头集合都是真的生效，不会出现「快捷入口摘得掉、主入口静默没摘」。
+        var config = NewEffectiveConfig();
         configure(config);
+        ApplyRemoveHeaders(config);
         return SendAsync(config, null);
     }
 
@@ -283,8 +293,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public Task<AxiosResponse<T>> RequestAsync<T>(Action<AxiosConfig> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        var config = new AxiosConfig();
+
+        var config = NewEffectiveConfig();
         configure(config);
+        ApplyRemoveHeaders(config);
         return SendTypedAsync<T>(config);
     }
 

@@ -178,11 +178,9 @@ public sealed class Audit20261023B1B8FixTests
                     Encoding.UTF8.GetBytes("{\"n\":1}\n"),
                     Encoding.UTF8.GetBytes("{\"n\":2}\n")
                 },
-                chunkDelays: new[]
-                {
-                    TimeSpan.Zero,
-                    TimeSpan.FromMilliseconds(40)
-                },
+                // 不注入分块间的网络延迟：CI 满载时 40ms 的 Task.Delay 可能被拖到 150ms 以上，
+                // 那已经不是「消费者停顿」的场景，只会让用例随机撞上空闲超时。本用例要验证的只是
+                // 「两次 MoveNext 之间的停顿不进入空闲计时」。
                 stallAfterChunks: true),
             idle: TimeSpan.FromMilliseconds(150));
 

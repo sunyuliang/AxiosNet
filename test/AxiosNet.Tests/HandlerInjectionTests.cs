@@ -293,6 +293,39 @@ public sealed class HandlerInjectionTests
     }
 
     [Fact]
+    public async Task HandlerFactory_ReturnsIndependentHandlerPerOrigin()
+    {
+        // 契约：工厂每次调用都要给一个**独立**实例（见 README「HandlerFactory 约定」）。
+        // 复用同一个 DelegatingHandler 的写法在单 origin 下能跑，多 origin 时后一次调用会把
+        // 它的 InnerHandler 顶掉，前一个 origin 的请求随即挂在内层已被替换的实例上。
+        await using var first = TestHttpServer.Start(req => TestJson.Response(new { origin = "first" }));
+        await using var second = TestHttpServer.Start(req => TestJson.Response(new { origin = "second" }));
+
+        var traces = new List<TraceHandler>();
+
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            HandlerFactory = ctx =>
+            {
+                var trace = new TraceHandler { InnerHandler = ctx.CreateDefaultHandler() };
+                traces.Add(trace);
+                return trace;
+            }
+        });
+
+        await client.GetAsync(first.Url + "ping");
+        await client.GetAsync(second.Url + "ping");
+        // 回到第一个 origin：它必须仍能正常发出请求（Handler 没被第二个 origin 抢走）
+        await client.GetAsync(first.Url + "ping");
+
+        Assert.Equal(2, traces.Count);
+        Assert.NotSame(traces[0], traces[1]);
+        Assert.Equal(2, traces[0].Requests.Count);
+        Assert.Single(traces[1].Requests);
+        Assert.Equal(2, client.Pool!.GetStatistics().EndpointCount);
+    }
+
+    [Fact]
     public async Task HandlerFactory_HandlersAreDisposedWhenPoolCleared()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Response(new { ok = true }));

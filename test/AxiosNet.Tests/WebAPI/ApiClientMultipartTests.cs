@@ -192,6 +192,24 @@ public sealed class ApiClientMultipartTests
     }
 
     [Fact]
+    public async Task Multipart_RawStreamPassthrough_IsDisposedWhenLaterPartThrows()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("payload"));
+
+        // 属性取值经反射，异常会被包进 TargetInvocationException（这里只关心「装配中断 + 流被释放」）
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
+            client.RequestAsync(new RawStreamThenThrowRequest { File = stream }));
+
+        Assert.Contains("boom", ex.ToString());
+
+        // 没声明 FileName/ContentType 的裸 Stream 由 Normalize 原样透传（不包装成 FormFile）：
+        // 装配在后续属性上中断时它还没被 builder 包成 StreamContent，容器 Dispose 覆盖不到，
+        // 只能靠回滚就地释放 —— 否则调用方的 FileStream 句柄永久泄漏
+        Assert.False(stream.CanRead);
+    }
+
+    [Fact]
     public void Multipart_WithBody_IsRejected()
     {
         var ex = Assert.Throws<InvalidOperationException>(
@@ -317,6 +335,19 @@ public sealed class ApiClientMultipartTests
     {
         [Part(ContentType = "text/plain")]
         public IEnumerable<Stream> Files { get; set; } = [];
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class RawStreamThenThrowRequest : IApiRequest<object>
+    {
+        /// <summary>未声明 FileName / ContentType → 原样透传，不包装成 <see cref="FormFile"/>。</summary>
+        [Part]
+        public Stream? File { get; set; }
+
+        /// <summary>取值即抛：装配在后续属性上中断，此时前面的裸流还没交给 builder。</summary>
+        [Part]
+        public string? Boom => throw new InvalidOperationException("boom");
     }
 
     [Post("upload")]
