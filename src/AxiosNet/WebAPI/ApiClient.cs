@@ -167,6 +167,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         (request as IApiRequestConfigurable)?.Configure(config);
         configure?.Invoke(config);
 
+        // [Multipart] 模型：Content-Type 由库设定（调用方/Configure 显式设置过则保留，可自带 boundary）
+        if (metadata.IsMultipart && !config.ContentTypeSet)
+        {
+            config.ContentType = AxiosContentType.MultipartFormData;
+        }
+
         return config;
     }
 

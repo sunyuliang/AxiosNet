@@ -212,6 +212,9 @@ public sealed class DemoApiServer : IDisposable
             case "POST" when path == "/api/signed/echo":
                 return SignedEcho(headers, body);
 
+            case "POST" when path == "/api/upload":
+                return MultipartUpload(headers, body);
+
             default:
                 return (404, """{"error":"no such route"}""", null);
         }
@@ -245,6 +248,27 @@ public sealed class DemoApiServer : IDisposable
 
     private static string HmacHex(byte[] data)
         => Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(SigningKey), data));
+
+    /// <summary>
+    /// multipart 上传端点：<see cref="MultipartReader"/> 按字节精确解析，
+    /// 回报每个部件的字段名 / 文件名 / Content-Type / 字节数（供声明式 multipart 示例核对）。
+    /// </summary>
+    private static (int Status, string Json, Dictionary<string, string>? ExtraHeaders) MultipartUpload(
+        IReadOnlyDictionary<string, string> headers,
+        byte[] body)
+    {
+        if (!MultipartReader.TryParse(headers.GetValueOrDefault("content-type"), body, out var parts, out var error))
+        {
+            return (400, """{"error":"malformed multipart body"}""", null);
+        }
+
+        var title = parts.FirstOrDefault(p => p.Name == "Title")?.Text ?? string.Empty;
+        var summary = parts
+            .Select(p => new UploadedPart(p.Name, p.FileName, p.ContentType, p.Content.Length))
+            .ToArray();
+
+        return (200, JsonSerializer.Serialize(new UploadResult(parts.Count, title, summary)), null);
+    }
 
     private static UserProfile? Find(int id) => Users.FirstOrDefault(u => u.Id == id) is { } found ? found : null;
 

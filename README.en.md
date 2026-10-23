@@ -152,6 +152,7 @@ Binding rules (parameter semantics aligned with Refit, but applied to **properti
 | Header | `[Header]` | `null` is skipped |
 | Header map | `[HeaderCollection]` | `IDictionary<string, string>` written entry by entry; entries with a `null` value are skipped |
 | Static headers | `[Headers]` (class level) | fixed `"Name: Value"` headers; a name alone (`"X-Internal"`) removes that header; property headers override same-named static ones, base-class declarations are inherited |
+| Multipart form | `[Multipart]` + `[Part]` | the model itself is the form: unannotated properties bind as parts by default; `[Part]` overrides the field name / file name / part Content-Type; mutually exclusive with `[Body]` |
 | Body | `[Body]` | at most one per model; `null` sends no body |
 | Exclusion | `[ApiIgnore]` | the property is excluded from binding entirely (no path/query/header/body), for internal state or sensitive data; combining with a parameter attribute throws |
 
@@ -1392,13 +1393,13 @@ Intentional differences driven by the .NET platform:
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 8 declarative = 32 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
+The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 9 declarative = 33 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
 
 > Items 13 and 18 above cover uploads: `DemoServer` uses `MultipartReader` to parse multipart **byte-exactly** and reports each part's field name, file name, content type, byte count, and SHA256; the single-file scenario also provides `/upload/raw` (raw stream) and `/upload/single` (multipart single file).
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.
 
-The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 8 examples make real HTTP round-trips:
+The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 9 examples make real HTTP round-trips:
 
 1. **GET detail**: `[Path]` binding + the response generic inferred from the request model
 2. **GET list**: unannotated properties bind as query by default, `ids[]=` array binding, `client.GetUri(request)` preview
@@ -1408,8 +1409,9 @@ The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is 
 6. **Global logging**: `client.Axios.Interceptors` with request/response/error branches (plus a global header)
 7. **Signing/verification**: the `SigningSerializer` decorator around the built-in JSON — request body HMAC-SHA256 into `X-Signature`, response verified before parsing; the demo server verifies symmetrically and rejects unsigned requests with 401
 8. **Streaming (SSE)**: `RequestStreamAsync` returns `AxiosResponse<IAsyncEnumerable<T>>` — `await` gives you the status code and headers, `await foreach` consumes frames one by one; the demo server streams with `chunked` encoding (terminated by `[DONE]`)
+9. **Multipart upload**: `[Multipart]` + `[Part]` — the model itself is the form, and the server parses it byte-exactly and reports the part list
 
-These 8 items live in the same startup menu as the 24 above (menu items 25-32, with their own demo server started lazily on first use):
+These 9 items live in the same startup menu as the 24 above (menu items 25-33, with their own demo server started lazily on first use):
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1631,9 +1633,9 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 8 declarative samples under WebAPI/; the startup menu lists all 32 by reflection — type a number to run, a = all, q = quit
+│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 9 declarative samples under WebAPI/; the startup menu lists all 33 by reflection — type a number to run, a = all, q = quit
 │  │  ├─ Examples/               # core integration samples (24 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 8 examples over real HTTP round-trips, incl. authorization declarations, global logging, HMAC signing/verification and SSE streaming; menu items 25-32)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE streaming; menu items 25-33)
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IScenario classes under Scenarios/ need no registration to appear in the menu)
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit tests (714 cases × net6.0 / net8.0 = 1428 executions)

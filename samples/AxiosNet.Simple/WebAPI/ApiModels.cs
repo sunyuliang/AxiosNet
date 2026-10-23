@@ -102,6 +102,33 @@ public sealed class SignedEchoRequest : IApiRequest<SignedEchoResult>
 public sealed record SignedEchoResult(bool Verified, string Name, int Age);
 
 /// <summary>
+/// POST /api/upload：声明式 multipart——模型自身即表单（<c>[Multipart]</c> + <c>[Part]</c>）。
+/// 未标注参数特性的属性默认按部件绑定（字段名 = 属性名）；服务器按字节精确解析并回报部件清单。
+/// </summary>
+[Post("api/upload")]
+[Multipart]
+public sealed class MultipartUploadRequest : IApiRequest<UploadResult>
+{
+    /// <summary>普通字段部件（字符串永远是字段，不发文件部件）。</summary>
+    [Part]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>文件部件：<c>[Part(FileName)]</c> 覆盖默认的「filename = 字段名」。</summary>
+    [Part(FileName = "data.bin")]
+    public byte[] Blob { get; set; } = [];
+
+    /// <summary>字段部件集合：展平为 meta[k]=v。</summary>
+    [Part("meta")]
+    public Dictionary<string, string> Tags { get; set; } = new();
+}
+
+/// <summary>multipart 上传回执：服务器解析后的部件清单。</summary>
+public sealed record UploadResult(int PartCount, string Title, UploadedPart[] Parts);
+
+/// <summary>单个部件的解析结果。</summary>
+public sealed record UploadedPart(string Name, string? FileName, string? ContentType, int Length);
+
+/// <summary>
 /// GET /api/stream/events：SSE 流式端点（演示服务器按 <c>text/event-stream</c> 分帧下发）。
 /// 流式请求的泛型参数是<b>单帧</b>类型，不是整个集合。
 /// </summary>

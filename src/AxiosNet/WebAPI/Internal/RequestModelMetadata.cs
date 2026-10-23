@@ -77,6 +77,12 @@ internal sealed partial class RequestModelMetadata
     /// <summary>授权策略（最近一层声明优先；都没标时为 <see cref="ApiAuthorizationMode.Inherit"/>）。</summary>
     internal ApiAuthorization Authorization { get; init; } = ApiAuthorization.Inherit;
 
+    /// <summary>是否声明了 <see cref="MultipartAttribute"/>（请求体 = 模型自身装配的 multipart 表单）。</summary>
+    internal bool IsMultipart { get; init; }
+
+    /// <summary>multipart 部件绑定：未标注参数特性的属性默认参与（名字 = 属性名），[Part] 可覆盖。</summary>
+    internal PartBinding[] PartBindings { get; init; } = [];
+
     /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
     public static RequestModelMetadata Get(Type requestType)
     {
@@ -167,8 +173,48 @@ internal sealed partial class RequestModelMetadata
         return query.Count > 0 ? query : null;
     }
 
-    /// <summary>请求体的原始值；没有 <see cref="BodyAttribute"/> 属性或值为 <c>null</c> 时返回 <c>null</c>（不发请求体）。</summary>
-    public object? ResolveBody(object request) => _bodyProperty?.GetValue(request);
+    /// <summary>
+    /// 请求体的原始值：普通模型取 <see cref="BodyAttribute"/> 属性；multipart 模型返回装配好的表单字典
+    /// （全部属性为 <c>null</c> 时返回 <c>null</c>，不发请求体）。
+    /// </summary>
+    public object? ResolveBody(object request)
+    {
+        if (!IsMultipart)
+        {
+            return _bodyProperty?.GetValue(request);
+        }
+
+        // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
+        var form = new Dictionary<string, object?>();
+
+        try
+        {
+            foreach (var binding in PartBindings)
+            {
+                var value = MultipartPartValues.Normalize(
+                    binding.Property.GetValue(request),
+                    binding.Name,
+                    binding.HasExplicitName,
+                    binding.FileName,
+                    binding.ContentType);
+
+                if (value is not null)
+                {
+                    form.Add(binding.Name, value);
+                }
+            }
+        }
+        catch
+        {
+            // 还没交给 MultipartBodyBuilder，容器回滚覆盖不到这里：已包装的部件必须就地释放
+            // （否则后续属性取值抛异常时，前面已取得的 FileStream 会随异常永久泄漏）。
+            MultipartPartValues.DisposeOwned(form.Values);
+            throw;
+        }
+
+        // 全部属性为 null：没有可发的部件，按「无请求体」处理（与 [Body] 为 null 的行为一致）
+        return form.Count > 0 ? form : null;
+    }
 
     /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置（不建集合）。</summary>
     /// <remarks>
@@ -253,11 +299,16 @@ internal sealed partial class RequestModelMetadata
         var headerCollections = new List<PropertyInfo>();
         var unannotated = new List<PropertyInfo>();
 
+        // multipart 部件绑定：模型声明 [Multipart] 时，模型自身即表单
+        var parts = new List<PartBinding>();
+        var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
+
         // 平铺的字典映射：属性是字符串键字典且没有显式命名时，键直接进查询串（Refit 的动态查询）。
         // 显式命名（[Query("filters")]）保留既有嵌套语义 ?filters[k]=v，作为逃生口。
         var mapProperties = new List<PropertyInfo>();
         var staticHeaders = new List<(string Name, string? Value)>();
         PropertyInfo? body = null;
+        var isMultipart = requestType.GetCustomAttribute<MultipartAttribute>() is not null;
         // Path 占位符是本库自己的模板语言：与模板 token 的大小写不敏感匹配（属性名回退如 Id ↔ {id}）；
         // Header 名按 RFC 3986 语义大小写不敏感，同名不同写法同样算重复。
         // Query 键名发到服务端是区分大小写的，保持 Ordinal。
@@ -273,11 +324,13 @@ internal sealed partial class RequestModelMetadata
             var query = property.GetCustomAttribute<QueryAttribute>();
             var header = property.GetCustomAttribute<HeaderAttribute>();
             var isHeaderCollection = property.GetCustomAttribute<HeaderCollectionAttribute>() is not null;
+            var part = property.GetCustomAttribute<PartAttribute>();
             var isBody = property.GetCustomAttribute<BodyAttribute>() is not null;
             var ignore = property.GetCustomAttribute<ApiIgnoreAttribute>() is not null;
 
             var kinds = (path is not null ? 1 : 0) + (query is not null ? 1 : 0)
-                + (header is not null ? 1 : 0) + (isHeaderCollection ? 1 : 0) + (isBody ? 1 : 0);
+                + (header is not null ? 1 : 0) + (isHeaderCollection ? 1 : 0)
+                + (part is not null ? 1 : 0) + (isBody ? 1 : 0);
 
             if (ignore)
             {
@@ -288,7 +341,7 @@ internal sealed partial class RequestModelMetadata
                 if (ownKinds > 0)
                 {
                     throw new InvalidOperationException(
-                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Body）："
+                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
@@ -339,6 +392,30 @@ internal sealed partial class RequestModelMetadata
                 headerCollections.Add(property);
             }
 
+            if (part is not null)
+            {
+                if (!isMultipart)
+                {
+                    throw new InvalidOperationException(
+                        $"属性 {requestType.Name}.{property.Name} 标注了 [Part]，但模型没有 [Multipart]：请在类上声明 [Multipart]。");
+                }
+
+                var explicitName = CleanPartValue(part.Name, requestType, property, nameof(PartAttribute.Name));
+                // 默认名走 [JsonPropertyName] / 属性名，与 builder 展平嵌套对象时的命名规则一致
+                var name = explicitName ?? BodyFields.ResolveFieldName(property);
+                if (!seenPartNames.Add(name))
+                {
+                    throw DuplicateBinding(requestType, name, "Part");
+                }
+
+                parts.Add(new PartBinding(
+                    name,
+                    property,
+                    explicitName is not null,
+                    CleanPartValue(part.FileName, requestType, property, nameof(PartAttribute.FileName)),
+                    CleanPartValue(part.ContentType, requestType, property, nameof(PartAttribute.ContentType))));
+            }
+
             if (isBody)
             {
                 if (body is not null)
@@ -352,6 +429,19 @@ internal sealed partial class RequestModelMetadata
 
             if (kinds == 0)
             {
+                if (isMultipart)
+                {
+                    // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认 Body / Query 判定
+                    var partName = BodyFields.ResolveFieldName(property);
+                    if (!seenPartNames.Add(partName))
+                    {
+                        throw DuplicateBinding(requestType, partName, "Part");
+                    }
+
+                    parts.Add(new PartBinding(partName, property, false, null, null));
+                    continue;
+                }
+
                 // 无标注 → 默认 Query（ kinds == 0 时没有任何参数特性，名字只能回退属性名）
                 var name = ResolveBindingName(string.Empty, property, "Query");
                 if (!seenQueryNames.Add(name))
@@ -391,7 +481,9 @@ internal sealed partial class RequestModelMetadata
         // 默认 Body：body 方法 + 恰好一个未标注属性 + 非标量类型 → 该属性即请求体。
         // 标量护栏防止「POST 只想带一个查询参数」被静默变成 JSON 请求体；
         // 多个未标注属性时维持 Query（歧义时宁可保持现状，[Body] 永远可以显式表态）。
+        // multipart 模型不参与：未标注属性已经按部件绑定，不存在「默认 JSON 请求体」。
         if (body is null
+            && !isMultipart
             && unannotated.Count == 1
             && IsBodyMethod(route.Method)
             && !IsScalarType(unannotated[0].PropertyType))
@@ -405,6 +497,14 @@ internal sealed partial class RequestModelMetadata
         if (mapProperties.Count > 0)
         {
             queries.RemoveAll(q => mapProperties.Contains(q.Property));
+        }
+
+        // multipart 与 [Body] 互斥：一个模型两种请求体形态属二义性
+        if (isMultipart && body is not null)
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {requestType.Name} 同时声明了 [Multipart] 与 [Body]（{body.Name}）："
+                + "multipart 模型的请求体由全部属性装配，两者互斥。");
         }
 
         var pathTokens = ValidatePathTemplate(requestType, route.Path, paths);
@@ -421,8 +521,28 @@ internal sealed partial class RequestModelMetadata
             [.. staticHeaders],
             body)
         {
-            Authorization = BuildAuthorization(requestType)
+            Authorization = BuildAuthorization(requestType),
+            IsMultipart = isMultipart,
+            PartBindings = [.. parts]
         };
+    }
+
+    /// <summary>清理 [Part] 的可选字符串声明；显式空白（而非省略）视为构建错误。</summary>
+    private static string? CleanPartValue(string? value, Type requestType, PropertyInfo property, string member)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {requestType.Name}.{property.Name} 的 [Part].{member} 不能为空白：要省略请直接不设置。");
+        }
+
+        return trimmed;
     }
 
     /// <summary>
@@ -526,6 +646,7 @@ internal sealed partial class RequestModelMetadata
             + (property.GetCustomAttribute<QueryAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<HeaderAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<HeaderCollectionAttribute>(inherit: false) is not null ? 1 : 0)
+            + (property.GetCustomAttribute<PartAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<BodyAttribute>(inherit: false) is not null ? 1 : 0);
 
     /// <summary>

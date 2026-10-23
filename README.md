@@ -151,6 +151,7 @@ await client.RequestAsync(new CreateUserRequest { Payload = payload });   // 返
 | 请求头 | `[Header]` | `null` 跳过 |
 | 字典头 | `[HeaderCollection]` | `IDictionary<string, string>` 逐项写头，值为 `null` 的项跳过 |
 | 静态头 | `[Headers]`（类级） | `"Name: Value"` 固定头，只有名字（`"X-Internal"`）表示删除该头；属性头覆盖同名静态头，基类声明被派生类继承 |
+| multipart 表单 | `[Multipart]` + `[Part]` | 模型自身即表单：未标注属性默认按部件绑定；`[Part]` 覆盖字段名 / 文件名 / 部件 Content-Type，与 `[Body]` 互斥 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
 | 排除 | `[ApiIgnore]` | 属性完全不绑定（不进路径/查询串/头/请求体），内部状态与敏感数据用；与参数特性同用报错 |
 
@@ -1404,13 +1405,13 @@ using var client3 = Axios.Create(
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 32 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 24 项。
+启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 33 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 24 项。
 
 > 第 13 项与第 18 项覆盖了上传：`DemoServer` 用 `MultipartReader` **按字节精确解析** multipart，回报每个部件的字段名、文件名、Content-Type、字节数与 SHA256；单文件场景还提供 `/upload/raw`（裸流）与 `/upload/single`（multipart 单文件）两个端点。
 >
 > 第 19 项是唯一需要额外 NuGet 包（`Newtonsoft.Json`）的示例，仅用于演示**引擎替换**——类库本身仍然零第三方运行时依赖；不需要自定义序列化时可以把 `Newtonsoft.Json` 从示例项目里删掉。
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 的 `WebAPI/` 目录是声明式客户端（[`AxiosNet.WebAPI`](#声明式-api-客户端-axiosnetwebapi对标-refit) 命名空间）的配套示例（同样开箱即用、离线可运行）：请求模型与返回模型集中在 `WebAPI/ApiModels.cs`，8 个示例走真实 HTTP 往返：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 的 `WebAPI/` 目录是声明式客户端（[`AxiosNet.WebAPI`](#声明式-api-客户端-axiosnetwebapi对标-refit) 命名空间）的配套示例（同样开箱即用、离线可运行）：请求模型与返回模型集中在 `WebAPI/ApiModels.cs`，9 个示例走真实 HTTP 往返：
 
 1. **GET 详情**：`[Path]` 绑定 + 返回泛型由请求模型自动确定
 2. **GET 列表**：无标注属性默认 Query、数组 `ids[]=` 绑定、`client.GetUri(request)` 预览 URL
@@ -1420,8 +1421,9 @@ dotnet run --project samples/AxiosNet.Simple
 6. **全局日志**：`client.Axios.Interceptors` 请求/响应/错误三分支（含全局追加头）
 7. **签名/验签**：`SigningSerializer` 装饰内置 JSON——请求体 HMAC-SHA256 写 `X-Signature`，响应先验签再解析；演示服务器对称校验，未签名请求被 401 拒绝
 8. **流式响应（SSE）**：`RequestStreamAsync` 返回 `AxiosResponse<IAsyncEnumerable<T>>`——`await` 即拿到状态码与响应头，`await foreach` 逐帧消费；演示服务器以 `chunked` 分帧下发（含 `[DONE]` 结束）
+9. **multipart 上传**：`[Multipart]` + `[Part]`——模型自身即表单，服务器按字节精确解析并回报部件清单
 
-这 8 项与上面的 24 项同在启动菜单里（菜单第 25-32 项，自带另一套演示服务器，按选择懒启动）：
+这 9 项与上面的 24 项同在启动菜单里（菜单第 25-33 项，自带另一套演示服务器，按选择懒启动）：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1642,9 +1644,9 @@ dotnet build AxiosNet.sln -c Release
 │     ├─ ApiClientResolver.cs            # IApiClientResolver 解析器 + 站点定义/创建（命名站点属主）
 │     └─ ApiClientOwnedAxiosClient.cs     # 自建模式与命名站点持有底层客户端的内部注册项（容器退出时释放）
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 8 项声明式示例；启动菜单反射列出全部 32 项，输入编号运行，a = 全部，q = 退出
+│  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 9 项声明式示例；启动菜单反射列出全部 33 项，输入编号运行，a = 全部，q = 退出
 │  │  ├─ Examples/               # 核心集成示例（24 项，IExample 零注册自动进菜单；SampleMenu.cs 为交互菜单，两个示例程序共用）
-│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：8 类示例走真实 HTTP 往返，含授权声明、全局日志、HMAC 签名/验签与 SSE 流式，菜单第 25-32 项）
+│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：9 类示例走真实 HTTP 往返，含授权声明、multipart、全局日志、HMAC 签名/验签与 SSE 流式，菜单第 25-33 项）
 │  └─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Scenarios/ 下 IScenario 零注册进菜单）
 └─ test/
    ├─ AxiosNet.Tests/            # xUnit 单元测试（714 个用例 × net6.0 / net8.0 双目标 = 1428 次执行）
