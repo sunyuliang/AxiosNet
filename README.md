@@ -1483,6 +1483,13 @@ var client = new AxiosClient(new AxiosConfig
 - 匿名对象作为 params 或表单值：类型无法静态保留，建议改用 `Dictionary<string, object?>` 或强类型 POCO。
 - `ValidateModels(Assembly)` 会枚举程序集全部类型，已标注 `RequiresUnreferencedCode`；AOT 下请改用 `ValidateModels(typeof(A), typeof(B))`。
 
+可直接运行的完整示例见 [samples/AxiosNet.Aot](samples/AxiosNet.Aot)：`PublishAot=true` + `TrimmerRootAssembly`，自带本地回环 HTTP 服务（断网可跑），同时演示 axios 风格与声明式两种用法。
+
+```bash
+dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
+./samples/AxiosNet.Aot/bin/Release/net8.0/win-x64/publish/AxiosNet.Aot.exe
+```
+
 ## 构建与测试
 
 ```bash

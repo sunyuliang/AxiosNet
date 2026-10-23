@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AxiosNet.Aot</RootNamespace>
+    <AssemblyName>AxiosNet.Aot</AssemblyName>
+
+    <!-- Native AOT 发布：dotnet publish -c Release -r win-x64（或 linux-x64） -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StripSymbols>true</StripSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+  </ItemGroup>
+
+  <!-- 方案 B 的 AOT 前提一：声明式客户端用反射读模型元数据，
+       把应用程序集整体 root，保证模型 getter 与特性不被裁剪。 -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="$(AssemblyName)" />
+  </ItemGroup>
+
+</Project>
