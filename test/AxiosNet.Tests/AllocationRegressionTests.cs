@@ -11,7 +11,8 @@ namespace AxiosNet.Tests;
 /// <item><see cref="AxiosConfig.Clone"/> 不得回到「new + 逐属性赋值」路径——
 /// 构造期白分配 <c>_headers</c> 与三个列表，每请求一次纯浪费；</item>
 /// <item>空 transform 链的 Clone 不得触发 <c>SynchronizedList</c> 的锁内快照构造；</item>
-/// <item>流式响应反复用同一个调用方令牌读取时，不得每块新建 linked CTS。</item>
+/// <item>流式响应反复用同一个调用方令牌读取时，不得每块新建 linked CTS
+/// （用「交给底层的令牌每次相同」做结构断言，不做分配测量，见该用例注释）。</item>
 /// </list>
 /// 阈值均留一倍以上余量：这些是用例「数量级不退回到修复前」的护栏，不是精确基准，
 /// 换运行时 / 换 GC 模式不应让它们误报。
@@ -93,62 +94,44 @@ public sealed class AllocationRegressionTests
     }
 
     [Fact]
-    public void StreamRead_WithRepeatedCallerToken_DoesNotAllocateLinkedCtsPerChunk()
+    public void StreamRead_WithRepeatedCallerToken_ReusesOneLinkedCts()
     {
         const int size = 8 * 1024 * 1024;
-
-        // 用注入 Handler 的内存响应而不是 TestHttpServer：真实 socket 读路径本身每块就有
-        // 几百 B 且随 TCP 分段波动，基线不可比。
-        //
-        // 测「差值」而不是绝对值：ReadAsync 链路（HttpResponseStream + 两层包装流）的每块
-        // 分配随 JIT / 线程池负载在 20~350 B 间漂移（双 TFM 并行实测），绝对阈值必然误报。
-        // 同一进程、同一时刻连续跑「不传令牌 / 带同一令牌」两条完全对称的路径，
-        // 唯一结构差异就是 Link 里走不走 CTS 分支——差值即 CTS 的净成本：
-        // 每块新建 linked CTS 时差值按块数线性增长（≈ 250 B × 块数），复用时只剩首块一次。
-        using var client = new AxiosClient(handler: new MemoryPayloadHandler(size));
+        // 注入 Handler + 自带记录流，而不是 TestHttpServer：真实 socket 读路径的令牌会随
+        // 底层实现变化，这里要观察的只是「库交给底层那一次的令牌」。
+        var content = new RecordingPayloadContent(size);
+        using var client = new AxiosClient(handler: new RecordingPayloadHandler(content));
         using var cts = new CancellationTokenSource();
         var buffer = new byte[131072];
 
-        // warmup：JIT 与 HttpResponseStream 的首次缓冲都不计入测量窗口
-        Drain(client, buffer, default, useToken: false);
-        Drain(client, buffer, cts.Token, useToken: true);
-
-        var (totalA, allocatedA, chunksA) = Drain(client, buffer, default, useToken: false);
-        var (totalB, allocatedB, chunksB) = Drain(client, buffer, cts.Token, useToken: true);
-
-        Assert.Equal(size, totalA);
-        Assert.Equal(size, totalB);
-        Assert.True(chunksA > 10 && chunksB > 10, $"读取块数异常：{chunksA}/{chunksB}。");
-
-        var delta = allocatedB - allocatedA;
-        Assert.True(
-            delta < 2048,
-            $"带同一调用方令牌比不传令牌多分配 {delta:N0} B（各 {chunksB} 块、{allocatedA:N0} vs {allocatedB:N0} B）"
-            + "——超出 2048 B 护栏，疑似每块都在新建 linked CTS。");
-    }
-
-    /// <summary>同步读完整个响应并返回（总字节, 分配字节, 块数）；同步阻塞等待避免 await 基础设施噪声。</summary>
-    private static (long Total, long Allocated, int Chunks) Drain(
-        AxiosClient client,
-        byte[] buffer,
-        CancellationToken token,
-        bool useToken)
-    {
         var response = client.GetAsync<Stream>("http://localhost/big").GetAwaiter().GetResult();
         using var stream = response.Data!;
 
         long total = 0;
-        var chunks = 0;
         int read;
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        while ((read = stream.ReadAsync(buffer.AsMemory(), useToken ? token : default)
-                   .GetAwaiter().GetResult()) > 0)
+        while ((read = stream.ReadAsync(buffer.AsMemory(), cts.Token).GetAwaiter().GetResult()) > 0)
         {
             total += read;
-            chunks++;
         }
 
-        return (total, GC.GetAllocatedBytesForCurrentThread() - before, chunks);
+        Assert.Equal(size, total);
+
+        var tokens = content.ReadTokens;
+        Assert.True(tokens.Count > 10, $"读取块数异常：{tokens.Count}。");
+
+        // 结构断言，而不是分配测量：反复传同一个调用方令牌时，整段循环只应建一次链接源，
+        // 因此交给底层的令牌**每次都是同一个**（CancellationToken 按源比较）。
+        // 每块新建 linked CTS 会让每块令牌的源各不相同，这里必然失败。
+        //
+        // 原先用「带令牌 / 不带令牌两条路径的分配差值 < 2048 B」做护栏，但线程局部分配计数
+        // 在 CI 的并行负载下会被同线程上的无关分配污染（实测差值可达 7 KB，而单次 linked CTS
+        // 只有几百 B），导致误报；令牌身份不受运行时噪声影响。
+        var first = tokens[0];
+        Assert.True(first.CanBeCanceled, "交给底层的令牌应链接了调用方令牌（可取消）。");
+        Assert.True(
+            tokens.All(token => token == first),
+            $"反复传同一个调用方令牌时，{tokens.Count} 块中出现了 {tokens.Distinct().Count()} 种不同的令牌"
+            + "——疑似每块都在新建 linked CTS。");
     }
 
     /// <summary>返回内存响应的 Handler：读取同步完成，用于确定的分配测量。</summary>
@@ -167,6 +150,96 @@ public sealed class AllocationRegressionTests
             response.Content.Headers.ContentType =
                 new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
             return Task.FromResult(response);
+        }
+    }
+
+    /// <summary>返回自带记录流的响应：记录库每次交给底层读的令牌。</summary>
+    private sealed class RecordingPayloadHandler : HttpMessageHandler
+    {
+        private readonly RecordingPayloadContent _content;
+
+        public RecordingPayloadHandler(RecordingPayloadContent content) => _content = content;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Content = _content;
+            response.Content.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RecordingPayloadContent : HttpContent
+    {
+        private readonly RecordingStream _stream;
+
+        public RecordingPayloadContent(int size) => _stream = new RecordingStream(size);
+
+        public IReadOnlyList<CancellationToken> ReadTokens => _stream.ReadTokens;
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(_stream);
+
+        private sealed class RecordingStream : Stream
+        {
+            private readonly byte[] _payload;
+            private int _position;
+
+            public RecordingStream(int size) => _payload = new byte[size];
+
+            public List<CancellationToken> ReadTokens { get; } = new();
+
+            public override bool CanRead => true;
+
+            public override bool CanSeek => false;
+
+            public override bool CanWrite => false;
+
+            public override long Length => throw new NotSupportedException();
+
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush()
+            {
+            }
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            public override int Read(byte[] buffer, int offset, int count)
+                => Read(buffer.AsSpan(offset, count));
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                ReadTokens.Add(cancellationToken);
+                return new ValueTask<int>(Read(buffer.Span));
+            }
+
+            private int Read(Span<byte> buffer)
+            {
+                var take = Math.Min(buffer.Length, _payload.Length - _position);
+                _payload.AsSpan(_position, take).CopyTo(buffer);
+                _position += take;
+                return take;
+            }
         }
     }
 
@@ -207,8 +280,7 @@ public sealed class AllocationRegressionTests
     {
         // 32MB：超过 8MB 预分配信任上限，走段式累积（pipeline 的池化分段思想）。
         // ByteArrayContent 自带 Content-Length；注入 Handler 而非 TestHttpServer：内存响应同步完成，
-        // 分配全部落在测量线程上，与上面 CTS 用例同一理由（真实 socket 读路径每块有几百 B 且随分段
-        // 波动，基线不可比）。
+        // 分配全部落在测量线程上（真实 socket 读路径每块有几百 B 且随分段波动，基线不可比）。
         const int size = 32 * 1024 * 1024;
         using var client = new AxiosClient(handler: new MemoryPayloadHandler(size));
 
