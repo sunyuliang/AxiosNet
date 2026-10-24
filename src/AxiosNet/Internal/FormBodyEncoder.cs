@@ -36,7 +36,7 @@ internal static class FormBodyEncoder
         catch (UnsupportedFormValueException ex)
         {
             // 「表单装不下文件部件」是调用方的编码选择错误，不是请求体内容有问题：
-            // 与 multipart 侧（InvalidFieldNameException → ERR_BAD_OPTION_VALUE）保持同一分类。
+            // 与 multipart 侧（InvalidMultipartOptionException → ERR_BAD_OPTION_VALUE）保持同一分类。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
 

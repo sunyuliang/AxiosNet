@@ -45,13 +45,22 @@ internal static class DispositionTokens
 }
 
 /// <summary>
-/// multipart 字段名非法。只在本程序集内部流转，由 <see cref="MultipartBodyBuilder"/> 转成
-/// 带配置上下文的 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// multipart 的调用方选项非法（部件字段名，或 <c>FormFile</c> / <c>[Part]</c> 声明的文件名与 Content-Type）。
+/// <para>
+/// 只在本程序集内部流转，由 <see cref="MultipartBodyBuilder"/> 转成带配置上下文的
+/// <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）：这些都是「配置写错了」，
+/// 不能落到「请求体序列化失败」（<c>ERR_BAD_REQUEST</c>）。
+/// </para>
 /// </summary>
-internal sealed class InvalidFieldNameException : Exception
+internal sealed class InvalidMultipartOptionException : Exception
 {
-    public InvalidFieldNameException(string message)
+    public InvalidMultipartOptionException(string message)
         : base(message)
+    {
+    }
+
+    public InvalidMultipartOptionException(string message, Exception innerException)
+        : base(message, innerException)
     {
     }
 }

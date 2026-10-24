@@ -54,8 +54,8 @@ internal static class MultipartBodyBuilder
             // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
             content.Dispose();
 
-            // 字段名非法属于调用方选项错误：换成带配置上下文的 ERR_BAD_OPTION_VALUE。
-            if (ex is InvalidFieldNameException invalid)
+            // 字段名 / 声明值非法属于调用方选项错误：换成带配置上下文的 ERR_BAD_OPTION_VALUE。
+            if (ex is InvalidMultipartOptionException invalid)
             {
                 throw AxiosException.InvalidOption(invalid.Message, config, invalid);
             }
@@ -352,7 +352,8 @@ internal static class MultipartBodyBuilder
     /// </summary>
     /// <remarks>
     /// 名字优先级：显式声明 &gt; <see cref="FormFile.FieldName"/> &gt; 字段名（[JsonPropertyName] / 属性名，
-    /// 再经 <c>FormFieldNameSelector</c>）。包装失败时就地释放已取得所有权的流 —— 与 builder 其余失败路径一致。
+    /// 再经 <c>FormFieldNameSelector</c>）。声明的值由 <see cref="FormFile"/> 在构造期校验，
+    /// 包装失败时就地释放已取得所有权的流 —— 与 builder 其余失败路径一致。
     /// </remarks>
     private static object? ApplyPartOverride(string? name, object? value, PartOverride partOverride)
     {
@@ -380,11 +381,11 @@ internal static class MultipartBodyBuilder
             {
                 return new FormFile(mergedFileName, file.Content, mergedContentType) { FieldName = mergedFieldName };
             }
-            catch
+            catch (ArgumentException ex)
             {
                 // 声明的文件名 / 类型 / 字段名非法：包装失败时流的所有权已经收不回去，就地释放
                 file.Content.Dispose();
-                throw;
+                throw DeclaredValueError(ex);
             }
         }
 
@@ -422,51 +423,75 @@ internal static class MultipartBodyBuilder
                         FieldName = partOverride.HasExplicitName ? name : null
                     };
                 }
+                catch (ArgumentException ex)
+                {
+                    // 声明的文件名 / 类型 / 字段名非法（FormFile 在构造期校验）：流的调用方已经交不回来，就地释放
+                    stream.Dispose();
+                    throw DeclaredValueError(ex);
+                }
                 catch
                 {
+                    // 字段名缺失 / 含非法字符：已是选项错误，释放后原样交给上层翻译成 ERR_BAD_OPTION_VALUE
                     stream.Dispose();
                     throw;
                 }
 
             case byte[] bytes:
-                return new FormFile(
+                return DeclaredFileFromBytes(
                     partOverride.FileName ?? RequireName(name),
                     bytes,
-                    partOverride.ContentType)
-                {
-                    FieldName = partOverride.HasExplicitName ? name : null
-                };
+                    partOverride.ContentType,
+                    partOverride.HasExplicitName ? name : null);
 
             case ReadOnlyMemory<byte> memory:
-                return new FormFile(
+                return DeclaredFileFromBytes(
                     partOverride.FileName ?? RequireName(name),
                     memory.ToArray(),
-                    partOverride.ContentType)
-                {
-                    FieldName = partOverride.HasExplicitName ? name : null
-                };
+                    partOverride.ContentType,
+                    partOverride.HasExplicitName ? name : null);
 
             case Memory<byte> memory:
-                return new FormFile(
+                return DeclaredFileFromBytes(
                     partOverride.FileName ?? RequireName(name),
                     memory.ToArray(),
-                    partOverride.ContentType)
-                {
-                    FieldName = partOverride.HasExplicitName ? name : null
-                };
+                    partOverride.ContentType,
+                    partOverride.HasExplicitName ? name : null);
 
             case ArraySegment<byte> segment:
-                return new FormFile(
+                return DeclaredFileFromBytes(
                     partOverride.FileName ?? RequireName(name),
                     segment.ToArray(),
-                    partOverride.ContentType)
-                {
-                    FieldName = partOverride.HasExplicitName ? name : null
-                };
+                    partOverride.ContentType,
+                    partOverride.HasExplicitName ? name : null);
         }
 
         return value;
     }
+
+    /// <summary>
+    /// 按声明把二进制内容包成文件部件。
+    /// <para>
+    /// 声明的文件名 / Content-Type 由 <see cref="FormFile"/> 在构造期校验，抛的是 <see cref="ArgumentException"/>；
+    /// 那是「配置写错了」而不是「请求体序列化失败」，所以在这里统一换成
+    /// <see cref="InvalidMultipartOptionException"/>（由 <see cref="Create"/> 转成 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// </para>
+    /// </summary>
+    private static FormFile DeclaredFileFromBytes(string fileName, byte[] content, string? contentType, string? fieldName)
+    {
+        try
+        {
+            return new FormFile(fileName, content, contentType) { FieldName = fieldName };
+        }
+        catch (ArgumentException ex)
+        {
+            // 内存内容没有所有权要回收（FormFile 内部的 MemoryStream 只持有托管数组）
+            throw DeclaredValueError(ex);
+        }
+    }
+
+    /// <summary>把 <see cref="FormFile"/> 构造期的 <see cref="ArgumentException"/> 归成调用方配置错误。</summary>
+    private static InvalidMultipartOptionException DeclaredValueError(ArgumentException ex) =>
+        new($"[Part] 声明的字段名 / 文件名 / Content-Type 非法：{ex.Message}", ex);
 
     /// <summary>二进制内容一律作为文件部件：字段名同时用作文件名（与 byte[] 既有行为一致）。</summary>
     /// <remarks>
@@ -516,7 +541,7 @@ internal static class MultipartBodyBuilder
         {
             // 与「名字含非法字符」同属调用方的配置错误，用同一个异常类型：
             // 上层据此统一转成 ERR_BAD_OPTION_VALUE，而不是误报成 ERR_BAD_REQUEST（请求体序列化失败）。
-            throw new InvalidFieldNameException(
+            throw new InvalidMultipartOptionException(
                 "multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
         }
 
@@ -524,7 +549,7 @@ internal static class MultipartBodyBuilder
         // 反斜杠与控制字符不会让 .NET 报错，而是让服务端拿到错位或带引号的键名；引号与换行直接破坏语法。
         if (DispositionTokens.FindInvalidCharacter(name) is { } invalid)
         {
-            throw new InvalidFieldNameException(
+            throw new InvalidMultipartOptionException(
                 $"multipart 字段名包含非法字符（{invalid}）：'{name}'。"
                 + "Content-Disposition 的 name 是 quoted-string：双引号、反斜杠、CR/LF 与其它控制字符"
                 + "会破坏语法或让服务端拿到的键名错位。中文可以正常使用（按 RFC 2047 编码），"

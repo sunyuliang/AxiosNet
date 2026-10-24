@@ -145,12 +145,56 @@ public sealed class ApiClientMultipartTests
         var stream = new MemoryStream("payload"u8.ToArray());
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        // 延迟执行的迭代器在 builder 装配时才抛错，异常会被包进「请求体构建失败」（只看原始信息与释放结果）
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
+        // 延迟执行的迭代器在 builder 装配时才抛错：归成「请求体构建失败」（ERR_BAD_REQUEST），
+        // 原始异常留在 InnerException 上，已包进 FormFile 的流在失败路径上被就地释放
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.RequestAsync(new ThrowingCollectionRequest { Files = YieldThenThrow(stream) }));
 
-        Assert.Contains("boom", ex.ToString());
-        Assert.False(stream.CanRead);   // 已包进 FormFile 的流在失败路径上被就地释放
+        Assert.Equal("ERR_BAD_REQUEST", ex.Code);
+        Assert.Equal("boom", Assert.IsType<InvalidOperationException>(ex.InnerException).Message);
+        Assert.False(stream.CanRead);
+    }
+
+    [Fact]
+    public async Task Multipart_IllegalDeclaredFileName_ReportsOptionError()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 声明的值写错是配置错误：与 [Part].Name 非法同一分类，不能报成「请求体序列化失败」
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(new IllegalDeclaredFileNameRequest { Blob = [1, 2, 3] }));
+
+        Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
+        Assert.Contains("文件名", ex.Message);
+        // 中间那层是库内部的选项错误，原始原因（FormFile 构造期的 ArgumentException）留在最里层
+        Assert.IsType<ArgumentException>(ex.InnerException?.InnerException);
+    }
+
+    [Fact]
+    public async Task Multipart_IllegalDeclaredContentType_ReportsOptionError()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(new IllegalDeclaredContentTypeRequest { Blob = [1, 2, 3] }));
+
+        // Content-Type 是逐个部件写进头部的取值，控制字符会被 FormFile 在构造期拦下
+        Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
+        Assert.Contains("Content-Type", ex.Message);
+    }
+
+    [Fact]
+    public async Task Multipart_IllegalDeclaredNameOnFormFile_ReportsOptionErrorAndReleasesStream()
+    {
+        var stream = new MemoryStream("payload"u8.ToArray());
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 显式声明的字段名压过 FormFile 自带的 FieldName：非法同样是配置错误，且已交进来的流必须释放
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(new IllegalDeclaredNameOnFileRequest { File = new FormFile("a.bin", stream) }));
+
+        Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
+        Assert.False(stream.CanRead);
     }
 
     [Fact]
@@ -369,6 +413,32 @@ public sealed class ApiClientMultipartTests
     {
         [Part("meta", FileName = "ignored.bin")]
         public Dictionary<string, string>? Meta { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class IllegalDeclaredFileNameRequest : IApiRequest<object>
+    {
+        /// <summary>文件名落在 quoted-string 里：引号会破坏头部语法，属配置错误。</summary>
+        [Part(FileName = "a\"b.txt")]
+        public byte[]? Blob { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class IllegalDeclaredContentTypeRequest : IApiRequest<object>
+    {
+        [Part(ContentType = "text/plain\r\nX-Injected: 1")]
+        public byte[]? Blob { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class IllegalDeclaredNameOnFileRequest : IApiRequest<object>
+    {
+        /// <summary>显式声明的字段名压过值自带的 FieldName，非法时连流一起回收。</summary>
+        [Part("bad\"name")]
+        public FormFile? File { get; set; }
     }
 
     [Post("upload")]

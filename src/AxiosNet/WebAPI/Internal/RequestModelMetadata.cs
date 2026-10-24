@@ -248,13 +248,8 @@ internal sealed partial class RequestModelMetadata
 
                 // 声明覆盖随值一起交给 MultipartBodyBuilder：包装、校验与所有权登记都在装配时完成，
                 // 这里不做任何预包装（避免同一份值规则在两层各写一遍）。
-                form.Add(
-                    binding.Name,
-                    binding.HasExplicitName || binding.FileName is not null || binding.ContentType is not null
-                        ? new PartValue(
-                            value,
-                            new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName))
-                        : value);
+                var partOverride = new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
+                form.Add(binding.Name, partOverride.Any ? new PartValue(value, partOverride) : value);
             }
         }
         catch

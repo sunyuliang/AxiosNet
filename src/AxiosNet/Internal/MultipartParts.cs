@@ -15,7 +15,11 @@ namespace AxiosNet.Internal;
 internal readonly record struct PartOverride(
     string? FileName,
     string? ContentType,
-    bool HasExplicitName);
+    bool HasExplicitName)
+{
+    /// <summary>是否声明了任何覆盖项：决定要不要包装成 <see cref="PartValue"/>、要不要在装配前校验。</summary>
+    public bool Any => HasExplicitName || FileName is not null || ContentType is not null;
+}
 
 /// <summary>
 /// 带声明覆盖的部件值：包装由 builder 完成，值本身仍是调用方/模型提供的原始对象。
