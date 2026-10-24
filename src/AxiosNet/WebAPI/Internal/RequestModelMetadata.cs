@@ -1,7 +1,9 @@
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AxiosNet.Internal;
 
@@ -249,7 +251,9 @@ internal sealed partial class RequestModelMetadata
                 // 声明覆盖随值一起交给 MultipartBodyBuilder：包装、校验与所有权登记都在装配时完成，
                 // 这里不做任何预包装（避免同一份值规则在两层各写一遍）。
                 var partOverride = new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
-                form.Add(binding.Name, partOverride.Any ? new PartValue(value, partOverride) : value);
+                form.Add(
+                    binding.Name,
+                    partOverride.Any ? new PartValue(MaterializeDeclaredCollection(value), partOverride) : value);
             }
         }
         catch
@@ -262,6 +266,47 @@ internal sealed partial class RequestModelMetadata
 
         // 全部属性为 null：没有可发的部件，按「无请求体」处理（与 [Body] 为 null 的行为一致）
         return form.Count > 0 ? form : null;
+    }
+
+    /// <summary>
+    /// 声明了覆盖项的集合在绑定期就枚举并物化成 <see cref="List{T}"/>。
+    /// <para>
+    /// 部件清单必须在装配开始前固定下来：延迟枚举要等装配轮到它才跑，于是「同一份配置重放」（重试、
+    /// 复用 <see cref="AxiosConfig"/>）会二次枚举调用方的序列，只能枚举一次的迭代器第二次就是空的；
+    /// 中途失败时还没被枚举出来的项也无法参与回滚。
+    /// </para>
+    /// <para>
+    /// 判据与 <see cref="MultipartBodyBuilder"/> 的分派顺序对齐：单个文件部件（<see cref="FormFile"/> /
+    /// Stream / 字节类）、调用方自带 <see cref="HttpContent"/>、要按 <c>a[b]</c> 展平的字典都不是
+    /// 「同名重复部件」的集合，原样透传。
+    /// </para>
+    /// </summary>
+    private static object MaterializeDeclaredCollection(object value)
+    {
+        if (value is string or byte[] or Stream or FormFile or HttpContent or JsonElement
+            or Memory<byte> or ReadOnlyMemory<byte> or ArraySegment<byte>
+            or IDictionary or IReadOnlyDictionary<string, object?>
+            || value is not IEnumerable items)
+        {
+            return value;
+        }
+
+        var materialized = new List<object?>();
+        try
+        {
+            foreach (var item in items)
+            {
+                materialized.Add(item);
+            }
+        }
+        catch
+        {
+            // 迭代器自己抛错：已经产出的项还没交给 builder，容器回滚覆盖不到，就地释放后再上抛
+            MultipartOwnership.DisposeOwned(materialized);
+            throw;
+        }
+
+        return materialized;
     }
 
     /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置（不建集合）。</summary>

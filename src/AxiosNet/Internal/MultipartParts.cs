@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 
 namespace AxiosNet.Internal;
 
@@ -30,13 +32,14 @@ internal readonly record struct PartValue(object? Value, PartOverride Override);
 /// <summary>
 /// multipart 部件的所有权回收。
 /// <para>
-/// 装配中途失败时，已经取得所有权的流 / 内容（含字典、集合、迭代器里的）必须释放，
-/// 否则异常路径会永久泄漏 <see cref="FileStream"/> 句柄。这里是<b>唯一</b>实现：
-/// 模型装配（<c>RequestModelMetadata.ResolveBody</c> 的失败回滚）与 builder 的既有回滚共用。
+/// 装配中途失败时，已经取得所有权的流 / 内容（含字典、集合、迭代器、嵌套对象里的）必须释放，
+/// 否则异常路径会永久泄漏 <see cref="FileStream"/> 句柄。这里是<b>唯一</b>实现：模型装配
+/// （<c>RequestModelMetadata.ResolveBody</c> 的失败回滚）与 <see cref="MultipartBodyBuilder"/>
+/// 的装配回滚共用。
 /// </para>
 /// <para>
 /// 遍历范围与 <see cref="MultipartBodyBuilder"/> 的展平规则对齐：<see cref="PartValue"/>、字典、
-/// 只读字典、集合都要递归进去。只看 <see cref="IEnumerable{T}"/> 会整本跳过字典 ——
+/// 只读字典、集合、嵌套对象都要递归进去。只看 <see cref="IEnumerable{T}"/> 会整本跳过字典 ——
 /// 它的元素是 KeyValuePair 值类型，泛型协变不成立
 /// （<c>Dictionary&lt;string, FormFile&gt;</c> 并不是 <c>IEnumerable&lt;object?&gt;</c>）。
 /// </para>
@@ -46,6 +49,7 @@ internal readonly record struct PartValue(object? Value, PartOverride Override);
 /// </summary>
 internal static class MultipartOwnership
 {
+    /// <summary>回收一组表单值（装配前的表单字典）。</summary>
     public static void DisposeOwned(IEnumerable<object?> values)
     {
         // 字典可以自引用（d["self"] = d）：按引用记录已访问，避免清理阶段无限递归。
@@ -57,6 +61,18 @@ internal static class MultipartOwnership
         }
     }
 
+    /// <summary>
+    /// 回收一个根对象（装配入口只拿得到 <c>data</c> 本身，见 <see cref="MultipartBodyBuilder.Create"/>）：
+    /// 装配在中间某个部件失败时，后面还没轮到装配的流同样已经交过所有权。
+    /// </summary>
+    public static void DisposeOwned(object? value) =>
+        DisposeValue(value, new HashSet<object>(ReferenceEqualityComparer.Instance));
+
+    // 反射读属性：根对象/嵌套对象的运行时类型无法静态标注（理由同 MultipartBodyBuilder.CollectParts）。
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "multipart 值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void DisposeValue(object? value, HashSet<object> visited)
     {
         try
@@ -67,6 +83,7 @@ internal static class MultipartOwnership
                 // string 也是 IEnumerable<char>；byte[] 是二进制内容，逐字节枚举纯属浪费
                 case string _:
                 case byte[] _:
+                case JsonElement:
                     return;
 
                 // 声明覆盖只是包装前的描述，真正的所有权在包装后的值上
@@ -127,6 +144,22 @@ internal static class MultipartOwnership
                     }
 
                     return;
+            }
+
+            // 嵌套对象：装配按 public 可读属性展平成部件，回收也得进到属性里，
+            // 否则「根对象是匿名类型/POCO」时属性上的流整片漏掉。
+            var type = value.GetType();
+            if (BodyFields.IsScalar(type) || !visited.Add(value))
+            {
+                return;
+            }
+
+            foreach (var property in ReflectionCache.GetReadableProperties(type))
+            {
+                if (!BodyFields.IsIgnored(property))
+                {
+                    DisposeValue(property.GetValue(value), visited);
+                }
             }
         }
         catch

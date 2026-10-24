@@ -54,6 +54,10 @@ internal static class MultipartBodyBuilder
             // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
             content.Dispose();
 
+            // 只释放容器覆盖不到「还没轮到装配」的那些：第 N 个部件失败时，第 N+1 个裸 Stream
+            // 还没被包成 StreamContent，但它同样已经交过所有权（README：装配失败即释放已交进来的流）。
+            MultipartOwnership.DisposeOwned(data);
+
             // 字段名 / 声明值非法属于调用方选项错误：换成带配置上下文的 ERR_BAD_OPTION_VALUE。
             if (ex is InvalidMultipartOptionException invalid)
             {

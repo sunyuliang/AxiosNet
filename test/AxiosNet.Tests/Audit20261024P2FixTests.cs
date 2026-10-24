@@ -15,6 +15,8 @@ namespace AxiosNet.Tests;
 /// <item><b>1/2</b>：params 收尾与嵌套键转义缓存的正确性（跨请求稳定、特殊字符只转义一次）；</item>
 /// <item><b>5/6</b>：transform 链写时复制——并发请求各自分离、不污染实例默认链；</item>
 /// <item><b>9</b>：回放生效配置免二次深拷，且不带上一次的按请求 Auth（沿用目标实例的默认凭据）。</item>
+/// <item><b>review#4</b>：multipart 装配在中间部件失败时，后面还没轮到装配的裸 <c>Stream</c> 也要释放
+/// （容器 Dispose 只覆盖已加入的部件）。</item>
 /// </list>
 /// </summary>
 public sealed class Audit20261024P2FixTests
@@ -57,6 +59,30 @@ public sealed class Audit20261024P2FixTests
         var received = Assert.Single(server.Received);
         Assert.Contains("----axios-net", received.Headers["Content-Type"]);
         Assert.Contains("----axios-net", BodyOf(received));
+    }
+
+    [Fact]
+    public async Task Multipart_LaterPartFails_StillReleasesUntouchedStreams()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var untouched = new MemoryStream("payload"u8.ToArray());
+
+        // SortedDictionary 的枚举顺序确定：先装配非法字段名（抛错），此时后面那个裸流还没被
+        // 包成 StreamContent，容器 Dispose 覆盖不到它 —— 装配失败的回收必须走进原始数据。
+        var data = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["bad\"name"] = 1,
+            ["zzz"] = untouched,
+        };
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.PostAsync("upload", data, c => c.ContentType = "multipart/form-data"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.False(untouched.CanRead);
+        Assert.Empty(server.Received);
     }
 
     // ---------------------------------------------------------------

@@ -145,14 +145,28 @@ public sealed class ApiClientMultipartTests
         var stream = new MemoryStream("payload"u8.ToArray());
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        // 延迟执行的迭代器在 builder 装配时才抛错：归成「请求体构建失败」（ERR_BAD_REQUEST），
-        // 原始异常留在 InnerException 上，已包进 FormFile 的流在失败路径上被就地释放
+        // 延迟执行的迭代器在物化该集合时就抛错：归成「请求体构建失败」（ERR_BAD_REQUEST），
+        // 原始异常留在 InnerException 上，已经产出的流在回滚里被就地释放
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.RequestAsync(new ThrowingCollectionRequest { Files = YieldThenThrow(stream) }));
 
         Assert.Equal("ERR_BAD_REQUEST", ex.Code);
+        Assert.Contains("ThrowingCollectionRequest", ex.Message);   // 绑定期失败带模型名（装配期只剩表单字典）
         Assert.Equal("boom", Assert.IsType<InvalidOperationException>(ex.InnerException).Message);
         Assert.False(stream.CanRead);
+    }
+
+    [Fact]
+    public void Multipart_DeclaredCollection_IsMaterializedWhenConfigIsBuilt()
+    {
+        var enumerations = 0;
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 声明了覆盖项的集合在绑定期就枚举并物化：延迟枚举会让「同一份配置重放」二次枚举调用方的序列，
+        // 只能枚举一次的迭代器第二次就是空的（GetUri 只建配置、不发请求，正好观察枚举时机）
+        client.GetUri(new DeclaredCollectionRequest { Chunks = CountEachChunk(() => enumerations++) });
+
+        Assert.Equal(1, enumerations);
     }
 
     [Fact]
@@ -489,6 +503,14 @@ public sealed class ApiClientMultipartTests
 
     [Post("upload")]
     [Multipart]
+    private sealed class DeclaredCollectionRequest : IApiRequest<object>
+    {
+        [Part(ContentType = "application/pdf")]
+        public IEnumerable<byte[]>? Chunks { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
     private sealed class ConflictingBodyRequest : IApiRequest<object>
     {
         [Body]
@@ -534,6 +556,13 @@ public sealed class ApiClientMultipartTests
     {
         yield return stream;
         throw new InvalidOperationException("boom");
+    }
+
+    /// <summary>每次开始迭代就记一次数（延迟枚举在 GetUri 阶段被触发时能数到 0）。</summary>
+    private static IEnumerable<byte[]> CountEachChunk(Action onEnumerate)
+    {
+        onEnumerate();
+        yield return [1, 2, 3];
     }
 
     private static int CountOccurrences(string text, string token)

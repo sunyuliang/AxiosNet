@@ -175,7 +175,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             Params = metadata.ResolveQuery(request, UrlParameterFormatter)
         };
 
-        var body = metadata.ResolveBody(request);
+        var body = ResolveBody(metadata, request, config);
         if (body is not null)
         {
             config.Data = body;
@@ -201,6 +201,26 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
 
         return config;
+    }
+
+    /// <summary>
+    /// 取请求体（<c>[Body]</c> 的值 / <c>[Multipart]</c> 装配好的表单字典）。
+    /// <para>
+    /// 属性取值、声明了覆盖项的集合枚举、声明校验都在这里发生，失败归 <c>ERR_BAD_REQUEST</c>——
+    /// 与装配期失败同一分类（此前原始异常会直接冒出请求入口，连 <see cref="AxiosException"/> 都不是）。
+    /// 消息里带请求模型名：走到 <see cref="AxiosClient"/> 的装配失败只剩内部表单字典，那个类型名对调用方没有意义。
+    /// </para>
+    /// </summary>
+    private static object? ResolveBody(RequestModelMetadata metadata, object request, AxiosConfig config)
+    {
+        try
+        {
+            return metadata.ResolveBody(request);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            throw AxiosException.BadRequestPayload(config, request: null, request.GetType().Name, ex);
+        }
     }
 
     /// <summary>
