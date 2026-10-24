@@ -62,8 +62,9 @@ internal static class MultipartPartValues
             return value;
         }
 
-        // 字典不可能是单个文件：整体透传给 builder 按 a[b] 展平（否则会落进下面的集合分支被拆成 Key/Value 对象）
-        if (value is IDictionary)
+        // 字典不可能是单个文件：整体透传给 builder 按 a[b] 展平（否则会落进下面的集合分支被拆成 Key/Value 对象）。
+        // 只实现 IReadOnlyDictionary 的自研只读视图同样命中 builder 的字典分支，不能当集合拆。
+        if (value is IDictionary || value is IReadOnlyDictionary<string, object?>)
         {
             return value;
         }
@@ -141,33 +142,98 @@ internal static class MultipartPartValues
 
     /// <summary>
     /// 装配中途失败时的回滚：<see cref="Normalize"/> 已经把调用方的流包进 FormFile（尚未交给 builder），
-    /// 这些部件必须在这里释放，否则异常路径会永久泄漏 FileStream 句柄。
+    /// 或者把裸 Stream / 字典 / 集合原样透传给了表单，这些部件必须在这里释放，
+    /// 否则异常路径会永久泄漏 FileStream 句柄。
+    /// <para>
+    /// 遍历范围与 <c>MultipartBodyBuilder</c> 对齐：字典、只读字典、集合都要递归进去。
+    /// 只看 <see cref="IEnumerable{T}"/> 会整本跳过字典 —— 它的元素是 KeyValuePair 值类型，
+    /// 泛型协变不成立（<c>Dictionary&lt;string, FormFile&gt;</c> 并不是 <c>IEnumerable&lt;object?&gt;</c>）。
+    /// </para>
+    /// <para>
+    /// 清理自身不允许失败：单项释放异常只放弃该项，既不中断其余部件，也不遮蔽装配的原始异常。
+    /// </para>
     /// </summary>
     public static void DisposeOwned(IEnumerable<object?> values)
     {
+        // 字典可以自引用（d["self"] = d）：按引用记录已访问，避免清理阶段无限递归。
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
         foreach (var value in values)
+        {
+            DisposeValue(value, visited);
+        }
+    }
+
+    private static void DisposeValue(object? value, HashSet<object> visited)
+    {
+        try
         {
             switch (value)
             {
+                case null:
+                // string 也是 IEnumerable<char>；byte[] 是二进制内容，逐字节枚举纯属浪费
+                case string _:
+                case byte[] _:
+                    return;
+
                 case FormFile file:
                     file.Content.Dispose();
-                    break;
+                    return;
 
                 case HttpContent content:
                     content.Dispose();
-                    break;
+                    return;
 
-                // 未声明 FileName/ContentType 的裸 Stream 由 Normalize 原样透传（尚未被 builder 包成 StreamContent），
-                // 容器的 Dispose 同样覆盖不到：模型里的流从装配开始就归库，失败路径必须在这里关掉。
                 case Stream stream:
                     stream.Dispose();
-                    break;
+                    return;
 
-                // Normalize 的集合产物：逐项回收
-                case IEnumerable<object?> items:
-                    DisposeOwned(items);
-                    break;
+                // 字典：Normalize 整体透传，值里的 FormFile / 裸流仍然是库的所有权
+                case IDictionary dictionary:
+                    if (!visited.Add(dictionary))
+                    {
+                        return;
+                    }
+
+                    foreach (DictionaryEntry entry in dictionary)
+                    {
+                        DisposeValue(entry.Value, visited);
+                    }
+
+                    return;
+
+                // 只实现 IReadOnlyDictionary 的字典：builder 同样按 a[b] 展平
+                case IReadOnlyDictionary<string, object?> readOnlyDictionary:
+                    if (!visited.Add(readOnlyDictionary))
+                    {
+                        return;
+                    }
+
+                    foreach (var entry in readOnlyDictionary)
+                    {
+                        DisposeValue(entry.Value, visited);
+                    }
+
+                    return;
+
+                // 集合 / 迭代器（含非泛型 ArrayList 等）：Normalize 的集合产物与裸透传都在这里逐项回收
+                case IEnumerable items:
+                    if (!visited.Add(value))
+                    {
+                        return;
+                    }
+
+                    foreach (var item in items)
+                    {
+                        DisposeValue(item, visited);
+                    }
+
+                    return;
             }
+        }
+        catch
+        {
+            // 清理阶段吞掉异常：调用方看到的是装配失败的原始异常，且其余部件继续释放
         }
     }
 }

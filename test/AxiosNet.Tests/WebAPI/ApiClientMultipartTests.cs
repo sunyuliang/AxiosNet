@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Text;
 using System.Text.Json.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -210,6 +211,46 @@ public sealed class ApiClientMultipartTests
     }
 
     [Fact]
+    public async Task Multipart_DictionaryOfFormFiles_ReleasesStreamsWhenLaterPartThrows()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("payload"));
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
+            client.RequestAsync(new DictionaryFormFileThenThrowRequest
+            {
+                Files = new Dictionary<string, FormFile>
+                {
+                    ["a"] = new FormFile("a.txt", stream, "text/plain")
+                }
+            }));
+
+        Assert.Contains("boom", ex.ToString());
+
+        // 字典由 Normalize 整体透传给 builder。它的元素是 KeyValuePair 值类型，
+        // 协变到 IEnumerable<object?> 不成立：回滚必须递归进字典，否则装配失败时这里的流永久泄漏
+        Assert.False(stream.CanRead);
+    }
+
+    [Fact]
+    public async Task Multipart_NonGenericCollection_ReleasesStreamsWhenLaterPartThrows()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("payload"));
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
+            client.RequestAsync(new ArrayListThenThrowRequest
+            {
+                Files = new ArrayList { new FormFile("a.txt", stream, "text/plain") }
+            }));
+
+        Assert.Contains("boom", ex.ToString());
+
+        // ArrayList 只实现非泛型 IEnumerable：同样不能被回滚跳过
+        Assert.False(stream.CanRead);
+    }
+
+    [Fact]
     public void Multipart_WithBody_IsRejected()
     {
         var ex = Assert.Throws<InvalidOperationException>(
@@ -346,6 +387,31 @@ public sealed class ApiClientMultipartTests
         public Stream? File { get; set; }
 
         /// <summary>取值即抛：装配在后续属性上中断，此时前面的裸流还没交给 builder。</summary>
+        [Part]
+        public string? Boom => throw new InvalidOperationException("boom");
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class DictionaryFormFileThenThrowRequest : IApiRequest<object>
+    {
+        /// <summary>未声明 FileName / ContentType → 字典整体透传给 builder，值里的 FormFile 仍归库释放。</summary>
+        [Part]
+        public Dictionary<string, FormFile> Files { get; set; } = new();
+
+        /// <summary>取值即抛：装配在后续属性上中断，此时字典还没交给 builder。</summary>
+        [Part]
+        public string? Boom => throw new InvalidOperationException("boom");
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class ArrayListThenThrowRequest : IApiRequest<object>
+    {
+        /// <summary>非泛型集合：只实现 IEnumerable，回滚同样要逐项回收。</summary>
+        [Part]
+        public ArrayList Files { get; set; } = new();
+
         [Part]
         public string? Boom => throw new InvalidOperationException("boom");
     }
