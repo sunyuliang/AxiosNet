@@ -8,6 +8,10 @@ namespace AxiosNet.Internal;
 /// <c>multipart/form-data</c> 通道：标量 / 嵌套对象 → 普通字段，
 /// <see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件；
 /// 数组 / 集合展开为同名重复部件。
+/// <para>
+/// <see cref="PartValue"/> 携带的声明覆盖（<c>[Part]</c> 的字段名 / 文件名 / Content-Type）
+/// 在装配时由本类应用：包装、校验与所有权登记都只有这一处。
+/// </para>
 /// </summary>
 internal static class MultipartBodyBuilder
 {
@@ -76,8 +80,18 @@ internal static class MultipartBodyBuilder
         MultipartFormDataContent content,
         Encoding encoding,
         Func<string?, string, string>? nameSelector,
-        HashSet<object>? visited)
+        HashSet<object>? visited,
+        PartOverride partOverride = default)
     {
+        // 声明覆盖（[Part]）：包装与所有权都在这里完成，组装前不预先改写值
+        if (value is PartValue declared)
+        {
+            CollectParts(name, declared.Value, content, encoding, nameSelector, visited, declared.Override);
+            return;
+        }
+
+        value = ApplyPartOverride(name, value, partOverride);
+
         switch (value)
         {
             case null:
@@ -247,7 +261,8 @@ internal static class MultipartBodyBuilder
             {
                 foreach (var item in enumerable)
                 {
-                    CollectParts(name, item, content, encoding, nameSelector, visited);
+                    // 集合逐项应用同一份声明（同名重复部件）
+                    CollectParts(name, item, content, encoding, nameSelector, visited, partOverride);
                 }
             }
             finally
@@ -327,6 +342,130 @@ internal static class MultipartBodyBuilder
                 // null / undefined：跳过
                 break;
         }
+    }
+
+    /// <summary>
+    /// 应用声明层覆盖（<c>[Part]</c>）：<see cref="FormFile"/> 合并文件名 / 类型 / 字段名；
+    /// 裸文件类值（Stream / byte[] / Memory / ArraySegment）按声明包成 <see cref="FormFile"/>；
+    /// 集合容器本身不包装，逐项在递归里应用同一份声明；字典 / 嵌套对象 / 字符串 / <see cref="HttpContent"/>
+    /// 不受影响（由各自的展平规则处理）。
+    /// </summary>
+    /// <remarks>
+    /// 名字优先级：显式声明 &gt; <see cref="FormFile.FieldName"/> &gt; 字段名（[JsonPropertyName] / 属性名，
+    /// 再经 <c>FormFieldNameSelector</c>）。包装失败时就地释放已取得所有权的流 —— 与 builder 其余失败路径一致。
+    /// </remarks>
+    private static object? ApplyPartOverride(string? name, object? value, PartOverride partOverride)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value is FormFile file)
+        {
+            // 值自带声明（FileName / ContentType / FieldName）是默认值，[Part] 是声明层，后者优先。
+            // 新旧 FormFile 共享同一个流：所有权只交给请求一次（旧实例随即被丢弃，不会二次释放）。
+            var mergedFileName = partOverride.FileName ?? file.FileName;
+            var mergedContentType = partOverride.ContentType ?? file.ContentType;
+            var mergedFieldName = partOverride.HasExplicitName ? name : file.FieldName;
+
+            if (mergedFileName == file.FileName
+                && mergedContentType == file.ContentType
+                && mergedFieldName == file.FieldName)
+            {
+                return file;
+            }
+
+            try
+            {
+                return new FormFile(mergedFileName, file.Content, mergedContentType) { FieldName = mergedFieldName };
+            }
+            catch
+            {
+                // 声明的文件名 / 类型 / 字段名非法：包装失败时流的所有权已经收不回去，就地释放
+                file.Content.Dispose();
+                throw;
+            }
+        }
+
+        // 未声明文件名 / 类型时原样透传：Stream / byte[] 的默认形态（filename = 字段名、octet-stream）
+        // 由各自的文件部件分支决定（也保留「裸流不预先包装」的现有行为）。
+        if (partOverride.FileName is null && partOverride.ContentType is null)
+        {
+            return value;
+        }
+
+        // 字典不可能是单个文件：整体透传给 a[b] 展平（否则会落进集合分支被拆成 Key/Value 对象）。
+        // 只实现 IReadOnlyDictionary 的自研只读视图同样命中 builder 的字典分支，不能当集合拆。
+        if (value is IDictionary || value is IReadOnlyDictionary<string, object?>)
+        {
+            return value;
+        }
+
+        // 字符串 / 标量 / JSON 树永远是普通字段（文本文件的文本形态由调用方用 FormFile / byte[] 表达）
+        if (value is string || value is JsonElement)
+        {
+            return value;
+        }
+
+        // 集合 / 迭代器 / 嵌套对象不包装：声明只作用于绑定的文件类值本身
+        switch (value)
+        {
+            case Stream stream:
+                try
+                {
+                    return new FormFile(
+                        partOverride.FileName ?? RequireName(name),
+                        stream,
+                        partOverride.ContentType)
+                    {
+                        FieldName = partOverride.HasExplicitName ? name : null
+                    };
+                }
+                catch
+                {
+                    stream.Dispose();
+                    throw;
+                }
+
+            case byte[] bytes:
+                return new FormFile(
+                    partOverride.FileName ?? RequireName(name),
+                    bytes,
+                    partOverride.ContentType)
+                {
+                    FieldName = partOverride.HasExplicitName ? name : null
+                };
+
+            case ReadOnlyMemory<byte> memory:
+                return new FormFile(
+                    partOverride.FileName ?? RequireName(name),
+                    memory.ToArray(),
+                    partOverride.ContentType)
+                {
+                    FieldName = partOverride.HasExplicitName ? name : null
+                };
+
+            case Memory<byte> memory:
+                return new FormFile(
+                    partOverride.FileName ?? RequireName(name),
+                    memory.ToArray(),
+                    partOverride.ContentType)
+                {
+                    FieldName = partOverride.HasExplicitName ? name : null
+                };
+
+            case ArraySegment<byte> segment:
+                return new FormFile(
+                    partOverride.FileName ?? RequireName(name),
+                    segment.ToArray(),
+                    partOverride.ContentType)
+                {
+                    FieldName = partOverride.HasExplicitName ? name : null
+                };
+        }
+
+        return value;
     }
 
     /// <summary>二进制内容一律作为文件部件：字段名同时用作文件名（与 byte[] 既有行为一致）。</summary>

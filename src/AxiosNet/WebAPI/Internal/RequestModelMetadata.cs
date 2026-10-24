@@ -240,24 +240,28 @@ internal sealed partial class RequestModelMetadata
         {
             foreach (var binding in PartBindings)
             {
-                var value = MultipartPartValues.Normalize(
-                    GetValue(binding.Property, request),
-                    binding.Name,
-                    binding.HasExplicitName,
-                    binding.FileName,
-                    binding.ContentType);
-
-                if (value is not null)
+                var value = GetValue(binding.Property, request);
+                if (value is null)
                 {
-                    form.Add(binding.Name, value);
+                    continue;
                 }
+
+                // 声明覆盖随值一起交给 MultipartBodyBuilder：包装、校验与所有权登记都在装配时完成，
+                // 这里不做任何预包装（避免同一份值规则在两层各写一遍）。
+                form.Add(
+                    binding.Name,
+                    binding.HasExplicitName || binding.FileName is not null || binding.ContentType is not null
+                        ? new PartValue(
+                            value,
+                            new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName))
+                        : value);
             }
         }
         catch
         {
-            // 还没交给 MultipartBodyBuilder，容器回滚覆盖不到这里：已包装的部件必须就地释放
+            // 还没交给 MultipartBodyBuilder，容器回滚覆盖不到这里：已取得的流 / 内容必须就地释放
             // （否则后续属性取值抛异常时，前面已取得的 FileStream 会随异常永久泄漏）。
-            MultipartPartValues.DisposeOwned(form.Values);
+            MultipartOwnership.DisposeOwned(form.Values);
             throw;
         }
 

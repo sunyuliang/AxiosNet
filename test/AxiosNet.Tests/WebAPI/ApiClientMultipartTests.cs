@@ -145,10 +145,11 @@ public sealed class ApiClientMultipartTests
         var stream = new MemoryStream("payload"u8.ToArray());
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // 延迟执行的迭代器在 builder 装配时才抛错，异常会被包进「请求体构建失败」（只看原始信息与释放结果）
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
             client.RequestAsync(new ThrowingCollectionRequest { Files = YieldThenThrow(stream) }));
 
-        Assert.Contains("boom", ex.Message);
+        Assert.Contains("boom", ex.ToString());
         Assert.False(stream.CanRead);   // 已包进 FormFile 的流在失败路径上被就地释放
     }
 
@@ -204,7 +205,7 @@ public sealed class ApiClientMultipartTests
 
         Assert.Contains("boom", ex.ToString());
 
-        // 没声明 FileName/ContentType 的裸 Stream 由 Normalize 原样透传（不包装成 FormFile）：
+        // 没声明 FileName/ContentType 的裸 Stream 原样透传（不包装成 FormFile）：
         // 装配在后续属性上中断时它还没被 builder 包成 StreamContent，容器 Dispose 覆盖不到，
         // 只能靠回滚就地释放 —— 否则调用方的 FileStream 句柄永久泄漏
         Assert.False(stream.CanRead);
@@ -227,7 +228,7 @@ public sealed class ApiClientMultipartTests
 
         Assert.Contains("boom", ex.ToString());
 
-        // 字典由 Normalize 整体透传给 builder。它的元素是 KeyValuePair 值类型，
+        // 字典整体透传给 builder。它的元素是 KeyValuePair 值类型，
         // 协变到 IEnumerable<object?> 不成立：回滚必须递归进字典，否则装配失败时这里的流永久泄漏
         Assert.False(stream.CanRead);
     }
