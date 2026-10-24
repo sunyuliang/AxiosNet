@@ -164,33 +164,18 @@ internal static class ScalarParser
 
     /// <summary>
     /// flags 枚举的组合值是否只由已定义位构成（<c>"Read,Write"</c> 合法、<c>"999"</c> 不合法）。
-    /// <para>非 flags 枚举直接 false；按底层类型分流（decimal 没有位运算）：ulong 底层按无符号汇总，
-    /// 其余按 <see cref="long"/>（负值 flags 同样正确）。</para>
+    /// <para>非 flags 枚举直接 false；掩码由 <see cref="ReflectionCache.GetFlagMask"/> 按枚举类型缓存
+    /// （<see cref="Enum.GetValues(Type)"/> 每次新建数组并装箱，而组合值是正常路径而非异常路径）。</para>
     /// </summary>
     private static bool IsFlagsCombination(Type enumType, object parsed)
     {
-        if (!enumType.IsDefined(typeof(FlagsAttribute), inherit: false))
+        if (ReflectionCache.GetFlagMask(enumType) is not { } mask)
         {
             return false;
         }
 
-        if (Enum.GetUnderlyingType(enumType) == typeof(ulong))
-        {
-            var unsignedMask = ulong.MinValue;
-            foreach (var defined in Enum.GetValues(enumType))
-            {
-                unsignedMask |= Convert.ToUInt64(defined, CultureInfo.InvariantCulture);
-            }
-
-            return (Convert.ToUInt64(parsed, CultureInfo.InvariantCulture) & ~unsignedMask) == ulong.MinValue;
-        }
-
-        var mask = 0L;
-        foreach (var defined in Enum.GetValues(enumType))
-        {
-            mask |= Convert.ToInt64(defined, CultureInfo.InvariantCulture);
-        }
-
-        return (Convert.ToInt64(parsed, CultureInfo.InvariantCulture) & ~mask) == 0L;
+        return mask.UnsignedMask is { } unsignedMask
+            ? (Convert.ToUInt64(parsed, CultureInfo.InvariantCulture) & ~unsignedMask) == 0UL
+            : (Convert.ToInt64(parsed, CultureInfo.InvariantCulture) & ~mask.SignedMask) == 0L;
     }
 }

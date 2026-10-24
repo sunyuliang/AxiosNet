@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json.Serialization;
 
@@ -32,6 +33,13 @@ internal static class ReflectionCache
 
     /// <summary>是否整体忽略（<c>[JsonIgnore(Always)]</c>）：与字段名同源同命脉，一并缓存。</summary>
     private static readonly ConcurrentDictionary<PropertyInfo, bool> IgnoredProperties = new();
+
+    /// <summary>
+    /// flags 枚举的「已定义位掩码」（按枚举类型缓存；非 flags 枚举缓存 null）。
+    /// <para>裸标量文本解析成 flags 组合是正常路径（<c>"Read,Write"</c>），
+    /// <see cref="Enum.GetValues(Type)"/> 每次都新建数组并装箱每个值 —— 缓存后热路径零分配。</para>
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, EnumFlagMask?> FlagMasks = new();
 
     /// <param name="type">待展平的类型；标注要求裁剪器保留其公开属性（含 getter）。</param>
     public static PropertyInfo[] GetReadableProperties(
@@ -70,4 +78,56 @@ internal static class ReflectionCache
             var attribute = p.GetCustomAttribute<JsonIgnoreAttribute>();
             return attribute is not null && attribute.Condition == JsonIgnoreCondition.Always;
         });
+
+    /// <summary>
+    /// flags 枚举的已定义位掩码；非 flags 枚举返回 <c>null</c>。
+    /// <para>底层类型为 <c>ulong</c> 的枚举按无符号汇总（<see cref="Convert.ToInt64(object)"/> 会溢出），
+    /// 其余按 <see cref="long"/>（负值 flags 同样正确）。</para>
+    /// </summary>
+    public static EnumFlagMask? GetFlagMask(Type enumType)
+        => FlagMasks.GetOrAdd(enumType, static type =>
+        {
+            if (!type.IsDefined(typeof(FlagsAttribute), inherit: false))
+            {
+                return null;
+            }
+
+            if (Enum.GetUnderlyingType(type) == typeof(ulong))
+            {
+                var unsignedMask = 0UL;
+                foreach (var defined in Enum.GetValues(type))
+                {
+                    unsignedMask |= Convert.ToUInt64(defined, CultureInfo.InvariantCulture);
+                }
+
+                return new EnumFlagMask(UnsignedMask: unsignedMask, SignedMask: 0L);
+            }
+
+            var signedMask = 0L;
+            foreach (var defined in Enum.GetValues(type))
+            {
+                signedMask |= Convert.ToInt64(defined, CultureInfo.InvariantCulture);
+            }
+
+            return new EnumFlagMask(UnsignedMask: null, SignedMask: signedMask);
+        });
+}
+
+/// <summary>
+/// flags 枚举的已定义位掩码（<see cref="ReflectionCache.GetFlagMask"/> 的缓存产物）：
+/// <see cref="UnsignedMask"/> 非 <c>null</c> 表示底层类型是 <c>ulong</c>。
+/// </summary>
+internal readonly struct EnumFlagMask
+{
+    public EnumFlagMask(ulong? UnsignedMask, long SignedMask)
+    {
+        this.UnsignedMask = UnsignedMask;
+        this.SignedMask = SignedMask;
+    }
+
+    /// <summary>底层类型为 <c>ulong</c> 时的掩码；否则为 <c>null</c>。</summary>
+    public ulong? UnsignedMask { get; }
+
+    /// <summary>底层类型不是 <c>ulong</c> 时的掩码。</summary>
+    public long SignedMask { get; }
 }

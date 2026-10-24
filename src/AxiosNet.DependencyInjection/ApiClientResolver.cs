@@ -61,7 +61,12 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     /// <summary>
     /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），
     /// 全局 <see cref="_gate"/> 只保护字典读写。这样慢 configure 或「configure 里同步等待
-    /// 另一个站点解析」不会阻塞 / 死锁其他站点的首次解析。
+    /// 另一个站点解析」不会阻塞其他站点的首次解析。
+    /// <para>
+    /// 单向等待（A 的 configure 等 B）不再死锁；<b>A、B 互相等待仍会互锁</b> ——
+    /// 两把站点锁之间没有约定锁序。configure 里做跨站点同步等待本身就是调用方要避免的写法，
+    /// 这里只保证它不会把无关站点一起拖住。
+    /// </para>
     /// </summary>
     private readonly ConcurrentDictionary<string, object> _siteGates = new(StringComparer.Ordinal);
     private int _disposed;

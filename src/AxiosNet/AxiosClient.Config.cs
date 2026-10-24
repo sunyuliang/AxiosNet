@@ -25,6 +25,9 @@ public sealed partial class AxiosClient
 
         if (perCall is null)
         {
+            // 没有任何按请求项：链整段都是实例默认段，产物标记即为全链长度。
+            merged.TransformInheritedRequest = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
+            merged.TransformInheritedResponse = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
             return merged;
         }
 
@@ -150,10 +153,16 @@ public sealed partial class AxiosClient
         // 不去重会让每个实例默认 transform 每回放一次多执行一遍。
         // 本次追加的项（含与默认链同引用的有意重复注册）一律原样保留 —— 去重范围按来源长度算，
         // 不按 merged 当前链长算，否则「调用方有意重复注册同一委托」会被误吞。
+        // 产物的「继承段长度」必须在追加**之前**取（追加后前 N 项不变，但链长了会算错），
+        // 且必须**无条件**写：它描述的是产物形态，与这次有没有追加无关 ——
+        // 只在 perCall.HasTransform* 分支里写，会让「perCall 自己没 transform」的产物把继承段
+        // 留成 0（Defaults.Clone 带过来的值），回放时实例默认 transform 再执行一遍。
+        var inheritedRequestCount = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
+        var inheritedResponseCount = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
+
         if (perCall.HasTransformRequest)
         {
-            var originalCount = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
-            var inherited = Math.Min(perCall.TransformInheritedRequest, originalCount);
+            var inherited = Math.Min(perCall.TransformInheritedRequest, inheritedRequestCount);
             foreach (var transform in perCall.TransformRequest)
             {
                 if (inherited > 0 && ChainContainsInherited(merged.TransformRequest, inherited, transform))
@@ -163,15 +172,11 @@ public sealed partial class AxiosClient
 
                 merged.TransformRequest.Add(transform);
             }
-
-            // 产物标记 = 合并前 merged 的链长（= 实例默认段）：回放这份配置时前 N 项才该去重。
-            merged.TransformInheritedRequest = originalCount;
         }
 
         if (perCall.HasTransformResponse)
         {
-            var originalCount = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
-            var inherited = Math.Min(perCall.TransformInheritedResponse, originalCount);
+            var inherited = Math.Min(perCall.TransformInheritedResponse, inheritedResponseCount);
             foreach (var transform in perCall.TransformResponse)
             {
                 if (inherited > 0 && ChainContainsInherited(merged.TransformResponse, inherited, transform))
@@ -181,9 +186,11 @@ public sealed partial class AxiosClient
 
                 merged.TransformResponse.Add(transform);
             }
-
-            merged.TransformInheritedResponse = originalCount;
         }
+
+        // 产物标记 = 合并前 merged 的链长（= 实例默认段）：回放这份配置时前 N 项才该去重。
+        merged.TransformInheritedRequest = inheritedRequestCount;
+        merged.TransformInheritedResponse = inheritedResponseCount;
 
         return merged;
     }

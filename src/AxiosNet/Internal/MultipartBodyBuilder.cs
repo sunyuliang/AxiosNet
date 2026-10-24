@@ -46,7 +46,7 @@ internal static class MultipartBodyBuilder
 
         try
         {
-            CollectParts(null, data, content, encoding, config.SerializationOrNull?.FormFieldNameSelector, visited: null);
+            CollectParts(null, data, content, encoding, config, visited: null);
             return content;
         }
         catch (Exception ex)
@@ -83,10 +83,13 @@ internal static class MultipartBodyBuilder
         object? value,
         MultipartFormDataContent content,
         Encoding encoding,
-        Func<string?, string, string>? nameSelector,
+        AxiosConfig config,
         HashSet<object>? visited,
         PartOverride partOverride = default)
     {
+        // 表单字段名选择器由 config 决定（含实例默认值），递归每一层都从同一份配置读取。
+        // 带上 config 而不是只带选择器：失败路径要用它给异常补请求上下文。
+        var nameSelector = config.SerializationOrNull?.FormFieldNameSelector;
         switch (value)
         {
             case null:
@@ -99,6 +102,7 @@ internal static class MultipartBodyBuilder
                     content,
                     name,
                     new StreamContent(file.Content),
+                    config,
                     partOverride,
                     file.FileName,
                     file.ContentType,
@@ -134,23 +138,23 @@ internal static class MultipartBodyBuilder
                 return;
 
             case byte[] bytes:
-                AddFilePart(content, name, new ByteArrayContent(bytes), partOverride);
+                AddFilePart(content, name, new ByteArrayContent(bytes), config, partOverride);
                 return;
 
             case ReadOnlyMemory<byte> memory:
-                AddFilePart(content, name, new ReadOnlyMemoryContent(memory), partOverride);
+                AddFilePart(content, name, new ReadOnlyMemoryContent(memory), config, partOverride);
                 return;
 
             case Memory<byte> memory:
-                AddFilePart(content, name, new ReadOnlyMemoryContent(memory), partOverride);
+                AddFilePart(content, name, new ReadOnlyMemoryContent(memory), config, partOverride);
                 return;
 
             case ArraySegment<byte> segment:
-                AddFilePart(content, name, new ReadOnlyMemoryContent(segment.AsMemory()), partOverride);
+                AddFilePart(content, name, new ReadOnlyMemoryContent(segment.AsMemory()), config, partOverride);
                 return;
 
             case Stream stream:
-                AddFilePart(content, name, new StreamContent(stream), partOverride);
+                AddFilePart(content, name, new StreamContent(stream), config, partOverride);
                 return;
 
             case IDictionary<string, object?> genericDictionary:
@@ -171,7 +175,7 @@ internal static class MultipartBodyBuilder
                             entry.Value,
                             content,
                             encoding,
-                            nameSelector,
+                            config,
                             visited,
                             entryOverride);
                     }
@@ -198,7 +202,7 @@ internal static class MultipartBodyBuilder
                             entry.Value,
                             content,
                             encoding,
-                            nameSelector,
+                            config,
                             visited);
                     }
                 }
@@ -227,7 +231,7 @@ internal static class MultipartBodyBuilder
                             entry.Value,
                             content,
                             encoding,
-                            nameSelector,
+                            config,
                             visited);
                     }
                 }
@@ -255,7 +259,7 @@ internal static class MultipartBodyBuilder
                 foreach (var item in enumerable)
                 {
                     // 集合逐项应用同一份声明（同名重复部件）
-                    CollectParts(name, item, content, encoding, nameSelector, visited, partOverride);
+                    CollectParts(name, item, content, encoding, config, visited, partOverride);
                 }
             }
             finally
@@ -283,7 +287,7 @@ internal static class MultipartBodyBuilder
                     property.GetValue(value),
                     content,
                     encoding,
-                    nameSelector,
+                    config,
                     visited);
             }
         }
@@ -348,6 +352,7 @@ internal static class MultipartBodyBuilder
     /// <param name="content">目标表单（部件加入后由它持有释放责任）。</param>
     /// <param name="name">字段名（[JsonPropertyName] / 属性名，再经 FormFieldNameSelector）。</param>
     /// <param name="part">已构造好的部件内容（失败路径由本方法就地释放）。</param>
+    /// <param name="config">本次请求的生效配置（非法 Content-Type 的错误要带请求上下文）。</param>
     /// <param name="partOverride">声明式层传入的覆盖项（没有声明时为 default）。</param>
     /// <param name="valueFileName">值自带的文件名（如 <see cref="FormFile.FileName"/>）。</param>
     /// <param name="valueContentType">值自带的 Content-Type。</param>
@@ -360,6 +365,7 @@ internal static class MultipartBodyBuilder
         MultipartFormDataContent content,
         string? name,
         HttpContent part,
+        AxiosConfig config,
         PartOverride partOverride,
         string? valueFileName = null,
         string? valueContentType = null,
@@ -374,9 +380,10 @@ internal static class MultipartBodyBuilder
 
             ValidateDeclaredValue(partOverride);
 
-            // contentType 三条来源（声明覆盖 / 值自带 / 默认 octet-stream）都已在各自入口校验过
-            // 控制字符，这里不携带 config：真出现非法值时会以 ArgumentException 冒到 Create 的 catch。
-            RequestContentType.Set(part, contentType);
+            // contentType 三条来源（声明覆盖 / 值自带 / 默认 octet-stream）都已在各自入口校验过控制字符，
+            // 这里仍走统一入口再拦一次（第三方部件自带的头值不可信）；带上 config 是为了让
+            // 真出现非法值时错误里保留请求上下文（ERR_BAD_OPTION_VALUE，不是 ERR_BAD_REQUEST）。
+            RequestContentType.Set(part, contentType, config);
             content.Add(part, field, fileName);
         }
         catch

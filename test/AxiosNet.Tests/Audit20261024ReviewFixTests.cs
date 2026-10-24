@@ -40,17 +40,22 @@ public sealed class Audit20261024ReviewFixTests
         using var cts = new CancellationTokenSource();
 
         var response = await clientA.GetAsync("http://localhost/a", c => c.CancellationToken = cts.Token);
-        Assert.Equal(cts.Token, response.Config.CancellationToken);
+        var config = Assert.IsType<AxiosConfig>(response.Config);
+        Assert.Equal(cts.Token, config.CancellationToken);
 
         // 回放到同一实例与另一个实例：令牌描述的是「来源实例那一次调用」，不搬过去
         // （观测点是回放请求自己的生效配置，不是 handler 收到的内部 CTS 令牌）。
-        var replaySame = await clientA.GetAsync("http://localhost/a", response.Config);
-        Assert.False(replaySame.Config.CancellationToken.CanBeCanceled, "回放到同实例后仍带着来源令牌。");
+        var replaySame = await clientA.GetAsync("http://localhost/a", config);
+        Assert.False(
+            Assert.IsType<AxiosConfig>(replaySame.Config).CancellationToken.CanBeCanceled,
+            "回放到同实例后仍带着来源令牌。");
 
         var handlerB = new RecordingHandler(_ => JsonResponse());
         using var clientB = new AxiosClient(handler: handlerB);
-        var replayOther = await clientB.GetAsync("http://localhost/b", response.Config);
-        Assert.False(replayOther.Config.CancellationToken.CanBeCanceled, "回放到另一实例时把来源令牌搬了过去。");
+        var replayOther = await clientB.GetAsync("http://localhost/b", config);
+        Assert.False(
+            Assert.IsType<AxiosConfig>(replayOther.Config).CancellationToken.CanBeCanceled,
+            "回放到另一实例时把来源令牌搬了过去。");
     }
 
     // 回放不携带按请求 Auth 的契约由 Audit20261024P2FixTests 锁定（含「用目标实例默认」），
@@ -189,7 +194,35 @@ public sealed class Audit20261024ReviewFixTests
         Assert.Equal(1, calls);
 
         // 回放生效配置：默认链不重复执行（继承段去重）
-        await client.GetAsync("http://localhost/a", response.Config);
+        await client.GetAsync("http://localhost/a", Assert.IsType<AxiosConfig>(response.Config));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Transform_ReplayOfObjectEntryResponse_DoesNotDuplicateDefaultChain()
+    {
+        // 对象入口（调用方自建配置、自身不带任何 transform）走 MergeConfig：
+        // 产物的继承段必须仍记为「实例默认段」，否则回放时默认 transform 会再执行一遍。
+        // 只在 perCall.HasTransform* 分支里写产物标记时，这条路径的标记恒为 0（回归点）。
+        var handler = new RecordingHandler(_ => JsonResponse());
+        using var client = new AxiosClient(handler: handler);
+        var calls = 0;
+        Func<object?, AxiosConfig, object?> log = (data, _) =>
+        {
+            calls++;
+            return data;
+        };
+
+        client.Defaults.TransformRequest.Add(log);
+
+        var response = await client.RequestAsync(new AxiosConfig
+        {
+            Url = "http://localhost/a",
+            Data = new { x = 1 }
+        });
+        Assert.Equal(1, calls);
+
+        await client.RequestAsync(Assert.IsType<AxiosConfig>(response.Config));
         Assert.Equal(2, calls);
     }
 
@@ -238,10 +271,10 @@ public sealed class Audit20261024ReviewFixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new AxiosClient();
 
-        // TimeOnly 走往返格式（保留秒）：与请求体路径的 "O" 一致，不再截成 "16:30"。
+        // TimeOnly 走往返格式（与请求体路径同一份 "O"）：秒与小数位都保留，不再截成 "16:30"。
         // 注意走 configure 写 Params：GetAsync(url, data) 重载会把匿名对象当请求体。
         await client.GetAsync(server.Url + "q", c => c.Params = new { t = new TimeOnly(16, 30, 15) });
-        Assert.Contains("16%3A30%3A15", server.Received[0].Query);
+        Assert.Contains("16%3A30%3A15.0000000", server.Received[0].Query);
 
         // DateTime(Unspecified) 按 UTC 解释：同一份数据在任何时区的机器上发出同样的字节
         //（按本机时区折的旧实现在东八区会发出 04:00:00.000Z）。
@@ -294,30 +327,17 @@ public sealed class Audit20261024ReviewFixTests
     private static TestResponse BareText(string text)
         => new(Body: Encoding.UTF8.GetBytes(text), ContentType: "application/json");
 
-    /// <summary>记录最后一个请求的 URI / Authorization / 取消令牌的离线 Handler。</summary>
+    /// <summary>固定应答的离线 Handler（回放语义用例只需要一条稳定的响应）。</summary>
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _respond;
 
         public RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) => _respond = respond;
 
-        public Uri? LastUri { get; private set; }
-
-        public string? LastAuthorization { get; private set; }
-
-        public CancellationToken LastToken { get; private set; }
-
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
-        {
-            LastUri = request.RequestUri;
-            LastAuthorization = request.Headers.TryGetValues("Authorization", out var values)
-                ? values.FirstOrDefault()
-                : null;
-            LastToken = cancellationToken;
-            return Task.FromResult(_respond(request));
-        }
+            => Task.FromResult(_respond(request));
     }
 
     /// <summary>自报带 CR/LF 的 MediaType 的第三方序列化器（不可信输入样例）。</summary>

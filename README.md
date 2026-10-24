@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-897%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-898%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -481,6 +481,21 @@ await http.GetAsync("search?q=" + Uri.EscapeDataString("a&b"));     // search?q=
 >
 > `url` 是必填参数：快捷方法收到 `null` / 空白串时直接抛 `ERR_INVALID_URL`，不会被解释成「请求 baseAddress 本身」——一次「变量忘赋值」不会变成向根路径发出的意外请求（`POST` 可能带副作用）。要请求基地址请显式传 `"/"`。
 
+**标量取值文本**（`Params` / `[Path]` / `[Header]` / 表单与 multipart 共用同一份实现，见 `BodyFields.ScalarToString`）：
+
+| 类型 | 文本形态 | 说明 |
+| --- | --- | --- |
+| `bool` | `true` / `false` | 不是 `.NET` 的 `True`/`False` |
+| 枚举 | 名字（`Write`） | — |
+| `DateTime` | `2026-10-24T12:00:00.000Z` | 折成 **UTC 毫秒**；**`Kind = Unspecified` 时按 UTC 解释**（同一份数据在任何时区的机器上发出同样的字节），`Kind = Local` 仍按本机时区换算 |
+| `DateTimeOffset` | `2026-10-24T12:00:00.000Z` | 取 `UtcDateTime`（丢弃原始偏移） |
+| `TimeOnly` | `16:30:15.0000000` | 往返格式 `O`：保留秒与小数位（不是 `16:30`） |
+| `DateOnly` | `10/24/2026` | 不变文化的短日期（斜杠会被百分号编码） |
+| `byte[]` | base64 | 查询串与表单各自的编码器都转 base64（不经过 `ScalarToString`）；请求体里的 `byte[]` 是原始字节 |
+| 其它 | `IFormattable` + `InvariantCulture` | `Guid` / 数值 / `TimeSpan` 等 |
+
+> JSON 请求体不走这张表：那里用 `O` 往返格式（保留 `Kind` 与 tick），与表单/查询串的「折成 UTC 毫秒」是两套约定。
+
 ### 对接 ASP.NET Core Web API：单文件上传
 
 「单文件上传」在 HTTP 层有两种形态，客户端与服务端必须对上：
@@ -628,7 +643,7 @@ var fileName = (disposition.FileNameStar ?? disposition.FileName)?.Trim('"') ?? 
 - 需要把响应流直接存盘的场景，`Callbacks.OnDownloadProgress` 的报告节流为 50 ms，不会因为回调过频拖慢拷贝。
 - `ResponseType.Stream` 时响应体不做任何解码，`response.Status/Headers` 照常可用（先校验状态码再落盘）。
 
-所有快捷方法都支持 `<dynamic>`：`GetAsync<dynamic>` / `PostAsync<dynamic>` / `PutAsync<dynamic>` / `PatchAsync<dynamic>` / `DeleteAsync<dynamic>`（含 `RequestAsync<dynamic>` 与静态门面 `Axios.GetAsync<dynamic>`）；也可以在非泛型请求上显式设置 `c.ResponseType = ResponseType.Dynamic`。显式指定 `ResponseType.Text/ArrayBuffer/Stream` 时优先于 `<dynamic>` 的默认动态展开。
+所有快捷方法都支持 `<dynamic>`：`GetAsync<dynamic>` / `PostAsync<dynamic>` / `PutAsync<dynamic>` / `PatchAsync<dynamic>` / `DeleteAsync<dynamic>`（含 `RequestAsync<dynamic>` 与静态门面 `Axios.GetAsync<dynamic>`）；也可以在非泛型请求上显式设置 `c.ResponseType = ResponseType.Dynamic`。**只要 `ResponseType` 被显式设置过（`*Set` 标记，含实例 `Defaults` 上的设置），就以显式值为准、不再自动展开** —— 包括显式写成 `ResponseType.Json`：那样 `GetAsync<object>` 得到的是 `JsonElement`，不是 `AxiosDynamic`（只看「值是不是 Json」会把「实例上显式表态的默认值」误当成未表态）。
 
 `<Stream>` / `<byte[]>` 也会自动匹配响应形态：`GetAsync<Stream>` 等价于 `ResponseType.Stream`，`GetAsync<byte[]>` 等价于 `ResponseType.ArrayBuffer`，无需再手写 `c.ResponseType = ...`。
 
@@ -681,7 +696,7 @@ JSON 到 CLR 的映射规则：
 
 | JSON | .NET 类型 |
 | --- | --- |
-| object | `AxiosDynamic`（`data.name` 成员访问 / `data["name"]` 索引访问 / 缺省成员返回 `null` / 可当 `IDictionary<string,object?>` 用） |
+| object | `AxiosDynamic`（`data.name` 成员访问 / `data["name"]` 索引访问 / 缺省成员返回 `null` / 可当 `IDictionary<string,object?>` 用）；`ResponseType` 被显式设置过时以显式值为准，不做自动展开 |
 | array | `List<object?>`（支持动态下标） |
 | string | `string` |
 | true/false | `bool` |
@@ -1497,7 +1512,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **854** 个、DI 扩展 **43** 个，合计 **897** 个用例（共 **1794** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **855** 个、DI 扩展 **43** 个，合计 **898** 个用例（共 **1796** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1556,7 +1571,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 897 个 xUnit 单元测试（核心/声明式 854 + DI 43；两个测试项目均为双目标，实际执行 1794 次）
+# 运行全部 898 个 xUnit 单元测试（核心/声明式 855 + DI 43；两个测试项目均为双目标，实际执行 1796 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1565,9 +1580,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 854 | `net8.0` / `net6.0` | 1708 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 855 | `net8.0` / `net6.0` | 1710 |
 | `AxiosNet.DependencyInjection.Tests` | 43 | `net8.0` / `net6.0` | 86 |
-| **合计** | **897** | | **1794** |
+| **合计** | **898** | | **1796** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1628,6 +1643,17 @@ dotnet build AxiosNet.sln -c Release
   - transform 链与按请求删头名单改为写时复制（只读用法每请求零拷贝）+ 只读快照缓存（并发枚举零分配、不装箱）
   - 声明式：属性取值走构建期缓存的委托（值类型属性同样受益；AOT / 禁用动态代码的运行时自动回退到 `PropertyInfo.GetValue`）；XML 根命名空间声明按类型缓存；连接池全量驱逐不再排序；流式失败响应的 64KB 错误体缓冲改走 `ArrayPool`；回放生效配置免一次深拷贝
   - `GetUri` 与 `RequestAsync` 统一口径：传入生效配置（`response.Config`）时按本实例重新合并，`BaseAddress` 等实例级项取自本实例——跨实例回放时算出的地址与实际去向一致（此前按原样使用，签名 / 日志可能指向旧服务端）；`GetUri(Action)` 改为直接用生效配置拼装，回调里写的 `BaseAddress` 语义不变
+
+- **2026-10-24 全库审查**（`Audit20261024ReviewFixTests`，14 个用例 + DI 侧 `ApiClientResolverConcurrencyTests` 3 个）
+  - 回放 `response.Config` 不再把来源实例的取消令牌搬过去（令牌描述的是「那一次调用」）：`*Set` 标记改用 `if` 而非三元赋值，避免把「未设置」记成显式意图
+  - transform 去重只覆盖 perCall 自己登记的继承段（调用方有意重复注册同一委托不再被吞），且**继承段对每份合并产物无条件记录** —— 对象入口（调用方自建配置、自身不带 transform）的产物回放时同样不重复执行实例默认 transform
+  - 枚举只接受已定义值（flags 组合除外）、`char` 只接受单字符：服务端给出的非法枚举 / 多字符文本按 `ERR_BAD_RESPONSE` 失败，不再静默产出 `(E)999` 或首字符
+  - 泛型 `<object>` / `<Stream>` 的 responseType 自动切换移到请求拦截器之后（拦截器整体替换 config 时不再静默丢失），判据改为「`ResponseType` 是否显式设置过」
+  - SSE 帧上限按**字节**判定（与 NDJSON 缓冲口径一致；UTF-8 多字节帧不再能灌到字符上限的约 4 倍）
+  - 第三方序列化器自报的 `MediaType` 含控制字符 → `ERR_BAD_OPTION_VALUE`（不再被收成 `ERR_BAD_REQUEST`「请求体序列化失败」）
+  - `ApiErrorContext.Body` 的 `byte[]` 分支按响应 `Content-Type` 的 charset 解码（gbk / iso-8859-1 错误体不再出乱码）
+  - 标量文本：`DateTime(Kind = Unspecified)` 按 UTC 解释、`TimeOnly` 用往返格式（保留秒）；`ValidateModels(Assembly)` 只校验可实例化类型（抽象 / 接口 / 开放泛型基类跳过，显式传入仍报错）
+  - DI：每站点一把创建锁（慢 configure 不再阻塞其它站点）、创建期间容器已退出则就地释放、单个站点释放失败不再跳过其余站点
 
 **声明式客户端与 DI**
 
@@ -1823,10 +1849,10 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（841 个用例 × net6.0 / net8.0 双目标 = 1682 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（855 个用例 × net6.0 / net8.0 双目标 = 1710 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（142 个用例，与主库测试同项目同程序集）
-   └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（40 个用例 × net6.0 / net8.0 双目标 = 80 次执行，复用主库/WebAPI 测试基建）
+   └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（43 个用例 × net6.0 / net8.0 双目标 = 86 次执行，复用主库/WebAPI 测试基建）
 ```
 
 ## License
