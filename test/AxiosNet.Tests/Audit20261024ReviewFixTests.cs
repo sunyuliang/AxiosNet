@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -11,7 +12,7 @@ namespace AxiosNet.Tests;
 /// 2026-10-24 全库审查的修复回归（按审查报告编号）：
 /// <list type="bullet">
 /// <item>回放 response.Config 不再把来源实例的取消令牌搬到目标实例（三元赋值置标记陷阱）；</item>
-/// <item>Enum 未定义数值 / char 多字符不再静默通过（ScalarParser 复核）；</item>
+/// <item>Enum 未定义数值 / char 多字符不再静默通过（ScalarParser 第 8 步复核 + 第 9 步序列化器产物复核，内置 JSON 的 STJ 路径同样拦截；错误状态码下 lenient 回退原文）；</item>
 /// <item>SSE 帧上限按字节判定（与 NDJSON 口径一致）；</item>
 /// <item>请求拦截器替换 config 后，泛型 &lt;object&gt;/&lt;Stream&gt; 的 responseType 自动切换仍然生效；</item>
 /// <item>transform 本次追加的重复注册不再被「继承段去重」误吞；</item>
@@ -40,22 +41,18 @@ public sealed class Audit20261024ReviewFixTests
         using var cts = new CancellationTokenSource();
 
         var response = await clientA.GetAsync("http://localhost/a", c => c.CancellationToken = cts.Token);
-        var config = Assert.IsType<AxiosConfig>(response.Config);
+        var config = response.Config!;
         Assert.Equal(cts.Token, config.CancellationToken);
 
         // 回放到同一实例与另一个实例：令牌描述的是「来源实例那一次调用」，不搬过去
         // （观测点是回放请求自己的生效配置，不是 handler 收到的内部 CTS 令牌）。
         var replaySame = await clientA.GetAsync("http://localhost/a", config);
-        Assert.False(
-            Assert.IsType<AxiosConfig>(replaySame.Config).CancellationToken.CanBeCanceled,
-            "回放到同实例后仍带着来源令牌。");
+        Assert.False(replaySame.Config!.CancellationToken.CanBeCanceled, "回放到同实例后仍带着来源令牌。");
 
         var handlerB = new RecordingHandler(_ => JsonResponse());
         using var clientB = new AxiosClient(handler: handlerB);
         var replayOther = await clientB.GetAsync("http://localhost/b", config);
-        Assert.False(
-            Assert.IsType<AxiosConfig>(replayOther.Config).CancellationToken.CanBeCanceled,
-            "回放到另一实例时把来源令牌搬了过去。");
+        Assert.False(replayOther.Config!.CancellationToken.CanBeCanceled, "回放到另一实例时把来源令牌搬了过去。");
     }
 
     // 回放不携带按请求 Auth 的契约由 Audit20261024P2FixTests 锁定（含「用目标实例默认」），
@@ -104,6 +101,80 @@ public sealed class Audit20261024ReviewFixTests
         using var client2 = new AxiosClient();
         var ok = await client2.GetAsync<char>($"http://127.0.0.1:{single.Port}/");
         Assert.Equal('x', ok.Data);
+    }
+
+    [Fact]
+    public async Task GetAsync_Enum_UndefinedNumericValue_WithDefaultSerializer_FailsBadResponse()
+    {
+        // 同一条 application/json + "999" 的响应，但不注入序列化器：内置 JSON 的 STJ 会把 999
+        // 静默转成 (E)999（它的既定行为），第 9 步必须用同一把尺子复核产物 —— 修复前这条路径
+        // 直接放行，(Perm)999 / (Level)999 会当 Data 返回（2026-10-24 审查缺口）。
+        await using var server = TestHttpServer.Start(_ => BareText("999"));
+        using var client = new AxiosClient();
+
+        var fromPlain = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Level>(
+            $"http://127.0.0.1:{server.Port}/"));
+        Assert.Equal(AxiosException.ErrBadResponse, fromPlain.Code);
+        Assert.Contains("undefined", fromPlain.Message);
+
+        var fromFlags = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Perm>(
+            $"http://127.0.0.1:{server.Port}/"));
+        Assert.Equal(AxiosException.ErrBadResponse, fromFlags.Code);
+
+        // 第三方序列化器直接产出 (Level)999（不依赖 STJ 的既定行为）：复核同样拒
+        var fromThirdParty = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Level>(
+            $"http://127.0.0.1:{server.Port}/",
+            c => c.Serialization.ContentSerializer = new FixedUndefinedEnumSerializer()));
+        Assert.Equal(AxiosException.ErrBadResponse, fromThirdParty.Code);
+    }
+
+    [Fact]
+    public async Task GetAsync_Enum_DefinedValues_WithDefaultSerializer_AreAccepted()
+    {
+        // 复核不能误拒合法值：已定义数字（第 8 步直解析）、第三方序列化器产出的已定义枚举
+        // （复核就发生在这一层）、flags 组合数字都要照常通过。
+        await using var number = TestHttpServer.Start(_ => BareText("1"));
+        await using var name = TestHttpServer.Start(_ => BareText("\"Low\""));
+        await using var flags = TestHttpServer.Start(_ => BareText("3"));
+
+        using var numberClient = new AxiosClient();
+        Assert.Equal(Level.Low, (await numberClient.GetAsync<Level>($"http://127.0.0.1:{number.Port}/")).Data);
+
+        using var nameClient = new AxiosClient();
+        Assert.Equal(Level.Low, (await nameClient.GetAsync<Level>(
+            $"http://127.0.0.1:{name.Port}/",
+            c => c.Serialization.ContentSerializer = new StringEnumSerializer())).Data);
+
+        using var flagsClient = new AxiosClient();
+        Assert.Equal(Perm.Read | Perm.Write, (await flagsClient.GetAsync<Perm>($"http://127.0.0.1:{flags.Port}/")).Data);
+    }
+
+    [Fact]
+    public async Task GetAsync_EnumBaseType_WithSerializerReturningEnum_IsNotFalseRejected()
+    {
+        // 目标类型本身不是枚举（Enum 基类）时，序列化器产出具体枚举是合法的：
+        // 复核只对「目标类型是枚举」生效 —— Enum.IsDefined 对非枚举入参抛 ArgumentException，
+        // 若不设防会被外层 catch 收成错误的 ERR_BAD_RESPONSE（2026-10-25 自审发现）。
+        var handler = new RecordingHandler(_ => JsonResponse());
+        using var client = new AxiosClient(handler: handler);
+
+        var response = await client.GetAsync<Enum>(
+            "http://localhost/a",
+            c => c.Serialization.ContentSerializer = new FixedDefinedEnumSerializer());
+
+        Assert.Equal(Level.Low, response.Data);
+    }
+
+    [Fact]
+    public async Task GetAsync_Enum_UndefinedValue_OnErrorStatus_KeepsStatusError()
+    {
+        // 状态码不合法时 lenient：正文问题不得盖住 HTTP 状态错误（与解析失败同口径回退原文）。
+        await using var server = TestHttpServer.Start(
+            _ => new TestResponse(StatusCode: 500, Body: Encoding.UTF8.GetBytes("999"), ContentType: "application/json"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Level>($"http://127.0.0.1:{server.Port}/"));
+        Assert.Contains("status code 500", ex.Message);
     }
 
     // ------------------------------------------------------------------
@@ -194,7 +265,7 @@ public sealed class Audit20261024ReviewFixTests
         Assert.Equal(1, calls);
 
         // 回放生效配置：默认链不重复执行（继承段去重）
-        await client.GetAsync("http://localhost/a", Assert.IsType<AxiosConfig>(response.Config));
+        await client.GetAsync("http://localhost/a", response.Config!);
         Assert.Equal(2, calls);
     }
 
@@ -222,7 +293,7 @@ public sealed class Audit20261024ReviewFixTests
         });
         Assert.Equal(1, calls);
 
-        await client.RequestAsync(Assert.IsType<AxiosConfig>(response.Config));
+        await client.RequestAsync(response.Config!);
         Assert.Equal(2, calls);
     }
 
@@ -360,6 +431,38 @@ public sealed class Audit20261024ReviewFixTests
             => throw new InvalidOperationException("strict");
     }
 
+    /// <summary>带字符串枚举转换器的第三方序列化器：把 <c>"Low"</c> 解成 <see cref="Level.Low"/>
+    /// —— 产物复核不得误拒序列化器合法产出的已定义枚举值。</summary>
+    private sealed class StringEnumSerializer : IContentSerializer
+    {
+        private static readonly JsonSerializerOptions Options = new()
+        {
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        public string Serialize(object? value, Type type, AxiosConfig config)
+            => JsonSerializer.Serialize(value, type, Options);
+
+        public object? Deserialize(string text, Type type, AxiosConfig config)
+            => JsonSerializer.Deserialize(text, type, Options);
+    }
+
+    /// <summary>无视正文、固定产出未定义枚举值的第三方序列化器：复核必须拒（不依赖 STJ 的既定行为）。</summary>
+    private sealed class FixedUndefinedEnumSerializer : IContentSerializer
+    {
+        public string Serialize(object? value, Type type, AxiosConfig config) => "0";
+
+        public object? Deserialize(string text, Type type, AxiosConfig config) => (Level)999;
+    }
+
+    /// <summary>固定产出已定义枚举值的第三方序列化器：目标类型不是枚举时复核必须放行。</summary>
+    private sealed class FixedDefinedEnumSerializer : IContentSerializer
+    {
+        public string Serialize(object? value, Type type, AxiosConfig config) => "0";
+
+        public object? Deserialize(string text, Type type, AxiosConfig config) => Level.Low;
+    }
+
     /// <summary>捕获错误上下文后放行（返回 null = 仍抛原始 AxiosException）。</summary>
     private sealed class CapturingErrorFactory : IApiErrorFactory
     {
@@ -379,6 +482,13 @@ public sealed class Audit20261024ReviewFixTests
         Read = 1,
         Write = 2,
         Execute = 4
+    }
+
+    /// <summary>非 flags 枚举（未定义值复核的两条路径都要覆盖）。</summary>
+    private enum Level
+    {
+        Low = 1,
+        High = 2
     }
 
     /// <summary>抽象请求基类（开放泛型）：程序集扫描必须跳过它。</summary>

@@ -184,6 +184,30 @@ public sealed class AxiosException : Exception
             inner);
     }
 
+    /// <summary>
+    /// 响应反序列化出的枚举值不在已定义集合内（序列化器不复核这层：内置 JSON 的 STJ 会把
+    /// <c>999</c> 静默转成 <c>(E)999</c>，第三方实现更没有这层义务）。
+    /// <para>
+    /// 与「正文无法反序列化」同属 <see cref="ErrBadResponse"/>，但消息要点明「值未定义」——
+    /// 调用方要改的是服务端数据，不是序列化器配置。
+    /// </para>
+    /// </summary>
+    internal static AxiosException UndefinedEnumValue(
+        AxiosConfig? config,
+        HttpRequestMessage? request,
+        string targetName,
+        string value,
+        Exception? inner = null)
+    {
+        return new AxiosException(
+            $"Response body deserialized to an undefined '{targetName}' value: {value}",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
     internal static AxiosException BadRequestPayload(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
     {
         return new AxiosException(

@@ -82,10 +82,9 @@ public sealed class ApiClientResolverConcurrencyTests
     [Fact]
     public void Dispose_OneSiteFails_StillReleasesTheOthers()
     {
-        // 直接驱动解析器：注入两个站点，第二个 holder 释放抛错时不跳过第一个的释放。
-        // 通过「容器退出时全部站点都已创建 + 自定义释放顺序」覆盖循环鲁棒性：
-        // 无法从外部让 holder.Dispose 抛错（内部类型），这里至少锁住「全部站点都被释放、
-        // 且释放后 Get 抛 ObjectDisposedException」的既有契约不回退。
+        // 解析器侧锁定可观测契约：容器退出时全部站点都被释放、释放后 Get 抛 ObjectDisposedException。
+        // 「首个失败不跳过其余站点」的循环本体由 HolderDisposalTests 直接驱动（holder 是内部类型，
+        // 无法从外部注入抛错，见该文件的 seam 说明）。
         using var provider = BuildProvider(services =>
         {
             services.AddApiClient("x", "https://x.example.com");

@@ -466,7 +466,30 @@ internal static class ResponseReader
         // 9) 文本响应的业务对象：交给当前序列化器，返回什么对象，Data 就是什么。
         try
         {
-            return AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
+            var deserialized = AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
+
+            // 序列化器不复核枚举已定义值：内置 JSON 的 STJ 会把 999 静默转成 (E)999，
+            // 第三方实现更没有这层义务 —— 第 8 步拒掉的未定义值不能在这里被放行，
+            // 否则「枚举只接受已定义值」只对非 JSON 响应成立（2026-10-24 审查缺口）。
+            // 与第 8 步同一把尺子（ScalarParser.IsAcceptableEnumValue）。
+            if (deserialized is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
+            {
+                // 状态码不合法（lenient）时不因数据值失败：与解析失败同口径回退原文，
+                // 不让正文问题盖住本该抛出的 HTTP 状态错误（RawText 已另行保留）。
+                if (lenient)
+                {
+                    return raw;
+                }
+
+                throw AxiosException.UndefinedEnumValue(
+                    config,
+                    request,
+                    // GetAsync<Color?> 的 dataType 是 Nullable<Color>：消息里报枚举类型本身
+                    (Nullable.GetUnderlyingType(dataType) ?? dataType).Name,
+                    enumValue.ToString());
+            }
+
+            return deserialized;
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {

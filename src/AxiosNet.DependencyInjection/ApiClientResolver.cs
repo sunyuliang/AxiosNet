@@ -198,8 +198,34 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             _owned.Clear();
         }
 
-        // 单个 holder 释放失败不能跳过其余站点：第一个抛异常就中断会让后面的连接池永久泄漏。
-        // 收集首个失败（保留原始堆栈），全部释放完后再抛。
+        HolderDisposal.DisposeAll(holders);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        ApiClientOwnedAxiosClient[] holders;
+        lock (_gate)
+        {
+            Volatile.Write(ref _disposed, 1);
+            _clients.Clear();
+            holders = _owned.ToArray();
+            _owned.Clear();
+        }
+
+        await HolderDisposal.DisposeAllAsync(holders).ConfigureAwait(false);
+    }
+}
+
+/// <summary>
+/// 属主释放的失败容错循环：单个 holder 释放失败不能跳过其余站点 ——
+/// 第一个抛异常就中断会让后面的连接池永久泄漏。
+/// <para>收集首个失败（<see cref="ExceptionDispatchInfo"/> 保留原始堆栈），全部释放完后再抛；
+/// 同步 / 异步两条路径共用同一语义，测试可直接用假 <see cref="IDisposable"/> 驱动。</para>
+/// </summary>
+internal static class HolderDisposal
+{
+    public static void DisposeAll(IEnumerable<IDisposable> holders)
+    {
         ExceptionDispatchInfo? failure = null;
         foreach (var holder in holders)
         {
@@ -216,23 +242,14 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         failure?.Throw();
     }
 
-    public async ValueTask DisposeAsync()
+    public static async ValueTask DisposeAllAsync(IEnumerable<IAsyncDisposable> holders)
     {
-        ApiClientOwnedAxiosClient[] holders;
-        lock (_gate)
-        {
-            Volatile.Write(ref _disposed, 1);
-            _clients.Clear();
-            holders = _owned.ToArray();
-            _owned.Clear();
-        }
-
         ExceptionDispatchInfo? failure = null;
         foreach (var holder in holders)
         {
             try
             {
-                await holder.DisposeAsync();
+                await holder.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
