@@ -6,8 +6,8 @@ namespace AxiosNet.Tests;
 
 /// <summary>
 /// dynamic 类型支持（对标 JS/axios 中 response.data.xxx 的直接访问）：
-/// - 响应：对象/嵌套对象/数组/标量/null；
-/// - 请求：dynamic（ExpandoObject）作为 data 发送 JSON、作为 params 序列化；
+/// - 响应：对象/嵌套对象/数组/标量/null，对象节点是 <see cref="AxiosDynamic"/>；
+/// - 请求：dynamic（ExpandoObject / AxiosDynamic）作为 data 发送 JSON、作为 params 序列化；
 /// - 调用形式：GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt;（含静态门面 Axios.GetAsync&lt;dynamic&gt;）。
 /// </summary>
 public sealed class DynamicTests
@@ -57,18 +57,20 @@ public sealed class DynamicTests
         // null 保持 null
         Assert.Null(data.nickname);
 
-        // C# 动态绑定器不支持 ExpandoObject 的字符串 [] 语法，字典式访问需显式转 IDictionary。
-        // 注意 AxiosResponse<dynamic>.Data 是 dynamic，必须先落到静态 object?，否则后续调用仍走动态绑定。
+        // 字典式访问不需要显式转型：AxiosDynamic 自带字符串索引器
+        Assert.Equal("alice", (string)data["name"]);
+
+        // 落成静态类型后仍可当 IDictionary 用（转 params/正文/字典遍历都靠它）
         object? rawData = response.Data;
         var asDictionary = Assert.IsAssignableFrom<IDictionary<string, object?>>(rawData);
         Assert.Equal("alice", asDictionary["name"]);
 
-        Assert.IsType<ExpandoObject>(rawData);
+        Assert.IsType<AxiosDynamic>(rawData);
         Assert.IsType<List<object?>>((object?)data.roles);
     }
 
     [Fact]
-    public async Task GetAsync_OfDynamic_RootArray_WrapsNestedObjectsAsExpando()
+    public async Task GetAsync_OfDynamic_RootArray_WrapsNestedObjectsAsAxiosDynamic()
     {
         await using var server = TestHttpServer.Start(_
             => new TestResponse(Body: Encoding.UTF8.GetBytes("""[{"id":1},{"id":2}]""")));
@@ -111,7 +113,7 @@ public sealed class DynamicTests
 
         dynamic d = response.Data!;
         Assert.True((bool)d.ok);
-        Assert.IsType<ExpandoObject>((object?)response.Data);
+        Assert.IsType<AxiosDynamic>((object?)response.Data);
     }
 
     [Fact]

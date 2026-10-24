@@ -1,4 +1,3 @@
-using System.Dynamic;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
@@ -296,9 +295,9 @@ public sealed class BasicRequestTests
         });
 
         // 快捷方法/新建 config 都没显式指定 responseType，应沿用实例默认（旧实现会被 Json 默认值吞掉）
-        Assert.IsType<ExpandoObject>((await client.GetAsync("any")).Data);
-        Assert.IsType<ExpandoObject>((await client.RequestAsync(c => c.Url = "any")).Data);
-        Assert.IsType<ExpandoObject>((await client.RequestAsync(new AxiosConfig { Url = "any" })).Data);
+        Assert.IsType<AxiosDynamic>((await client.GetAsync("any")).Data);
+        Assert.IsType<AxiosDynamic>((await client.RequestAsync(c => c.Url = "any")).Data);
+        Assert.IsType<AxiosDynamic>((await client.RequestAsync(new AxiosConfig { Url = "any" })).Data);
 
         // 显式指定时仍然按其覆盖
         Assert.IsType<string>((await client.GetAsync("any", c => c.ResponseType = ResponseType.Text)).Data);

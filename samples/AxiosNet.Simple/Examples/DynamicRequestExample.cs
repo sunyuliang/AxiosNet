@@ -4,7 +4,7 @@ using AxiosNet;
 namespace AxiosNet.Simple.Examples;
 
 /// <summary>
-/// 8. dynamic 请求：ExpandoObject 作为 body 与 params。
+/// 8. dynamic 请求：AxiosDynamic / ExpandoObject 作为 body 与 params。
 /// </summary>
 public sealed class DynamicRequestExample : IExample
 {
@@ -13,7 +13,7 @@ public sealed class DynamicRequestExample : IExample
 
     public int Number => 8;
 
-    public string Title => "dynamic 请求：ExpandoObject 作为 data / params";
+    public string Title => "dynamic 请求：AxiosDynamic / ExpandoObject 作为 data / params";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -22,26 +22,32 @@ public sealed class DynamicRequestExample : IExample
         // 静态复用：首次运行创建，之后复用同一实例与连接池
         var http = _http ??= new AxiosClient();
 
-        dynamic payload = new ExpandoObject();
+        // AxiosDynamic 既是动态对象也是 IDictionary：作 body 时序列化成 JSON 对象
+        dynamic payload = new AxiosDynamic();
         payload.name = "charlie";
         payload.age = 25;
-        dynamic nested = new ExpandoObject();
-        nested.city = "Shenzhen";
-        payload.address = nested;
+        payload.address = new AxiosDynamic();
+        payload.address.city = "Shenzhen";
 
-        var response = await http.PostAsync<dynamic>(context.BaseUrl + "echo", payload);
+        // (object) 是必要的：直接把 dynamic 传进泛型方法会让整条调用变成动态调用
+        var response = await http.PostAsync<object>(context.BaseUrl + "echo", (object)payload);
         dynamic echoed = response.Data!;
         Console.WriteLine($"  回显: name={echoed.name}, age={echoed.age}, address.city={echoed.address.city}");
 
+        // ExpandoObject 同样可用：任何 IDictionary<string,object> 都能当 body / params
         dynamic query = new ExpandoObject();
         query.page = 3;
         query.keyword = "dot net";
-        dynamic filter = new ExpandoObject();
-        filter.kind = "music";
-        query.filter = filter;
+        query.filter = new AxiosDynamic();
+        query.filter.kind = "music";
 
-        var searchResponse = await http.GetAsync<dynamic>(context.BaseUrl + "search", c => c.Params = query);
+        var searchResponse = await http.GetAsync<object>(context.BaseUrl + "search", c => c.Params = query);
         dynamic data = searchResponse.Data!;
         Console.WriteLine($"  query -> {data.query}");
+
+        // 响应对象零转换直接当 params 复用
+        var reuseResponse = await http.GetAsync<object>(context.BaseUrl + "search", c => c.Params = (object)payload);
+        dynamic reused = reuseResponse.Data!;
+        Console.WriteLine($"  复用响应对象作 params -> query={reused.query}");
     }
 }

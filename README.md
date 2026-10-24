@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-869%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-881%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -95,6 +95,10 @@ dotnet sln YourApp.sln add src/AxiosNet/AxiosNet.csproj
 
 ```csharp
 using AxiosNet;
+
+// 两个最省事的形态：原始文本 / 动态对象（都无需 DTO）
+var text = await Axios.GetAsync<string>("https://api.example.com/ping");    // Data 就是 string（不做 JSON 解析）
+var dyn = await Axios.GetAsync<dynamic>("https://api.example.com/users/1"); // Data 是 AxiosDynamic：dyn.Data.name / dyn.Data["name"]
 
 // 等同 axios.get('/users/1').then(res => res.data)
 var response = await Axios.GetAsync<User>("https://api.example.com/users/1");
@@ -584,10 +588,11 @@ var text = await http.GetAsync("ping", c => c.ResponseType = ResponseType.Text);
 var bytes = await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayBuffer);
 var stream = await http.GetAsync("file", c => c.ResponseType = ResponseType.Stream);
 
-// 4) dynamic：直接使用泛型 <dynamic>，无需 DTO，像 JS 一样访问（ExpandoObject 动态图）
+// 4) dynamic：直接使用泛型 <dynamic>，无需 DTO，像 JS 一样访问（AxiosDynamic 动态图）
 var dyn = await http.GetAsync<dynamic>("users/1");
 dynamic data = dyn.Data!;
 Console.WriteLine($"{data.name}, {data.address.city}, {data.roles[0]}");
+Console.WriteLine($"{data["name"]}, 缺省字段={data.notExist ?? "<null>"}");
 ```
 
 ### 下载文件
@@ -676,7 +681,7 @@ JSON 到 CLR 的映射规则：
 
 | JSON | .NET 类型 |
 | --- | --- |
-| object | `ExpandoObject`（成员访问 / 转 `IDictionary<string,object?>` 索引） |
+| object | `AxiosDynamic`（`data.name` 成员访问 / `data["name"]` 索引访问 / 缺省成员返回 `null` / 可当 `IDictionary<string,object?>` 用） |
 | array | `List<object?>`（支持动态下标） |
 | string | `string` |
 | true/false | `bool` |
@@ -684,23 +689,26 @@ JSON 到 CLR 的映射规则：
 | 小数 | `double` |
 | null | `null` |
 
-`dynamic` 也可作为**请求体/参数**（`ExpandoObject`）：
+`dynamic` 也可作为**请求体/参数**（`AxiosDynamic`，或任意 `IDictionary<string,object>` 如 `ExpandoObject`）：
 
 ```csharp
-dynamic payload = new ExpandoObject();
+dynamic payload = new AxiosDynamic();
 payload.name = "charlie";
 payload.age = 25;
-await http.PostAsync<dynamic>("users", payload); // 序列化为 {"name":"charlie","age":25}
+await http.PostAsync<object>("users", (object)payload); // 序列化为 {"name":"charlie","age":25}
 
-dynamic query = new ExpandoObject();
+dynamic query = new AxiosDynamic();
 query.page = 3;
-query.filter = new ExpandoObject();
+query.filter = new AxiosDynamic();
 query.filter.kind = "music";                      // ?page=3&filter[kind]=music
-await http.GetAsync<dynamic>("search", c => c.Params = query);
+await http.GetAsync<object>("search", c => c.Params = (object)query);
 ```
 
-> 注意：C# 语言的动态绑定器不支持 `expando["key"]` 字符串索引语法；需要键索引时请显式转换：
-> `((IDictionary<string, object?>)dyn.Data!)["key"]`。
+> 注意两点：
+> 1. **动态成员优先于 CLR 成员**——JSON 里没有 `Count` 字段时 `data.Count` 返回 `null`；要字典语义
+>    （`Count`/`TryGetValue`/枚举）请显式转换：`((IDictionary<string, object?>)data).Count`。
+> 2. **只有第一层是 null 安全的**——`data.notExist` 返回 `null`，但在它上面继续取成员仍会抛
+>    `RuntimeBinderException`；深链请用 `data.address?.city` 或先判空。
 
 ## 表单快捷方法 postForm / putForm / patchForm
 
@@ -1349,7 +1357,7 @@ using var client3 = Axios.Create(
 **额外能力**
 
 - 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
-- 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）
+- 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）；对象节点是 `AxiosDynamic`——`data["key"]` 索引可用、缺省成员返回 `null`（不抛）、运行期可增删属性，同时实现 `IDictionary<string,object?>`（可原样回灌 params/请求体，`System.Text.Json` 也按 JSON 对象序列化）；成员访问与 `ExpandoObject` 同构（shape + 固化槽位），实测持平或更快
 - 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
 - ⬇️ **文件下载**：`GetAsync<Stream>` 流式落盘（内存占用恒定）、`GetAsync<byte[]>` 一次性字节；流读完自动归还连接（可复验连接复用）
 - ⬆️ **文件上传**：裸流直传（`Stream`/`byte[]` + 文件类型 `ContentType`）与 `multipart/form-data`（`FormFile`、同名重复部件）；示例服务器按字节精确解析并回报字段名/文件名/大小/SHA256
@@ -1429,8 +1437,8 @@ using var client3 = Axios.Create(
 4. POST 字典表单
 5. params 数组/嵌套序列化
 6. HTTP Basic Auth
-7. **dynamic 响应**：`GetAsync<dynamic>`（成员/嵌套/根数组，另支持 `ResponseType.Dynamic`）
-8. **dynamic 请求**（ExpandoObject 作 body 与 params）
+7. **dynamic 响应**：`GetAsync<dynamic>`（成员/索引/嵌套/根数组/缺省字段返回 null，另支持 `ResponseType.Dynamic`）
+8. **dynamic 请求**（AxiosDynamic / ExpandoObject 作 body 与 params，响应对象零转换回灌）
 9. text / arraybuffer
 10. 请求/响应拦截器（含 401/404 错误恢复）
 11. 错误码、超时、取消、validateStatus
@@ -1489,7 +1497,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **829** 个、DI 扩展 **40** 个，合计 **869** 个用例（共 **1738** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **841** 个、DI 扩展 **40** 个，合计 **881** 个用例（共 **1762** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1548,7 +1556,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 869 个 xUnit 单元测试（核心/声明式 829 + DI 40；两个测试项目均为双目标，实际执行 1738 次）
+# 运行全部 881 个 xUnit 单元测试（核心/声明式 841 + DI 40；两个测试项目均为双目标，实际执行 1762 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1557,9 +1565,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 829 | `net8.0` / `net6.0` | 1658 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 841 | `net8.0` / `net6.0` | 1682 |
 | `AxiosNet.DependencyInjection.Tests` | 40 | `net8.0` / `net6.0` | 80 |
-| **合计** | **869** | | **1738** |
+| **合计** | **881** | | **1762** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1573,7 +1581,7 @@ dotnet build AxiosNet.sln -c Release
 - **序列化扩展点**：`paramsSerializer` / `formFieldNameSelector` / `transformRequest` / `transformResponse` / `PostForm*` 快捷方法
 - **表单快捷方法的编码优先级**：`configure` > 方法默认 `multipart/form-data` > 实例 `Defaults.ContentType`——实例设 `application/json` 时三个表单方法仍发 multipart，实例本身是 `application/x-www-form-urlencoded` 或带 `boundary` 的 multipart 时保留实例值（含 boundary），`configure` 始终可覆盖
 - **文件下载**：`GetAsync<Stream>` 落盘、`ResponseType.ArrayBuffer`、流释放后连接复用、Content-Disposition 文件名、下载超时
-- **dynamic**：响应图与请求共 9 个专项测试，覆盖 `GetAsync<dynamic>` / `PostAsync<dynamic>` / 静态门面 / 显式 responseType 优先
+- **dynamic**：共 21 个专项测试——响应图与请求 9 个（`GetAsync<dynamic>` / `PostAsync<dynamic>` / 静态门面 / 显式 responseType 优先），`AxiosDynamic` 契约 12 个（成员与索引一致、缺省成员返回 null、深链行为、运行期增删、异构 shape 交替读、完整 `IDictionary` 表面、JSON 正反序列化、响应对象直接回灌 params/请求体）
 - **连接池**：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义；共享池 fail-fast（连接级 defaults 与 `pool`/`poolOptions` 互斥）；origin key IDNA 归一（unicode/punycode 同节点、IPv6 括号保留）；`pool.Options` 选项隔离
 - **响应读取与泛型路由**：无 Content-Length 的关闭 delimiting 响应（缓冲读取未知长度分支）、精确预分配时零拷贝返回；`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
 - **自定义 Handler**：`PROPFIND` 等自定义谓词透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / **每个 origin 必须拿到独立实例**（两个 origin 交替请求互不影响，前一个不被后一个顶掉）/ 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
@@ -1774,6 +1782,7 @@ dotnet build AxiosNet.sln -c Release
 │  │  ├─ AxiosStreamFormat.cs    # 流式帧格式（NDJSON / SSE）
 │  │  ├─ AxiosUrl.cs             # 路径段转义（AxiosUrl.EncodePathSegment）
 │  │  ├─ AxiosHeaders.cs         # 大小写不敏感请求头
+│  │  ├─ AxiosDynamic.cs         # dynamic 响应的对象节点（成员/索引/缺省 null/IDictionary，shape 固化槽位）
 │  │  ├─ AxiosResponse.cs        # 响应（泛型/非泛型）
 │  │  ├─ AxiosResponseInfo.cs    # 反序列化阶段的只读响应上下文（状态/头/媒体类型）
 │  │  ├─ AxiosException.cs       # AxiosError 对齐
@@ -1786,7 +1795,7 @@ dotnet build AxiosNet.sln -c Release
 │  │  │  ├─ IContentSerializer.cs      # 序列化契约：Serialize / Deserialize + 字节通道默认实现（DIM）
 │  │  │  ├─ SystemTextJsonSerializer.cs# 内置 JSON（默认回落）：STJ + JsonSerializerOptions / AxiosJson.Options
 │  │  │  └─ XmlContentSerializer.cs    # 内置 XML：XmlSerializer 按类型缓存、禁 DTD，不支持 AOT
-│  │  ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON、反射缓存、媒体类型与标量判定、状态码文本、超时与流包装
+│  │  ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON 展开（产出 AxiosDynamic）、反射缓存、媒体类型与标量判定、状态码文本、超时与流包装
 │  │  ├─ Pooling/                # HttpConnectionPool + 连接池选项/统计/PoolLease + PooledHandlerContext（Handler 注入）
 │  │  └─ WebAPI/                 # 声明式 API 客户端（主包内置，命名空间 AxiosNet.WebAPI）
 │  │     ├─ ApiClient.cs            # 门面：RequestAsync(request) + GetUri(request)，薄封装 AxiosClient
@@ -1814,7 +1823,7 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（829 个用例 × net6.0 / net8.0 双目标 = 1658 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（841 个用例 × net6.0 / net8.0 双目标 = 1682 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（142 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（40 个用例 × net6.0 / net8.0 双目标 = 80 次执行，复用主库/WebAPI 测试基建）

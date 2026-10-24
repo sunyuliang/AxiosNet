@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-869%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-881%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -95,6 +95,10 @@ dotnet sln YourApp.sln add src/AxiosNet/AxiosNet.csproj
 
 ```csharp
 using AxiosNet;
+
+// The two lowest-ceremony shapes: raw text / dynamic object (no DTO either way)
+var text = await Axios.GetAsync<string>("https://api.example.com/ping");    // Data is a string (no JSON parsing)
+var dyn = await Axios.GetAsync<dynamic>("https://api.example.com/users/1"); // Data is AxiosDynamic: dyn.Data.name / dyn.Data["name"]
 
 // Equivalent to axios.get('/users/1').then(res => res.data)
 var response = await Axios.GetAsync<User>("https://api.example.com/users/1");
@@ -580,7 +584,7 @@ var text = await http.GetAsync("ping", c => c.ResponseType = ResponseType.Text);
 var bytes = await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayBuffer);
 var stream = await http.GetAsync("file", c => c.ResponseType = ResponseType.Stream);
 
-// 4) dynamic: use the <dynamic> generic, no DTO needed, accessed like JS (ExpandoObject graph)
+// 4) dynamic: use the <dynamic> generic, no DTO needed, accessed like JS (AxiosDynamic graph)
 var dyn = await http.GetAsync<dynamic>("users/1");
 dynamic data = dyn.Data!;
 Console.WriteLine($"{data.name}, {data.address.city}, {data.roles[0]}");
@@ -659,7 +663,7 @@ JSON-to-CLR mapping rules:
 
 | JSON | .NET type |
 | --- | --- |
-| object | `ExpandoObject` (member access / cast to `IDictionary<string,object?>` for indexing) |
+| object | `AxiosDynamic` (`data.name` member access / `data["name"]` indexing / missing members yield `null` / usable as `IDictionary<string,object?>`) |
 | array | `List<object?>` (supports dynamic indexing) |
 | string | `string` |
 | true/false | `bool` |
@@ -667,23 +671,26 @@ JSON-to-CLR mapping rules:
 | decimal | `double` |
 | null | `null` |
 
-`dynamic` also works as a **request body/params** value (`ExpandoObject`):
+`dynamic` also works as a **request body/params** value (`AxiosDynamic`, or any `IDictionary<string,object>` such as `ExpandoObject`):
 
 ```csharp
-dynamic payload = new ExpandoObject();
+dynamic payload = new AxiosDynamic();
 payload.name = "charlie";
 payload.age = 25;
-await http.PostAsync<dynamic>("users", payload); // serialized as {"name":"charlie","age":25}
+await http.PostAsync<object>("users", (object)payload); // serialized as {"name":"charlie","age":25}
 
-dynamic query = new ExpandoObject();
+dynamic query = new AxiosDynamic();
 query.page = 3;
-query.filter = new ExpandoObject();
+query.filter = new AxiosDynamic();
 query.filter.kind = "music";                      // ?page=3&filter[kind]=music
-await http.GetAsync<dynamic>("search", c => c.Params = query);
+await http.GetAsync<object>("search", c => c.Params = (object)query);
 ```
 
-> Note: the C# dynamic binder does not support the `expando["key"]` string-indexer syntax; for key-based indexing cast explicitly:
-> `((IDictionary<string, object?>)dyn.Data!)["key"]`.
+> Two caveats:
+> 1. **Dynamic members shadow CLR members** — when the JSON has no `Count` field, `data.Count` returns `null`; for dictionary
+>    semantics (`Count`/`TryGetValue`/enumeration) cast explicitly: `((IDictionary<string, object?>)data).Count`.
+> 2. **Only the first level is null-safe** — `data.notExist` returns `null`, but accessing a member on it still throws
+>    `RuntimeBinderException`; use `data.address?.city` or check for null first.
 
 ## Form shortcuts: postForm / putForm / patchForm
 
@@ -1336,7 +1343,7 @@ Key points:
 **Additional capabilities**
 
 - 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
-- 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS)
+- 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS); object nodes are `AxiosDynamic` — `data["key"]` indexing works, missing members yield `null` instead of throwing, properties can be added/removed at runtime, and it implements `IDictionary<string,object?>` (so it can be fed back as params/body and `System.Text.Json` serializes it as a plain JSON object). Member access uses the same shape + baked-slot design as `ExpandoObject` (measured on par or slightly faster)
 - 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
 - ⬇️ **File download**: `GetAsync<Stream>` streams to disk with constant memory, `GetAsync<byte[]>` grabs all bytes at once; connections return to the pool when the stream is disposed (connection reuse is verifiable)
 - ⬆️ **File upload**: raw stream passthrough (`Stream`/`byte[]` plus a file `ContentType`) and `multipart/form-data` (`FormFile`, repeated same-name parts); the sample server parses byte-exactly and reports field name/file name/size/SHA256
@@ -1417,7 +1424,7 @@ Intentional differences driven by the .NET platform:
 5. `params` array/nested serialization
 6. HTTP Basic Auth
 7. **dynamic response**: `GetAsync<dynamic>` (members/nesting/root array, plus `ResponseType.Dynamic`)
-8. **dynamic request** (`ExpandoObject` as body and as params)
+8. **dynamic request** (`AxiosDynamic` / `ExpandoObject` as body and as params, plus feeding a response object straight back)
 9. text / arraybuffer
 10. Request/response interceptors (including 401/404 error recovery)
 11. Error codes, timeouts, cancellation, validateStatus
@@ -1476,7 +1483,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **829** core/declarative cases plus **40** DI-extension cases — **869** in total (**1738** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **841** core/declarative cases plus **40** DI-extension cases — **881** in total (**1762** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1535,7 +1542,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 869 xUnit tests (829 core/declarative + 40 DI; both test projects target net8.0 + net6.0, so 1738 executions)
+# Run all 881 xUnit tests (841 core/declarative + 40 DI; both test projects target net8.0 + net6.0, so 1762 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1544,9 +1551,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 829 | `net8.0` / `net6.0` | 1658 |
+| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 841 | `net8.0` / `net6.0` | 1682 |
 | `AxiosNet.DependencyInjection.Tests` | 40 | `net8.0` / `net6.0` | 80 |
-| **Total** | **869** | | **1738** |
+| **Total** | **881** | | **1762** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1562,7 +1569,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Serialization extension points: `paramsSerializer` / `formFieldNameSelector` / `transformRequest` / `transformResponse` / `PostForm*` shortcuts
 - Form-shortcut encoding precedence: `configure` > method default `multipart/form-data` > instance `Defaults.ContentType` — with an instance default of `application/json` the three form methods still send multipart, while an instance default that is already `application/x-www-form-urlencoded` or `multipart/form-data` with a `boundary` is preserved (boundary included); `configure` always wins
 - File download: `GetAsync<Stream>` to disk, `ResponseType.ArrayBuffer`, connection reuse after stream disposal, Content-Disposition file name, download timeout
-- `dynamic`: response graphs and dynamic requests (9 dedicated tests covering `GetAsync<dynamic>` / `PostAsync<dynamic>` / static facade / explicit responseType precedence)
+- `dynamic`: response graphs and dynamic requests (9 dedicated tests covering `GetAsync<dynamic>` / `PostAsync<dynamic>` / static facade / explicit responseType precedence) plus 12 `AxiosDynamic` contract tests (member/index parity, missing members yielding null, chained-access behaviour, runtime add/remove, alternating heterogeneous shapes, the full `IDictionary` surface, JSON round-trip, and feeding a response object back as params/body)
 - Connection pool: connection reuse, max-connection throttling, sharing across instances, idle eviction, multi-origin isolation, dispose semantics; shared-pool fail-fast (connection-level defaults and `pool`/`poolOptions` exclusivity); origin key IDNA normalization (unicode/punycode as the same node, IPv6 brackets preserved); `pool.Options` option isolation
 - Response reading and generic routing: close-delimited responses without Content-Length, zero-copy return when the length allows exact preallocation; `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / **each origin must get an independent instance** (two origins alternating requests stay unaffected, neither hijacks the other) / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
@@ -1763,6 +1770,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ AxiosStreamFormat.cs    # streaming frame format (NDJSON / SSE)
 │  │  ├─ AxiosUrl.cs             # path-segment escaping (AxiosUrl.EncodePathSegment)
 │  │  ├─ AxiosHeaders.cs         # case-insensitive headers
+│  │  ├─ AxiosDynamic.cs         # object node for dynamic responses (member/index/missing->null/IDictionary, shape-baked slots)
 │  │  ├─ AxiosResponse.cs        # response (generic/non-generic)
 │  │  ├─ AxiosResponseInfo.cs    # read-only response context for deserialization (status/headers/media type)
 │  │  ├─ AxiosException.cs       # aligned with AxiosError
@@ -1775,7 +1783,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  │  ├─ IContentSerializer.cs      # serialization contract: Serialize / Deserialize + default byte-channel hooks (DIM)
 │  │  │  ├─ SystemTextJsonSerializer.cs# built-in JSON (default fallback): STJ + JsonSerializerOptions / AxiosJson.Options
 │  │  │  └─ XmlContentSerializer.cs    # built-in XML: cached XmlSerializer, DTD disabled, not AOT-safe
-│  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type and scalar classification, status text, timeouts and stream wrappers
+│  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON expansion (produces AxiosDynamic), reflection cache, media-type and scalar classification, status text, timeouts and stream wrappers
 │  │  ├─ Pooling/                # HttpConnectionPool + pool options/statistics/PoolLease + PooledHandlerContext (handler injection)
 │  │  └─ WebAPI/                 # declarative API client (built into the main package, namespace AxiosNet.WebAPI)
 │  │     ├─ ApiClient.cs            # facade: RequestAsync(request) + GetUri(request), a thin wrapper over AxiosClient
@@ -1803,7 +1811,7 @@ How the stages map onto the source files (read together with the [project layout
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (829 cases × net6.0 / net8.0 = 1658 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (841 cases × net6.0 / net8.0 = 1682 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (142 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (40 cases × net6.0 / net8.0 = 80 executions, reuses the main/WebAPI test infrastructure)

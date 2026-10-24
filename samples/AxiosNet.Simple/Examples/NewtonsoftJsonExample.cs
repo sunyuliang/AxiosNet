@@ -55,9 +55,9 @@ public sealed class NewtonsoftJsonExample : IExample
             $"  强类型响应: UserName={typed.Data!.UserName}, Age={typed.Data.Age}, "
             + $"City={typed.Data.Address?.City}, Roles={string.Join("/", typed.Data.Roles ?? [])}");
 
-        // 3) dynamic：由库展开成 ExpandoObject（JSON 便利能力，与序列化器无关）
+        // 3) dynamic：由库展开成 AxiosDynamic（JSON 便利能力，与序列化器无关）
         dynamic data = (await newtonsoft.GetAsync<dynamic>("users/1/pascal")).Data!;
-        Console.WriteLine($"  dynamic(ExpandoObject): UserName={data.UserName}, Age={data.Age}, Roles[1]={data.Roles[1]}");
+        Console.WriteLine($"  dynamic(AxiosDynamic): UserName={data.UserName}, Age={data.Age}, Roles[1]={data.Roles[1]}");
 
         Console.WriteLine("  提示：库本身仍零第三方依赖，Newtonsoft 只在示例项目中引用");
     }

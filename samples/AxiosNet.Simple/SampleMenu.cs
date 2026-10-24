@@ -41,13 +41,6 @@ internal static class SampleMenu
                 break; // 标准输入结束（重定向 / 管道）：退出
             }
 
-            // stdout 被重定向（管道 / CI / 重定向到文件）时 Console.Clear 会抛「句柄无效」：
-            // 清屏只是交互体验，没有控制台就跳过。
-            if (!Console.IsOutputRedirected)
-            {
-                Console.Clear();
-            }
-
             var command = line.Trim();
             if (command.Length == 0)
             {
@@ -74,7 +67,10 @@ internal static class SampleMenu
                 Console.WriteLine($"无效输入「{command}」：有效范围 1-{items.Count}，a = 全部，q = 退出");
                 continue;
             }
-           
+            if (!Console.IsOutputRedirected)
+            {
+                Console.Clear();
+            }
             failed |= await RunItemAsync(choice, items[choice - 1]);
             Console.WriteLine($"{items[choice - 1].Name}执行完毕、按任意键继续");
             Console.ReadKey();
