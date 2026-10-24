@@ -45,7 +45,7 @@ internal static class DispositionTokens
 }
 
 /// <summary>
-/// multipart 的调用方选项非法（部件字段名，或 <c>FormFile</c> / <c>[Part]</c> 声明的文件名与 Content-Type）。
+/// multipart 的调用方选项非法（部件字段名，或 <c>FormFile</c> / 声明式层传入的文件名与 Content-Type）。
 /// <para>
 /// 只在本程序集内部流转，由 <see cref="MultipartBodyBuilder"/> 转成带配置上下文的
 /// <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）：这些都是「配置写错了」，

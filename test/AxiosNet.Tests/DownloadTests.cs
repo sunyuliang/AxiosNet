@@ -18,6 +18,17 @@ public sealed class DownloadTests
         .Select(i => (byte)(i % 251))
         .ToArray();
 
+    /// <summary>
+    /// 服务端「永不自行回应」的用例预算：断言只需证明超时确实生效（否则请求会一直等下去），
+    /// 不必精确到几百毫秒。
+    /// <para>
+    /// 超时计时器的回调同样要排进线程池，CI 满载时可能晚到数秒（实测 GitHub Actions 上约 2~3s，
+    /// 见 <c>StreamCancellationTests</c> 里同名注释）。因此这里的预算只当「测试自己的兜底」：
+    /// 实现真不超时，用例以 <see cref="TimeoutException"/> 失败，而不是把整条 CI 挂住。
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan HungResponseBudget = TimeSpan.FromSeconds(10);
+
     private static TestResponse Binary(TestRequest _)
         => new(Body: Payload, ContentType: "application/octet-stream");
 
@@ -196,9 +207,11 @@ public sealed class DownloadTests
     [Fact]
     public async Task Download_WithTimeoutAndCancellation_DoesNotHang()
     {
+        // 服务端必须「自己不回应」：只延迟 500ms 的话，CI 上被推迟的超时回调会输给这条应答，
+        // 请求成功返回 —— 断言看到的就是「没有抛异常」。延迟只要远大于调度抖动幅度即可。
         await using var server = TestHttpServer.Start(async _ =>
         {
-            await Task.Delay(500);
+            await Task.Delay(TimeSpan.FromSeconds(30));
             return new TestResponse(Body: Payload, ContentType: "application/octet-stream");
         });
 
@@ -210,7 +223,7 @@ public sealed class DownloadTests
             {
                 c.ResponseType = ResponseType.Stream;
                 c.Timeout = TimeSpan.FromMilliseconds(150);
-            }));
+            }).WaitAsync(HungResponseBudget));
 
         Assert.Equal("ECONNABORTED", ex.Code);
     }

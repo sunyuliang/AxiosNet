@@ -9,8 +9,8 @@ namespace AxiosNet.Internal;
 /// <see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件；
 /// 数组 / 集合展开为同名重复部件。
 /// <para>
-/// <see cref="PartValue"/> 携带的声明覆盖（<c>[Part]</c> 的字段名 / 文件名 / Content-Type）
-/// 在装配时由本类应用：包装、校验与所有权登记都只有这一处。
+/// 部件声明覆盖（字段名 / 文件名 / Content-Type，由声明式层随值传入）在文件部件装配处
+/// 一次性应用：包装、校验与所有权登记都只有这一处。
 /// </para>
 /// </summary>
 internal static class MultipartBodyBuilder
@@ -87,40 +87,23 @@ internal static class MultipartBodyBuilder
         HashSet<object>? visited,
         PartOverride partOverride = default)
     {
-        // 声明覆盖（[Part]）：包装与所有权都在这里完成，组装前不预先改写值
-        if (value is PartValue declared)
-        {
-            CollectParts(name, declared.Value, content, encoding, nameSelector, visited, declared.Override);
-            return;
-        }
-
-        value = ApplyPartOverride(name, value, partOverride);
-
         switch (value)
         {
             case null:
                 return;
 
             case FormFile file:
-            {
-                // 先取所有权再校验字段名：FormFile.Content 的契约是「随请求释放」，
-                // 失败路径也一样 —— 否则名字写错就等于把一个已打开的 FileStream 永久留在调用方手里。
-                var part = new StreamContent(file.Content);
-                try
-                {
-                    var field = RequireName(file.FieldName ?? name);
-                    RequestContentType.Set(part, file.ContentType ?? OctetStreamMediaType);
-                    content.Add(part, field, file.FileName);
-                }
-                catch
-                {
-                    // 部件还没加入容器，容器的 Dispose 覆盖不到它：就地释放才是唯一机会
-                    part.Dispose();
-                    throw;
-                }
-
+                // 值的自带声明（FieldName / FileName / ContentType）是默认值，声明覆盖在装配处压过它；
+                // 值的流所有权随即转给 StreamContent，失败路径由 AddFilePart 就地释放
+                AddFilePart(
+                    content,
+                    name,
+                    new StreamContent(file.Content),
+                    partOverride,
+                    file.FileName,
+                    file.ContentType,
+                    file.FieldName);
                 return;
-            }
 
             case HttpContent part:
             {
@@ -151,40 +134,46 @@ internal static class MultipartBodyBuilder
                 return;
 
             case byte[] bytes:
-                AddFilePart(content, name, new ByteArrayContent(bytes));
+                AddFilePart(content, name, new ByteArrayContent(bytes), partOverride);
                 return;
 
             case ReadOnlyMemory<byte> memory:
-                AddFilePart(content, name, new ReadOnlyMemoryContent(memory));
+                AddFilePart(content, name, new ReadOnlyMemoryContent(memory), partOverride);
                 return;
 
             case Memory<byte> memory:
-                AddFilePart(content, name, new ReadOnlyMemoryContent(memory));
+                AddFilePart(content, name, new ReadOnlyMemoryContent(memory), partOverride);
                 return;
 
             case ArraySegment<byte> segment:
-                AddFilePart(content, name, new ReadOnlyMemoryContent(segment.AsMemory()));
+                AddFilePart(content, name, new ReadOnlyMemoryContent(segment.AsMemory()), partOverride);
                 return;
 
             case Stream stream:
-                AddFilePart(content, name, new StreamContent(stream));
+                AddFilePart(content, name, new StreamContent(stream), partOverride);
                 return;
 
             case IDictionary<string, object?> genericDictionary:
             {
-                // 含 ExpandoObject（dynamic）
+                // 含 ExpandoObject（dynamic）；声明式表单的覆盖按字段名登记，在这里随值一起下传
+                var overrides = (genericDictionary as DeclaredForm)?.Overrides;
                 visited = ObjectGraph.Enter(visited, genericDictionary);
                 try
                 {
                     foreach (var entry in genericDictionary)
                     {
+                        var entryOverride = overrides is not null && overrides.TryGetValue(entry.Key, out var declared)
+                            ? declared
+                            : default;
+
                         CollectParts(
                             BodyFields.CombineName(nameSelector, name, entry.Key),
                             entry.Value,
                             content,
                             encoding,
                             nameSelector,
-                            visited);
+                            visited,
+                            entryOverride);
                     }
                 }
                 finally
@@ -349,166 +338,43 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>
-    /// 应用声明层覆盖（<c>[Part]</c>）：<see cref="FormFile"/> 合并文件名 / 类型 / 字段名；
-    /// 裸文件类值（Stream / byte[] / Memory / ArraySegment）按声明包成 <see cref="FormFile"/>；
-    /// 集合容器本身不包装，逐项在递归里应用同一份声明；字典 / 嵌套对象 / 字符串 / <see cref="HttpContent"/>
-    /// 不受影响（由各自的展平规则处理）。
-    /// </summary>
-    /// <remarks>
-    /// 名字优先级：显式声明 &gt; <see cref="FormFile.FieldName"/> &gt; 字段名（[JsonPropertyName] / 属性名，
-    /// 再经 <c>FormFieldNameSelector</c>）。声明的值由 <see cref="FormFile"/> 在构造期校验，
-    /// 包装失败时就地释放已取得所有权的流 —— 与 builder 其余失败路径一致。
-    /// </remarks>
-    private static object? ApplyPartOverride(string? name, object? value, PartOverride partOverride)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        if (value is FormFile file)
-        {
-            // 值自带声明（FileName / ContentType / FieldName）是默认值，[Part] 是声明层，后者优先。
-            // 新旧 FormFile 共享同一个流：所有权只交给请求一次（旧实例随即被丢弃，不会二次释放）。
-            var mergedFileName = partOverride.FileName ?? file.FileName;
-            var mergedContentType = partOverride.ContentType ?? file.ContentType;
-            var mergedFieldName = partOverride.HasExplicitName ? name : file.FieldName;
-
-            if (mergedFileName == file.FileName
-                && mergedContentType == file.ContentType
-                && mergedFieldName == file.FieldName)
-            {
-                return file;
-            }
-
-            try
-            {
-                return new FormFile(mergedFileName, file.Content, mergedContentType) { FieldName = mergedFieldName };
-            }
-            catch (ArgumentException ex)
-            {
-                // 声明的文件名 / 类型 / 字段名非法：包装失败时流的所有权已经收不回去，就地释放
-                file.Content.Dispose();
-                throw DeclaredValueError(ex);
-            }
-        }
-
-        // 未声明文件名 / 类型时原样透传：Stream / byte[] 的默认形态（filename = 字段名、octet-stream）
-        // 由各自的文件部件分支决定（也保留「裸流不预先包装」的现有行为）。
-        if (partOverride.FileName is null && partOverride.ContentType is null)
-        {
-            return value;
-        }
-
-        // 字典不可能是单个文件：整体透传给 a[b] 展平（否则会落进集合分支被拆成 Key/Value 对象）。
-        // 只实现 IReadOnlyDictionary 的自研只读视图同样命中 builder 的字典分支，不能当集合拆。
-        if (value is IDictionary || value is IReadOnlyDictionary<string, object?>)
-        {
-            return value;
-        }
-
-        // 字符串 / 标量 / JSON 树永远是普通字段（文本文件的文本形态由调用方用 FormFile / byte[] 表达）
-        if (value is string || value is JsonElement)
-        {
-            return value;
-        }
-
-        // 集合 / 迭代器 / 嵌套对象不包装：声明只作用于绑定的文件类值本身
-        switch (value)
-        {
-            case Stream stream:
-                try
-                {
-                    return new FormFile(
-                        partOverride.FileName ?? RequireName(name),
-                        stream,
-                        partOverride.ContentType)
-                    {
-                        FieldName = partOverride.HasExplicitName ? name : null
-                    };
-                }
-                catch (ArgumentException ex)
-                {
-                    // 声明的文件名 / 类型 / 字段名非法（FormFile 在构造期校验）：流的调用方已经交不回来，就地释放
-                    stream.Dispose();
-                    throw DeclaredValueError(ex);
-                }
-                catch
-                {
-                    // 字段名缺失 / 含非法字符：已是选项错误，释放后原样交给上层翻译成 ERR_BAD_OPTION_VALUE
-                    stream.Dispose();
-                    throw;
-                }
-
-            case byte[] bytes:
-                return DeclaredFileFromBytes(
-                    partOverride.FileName ?? RequireName(name),
-                    bytes,
-                    partOverride.ContentType,
-                    partOverride.HasExplicitName ? name : null);
-
-            case ReadOnlyMemory<byte> memory:
-                return DeclaredFileFromBytes(
-                    partOverride.FileName ?? RequireName(name),
-                    memory.ToArray(),
-                    partOverride.ContentType,
-                    partOverride.HasExplicitName ? name : null);
-
-            case Memory<byte> memory:
-                return DeclaredFileFromBytes(
-                    partOverride.FileName ?? RequireName(name),
-                    memory.ToArray(),
-                    partOverride.ContentType,
-                    partOverride.HasExplicitName ? name : null);
-
-            case ArraySegment<byte> segment:
-                return DeclaredFileFromBytes(
-                    partOverride.FileName ?? RequireName(name),
-                    segment.ToArray(),
-                    partOverride.ContentType,
-                    partOverride.HasExplicitName ? name : null);
-        }
-
-        return value;
-    }
-
-    /// <summary>
-    /// 按声明把二进制内容包成文件部件。
+    /// 把一个文件类值加入容器：字段名 / 文件名 / Content-Type 在这里统一解析，
+    /// 声明覆盖压过值自带的声明（<paramref name="valueFileName"/> 等），后者再压过默认值。
     /// <para>
-    /// 声明的文件名 / Content-Type 由 <see cref="FormFile"/> 在构造期校验，抛的是 <see cref="ArgumentException"/>；
-    /// 那是「配置写错了」而不是「请求体序列化失败」，所以在这里统一换成
-    /// <see cref="InvalidMultipartOptionException"/>（由 <see cref="Create"/> 转成 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// 二进制内容默认「字段名即文件名 + octet-stream」（与 byte[] 既有行为一致）；
+    /// 流 / <see cref="FormFile"/> 的默认值由调用方所给的值决定。
     /// </para>
     /// </summary>
-    private static FormFile DeclaredFileFromBytes(string fileName, byte[] content, string? contentType, string? fieldName)
-    {
-        try
-        {
-            return new FormFile(fileName, content, contentType) { FieldName = fieldName };
-        }
-        catch (ArgumentException ex)
-        {
-            // 内存内容没有所有权要回收（FormFile 内部的 MemoryStream 只持有托管数组）
-            throw DeclaredValueError(ex);
-        }
-    }
-
-    /// <summary>把 <see cref="FormFile"/> 构造期的 <see cref="ArgumentException"/> 归成调用方配置错误。</summary>
-    private static InvalidMultipartOptionException DeclaredValueError(ArgumentException ex) =>
-        new($"[Part] 声明的字段名 / 文件名 / Content-Type 非法：{ex.Message}", ex);
-
-    /// <summary>二进制内容一律作为文件部件：字段名同时用作文件名（与 byte[] 既有行为一致）。</summary>
+    /// <param name="content">目标表单（部件加入后由它持有释放责任）。</param>
+    /// <param name="name">字段名（[JsonPropertyName] / 属性名，再经 FormFieldNameSelector）。</param>
+    /// <param name="part">已构造好的部件内容（失败路径由本方法就地释放）。</param>
+    /// <param name="partOverride">声明式层传入的覆盖项（没有声明时为 default）。</param>
+    /// <param name="valueFileName">值自带的文件名（如 <see cref="FormFile.FileName"/>）。</param>
+    /// <param name="valueContentType">值自带的 Content-Type。</param>
+    /// <param name="valueFieldName">值自带的字段名（如 <see cref="FormFile.FieldName"/>）。</param>
     /// <remarks>
     /// 名字校验必须在「部件交出所有权」之前完成：<paramref name="part"/> 已经构造好（Stream 形态下
     /// 它持有调用方的流），校验失败时它还没加入容器，容器的 Dispose 覆盖不到它 —— 就地释放是唯一机会。
     /// </remarks>
-    private static void AddFilePart(MultipartFormDataContent content, string? name, HttpContent part)
+    private static void AddFilePart(
+        MultipartFormDataContent content,
+        string? name,
+        HttpContent part,
+        PartOverride partOverride,
+        string? valueFileName = null,
+        string? valueContentType = null,
+        string? valueFieldName = null)
     {
         try
         {
-            var field = RequireName(name);
-            RequestContentType.Set(part, OctetStreamMediaType);
-            content.Add(part, field, field);
+            // 名字优先级：显式声明 > 值自带 > 字段名（[JsonPropertyName] / 属性名，再经 FormFieldNameSelector）
+            var field = RequireName(partOverride.HasExplicitName ? name : valueFieldName ?? name);
+            var fileName = partOverride.FileName ?? valueFileName ?? field;
+            var contentType = partOverride.ContentType ?? valueContentType ?? OctetStreamMediaType;
+
+            ValidateDeclaredValue(partOverride);
+            RequestContentType.Set(part, contentType);
+            content.Add(part, field, fileName);
         }
         catch
         {
@@ -516,6 +382,44 @@ internal static class MultipartBodyBuilder
             throw;
         }
     }
+
+    /// <summary>
+    /// 校验声明式层传入的文件名 / Content-Type。
+    /// <para>
+    /// 与 <see cref="FormFile"/> 的构造契约一致（文件名进 quoted-string、Content-Type 是头值）；
+    /// 抛出的 <see cref="ArgumentException"/> 属于「配置写错了」而不是「请求体序列化失败」，
+    /// 在这里统一换成 <see cref="InvalidMultipartOptionException"/>
+    /// （由 <see cref="Create"/> 转成 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// </para>
+    /// </summary>
+    private static void ValidateDeclaredValue(PartOverride partOverride)
+    {
+        try
+        {
+            if (partOverride.FileName is { } fileName
+                && DispositionTokens.FindInvalidCharacter(fileName) is { } invalid)
+            {
+                throw new ArgumentException(
+                    $"文件名包含不能出现在 Content-Disposition 里的字符（{invalid}）：'{fileName}'。"
+                    + "双引号、反斜杠、CR/LF 与其它控制字符会破坏头部语法或让服务端收到的文件名错位；"
+                    + "中文可以正常使用（会按 RFC 5987 编码）。",
+                    nameof(fileName));
+            }
+
+            if (partOverride.ContentType is { } contentType)
+            {
+                AxiosHeaders.ValidateHeaderValue("Content-Type", contentType);
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            throw DeclaredValueError(ex);
+        }
+    }
+
+    /// <summary>把声明值的 <see cref="ArgumentException"/> 归成调用方配置错误。</summary>
+    private static InvalidMultipartOptionException DeclaredValueError(ArgumentException ex) =>
+        new($"部件声明的字段名 / 文件名 / Content-Type 非法：{ex.Message}", ex);
 
     /// <summary>
     /// 加入调用方自带的部件：已有 Content-Disposition 时只补缺失的 Name

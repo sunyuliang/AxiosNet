@@ -170,6 +170,119 @@ public sealed class ApiClientMultipartTests
     }
 
     [Fact]
+    public async Task Multipart_ConfigureSeesRawPartValues()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+        object? seen = null;
+
+        await client.RequestAsync(
+            new UploadRequest
+            {
+                Title = "t",
+                Blob = new byte[] { 1 },
+                Extra = new byte[] { 2 },
+                Tags = new Dictionary<string, string> { ["k"] = "v" }
+            },
+            c => seen = c.Data);
+
+        // 公开的 config.Data 里不能出现内部包装：有声明的部件也只登记覆盖，值保持原样
+        var data = Assert.IsAssignableFrom<IDictionary<string, object?>>(seen);
+        Assert.Equal("t", data["Title"]);
+        Assert.IsType<byte[]>(data["Blob"]);
+        Assert.IsType<byte[]>(data["Extra"]);
+        Assert.IsType<Dictionary<string, string>>(data["meta"]);
+    }
+
+    [Fact]
+    public async Task Multipart_DeclaredMemoryShapes_AreFilePartsWithDeclaredMetadata()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var memory = Encoding.ASCII.GetBytes("mem-data");
+        var readOnly = Encoding.ASCII.GetBytes("rom-data");
+        var segment = Encoding.ASCII.GetBytes("seg-data");
+        var stream = new MemoryStream(Encoding.ASCII.GetBytes("stream-data"));
+
+        await client.RequestAsync(new DeclaredMemoryShapesRequest
+        {
+            Memory = new Memory<byte>(memory),
+            ReadOnly = new ReadOnlyMemory<byte>(readOnly),
+            Segment = new ArraySegment<byte>(segment),
+            Stream = stream
+        });
+
+        var received = Assert.Single(server.Received);
+        var body = Body(received);
+
+        // 声明覆盖对四种「内存 / 流」形态一视同仁：文件名与 Content-Type 都来自声明
+        Assert.Contains("name=Memory; filename=mem.bin", body);
+        Assert.Contains("application/x-memory", body);
+        Assert.Contains("name=ReadOnly; filename=rom.bin", body);
+        Assert.Contains("application/x-readonly", body);
+        Assert.Contains("name=Segment; filename=seg.bin", body);
+        Assert.Contains("application/x-segment", body);
+        Assert.Contains("name=Stream; filename=stream.bin", body);
+        Assert.Contains("application/x-stream", body);
+
+        Assert.True(received.Body.AsSpan().IndexOf(memory) >= 0);
+        Assert.True(received.Body.AsSpan().IndexOf(readOnly) >= 0);
+        Assert.True(received.Body.AsSpan().IndexOf(segment) >= 0);
+        Assert.Contains("stream-data", body);
+        Assert.False(stream.CanRead);   // 成功路径同样随请求释放调用方的流
+    }
+
+    [Fact]
+    public async Task Multipart_PlainMemoryShapes_BecomeFileParts()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new PlainMemoryShapesRequest
+        {
+            Memory = new Memory<byte>(Encoding.ASCII.GetBytes("m")),
+            ReadOnly = new ReadOnlyMemory<byte>(Encoding.ASCII.GetBytes("r")),
+            Segment = new ArraySegment<byte>(Encoding.ASCII.GetBytes("s"))
+        });
+
+        // 未声明时保持既有默认：字段名即文件名、octet-stream
+        var body = Body(Assert.Single(server.Received));
+        Assert.Contains("name=Memory; filename=Memory", body);
+        Assert.Contains("name=ReadOnly; filename=ReadOnly", body);
+        Assert.Contains("name=Segment; filename=Segment", body);
+    }
+
+    [Fact]
+    public async Task Multipart_IllegalDeclaredContentTypeOnStream_ReleasesStream()
+    {
+        var stream = new MemoryStream(Encoding.ASCII.GetBytes("payload"));
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 声明值非法在「流已交出所有权」之后才被发现：必须就地释放，且归成选项错误
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(new IllegalDeclaredContentTypeOnStreamRequest { File = stream }));
+
+        Assert.Equal("ERR_BAD_OPTION_VALUE", ex.Code);
+        Assert.Contains("Content-Type", ex.Message);
+        Assert.False(stream.CanRead);
+    }
+
+    [Fact]
+    public async Task Multipart_AssemblyFailure_ReportsModelName()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 装配期（config.Data 已只剩表单）失败也要能指出是哪个请求模型，而不是内部容器类型名
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(new LazyThrowingPartRequest()));
+
+        Assert.Equal("ERR_BAD_REQUEST", ex.Code);
+        Assert.Contains(nameof(LazyThrowingPartRequest), ex.Message);
+        Assert.DoesNotContain("Dictionary", ex.Message);
+    }
+
+    [Fact]
     public async Task Multipart_IllegalDeclaredFileName_ReportsOptionError()
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
@@ -507,6 +620,56 @@ public sealed class ApiClientMultipartTests
     {
         [Part(ContentType = "application/pdf")]
         public IEnumerable<byte[]>? Chunks { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class DeclaredMemoryShapesRequest : IApiRequest<object>
+    {
+        [Part(FileName = "mem.bin", ContentType = "application/x-memory")]
+        public Memory<byte> Memory { get; set; }
+
+        [Part(FileName = "rom.bin", ContentType = "application/x-readonly")]
+        public ReadOnlyMemory<byte> ReadOnly { get; set; }
+
+        [Part(FileName = "seg.bin", ContentType = "application/x-segment")]
+        public ArraySegment<byte> Segment { get; set; }
+
+        [Part(FileName = "stream.bin", ContentType = "application/x-stream")]
+        public Stream? Stream { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class PlainMemoryShapesRequest : IApiRequest<object>
+    {
+        public Memory<byte> Memory { get; set; }
+
+        public ReadOnlyMemory<byte> ReadOnly { get; set; }
+
+        public ArraySegment<byte> Segment { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class IllegalDeclaredContentTypeOnStreamRequest : IApiRequest<object>
+    {
+        [Part(ContentType = "text/plain\r\nX-Injected: 1")]
+        public Stream? File { get; set; }
+    }
+
+    [Post("upload")]
+    [Multipart]
+    private sealed class LazyThrowingPartRequest : IApiRequest<object>
+    {
+        /// <summary>装配到这一项才枚举并抛错：失败发生在 builder 里，config.Data 已只剩表单。</summary>
+        public IEnumerable<int> Values => ThrowingValues();
+
+        private static IEnumerable<int> ThrowingValues()
+        {
+            yield return 1;
+            throw new InvalidOperationException("boom");
+        }
     }
 
     [Post("upload")]

@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 部件声明层（<c>[Part]</c>）解析后的覆盖项。
+/// 部件声明（声明式层传入的字段名 / 文件名 / Content-Type）解析后的覆盖项。
 /// <para>
 /// 只描述「声明了什么」，不描述「怎么包装」：真正的 FormFile 合并、文件部件包装与所有权登记
 /// 全部由 <see cref="MultipartBodyBuilder"/> 在装配时完成 —— 因此失败路径的释放点也只有一处。
@@ -19,15 +19,26 @@ internal readonly record struct PartOverride(
     string? ContentType,
     bool HasExplicitName)
 {
-    /// <summary>是否声明了任何覆盖项：决定要不要包装成 <see cref="PartValue"/>、要不要在装配前校验。</summary>
+    /// <summary>是否声明了任何覆盖项：决定要不要在装配前校验、要不要把它登记到 <see cref="DeclaredForm.Overrides"/>。</summary>
     public bool Any => HasExplicitName || FileName is not null || ContentType is not null;
 }
 
 /// <summary>
-/// 带声明覆盖的部件值：包装由 builder 完成，值本身仍是调用方/模型提供的原始对象。
-/// <para>只用于「确实有声明」的绑定；没有声明的值原样放进表单字典，避免多余装箱。</para>
+/// 声明式 multipart 表单：值保持调用方原样（<see cref="FormFile"/> / 流 / 字节 / 原值），
+/// 声明覆盖按字段名单独登记，装配时由 <see cref="MultipartBodyBuilder"/> 逐项取出应用。
+/// <para>
+/// 用字典子类型而不是包装值：公开的 <c>config.Data</c> 里看到的仍是原始值
+/// （<c>Configure</c> / 拦截器 / <c>transformRequest</c> 都按普通表单字典处理）。
+/// </para>
 /// </summary>
-internal readonly record struct PartValue(object? Value, PartOverride Override);
+internal sealed class DeclaredForm : Dictionary<string, object?>
+{
+    /// <summary>字段名 → 声明覆盖（只登记确实声明了覆盖的项）。</summary>
+    public Dictionary<string, PartOverride> Overrides { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>数据来源的请求模型名：装配期错误用它做上下文（普通字典没有这个名字）。</summary>
+    public string? SourceName { get; init; }
+}
 
 /// <summary>
 /// multipart 部件的所有权回收。
@@ -38,7 +49,7 @@ internal readonly record struct PartValue(object? Value, PartOverride Override);
 /// 的装配回滚共用。
 /// </para>
 /// <para>
-/// 遍历范围与 <see cref="MultipartBodyBuilder"/> 的展平规则对齐：<see cref="PartValue"/>、字典、
+/// 遍历范围与 <see cref="MultipartBodyBuilder"/> 的展平规则对齐：字典（含 <see cref="DeclaredForm"/>）、
 /// 只读字典、集合、嵌套对象都要递归进去。只看 <see cref="IEnumerable{T}"/> 会整本跳过字典 ——
 /// 它的元素是 KeyValuePair 值类型，泛型协变不成立
 /// （<c>Dictionary&lt;string, FormFile&gt;</c> 并不是 <c>IEnumerable&lt;object?&gt;</c>）。
@@ -84,11 +95,6 @@ internal static class MultipartOwnership
                 case string _:
                 case byte[] _:
                 case JsonElement:
-                    return;
-
-                // 声明覆盖只是包装前的描述，真正的所有权在包装后的值上
-                case PartValue declared:
-                    DisposeValue(declared.Value, visited);
                     return;
 
                 case FormFile file:

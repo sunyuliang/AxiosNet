@@ -494,10 +494,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
                 {
                     // 序列化失败同样走统一错误模型；取消类异常原样抛出，保留 IsCancel 语义。
+                    // 声明式表单的 config.Data 只是内部表单字典：报请求模型名，别把 Dictionary`2 这种实现细节漏给调用方。
                     throw AxiosException.BadRequestPayload(
                         config,
                         request,
-                        config.Data?.GetType().Name ?? "null",
+                        config.Data is DeclaredForm declared
+                            ? declared.SourceName ?? declared.GetType().Name
+                            : config.Data?.GetType().Name ?? "null",
                         ex);
                 }
 

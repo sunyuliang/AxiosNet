@@ -225,8 +225,8 @@ internal sealed partial class RequestModelMetadata
     }
 
     /// <summary>
-    /// 请求体的原始值：普通模型取 <see cref="BodyAttribute"/> 属性；multipart 模型返回装配好的表单字典
-    /// （全部属性为 <c>null</c> 时返回 <c>null</c>，不发请求体）。
+    /// 请求体的原始值：普通模型取 <see cref="BodyAttribute"/> 属性；multipart 模型返回装配好的声明式表单
+    /// （值保持原样，声明覆盖单独登记；全部属性为 <c>null</c> 时返回 <c>null</c>，不发请求体）。
     /// </summary>
     public object? ResolveBody(object request)
     {
@@ -236,7 +236,7 @@ internal sealed partial class RequestModelMetadata
         }
 
         // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
-        var form = new Dictionary<string, object?>();
+        var form = new DeclaredForm { SourceName = request.GetType().Name };
 
         try
         {
@@ -248,12 +248,18 @@ internal sealed partial class RequestModelMetadata
                     continue;
                 }
 
-                // 声明覆盖随值一起交给 MultipartBodyBuilder：包装、校验与所有权登记都在装配时完成，
-                // 这里不做任何预包装（避免同一份值规则在两层各写一遍）。
+                // 声明覆盖与值分开登记：值保持模型提供的原始对象，覆盖在装配时由 MultipartBodyBuilder 应用
+                // （包装、校验与所有权登记都在那一刻完成，这里不做任何预包装）。
                 var partOverride = new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
-                form.Add(
-                    binding.Name,
-                    partOverride.Any ? new PartValue(MaterializeDeclaredCollection(value), partOverride) : value);
+                if (partOverride.Any)
+                {
+                    form.Overrides[binding.Name] = partOverride;
+                    form.Add(binding.Name, MaterializeDeclaredCollection(value));
+                }
+                else
+                {
+                    form.Add(binding.Name, value);
+                }
             }
         }
         catch
