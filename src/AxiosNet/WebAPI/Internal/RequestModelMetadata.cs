@@ -134,7 +134,7 @@ internal sealed partial class RequestModelMetadata
         // (TTarget)instance 对引用类型是 castclass、对值类型是 unbox，无需约束。
         var wrapper = typeof(GetterWrapper<,>).MakeGenericType(method.DeclaringType!, method.ReturnType);
         return (Func<object, object?>)wrapper
-            .GetMethod(nameof(GetterWrapper<,>.Create), BindingFlags.Public | BindingFlags.Static)!
+            .GetMethod(nameof(GetterWrapper<object, object>.Create), BindingFlags.Public | BindingFlags.Static)!
             .Invoke(null, new object[] { method })!;
     }
 
