@@ -52,13 +52,18 @@ public sealed class ApiErrorContext
     /// <summary>
     /// 错误响应正文原文：<see cref="AxiosResponse.RawText"/> 优先，其次按 <see cref="AxiosResponse.Data"/>
     /// 的实际形态取文本（string / <see cref="JsonElement"/> / byte[]）；都不适用时为 <c>null</c>。
+    /// <para>byte[] 按响应的 Content-Type charset 解码（与正常响应的解码口径一致）：
+    /// 传 null 会把 gbk / iso-8859-1 声明的错误体按 UTF-8 解出乱码。</para>
     /// </summary>
     public string? Body => Response.RawText ?? Response.Data switch
     {
         null => null,
         string text => text,
         JsonElement element => element.ValueKind == JsonValueKind.String ? element.GetString() : element.GetRawText(),
-        byte[] bytes => ResponseTextDecoder.Decode(bytes, charSet: null, Config.SerializationOrNull?.ResponseEncoding),
+        byte[] bytes => ResponseTextDecoder.Decode(
+            bytes,
+            Config.Response?.CharSet,
+            Config.SerializationOrNull?.ResponseEncoding),
         _ => null
     };
 

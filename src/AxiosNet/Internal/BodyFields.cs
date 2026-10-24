@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace AxiosNet.Internal;
 
@@ -9,8 +8,10 @@ namespace AxiosNet.Internal;
 /// 请求体展平（表单 / multipart）共用的「值分类 + 字段命名」：
 /// 哪些类型算标量、标量怎么取文本、嵌套字段名怎么拼。
 /// <para>
-/// 命名只看 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 与属性上的 <see cref="JsonPropertyNameAttribute"/>，
-/// 忽略看 <see cref="JsonIgnoreAttribute"/>（<c>Always</c>）；<b>刻意不读</b> 序列化器的命名策略 —— 表单与序列化器解耦。
+/// 命名只看 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 与属性上的
+/// <see cref="System.Text.Json.Serialization.JsonPropertyNameAttribute"/>，
+/// 忽略看 <see cref="System.Text.Json.Serialization.JsonIgnoreAttribute"/>（<c>Always</c>）；
+/// <b>刻意不读</b> 序列化器的命名策略 —— 表单与序列化器解耦。
 /// </para>
 /// </summary>
 internal static class BodyFields
@@ -26,14 +27,27 @@ internal static class BodyFields
     public static bool IsScalar(Type type) => ScalarTypes.IsScalarType(type);
 
     /// <summary>表单 / multipart 的标量文本：日期时间折成 UTC 毫秒（与 query 序列化的既有约定一致）。</summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><see cref="DateTime"/>：<see cref="DateTimeKind.Unspecified"/>（未标注时区，最常见的构造）
+    /// 按 <b>UTC</b> 解释 —— 按本机时区折会让同一份数据在不同时区的机器上发出不同字节；
+    /// <see cref="DateTimeKind.Local"/> 仍按本机时区转换。</item>
+    /// <item><see cref="TimeOnly"/>：显式用往返格式 <c>O</c>（保留秒）—— <see cref="IFormattable"/>
+    /// 的默认短时间格式会截掉秒（<c>16:30:15</c> → <c>16:30</c>），与请求体路径的 <c>O</c> 分歧。</item>
+    /// <item><see cref="DateOnly"/>：维持 <see cref="IFormattable"/> 的不变文化短日期（既有契约，已固化测试）。</item>
+    /// </list>
+    /// </remarks>
     public static string ScalarToString(object value) => value switch
     {
         string s => s,
         bool b => b ? "true" : "false",
         char c => c.ToString(),
-        DateTime dt => dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+        DateTime dt => (dt.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+            : dt).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
         DateTimeOffset dto => dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
         Enum e => e.ToString(),
+        TimeOnly t => t.ToString("O", CultureInfo.InvariantCulture),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? string.Empty
     };
@@ -75,13 +89,10 @@ internal static class BodyFields
             : string.IsNullOrEmpty(prefix) ? name : prefix + "[" + name + "]";
 
     /// <summary>属性名在表单 / multipart 里的字段名：<c>[JsonPropertyName]</c> 优先，否则属性名。</summary>
-    public static string ResolveFieldName(PropertyInfo property)
-        => property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? property.Name;
+    /// <remarks>特性查找结果按属性缓存（<see cref="ReflectionCache.GetFieldName"/>）：展平路径每请求都要取字段名。</remarks>
+    public static string ResolveFieldName(PropertyInfo property) => ReflectionCache.GetFieldName(property);
 
     /// <summary>是否整体忽略：只认 <c>[JsonIgnore(Always)]</c>（条件忽略在展平时无法求值，按参与处理）。</summary>
-    public static bool IsIgnored(PropertyInfo property)
-    {
-        var attribute = property.GetCustomAttribute<JsonIgnoreAttribute>();
-        return attribute is not null && attribute.Condition == JsonIgnoreCondition.Always;
-    }
+    /// <remarks>特性查找结果按属性缓存（<see cref="ReflectionCache.IsIgnoredProperty"/>），与字段名同一出处。</remarks>
+    public static bool IsIgnored(PropertyInfo property) => ReflectionCache.IsIgnoredProperty(property);
 }

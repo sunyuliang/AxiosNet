@@ -35,6 +35,9 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
     private readonly StringBuilder _frameData = new();
 
+    /// <summary>当前 SSE 帧已累积的<b>原始字节数</b>（分帧上限按字节判定，与 NDJSON 缓冲区口径一致）。</summary>
+    private int _frameBytes;
+
     private byte[] _buffer = new byte[ReadChunk];
     private int _start;
     private int _end;
@@ -171,6 +174,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 {
                     var tail = _frameData.ToString();
                     _frameData.Clear();
+                    _frameBytes = 0;
                     return IsDone(tail) ? null : tail;
                 }
 
@@ -179,16 +183,16 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
             if (_format == AxiosStreamFormat.NewlineDelimitedJson)
             {
-                if (line.Length == 0)
+                if (line.Text.Length == 0)
                 {
                     continue;
                 }
 
-                return line;
+                return line.Text;
             }
 
             // SSE：空行结束一帧
-            if (line.Length == 0)
+            if (line.Text.Length == 0)
             {
                 if (_frameData.Length == 0)
                 {
@@ -198,24 +202,26 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
                 var frame = _frameData.ToString();
                 _frameData.Clear();
+                _frameBytes = 0;
                 return IsDone(frame) ? null : frame;
             }
 
-            if (line[0] == ':')
+            var text = line.Text;
+            if (text[0] == ':')
             {
                 // 注释 / 心跳
                 continue;
             }
 
-            var colon = line.IndexOf(':');
-            var field = colon < 0 ? line : line[..colon];
+            var colon = text.IndexOf(':');
+            var field = colon < 0 ? text : text[..colon];
             if (!field.Equals("data", StringComparison.Ordinal))
             {
                 // event: / id: / retry: 等字段不进入数据流
                 continue;
             }
 
-            var value = colon < 0 ? string.Empty : line[(colon + 1)..];
+            var value = colon < 0 ? string.Empty : text[(colon + 1)..];
             if (value.StartsWith(' '))
             {
                 value = value[1..];
@@ -227,7 +233,11 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             }
 
             _frameData.Append(value);
-            if (_frameData.Length > MaxFrameBytes)
+
+            // 上限按字节数（NDJSON 的缓冲区口径）：按字符算的话 UTF-8 多字节帧最多可灌约
+            // 4× 上限的源字节才触发，StringBuilder 的 UTF-16 存储还让内存峰值再翻倍。
+            _frameBytes += line.ByteLength;
+            if (_frameBytes > MaxFrameBytes)
             {
                 throw AxiosException.StreamFrameTooLarge(_config, _request, "SSE", MaxFrameBytes);
             }
@@ -237,8 +247,8 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     private static bool IsDone(string frame)
         => string.Equals(frame, DoneSentinel, StringComparison.Ordinal);
 
-    /// <summary>读取一行（不含行尾 CR / LF）；<c>null</c> 表示流已结束。</summary>
-    private async ValueTask<string?> TryReadLineAsync()
+    /// <summary>读取一行（不含行尾 CR / LF）及其原始字节数；<c>null</c> 表示流已结束。</summary>
+    private async ValueTask<Line?> TryReadLineAsync()
     {
         while (true)
         {
@@ -253,7 +263,8 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                     continue;
                 }
 
-                var line = Decode(_start, terminator - _start);
+                var byteLength = terminator - _start;
+                var line = Decode(_start, byteLength);
                 _start = terminator + 1;
 
                 // 裸 CR / 裸 LF 只前进 1 字节；CRLF 再吃掉 LF。
@@ -264,7 +275,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                     _start++;
                 }
 
-                return line;
+                return new Line(line, byteLength);
             }
 
             if (_eof)
@@ -274,14 +285,18 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                     return null;
                 }
 
-                var tail = Decode(_start, _end - _start);
+                var tailLength = _end - _start;
+                var tail = Decode(_start, tailLength);
                 _start = _end;
-                return tail;
+                return new Line(tail, tailLength);
             }
 
             await FillAsync().ConfigureAwait(false);
         }
     }
+
+    /// <summary>一行文本 + 它在原始字节流里的长度（SSE 分帧上限按字节判定，与 NDJSON 缓冲区口径一致）。</summary>
+    private readonly record struct Line(string Text, int ByteLength);
 
     /// <summary>
     /// 行尾判定：LF / CR / CRLF 都是合法行分隔符（WHATWG SSE 明确允许三种），

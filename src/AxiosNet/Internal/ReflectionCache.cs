@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Text.Json.Serialization;
 
 namespace AxiosNet.Internal;
 
@@ -21,6 +22,16 @@ internal static class ReflectionCache
 
     /// <summary>属性名的「[转义名]」后缀（嵌套键）：连插值带转义一次算好，热路径只剩一次前缀拼接。</summary>
     private static readonly ConcurrentDictionary<PropertyInfo, string> BracketSuffixes = new();
+
+    /// <summary>
+    /// 表单 / multipart 的字段名（<c>[JsonPropertyName]</c> 优先，否则属性名）：特性查找按属性缓存。
+    /// <para>展平路径每请求每属性都要取字段名，而 <c>PropertyInfo.GetCustomAttribute</c> 比数组遍历贵约
+    /// 两个数量级（实测占展平路径绝大部分耗时）——属性跨请求不变，缓存后归零。</para>
+    /// </summary>
+    private static readonly ConcurrentDictionary<PropertyInfo, string> FieldNames = new();
+
+    /// <summary>是否整体忽略（<c>[JsonIgnore(Always)]</c>）：与字段名同源同命脉，一并缓存。</summary>
+    private static readonly ConcurrentDictionary<PropertyInfo, bool> IgnoredProperties = new();
 
     /// <param name="type">待展平的类型；标注要求裁剪器保留其公开属性（含 getter）。</param>
     public static PropertyInfo[] GetReadableProperties(
@@ -47,4 +58,16 @@ internal static class ReflectionCache
     /// <summary>属性名转义后的「[键]」后缀（嵌套层级）。</summary>
     public static string GetBracketSuffix(PropertyInfo property)
         => BracketSuffixes.GetOrAdd(property, static p => "[" + ParamsSerializer.EscapeKey(p.Name) + "]");
+
+    /// <summary>表单 / multipart 字段名：<c>[JsonPropertyName]</c> 优先，否则属性名（按属性缓存）。</summary>
+    public static string GetFieldName(PropertyInfo property)
+        => FieldNames.GetOrAdd(property, static p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? p.Name);
+
+    /// <summary>是否整体忽略：只认 <c>[JsonIgnore(Always)]</c>（条件忽略在展平时无法求值，按参与处理）。</summary>
+    public static bool IsIgnoredProperty(PropertyInfo property)
+        => IgnoredProperties.GetOrAdd(property, static p =>
+        {
+            var attribute = p.GetCustomAttribute<JsonIgnoreAttribute>();
+            return attribute is not null && attribute.Condition == JsonIgnoreCondition.Always;
+        });
 }

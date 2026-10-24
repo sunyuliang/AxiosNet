@@ -89,7 +89,7 @@ internal static class RequestBodyFactory
                 // 已构造好的内容原样透传；仅当内容自身没有 Content-Type 且用户显式配置过时才补头部。
                 if (config.ContentTypeSet && existing.Headers.ContentType is null)
                 {
-                    RequestContentType.Set(existing, mediaType);
+                    RequestContentType.Set(existing, mediaType, config);
                 }
 
                 // multipart 没有 boundary 服务端必然解析失败（正文靠随机边界切分部件），
@@ -107,51 +107,51 @@ internal static class RequestBodyFactory
                 return existing;
 
             case string text:
-                return CreateText(text, mediaType, encoding, appendCharset);
+                return CreateText(text, mediaType, encoding, appendCharset, config);
 
             case byte[] bytes:
-                return CreateBinary(bytes, mediaType);
+                return CreateBinary(bytes, mediaType, config);
 
             case ReadOnlyMemory<byte> memory:
-                return CreateBinary(memory, mediaType);
+                return CreateBinary(memory, mediaType, config);
 
             case Memory<byte> memory:
-                return CreateBinary(memory, mediaType);
+                return CreateBinary(memory, mediaType, config);
 
             case ArraySegment<byte> segment:
-                return CreateBinary(segment.AsMemory(), mediaType);
+                return CreateBinary(segment.AsMemory(), mediaType, config);
 
             case Stream stream:
                 var streamContent = new StreamContent(stream);
-                RequestContentType.Set(streamContent, mediaType);
+                RequestContentType.Set(streamContent, mediaType, config);
                 return streamContent;
         }
 
         return CreateStructured(data, config, mediaType, encoding, appendCharset);
     }
 
-    private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset)
+    private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
     {
         // 直接构造 ByteArrayContent 可保证携带 Content-Length，避免分块传输带来的兼容性问题。
         var content = new ByteArrayContent(encoding.GetBytes(text));
-        RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset));
+        RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }
 
-    private static HttpContent CreateBinary(byte[] bytes, string mediaType)
+    private static HttpContent CreateBinary(byte[] bytes, string mediaType, AxiosConfig config)
     {
         var content = new ByteArrayContent(bytes);
-        RequestContentType.Set(content, mediaType);
+        RequestContentType.Set(content, mediaType, config);
         return content;
     }
 
     /// <summary>
     /// 零拷贝发送 <see cref="ReadOnlyMemory{T}"/>：<see cref="ByteArrayContent"/> 会先 ToArray() 复制整段。
     /// </summary>
-    private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType)
+    private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType, AxiosConfig config)
     {
         var content = new ReadOnlyMemoryContent(memory);
-        RequestContentType.Set(content, mediaType);
+        RequestContentType.Set(content, mediaType, config);
         return content;
     }
 
@@ -190,7 +190,7 @@ internal static class RequestBodyFactory
         // 字典 / 集合 / 对象 / dynamic 一律不进这个分支，它们和业务对象走同一套逻辑。
         if (BodyFields.IsScalar(type))
         {
-            var scalar = CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset);
+            var scalar = CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset, config);
             ValidateDeclaredCharset(scalar, config, encoding);
             return scalar;
         }
@@ -198,11 +198,11 @@ internal static class RequestBodyFactory
         // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送（不编码文本、不补 charset）。
         if (serializer.SerializeToBytes(data, type, config) is { } bytes)
         {
-            return CreateBinary(bytes, mediaType);
+            return CreateBinary(bytes, mediaType, config);
         }
 
         // Serialize 可能往 config.Headers 写 Content-Type（含 charset）：产出之后再校验
-        var text = CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset);
+        var text = CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset, config);
         ValidateDeclaredCharset(text, config, encoding);
         return text;
     }

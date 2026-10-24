@@ -26,7 +26,9 @@ public sealed partial class ApiClient
 
     /// <summary>
     /// 扫描程序集里全部 <see cref="IApiRequest{TResponse}"/> 实现并校验，返回全部错误消息。
-    /// <para>只检查实现该接口的具体类型；动态加载失败的类型会被跳过（<see cref="ReflectionTypeLoadException"/>）。</para>
+    /// <para>只检查实现该接口的<b>可实例化</b>类型；抽象类 / 接口 / 开放泛型定义会被跳过 ——
+    /// 路由特性不继承，派生类必须各自声明路由，公共请求基类是合法模式，扫描它们只会产出
+    /// 调用方无法修复的误报。动态加载失败的类型会被跳过（<see cref="ReflectionTypeLoadException"/>）。</para>
     /// </summary>
     /// <param name="assembly">待扫描的程序集。</param>
     /// <exception cref="ArgumentNullException"><paramref name="assembly"/> 为 <c>null</c>。</exception>
@@ -47,8 +49,16 @@ public sealed partial class ApiClient
             types = [.. ex.Types.OfType<Type>()];
         }
 
-        return ValidateCore(types.Where(ImplementsApiRequest));
+        return ValidateCore(types.Where(ImplementsApiRequest).Where(IsConcreteInstantiable));
     }
+
+    /// <summary>
+    /// 是否可实例化（程序集扫描的准入判据）：排除抽象类、接口与开放泛型定义。
+    /// <para>已特化的封闭泛型（<c>Foo&lt;int&gt;</c>）可实例化，保留；<see cref="ValidateModels(Type[])"/>
+    /// 显式传入的类型不经过本判据 —— 传抽象类型是调用方的明确意图，照常报错。</para>
+    /// </summary>
+    private static bool IsConcreteInstantiable(Type type)
+        => !type.IsAbstract && !type.IsInterface && !type.IsGenericTypeDefinition;
 
     // params Type[] 上的裁剪标注经过 IEnumerable<Type> 传递后会丢失，这里按「运行时类型」放宽。
     [UnconditionalSuppressMessage(

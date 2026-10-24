@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AxiosNet.WebAPI.DependencyInjection;
@@ -55,6 +57,13 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     private readonly Dictionary<string, ApiClient> _clients = new(StringComparer.Ordinal);
     private readonly List<ApiClientOwnedAxiosClient> _owned = new();
     private readonly object _gate = new();
+
+    /// <summary>
+    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），
+    /// 全局 <see cref="_gate"/> 只保护字典读写。这样慢 configure 或「configure 里同步等待
+    /// 另一个站点解析」不会阻塞 / 死锁其他站点的首次解析。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, object> _siteGates = new(StringComparer.Ordinal);
     private int _disposed;
 
     public ApiClientResolver(IServiceProvider services, IEnumerable<ApiClientDefinition> definitions)
@@ -94,6 +103,9 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
 
     private bool TryGetCore(string name, [MaybeNullWhen(false)] out ApiClient client)
     {
+        // 第一层（全局锁）：只做字典查询与定义查找，不执行任何用户代码。
+        object siteGate;
+        ApiClientDefinition? definition;
         lock (_gate)
         {
             if (Volatile.Read(ref _disposed) == 1)
@@ -106,11 +118,32 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
                 return true;
             }
 
-            var definition = Array.Find(_definitions, d => string.Equals(d.Name, name, StringComparison.Ordinal));
+            definition = Array.Find(_definitions, d => string.Equals(d.Name, name, StringComparison.Ordinal));
             if (definition is null)
             {
                 client = null;
                 return false;
+            }
+
+            siteGate = _siteGates.GetOrAdd(name, static _ => new object());
+        }
+
+        // 第二层（站点锁）：创建跑在这里 —— configure 与容器解析都是调用方代码，
+        // 放在全局锁内会让慢 configure 阻塞全部站点，「configure 里同步等待另一站点解析」
+        // 更是直接死锁。站点锁同时保证同一站点只创建一次。
+        lock (siteGate)
+        {
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _disposed) == 1)
+                {
+                    throw new ObjectDisposedException(nameof(ApiClientResolver));
+                }
+
+                if (_clients.TryGetValue(name, out client))
+                {
+                    return true;
+                }
             }
 
             // 每站点自建底层客户端（与容器里的 AxiosClient 注册互不相干），由本解析器持有并在容器退出时释放。
@@ -130,8 +163,19 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
                 throw;
             }
 
-            _owned.Add(holder);
-            _clients[name] = created;
+            lock (_gate)
+            {
+                if (Volatile.Read(ref _disposed) == 1)
+                {
+                    // 创建期间容器已退出：没人会持有这个 holder，就地释放而不登记
+                    holder.Dispose();
+                    throw new ObjectDisposedException(nameof(ApiClientResolver));
+                }
+
+                _owned.Add(holder);
+                _clients[name] = created;
+            }
+
             client = created;
             return true;
         }
@@ -149,10 +193,22 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             _owned.Clear();
         }
 
+        // 单个 holder 释放失败不能跳过其余站点：第一个抛异常就中断会让后面的连接池永久泄漏。
+        // 收集首个失败（保留原始堆栈），全部释放完后再抛。
+        ExceptionDispatchInfo? failure = null;
         foreach (var holder in holders)
         {
-            holder.Dispose();
+            try
+            {
+                holder.Dispose();
+            }
+            catch (Exception ex)
+            {
+                failure ??= ExceptionDispatchInfo.Capture(ex);
+            }
         }
+
+        failure?.Throw();
     }
 
     public async ValueTask DisposeAsync()
@@ -166,10 +222,20 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             _owned.Clear();
         }
 
+        ExceptionDispatchInfo? failure = null;
         foreach (var holder in holders)
         {
-            await holder.DisposeAsync();
+            try
+            {
+                await holder.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                failure ??= ExceptionDispatchInfo.Capture(ex);
+            }
         }
+
+        failure?.Throw();
     }
 }
 

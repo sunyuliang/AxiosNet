@@ -515,11 +515,15 @@ public sealed class LowPriorityRegressionTests
 
                 stream = (Stream)response.Data!;
                 var read = await stream.ReadAsync(new byte[16]);
-                Assert.True(read >= 0);
+
+                // 值断言（不是恒真的 read >= 0）：拿到流的路径必须真的读到正文字节 ——
+                // 响应体非空，read == 0 意味着流被提前关闭，属于第三种不该出现的结果。
+                Assert.True(read > 0, $"第 {i} 轮：拿到了流但读到 0 字节（响应体非空，不应为空读）。");
             }
             catch (AxiosException ex) when (ex.Code == AxiosException.ErrConnAborted)
             {
-                // 允许的结果之一：预算耗尽/超时
+                // 允许的结果之一：预算耗尽/超时。两种结果（读到数据 / ECONNABORTED）之外的一切
+                // （其它错误码、裸异常、挂死）都会让本用例失败 —— when 过滤器只放行这一种。
             }
             finally
             {

@@ -45,7 +45,7 @@ internal static class FormBodyEncoder
         var body = BuildBody(pairs);
 
         var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
-        RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset));
+        RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }
 

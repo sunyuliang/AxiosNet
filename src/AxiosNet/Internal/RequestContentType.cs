@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using AxiosNet.Serialization;
 
 namespace AxiosNet.Internal;
 
@@ -12,9 +13,22 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class RequestContentType
 {
-    public static void Set(HttpContent content, string mediaType)
+    /// <summary>
+    /// 写 Content-Type（库内唯一入口，统一再拦一次控制字符）。
+    /// <para>第三方 <see cref="IContentSerializer.MediaType"/> 是不可信输入：含 CR/LF 时按库自己的
+    /// 分类口径是「声明写错了」（<c>ERR_BAD_OPTION_VALUE</c>）—— 裸抛 <see cref="ArgumentException"/>
+    /// 会被 <see cref="AxiosClient"/> 收成 <c>ERR_BAD_REQUEST</c>「请求体序列化失败」，分类错位。</para>
+    /// </summary>
+    public static void Set(HttpContent content, string mediaType, AxiosConfig? config = null)
     {
-        AxiosHeaders.ValidateHeaderValue("Content-Type", mediaType);
+        try
+        {
+            AxiosHeaders.ValidateHeaderValue("Content-Type", mediaType);
+        }
+        catch (ArgumentException ex)
+        {
+            throw AxiosException.InvalidOption($"Content-Type 非法：{ex.Message}", config, ex);
+        }
 
         content.Headers.Remove("Content-Type");
         content.Headers.TryAddWithoutValidation("Content-Type", mediaType);

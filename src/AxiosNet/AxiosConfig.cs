@@ -247,6 +247,19 @@ public sealed partial class AxiosConfig
     /// </summary>
     internal bool InstanceOptionsInherited { get; set; }
 
+    /// <summary>
+    /// transform 链里「继承自实例默认」的前缀长度（库产出配置才有；调用方 new 的为 0）。
+    /// <para>
+    /// 合并层据此只对前 <see cref="TransformInheritedRequest"/> / <see cref="TransformInheritedResponse"/>
+    /// 项去重：回放 response.Config 时不重复执行实例默认 transform，而本次追加的项
+    /// （含与默认链同引用的有意重复注册）保持原样。随 <see cref="Clone"/> 继承。
+    /// </para>
+    /// </summary>
+    internal int TransformInheritedRequest { get; set; }
+
+    /// <summary><see cref="TransformInheritedRequest"/> 的响应侧对应项。</summary>
+    internal int TransformInheritedResponse { get; set; }
+
     /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
     internal bool AuthSet => _connection?.AuthSet ?? false;
 
@@ -418,7 +431,9 @@ public sealed partial class AxiosConfig
         clone.Response = null;
 
         // 「显式赋过 Auth」属于那一次赋值，不属于「这份配置的内容」：
-        // 回放 response.Config（或任何克隆）时，Auth 的值已是生效结果，不能再被当成按请求意图。
+        // 回放 response.Config（或任何克隆）时，Auth 的值已是生效结果，不能再被当成按请求意图 ——
+        // 目标实例用自己的默认凭据（与 Proxy / BaseAddress 的 instanceSourced 门禁同构，
+        // 契约由 Audit20261024P2FixTests 锁定）。
         if (clone._connection is not null)
         {
             clone._connection.AuthSet = false;

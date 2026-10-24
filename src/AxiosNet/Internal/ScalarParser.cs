@@ -23,7 +23,9 @@ internal static class ScalarParser
 
         if (target == typeof(char))
         {
-            if (raw.Length == 0)
+            // 只接受单字符文本：多字符取首字符是静默截断（"abc" → 'a'），
+            // 调用方以为拿到的是完整值，比直接报错更难排查。
+            if (raw.Length != 1)
             {
                 return false;
             }
@@ -47,7 +49,17 @@ internal static class ScalarParser
         {
             try
             {
-                value = Enum.Parse(target, raw, ignoreCase: true);
+                var parsed = Enum.Parse(target, raw, ignoreCase: true);
+
+                // Enum.Parse 不校验未定义数值（"999" 会静默产出 (E)999）：不复核的话
+                // GetAsync<MyEnum> 会把服务端的非法枚举值交作 Data，而不是按 ERR_BAD_RESPONSE 失败。
+                // flags 枚举放行组合值（"Read,Write"），但要求组合里没有已定义位之外的位。
+                if (!Enum.IsDefined(target, parsed) && !IsFlagsCombination(target, parsed))
+                {
+                    return false;
+                }
+
+                value = parsed;
                 return true;
             }
             catch (Exception ex) when (ex is ArgumentException or OverflowException)
@@ -148,5 +160,37 @@ internal static class ScalarParser
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// flags 枚举的组合值是否只由已定义位构成（<c>"Read,Write"</c> 合法、<c>"999"</c> 不合法）。
+    /// <para>非 flags 枚举直接 false；按底层类型分流（decimal 没有位运算）：ulong 底层按无符号汇总，
+    /// 其余按 <see cref="long"/>（负值 flags 同样正确）。</para>
+    /// </summary>
+    private static bool IsFlagsCombination(Type enumType, object parsed)
+    {
+        if (!enumType.IsDefined(typeof(FlagsAttribute), inherit: false))
+        {
+            return false;
+        }
+
+        if (Enum.GetUnderlyingType(enumType) == typeof(ulong))
+        {
+            var unsignedMask = ulong.MinValue;
+            foreach (var defined in Enum.GetValues(enumType))
+            {
+                unsignedMask |= Convert.ToUInt64(defined, CultureInfo.InvariantCulture);
+            }
+
+            return (Convert.ToUInt64(parsed, CultureInfo.InvariantCulture) & ~unsignedMask) == ulong.MinValue;
+        }
+
+        var mask = 0L;
+        foreach (var defined in Enum.GetValues(enumType))
+        {
+            mask |= Convert.ToInt64(defined, CultureInfo.InvariantCulture);
+        }
+
+        return (Convert.ToInt64(parsed, CultureInfo.InvariantCulture) & ~mask) == 0L;
     }
 }

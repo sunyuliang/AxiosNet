@@ -94,7 +94,7 @@ public sealed class AllocationRegressionTests
     }
 
     [Fact]
-    public void StreamRead_WithRepeatedCallerToken_ReusesOneLinkedCts()
+    public async Task StreamRead_WithRepeatedCallerToken_ReusesOneLinkedCts()
     {
         const int size = 8 * 1024 * 1024;
         // 注入 Handler + 自带记录流，而不是 TestHttpServer：真实 socket 读路径的令牌会随
@@ -104,13 +104,18 @@ public sealed class AllocationRegressionTests
         using var cts = new CancellationTokenSource();
         var buffer = new byte[131072];
 
-        var response = client.GetAsync<Stream>("http://localhost/big").GetAwaiter().GetResult();
+        var response = await client.GetAsync<Stream>("http://localhost/big");
         using var stream = response.Data!;
 
         long total = 0;
-        int read;
-        while ((read = stream.ReadAsync(buffer.AsMemory(), cts.Token).GetAwaiter().GetResult()) > 0)
+        while (true)
         {
+            var read = await stream.ReadAsync(buffer.AsMemory(), cts.Token);
+            if (read <= 0)
+            {
+                break;
+            }
+
             total += read;
         }
 
@@ -225,15 +230,17 @@ public sealed class AllocationRegressionTests
             public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
             public override int Read(byte[] buffer, int offset, int count)
-                => Read(buffer.AsSpan(offset, count));
+                => ReadInto(buffer.AsSpan(offset, count));
 
             public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             {
                 ReadTokens.Add(cancellationToken);
-                return new ValueTask<int>(Read(buffer.Span));
+                return new ValueTask<int>(ReadInto(buffer.Span));
             }
 
-            private int Read(Span<byte> buffer)
+            // 私有方法不能 override 虚成员：与 Stream.Read(Span<byte>) 同签名会触发 CS0114
+            //（对外部调用方而言私有方法不可见，行为上无影响，但警告即噪音，改名消除）。
+            private int ReadInto(Span<byte> buffer)
             {
                 var take = Math.Min(buffer.Length, _payload.Length - _position);
                 _payload.AsSpan(_position, take).CopyTo(buffer);

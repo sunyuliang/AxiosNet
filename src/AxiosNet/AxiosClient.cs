@@ -403,20 +403,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
             ValidatePerRequestOptions(config);
 
-            // 泛型 <dynamic>/<object>：响应自动展开为动态对象图（对标 response.data.xxx）；
-            // 显式设置过其他 responseType 时以显式配置为准。
-            // 自动切换不置 ResponseTypeSet：否则回放生效配置时会被当成调用方显式意图。
-            if (dataType == typeof(object) && config.ResponseType == ResponseType.Json)
-            {
-                config.SetResponseTypeAuto(ResponseType.Dynamic);
-            }
-
-            // 泛型 <Stream>：自动切流式响应（对标 responseType: 'stream'）；显式配置仍然优先。
-            if (dataType == typeof(Stream) && config.ResponseType == ResponseType.Json)
-            {
-                config.SetResponseTypeAuto(ResponseType.Stream);
-            }
-
             // 1) 请求拦截器：与 axios 一致，按注册逆序执行
             //    注意：实例级选项（Proxy / Credentials / WithCredentials / MaxRedirects / PoolOptions）
             //    在构造期已固化进连接池，拦截器里改它们不生效也不报错 —— 请新建实例配置
@@ -449,6 +435,25 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
                     + "（要做修改请改传入的 config 后端返回它）。",
                     config);
+            }
+
+            // 泛型 <dynamic>/<object> 与 <Stream> 的响应形态自动切换（对标 responseType:
+            // 'dynamic' / 'stream'）。判据是 ResponseTypeSet（调用方显式设置过）而不是当前值：
+            // Json 是字段默认值，只看值会把「Defaults 上显式设过 Json」也当成未表态。
+            // 位置必须在请求拦截器之后：拦截器可以整体替换 config（返回一个新 AxiosConfig），
+            // 在它之前切换会在拦截器换配置时静默丢失，最终在反序列化阶段报 ERR_BAD_RESPONSE ——
+            // 错误表象与真实原因（拦截器换了配置）相距甚远（与下面的 ValidateRangeConfig 同理）。
+            // 自动切换不置 ResponseTypeSet：否则回放生效配置时会被当成调用方显式意图。
+            if (!config.ResponseTypeSet)
+            {
+                if (dataType == typeof(object))
+                {
+                    config.SetResponseTypeAuto(ResponseType.Dynamic);
+                }
+                else if (dataType == typeof(Stream))
+                {
+                    config.SetResponseTypeAuto(ResponseType.Stream);
+                }
             }
 
             // 负值没有合理语义，静默当作「不限制」会让调用方以为限制生效了。

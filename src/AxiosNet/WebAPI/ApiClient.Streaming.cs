@@ -63,9 +63,14 @@ public sealed partial class ApiClient
         // 正文按帧消费：responseType 固定 Stream；Timeout 只到响应头，正文口径交给 StreamIdleTimeout。
         // 优先级：按请求 configure 显式写过的值 > 本门面显式设置过的值 > 底层客户端默认值 > 本门面默认值。
         // 「底层客户端配过、本门面没表态」时必须让它生效，不能被本门面的默认 Zero 静默压成「不限时」。
-        // 用自动切换而非 setter：这不是调用方意图，回放 response.Config 时不能把 Stream 泄漏给下一次请求。
         // 必须按「显式设置过」判断，不能看值：未设置时读到的也是 null，而显式设成 null
         // 表示「正文与响应头共享 Timeout 预算」，是有效意图（与 AxiosClient 构造期判 MaxRedirectsSet 同理）。
+        //
+        // responseType 用自动切换（不置 ResponseTypeSet）：这不是调用方意图，回放 response.Config 时
+        // 不能把 Stream 泄漏给下一次请求（契约由 Audit20261023B1B8FixTests 锁定）。
+        // 已知限制：底层实例显式设过非 Json 的 responseType 时，合并层只认 *Set 标记，
+        // 自动切换会被默认值覆盖，流式请求以 ERR_BAD_RESPONSE 失败 —— 那是自相矛盾的配置
+        // （「这个客户端的响应默认按文本读」与「本次按帧消费」），报错即答复。
         config.SetResponseTypeAuto(ResponseType.Stream);
         if (!config.StreamIdleTimeoutSet && (_streamIdleTimeoutSet || !Axios.Defaults.StreamIdleTimeoutSet))
         {

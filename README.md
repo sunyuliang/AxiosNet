@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-881%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-897%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -193,7 +193,7 @@ public sealed class GetUserRequest : IApiRequest<User>
 - **不希望发送的属性**：`[ApiIgnore]` 完全排除出绑定（也不参与默认 Body 的「唯一未标注」判定）；注意它只影响绑定层面，请求体**内部**的属性序列化是请求体类型自己的事（那是 STJ 的 `[JsonIgnore]`）
 - 需要按请求微调（超时 / Content-Type / 序列化器 / responseType）：继承 `ApiRequest<T>` 覆写 `Configure(config)`，或调用 `RequestAsync(request, config => ...)`（后者在模型绑定之后执行，可覆盖模型写入的头）
 - 模型定义非法（缺路由特性、占位符没绑定、多个请求体、同名参数）在**首次调用时**抛 `InvalidOperationException`，消息直接指名属性
-- **启动期体检**：`ApiClient.ValidateModels(typeof(GetUserRequest), ...)` 或 `ApiClient.ValidateModels(assembly)` 返回**全部**错误消息（空列表 = 全部合法），不抛异常；与首次调用共用同一份元数据构建，不会出现「校验过了调用还报错」
+- **启动期体检**：`ApiClient.ValidateModels(typeof(GetUserRequest), ...)` 或 `ApiClient.ValidateModels(assembly)` 返回**全部**错误消息（空列表 = 全部合法），不抛异常；与首次调用共用同一份元数据构建，不会出现「校验过了调用还报错」。程序集扫描只检查**可实例化**的类型：抽象类 / 接口 / 开放泛型定义会被跳过（路由特性不继承，派生类必须各自声明路由，公共请求基类是合法模式），显式传入类型时不跳过
 - 授权在绑定与 `Configure` **之后**执行：签名类实现拿到的就是最终 URL 与最终头
 - **强类型错误**：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后，状态码错误抛 `ApiError<TError>`（`Error` / `Status` / `Response` / `Original`，`InnerException` 是原始 `AxiosException`）；工厂返回 `null` 或未设置时仍抛 `AxiosException`。网络错误 / 超时 / 取消不经过工厂
 - **错误体读取**：`ApiErrorContext.Body` 给出错误响应原文（与声明返回类型能否解析错误体无关），`TryReadAsync<TError>()` 按响应 `Content-Type` 选序列化器反序列化；解析失败只返回 `default`，不会盖住原始 HTTP 错误
@@ -644,7 +644,7 @@ var raw = (await http.GetAsync("file", c => c.ResponseType = ResponseType.ArrayB
 ```
 
 - `GetAsync<string>` / `ResponseType.Text`：返回原始文本，不做 JSON 解析；
-- 数值 / 日期 / 布尔 / GUID / 枚举 / `TimeSpan` 等：body 是 JSON 标量时直接反序列化，是裸标量文本时按类型解析；
+- 数值 / 日期 / 布尔 / GUID / 枚举 / `TimeSpan` 等：body 是 JSON 标量时直接反序列化，是裸标量文本时按类型解析；**枚举只接受已定义值**（`flags` 组合除外，如 `"Read,Write"`）—— 未定义数值（`"999"`）按 `ERR_BAD_RESPONSE` 失败而不是静默产出非法枚举值；`char` 只接受单字符文本（多字符不再取首字符）；
 - 复杂类型：按 JSON 反序列化；
 - 非泛型：文本响应下合法 JSON 为 `JsonElement`、非法 JSON 原样返回文本（对齐 axios `transformResponse`）；二进制响应（`Content-Type` 非文本）直接给 `byte[]`；
 - 二进制响应的业务对象（`GetAsync<T>`）：字节直达序列化器的字节入口，不做文本解码。
@@ -1497,7 +1497,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **841** 个、DI 扩展 **40** 个，合计 **881** 个用例（共 **1762** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **854** 个、DI 扩展 **43** 个，合计 **897** 个用例（共 **1794** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1541,7 +1541,7 @@ var client = new AxiosClient(new AxiosConfig
 - `dynamic` 响应、非泛型 `object` 载荷上运行时才确定的类型：依赖 `RuntimeBinder` / 反射。
 - `XmlContentSerializer`：`XmlSerializer` 需要在运行时生成序列化器，请改用 JSON + 源生成上下文。
 - 匿名对象作为 params 或表单值：类型无法静态保留，建议改用 `Dictionary<string, object?>` 或强类型 POCO。
-- `ValidateModels(Assembly)` 会枚举程序集全部类型，已标注 `RequiresUnreferencedCode`；AOT 下请改用 `ValidateModels(typeof(A), typeof(B))`。
+- `ValidateModels(Assembly)` 会枚举程序集全部类型（只校验可实例化的：抽象类 / 接口 / 开放泛型定义会被跳过），已标注 `RequiresUnreferencedCode`；AOT 下请改用 `ValidateModels(typeof(A), typeof(B))`。
 
 可直接运行的完整示例见 [samples/AxiosNet.Aot](samples/AxiosNet.Aot)：`PublishAot=true` + `TrimmerRootAssembly`，自带本地回环 HTTP 服务（断网可跑），同时演示 axios 风格与声明式两种用法。
 
@@ -1556,7 +1556,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 881 个 xUnit 单元测试（核心/声明式 841 + DI 40；两个测试项目均为双目标，实际执行 1762 次）
+# 运行全部 897 个 xUnit 单元测试（核心/声明式 854 + DI 43；两个测试项目均为双目标，实际执行 1794 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1565,9 +1565,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 841 | `net8.0` / `net6.0` | 1682 |
-| `AxiosNet.DependencyInjection.Tests` | 40 | `net8.0` / `net6.0` | 80 |
-| **合计** | **881** | | **1762** |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 854 | `net8.0` / `net6.0` | 1708 |
+| `AxiosNet.DependencyInjection.Tests` | 43 | `net8.0` / `net6.0` | 86 |
+| **合计** | **897** | | **1794** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 

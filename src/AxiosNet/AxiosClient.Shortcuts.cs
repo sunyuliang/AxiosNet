@@ -337,6 +337,12 @@ public sealed partial class AxiosClient
         var config = Defaults.Clone();
         config.EffectiveMerged = true;
         config.ClearInstanceOptionFlags();
+
+        // 记下「哪些 transform 是继承来的」：合并层只对这一段去重（回放不重复执行默认 transform），
+        // 回调里追加的项一律原样保留 —— 包括与默认链同引用的有意重复注册。
+        // 走 Has*/Count 访问器：_transformRequest 是 AxiosConfig 的私有字段，跨类不可见。
+        config.TransformInheritedRequest = Defaults.HasTransformRequest ? Defaults.TransformRequest.Count : 0;
+        config.TransformInheritedResponse = Defaults.HasTransformResponse ? Defaults.TransformResponse.Count : 0;
         return config;
     }
 

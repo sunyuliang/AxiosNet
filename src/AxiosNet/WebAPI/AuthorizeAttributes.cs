@@ -16,7 +16,7 @@ namespace AxiosNet.WebAPI;
 public sealed class AuthorizeAttribute : Attribute
 {
     /// <summary>声明需要授权，使用指定认证方案（默认 <c>Bearer</c>）。</summary>
-    /// <param name="scheme">认证方案名，拼在令牌前（如 <c>Bearer</c> / <c>Basic</c>）；不能为空白。</param>
+    /// <param name="scheme">认证方案名，拼在令牌前（如 <c>Bearer</c> / <c>Basic</c>）；不能为空白、不能含内部空白。</param>
     public AuthorizeAttribute(string scheme = "Bearer")
     {
         if (string.IsNullOrWhiteSpace(scheme))
@@ -24,7 +24,22 @@ public sealed class AuthorizeAttribute : Attribute
             throw new ArgumentException("授权 scheme 不能为空白。", nameof(scheme));
         }
 
-        Scheme = scheme.Trim();
+        var trimmed = scheme.Trim();
+
+        // scheme 与令牌拼成同一个头值（"Authorization: {scheme} {token}"）：内部空白会让
+        // 头值带上两个空格分隔的三段形态（"Basic x <token>"），服务端按 RFC 7235 解析不出来。
+        // AxiosHeaders 的取值校验只拦控制字符，内部空白管不到这里 —— 特性构造期直接拒。
+        foreach (var c in trimmed)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                throw new ArgumentException(
+                    $"授权 scheme 不能包含空白字符（当前 \"{trimmed}\"）：它会与令牌拼进同一个 Authorization 头值。",
+                    nameof(scheme));
+            }
+        }
+
+        Scheme = trimmed;
     }
 
     /// <summary>认证方案名（拼在令牌前，如 <c>Bearer</c> / <c>Basic</c>）。</summary>

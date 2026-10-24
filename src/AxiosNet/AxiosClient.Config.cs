@@ -96,7 +96,16 @@ public sealed partial class AxiosClient
             merged.ResponseType = perCall.ResponseType;
         }
 
-        merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
+        // 与 BaseAddress 同理：库产出配置（回放生效配置 / 免克隆合并）的取消令牌描述的是
+        // 「来源实例那一次调用」，不能搬到目标实例 —— 否则实例 A 的 response.Config 回放到 B
+        // 会把 A 的令牌套到 B 的请求上（B 既控制不了它的取消，生命周期也可能已经结束）。
+        // 调用方自己 new 的配置带令牌照常合并（显式按请求令牌）。
+        // 必须用 if 而不是三元赋值：setter 无条件置 CancellationTokenSet（与上面 ResponseType
+        // 同一陷阱），三元在 else 分支也会调 setter，把「未设置」记成显式意图。
+        if (!instanceSourced && perCall.CancellationTokenSet)
+        {
+            merged.CancellationToken = perCall.CancellationToken;
+        }
 
         // 分组下沉：每组只有一个守卫（组对象为 null = 本请求没碰这一组），
         // 组内「有值才覆盖」交给各自的 MergeFrom，主体不再有十几次同类判断。
@@ -128,19 +137,23 @@ public sealed partial class AxiosClient
         // 例外：库产出的配置（回放生效配置或免克隆合并）这几项描述的是来源实例，一律沿用本实例默认值。
         // 其中 Auth / WithCredentials / MaxRedirects 的 *Set 标记是语义的一部分：
         // Auth = null 表示「本次请求不带认证」，显式 null 必须能压住实例默认凭据。
+        // Auth 随 Connection 整组受同一门禁：回放不携带来源实例的按请求凭据（Audit20261024P2FixTests
+        // 锁定的契约 —— 与 BaseAddress / Proxy 同构，目标实例用自己的默认值）。
         if (!instanceSourced && perCallConnection is not null)
         {
             merged.Connection.MergeFrom(perCallConnection);
         }
 
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定。
-        // 按委托引用跳过 merged 初始链（= 实例默认链）里已有的项：回放 response.Config 时，
+        // 去重只覆盖 perCall 自己登记的「继承段」（前 TransformInherited* 项）：回放 response.Config 时，
         // 它的链本身已经是「实例默认 + 上次按请求」（Shortcut / MergeConfig 的产出都是 Defaults.Clone() 的副本），
         // 不去重会让每个实例默认 transform 每回放一次多执行一遍。
-        // 只对初始链去重：本次追加的项保持原样（调用方有意重复注册同一委托时语义不变）。
+        // 本次追加的项（含与默认链同引用的有意重复注册）一律原样保留 —— 去重范围按来源长度算，
+        // 不按 merged 当前链长算，否则「调用方有意重复注册同一委托」会被误吞。
         if (perCall.HasTransformRequest)
         {
-            var inherited = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
+            var originalCount = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
+            var inherited = Math.Min(perCall.TransformInheritedRequest, originalCount);
             foreach (var transform in perCall.TransformRequest)
             {
                 if (inherited > 0 && ChainContainsInherited(merged.TransformRequest, inherited, transform))
@@ -150,11 +163,15 @@ public sealed partial class AxiosClient
 
                 merged.TransformRequest.Add(transform);
             }
+
+            // 产物标记 = 合并前 merged 的链长（= 实例默认段）：回放这份配置时前 N 项才该去重。
+            merged.TransformInheritedRequest = originalCount;
         }
 
         if (perCall.HasTransformResponse)
         {
-            var inherited = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
+            var originalCount = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
+            var inherited = Math.Min(perCall.TransformInheritedResponse, originalCount);
             foreach (var transform in perCall.TransformResponse)
             {
                 if (inherited > 0 && ChainContainsInherited(merged.TransformResponse, inherited, transform))
@@ -164,6 +181,8 @@ public sealed partial class AxiosClient
 
                 merged.TransformResponse.Add(transform);
             }
+
+            merged.TransformInheritedResponse = originalCount;
         }
 
         return merged;
@@ -171,7 +190,8 @@ public sealed partial class AxiosClient
 
     /// <summary>
     /// 链的前 <paramref name="count"/> 项里是否已含同一委托实例（按引用）。
-    /// <para>链通常 0–3 项，线性扫描比为主路径建 HashSet 便宜；只比初始链是为了不吞掉本次追加的重复项。</para>
+    /// <para>链通常 0–3 项，线性扫描比为主路径建 HashSet 便宜；count 是 perCall 登记的「继承段」长度，
+    /// 只扫这一段是为了不吞掉本次追加的重复项。</para>
     /// </summary>
     private static bool ChainContainsInherited(
         IList<Func<object?, AxiosConfig, object?>> chain,

@@ -373,6 +373,9 @@ internal static class MultipartBodyBuilder
             var contentType = partOverride.ContentType ?? valueContentType ?? OctetStreamMediaType;
 
             ValidateDeclaredValue(partOverride);
+
+            // contentType 三条来源（声明覆盖 / 值自带 / 默认 octet-stream）都已在各自入口校验过
+            // 控制字符，这里不携带 config：真出现非法值时会以 ArgumentException 冒到 Create 的 catch。
             RequestContentType.Set(part, contentType);
             content.Add(part, field, fileName);
         }
