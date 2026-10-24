@@ -1753,7 +1753,11 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ AxiosClient.Config.cs   # config merging and header application
 │  │  ├─ AxiosJson.cs            # global JSON defaults (JsonSerializerOptions)
 │  │  ├─ AxiosContent.cs         # global injection point for content serialization
-│  │  ├─ AxiosConfig.cs          # request/instance configuration
+│  │  ├─ AxiosConfig.cs          # request/instance configuration (group entry points + lazy creation)
+│  │  │  ├─ AxiosConfig.Serialization.cs # SerializationSettings: JSON options/serializer/encoding/naming
+│  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings: proxy/credentials/pool/HTTP version/auth
+│  │  │  ├─ AxiosConfig.Limits.cs        # LimitSettings: size, rate, stream idle timeout
+│  │  │  └─ AxiosConfig.Callbacks.cs     # CallbackSettings: progress callbacks/status validation/timeout text
 │  │  ├─ AxiosContentType.cs     # common Content-Type presets
 │  │  ├─ AxiosCollectionFormat.cs# params collection encoding (Brackets/Multi/Csv/Ssv/Tsv/Pipes)
 │  │  ├─ AxiosStreamFormat.cs    # streaming frame format (NDJSON / SSE)
@@ -1768,6 +1772,9 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
 │  │  ├─ Interceptors/           # interceptor container (AxiosInterceptors) + request/response interceptor management
 │  │  ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in System.Text.Json / XML implementations
+│  │  │  ├─ IContentSerializer.cs      # serialization contract: Serialize / Deserialize + default byte-channel hooks (DIM)
+│  │  │  ├─ SystemTextJsonSerializer.cs# built-in JSON (default fallback): STJ + JsonSerializerOptions / AxiosJson.Options
+│  │  │  └─ XmlContentSerializer.cs    # built-in XML: cached XmlSerializer, DTD disabled, not AOT-safe
 │  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON, reflection cache, media-type and scalar classification, status text, timeouts and stream wrappers
 │  │  ├─ Pooling/                # HttpConnectionPool + pool options/statistics/PoolLease + PooledHandlerContext (handler injection)
 │  │  └─ WebAPI/                 # declarative API client (built into the main package, namespace AxiosNet.WebAPI)

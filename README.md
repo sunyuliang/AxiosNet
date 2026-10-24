@@ -1764,7 +1764,11 @@ dotnet build AxiosNet.sln -c Release
 │  │  ├─ AxiosClient.Config.cs   # 配置合并与请求头应用
 │  │  ├─ AxiosJson.cs            # JSON 全局默认（JsonSerializerOptions）
 │  │  ├─ AxiosContent.cs         # 内容序列化全局注入点（AxiosContent.Serializer）
-│  │  ├─ AxiosConfig.cs          # 请求/实例配置
+│  │  ├─ AxiosConfig.cs          # 请求/实例配置（分组设置的入口与懒创建）
+│  │  │  ├─ AxiosConfig.Serialization.cs # SerializationSettings：JSON 选项/序列化器/编码/命名
+│  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings：代理/凭据/池选项/HTTP 版本/认证
+│  │  │  ├─ AxiosConfig.Limits.cs        # LimitSettings：体积、速率、流式空闲超时
+│  │  │  └─ AxiosConfig.Callbacks.cs     # CallbackSettings：进度回调/状态校验/超时文案
 │  │  ├─ AxiosContentType.cs     # 常用 Content-Type 预置常量
 │  │  ├─ AxiosCollectionFormat.cs# params 集合编码形态（Brackets/Multi/Csv/Ssv/Tsv/Pipes）
 │  │  ├─ AxiosStreamFormat.cs    # 流式帧格式（NDJSON / SSE）
@@ -1779,6 +1783,9 @@ dotnet build AxiosNet.sln -c Release
 │  │  ├─ ResponseType.cs / AxiosAuth.cs          # 响应形态 / Basic 认证
 │  │  ├─ Interceptors/           # 拦截器容器（AxiosInterceptors）+ 请求/响应拦截器管理
 │  │  ├─ Serialization/          # IContentSerializer（2 个文本方法 + 一对字节通道 + MediaType）+ 内置 System.Text.Json / XML 实现
+│  │  │  ├─ IContentSerializer.cs      # 序列化契约：Serialize / Deserialize + 字节通道默认实现（DIM）
+│  │  │  ├─ SystemTextJsonSerializer.cs# 内置 JSON（默认回落）：STJ + JsonSerializerOptions / AxiosJson.Options
+│  │  │  └─ XmlContentSerializer.cs    # 内置 XML：XmlSerializer 按类型缓存、禁 DTD，不支持 AOT
 │  │  ├─ Internal/               # URL/params、请求体分派 + 表单/multipart 编码、响应读取、流量计量、动态 JSON、反射缓存、媒体类型与标量判定、状态码文本、超时与流包装
 │  │  ├─ Pooling/                # HttpConnectionPool + 连接池选项/统计/PoolLease + PooledHandlerContext（Handler 注入）
 │  │  └─ WebAPI/                 # 声明式 API 客户端（主包内置，命名空间 AxiosNet.WebAPI）

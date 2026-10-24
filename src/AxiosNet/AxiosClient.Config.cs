@@ -36,6 +36,8 @@ public sealed partial class AxiosClient
         var instanceSourced = perCall.InstanceOptionsInherited || perCall.EffectiveMerged;
 
         merged.Url = perCall.Url ?? merged.Url;
+        merged.Params = perCall.Params ?? merged.Params;
+        merged.Data = perCall.Data ?? merged.Data;
 
         // BaseAddress 与连接级选项同属「实例来源」：回放一份生效配置（response.Config）时，
         // 上一实例的基地址不能覆盖目标实例的 —— 否则请求会静默发到旧服务端。
@@ -73,16 +75,6 @@ public sealed partial class AxiosClient
             }
         }
 
-        if (perCall.Params is not null)
-        {
-            merged.Params = perCall.Params;
-        }
-
-        if (perCall.Data is not null)
-        {
-            merged.Data = perCall.Data;
-        }
-
         // 只在显式设置时赋值：否则 ContentTypeSet 恒为 true，
         // 让「HttpContent 自带 Content-Type 就原样透传」的判断永远失效。
         if (perCall.ContentTypeSet)
@@ -96,15 +88,6 @@ public sealed partial class AxiosClient
             merged.Timeout = perCall.Timeout;
         }
 
-        // 显式赋过值才覆盖：Auth = null 的语义是「本次请求不带认证」，
-        // 必须能压住实例默认的凭据（用 ?? 会把实例凭据发到本应匿名的端点）。
-        // 库产出的配置不带 Auth 意图：它的 Auth 已是生效结果，当成按请求项搬过去会让
-        // 回放悄悄带上一次的凭据（此前由 PreparePerCall 的 Clone 清 AuthSet 保证）。
-        if (perCall.AuthSet && !instanceSourced)
-        {
-            merged.Connection.Auth = perCall.ConnectionOrNull?.Auth;
-        }
-
         // 只在显式设置时覆盖：new AxiosConfig() 的默认值会把实例默认吞掉。
         // 必须用 if 而不是三元赋值 —— setter 会把 ResponseTypeSet 置 true，回放生效配置时
         // 连「未设置」也会被记成显式意图（自动切换出的 Dynamic/Stream 就此泄漏到下一次请求）。
@@ -112,128 +95,42 @@ public sealed partial class AxiosClient
         {
             merged.ResponseType = perCall.ResponseType;
         }
-        // 回调 / 序列化项只在有值时写回：无条件赋值会在每个请求上把分组对象建出来，
-        // 正抵消「不用的功能项不占对象」的收益。
-        var perCallCallbacks = perCall.CallbacksOrNull;
-        var mergedCallbacks = merged.CallbacksOrNull;
-
-        if ((perCallCallbacks?.ValidateStatus ?? mergedCallbacks?.ValidateStatus) is { } validateStatus)
-        {
-            merged.Callbacks.ValidateStatus = validateStatus;
-        }
 
         merged.CancellationToken = perCall.CancellationTokenSet ? perCall.CancellationToken : merged.CancellationToken;
 
+        // 分组下沉：每组只有一个守卫（组对象为 null = 本请求没碰这一组），
+        // 组内「有值才覆盖」交给各自的 MergeFrom，主体不再有十几次同类判断。
+        // 首次读取分组会懒创建对象，但只有 perCall 自己已经建出该分组时才会发生。
+        if (perCall.CallbacksOrNull is { } incomingCallbacks)
+        {
+            merged.Callbacks.MergeFrom(incomingCallbacks);
+        }
+
+        if (perCall.SerializationOrNull is { } incomingSerialization)
+        {
+            merged.Serialization.MergeFrom(incomingSerialization);
+        }
+
+        if (perCall.LimitsOrNull is { } incomingLimits)
+        {
+            merged.Limits.MergeFrom(incomingLimits);
+        }
+
         var perCallConnection = perCall.ConnectionOrNull;
-        if ((perCallConnection?.HttpVersion ?? merged.ConnectionOrNull?.HttpVersion) is { } httpVersion)
+
+        // HttpVersion 属按请求项（不是实例级），库产出的配置同样合并。
+        if (perCallConnection?.HttpVersion is { } httpVersion)
         {
             merged.Connection.HttpVersion = httpVersion;
         }
 
-        var perCallSerialization = perCall.SerializationOrNull;
-        var mergedSerialization = merged.SerializationOrNull;
-
-        if ((perCallSerialization?.JsonSerializerOptions ?? mergedSerialization?.JsonSerializerOptions) is { } jsonOptions)
-        {
-            merged.Serialization.JsonSerializerOptions = jsonOptions;
-        }
-
-        if ((perCallSerialization?.ContentSerializer ?? mergedSerialization?.ContentSerializer) is { } serializer)
-        {
-            merged.Serialization.ContentSerializer = serializer;
-        }
-
-        if ((perCallSerialization?.RequestEncoding ?? mergedSerialization?.RequestEncoding) is { } requestEncoding)
-        {
-            merged.Serialization.RequestEncoding = requestEncoding;
-        }
-
-        if ((perCallSerialization?.ResponseEncoding ?? mergedSerialization?.ResponseEncoding) is { } responseEncoding)
-        {
-            merged.Serialization.ResponseEncoding = responseEncoding;
-        }
-
-        // 后加的配置：Proxy/Credentials 已按「按请求设置」拦掉，WithCredentials/MaxRedirects 属实例级，均不参与合并。
-        if (perCall.MaxContentLengthSet)
-        {
-            merged.Limits.MaxContentLength = perCall.LimitsOrNull?.MaxContentLength;
-        }
-
-        if (perCall.MaxBodyLengthSet)
-        {
-            merged.Limits.MaxBodyLength = perCall.LimitsOrNull?.MaxBodyLength;
-        }
-
-        if (perCall.MaxRateSet)
-        {
-            merged.Limits.MaxRate = perCall.LimitsOrNull?.MaxRate;
-        }
-
-        if (perCall.CollectionFormatSet)
-        {
-            merged.Serialization.CollectionFormat =
-                perCall.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
-        }
-
-        if (perCall.StreamIdleTimeoutSet)
-        {
-            merged.Limits.StreamIdleTimeout = perCall.LimitsOrNull?.StreamIdleTimeout;
-        }
-
         // 实例级选项必须合并进来，否则按请求写的值到不了 ValidatePerRequestOptions（它判的是生效配置）。
         // 例外：库产出的配置（回放生效配置或免克隆合并）这几项描述的是来源实例，一律沿用本实例默认值。
-        if (!instanceSourced)
+        // 其中 Auth / WithCredentials / MaxRedirects 的 *Set 标记是语义的一部分：
+        // Auth = null 表示「本次请求不带认证」，显式 null 必须能压住实例默认凭据。
+        if (!instanceSourced && perCallConnection is not null)
         {
-            if (perCall.WithCredentialsSet)
-            {
-                merged.Connection.WithCredentials = perCallConnection?.WithCredentials ?? false;
-            }
-
-            if (perCall.MaxRedirectsSet)
-            {
-                merged.Connection.MaxRedirects = perCallConnection?.MaxRedirects ?? 5;
-            }
-
-            if (perCallConnection?.Proxy is { } proxy)
-            {
-                merged.Connection.Proxy = proxy;
-            }
-
-            if (perCallConnection?.Credentials is { } credentials)
-            {
-                merged.Connection.Credentials = credentials;
-            }
-
-            if (perCallConnection?.PoolOptions is { } poolOptions)
-            {
-                merged.Connection.PoolOptions = poolOptions;
-            }
-        }
-
-        if ((perCallCallbacks?.TimeoutMessage ?? mergedCallbacks?.TimeoutMessage) is { } timeoutMessage)
-        {
-            merged.Callbacks.TimeoutMessage = timeoutMessage;
-        }
-
-        if ((perCallCallbacks?.OnUploadProgress ?? mergedCallbacks?.OnUploadProgress) is { } onUploadProgress)
-        {
-            merged.Callbacks.OnUploadProgress = onUploadProgress;
-        }
-
-        if ((perCallCallbacks?.OnDownloadProgress ?? mergedCallbacks?.OnDownloadProgress) is { } onDownloadProgress)
-        {
-            merged.Callbacks.OnDownloadProgress = onDownloadProgress;
-        }
-
-        if ((perCallSerialization?.ParamsSerializer ?? mergedSerialization?.ParamsSerializer) is { } paramsSerializer)
-        {
-            merged.Serialization.ParamsSerializer = paramsSerializer;
-        }
-
-        if ((perCallSerialization?.FormFieldNameSelector ?? mergedSerialization?.FormFieldNameSelector)
-            is { } formFieldNameSelector)
-        {
-            merged.Serialization.FormFieldNameSelector = formFieldNameSelector;
+            merged.Connection.MergeFrom(perCallConnection);
         }
 
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定。
