@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 
 namespace AxiosNet.Internal;
@@ -75,7 +76,8 @@ internal static class UrlBuilder
             }
             else
             {
-                target += (target.Contains('?') ? "&" : "?") + query;
+                // 一次拼接成型：先拼分隔符再拼目标会多出一个中间串（每请求热路径）。
+                target = string.Concat(target, target.Contains('?') ? "&" : "?", query);
             }
         }
 
@@ -265,11 +267,35 @@ internal static class ParamsSerializer
             {
                 foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
                 {
-                    Append(EscapeKey(property.Name), property.GetValue(paramsObj), pairs, visited: null, format);
+                    Append(ReflectionCache.GetEscapedName(property), property.GetValue(paramsObj), pairs, visited: null, format);
                 }
             }
 
-            return string.Join("&", pairs.Select(p => p.Key + "=" + p.Value));
+            // 收尾：单个 StringBuilder 一次成型。Select + 每对中间串 + Join 的二次遍历
+            // 在每请求热路径上纯属浪费（千级 params 时约 3 倍瞬分配）。
+            if (pairs.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var capacity = pairs.Count * 2;
+            for (var i = 0; i < pairs.Count; i++)
+            {
+                capacity += pairs[i].Key.Length + pairs[i].Value.Length;
+            }
+
+            var query = new StringBuilder(capacity);
+            for (var i = 0; i < pairs.Count; i++)
+            {
+                if (i > 0)
+                {
+                    query.Append('&');
+                }
+
+                query.Append(pairs[i].Key).Append('=').Append(pairs[i].Value);
+            }
+
+            return query.ToString();
         }
         catch (DataCycleException ex)
         {
@@ -412,7 +438,8 @@ internal static class ParamsSerializer
         {
             foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
             {
-                Append($"{prefix}[{EscapeKey(property.Name)}]", property.GetValue(value), pairs, visited, format);
+                // 后缀（含转义）按属性缓存：属性名跨请求不变，热路径只剩一次前缀拼接
+                Append(prefix + ReflectionCache.GetBracketSuffix(property), property.GetValue(value), pairs, visited, format);
             }
         }
         finally
@@ -435,20 +462,24 @@ internal static class ParamsSerializer
         visited = ObjectGraph.Enter(visited, enumerable);
         try
         {
-            var items = new List<object?>();
-            foreach (var item in enumerable)
-            {
-                items.Add(item);
-            }
-
+            // Multi 直接流式枚举源：其余分隔形态要两遍（先判全标量，再拼接 / 回落），
+            // 才需要物化一次；能取到 Count 时按容量建表。
             if (format == AxiosCollectionFormat.Multi)
             {
-                foreach (var item in items)
+                foreach (var item in enumerable)
                 {
                     Append(prefix, item, pairs, visited, format);
                 }
 
                 return;
+            }
+
+            var items = enumerable as ICollection is { Count: > 0 } counted
+                ? new List<object?>(counted.Count)
+                : new List<object?>();
+            foreach (var item in enumerable)
+            {
+                items.Add(item);
             }
 
             var parts = new List<string>(items.Count);
@@ -639,7 +670,7 @@ internal static class ParamsSerializer
     };
 
     // axios 默认 encoder 用 encodeURIComponent，并把 %5B / %5D 还原成 [ ]
-    private static string EscapeKey(string key)
+    internal static string EscapeKey(string key)
         => Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]");
 
     private static string EscapeValue(string value)

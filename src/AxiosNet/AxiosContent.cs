@@ -40,6 +40,13 @@ public static class AxiosContent
     private static readonly ConcurrentDictionary<string, IContentSerializer> Registry =
         new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// 注册表条目数，只用于 <see cref="Lookup"/> 的「空表」快路径判定：
+    /// <see cref="ConcurrentDictionary{TKey,TValue}.IsEmpty"/> 会取全部桶锁，比一次字符串归一化还贵。
+    /// 注册/注销是启动期动作，这里的计数允许与并发写入有极短的可见性滞后（最多错过一次查找）。
+    /// </summary>
+    private static int _registeredCount;
+
     private static IContentSerializer? _serializer;
 
     /// <summary>
@@ -68,7 +75,14 @@ public static class AxiosContent
         var key = MediaTypes.Normalize(mediaType)
             ?? throw new ArgumentException("媒体类型不能为空。", nameof(mediaType));
 
-        Registry[key] = serializer;
+        if (!Registry.TryAdd(key, serializer))
+        {
+            // 重复注册以最后一次为准：覆盖已有项，计数不变。
+            Registry[key] = serializer;
+            return;
+        }
+
+        Interlocked.Increment(ref _registeredCount);
     }
 
     /// <summary>取消某个媒体类型的注册（回到「未注册」，即自动模式回落内置 JSON）。</summary>
@@ -76,7 +90,13 @@ public static class AxiosContent
     public static bool Unregister(string mediaType)
     {
         var key = MediaTypes.Normalize(mediaType);
-        return key is not null && Registry.TryRemove(key, out _);
+        if (key is null || !Registry.TryRemove(key, out _))
+        {
+            return false;
+        }
+
+        Interlocked.Decrement(ref _registeredCount);
+        return true;
     }
 
     /// <summary>
@@ -109,6 +129,14 @@ public static class AxiosContent
     /// </summary>
     private static IContentSerializer? Lookup(string? mediaType)
     {
+        // 注册表为空时任何媒体类型都查不到：先于归一化返回，省掉每请求一次子串 + 大小写转换
+        // （零注册是绝大多数应用的形态，这条快路径让「无注入」时查找本身零分配）。
+        // 用计数而不是 ConcurrentDictionary.IsEmpty：后者每次都要取全部桶锁。
+        if (Volatile.Read(ref _registeredCount) == 0)
+        {
+            return null;
+        }
+
         var main = MediaTypes.Normalize(mediaType);
         if (main is null)
         {

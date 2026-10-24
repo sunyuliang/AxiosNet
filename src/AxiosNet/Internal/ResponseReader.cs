@@ -272,9 +272,9 @@ internal static class ResponseReader
 
             // transformResponse：反序列化之后依次加工 Data。
             // 调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，不让裸异常从管线深处漏出。
-            if (config.HasTransformResponse)
+            if (config.TransformResponseSnapshot is { } responseTransforms)
             {
-                foreach (var transform in config.TransformResponse)
+                foreach (var transform in responseTransforms)
                 {
                     try
                     {

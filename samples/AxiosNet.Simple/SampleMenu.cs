@@ -41,7 +41,12 @@ internal static class SampleMenu
                 break; // 标准输入结束（重定向 / 管道）：退出
             }
 
-            Console.Clear();
+            // stdout 被重定向（管道 / CI / 重定向到文件）时 Console.Clear 会抛「句柄无效」：
+            // 清屏只是交互体验，没有控制台就跳过。
+            if (!Console.IsOutputRedirected)
+            {
+                Console.Clear();
+            }
 
             var command = line.Trim();
             if (command.Length == 0)

@@ -190,7 +190,9 @@ internal static class RequestBodyFactory
         // 字典 / 集合 / 对象 / dynamic 一律不进这个分支，它们和业务对象走同一套逻辑。
         if (BodyFields.IsScalar(type))
         {
-            return CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset);
+            var scalar = CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset);
+            ValidateDeclaredCharset(scalar, config, encoding);
+            return scalar;
         }
 
         // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送（不编码文本、不补 charset）。
@@ -199,7 +201,38 @@ internal static class RequestBodyFactory
             return CreateBinary(bytes, mediaType);
         }
 
-        return CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset);
+        // Serialize 可能往 config.Headers 写 Content-Type（含 charset）：产出之后再校验
+        var text = CreateText(serializer.Serialize(data, type, config), mediaType, encoding, appendCharset);
+        ValidateDeclaredCharset(text, config, encoding);
+        return text;
+    }
+
+    /// <summary>
+    /// 正文产出之后的 <b>charset 收口校验</b>：最终会发出的 Content-Type（请求头里的优先，
+    /// 与 <c>ApplyHeaders</c> 的覆盖规则一致）若声明了 charset，必须与正文实际编码一致。
+    /// <para>
+    /// 序列化器可以在 <see cref="IContentSerializer.Serialize"/> 里写请求头、或自报带 charset 的
+    /// <see cref="IContentSerializer.MediaType"/>，这些写入都发生在正文产出过程中，入口处的预校验
+    /// 看不到它们 —— 落空的结果是「头声明 gbk、正文 UTF-8」，服务端按头解出乱码且没有任何报错
+    /// （<see cref="IContentSerializer"/> 上承诺拦下 <c>ERR_BAD_OPTION_VALUE</c>，在这里兑现）。
+    /// </para>
+    /// </summary>
+    private static void ValidateDeclaredCharset(HttpContent content, AxiosConfig config, Encoding bodyEncoding)
+    {
+        var finalType = config.HasHeaders && config.Headers.Get("Content-Type") is { Length: > 0 } headerType
+            ? headerType
+            : content.Headers.ContentType?.ToString();
+
+        if (finalType is { Length: > 0 }
+            && RequestContentType.GetCharsetEncoding(finalType) is { } declared
+            && declared.CodePage != bodyEncoding.CodePage)
+        {
+            throw AxiosException.InvalidOption(
+                $"Content-Type 声明 charset={declared.WebName}，但请求体实际按 {bodyEncoding.WebName} 编码："
+                + "两者不一致会让服务端按头解出乱码。请让序列器自报 / 写入与正文一致的 charset，"
+                + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.RequestEncoding。",
+                config);
+        }
     }
 
     /// <summary>「内容原样发送」的类型：与结构化数据相对，不经过任何展平/序列化。</summary>

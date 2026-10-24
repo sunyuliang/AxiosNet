@@ -28,13 +28,18 @@ public sealed partial class AxiosClient
             return merged;
         }
 
+        // 库产出的配置（快捷方法 / 本方法的产物 / 它们的克隆）整体按「实例来源」对待：
+        // BaseAddress 与连接级选项一律沿用本实例的值，不能把源实例的搬过来。
+        // InstanceOptionsInherited 覆盖经 Clone 的场景；EffectiveMerged 覆盖未克隆、
+        // 直接合并的场景（PreparePerCall 的免克隆回放路径）—— 两者对库产出配置等价，
+        // 调用方自己 new 的配置两个标记都没有，仍可按请求指定基地址 / 连接级选项。
+        var instanceSourced = perCall.InstanceOptionsInherited || perCall.EffectiveMerged;
+
         merged.Url = perCall.Url ?? merged.Url;
 
         // BaseAddress 与连接级选项同属「实例来源」：回放一份生效配置（response.Config）时，
         // 上一实例的基地址不能覆盖目标实例的 —— 否则请求会静默发到旧服务端。
-        // 区分依据是 InstanceOptionsInherited（Library 产出的生效配置），
-        // 调用方自己 new 的配置（false）仍可按请求指定基地址。
-        if (!perCall.InstanceOptionsInherited)
+        if (!instanceSourced)
         {
             merged.BaseAddress = perCall.BaseAddress ?? merged.BaseAddress;
         }
@@ -93,7 +98,9 @@ public sealed partial class AxiosClient
 
         // 显式赋过值才覆盖：Auth = null 的语义是「本次请求不带认证」，
         // 必须能压住实例默认的凭据（用 ?? 会把实例凭据发到本应匿名的端点）。
-        if (perCall.AuthSet)
+        // 库产出的配置不带 Auth 意图：它的 Auth 已是生效结果，当成按请求项搬过去会让
+        // 回放悄悄带上一次的凭据（此前由 PreparePerCall 的 Clone 清 AuthSet 保证）。
+        if (perCall.AuthSet && !instanceSourced)
         {
             merged.Connection.Auth = perCall.ConnectionOrNull?.Auth;
         }
@@ -174,8 +181,8 @@ public sealed partial class AxiosClient
         }
 
         // 实例级选项必须合并进来，否则按请求写的值到不了 ValidatePerRequestOptions（它判的是生效配置）。
-        // 例外：回放一份生效配置（InstanceOptionsInherited）时这几项描述的是来源实例，一律沿用本实例默认值。
-        if (!perCall.InstanceOptionsInherited)
+        // 例外：库产出的配置（回放生效配置或免克隆合并）这几项描述的是来源实例，一律沿用本实例默认值。
+        if (!instanceSourced)
         {
             if (perCall.WithCredentialsSet)
             {

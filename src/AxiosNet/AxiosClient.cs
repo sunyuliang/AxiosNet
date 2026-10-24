@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.ExceptionServices;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
@@ -231,31 +232,49 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 按配置拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求。
-    /// 返回实际发送形态（已转义），可直接用于签名与日志。
+    /// 按<b>本实例的生效配置</b>拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求。
+    /// 返回本实例实际会发出的形态（已转义），可直接用于签名与日志。
+    /// <para>
+    /// 传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按<b>回放语义</b>重新合并：
+    /// 其中的实例级项（<c>BaseAddress</c> / 代理 / 池选项）取自本实例，与
+    /// <see cref="RequestAsync(AxiosConfig)"/> 真正发出去的地址一致 —— 签名与日志不会与实际去向错位。
+    /// </para>
     /// <para><see cref="System.Uri"/> 按 RFC 3986 归一化非保留字符（<c>%41</c>→<c>A</c>），与请求行一致。</para>
     /// </summary>
     public string GetUri(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        // 已经是生效配置（RequestAsync/GetUri 的 configure 入口产出）时不必再合并一遍：
-        // 它的头集合就是最终形态，重新合并会把回调里删掉的头（Delete/Clear）又加回来。
-        var merged = config.EffectiveMerged ? config : MergeConfig(config);
+        // 一律按「本实例的生效配置」算：回放 response.Config 时，其中的 BaseAddress 等实例级项
+        // 由 MergeConfig 的 instanceSourced 门禁让位给本实例默认值，与 RequestAsync 实际发出的地址一致。
+        // （此前「生效配置原样使用」那个分支是为了让 GetUri(Action) 里写的 BaseAddress 不被门禁吞掉，
+        //  那个需求现在由 GetUri(Action) 直接拼装满足，不再需要它。）
+        var merged = MergeConfig(config);
         return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.ParamsSerializer, config: merged)
             .AbsoluteUri;
     }
 
-    /// <summary>按 Action 配置拼出最终请求 URL，不发请求。</summary>
+    /// <summary>
+    /// 按 Action 配置拼出最终请求 URL，不发请求。
+    /// 回调在实例默认值的副本上修改（与快捷方法同一模型）：<c>c.BaseAddress</c> / <c>c.Url</c> /
+    /// <c>c.Params</c> 直接生效，返回本实例会发出的形态。
+    /// </summary>
     public string GetUri(Action<AxiosConfig> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
 
-        // 与 RequestAsync(configure) 同一份起点：回调看到的 config 已带实例默认值。
+        // 直接拼生效配置，不再回落到 GetUri(AxiosConfig)：那条路径会走 MergeConfig，
+        // 而它的 instanceSourced 门禁会把回调里显式写的 BaseAddress 当成「来源实例的值」丢掉。
+        // 请求头不参与 URL 拼装，因此不需要 ApplyRemoveHeaders。
         var config = NewEffectiveConfig();
         configure(config);
-        ApplyRemoveHeaders(config);
-        return GetUri(config);
+        return UrlBuilder.Build(
+                config.BaseAddress,
+                config.Url,
+                config.Params,
+                config.SerializationOrNull?.ParamsSerializer,
+                config: config)
+            .AbsoluteUri;
     }
 
     // ------------------------------------------------------------------
@@ -301,13 +320,31 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 把调用方交进来的配置整理成「按请求项」：只有带 <see cref="AxiosConfig.EffectiveMerged"/> 的
-    /// 生效配置（典型是回放 <see cref="AxiosResponse.Config"/>）需要处理 ——
-    /// 克隆一次清掉标记，让它重新合并到本实例默认值，否则本实例的默认值会被整段跳过；
-    /// 同时把其中的实例级选项标成「来源是实例」，合并时沿用本实例的值。
+    /// 把调用方交进来的配置整理成「本次请求的生效配置」：普通配置（按请求补丁）原样返回，
+    /// 由 <see cref="SendAsync"/> 合并到实例默认值。
+    /// <para>
+    /// 带 <see cref="AxiosConfig.EffectiveMerged"/> 的生效配置（典型是回放 <see cref="AxiosResponse.Config"/>）
+    /// 在这里<b>直接合并</b>：合并只读 perCall、不写它，不需要先 <see cref="AxiosConfig.Clone"/> 一份 ——
+    /// 那份克隆只是用来「清掉标记让 SendAsync 走合并分支」，白白多一次深拷。
+    /// </para>
+    /// <para>
+    /// 合并产物在这里（而不是 <c>MergeConfig</c> 里）置 <c>EffectiveMerged</c>：
+    /// 标记的含义是「本次请求已合并、SendAsync 不必再合并」，只对这条路径成立；
+    /// <c>MergeConfig</c> 的其他调用方（SendAsync 的常规合并、<c>GetUri</c>）拿到的产物
+    /// 仍按「未合并的输入」处理，与 <c>GetUri</c> 既有的 <c>EffectiveMerged ? 原样 : 合并</c> 判定兼容。
+    /// </para>
     /// </summary>
-    private static AxiosConfig PreparePerCall(AxiosConfig config)
-        => config.EffectiveMerged ? config.Clone() : config;
+    private AxiosConfig PreparePerCall(AxiosConfig config)
+    {
+        if (!config.EffectiveMerged)
+        {
+            return config;
+        }
+
+        var merged = MergeConfig(config);
+        merged.EffectiveMerged = true;
+        return merged;
+    }
 
     // ------------------------------------------------------------------
     // 核心请求管线
@@ -422,9 +459,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             // 2) transformRequest：拦截器之后、编码之前依次作用于数据
             // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
-            if (config.HasTransformRequest)
+            // 快照访问器拿具体 List：foreach 走结构体枚举器，不装箱。
+            if (config.TransformRequestSnapshot is { } requestTransforms)
             {
-                foreach (var transform in config.TransformRequest)
+                foreach (var transform in requestTransforms)
                 {
                     try
                     {
@@ -874,29 +912,40 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return null;
         }
 
-        var buffer = new byte[limit];
+        // 失败路径的一次性缓冲：走 ArrayPool，大错误体 + 高频重试时不再每请求一块 64KB。
+        // Rent 可能返回比 limit 大的缓冲，读取上限仍按 limit 算（抢救量有契约上限）。
+        var buffer = ArrayPool<byte>.Shared.Rent(limit);
         var total = 0;
         try
         {
-            while (total < buffer.Length)
+            try
             {
-                var read = await body.ReadAsync(buffer.AsMemory(total), cancellationToken).ConfigureAwait(false);
-                if (read == 0)
+                while (total < limit)
                 {
-                    break;
+                    var read = await body.ReadAsync(buffer.AsMemory(total, limit - total), cancellationToken).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    total += read;
                 }
-
-                total += read;
             }
-        }
-        catch (Exception ex) when (ex is IOException or HttpRequestException or AxiosException or OperationCanceledException)
-        {
-            // 错误体读不完不影响「这是一次失败响应」，保留已读部分
-        }
+            catch (Exception ex) when (ex is IOException or HttpRequestException or AxiosException or OperationCanceledException)
+            {
+                // 错误体读不完不影响「这是一次失败响应」，保留已读部分
+            }
 
-        return total == 0
-            ? null
-            : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding);
+            // 解码必须在 finally 归还缓冲之前完成：归还后该数组可能立刻被别的请求租走并覆写。
+            return total == 0
+                ? null
+                : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding);
+        }
+        finally
+        {
+            // 错误体可能含敏感信息：清空后再归还，避免下一个租用方读到上一请求的正文。
+            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+        }
     }
 
     private static void ValidateRangeConfig(AxiosConfig config)

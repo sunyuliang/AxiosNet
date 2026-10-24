@@ -330,15 +330,23 @@ public sealed class AxiosConfig
         }
     }
 
-    private IList<Func<object?, AxiosConfig, object?>>? _transformRequest;
+    private SynchronizedList<Func<object?, AxiosConfig, object?>>? _transformRequest;
 
     /// <summary>是否有请求 transform（不创建集合）。</summary>
     internal bool HasTransformRequest => _transformRequest is { Count: > 0 };
 
-    private IList<Func<object?, AxiosConfig, object?>>? _transformResponse;
+    /// <summary>请求 transform 链的只读快照（管线热路径：具体 List 类型，foreach 走结构体枚举器、零分配）。</summary>
+    internal List<Func<object?, AxiosConfig, object?>>? TransformRequestSnapshot
+        => _transformRequest is { Count: > 0 } ? _transformRequest.Snapshot() : null;
+
+    private SynchronizedList<Func<object?, AxiosConfig, object?>>? _transformResponse;
 
     /// <summary>是否有响应 transform（不创建集合）。</summary>
     internal bool HasTransformResponse => _transformResponse is { Count: > 0 };
+
+    /// <summary>响应 transform 链的只读快照（响应阶段热路径，同 <see cref="TransformRequestSnapshot"/>）。</summary>
+    internal List<Func<object?, AxiosConfig, object?>>? TransformResponseSnapshot
+        => _transformResponse is { Count: > 0 } ? _transformResponse.Snapshot() : null;
 
     /// <summary>
     /// 对应 axios transformResponse：响应体转换/反序列化之后依次作用于 Data
@@ -398,11 +406,12 @@ public sealed class AxiosConfig
         var clone = (AxiosConfig)MemberwiseClone();
 
         clone._headers = _headers?.Clone();
-        clone._removeHeaders = _removeHeaders is { Count: > 0 }
-            ? new SynchronizedList<string>(_removeHeaders)
-            : null;
-        clone._transformRequest = CopiedTransforms(_transformRequest);
-        clone._transformResponse = CopiedTransforms(_transformResponse);
+
+        // transform 链与删头名单走写时复制共享（见 SynchronizedList.Share）：只读用法零拷贝，
+        // 任意一方首次写入前分离。此前每请求都整份拷贝，实例配了 transform 时白付一次全量复制。
+        clone._removeHeaders = _removeHeaders is { Count: > 0 } ? _removeHeaders.Share() : null;
+        clone._transformRequest = SharedTransforms(_transformRequest);
+        clone._transformResponse = SharedTransforms(_transformResponse);
         clone._serialization = _serialization?.Clone();
         clone._connection = _connection?.Clone();
         clone._limits = _limits?.Clone();
@@ -441,12 +450,10 @@ public sealed class AxiosConfig
         => values as SynchronizedList<Func<object?, AxiosConfig, object?>>
             ?? new SynchronizedList<Func<object?, AxiosConfig, object?>>(values);
 
-    /// <summary>transform 链的独立副本；空链返回 <c>null</c>（调用方只在有内容时才创建）。</summary>
-    private static IList<Func<object?, AxiosConfig, object?>>? CopiedTransforms(
-        IList<Func<object?, AxiosConfig, object?>>? source)
-        => source is { Count: > 0 }
-            ? new SynchronizedList<Func<object?, AxiosConfig, object?>>(source)
-            : null;
+    /// <summary>transform 链的共享引用（写时复制）；空链返回 <c>null</c>（调用方只在有内容时才创建）。</summary>
+    private static SynchronizedList<Func<object?, AxiosConfig, object?>>? SharedTransforms(
+        SynchronizedList<Func<object?, AxiosConfig, object?>>? source)
+        => source is { Count: > 0 } ? source.Share() : null;
 
     /// <summary>
     /// 序列化相关设置（<see cref="AxiosConfig.Serialization"/>）。

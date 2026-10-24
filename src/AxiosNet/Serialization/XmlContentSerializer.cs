@@ -106,16 +106,25 @@ public sealed class XmlContentSerializer : IContentSerializer
     private static XmlSerializer For(Type type) => Cache.GetOrAdd(type, static t => new XmlSerializer(t));
 
     /// <summary>
+    /// 根元素声明的命名空间（空前缀）。按类型缓存：此前每次 <see cref="Serialize"/> 都要跑两次
+    /// <c>GetCustomAttribute</c>，而声明随类型不变。
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, string> RootNamespaces = new();
+
+    /// <summary>
     /// 根元素使用「空前缀 + 类型声明的命名空间」：无命名空间的 DTO 因此不带
     /// <c>xmlns:xsi</c>/<c>xmlns:xsd</c>；显式写了 <c>[XmlRoot(Namespace=...)]</c> 的仍按声明输出。
     /// </summary>
     private static XmlSerializerNamespaces NamespacesFor(Type type)
     {
-        var declared = type.GetCustomAttribute<XmlRootAttribute>(inherit: false)?.Namespace
-            ?? type.GetCustomAttribute<XmlTypeAttribute>(inherit: false)?.Namespace;
+        // 命名空间实例每次新建：XmlSerializer 序列化过程中可能往里补条目，共享一个可变实例有竞态。
+        var declared = RootNamespaces.GetOrAdd(type, static t =>
+            t.GetCustomAttribute<XmlRootAttribute>(inherit: false)?.Namespace
+            ?? t.GetCustomAttribute<XmlTypeAttribute>(inherit: false)?.Namespace
+            ?? string.Empty);
 
         var namespaces = new XmlSerializerNamespaces();
-        namespaces.Add(string.Empty, declared ?? string.Empty);
+        namespaces.Add(string.Empty, declared);
         return namespaces;
     }
 

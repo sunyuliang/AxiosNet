@@ -253,9 +253,16 @@ public sealed class HttpConnectionPool : IDisposable
         // 按 LastUsedUtc 升序扫：EnsureCapacity 的 limit: 1 要驱逐的是「最久未使用」的空闲节点，
         // ConcurrentDictionary 的枚举顺序是桶结构序，直接取第一个等于随机挑（可能驱逐刚空闲的热节点）。
         // 这里的读值只决定顺序；是否可驱逐仍以锁内的复核为准（并发下读到旧值无正确性影响）。
-        // 快照 + 排序只跑在驱逐路径（达到上限或手动清理），不在租用热路径上。
+        // 快照只跑在驱逐路径（达到上限或手动清理），不在租用热路径上。
         var candidates = _endpoints.ToArray();
-        Array.Sort(candidates, static (a, b) => a.Value.LastUsedUtc.CompareTo(b.Value.LastUsedUtc));
+
+        // LRU 顺序只在「要驱逐的个数少于候选数」时才有意义（limit: 1 挑最久未用的）；
+        // 全量清扫（定时器 / 手动清理，limit = int.MaxValue）会把所有合格节点都扫到，顺序无关，
+        // 此时跳过排序：每个 tick 省掉一次 O(n logn) 排序。
+        if (limit < candidates.Length)
+        {
+            Array.Sort(candidates, static (a, b) => a.Value.LastUsedUtc.CompareTo(b.Value.LastUsedUtc));
+        }
 
         foreach (var pair in candidates)
         {

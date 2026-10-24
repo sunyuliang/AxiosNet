@@ -20,10 +20,25 @@ internal static class MultipartBodyBuilder
         AxiosConfig config)
     {
         // 用户显式声明 boundary 时沿用（部分服务端会校验），否则由 MultipartFormDataContent 生成随机边界。
-        var boundary = RequestContentType.ExtractBoundary(mediaType);
-        var content = boundary is null
-            ? new MultipartFormDataContent()
-            : new MultipartFormDataContent(boundary);
+        // 构造放进 try：BCL 对非法 boundary（超长 / 含限定字符集之外的字符）抛 ArgumentException，
+        // 那与「字段名非法」同属调用方选项错误，统一成带配置上下文的 ERR_BAD_OPTION_VALUE
+        // （放在 try 外会被 AxiosClient 收成 ERR_BAD_REQUEST「请求体序列化失败」，分类错位）。
+        MultipartFormDataContent content;
+        try
+        {
+            var boundary = RequestContentType.ExtractBoundary(mediaType);
+            content = boundary is null
+                ? new MultipartFormDataContent()
+                : new MultipartFormDataContent(boundary);
+        }
+        catch (ArgumentException ex)
+        {
+            throw AxiosException.InvalidOption(
+                $"multipart boundary 非法：{ex.Message}"
+                + "（RFC 2046：boundary 不超过 70 字符，且只含限定字符集；不指定时由库自动生成）。",
+                config,
+                ex);
+        }
 
         try
         {

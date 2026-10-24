@@ -16,7 +16,11 @@ namespace AxiosNet.Tests;
 /// </summary>
 public sealed class StreamCancellationTests
 {
-    /// <summary>期望在 250ms 内被打断；给 2 秒的宽松上限，避免 CI 抖动导致假失败。</summary>
+    /// <summary>
+    /// 期望在 250ms 内被打断；给 2 秒的宽松上限，避免 CI 抖动导致假失败。
+    /// <para>只用于「服务端稍后会自然返回」的用例（3s / 4s 延迟）：这类断言必须把
+    /// 「被超时/取消打断」与「自己等完」区分开，预算不能放大。</para>
+    /// </summary>
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
 
     /// <summary>
@@ -25,6 +29,19 @@ public sealed class StreamCancellationTests
     /// （64KB @1KB/s ≈ 64s），2 秒的 <see cref="Budget"/> 在这里过于接近调度抖动幅度。
     /// </summary>
     private static readonly TimeSpan BlockingReadBudget = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// 「内层流永不返回」的用例专用预算：断言只需证明超时/取消确实生效（否则会一直等下去），
+    /// 不必精确到几百毫秒。
+    /// <para>
+    /// 计时器回调要排进线程池，CI 满载时线程池注入慢，回调可能晚到数秒 ——
+    /// 实测 GitHub Actions 上 <c>BufferedResponse_HonorsTimeoutDuringBodyRead</c> 耗时 2.12s
+    /// （同步读用例约 3.3s）。2 秒的 <see cref="Budget"/> 落在调度抖动范围内，
+    /// 会把「实现正确但机器忙」误判成失败。
+    /// </para>
+    /// <para>只用于内层流不会自行结束的用例；有自然返回时间的仍然用 <see cref="Budget"/>。</para>
+    /// </summary>
+    private static readonly TimeSpan HungReadBudget = TimeSpan.FromSeconds(10);
 
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromMilliseconds(250);
 
@@ -185,7 +202,7 @@ public sealed class StreamCancellationTests
         clock.Stop();
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.True(clock.Elapsed < Budget, $"同步读超时没有及时生效，耗时 {clock.Elapsed}");
+        Assert.True(clock.Elapsed < HungReadBudget, $"同步读超时没有及时生效，耗时 {clock.Elapsed}");
     }
 
     [Fact]
@@ -201,7 +218,7 @@ public sealed class StreamCancellationTests
         clock.Stop();
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.True(clock.Elapsed < Budget, $"异步读超时没有及时生效，耗时 {clock.Elapsed}");
+        Assert.True(clock.Elapsed < HungReadBudget, $"异步读超时没有及时生效，耗时 {clock.Elapsed}");
     }
 
     /// <summary>
@@ -356,7 +373,7 @@ public sealed class StreamCancellationTests
         clock.Stop();
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.True(clock.Elapsed < Budget, $"正文读取阶段没有响应超时，耗时 {clock.Elapsed}");
+        Assert.True(clock.Elapsed < HungReadBudget, $"正文读取阶段没有响应超时，耗时 {clock.Elapsed}");
     }
 
     [Fact]
@@ -371,7 +388,7 @@ public sealed class StreamCancellationTests
         clock.Stop();
 
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
-        Assert.True(clock.Elapsed < Budget, $"正文读取阶段没有响应取消，耗时 {clock.Elapsed}");
+        Assert.True(clock.Elapsed < HungReadBudget, $"正文读取阶段没有响应取消，耗时 {clock.Elapsed}");
     }
 
     // ------------------------------------------------------------------

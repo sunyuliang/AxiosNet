@@ -1,5 +1,6 @@
 using System.Text;
 using AxiosNet.Internal;
+using AxiosNet.Serialization;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -25,8 +26,13 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     private readonly AxiosConfig _config;
     private readonly HttpRequestMessage? _request;
     private readonly AxiosStreamFormat _format;
-    private readonly string? _charSet;
-    private readonly string? _mediaType;
+
+    /// <summary>整个响应流固定的生效编码（取流时解析一次）：null = 未声明 charset 也未强制，按行 BOM 探测。</summary>
+    private readonly Encoding? _encoding;
+
+    /// <summary>整个响应流固定的序列化器（媒体类型与配置都不变）：避免每帧重复查注册表 / 归一化媒体类型。</summary>
+    private readonly IContentSerializer _serializer;
+
     private readonly StringBuilder _frameData = new();
 
     private byte[] _buffer = new byte[ReadChunk];
@@ -66,8 +72,14 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _config = config;
         _request = request;
         _format = format;
-        _charSet = charSet;
-        _mediaType = mediaType;
+
+        // framing 校验已经解析过「最终生效的编码」（强制 ResponseEncoding 优先于 charset），
+        // 结果直接留给逐行解码复用：每行重跑 ResolveFromCharset 在非 UTF-8 声明时是一次编码表查找。
+        _encoding = framingEncoding;
+
+        // 序列化器对整个响应流固定：取流时解析一次。每帧解析会让 NDJSON / SSE 的
+        // 高帧率场景（LLM token 流、行情推送）每帧白付一次媒体类型归一化 + 注册表查找。
+        _serializer = AxiosContent.Get(config, mediaType);
     }
 
     public T Current => _current;
@@ -288,7 +300,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     }
 
     private string Decode(int offset, int length)
-        => length <= 0 ? string.Empty : ResponseTextDecoder.Decode(_buffer.AsSpan(offset, length), _charSet, _config.SerializationOrNull?.ResponseEncoding);
+        => length <= 0 ? string.Empty : ResponseTextDecoder.DecodeResolved(_buffer.AsSpan(offset, length), _encoding);
 
     /// <summary>压缩未消费字节后补读一块；缓冲区到达单帧上限时抛错而不是无限增长。</summary>
     private async ValueTask FillAsync()
@@ -332,8 +344,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     {
         try
         {
-            var serializer = AxiosContent.Get(_config, _mediaType);
-            var value = serializer.Deserialize(payload, typeof(T), _config);
+            var value = _serializer.Deserialize(payload, typeof(T), _config);
 
             // null 是合法帧（JSON 的 null）；非 null 却不是 T 说明序列化器与目标类型不匹配，
             // 静默返回 default! 会把编程错误伪装成一帧空数据。

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace AxiosNet.Internal;
 
 /// <summary>
@@ -26,6 +28,24 @@ internal static class ResponseTextDecoder
             ?? Encoding.UTF8;
 
         // 即便已确定编码，也剥离匹配的 BOM（与 .NET 一致）。
+        var bomLength = GetPreambleLength(bytes, encoding);
+        return encoding.GetString(bytes[bomLength..]);
+    }
+
+    /// <summary>
+    /// 已解析编码的解码（流式分帧用：编码对整个响应流固定，调用方在取流时解析一次，
+    /// 之后每行直接复用，不再重复跑 charset 表查找）。其余语义与
+    /// <see cref="Decode(ReadOnlySpan{byte}, string?, Encoding?)"/> 完全一致：
+    /// <paramref name="resolved"/> 为 <c>null</c>（未声明 charset 也未强制）时仍按 BOM → UTF-8 兜底。
+    /// </summary>
+    public static string DecodeResolved(ReadOnlySpan<byte> bytes, Encoding? resolved)
+    {
+        if (bytes.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var encoding = resolved ?? DetectFromBom(bytes) ?? Encoding.UTF8;
         var bomLength = GetPreambleLength(bytes, encoding);
         return encoding.GetString(bytes[bomLength..]);
     }
@@ -123,9 +143,16 @@ internal static class ResponseTextDecoder
         return null;
     }
 
+    // Encoding.GetPreamble() 每次调用都新建字节数组：流式分帧按行解码时会每行分配一次。
+    // 前导只取决于编码实例（内置实例是单例），按实例缓存，键随编码一起被 GC 回收。
+    private static readonly ConditionalWeakTable<Encoding, byte[]> Preambles = new();
+
+    private static ReadOnlySpan<byte> PreambleOf(Encoding encoding)
+        => Preambles.GetValue(encoding, static e => e.GetPreamble());
+
     private static int GetPreambleLength(ReadOnlySpan<byte> bytes, Encoding encoding)
     {
-        var preamble = encoding.GetPreamble();
+        var preamble = PreambleOf(encoding);
         if (preamble.Length > 0
             && bytes.Length >= preamble.Length
             && bytes[..preamble.Length].SequenceEqual(preamble))

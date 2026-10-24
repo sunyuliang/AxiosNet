@@ -41,11 +41,40 @@ internal static class FormBodyEncoder
         }
 
         // 表单体按已转义的 ASCII 串写入，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
-        var body = string.Join('&', pairs.Select(pair => pair.Key + "=" + pair.Value));
+        // 单个 StringBuilder 一次成型：Select + 每对中间串 + Join 的二次遍历在千字段时约 3 倍瞬分配。
+        var body = BuildBody(pairs);
 
         var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset));
         return content;
+    }
+
+    /// <summary>把键值对拼成表单正文；容量按精确长度预估，一次成型不重排。</summary>
+    private static string BuildBody(List<KeyValuePair<string, string>> pairs)
+    {
+        if (pairs.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var capacity = (pairs.Count - 1) * 2;
+        foreach (var pair in pairs)
+        {
+            capacity += pair.Key.Length + pair.Value.Length + 1;
+        }
+
+        var builder = new StringBuilder(capacity);
+        for (var i = 0; i < pairs.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append('&');
+            }
+
+            builder.Append(pairs[i].Key).Append('=').Append(pairs[i].Value);
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>
@@ -328,7 +357,19 @@ internal static class FormBodyEncoder
         }
 
         var bytes = encoding.GetBytes(value);
-        var builder = new StringBuilder(bytes.Length);
+
+        // 容量一次算准（每字节 1 或 3 字符）：从 bytes.Length 起建会在转义密集的正文上反复扩容，
+        // 按 3 倍预估又对纯 ASCII 正文浪费两倍 —— 先数一遍需要转义的字节，两边都不付。
+        var escaped = 0;
+        foreach (var b in bytes)
+        {
+            if (b != (byte)' ' && !IsUnreserved(b))
+            {
+                escaped++;
+            }
+        }
+
+        var builder = new StringBuilder(bytes.Length + escaped * 2);
         foreach (var b in bytes)
         {
             if (b == (byte)' ')

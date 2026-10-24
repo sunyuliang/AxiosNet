@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using AxiosNet.Internal;
 
@@ -100,6 +101,50 @@ internal sealed partial class RequestModelMetadata
         return metadata;
     }
 
+    /// <summary>
+    /// 属性取值器缓存：<see cref="PropertyInfo.GetValue(object?)"/> 每次调用都走一次反射，而每个绑定
+    /// 每请求都要取值。构建期把 getter 包成 <see cref="Func{Object, Object}"/>（精确签名委托 +
+    /// 开放泛型包装，不用表达式树 / Reflection.Emit），之后每次取值就是一次委托调用。
+    /// </summary>
+    private static readonly ConcurrentDictionary<PropertyInfo, Func<object, object?>> Getters = new();
+
+    private static object? GetValue(PropertyInfo property, object request)
+    {
+        // Native AOT（或其它禁用动态代码的运行时）下 MakeGenericType 无法在运行时特化包装类：
+        // 直接走 PropertyInfo.GetValue —— 公开属性已由 Get 的参数标注保根，裁剪/AOT 安全。
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return property.GetValue(request);
+        }
+
+        return Getters.GetOrAdd(property, static p => CreateGetter(p))(request);
+    }
+
+    [UnconditionalSuppressMessage(
+        "AotAnalysis",
+        "IL3050",
+        Justification = "只在 RuntimeFeature.IsDynamicCodeSupported 为 true（JIT）时调用；AOT 下已回退到 PropertyInfo.GetValue。")]
+    private static Func<object, object?> CreateGetter(PropertyInfo property)
+    {
+        var method = property.GetMethod!;
+
+        // 按 (声明类型, 返回值) 特化包装类：内部委托签名与方法精确匹配，CreateDelegate 才能成；
+        // (TTarget)instance 对引用类型是 castclass、对值类型是 unbox，无需约束。
+        var wrapper = typeof(GetterWrapper<,>).MakeGenericType(method.DeclaringType!, method.ReturnType);
+        return (Func<object, object?>)wrapper
+            .GetMethod(nameof(GetterWrapper<,>.Create), BindingFlags.Public | BindingFlags.Static)!
+            .Invoke(null, new object[] { method })!;
+    }
+
+    private static class GetterWrapper<TTarget, TValue>
+    {
+        public static Func<object, object?> Create(MethodInfo method)
+        {
+            var typed = (Func<TTarget, TValue>)method.CreateDelegate(typeof(Func<TTarget, TValue>));
+            return instance => typed((TTarget)instance!);
+        }
+    }
+
     /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
     /// <param name="request">请求模型实例。</param>
     /// <param name="formatter">URL 参数格式化钩子（返回 null 表示用默认规则），可为 null。</param>
@@ -114,7 +159,7 @@ internal sealed partial class RequestModelMetadata
 
         foreach (var (token, property) in _pathTokens)
         {
-            var value = property.GetValue(request)
+            var value = GetValue(property, request)
                 ?? throw new InvalidOperationException(
                     $"路径参数 {property.DeclaringType!.Name}.{property.Name}（占位符 {{{token}}}）为 null：路径缺段无法成行。");
 
@@ -146,7 +191,7 @@ internal sealed partial class RequestModelMetadata
 
         foreach (var binding in _queryBindings)
         {
-            var value = FormatValue(binding.Property.GetValue(request), formatter);
+            var value = FormatValue(GetValue(binding.Property, request), formatter);
 
             // 与 axios params 一致：null 参数跳过
             if (value is not null)
@@ -158,7 +203,7 @@ internal sealed partial class RequestModelMetadata
         // 字典映射平铺：值仍保持原始对象，集合 / 嵌套对象继续走 UrlBuilder 的既有规则
         foreach (var map in _queryMaps)
         {
-            if (map.Property.GetValue(request) is not { } dictionary)
+            if (GetValue(map.Property, request) is not { } dictionary)
             {
                 continue;
             }
@@ -185,7 +230,7 @@ internal sealed partial class RequestModelMetadata
     {
         if (!IsMultipart)
         {
-            return _bodyProperty?.GetValue(request);
+            return _bodyProperty is { } bodyProperty ? GetValue(bodyProperty, request) : null;
         }
 
         // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
@@ -196,7 +241,7 @@ internal sealed partial class RequestModelMetadata
             foreach (var binding in PartBindings)
             {
                 var value = MultipartPartValues.Normalize(
-                    binding.Property.GetValue(request),
+                    GetValue(binding.Property, request),
                     binding.Name,
                     binding.HasExplicitName,
                     binding.FileName,
@@ -230,7 +275,7 @@ internal sealed partial class RequestModelMetadata
     {
         foreach (var binding in _headerBindings)
         {
-            var value = binding.Property.GetValue(request);
+            var value = GetValue(binding.Property, request);
 
             // 与 query 一致：null 头跳过
             if (value is not null)
@@ -241,7 +286,7 @@ internal sealed partial class RequestModelMetadata
 
         foreach (var property in _headerCollections)
         {
-            if (property.GetValue(request) is not { } dictionary)
+            if (GetValue(property, request) is not { } dictionary)
             {
                 continue;
             }

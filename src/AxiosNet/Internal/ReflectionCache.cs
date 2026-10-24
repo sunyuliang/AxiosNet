@@ -13,6 +13,15 @@ internal static class ReflectionCache
 {
     private static readonly ConcurrentDictionary<Type, PropertyInfo[]> Cache = new();
 
+    /// <summary>
+    /// 属性名的转义形态（params / 表单展平的键）：属性名跨请求不变，
+    /// 缓存后热路径不再每次跑 <see cref="Uri.EscapeDataString"/> 与两次 Replace。
+    /// </summary>
+    private static readonly ConcurrentDictionary<PropertyInfo, string> EscapedNames = new();
+
+    /// <summary>属性名的「[转义名]」后缀（嵌套键）：连插值带转义一次算好，热路径只剩一次前缀拼接。</summary>
+    private static readonly ConcurrentDictionary<PropertyInfo, string> BracketSuffixes = new();
+
     /// <param name="type">待展平的类型；标注要求裁剪器保留其公开属性（含 getter）。</param>
     public static PropertyInfo[] GetReadableProperties(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
@@ -30,4 +39,12 @@ internal static class ReflectionCache
 
         return Cache.GetOrAdd(type, properties);
     }
+
+    /// <summary>属性名转义后的键（根层级，无方括号）。</summary>
+    public static string GetEscapedName(PropertyInfo property)
+        => EscapedNames.GetOrAdd(property, static p => ParamsSerializer.EscapeKey(p.Name));
+
+    /// <summary>属性名转义后的「[键]」后缀（嵌套层级）。</summary>
+    public static string GetBracketSuffix(PropertyInfo property)
+        => BracketSuffixes.GetOrAdd(property, static p => "[" + ParamsSerializer.EscapeKey(p.Name) + "]");
 }
