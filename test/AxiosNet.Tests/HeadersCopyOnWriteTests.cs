@@ -191,6 +191,68 @@ public sealed class HeadersCopyOnWriteTests
     }
 
     [Fact]
+    public void EmptyHeaders_DoesNotPreallocateDictionary()
+    {
+        // 空 headers 很常见（懒创建的 Config.Headers、只读一次的默认值）：
+        // 旧实现构造时就建 Store + 锁对象 + 空字典（176 B），现在只有实例 + 惰性存储（实测 64 B）。
+        var cost = AverageBytes(50_000, () => GC.KeepAlive(new AxiosHeaders()));
+
+        Assert.True(cost < 100, $"new AxiosHeaders() 平均 {cost} B —— 疑似又预建了空字典或独立锁对象。");
+    }
+
+    [Fact]
+    public void BulkConstruction_DoesNotGrowDictionaryRepeatedly()
+    {
+        var source = new Dictionary<string, string>();
+        for (var i = 0; i < 10; i++)
+        {
+            source[$"X-H{i}"] = $"value-{i}";
+        }
+
+        // 逐条 Set 会让字典按 3/5/9/17 反复扩容（实测 1144 B）；按已知数量预分配后 560 B。
+        var cost = AverageBytes(20_000, () => GC.KeepAlive(new AxiosHeaders(source)));
+
+        Assert.True(cost < 700, $"构造 10 头 AxiosHeaders 平均 {cost} B —— 疑似又逐条扩容。");
+    }
+
+    [Fact]
+    public void Enumeration_DoesNotBoxEnumerator()
+    {
+        var headers = NewHeaders(10);
+        _ = CountOf(headers); // 先把快照建好，之后枚举应零分配
+
+        var cost = AverageBytes(50_000, () =>
+        {
+            var count = 0;
+            foreach (var _ in headers)
+            {
+                count++;
+            }
+
+            GC.KeepAlive(count);
+        });
+
+        // 旧实现把数组枚举器装箱（每次 56 B）。注意 KeepAlive(int) 自身会装箱 24 B，故护栏留到 32 B。
+        Assert.True(cost < 32, $"枚举 10 头平均 {cost} B —— 结构体枚举器没生效，又在装箱。");
+    }
+
+    [Fact]
+    public void Detach_StaysWithinBudget()
+    {
+        var source = NewHeaders(10);
+
+        var cost = AverageBytes(20_000, () =>
+        {
+            var copy = source.Clone(); // 24 B
+            copy.Set("X-New", "1");    // 首次写入触发分离：复制 10 条字典
+            GC.KeepAlive(copy);
+        });
+
+        // 分离 = 复制一份字典（10 条）+ 一个新存储，实测 504 B；整份「克隆后再深拷贝」的旧形态是 1312 B 起。
+        Assert.True(cost < 620, $"克隆 + 分离写一条平均 {cost} B —— 超出预算，疑似退化成整份深拷贝。");
+    }
+
+    [Fact]
     public async Task RequestWithDefaultHeaders_DoesNotPayPerHeaderAllocation()
     {
         // 默认头是「每请求拷一份、之后只读」的典型形态：

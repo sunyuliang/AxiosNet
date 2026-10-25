@@ -249,9 +249,23 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
     /// <summary>
     /// 形状：名字 → 槽位的映射 + 迁移缓存。不可变，同形状的实例共享同一个对象，
     /// 因此 DLR 规则里固化的 shape 常量与槽位对同形状的所有实例都成立。
+    /// <para>
+    /// <b>迁移缓存必须有界</b>：<see cref="Empty"/> 是静态根，它缓存的每个子形状又会缓存自己的子形状，
+    /// 整张图从静态根永久可达、GC 收不掉。字段名有限（正常 JSON）时图很小；但如果字段名是数据本身
+    /// （把 ID 当键、逐条响应各不同），无界缓存会把每条响应都钉在内存里。
+    /// 因此单节点缓存到 <see cref="MaxTransitions"/> 条后<b>停止缓存并传递下去</b>：
+    /// 之后派生的形状不再登记，图规模就此截断。
+    /// </para>
+    /// <para>
+    /// 停止缓存的代价只是「这些形状的实例各自持有一条 DLR 规则」，不影响正确性；
+    /// 而正常场景（字段名重复出现）永远碰不到上限，跨实例复用照旧。
+    /// </para>
     /// </summary>
     private sealed class Shape
     {
+        /// <summary>单个形状节点最多缓存多少个「加字段 / 减字段」迁移。</summary>
+        private const int MaxTransitions = 256;
+
         internal static readonly Shape Empty = new(new Dictionary<string, int>(StringComparer.Ordinal), 0);
 
         /// <summary>名字 → 槽位；构造后不再修改（增删都换新实例）。</summary>
@@ -260,13 +274,20 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
         /// <summary>下一个可用槽位（只增不减；删除不复用旧槽，避免已绑定的常量槽位读到别的字段）。</summary>
         internal readonly int NextSlot;
 
-        private readonly Dictionary<string, Shape> _added = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, Shape> _removed = new(StringComparer.Ordinal);
+        /// <summary>迁移缓存；<c>null</c> 表示已停止缓存（派生出的形状也不再缓存）。</summary>
+        private readonly Dictionary<string, Shape>? _added;
+        private readonly Dictionary<string, Shape>? _removed;
 
-        internal Shape(Dictionary<string, int> slots, int nextSlot)
+        internal Shape(Dictionary<string, int> slots, int nextSlot, bool cacheable = true)
         {
             Slots = slots;
             NextSlot = nextSlot;
+
+            if (cacheable)
+            {
+                _added = new Dictionary<string, Shape>(StringComparer.Ordinal);
+                _removed = new Dictionary<string, Shape>(StringComparer.Ordinal);
+            }
         }
 
         internal int Count => Slots.Count;
@@ -274,12 +295,23 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
         /// <summary>迁移到「多一个键」的形状；同名字序列在全进程内复用同一个实例。</summary>
         internal Shape WithAdded(string name)
         {
+            if (_added is null)
+            {
+                return DeriveAdded(name, cacheable: false);
+            }
+
             lock (_added)
             {
-                if (!_added.TryGetValue(name, out var next))
+                if (_added.TryGetValue(name, out var next))
                 {
-                    var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal) { [name] = NextSlot };
-                    next = new Shape(slots, NextSlot + 1);
+                    return next;
+                }
+
+                // 已经缓存满：本次照常派生，但结果与它的后代都不再登记。
+                var cacheable = _added.Count < MaxTransitions;
+                next = DeriveAdded(name, cacheable);
+                if (cacheable)
+                {
                     _added[name] = next;
                 }
 
@@ -290,18 +322,40 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
         /// <summary>迁移到「少一个键」的形状；<see cref="NextSlot"/> 保持不变。</summary>
         internal Shape WithRemoved(string name)
         {
+            if (_removed is null)
+            {
+                return DeriveRemoved(name, cacheable: false);
+            }
+
             lock (_removed)
             {
-                if (!_removed.TryGetValue(name, out var next))
+                if (_removed.TryGetValue(name, out var next))
                 {
-                    var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal);
-                    slots.Remove(name);
-                    next = new Shape(slots, NextSlot);
+                    return next;
+                }
+
+                var cacheable = _removed.Count < MaxTransitions;
+                next = DeriveRemoved(name, cacheable);
+                if (cacheable)
+                {
                     _removed[name] = next;
                 }
 
                 return next;
             }
+        }
+
+        private Shape DeriveAdded(string name, bool cacheable)
+        {
+            var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal) { [name] = NextSlot };
+            return new Shape(slots, NextSlot + 1, cacheable);
+        }
+
+        private Shape DeriveRemoved(string name, bool cacheable)
+        {
+            var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal);
+            slots.Remove(name);
+            return new Shape(slots, NextSlot, cacheable);
         }
     }
 

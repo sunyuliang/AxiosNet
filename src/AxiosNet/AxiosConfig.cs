@@ -430,11 +430,12 @@ public sealed partial class AxiosConfig
 
         clone._headers = _headers?.Clone();
 
-        // transform 链与删头名单走写时复制共享（见 SynchronizedList.Share）：只读用法零拷贝，
+        // transform 链与删头名单走写时复制共享（见 SynchronizedList.ShareIfNotEmpty）：只读用法零拷贝，
         // 任意一方首次写入前分离。此前每请求都整份拷贝，实例配了 transform 时白付一次全量复制。
-        clone._removeHeaders = _removeHeaders is { Count: > 0 } ? _removeHeaders.Share() : null;
-        clone._transformRequest = SharedTransforms(_transformRequest);
-        clone._transformResponse = SharedTransforms(_transformResponse);
+        // 「是否为空」与「+1」由 ShareIfNotEmpty 在同一临界区完成，空链在克隆侧保持 null。
+        clone._removeHeaders = _removeHeaders?.ShareIfNotEmpty();
+        clone._transformRequest = _transformRequest?.ShareIfNotEmpty();
+        clone._transformResponse = _transformResponse?.ShareIfNotEmpty();
         clone._serialization = _serialization?.Clone();
         clone._connection = _connection?.Clone();
         clone._limits = _limits?.Clone();
@@ -475,9 +476,4 @@ public sealed partial class AxiosConfig
         IList<Func<object?, AxiosConfig, object?>> values)
         => values as SynchronizedList<Func<object?, AxiosConfig, object?>>
             ?? new SynchronizedList<Func<object?, AxiosConfig, object?>>(values);
-
-    /// <summary>transform 链的共享引用（写时复制）；空链返回 <c>null</c>（调用方只在有内容时才创建）。</summary>
-    private static SynchronizedList<Func<object?, AxiosConfig, object?>>? SharedTransforms(
-        SynchronizedList<Func<object?, AxiosConfig, object?>>? source)
-        => source is { Count: > 0 } ? source.Share() : null;
 }

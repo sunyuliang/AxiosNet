@@ -10,12 +10,12 @@ namespace AxiosNet.Internal;
 /// </para>
 /// <para>
 /// <b>写时复制</b>（与 <see cref="AxiosHeaders"/> 的 Owners 模型一致）：实例 defaults 上的列表会被每个请求的
-/// 配置克隆共享（<see cref="Share"/> 只递增引用计数，不复制元素）；任意一方首次写入前分离，
+/// 配置克隆共享（<see cref="ShareIfNotEmpty"/> 只递增引用计数，不复制元素）；任意一方首次写入前分离，
 /// 语义与深拷一致，但只读用法（实例配了 transform、按请求不改）不再为元素数付费。
 /// </para>
 /// <para>
-/// 并发边界：共享返回后的写入一律被分离挡住；唯一窗口是「写入方已判定独占、共享紧接着完成」，
-/// 此时副本可能带上那次写入的值（方向只会是更新，且不会读到半成品 —— 读写都在同一把锁内）。
+/// 分离的原子性由 <see cref="EnterWrite"/> 保证：<b>判定独占、复制列表、发布新状态</b>与后续写入
+/// 处在同一个临界区里，中途不会被共享或另一个写方插队（旧实现两步分开，会丢更新）。
 /// </para>
 /// </summary>
 internal sealed class SynchronizedList<T> : IList<T>
@@ -40,6 +40,10 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
     }
 
+    /// <summary>
+    /// 当前共享状态。只通过 <see cref="Volatile"/> 读写：写方在 <see cref="EnterWrite"/> 里发布新状态，
+    /// 读者在锁外取引用 —— 普通字段的读可能被 JIT 提到锁之前，读到已经被分离掉的旧状态。
+    /// </summary>
     private Core _core;
 
     public SynchronizedList()
@@ -59,19 +63,33 @@ internal sealed class SynchronizedList<T> : IList<T>
     }
 
     /// <summary>
-    /// 写时复制的共享：不复制底层列表，只让引用计数 +1。之后任意一方写入都会先分离，
-    /// 语义与「深拷贝」一致，但只读用法不再为元素数付费。
+    /// 写时复制的共享：不复制底层列表，只让引用计数 +1；空列表返回 <c>null</c>（调用方只共享有内容的链，
+    /// 空链在克隆侧保持 <c>null</c>，热路径才不会为「空集合」付一次分配）。
+    /// <para>
+    /// 「是否为空」与「+1」必须在同一临界区：分成「先 Count 再 Share」的话，中间被清空就会共享出一个空链。
+    /// </para>
     /// </summary>
-    internal SynchronizedList<T> Share()
+    internal SynchronizedList<T>? ShareIfNotEmpty()
     {
-        var core = _core;
-
-        // 必须与 Exclusive 的判定在同一把锁内：否则「写方判定 Owners 为 1」与「共享方 +1」可以交错，
-        // 副本会与一个仍在就地写入的列表重叠。
-        lock (core)
+        while (true)
         {
-            core.Owners++;
-            return new SynchronizedList<T>(core);
+            var core = Volatile.Read(ref _core);
+
+            lock (core)
+            {
+                if (!ReferenceEquals(Volatile.Read(ref _core), core))
+                {
+                    continue; // 已被分离：重取当前状态
+                }
+
+                if (core.Items.Count == 0)
+                {
+                    return null;
+                }
+
+                core.Owners++;
+                return new SynchronizedList<T>(core);
+            }
         }
     }
 
@@ -83,7 +101,7 @@ internal sealed class SynchronizedList<T> : IList<T>
     /// <summary>拷贝构造的取用：在锁内整份复制，与源不共享任何状态。</summary>
     private List<T> CopyUnderLock()
     {
-        var core = _core;
+        var core = Volatile.Read(ref _core);
         lock (core)
         {
             return new List<T>(core.Items);
@@ -91,46 +109,51 @@ internal sealed class SynchronizedList<T> : IList<T>
     }
 
     /// <summary>
-    /// 取一个「只属于自己」的底层状态：计数为 1 时直接返回，否则复制并降掉旧状态的计数。
-    /// <para>判定必须在锁内：与 <see cref="Share"/> 的 +1 互斥，保证「返回的状态一定独占」在返回后依然成立。</para>
+    /// 进入「独占写」临界区：返回时<b>已持有</b>返回状态的锁，并保证 <c>_core == 返回的状态</c> 且
+    /// <c>Owners == 1</c>。调用方必须在 <c>try/finally</c> 里配对 <see cref="Monitor.Exit(object)"/>。
     /// <para>
-    /// 拿到旧状态的引用后可能已被别的线程分离（<c>_core</c> 换成了新状态）：此时必须<b>重来一轮</b>，
-    /// 不能直接把新状态交出去 —— 新状态可能刚被 <see cref="Share"/> 加过计数，
-    /// 直接写入会让共享出来的副本看到这次写入（隔离性被破坏）。
+    /// <b>为什么判定与写入必须同一个临界区</b>：旧实现「先返回独占状态、调用方再另加一次锁」，
+    /// 两步之间另一个线程可以 <see cref="ShareIfNotEmpty"/>（+1，写入漏给副本）或再次分离
+    /// （换走 <c>_core</c>，写入落进无人读取的孤儿状态）。对 transform 链来说，这两种都是
+    /// 「注册过的 transform 悄悄不生效」，比 headers 更隐蔽。
     /// </para>
     /// </summary>
-    private Core Exclusive()
+    private Core EnterWrite()
     {
         while (true)
         {
-            var core = _core;
-            lock (core)
+            var core = Volatile.Read(ref _core);
+            Monitor.Enter(core);
+
+            // 进入锁之前可能已被别的线程分离：换它换上的新状态重来。
+            if (!ReferenceEquals(Volatile.Read(ref _core), core))
             {
-                // 已被另一个实例（或本实例的另一个线程）分离过：换它换上的新状态重来，
-                // 下一轮会在新状态的锁内复核 Owners —— 这是「返回的状态一定独占」的唯一保证。
-                if (!ReferenceEquals(_core, core))
-                {
-                    continue;
-                }
-
-                if (core.Owners == 1)
-                {
-                    return core;
-                }
-
-                var copy = new Core(new List<T>(core.Items), 1);
-                core.Owners--;
-                Volatile.Write(ref _core, copy);
-                return copy;
+                Monitor.Exit(core);
+                continue;
             }
+
+            if (core.Owners == 1)
+            {
+                return core; // 锁保持，由调用方释放
+            }
+
+            var copy = new Core(new List<T>(core.Items), 1);
+            core.Owners--;
+            Volatile.Write(ref _core, copy);
+            Monitor.Exit(core);
+
+            // 下一轮在 copy 上复核：copy 是全新的，通常直接返回。
         }
     }
+
+    /// <summary>让只读快照失效。必须在持有状态锁时调用。</summary>
+    private static void InvalidateSnapshot(Core core) => Volatile.Write(ref core.Frozen, null);
 
     public T this[int index]
     {
         get
         {
-            var core = _core;
+            var core = Volatile.Read(ref _core);
             lock (core)
             {
                 return core.Items[index];
@@ -138,11 +161,15 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
         set
         {
-            var core = Exclusive();
-            lock (core)
+            var core = EnterWrite();
+            try
             {
                 core.Items[index] = value;
-                core.Frozen = null;
+                InvalidateSnapshot(core);
+            }
+            finally
+            {
+                Monitor.Exit(core);
             }
         }
     }
@@ -151,7 +178,7 @@ internal sealed class SynchronizedList<T> : IList<T>
     {
         get
         {
-            var core = _core;
+            var core = Volatile.Read(ref _core);
             lock (core)
             {
                 return core.Items.Count;
@@ -163,27 +190,45 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public void Add(T item)
     {
-        var core = Exclusive();
-        lock (core)
+        var core = EnterWrite();
+        try
         {
             core.Items.Add(item);
-            core.Frozen = null;
+            InvalidateSnapshot(core);
+        }
+        finally
+        {
+            Monitor.Exit(core);
         }
     }
 
     public void Clear()
     {
-        var core = Exclusive();
-        lock (core)
+        // 快速路径：空列表没有内容可清，共享期间更不该为它整份复制。
+        var probe = Volatile.Read(ref _core);
+        lock (probe)
+        {
+            if (probe.Items.Count == 0)
+            {
+                return;
+            }
+        }
+
+        var core = EnterWrite();
+        try
         {
             core.Items.Clear();
-            core.Frozen = null;
+            InvalidateSnapshot(core);
+        }
+        finally
+        {
+            Monitor.Exit(core);
         }
     }
 
     public bool Contains(T item)
     {
-        var core = _core;
+        var core = Volatile.Read(ref _core);
         lock (core)
         {
             return core.Items.Contains(item);
@@ -192,7 +237,7 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public void CopyTo(T[] array, int arrayIndex)
     {
-        var core = _core;
+        var core = Volatile.Read(ref _core);
         lock (core)
         {
             core.Items.CopyTo(array, arrayIndex);
@@ -201,7 +246,7 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public int IndexOf(T item)
     {
-        var core = _core;
+        var core = Volatile.Read(ref _core);
         lock (core)
         {
             return core.Items.IndexOf(item);
@@ -210,36 +255,58 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public void Insert(int index, T item)
     {
-        var core = Exclusive();
-        lock (core)
+        var core = EnterWrite();
+        try
         {
             core.Items.Insert(index, item);
-            core.Frozen = null;
+            InvalidateSnapshot(core);
+        }
+        finally
+        {
+            Monitor.Exit(core);
         }
     }
 
     public bool Remove(T item)
     {
-        var core = Exclusive();
-        lock (core)
+        // 快速路径：不存在就不必付分离复制（共享期间移除一个没注册过的 transform 很常见）。
+        var probe = Volatile.Read(ref _core);
+        lock (probe)
+        {
+            if (probe.Items.IndexOf(item) < 0)
+            {
+                return false;
+            }
+        }
+
+        var core = EnterWrite();
+        try
         {
             if (!core.Items.Remove(item))
             {
                 return false;
             }
 
-            core.Frozen = null;
+            InvalidateSnapshot(core);
             return true;
+        }
+        finally
+        {
+            Monitor.Exit(core);
         }
     }
 
     public void RemoveAt(int index)
     {
-        var core = Exclusive();
-        lock (core)
+        var core = EnterWrite();
+        try
         {
             core.Items.RemoveAt(index);
-            core.Frozen = null;
+            InvalidateSnapshot(core);
+        }
+        finally
+        {
+            Monitor.Exit(core);
         }
     }
 
@@ -249,7 +316,7 @@ internal sealed class SynchronizedList<T> : IList<T>
     /// </summary>
     internal List<T> Snapshot()
     {
-        var core = _core;
+        var core = Volatile.Read(ref _core);
         var frozen = Volatile.Read(ref core.Frozen);
         if (frozen is not null)
         {
@@ -258,7 +325,15 @@ internal sealed class SynchronizedList<T> : IList<T>
 
         lock (core)
         {
-            return core.Frozen ??= new List<T>(core.Items);
+            var cached = Volatile.Read(ref core.Frozen);
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            cached = new List<T>(core.Items);
+            Volatile.Write(ref core.Frozen, cached);
+            return cached;
         }
     }
 

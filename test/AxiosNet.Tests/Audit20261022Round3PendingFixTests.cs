@@ -13,7 +13,7 @@ namespace AxiosNet.Tests;
 public sealed class Audit20261022Round3PendingFixTests
 {
     /// <summary>
-    /// A：<see cref="AxiosHeaders"/> 的「取独占存储」在「旧存储已被别的线程换掉」时必须重来一轮。
+    /// A：<see cref="AxiosHeaders"/> 进入独占写临界区时，若「旧存储已被别的线程换掉」必须重来一轮。
     /// <para>
     /// 缺陷版本会直接把换上的新存储交出去 —— 而那个新存储可能刚被 <c>Clone</c> 加过计数，
     /// 于是写入落进了共享字典，克隆出来的快照静默看到了这次写入（隔离性被破坏）。
@@ -34,10 +34,11 @@ public sealed class Audit20261022Round3PendingFixTests
         var storeField = type.GetField("_store", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var oldStore = storeField.GetValue(headers)!;
         var storeType = oldStore.GetType();
-        var syncField = storeType.GetField("Sync", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var ownersField = storeType.GetField("Owners", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var mapField = storeType.GetField("Map", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var oldSync = syncField.GetValue(oldStore)!;
+
+        // 锁就是存储自己（不再有独立的 Sync 对象）
+        var oldSync = oldStore;
 
         // 让旧存储变成共享（Owners = 2），后台线程的写入才会走「分离」路径
         _ = headers.Clone();
@@ -54,7 +55,9 @@ public sealed class Audit20261022Round3PendingFixTests
 
             // 模拟「另一个线程先完成了分离」：把 _store 换成新存储
             var replacement = Activator.CreateInstance(storeType, nonPublic: true)!;
-            ((Dictionary<string, string>)mapField.GetValue(replacement)!)["k0"] = "v0";
+            mapField.SetValue(
+                replacement,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["k0"] = "v0" });
             storeField.SetValue(headers, replacement);
 
             // 再克隆一次让新存储成为共享存储（Owners = 2）：snapshot 与 headers 指向同一份字典

@@ -13,6 +13,10 @@ namespace AxiosNet;
 /// 分离是<b>对称</b>的：克隆方写入不影响源，源写入也不影响已克隆出去的副本。
 /// </para>
 /// <para>
+/// 分离的原子性由 <see cref="EnterWrite"/> 保证：<b>判定独占、复制字典、发布新存储</b>与后续写入
+/// 处在同一个临界区里，中途不会被 <see cref="Clone"/> 或另一个写方插队。
+/// </para>
+/// <para>
 /// <b>写入即校验</b>：头名必须是 RFC 7230 token，取值不允许 <c>CR</c> / <c>LF</c> 等控制字符 ——
 /// 上送层用 <c>TryAddWithoutValidation</c> 不做任何检查，这里是唯一的闸口（CWE-113 请求拆分）。
 /// </para>
@@ -25,20 +29,26 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>
     /// 共享存储。克隆出来的实例指向同一个 <see cref="Store"/>，<see cref="Owners"/> 记录实例数；
     /// 只要 &gt; 1，任何写入都必须先复制一份。
-    /// <para>锁挂在存储上而不是实例上：共享期间多个实例必须串行访问同一份字典。</para>
+    /// <para>
+    /// <b>锁就是 Store 自己</b>：早先给每个存储单独 new 一个锁对象，每个实例白付 24 B，
+    /// 还要多一次间接寻址。类型是私有的，外部拿不到引用，用它当锁没有「别人也来 lock 同一对象」的风险。
+    /// </para>
+    /// <para>
+    /// <b>字典惰性创建</b>：空 headers 很常见（懒创建的 <c>Config.Headers</c>、只读一次的默认值），
+    /// 为它们预建一个 80 B 的空字典纯属浪费。首次写入才建，读路径只多一次 null 检查。
+    /// </para>
     /// </summary>
     private sealed class Store
     {
-        internal readonly object Sync = new();
-
-        internal readonly Dictionary<string, string> Map;
+        /// <summary>实际数据；<c>null</c> 表示空（尚未写入过）。只在锁内读写。</summary>
+        internal Dictionary<string, string>? Map;
 
         /// <summary>
-        /// 指向本存储的实例数（含自己）。只在 <see cref="Sync"/> 锁内改。
+        /// 指向本存储的实例数（含自己）。只在锁内改。
         /// <para>
         /// 用 <see cref="long"/> 而不是 <see cref="int"/>：这个计数只在写入时递减（GC 不减），
         /// 长期高频的「克隆后从不写入」会把计数一路推高；int 在 21 亿次后溢出成负数，
-        /// <see cref="Exclusive"/> 的 <c>Owners == 1</c> 判定随之中毒（返回仍在共享的存储）。
+        /// <see cref="EnterWrite"/> 的 <c>Owners == 1</c> 判定随之中毒（返回仍在共享的存储）。
         /// </para>
         /// </summary>
         internal long Owners = 1;
@@ -51,7 +61,6 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 
         internal Store()
         {
-            Map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
         /// <summary>分离用：整份复制（走字典的复制构造，比逐条重插快）。</summary>
@@ -59,8 +68,19 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         {
             Map = new Dictionary<string, string>(source, StringComparer.OrdinalIgnoreCase);
         }
+
+        /// <summary>取字典用于写入：没有就按需建一个。只在独占时调用（锁内，或对象尚未发布的构造期）。</summary>
+        internal Dictionary<string, string> EnsureMap()
+            => Map ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>取字典用于读取：没有返回 <c>null</c>（调用方按「空」处理，不分配）。</summary>
+        internal Dictionary<string, string>? MapOrNull => Map;
     }
 
+    /// <summary>
+    /// 当前存储。只通过 <see cref="Volatile"/> 读写：写入方在 <see cref="EnterWrite"/> 里发布新存储，
+    /// 读者在锁外取引用 —— 普通字段的读可能被 JIT 提到锁之前，读到已经被分离掉的旧存储。
+    /// </summary>
     private Store _store;
 
     public AxiosHeaders() => _store = new Store();
@@ -71,49 +91,86 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         : this()
     {
         ArgumentNullException.ThrowIfNull(headers);
+
+        // 已知数量就一次备好容量：逐条 Set 会让字典按 3/5/9… 反复扩容（10 头实测多分配约 260 B）。
+        // 构造期还没有第二个实例（Owners == 1），不必走 EnterWrite。
+        if (headers is ICollection<KeyValuePair<string, string>> known && known.Count > 0)
+        {
+            _store.EnsureMap().EnsureCapacity(known.Count);
+        }
+
         foreach (var kv in headers)
         {
             Set(kv.Key, kv.Value);
         }
     }
 
-    /// <summary>设置/覆盖请求头，返回当前对象以支持链式调用。</summary>
+    /// <summary>设置/覆盖请求头，返回当前对象以支持链式调用。<c>null</c> 取值等价于删除。</summary>
     /// <exception cref="ArgumentException">名称不是合法 HTTP token，或取值含控制字符。</exception>
     public AxiosHeaders Set(string name, string? value)
     {
         var key = ValidateName(name);
 
-        // null 表示删除，不校验取值
-        if (value is not null)
+        // null 表示删除：直接走 Delete，复用「不存在就不分离」的快速路径（不校验取值）。
+        if (value is null)
         {
-            ValidateHeaderValue(key, value);
+            Delete(key);
+            return this;
         }
 
-        var store = Exclusive();
-        lock (store.Sync)
-        {
-            if (value is null)
-            {
-                store.Map.Remove(key);
-            }
-            else
-            {
-                store.Map[key] = value;
-            }
+        ValidateHeaderValue(key, value);
 
-            store.Frozen = null;
+        var store = EnterWrite();
+        try
+        {
+            store.EnsureMap()[key] = value;
+            InvalidateSnapshot(store);
+        }
+        finally
+        {
+            Monitor.Exit(store);
         }
 
         return this;
     }
 
-    /// <summary>批量合并请求头。</summary>
+    /// <summary>批量合并请求头（逐条校验、逐条生效，第 k 条非法时前 k-1 条已写入）。</summary>
     public AxiosHeaders Set(IEnumerable<KeyValuePair<string, string?>> headers)
     {
         ArgumentNullException.ThrowIfNull(headers);
-        foreach (var kv in headers)
+
+        // 逐条 Set 是 n 次 Enter/Exit；批量时合并成一个临界区，语义保持不变。
+        var store = EnterWrite();
+        try
         {
-            Set(kv.Key, kv.Value);
+            Dictionary<string, string>? map = null;
+
+            if (headers is ICollection<KeyValuePair<string, string?>> { Count: > 0 } known)
+            {
+                map = store.EnsureMap();
+                map.EnsureCapacity(map.Count + known.Count);
+            }
+
+            foreach (var kv in headers)
+            {
+                var key = ValidateName(kv.Key);
+
+                // 删除：本来就没有字典的话，不必为了「删一个不存在的东西」把它建出来。
+                if (kv.Value is null)
+                {
+                    (map ??= store.MapOrNull)?.Remove(key);
+                    continue;
+                }
+
+                ValidateHeaderValue(key, kv.Value);
+                (map ??= store.EnsureMap())[key] = kv.Value;
+            }
+        }
+        finally
+        {
+            // 校验可能写到一半才抛：快照必须失效（部分写入已发生），锁也必须释放。
+            InvalidateSnapshot(store);
+            Monitor.Exit(store);
         }
 
         return this;
@@ -125,10 +182,11 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         ArgumentNullException.ThrowIfNull(name);
 
-        var store = _store;
-        lock (store.Sync)
+        var store = Volatile.Read(ref _store);
+        lock (store)
         {
-            return store.Map.TryGetValue(NormalizeName(name), out var value) ? value : null;
+            var map = store.MapOrNull;
+            return map is not null && map.TryGetValue(NormalizeName(name), out var value) ? value : null;
         }
     }
 
@@ -138,10 +196,10 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         ArgumentNullException.ThrowIfNull(name);
 
-        var store = _store;
-        lock (store.Sync)
+        var store = Volatile.Read(ref _store);
+        lock (store)
         {
-            return store.Map.ContainsKey(NormalizeName(name));
+            return store.MapOrNull?.ContainsKey(NormalizeName(name)) == true;
         }
     }
 
@@ -152,42 +210,55 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         ArgumentNullException.ThrowIfNull(name);
 
         var key = NormalizeName(name);
-        var store = _store;
 
-        // 先只读探测：删除不存在（或共享存储上的探测）不必付一次分离复制。
-        lock (store.Sync)
+        // 快速路径：不存在就不必付分离复制。共享期间删一个不存在的头是常见形态（调用方统一清默认项）。
+        var probe = Volatile.Read(ref _store);
+        lock (probe)
         {
-            if (!store.Map.ContainsKey(key))
+            if (probe.MapOrNull?.ContainsKey(key) != true)
             {
                 return false;
             }
         }
 
-        store = Exclusive();
-        lock (store.Sync)
+        var store = EnterWrite();
+        try
         {
-            if (!store.Map.Remove(key))
+            if (store.MapOrNull?.Remove(key) != true)
             {
                 return false;
             }
 
-            store.Frozen = null;
+            InvalidateSnapshot(store);
             return true;
+        }
+        finally
+        {
+            Monitor.Exit(store);
         }
     }
 
     public void Clear()
     {
-        var store = Exclusive();
-        lock (store.Sync)
+        // 快速路径：空的存储没有内容可清，共享期间更不该为它整份复制。
+        var probe = Volatile.Read(ref _store);
+        lock (probe)
         {
-            if (store.Map.Count == 0)
+            if (probe.MapOrNull is null or { Count: 0 })
             {
                 return;
             }
+        }
 
-            store.Map.Clear();
-            store.Frozen = null;
+        var store = EnterWrite();
+        try
+        {
+            store.MapOrNull?.Clear();
+            InvalidateSnapshot(store);
+        }
+        finally
+        {
+            Monitor.Exit(store);
         }
     }
 
@@ -201,10 +272,10 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         get
         {
-            var store = _store;
-            lock (store.Sync)
+            var store = Volatile.Read(ref _store);
+            lock (store)
             {
-                return store.Map.Count;
+                return store.MapOrNull?.Count ?? 0;
             }
         }
     }
@@ -218,20 +289,26 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// 引用计数只在写入时递减，GC 时不减 —— 多出的计数只会让某次写入多复制一次字典，不影响正确性。
     /// </para>
     /// <para>
-    /// 并发边界：克隆返回后的写入一律被分离挡住；唯一窗口是「写入方已判定独占、克隆紧接着完成」，
-    /// 此时副本可能带上那次写入的值（方向只会是更新，且不会读到半成品 —— 读写都在同一把锁内）。
+    /// 锁内复核 <c>_store</c>：并发写入可能刚把本实例分离到新存储上，此时必须换新存储重来，
+    /// 否则副本会拿到分离前的旧内容（而源已经在新存储上继续演进）。
     /// </para>
     /// </summary>
     public AxiosHeaders Clone()
     {
-        var store = _store;
-
-        // 必须与 Exclusive() 的判定在同一把锁内：否则「写方判定 Owners 为 1」与「克隆方 +1」可以交错，
-        // 副本会与一个仍在就地写入的存储重叠。
-        lock (store.Sync)
+        while (true)
         {
-            store.Owners++;
-            return new AxiosHeaders(store);
+            var store = Volatile.Read(ref _store);
+
+            lock (store)
+            {
+                if (!ReferenceEquals(Volatile.Read(ref _store), store))
+                {
+                    continue; // 已被分离：重取当前存储，别给废弃的存储加计数
+                }
+
+                store.Owners++;
+                return new AxiosHeaders(store);
+            }
         }
     }
 
@@ -251,15 +328,25 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return;
         }
 
-        var store = Exclusive();
-        lock (store.Sync)
+        var store = EnterWrite();
+        try
         {
+            var map = store.EnsureMap();
+
+            // 一次把容量抬到「现有 + 新增」的上界：合并是每请求路径（默认头 + 按请求头），
+            // 逐条写会让字典按 3/5/9… 反复扩容，白分配一轮桶与 entries 数组。
+            map.EnsureCapacity(map.Count + incoming.Length);
+
             foreach (var kv in incoming)
             {
-                store.Map[kv.Key] = kv.Value;
+                map[kv.Key] = kv.Value;
             }
 
-            store.Frozen = null;
+            InvalidateSnapshot(store);
+        }
+        finally
+        {
+            Monitor.Exit(store);
         }
     }
 
@@ -272,69 +359,125 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// </summary>
     internal KeyValuePair<string, string>[] Snapshot()
     {
-        var store = _store;
+        var store = Volatile.Read(ref _store);
         var frozen = Volatile.Read(ref store.Frozen);
         if (frozen is not null)
         {
             return frozen;
         }
 
-        lock (store.Sync)
+        lock (store)
         {
-            return store.Frozen ??= Freeze(store);
+            var cached = Volatile.Read(ref store.Frozen);
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            cached = Freeze(store);
+            Volatile.Write(ref store.Frozen, cached);
+            return cached;
         }
     }
 
-    public IEnumerator<KeyValuePair<string, string>> GetEnumerator()
-        => ((IEnumerable<KeyValuePair<string, string>>)Snapshot()).GetEnumerator();
+    /// <summary>
+    /// 结构体枚举器：<c>foreach</c> 直接用它，不经过 <see cref="IEnumerable{T}"/>，
+    /// 因此不会把数组枚举器装箱（旧实现每次 <c>foreach</c> 白分配 56 B）。
+    /// <para>快照在进入枚举时取定：枚举期间写入不会抛，也看不到中途变化。</para>
+    /// </summary>
+    public Enumerator GetEnumerator() => new(Snapshot());
+
+    IEnumerator<KeyValuePair<string, string>> IEnumerable<KeyValuePair<string, string>>.GetEnumerator()
+        => GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    /// <summary>
-    /// 取一个「只属于自己」的存储：引用计数为 1 时直接返回，否则复制字典并降掉旧存储的计数。
-    /// <para>判定必须在锁内：与 <see cref="Clone"/> 的 +1 互斥，保证「返回独占存储」在返回后依然成立。</para>
-    /// <para>
-    /// 拿到旧存储的引用后可能已被别的线程分离（<c>_store</c> 换成了新存储）：此时必须<b>重来一轮</b>，
-    /// 不能直接把新存储交出去 —— 新存储可能刚被 <see cref="Clone"/> 加过计数，
-    /// 直接写入会让克隆出来的副本看到这次写入（隔离性被破坏）。
-    /// </para>
-    /// </summary>
-    private Store Exclusive()
+    /// <summary>只读结构体枚举器，基于 <see cref="Snapshot"/> 的数组。</summary>
+    public struct Enumerator : IEnumerator<KeyValuePair<string, string>>
     {
-        while (true)
+        private readonly KeyValuePair<string, string>[] _items;
+        private int _index;
+
+        internal Enumerator(KeyValuePair<string, string>[] items)
         {
-            var store = _store;
-            lock (store.Sync)
-            {
-                // 已被另一个实例（或本实例的另一个线程）分离过：换它换上的新存储重来，
-                // 下一轮会在新存储的锁内复核 Owners —— 这是「返回的存储一定独占」的唯一保证。
-                if (!ReferenceEquals(_store, store))
-                {
-                    continue;
-                }
+            _items = items;
+            _index = -1;
+        }
 
-                if (store.Owners == 1)
-                {
-                    return store;
-                }
+        public KeyValuePair<string, string> Current => _items[_index];
 
-                var copy = new Store(store.Map);
-                store.Owners--;
-                Volatile.Write(ref _store, copy);
-                return copy;
-            }
+        object IEnumerator.Current => Current;
+
+        public bool MoveNext() => ++_index < _items.Length;
+
+        public void Reset() => _index = -1;
+
+        public void Dispose()
+        {
         }
     }
 
+    /// <summary>
+    /// 进入「独占写」临界区：返回时<b>已持有</b>返回存储的锁，并保证
+    /// <c>_store == 返回的存储</c> 且 <c>Owners == 1</c>。
+    /// <para>
+    /// 调用方必须在 <c>try/finally</c> 里配对 <see cref="Monitor.Exit(object)"/>。
+    /// </para>
+    /// <para>
+    /// <b>为什么判定与写入必须同一个临界区</b>：旧实现是「先返回独占存储、调用方再另加一次锁」，
+    /// 两步之间可以被插队 ——
+    /// ① 另一个线程 <see cref="Clone"/> 把计数 +1，本次写入就漏给了副本；
+    /// ② 另一个写方看到计数 &gt; 1 而分离，把 <c>_store</c> 换走，本次写入便落进一个再无人读取的孤儿存储。
+    /// 两种都是丢更新。把判定、复制、发布与写入合并进一个临界区后，这两个窗口都不存在。
+    /// </para>
+    /// <para>
+    /// 顺带省掉一次加锁：独占（绝大多数写入）时只 <c>Enter</c> 一次，旧实现要两次。
+    /// </para>
+    /// </summary>
+    private Store EnterWrite()
+    {
+        while (true)
+        {
+            var store = Volatile.Read(ref _store);
+            Monitor.Enter(store);
+
+            // 进入锁之前可能已被别的线程分离：换它换上的新存储重来。
+            if (!ReferenceEquals(Volatile.Read(ref _store), store))
+            {
+                Monitor.Exit(store);
+                continue;
+            }
+
+            if (store.Owners == 1)
+            {
+                return store; // 锁保持，由调用方释放
+            }
+
+            // 仍在共享：复制一份并改挂到本实例，旧存储的计数减一。
+            // 空存储直接给一个空的新存储，不为了「复制空字典」分配一个 80 B 的 Dictionary。
+            var copy = store.MapOrNull is { } map ? new Store(map) : new Store();
+            store.Owners--;
+            Volatile.Write(ref _store, copy);
+            Monitor.Exit(store);
+
+            // 下一轮在 copy 上复核。copy 是全新的，通常直接返回；极端情况下刚发布就被 Clone，
+            // 那就再复制一次 —— 无论如何都不会写进仍在共享的存储。
+        }
+    }
+
+    /// <summary>让只读快照失效。必须在持有存储锁时调用。</summary>
+    private static void InvalidateSnapshot(Store store) => Volatile.Write(ref store.Frozen, null);
+
     private static KeyValuePair<string, string>[] Freeze(Store store)
     {
-        if (store.Map.Count == 0)
+        var map = store.MapOrNull;
+        if (map is null or { Count: 0 })
         {
             return Array.Empty<KeyValuePair<string, string>>();
         }
 
-        var array = new KeyValuePair<string, string>[store.Map.Count];
-        ((ICollection<KeyValuePair<string, string>>)store.Map).CopyTo(array, 0);
+        var array = new KeyValuePair<string, string>[map.Count];
+        ((ICollection<KeyValuePair<string, string>>)map).CopyTo(array, 0);
         return array;
     }
 
