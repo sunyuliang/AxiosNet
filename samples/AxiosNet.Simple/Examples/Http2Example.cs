@@ -4,11 +4,12 @@ using AxiosNet;
 namespace AxiosNet.Simple.Examples;
 
 /// <summary>
-/// 26. HTTP/2：默认仍是 1.1（与 <c>HttpClient</c> 一致，升级不改变线上协议），一行即可开启 h2；
-/// 开启后服务端不支持会自动降级。
+/// 26. HTTP/2：默认就是 2.0（h2 已是公网流量主力），服务端不支持时自动降级；
+/// 需要老协议时一行退回 1.1。
 /// <para>
-/// 演示服务器只实现 HTTP/1.1（相当于现实里的老服务），正好用来观察降级：客户端请求 2.0，
-/// 服务端看到的请求行仍然是 HTTP/1.1，请求照常成功。
+/// 演示服务器只实现 HTTP/1.1（相当于现实里那些只认 1.x 的服务），正好用来观察默认值的两个面：
+/// 客户端请求 2.0，服务端看到的请求行仍然是 HTTP/1.1，请求照常成功 —— 降级不需要额外配置，
+/// 也不会多一次往返。真实的 https 目标支持 h2 时，同样的默认配置会直接谈成 h2。
 /// </para>
 /// </summary>
 public sealed class Http2Example : IExample
@@ -18,7 +19,7 @@ public sealed class Http2Example : IExample
 
     public int Number => 26;
 
-    public string Title => "HTTP/2：默认 1.1、一行开启（服务端不支持时自动降级）";
+    public string Title => "HTTP/2：默认 2.0（不支持时自动降级）、一行退回 1.1";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -29,15 +30,15 @@ public sealed class Http2Example : IExample
         Console.WriteLine("  服务端能力：本示例的演示服务器只实现 HTTP/1.1（相当于「不支持 h2 的老服务」）");
         Console.WriteLine();
 
-        // 1) 默认：什么都不配，与 HttpClient 的默认一致
+        // 1) 默认：什么都不配，库按 2.0 发起，服务端不支持就降级
         var byDefault = await http.GetAsync<ProtocolProbe>("protocol");
         Console.WriteLine("  [1] 默认配置（不设置 HttpVersion）");
-        Console.WriteLine($"      客户端请求 1.1 -> 服务端收到 {byDefault.Data!.RequestVersion}：与升级前完全一致");
+        Console.WriteLine($"      客户端配置 2.0（本示例是明文，没有 ALPN 可协商）-> 服务端收到 {byDefault.Data!.RequestVersion}，响应协商结果 {byDefault.ProtocolVersion}：按契约落 1.1，请求照常成功");
 
-        // 2) 开启 h2：只需要一行，策略默认 OrLower（服务端不支持就降级）
-        var fallback = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version20);
-        Console.WriteLine("  [2] 开启 h2（HttpVersion = Version20，策略默认 RequestVersionOrLower）");
-        Console.WriteLine($"      客户端请求 2.0 -> 服务端收到 {fallback.Data!.RequestVersion}：协商不上就降级，请求照常成功");
+        // 2) 退回 1.1：老网关 / NTLM 这类连接级认证 / 必须用连接级头时
+        var forced = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version11);
+        Console.WriteLine("  [2] 退回 1.1（HttpVersion = Version11，策略仍是默认的 RequestVersionOrLower）");
+        Console.WriteLine($"      客户端请求 1.1 -> 服务端收到 {forced.Data!.RequestVersion}，响应协商结果 {forced.ProtocolVersion}：不再尝试协商");
 
         // 3) 要求必须是 2.0：Exact 不降级，服务端不支持就失败（也用于明文 h2c 先验知识）
         Console.WriteLine("  [3] 要求必须是 h2（VersionPolicy = RequestVersionExact）");
@@ -55,12 +56,20 @@ public sealed class Http2Example : IExample
             Console.WriteLine($"      失败（预期）：code={ex.Code} —— Exact 的语义就是「不支持就报错，不降级」");
         }
 
+        // 4) HTTP/3：本库没有 h3 专属实现（无 QUIC / Alt-Svc），但版本是原样透传的。
+        //    h3 只存在于 QUIC 上，明文目标上 OrLower 会落到 1.1（Exact 则会直接失败）。
+        Console.WriteLine("  [4] 要求 h3（HttpVersion = Version30，策略默认 OrLower）");
+        var h3 = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version30);
+        Console.WriteLine($"      客户端请求 3.0 -> 服务端收到 {h3.Data!.RequestVersion}，响应协商结果 {h3.ProtocolVersion}：明文上不存在 h3，按 OrLower 落 1.1");
+
         Console.WriteLine();
         Console.WriteLine("  要点：");
-        Console.WriteLine("    · 默认仍是 1.1：升级本库不改变线上协议；需要多路复用 / 头部压缩时一行开启 h2");
-        Console.WriteLine("    · 开启后策略默认 RequestVersionOrLower：https 上走 ALPN 协商，服务端只支持 1.1 时自动退回，老服务不受影响");
-        Console.WriteLine("    · 明文 http:// 没有 ALPN 可协商，开了 h2 也仍是 1.1；h2c 必须先验知识（VersionPolicy = RequestVersionExact）");
-        Console.WriteLine("    · HTTP/2 禁止 Connection / Keep-Alive / Transfer-Encoding 这类连接级头，需要它们（或 NTLM 认证）时保持 1.1");
+        Console.WriteLine("    · 默认 2.0：h2 已是公网流量主力，默认停在 1.1 等于白白丢掉多路复用与头部压缩");
+        Console.WriteLine("    · 降级是免费的：https 上走 TLS 的 ALPN，服务端只认 1.1 就在同一次握手里谈成 1.1，不多一次往返、不多一条连接");
+        Console.WriteLine("    · 明文 http:// 没有 ALPN 可协商，一律走 1.1 —— 所以默认 2.0 只影响 https，http:// 的线上行为与之前完全一致");
+        Console.WriteLine("    · 需要 1.1 时一行退回：Connection.HttpVersion = Version11（老网关、NTLM 认证、必须用连接级头）");
+        Console.WriteLine("    · 降级是静默的：response.ProtocolVersion 是「实际用了哪个版本」，日志 / 断言靠它确认有没有真拿到 h2");
+        Console.WriteLine("    · HTTP/3：版本原样透传，但真正跑 h3 需要 .NET 7+ 运行时 + QUIC（MsQuic）；本库没有 Alt-Svc 自动发现");
         Console.WriteLine("    · 单条 h2 连接的并发上限由服务端 MAX_CONCURRENT_STREAMS 决定，池默认允许按 MaxConnectionsPerServer 加连接");
         Console.WriteLine("    · 本机示例没有证书，演示的是明文路径；生产环境（https://）走 TLS + ALPN，配置完全一样");
     }

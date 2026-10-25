@@ -487,16 +487,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             //    没有重试策略时模板本身就是唯一那条请求，与不重试的旧路径完全一致（不多一次分配）。
             var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
 
-            // 默认 HTTP/1.1（与 HttpClient 的默认一致）：升级本库不改变线上协议。
-            // 需要 HTTP/2 时由调用方显式设 Connection.HttpVersion = Version20；此时协商策略默认仍是
-            // RequestVersionOrLower，服务端不支持会自动降级 —— 所以「开 h2」不会让老服务失败。
+            // 默认 HTTP/2：现在 h2 是公网流量的主力（占比约一半，1.x 已降到一成多），默认停在 1.1
+            // 等于让绝大多数调用方白白丢掉多路复用与头压缩。默认 2.0 不会伤到老服务 —— 降级发生在
+            // TLS 握手的 ALPN 里，服务端只认 http/1.1 就直接谈成 1.1，不多一次往返、不多一条连接、
+            // 也没有「先试 2.0 再回退」的探测请求；协商不上时用户根本感知不到（代价只是没拿到 h2 的收益）。
             // 策略显式写出来（而不是依赖 BCL 默认值）：「不支持就降级」是库的契约，BCL 哪天改了默认策略
-            // （例如改 Exact）不能让这条承诺静默失效。
-            // 明文 HTTP 上没有 ALPN 可协商，OrLower 一律走 1.1，不会拿 h2c 先验知识去撞只认 1.x 的服务端。
+            // （例如改 Exact）不能让这条承诺静默失效 —— 一旦变成 Exact，默认 2.0 就会让所有老服务直接失败。
+            // 明文 HTTP 上没有 ALPN 可协商，OrLower 一律走 1.1，不会拿 h2c 先验知识去撞只认 1.x 的服务端；
+            // 也就是说默认 2.0 只影响 https，http:// 的线上行为与之前完全一致。
+            // 反向（需要强制 1.1：老网关、NTLM/Negotiate 这类连接级认证、必须用 Connection/Keep-Alive
+            // 等 h2 禁止的连接级头）：Connection.HttpVersion = Version11。
             var connection = config.ConnectionOrNull;
             var template = new HttpRequestMessage(config.Method, uri)
             {
-                Version = connection?.HttpVersion ?? HttpVersion.Version11,
+                Version = connection?.HttpVersion ?? HttpVersion.Version20,
                 VersionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower
             };
 

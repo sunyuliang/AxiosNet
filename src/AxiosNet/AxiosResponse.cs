@@ -14,6 +14,20 @@ public class AxiosResponse
 
     public string StatusText { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 这次请求<b>实际协商到</b>的 HTTP 版本（<c>1.1</c> / <c>2.0</c> / <c>3.0</c>）。
+    /// <para>
+    /// 与 <see cref="AxiosConfig.ConnectionSettings.HttpVersion"/> 的「请求意图」不同：那个是你要什么，
+    /// 这个是线上真正用了什么。默认 2.0 + 自动降级时，只有它能告诉你「这次到底拿到 h2 没有」——
+    /// 降级是静默的（服务端只认 1.1 时不报错、不多花钱），没有这个值就无法在日志或测试里确认协议。
+    /// </para>
+    /// <para>
+    /// 取自 <see cref="HttpResponseMessage.Version"/>。自定义 Handler 不设置该属性时是 <c>1.1</c>；
+    /// 响应拦截器替换响应对象时，库会把原值搬到新对象上。
+    /// </para>
+    /// </summary>
+    public Version? ProtocolVersion { get; set; }
+
     private IReadOnlyDictionary<string, IEnumerable<string>>? _headers;
 
     /// <summary>合并了响应头与内容头的只读字典（大小写不敏感）。</summary>
@@ -63,6 +77,7 @@ public class AxiosResponse
             RawText = RawText,
             Status = Status,
             StatusText = StatusText,
+            ProtocolVersion = ProtocolVersion,
             Headers = Headers,
             Config = Config,
             Request = Request

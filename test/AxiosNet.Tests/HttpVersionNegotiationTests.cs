@@ -11,8 +11,8 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// HTTP 版本协商：默认 1.1（与 HttpClient 一致）、显式开启 HTTP/2 后服务端不支持时自动降级、
-/// 按请求覆盖版本与策略、重试复制请求时不丢策略、以及池对 h2 多连接的支持。
+/// HTTP 版本协商：默认 2.0、服务端不支持时自动降级回 1.1、按请求覆盖版本与策略、
+/// 重试复制请求时不丢策略、以及池对 h2 多连接的支持。
 /// <para>
 /// 「降级」本身是 BCL 的行为（TLS 上走 ALPN，明文上没有 ALPN 可协商），库的职责是把
 /// <c>Version</c> / <c>VersionPolicy</c> 正确写进出站请求。因此这里的用例分两层：
@@ -28,6 +28,9 @@ public sealed class HttpVersionNegotiationTests
 
         /// <summary>第 N 次（从 1 开始）调用应返回的状态码，默认 200。</summary>
         public Func<int, HttpStatusCode>? Responder { get; set; }
+
+        /// <summary>响应上标注的协议版本（模拟「服务端实际用了哪个版本」），默认 1.1。</summary>
+        public Version ResponseVersion { get; set; } = HttpVersion.Version11;
 
         public IReadOnlyList<(Version Version, HttpVersionPolicy Policy)> Sent
         {
@@ -51,6 +54,7 @@ public sealed class HttpVersionNegotiationTests
 
             var response = new HttpResponseMessage(Responder?.Invoke(attempt) ?? HttpStatusCode.OK)
             {
+                Version = ResponseVersion,
                 Content = new StringContent("""{"ok":true}""", Encoding.UTF8, "application/json"),
                 RequestMessage = request
             };
@@ -64,33 +68,33 @@ public sealed class HttpVersionNegotiationTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Default_RequestsHttp11()
+    public async Task Default_RequestsHttp2()
     {
-        // 默认与 HttpClient 一致：升级本库不改变线上协议，HTTP/2 由调用方显式开启。
+        // 默认 2.0：h2 已是公网流量主力，默认停在 1.1 等于让绝大多数调用方白白丢掉多路复用。
         var handler = new CapturingHandler();
         using var client = new AxiosClient(handler: handler);
 
         await client.GetAsync("http://example.test/ping");
 
         var sent = Assert.Single(handler.Sent);
-        Assert.Equal(HttpVersion.Version11, sent.Version);
+        Assert.Equal(HttpVersion.Version20, sent.Version);
 
-        // 策略仍然显式写死 OrLower：开了 h2 之后「服务端不支持就降级」是库的契约，
-        // 不能依赖 BCL 的默认策略（哪天改成 Exact，这条承诺就静默失效了）。
+        // 策略必须显式写死 OrLower：「服务端不支持就降级」是库的契约。
+        // 这条断言是默认 2.0 的前提 —— 一旦策略变成 Exact，默认 2.0 就会让所有只认 1.x 的服务直接失败。
         Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, sent.Policy);
     }
 
     [Fact]
-    public async Task Config_CanEnableHttp2()
+    public async Task Config_CanForceHttp11()
     {
         var handler = new CapturingHandler();
         using var client = new AxiosClient(handler: handler);
 
-        // 开启 h2 只需要一行：策略默认 OrLower，服务端不支持会自动降级
-        await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version20);
+        // 退回 1.1 也只需要一行：老网关 / NTLM 这类连接级认证 / 必须用连接级头的场景
+        await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version11);
 
         var sent = Assert.Single(handler.Sent);
-        Assert.Equal(HttpVersion.Version20, sent.Version);
+        Assert.Equal(HttpVersion.Version11, sent.Version);
         Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, sent.Policy);
     }
 
@@ -114,17 +118,17 @@ public sealed class HttpVersionNegotiationTests
     [Fact]
     public async Task PerRequestVersion_OverridesInstanceDefault()
     {
-        // 实例上开了 h2，单次请求仍可退回 1.1（老网关 / NTLM 这类例外调用）
+        // 实例上退回 1.1（比如整个客户端面向一个老网关），单次请求仍可单独要 h2
         var handler = new CapturingHandler();
         using var client = new AxiosClient(
-            new AxiosConfig { Connection = { HttpVersion = HttpVersion.Version20 } },
+            new AxiosConfig { Connection = { HttpVersion = HttpVersion.Version11 } },
             handler: handler);
 
         await client.GetAsync("http://example.test/ping");
-        await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version11);
+        await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version20);
 
         Assert.Equal(
-            new[] { HttpVersion.Version20, HttpVersion.Version11 },
+            new[] { HttpVersion.Version11, HttpVersion.Version20 },
             handler.Sent.Select(s => s.Version));
     }
 
@@ -149,8 +153,10 @@ public sealed class HttpVersionNegotiationTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Default_OnCleartext_SendsHttp11()
+    public async Task DefaultOnCleartext_FallsBackToHttp11()
     {
+        // 默认是 2.0，但明文连接没有 ALPN 可协商，OrLower 必须落到 1.1 ——
+        // 这正是「默认 2.0 只影响 https」的证据：http:// 的线上行为与之前完全一致。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
@@ -161,14 +167,18 @@ public sealed class HttpVersionNegotiationTests
     }
 
     [Fact]
-    public async Task Http2OnCleartext_FallsBackToHttp11()
+    public async Task ExplicitHttp11OnCleartext_WithExactPolicy_Succeeds()
     {
-        // 显式开了 h2 但目标只有明文 HTTP：没有 ALPN 可协商，OrLower 必须落到 1.1，
-        // 不能拿 h2c 先验知识去撞只认 1.x 的服务端（那样每个老服务都会连不上）。
+        // 显式退回 1.1 时，即使策略是 Exact 也不该被误解成「明文跑 h2」：
+        // 目标是 1.1、对端也只说 1.1，就该正常成功，不能因为 Exact 就去发 h2c 序言。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.Connection.HttpVersion = HttpVersion.Version20);
+        var response = await client.GetAsync(server.Url, c =>
+        {
+            c.Connection.HttpVersion = HttpVersion.Version11;
+            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+        });
 
         Assert.Equal(200, response.Status);
         Assert.Equal("HTTP/1.1", server.Received[0].Version);
@@ -240,10 +250,11 @@ public sealed class HttpVersionNegotiationTests
     [Fact]
     public async Task TlsServerWithOnlyHttp11_FallsBackToHttp11()
     {
-        // 生产路径：显式开了 h2，但服务端 ALPN 只给 http/1.1 —— 必须自动降级并在 1.1 上成功，
-        // 而不是抛协议错误（这就是「开 h2 不影响老服务」的实证）。
+        // 生产路径（不设任何版本配置，走默认 2.0）：服务端 ALPN 只给 http/1.1 ——
+        // 必须在同一次握手里谈成 1.1 并成功，而不是抛协议错误。
+        // 这就是「默认 2.0 不会让老服务失败」的实证。
         await using var server = TlsProbeServer.Start(SslApplicationProtocol.Http11);
-        using var client = new AxiosClient(Http2Config(), poolOptions: TrustAnyCertificate());
+        using var client = new AxiosClient(poolOptions: TrustAnyCertificate());
 
         var response = await client.GetAsync(server.Url);
 
@@ -255,10 +266,10 @@ public sealed class HttpVersionNegotiationTests
     [Fact]
     public async Task TlsServerWithH2Alpn_SpeaksHttp2()
     {
-        // 反向确认：服务端 ALPN 只给 h2 时，客户端确实按 h2 起手（连接序言），
-        // 说明上面的降级是「协商不上才降」，而不是「永远只发 1.1」。
+        // 反向确认：同样是默认配置，服务端 ALPN 只给 h2 时客户端确实按 h2 起手（连接序言），
+        // 说明上面的降级是「协商不上才降」，而不是「永远只发 1.1」—— 默认值真的生效了。
         await using var server = TlsProbeServer.Start(SslApplicationProtocol.Http2);
-        using var client = new AxiosClient(Http2Config(), poolOptions: TrustAnyCertificate());
+        using var client = new AxiosClient(poolOptions: TrustAnyCertificate());
 
         // 本用例的服务端只读序言就断开，客户端必然报错
         await Assert.ThrowsAnyAsync<Exception>(() => client.GetAsync(server.Url));
@@ -267,11 +278,71 @@ public sealed class HttpVersionNegotiationTests
         Assert.StartsWith("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", first);
     }
 
-    /// <summary>开启 HTTP/2 的实例配置（策略保持默认的「不支持就降级」）。</summary>
-    private static AxiosConfig Http2Config() => new()
+    // ------------------------------------------------------------------
+    // 协商结果对调用方可见（降级是静默的，这是唯一的确认入口）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Response_ReportsNegotiatedVersion()
     {
-        Connection = { HttpVersion = HttpVersion.Version20 }
-    };
+        // 让桩 Handler 把响应标成 2.0，而请求也是默认的 2.0 —— 值必须取自**响应**；
+        // 为了有判别力，下面的用例让两者不同（请求 2.0 / 响应 1.1）。
+        var handler = new CapturingHandler { ResponseVersion = HttpVersion.Version20 };
+        using var client = new AxiosClient(handler: handler);
+
+        var response = await client.GetAsync("http://example.test/ping");
+
+        Assert.Equal(HttpVersion.Version20, response.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task Response_ReportsDowngradedVersion()
+    {
+        // 请求要 2.0、响应标 1.1：模拟真实降级后的结果，调用方必须能看到「实际是 1.1」。
+        var handler = new CapturingHandler { ResponseVersion = HttpVersion.Version11 };
+        using var client = new AxiosClient(handler: handler);
+
+        var response = await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version20);
+
+        Assert.Equal(HttpVersion.Version20, Assert.Single(handler.Sent).Version);
+        Assert.Equal(HttpVersion.Version11, response.ProtocolVersion);
+    }
+
+    // ------------------------------------------------------------------
+    // HTTP/3：本库没有 h3 专属实现（无 QUIC / Alt-Svc），但版本原样透传
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Http3OnCleartext_FallsBackToHttp11()
+    {
+        // h3 只能跑在 QUIC（TLS 1.3 over UDP）上，明文 http:// 上不存在 h3：
+        // 传 3.0 + 默认 OrLower 必须落到 1.1 而不是抛错，否则「显式要求 h3」会让明文目标全失败。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url, c => c.Connection.HttpVersion = HttpVersion.Version30);
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal("HTTP/1.1", server.Received[0].Version);
+        Assert.Equal(HttpVersion.Version11, response.ProtocolVersion);
+    }
+
+    [Fact]
+    public async Task Http3WithExactPolicy_FailsAsNetworkError()
+    {
+        // Exact + 3.0 = 「必须是 h3」：QUIC 建不起来就该失败，但错误必须走库的错误码，
+        // 不能把 BCL 的 HttpRequestException 漏给调用方（也覆盖 .NET 6 运行时没有 QUIC 的情况）。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
+        {
+            c.Connection.HttpVersion = HttpVersion.Version30;
+            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+        }));
+
+        Assert.Equal("ERR_NETWORK", ex.Code);
+    }
 
     private static ConnectionPoolOptions TrustAnyCertificate() => new()
     {
@@ -431,18 +502,19 @@ public sealed class HttpVersionNegotiationTests
 
         var response = await client.GetAsync("http://example.test/ping", c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version20;
+            // 两项都取非默认值（默认是 2.0 + OrLower）：只搬 Version 不搬策略会静默退回 OrLower，
+            // 只搬策略不搬 Version 会静默变成 2.0 —— 两个字段都必须过一遍 CloneRequest。
+            c.Connection.HttpVersion = HttpVersion.Version11;
             c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
         });
 
         Assert.Equal(200, response.Status);
 
-        // 第 2 次是 CloneRequest 出来的新实例：只搬 Version 不搬策略，会静默退回 OrLower
         Assert.Equal(2, handler.Sent.Count);
         Assert.All(handler.Sent, sent =>
         {
-            Assert.Equal(HttpVersion.Version20, sent.Version);
+            Assert.Equal(HttpVersion.Version11, sent.Version);
             Assert.Equal(HttpVersionPolicy.RequestVersionExact, sent.Policy);
         });
     }

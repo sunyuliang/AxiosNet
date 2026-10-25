@@ -298,6 +298,8 @@ internal static class ResponseReader
         response.RawText = lenient ? rawText : null;
         response.Status = status;
         response.StatusText = statusText;
+        // 协商结果（1.1 / 2.0 / 3.0）只有这一处拿得到：降级是静默的，调用方靠它判断「有没有真的拿到 h2」。
+        response.ProtocolVersion = message.Version;
         response.Headers = headers;
         response.Config = config;
         response.Request = request;

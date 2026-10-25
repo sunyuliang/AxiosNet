@@ -105,6 +105,7 @@ public sealed partial class ApiClient
             Data = frames,
             Status = raw.Status,
             StatusText = raw.StatusText,
+            ProtocolVersion = raw.ProtocolVersion,
             Headers = raw.Headers,
             Config = raw.Config,
             Request = raw.Request

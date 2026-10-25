@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-1018%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1022%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -50,7 +50,7 @@
 - [网络连接池](#网络连接池)
   - [为什么需要](#为什么需要)
   - [使用方式](#使用方式)
-  - [HTTP 版本协商（默认 HTTP/1.1）](#http-版本协商默认-http11)
+  - [HTTP 版本协商（默认 HTTP/2）](#http-版本协商默认-http2)
   - [DNS 变更与连接过期](#dns-变更与连接过期)
 - [自定义 Handler 注入](#自定义-handler-注入)
   - [方式一：HandlerFactory（推荐）](#方式一handlerfactory推荐)
@@ -331,7 +331,7 @@ var config = new AxiosConfig
         Auth = new AxiosAuth("user", "pass"), // Basic
         MaxRedirects = 5,
         WithCredentials = false,
-        HttpVersion = HttpVersion.Version11,                     // 默认（= HttpClient 默认）；开 h2 改成 Version20
+        HttpVersion = HttpVersion.Version20,                     // 默认 2.0；退回 1.1 改成 Version11
         VersionPolicy = HttpVersionPolicy.RequestVersionOrLower, // 默认：协商不上就降级（Exact = 不支持就报错）
         // Proxy / Credentials / PoolOptions ...
     },
@@ -1368,29 +1368,30 @@ sharedPool.EvictIdleEndpoints();
 
 > 性能要点：顺序/并发请求都会复用已建立的 TCP 连接（仓库测试与示例实测：5 个顺序请求只建立 1 条 TCP；6 个并发慢请求在 `MaxConnectionsPerServer=2` 下峰值并发恰好为 2）。应用关闭时 `Dispose()` 池即可释放全部连接；共享池不会因为单个 client 释放而被销毁（仅池拥有者负责释放）。
 
-### HTTP 版本协商（默认 HTTP/1.1）
+### HTTP 版本协商（默认 HTTP/2）
 
-默认按 **HTTP/1.1** 发起（与 `HttpClient` 的默认一致）：升级本库**不改变线上协议**。需要 HTTP/2 的多路复用与头部压缩时，一行即可开启 —— 协商策略默认 `RequestVersionOrLower`，**服务端不支持就自动降级回 1.1**，所以开启 h2 也不会让老服务失败。
+默认按 **HTTP/2** 发起：h2 已是公网流量的主力（约占一半请求），HTTP/1.x 只剩一成多并继续萎缩，默认停在 1.1 等于让绝大多数调用方白白丢掉多路复用与头部压缩。协商策略默认 `RequestVersionOrLower`，**服务端不支持就在同一次 TLS 握手里谈成 1.1**——不多一次往返、不多一条连接、没有「先试 2.0 再回退」的探测请求，所以默认 2.0 不会让老服务失败，最差情况只是没拿到 h2 的收益。
 
 | 配置 | 客户端实际发出 | 说明 |
 | --- | --- | --- |
-| 不设置（默认，= `Version11`） | HTTP/1.1 | 与 `HttpClient` 默认一致，线上行为与升级前相同 |
-| `HttpVersion = Version20`（策略默认 OrLower） | https：协商出 `h2` 就用 2.0；服务端只给 `http/1.1` 时降级 1.1。明文 http：一律 1.1 | 推荐的开启方式 |
+| 不设置（默认，= `Version20` + OrLower） | https：协商出 `h2` 就用 2.0；服务端只给 `http/1.1` 时降级 1.1。明文 http：一律 1.1 | 推荐；对老服务与明文目标无影响 |
 | `Version20` + `RequestVersionExact` | 只发 2.0，协商不上就报错 | 需要确认对端真的支持 h2 时用；明文上等于 h2c 先验知识 |
-| `Version11` + 任意策略 | HTTP/1.1 | 显式声明，连协商都不做 |
+| `HttpVersion = Version11`（策略默认 OrLower） | HTTP/1.1 | 退回老协议：老网关、NTLM 认证、必须用连接级头 |
+| `Version11` + `RequestVersionExact` | HTTP/1.1 | 显式声明「只用 1.1」，连协商都不做 |
+| `HttpVersion = Version30`（策略默认 OrLower） | 有 QUIC 且服务端支持 h3 时 3.0；否则降级 h2 / 1.1。明文一律 1.1 | 见下方 HTTP/3 说明：需要 .NET 7+ 运行时与 MsQuic，本库不做 Alt-Svc 自动发现 |
 
 ```csharp
-// 默认：HTTP/1.1，什么都不用配
+// 默认：HTTP/2，什么都不用配（服务端不支持自动降级回 1.1）
 var client = new AxiosClient();
 
-// 开启 HTTP/2：一行（服务端不支持会自动降级回 1.1）
-await client.GetAsync(url, c => c.Connection.HttpVersion = HttpVersion.Version20);
+// 退回 HTTP/1.1：一行，只对这次请求生效
+await client.GetAsync(url, c => c.Connection.HttpVersion = HttpVersion.Version11);
 
-// 整个实例都开：写在 defaults 上
-var http2 = new AxiosClient(new AxiosConfig
+// 整个实例都退回 1.1：写在 defaults 上（比如整个客户端只面向一个老网关）
+var legacy = new AxiosClient(new AxiosConfig
 {
-    BaseAddress = "https://api.example.com/",
-    Connection = { HttpVersion = HttpVersion.Version20 }
+    BaseAddress = "https://legacy.internal/",
+    Connection = { HttpVersion = HttpVersion.Version11 }
 });
 
 // 要求「必须是 h2」：协商失败就抛错，不降级
@@ -1408,9 +1409,15 @@ await client.GetAsync("http://h2c.example.com/", c =>
 });
 ```
 
-> 为什么默认不直接开 2.0：**降级本身不花钱**（ALPN 与 TLS 握手同一次往返，实测「每请求都重新握手」的场景下，请求 2.0 与显式 1.1 的握手次数、耗时完全一致，不存在「先试 2.0 再回退」的额外请求），但 **h2 有行为差异** —— 它不允许 `Connection` / `Keep-Alive` / `Proxy-Connection` / `Transfer-Encoding` / `Upgrade` 这类连接级头，也不支持 NTLM / Negotiate 这类连接级认证。默认 1.1 等于承诺「升级本库不改线上行为」，这些场景无需排查；需要 h2 的收益时再显式打开。
+> **为什么默认 2.0 是安全的**：降级发生在 TLS 握手的 ALPN 阶段（ClientHello 同时带 `h2` 与 `http/1.1`，服务端挑一个），与握手同一次往返。实测在「每个请求都重新建连」的最坏场景下，请求 2.0 与显式 1.1 的握手次数、耗时完全一致，不存在额外开销。明文 `http://` 上没有 ALPN 可协商，`OrLower` 一律用 1.1，也不会拿 h2c 先验知识去撞只认 1.x 的服务端——**默认值只影响 https**。
 >
-> `HttpVersion` / `VersionPolicy` 是**按请求项**：实例 defaults 与单次请求都能设（单次请求覆盖实例默认），重试重发的请求沿用同一套版本与策略。开启 h2 后池默认 `EnableMultipleHttp2Connections = true`：一条 h2 连接能并发跑多少请求由服务端的 `SETTINGS_MAX_CONCURRENT_STREAMS` 决定（nginx 常见 128，部分网关只有 100），关掉时超出的请求只能在那一条连接上排队，打开后按 `MaxConnectionsPerServer` 继续加连接。
+> **需要显式退回 1.1 的少数场景**：① 老网关 / 中间设备不认 h2；② **NTLM / Negotiate 这类连接级认证在 h2 上不可用**（本库的 `WithCredentials = true` 走的是 `CredentialCache.DefaultCredentials`，面向 IIS / 域内服务的集成认证请设 `HttpVersion = Version11`）；③ 业务必须自己发 `Connection` / `Keep-Alive` / `Proxy-Connection` / `Transfer-Encoding` / `Upgrade` 这类 h2 禁止的连接级头（这些头在 h2 上会被拒绝，库自身不注入它们）。
+>
+> `HttpVersion` / `VersionPolicy` 是**按请求项**：实例 defaults 与单次请求都能设（单次请求覆盖实例默认），重试重发的请求沿用同一套版本与策略。h2 下池默认 `EnableMultipleHttp2Connections = true`：一条 h2 连接能并发跑多少请求由服务端的 `SETTINGS_MAX_CONCURRENT_STREAMS` 决定（nginx 常见 128，部分网关只有 100），关掉时超出的请求只能在那一条连接上排队，打开后按 `MaxConnectionsPerServer` 继续加连接。
+
+> **怎么确认实际用的是哪个版本**：降级是静默的，所以 `AxiosResponse.ProtocolVersion` 暴露了这次请求**真正协商到**的版本（取自响应的 `Version`）。请求意图看 `Config.Connection.HttpVersion`，实际结果看 `ProtocolVersion` —— 两者不同就说明发生了降级。
+>
+> **HTTP/3**：版本是原样透传的（`HttpVersion` 是 `Version?`，写 `Version30` 不需要改库），但本库**没有 h3 专属实现**：不做 Alt-Svc 自动发现，也没有 QUIC 相关配置。真要跑 h3 需要 ① .NET 7+ 运行时，② 可用的 MsQuic（Windows 11 / Server 2022+ 自带，Windows 10 与多数 Linux 发行版需另装 `libmsquic`），③ 服务端在 UDP 443 上支持 h3。三者缺一：`OrLower` 会降级回 h2 / 1.1（实测 3.0 在只给 `h2` 的 TLS 服务端上确实回落到 h2），`Exact` 则报 `ERR_NETWORK`。h3 只能跑在 QUIC（TLS 1.3 over UDP）上，明文 `http://` 上不存在 h3，`OrLower` 一律落 1.1。
 
 ### DNS 变更与连接过期
 
@@ -1511,13 +1518,13 @@ using var client3 = Axios.Create(
 - `transformRequest` / `transformResponse`：请求前、响应后数据变换链（线程安全，可在运行期增删；整体赋值任意 `IList` 也会被包装成线程安全实现，枚举始终走快照）
 - 🔧 **可插拔内容序列化**：默认 JSON（System.Text.Json），**内置 XML**（`XmlContentSerializer`）；`Serialization.JsonSerializerOptions` 按「全局 → 实例 → 单次请求」覆盖；实现 `IContentSerializer`（文本格式两个方法 + 二进制格式一对字节通道 `SerializeToBytes` / `Deserialize(bytes)` + 可选的 `MediaType` 自报媒体类型）即可换成 YAML / Protobuf / 换掉 JSON 引擎（`AxiosContent.Serializer` 全局注入），请求头由序列化器自动对齐
 - `postForm` / `putForm` / `patchForm`：一行发 `multipart/form-data` 或表单
-- 完整响应结构：`Data / Status / StatusText / Headers / Config / Request`
+- 完整响应结构：`Data / Status / StatusText / ProtocolVersion / Headers / Config / Request`
 
 **额外能力**
 
 - 🔁 **弹性重试**：默认不重试；挂上策略即可按「次数 + 间隔」重试网络错误 / 超时 / 408 / 429 / 5xx（指数退避、抖动、`Retry-After` 优先，默认只重试幂等方法），策略接口 `IAxiosRetryPolicy` 可完全自定义；正文只序列化一次并原样重发
 - 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
-- 🚀 **可选 HTTP/2（默认 HTTP/1.1）**：默认与 `HttpClient` 一致、升级不改线上行为；一行 `Connection.HttpVersion = Version20` 即开启，服务端不支持时**自动降级**回 1.1（`VersionPolicy` 可改为 `Exact` 要求必须 h2，也可用于明文 h2c）；池默认允许 h2 多连接，避免单连接的 `MAX_CONCURRENT_STREAMS` 上限卡住吞吐
+- 🚀 **默认 HTTP/2，不支持时自动降级**：h2 已是公网流量主力，默认即启用多路复用与头部压缩；降级在 TLS 的 ALPN 里完成（同一次握手，不多往返、不多连接），老服务与明文 `http://` 都不受影响。需要老协议时一行 `Connection.HttpVersion = Version11` 退回；`VersionPolicy = Exact` 可要求必须 h2（也用于明文 h2c）；池默认允许 h2 多连接，避免单连接的 `MAX_CONCURRENT_STREAMS` 上限卡住吞吐
 - 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）；对象节点是 `AxiosDynamic`——`data["key"]` 索引可用、缺省成员返回 `null`（不抛）、运行期可增删属性，同时实现 `IDictionary<string,object?>`（可原样回灌 params/请求体，`System.Text.Json` 也按 JSON 对象序列化）；成员访问与 `ExpandoObject` 同构（shape + 固化槽位），实测持平或更快
 - 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
 - ⬇️ **文件下载**：`GetAsync<Stream>` 流式落盘（内存占用恒定）、`GetAsync<byte[]>` 一次性字节；流读完自动归还连接（可复验连接复用）
@@ -1619,7 +1626,7 @@ using var client3 = Axios.Create(
 23. **XML 序列化（内置）**：换上 `XmlContentSerializer.Instance` —— 请求体、强类型响应、非泛型原文三条路径，标量请求体不经过序列化器，`AxiosContent.Register` 的自动模式（按 Content-Type 选序列化器），以及表单/multipart 与序列化器解耦
 24. **二进制格式（字节通道双向）**：序列化器覆写 `SerializeToBytes` + 字节入口 —— 请求对象自动变字节正文并自报 `application/octet-stream`，响应零解码直达字节入口；对比非泛型 / `byte[]` 路径，并演示调用方显式 `ContentType` 覆盖自报头
 25. **弹性重试**：默认不重试、`RetryPolicy`（次数 / 固定间隔 / 指数退避 / 抖动 / `Retry-After`）、幂等判定（POST 默认不重试）、`OnRetry` 观察每次重试、自定义 `IAxiosRetryPolicy`
-26. **HTTP/2**：默认仍是 1.1，一行开启 h2 —— 演示服务器只支持 1.1，正好看到自动降级（服务端回显请求行版本）；以及 `RequestVersionExact` 要求必须是 h2（不降级就报错）
+26. **HTTP/2**：默认就是 2.0，服务端不支持自动降级 —— 演示服务器只支持 1.1，正好看到降级（服务端回显请求行版本）；一行退回 1.1；以及 `RequestVersionExact` 要求必须是 h2（不降级就报错）
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1662,7 +1669,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **971** 个、DI 扩展 **47** 个，合计 **1018** 个用例（共 **2036** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **975** 个、DI 扩展 **47** 个，合计 **1022** 个用例（共 **2044** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1721,7 +1728,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 1018 个 xUnit 单元测试（核心/声明式 971 + DI 47；两个测试项目均为双目标，实际执行 2036 次）
+# 运行全部 1022 个 xUnit 单元测试（核心/声明式 975 + DI 47；两个测试项目均为双目标，实际执行 2044 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1730,9 +1737,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 167 个） | 971 | `net8.0` / `net6.0` | 1942 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 167 个） | 975 | `net8.0` / `net6.0` | 1950 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **1018** | | **2036** |
+| **合计** | **1022** | | **2044** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1748,7 +1755,7 @@ dotnet build AxiosNet.sln -c Release
 - **文件下载**：`GetAsync<Stream>` 落盘、`ResponseType.ArrayBuffer`、流释放后连接复用、Content-Disposition 文件名、下载超时
 - **dynamic**：共 21 个专项测试——响应图与请求 9 个（`GetAsync<dynamic>` / `PostAsync<dynamic>` / 静态门面 / 显式 responseType 优先），`AxiosDynamic` 契约 12 个（成员与索引一致、缺省成员返回 null、深链行为、运行期增删、异构 shape 交替读、完整 `IDictionary` 表面、JSON 正反序列化、响应对象直接回灌 params/请求体）
 - **连接池**：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义；共享池 fail-fast（连接级 defaults 与 `pool`/`poolOptions` 互斥）；origin key IDNA 归一（unicode/punycode 同节点、IPv6 括号保留）；`pool.Options` 选项隔离
-- **HTTP 版本协商**（`HttpVersionNegotiationTests`）：默认 1.1 + `RequestVersionOrLower`（与 `HttpClient` 一致）；开启 h2 后 TLS 服务端 ALPN 只给 `http/1.1` 时自动降级并成功（自签证书的真实握手，服务端观察请求行）、只给 `h2` 时真的按 h2 起手（观察连接序言）；明文服务端同样降级到 1.1；`RequestVersionExact` 在明文上发出 h2 先验知识序言；实例默认与按请求覆盖版本/策略；重试复制请求时策略不丢；`EnableMultipleHttp2Connections` 默认开启、可关闭、随选项克隆
+- **HTTP 版本协商**（`HttpVersionNegotiationTests`，18 个用例）：默认 2.0 + `RequestVersionOrLower`；默认配置下 TLS 服务端 ALPN 只给 `http/1.1` 时自动降级并成功（自签证书的真实握手，服务端观察请求行）、只给 `h2` 时真的按 h2 起手（观察连接序言）；明文服务端默认降级到 1.1、显式 1.1 + `Exact` 也不误发 h2c 序言；`RequestVersionExact` 在明文上发出 h2 先验知识序言；实例默认与按请求覆盖版本/策略；重试复制请求时版本与策略都不丢；**协商结果对调用方可见**（`ProtocolVersion` 取自响应而非请求，降级后能读到 1.1）；**HTTP/3 透传**（3.0 + OrLower 在明文上落 1.1、3.0 + Exact 失败时归 `ERR_NETWORK`）；`EnableMultipleHttp2Connections` 默认开启、可关闭、随选项克隆
 - **响应读取与泛型路由**：无 Content-Length 的关闭 delimiting 响应（缓冲读取未知长度分支）、精确预分配时零拷贝返回；`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
 - **自定义 Handler**：`PROPFIND` 等自定义谓词透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / **每个 origin 必须拿到独立实例**（两个 origin 交替请求互不影响，前一个不被后一个顶掉）/ 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
 - **弹性重试**（`RetryTests`）：默认不重试；5xx / 408 / 429 重试到成功、次数上限、4xx 不重试、POST 默认不重试（`RetryNonIdempotentMethods` 可打开）、网络错误与超时重试、重试间隔真实生效、`Retry-After` 优先与 `MaxDelay` 封顶、指数退避与抖动区间、正文重放（对象 / 可 seek 流；不可 seek 流 fail-fast）、`OnRetry` 回调、自定义策略、单次请求开关实例默认策略、取消后不再重试、响应拦截器只跑一次
@@ -2030,7 +2037,7 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（971 个用例 × net6.0 / net8.0 双目标 = 1942 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（975 个用例 × net6.0 / net8.0 双目标 = 1950 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（167 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（47 个用例 × net6.0 / net8.0 双目标 = 94 次执行，复用主库/WebAPI 测试基建）
