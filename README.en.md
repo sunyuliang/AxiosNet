@@ -1715,7 +1715,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
   - `AxiosHeaders` goes from "reference count + dictionary + detach copy" to "immutable entry array + CAS publish": reads take no lock at all, a clone just shares the array reference (24 B regardless of header count), and an idempotent write (same value) publishes nothing. Each entry caches a `(length, first char, last char)` discriminator, so a lookup compares an `int` before touching the string
   - Allocation: `new AxiosHeaders()` 64 → **24 B**; clone-then-write 392 → **192 B** (5 headers), 504 → **312 B** (10), 840 → **552 B** (20); idempotent write 392 → **24 B**; `Clone+Set` throughput **2.75x**
   - Lookup: 8.2 ns for 5 headers (was 22.6), 13.0 ns for 10 (was 25.0) — `Get` throughput 2.6x. The trade-off is an O(N) scan: beyond ~18 headers a dictionary wins (67 ns vs 27 ns at 40), and request header sets in practice stay under 10
-  - Per request: `Defaults.RemoveHeaders` 3,872 → **3,496 B**; one per-request header 4,496 → **4,128 B** (no longer copies the whole default set)
+  - Per request (valid JSON response, 2,000 B baseline): `Defaults.RemoveHeaders` 2,680 → **2,304 B**; one per-request header 3,304 → **2,936 B** (no longer copies the whole default set)
   - `SynchronizedList` (transform chains / per-request remove-headers) converted the same way: no lock on the per-request clone, zero-copy snapshot, no boxing when the library enumerates; single-thread stub throughput +7%
 
 - **2026-10-24 full-library audit** (`Audit20261024ReviewFixTests`, 18 cases + 3 in `ApiClientResolverConcurrencyTests` + 4 in `HolderDisposalTests` on the DI side)

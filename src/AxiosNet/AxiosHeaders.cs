@@ -21,6 +21,12 @@ namespace AxiosNet;
 /// 头数 &gt; 20 时逐条比 <c>int</c> 的开销会超过一次哈希查找，但那是极端形态（每请求也就查 3 次）。
 /// </para>
 /// <para>
+/// <b>写入成本</b>：单条 <see cref="Set(string, string?)"/> 是 O(N) 复制（一次写入产出一版新数组，与头数成正比）。
+/// 因此<b>逐条建 N 个头是 O(N²)</b>（200 个约 480 KB 垃圾）；批量建头请用构造或
+/// <see cref="Set(IEnumerable{KeyValuePair{string, string?}})"/> —— 两者都是一次成型、只发布一次。
+/// 每请求「克隆 + 改一两个头」的形态不受影响：N 是当前头数（通常 ≤ 10），一次写入只付一版数组。
+/// </para>
+/// <para>
 /// <b>并发</b>：<see cref="_items"/> 只用 <see cref="Volatile"/> 读、<see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/> 发布。
 /// 两个线程同时写不同的头不会互相覆盖（CAS 失败就基于新版本重算），因此实例默认头可以在请求进行中安全修改。
 /// </para>

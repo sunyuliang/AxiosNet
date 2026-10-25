@@ -223,7 +223,7 @@ public sealed class HeadersCopyOnWriteTests
     }
 
     [Fact]
-    public void BulkConstruction_DoesNotGrowDictionaryRepeatedly()
+    public void BulkConstruction_IsBuiltInOnePass()
     {
         var source = new Dictionary<string, string>();
         for (var i = 0; i < 10; i++)
@@ -231,7 +231,7 @@ public sealed class HeadersCopyOnWriteTests
             source[$"X-H{i}"] = $"value-{i}";
         }
 
-        // 逐条 Set 会让字典按 3/5/9/17 反复扩容（实测 1144 B）；按已知数量预分配后 560 B。
+        // 逐条 Set 会按 1、2、3… 复制 N 次数组（10 头约 1.6 KB）；构造走「攒进 List 再 ToArray」只成型一次（实测 560 B）。
         var cost = AverageBytes(20_000, () => GC.KeepAlive(new AxiosHeaders(source)));
 
         Assert.True(cost < 700, $"构造 10 头 AxiosHeaders 平均 {cost} B —— 疑似又逐条扩容。");
