@@ -352,9 +352,9 @@ public sealed partial class AxiosClient
     /// </summary>
     private static void ApplyRemoveHeaders(AxiosConfig config)
     {
-        if (config.HasRemoveHeaders && config.HasHeaders)
+        if (config.HasHeaders && config.RemoveHeadersSnapshot is { } removeHeaders)
         {
-            foreach (var name in config.RemoveHeaders)
+            foreach (var name in removeHeaders)
             {
                 config.Headers.Delete(name);
             }

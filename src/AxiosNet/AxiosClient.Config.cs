@@ -62,17 +62,19 @@ public sealed partial class AxiosClient
         // 实例默认（Defaults）自己的 RemoveHeaders 也在此生效 —— 否则同一份默认配置，
         // 快捷方法会摘、RequestAsync 入口不摘，两条入口行为相反；Defaults 上写
         // 「永远摘掉某个头」也才有意义。两边都没内容时跳过（空集合删除是 no-op）。
-        if (perCall.HasRemoveHeaders)
+        // 走不可变快照而不是直接枚举集合：RemoveHeaders 的公开类型是 ICollection<string>，
+        // 走接口枚举会为枚举器装箱（每请求 32 B），而这里是每请求都要跑的路径。
+        if (perCall.RemoveHeadersSnapshot is { } perCallRemoveHeaders)
         {
-            foreach (var name in perCall.RemoveHeaders)
+            foreach (var name in perCallRemoveHeaders)
             {
                 merged.RemoveHeaders.Add(name);
             }
         }
 
-        if (merged.HasRemoveHeaders && merged.HasHeaders)
+        if (merged.HasHeaders && merged.RemoveHeadersSnapshot is { } removeHeaders)
         {
-            foreach (var name in merged.RemoveHeaders)
+            foreach (var name in removeHeaders)
             {
                 merged.Headers.Delete(name);
             }
@@ -253,16 +255,16 @@ public sealed partial class AxiosClient
         // 没有头就整段跳过：Headers 延迟创建，为「遍历空集合」把它建出来是每请求的白分配。
         if (config.HasHeaders)
         {
-            // 取缓存的只读数组快照：默认头基本不变，数组只建一次，之后每请求零分配。
+            // 取当前版本的只读数组：不可变数组本身就是快照，每请求零分配、零拷贝。
             var headers = config.Headers.Snapshot();
             foreach (var header in headers)
             {
-                if (!ContentHeaderNames.Contains(header.Key))
+                if (!ContentHeaderNames.Contains(header.Name))
                 {
                     // 非 Content-* 头：先给请求头；请求头不认的个别名称再退回内容头。
-                    if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value) && content is not null)
+                    if (!request.Headers.TryAddWithoutValidation(header.Name, header.Value) && content is not null)
                     {
-                        content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                        content.Headers.TryAddWithoutValidation(header.Name, header.Value);
                     }
 
                     continue;
@@ -276,7 +278,7 @@ public sealed partial class AxiosClient
 
                 // Content-Length 必须与正文实际字节数一致：写错的值会让连接一直等一个不会来的正文，
                 // 最终只表现为一句 ERR_NETWORK。
-                if (string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(header.Name, "Content-Length", StringComparison.OrdinalIgnoreCase))
                 {
                     if (content is null || contentIsSynthetic)
                     {
@@ -301,8 +303,8 @@ public sealed partial class AxiosClient
 
                     // 长度未知（非 seekable 的 Stream 等）：尊重调用方显式声明的值
                     // —— 这是「已知长度、但要关掉 chunked」的逃生口。
-                    content.Headers.Remove(header.Key);
-                    content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                    content.Headers.Remove(header.Name);
+                    content.Headers.TryAddWithoutValidation(header.Name, header.Value);
                     continue;
                 }
 
@@ -317,15 +319,15 @@ public sealed partial class AxiosClient
 
                 // multipart 的 Content-Type 带着生成的 boundary（可能已被进度包装复制），
                 // 覆盖会让正文无法解析，因此保留内容自身的头部。
-                if (string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase)
+                if (string.Equals(header.Name, "Content-Type", StringComparison.OrdinalIgnoreCase)
                     && RequestContentType.HasMultipartBoundary(content.Headers.ContentType))
                 {
                     continue;
                 }
 
                 // Content-Type 允许用户显式覆盖工厂默认值
-                content.Headers.Remove(header.Key);
-                content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                content.Headers.Remove(header.Name);
+                content.Headers.TryAddWithoutValidation(header.Name, header.Value);
             }
         }
 

@@ -143,6 +143,14 @@ public sealed partial class AxiosConfig
     internal bool HasRemoveHeaders => _removeHeaders is { Count: > 0 };
 
     /// <summary>
+    /// 删头名单的只读快照（不可变数组，<c>foreach</c> 零分配）。
+    /// <para>库内热路径用它代替「直接枚举 <see cref="RemoveHeaders"/>」：后者是 <c>ICollection&lt;string&gt;</c>，
+    /// 走接口会为枚举器装箱（每次 32 B）。</para>
+    /// </summary>
+    internal string[]? RemoveHeadersSnapshot
+        => _removeHeaders is { Count: > 0 } ? _removeHeaders.Snapshot() : null;
+
+    /// <summary>
     /// 对应 axios params，会被序列化为 query string。
     /// <para>
     /// 支持对象 / 字典（含 <c>dynamic</c>）/ 集合（根集合用 <c>[0]=v</c>，嵌套数组 <c>a[]=v</c>，
@@ -358,8 +366,11 @@ public sealed partial class AxiosConfig
     /// <summary>是否有请求 transform（不创建集合）。</summary>
     internal bool HasTransformRequest => _transformRequest is { Count: > 0 };
 
-    /// <summary>请求 transform 链的只读快照（管线热路径：具体 List 类型，foreach 走结构体枚举器、零分配）。</summary>
-    internal List<Func<object?, AxiosConfig, object?>>? TransformRequestSnapshot
+    /// <summary>
+    /// 请求 transform 链的只读快照（管线热路径：不可变数组，<c>foreach</c> 走结构体枚举器、零分配）。
+    /// <para>调用方不得修改返回的数组。</para>
+    /// </summary>
+    internal Func<object?, AxiosConfig, object?>[]? TransformRequestSnapshot
         => _transformRequest is { Count: > 0 } ? _transformRequest.Snapshot() : null;
 
     private SynchronizedList<Func<object?, AxiosConfig, object?>>? _transformResponse;
@@ -368,7 +379,7 @@ public sealed partial class AxiosConfig
     internal bool HasTransformResponse => _transformResponse is { Count: > 0 };
 
     /// <summary>响应 transform 链的只读快照（响应阶段热路径，同 <see cref="TransformRequestSnapshot"/>）。</summary>
-    internal List<Func<object?, AxiosConfig, object?>>? TransformResponseSnapshot
+    internal Func<object?, AxiosConfig, object?>[]? TransformResponseSnapshot
         => _transformResponse is { Count: > 0 } ? _transformResponse.Snapshot() : null;
 
     /// <summary>
@@ -431,8 +442,8 @@ public sealed partial class AxiosConfig
         clone._headers = _headers?.Clone();
 
         // transform 链与删头名单走写时复制共享（见 SynchronizedList.ShareIfNotEmpty）：只读用法零拷贝，
-        // 任意一方首次写入前分离。此前每请求都整份拷贝，实例配了 transform 时白付一次全量复制。
-        // 「是否为空」与「+1」由 ShareIfNotEmpty 在同一临界区完成，空链在克隆侧保持 null。
+        // 任意一方写入都发布自己的新数组。此前每请求都整份拷贝，实例配了 transform 时白付一次全量复制。
+        // 空链在克隆侧保持 null（ShareIfNotEmpty 读的是同一版不可变数组，不存在「判空后被清空」的窗口）。
         clone._removeHeaders = _removeHeaders?.ShareIfNotEmpty();
         clone._transformRequest = _transformRequest?.ShareIfNotEmpty();
         clone._transformResponse = _transformResponse?.ShareIfNotEmpty();

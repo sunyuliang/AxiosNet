@@ -1,5 +1,4 @@
 using System.Net;
-using System.Reflection;
 
 namespace AxiosNet.Tests;
 
@@ -13,70 +12,62 @@ namespace AxiosNet.Tests;
 public sealed class Audit20261022Round3PendingFixTests
 {
     /// <summary>
-    /// A：<see cref="AxiosHeaders"/> 进入独占写临界区时，若「旧存储已被别的线程换掉」必须重来一轮。
+    /// A：<see cref="AxiosHeaders"/> 的「不可变数组 + CAS」模型必须同时满足两条契约 ——
+    /// <b>克隆共享同一版数组（写时复制）</b>、<b>写入各换各的（隔离）</b>。
     /// <para>
-    /// 缺陷版本会直接把换上的新存储交出去 —— 而那个新存储可能刚被 <c>Clone</c> 加过计数，
-    /// 于是写入落进了共享字典，克隆出来的快照静默看到了这次写入（隔离性被破坏）。
-    /// </para>
-    /// <para>
-    /// 时序（本用例钉死的交错）：主线程先持住旧存储的锁 → 后台线程进入写入并读到旧存储后阻塞在那里 →
-    /// 主线程把 <c>_store</c> 换成新存储并克隆一次（Owners = 2）→ 释放锁 → 后台线程发现旧存储已过期。
-    /// 修复前的实现此时直接写新存储（共享），修复后重试并复制出独占存储。
+    /// 旧实现（引用计数 + 字典）靠「判定独占 → 复制字典 → 发布」的临界区保证这一点，代码里有两个窗口
+    /// 曾经丢过更新；换成不可变数组后，这两条契约由「数组发布后永不修改」直接成立，不再有窗口。
+    /// 本用例把两条契约都钉死：任一方写入都不得被对方看到，且源与副本各自保留自己的条目。
     /// </para>
     /// </summary>
     [Fact]
-    public async Task Exclusive_WhenStoreWasReplaced_DoesNotWriteIntoSharedStore()
+    public void Clone_SharesSnapshot_ButWritesStayIsolated()
+    {
+        var source = new AxiosHeaders();
+        source.Set("k0", "v0");
+
+        var clone = source.Clone();
+        Assert.Equal("v0", clone.Get("k0"));
+
+        // 副本写入：源不受影响
+        clone.Set("k1", "v1");
+        Assert.Null(source.Get("k1"));
+
+        // 源写入：已经克隆出去的副本也不受影响（对称分离）
+        source.Set("k2", "v2");
+        Assert.Null(clone.Get("k2"));
+        Assert.Equal(2, source.Count);
+        Assert.Equal(2, clone.Count);
+    }
+
+    /// <summary>
+    /// A2：同一实例被多线程并发写<b>不同的头</b>时不能丢更新。
+    /// <para>
+    /// 这是「实例默认头可在请求进行中修改（如运行期刷新 Token）」的底层保证。CAS 失败即基于新版本重算，
+    /// 因此每个线程写的键都必须留下；旧实现若把「判定独占」与「写入」分成两步，就会在这里丢条目。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ConcurrentWrites_OnSameInstance_DoNotLoseUpdates()
     {
         var headers = new AxiosHeaders();
-        headers.Set("k0", "v0");
+        const int workers = 8;
+        const int perWorker = 200;
 
-        var type = typeof(AxiosHeaders);
-        var storeField = type.GetField("_store", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var oldStore = storeField.GetValue(headers)!;
-        var storeType = oldStore.GetType();
-        var ownersField = storeType.GetField("Owners", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var mapField = storeType.GetField("Map", BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-        // 锁就是存储自己（不再有独立的 Sync 对象）
-        var oldSync = oldStore;
-
-        // 让旧存储变成共享（Owners = 2），后台线程的写入才会走「分离」路径
-        _ = headers.Clone();
-        Assert.Equal(2L, ownersField.GetValue(oldStore));
-
-        var released = false;
-        Monitor.Enter(oldSync);
-        try
+        Parallel.For(0, workers, worker =>
         {
-            var writer = Task.Run(() => headers.Set("k1", "v1"));
-
-            // 同步等待，不能在这里 await：Monitor 是线程亲和的，await 后可能换线程退出锁
-            Thread.Sleep(150);
-
-            // 模拟「另一个线程先完成了分离」：把 _store 换成新存储
-            var replacement = Activator.CreateInstance(storeType, nonPublic: true)!;
-            mapField.SetValue(
-                replacement,
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["k0"] = "v0" });
-            storeField.SetValue(headers, replacement);
-
-            // 再克隆一次让新存储成为共享存储（Owners = 2）：snapshot 与 headers 指向同一份字典
-            var snapshot = headers.Clone();
-            Assert.Equal(2L, ownersField.GetValue(replacement));
-
-            Monitor.Exit(oldSync);
-            released = true;
-
-            await writer.WaitAsync(TimeSpan.FromSeconds(5));
-
-            // 关键断言：克隆快照不该看到后台线程对 headers 的写入
-            Assert.Null(snapshot.Get("k1"));
-        }
-        finally
-        {
-            if (!released)
+            for (var i = 0; i < perWorker; i++)
             {
-                Monitor.Exit(oldSync);
+                headers.Set($"X-W{worker}-{i}", i.ToString());
+            }
+        });
+
+        Assert.Equal(workers * perWorker, headers.Count);
+        for (var worker = 0; worker < workers; worker++)
+        {
+            for (var i = 0; i < perWorker; i++)
+            {
+                Assert.Equal(i.ToString(), headers.Get($"X-W{worker}-{i}"));
             }
         }
     }

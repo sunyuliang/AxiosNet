@@ -194,10 +194,32 @@ public sealed class HeadersCopyOnWriteTests
     public void EmptyHeaders_DoesNotPreallocateDictionary()
     {
         // 空 headers 很常见（懒创建的 Config.Headers、只读一次的默认值）：
-        // 旧实现构造时就建 Store + 锁对象 + 空字典（176 B），现在只有实例 + 惰性存储（实测 64 B）。
+        // 空版本是静态单例数组，构造只分配实例本身（实测 24 B）。
         var cost = AverageBytes(50_000, () => GC.KeepAlive(new AxiosHeaders()));
 
-        Assert.True(cost < 100, $"new AxiosHeaders() 平均 {cost} B —— 疑似又预建了空字典或独立锁对象。");
+        Assert.True(cost < 100, $"new AxiosHeaders() 平均 {cost} B —— 疑似又为空集合预建了容器或缓存对象。");
+    }
+
+    [Fact]
+    public void IdempotentSet_DoesNotPublishNewVersion()
+    {
+        // 「每请求把 Authorization / trace id 重设成同一个值」是常见形态。
+        // 不可变数组模型的收益就在这里：值没变就不发布新版本，只分配克隆实例本身（24 B）。
+        // 旧模型（字典 + 引用计数）只要写就分离，5 头实测 392 B —— 差 16 倍。
+        var source = NewHeaders(5);
+        var name = "X-H0";
+        var value = source.Get(name)!;
+
+        var cost = AverageBytes(50_000, () =>
+        {
+            var copy = source.Clone();
+            copy.Set(name, value);
+            GC.KeepAlive(copy);
+        });
+
+        Assert.True(
+            cost < 64,
+            $"克隆后重设同一个值平均 {cost} B —— 幂等写入又发布了新版本（应当只有 24 B 的克隆实例）。");
     }
 
     [Fact]
@@ -253,16 +275,20 @@ public sealed class HeadersCopyOnWriteTests
     }
 
     [Fact]
-    public async Task RequestWithDefaultHeaders_DoesNotPayPerHeaderAllocation()
+    public async Task RequestWithDefaultHeaders_PaysOnlyBclHeaderCost()
     {
-        // 默认头是「每请求拷一份、之后只读」的典型形态：
-        // 修复前 5 个默认头让每个请求多分配 1200 B（≈240 B/头，克隆 + 每请求 List 快照）；
-        // 修复后只剩 BCL 自己把 5 个头写进 HttpRequestMessage 的开销（实测 360 B，≈72 B/头）。
+        // 默认头是「每请求拷一份、之后只读」的典型形态：修复前 5 个头让每请求多分配 1200 B
+        // （≈240 B/头：整份克隆 + 每请求 List 快照）。写时复制之后我们只剩实例本身（24 B，与头数无关）。
+        //
+        // 剩下的大头是 BCL 把每个头写进 HttpRequestMessage.Headers —— 它按「字典初始化 + 扩容」计费，
+        // 不是按头计费：net8 上 1 头 136 B / 5 头 288 B / 10 头 568 B，net6 上 1 头 296 B / 5 头 600 B。
+        // 所以这里不用绝对阈值（换个运行时或改个头数，阈值就变成噪音），改为「现场测一遍裸 BCL 再相减」，
+        // 只钉我们自己的那一份：AxiosNet 的边际成本 − 裸 BCL 的边际成本 ≤ 64 B。
         using var bare = new AxiosClient(handler: new StubHandler());
         using var rich = new AxiosClient(handler: new StubHandler());
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < DefaultHeaderNames.Length; i++)
         {
-            rich.Defaults.Headers.Set($"X-Default-{i}", $"value-{i}");
+            rich.Defaults.Headers.Set(DefaultHeaderNames[i], DefaultHeaderValues[i]);
         }
 
         await Send(bare);
@@ -270,13 +296,46 @@ public sealed class HeadersCopyOnWriteTests
 
         var bareCost = MeasureRequest(bare);
         var richCost = MeasureRequest(rich);
+        var ours = richCost - bareCost;
+        var bcl = MeasureBclHeaderCost();
 
-        var delta = richCost - bareCost;
         Assert.True(
-            delta < 700,
-            $"5 个默认头让每个请求多分配 {delta:N0} B（{bareCost:N0} → {richCost:N0}）——"
-            + "超出 700 B 护栏，疑似 Defaults.Clone 又变回整份复制或 ApplyHeaders 又每请求建 List。");
+            ours - bcl <= 64,
+            $"{DefaultHeaderNames.Length} 个默认头让每请求多分配 {ours:N0} B，其中裸 BCL 自己就要 {bcl:N0} B ——"
+            + $"我们这一份 {ours - bcl:N0} B，超出 64 B 护栏：疑似 Defaults.Clone 又变回整份复制，"
+            + "或 ApplyHeaders 又每请求建 List。");
     }
+
+    /// <summary>
+    /// 对照基线：同一进程里「裸 BCL 把同样这几个头写进 HttpRequestMessage」的每请求成本。
+    /// <para>
+    /// 头名/取值预存在静态数组里：测量循环内用字符串插值会按次分配，把基线抬高几十字节
+    /// （5 个头实测能从 288 B 虚增到 728 B），护栏就此失效。
+    /// </para>
+    /// </summary>
+    private static long MeasureBclHeaderCost()
+    {
+        var empty = AverageBytes(20_000, () => GC.KeepAlive(new HttpRequestMessage(HttpMethod.Get, "http://localhost/x")));
+
+        var withHeaders = AverageBytes(20_000, () =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, "http://localhost/x");
+            for (var i = 0; i < DefaultHeaderNames.Length; i++)
+            {
+                request.Headers.TryAddWithoutValidation(DefaultHeaderNames[i], DefaultHeaderValues[i]);
+            }
+
+            GC.KeepAlive(request);
+        });
+
+        return withHeaders - empty;
+    }
+
+    private static readonly string[] DefaultHeaderNames =
+        Enumerable.Range(0, 5).Select(i => $"X-Default-{i}").ToArray();
+
+    private static readonly string[] DefaultHeaderValues =
+        Enumerable.Range(0, 5).Select(i => $"value-{i}").ToArray();
 
     private static AxiosHeaders NewHeaders(int count)
     {
