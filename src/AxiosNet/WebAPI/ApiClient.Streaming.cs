@@ -107,6 +107,9 @@ public sealed partial class ApiClient
             Status = raw.Status,
             StatusText = raw.StatusText,
             ProtocolVersion = raw.ProtocolVersion,
+            // 流式响应的正文字节数本来就未知（这里恒为 null），但字段照搬一份：
+            // 少拷一个字段，将来「谁该拷哪些字段」就要靠记忆而不是靠一致性。
+            BodyBytes = raw.BodyBytes,
             Headers = raw.Headers,
             Config = raw.Config,
             Request = raw.Request

@@ -63,6 +63,17 @@ public class AxiosResponse
         => Headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
 
     /// <summary>
+    /// 响应正文字节数（<b>只有非流式响应有值</b>；流式响应读到这里时正文还没下完，宁可不填也不猜
+    /// <c>Content-Length</c>）。
+    /// <para>
+    /// 供遥测把 <c>http.response.body.size</c> 写进 span。不复用 <see cref="Headers"/> 里的
+    /// <c>Content-Length</c>：那个值可能被 chunked / 压缩改写，与「实际收了多少字节」不是一回事，
+    /// 而展开响应头字典本身还有开销。
+    /// </para>
+    /// </summary>
+    internal long? BodyBytes { get; set; }
+
+    /// <summary>
     /// 把非泛型响应复制成 <typeparamref name="TData"/> 的响应。
     /// <para>
     /// 只在<b>响应拦截器换掉响应对象</b>时走这里（它写不出泛型参数）：
@@ -78,6 +89,7 @@ public class AxiosResponse
             Status = Status,
             StatusText = StatusText,
             ProtocolVersion = ProtocolVersion,
+            BodyBytes = BodyBytes,
             Headers = Headers,
             Config = Config,
             Request = Request

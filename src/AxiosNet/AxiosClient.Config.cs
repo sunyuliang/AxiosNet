@@ -126,6 +126,12 @@ public sealed partial class AxiosClient
             merged.Retry.MergeFrom(incomingRetry);
         }
 
+        // 遥测开关同属按请求项：健康检查这类请求可以单独关掉，不影响实例默认。
+        if (perCall.TelemetryOrNull is { } incomingTelemetry)
+        {
+            merged.Telemetry.MergeFrom(incomingTelemetry);
+        }
+
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
             merged.Serialization.MergeFrom(incomingSerialization);

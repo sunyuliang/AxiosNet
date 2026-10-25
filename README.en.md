@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-1038%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1060%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -13,6 +13,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - Zero third-party dependencies — .NET BCL only
 - Runtime support: **.NET 6 and later** (single `net6.0` target, see [Target framework and runtime support](#target-framework-and-runtime-support))
 - Async-first (`Task` / `CancellationToken` / `ConfigureAwait(false)`)
+- Observability: `ActivitySource` / `Meter` / `DiagnosticListener` all wired up, with OpenTelemetry HTTP semantic-convention tags; two lines to hook OTel (`AddSource("AxiosNet")` + `AddMeter("AxiosNet")` — see [Observability](#observability-traces--metrics--events))
 
 > Repository: **Gitee ([itsm/axios-net](https://gitee.com/itsm/axios-net)) is the primary repository** —  PRs and tags are handled there. [GitHub](https://github.com/sunyuliang/AxiosNet) is a read-only mirror (CI-driven NuGet publishing also runs on the mirror side).
 
@@ -55,6 +56,11 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Injecting a custom handler](#injecting-a-custom-handler)
   - [Option 1: HandlerFactory (recommended)](#option-1-handlerfactory-recommended)
   - [Option 2: Inject the handler directly (no pool)](#option-2-inject-the-handler-directly-no-pool)
+- [Observability (traces / metrics / events)](#observability-traces--metrics--events)
+  - [Traces: ActivitySource](#traces-activitysource)
+  - [Metrics: Meter](#metrics-meter)
+  - [Events: DiagnosticListener](#events-diagnosticlistener)
+  - [Configuration and overhead](#configuration-and-overhead)
 - [Features](#features)
 - [axios ↔ AxiosNet mapping](#axios--axiosnet-mapping)
 - [Differences from axios](#differences-from-axios)
@@ -375,11 +381,18 @@ var config = new AxiosConfig
         CollectionFormat = AxiosCollectionFormat.Csv, // collection form: Brackets(default)/Multi/Csv/Ssv/Tsv/Pipes
         FormFieldNameSelector = (prefix, name) => string.IsNullOrEmpty(prefix) ? name : $"{prefix}.{name}",
     },
+
+    // —— Observability (on by default; produces nothing unless someone listens) ——
+    Telemetry = new()
+    {
+        Enabled = null,      // null/true = emit spans / metrics / events; false = emit nothing for this request
+        CaptureUrl = null,   // null/true = write url.full on the span; false = keep only scheme/host/port/path
+    },
 };
 ```
 
-> Optional settings are grouped into five sub-objects: `Serialization` / `Connection` / `Limits` / `Callbacks` / `Retry`.
-> They are **created lazily on first access**: configs that never touch these five objects allocate nothing extra, and internal reads go straight to the backing field (zero allocation on the hot path).
+> Optional settings are grouped into six sub-objects: `Serialization` / `Connection` / `Limits` / `Callbacks` / `Retry` / `Telemetry`.
+> They are **created lazily on first access**: configs that never touch these six objects allocate nothing extra, and internal reads go straight to the backing field (zero allocation on the hot path).
 
 > See [Progress callbacks, rate limiting, and size limits](#progress-callbacks-rate-limiting-and-size-limits) for the progress/rate-limit details.
 
@@ -389,7 +402,7 @@ The default JSON options are **web-style** (camelCase output, case-insensitive i
 >
 > The same applies to an `AxiosClient(pool: ...)` sharing a pool: these four settings and `Connection.PoolOptions` apply to the **pool**, not to an individual instance, so setting them on a shared-pool client's defaults also throws `ERR_BAD_OPTION_VALUE` immediately. Configure them on the `ConnectionPoolOptions` used to create the pool instead (see [Connection pool](#connection-pool)).
 >
-> Settings that are meant to be per-request (`timeout`, `headers`, `params`, `responseType`, `maxContentLength`, `maxRate`, `onUploadProgress`/`onDownloadProgress`, `transformRequest`/`transformResponse`, `validateStatus`, `auth`, `httpVersion`/`versionPolicy`, `cancellationToken`, `Serialization.RequestEncoding`/`Serialization.ResponseEncoding`, and so on) are not affected. `cancellationToken` may be set either as an instance default or per request; the per-request value wins when both are present.
+> Settings that are meant to be per-request (`timeout`, `headers`, `params`, `responseType`, `maxContentLength`, `maxRate`, `onUploadProgress`/`onDownloadProgress`, `transformRequest`/`transformResponse`, `validateStatus`, `auth`, `httpVersion`/`versionPolicy`, `cancellationToken`, `Serialization.RequestEncoding`/`Serialization.ResponseEncoding`, `Telemetry.Enabled`/`Telemetry.CaptureUrl`, and so on) are not affected. `cancellationToken` may be set either as an instance default or per request; the per-request value wins when both are present.
 
 The `AxiosConfig` handed to a `configure` callback (quick methods and `RequestAsync(configure)` / `GetUri(configure)`) **is a copy of the instance defaults**: what you read is the effective value, and what you write becomes the effective value. Operations that remove things — `c.Headers.Delete("X-Foo")`, `c.Headers.Clear()` — therefore really drop instance default headers, identically on every entry point. Passing an `AxiosConfig` object to `RequestAsync(config)` is the other path: it is merged onto the instance defaults as a set of per-request overrides.
 
@@ -1485,6 +1498,114 @@ Key points:
 - It is mutually exclusive with `pool` / `poolOptions`; passing both also throws `ERR_BAD_OPTION_VALUE`.
 - Timeouts are still managed per request by the library (`HttpClient.Timeout` is set to Infinite internally, so `c.Timeout` works as usual); data-layer features such as `Callbacks.OnUploadProgress` / `maxRate` / `maxContentLength` are unaffected.
 
+## Observability (traces / metrics / events)
+
+All three signal types (traces / metrics / events) are **on by default**, and all three use the name `AxiosNet`. Hooking up OpenTelemetry takes two lines:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddSource(AxiosTelemetry.ActivitySourceName)) // "AxiosNet"
+    .WithMetrics(m => m.AddMeter(AxiosTelemetry.MeterName));          // "AxiosNet"
+```
+
+You can also subscribe by hand (`ActivityListener` / `MeterListener` / `DiagnosticListener`) if you would rather not pull in OTel; the names are public constants on `AxiosTelemetry`.
+
+**Why it is on by default**: observability fails asymmetrically — forget to enable it and you find out you have no data only when production breaks, and fixing that means a redeploy; while the cost of having it on is zero as long as nobody subscribes (see the measurements under [Configuration and overhead](#configuration-and-overhead)). This also matches the BCL itself (`HttpClient`'s `System.Net.Http` source behaves the same way: it produces by default and you pay only when you subscribe), and it avoids the "you must do two things (subscribe + flip a switch), miss one and you silently get no data" trap.
+
+### Why the library opens a span of its own
+
+The library ultimately runs on top of `HttpClient`, so the span for the **actual I/O** is produced by the BCL itself (.NET 8+ emits `HttpRequestOut` from the `System.Net.Http` source; .NET 6 only raises `HttpHandlerDiagnosticListener` events, with no span). That layer sees "one HTTP round trip" but cannot see anything the library knows: how many retries happened, what the library error code was, which HTTP version was actually negotiated, how many bytes went each way.
+
+So the library opens its own `ActivityKind.Client` span: **one span per logical request** (retries do not open new spans — the count goes on `http.request.resend_count`). With both sources enabled, the BCL span naturally becomes its child and `traceparent` is injected by the BCL, so the server still sees a single trace.
+
+### Traces: ActivitySource
+
+Source name `AxiosNet`; the span name is the HTTP method (`GET` / `POST`). The URL is deliberately kept out of the name: putting it there makes backends group millions of "operations" by URL, which hides the endpoint dimension instead of revealing it.
+
+| Tag | Meaning |
+| --- | --- |
+| `http.request.method` | The method (same source as the span name) |
+| `url.scheme` / `server.address` / `server.port` / `url.path` | Target; `server.address` uses the IDNA form (same convention as the pool's origin key) |
+| `url.full` | Full URL including the query string, with **userinfo stripped** (credentials in `https://user:pass@host/` never reach the span). **Omitted** when `Telemetry.CaptureUrl = false`, leaving only the four tags above |
+| `http.response.status_code` | Written when a response was received |
+| `network.protocol.version` | The version **actually negotiated** (`1.0` / `1.1` / `2` / `3`). With the HTTP/2 default plus silent downgrade, this is the only way to confirm what the wire protocol really was |
+| `http.request.body.size` / `http.response.body.size` | Byte counts; the request tag is skipped when the body length is unknown (streaming), rather than guessed |
+| `http.request.resend_count` | How many times this logical request has been retried |
+| `error.type` | The status code when there is one; otherwise the library error code (`ERR_NETWORK` / `ECONNABORTED` / `ERR_BAD_RESPONSE` …, more stable than an exception type name); the exception type name is the last resort |
+
+- **Status**: 4xx / 5xx are marked `Error` even when `validateStatus` accepts them (the semantic-convention reading, consistent with the failure path that throws `AxiosException`).
+- **Failure detail**: an `exception` event is recorded as well (`exception.type` / `exception.message` / `exception.stacktrace`). net6.0 has no `Activity.AddException` (that arrived in .NET 9), so the library writes it by hand following the convention.
+- **Retries**: each "decided to retry" adds a `retry` event (`http.request.resend_count` / `axiosnet.retry.delay_ms` / status code / `error.type`).
+- **Parent span**: if the caller already has an `Activity` open, the library's span uses it as parent (`Activity.Current` picks it up naturally) — no extra configuration.
+- **Streaming responses** (`ResponseType.Stream`): the span ends as soon as the response headers arrive — the body is handed to the caller to consume frame by frame, and the library has no idea when you finish. So a streaming request's duration is essentially **time to first byte**, and `http.response.body.size` is not written. Measure the body download yourself (or use the [progress callbacks](#progress-callbacks-rate-limiting-and-size-limits)).
+
+### Metrics: Meter
+
+Source name `AxiosNet`.
+
+| Metric | Type | Unit | Tags |
+| --- | --- | --- | --- |
+| `axiosnet.client.request.duration` | `Histogram<double>` | `s` | `http.request.method` / `server.address` / `server.port` / `http.response.status_code` / `error.type` |
+| `axiosnet.client.active_requests` | `ObservableGauge<long>` | `{request}` | none |
+| `axiosnet.client.request.retries` | `Counter<long>` | `{retry}` | `http.request.method` / `server.address` / `server.port` / `error.type` |
+
+The tags are deliberately **low-cardinality** only: method, host, port, status code, error type. URL paths and full URLs stay out of metrics — that is the span's job; putting them in metrics makes the series count grow linearly with the number of endpoints.
+
+`request.duration` measures the **logical request**: retries and backoff waits included (which matches "how long did this call take" from the caller's point of view), not a single HTTP round trip. The window runs from "request formed (URL built)" to "response read + response interceptors done" — the preparation phase (request interceptors and `transformRequest`) is excluded, and it is **the same window the span covers** (otherwise one request would report two different durations in traces and dashboards).
+
+`active_requests` is a **process-level water mark**, implemented as an `ObservableGauge` that reads an `Interlocked` counter at collection time: net6.0 metrics have no `UpDownCounter` (added in .NET 7) and a `Counter` should only ever go up. It counts requests that are already formed and in the send stage — preparation does not count as occupancy.
+
+### Events: DiagnosticListener
+
+Listener name `AxiosNet.DiagnosticListener`, four events, all with public payload types:
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `AxiosNet.RequestStart` | `AxiosRequestStartEvent` (`Method` / `Uri` / `Config`) | Interceptors and `transformRequest` have run, the URL is built, the request is about to be sent |
+| `AxiosNet.RequestStop` | `AxiosRequestStopEvent` (`Method` / `Uri` / `Response` / `Elapsed`) | A response was obtained successfully (including 4xx/5xx accepted by `validateStatus`) |
+| `AxiosNet.RequestFailed` | `AxiosRequestFailedEvent` (`Method` / `Uri` / `Exception` / `ErrorCode` / `Status` / `Elapsed`) | An `AxiosException` was thrown |
+| `AxiosNet.Retry` | `AxiosRetryContext` (the same struct the `OnRetry` callback receives) | Every "decided to retry" |
+
+This channel exists for "I only want logs / analytics and do not want OpenTelemetry", and it is also the only way to see per-request events on .NET 6.
+
+### Configuration and overhead
+
+```csharp
+var config = new AxiosConfig
+{
+    Telemetry = new()
+    {
+        Enabled = false,     // emit nothing at all for this request/instance (default true)
+        CaptureUrl = false,  // do not write url.full (default true): use when the query string carries a token
+    },
+};
+```
+
+Both are **per-request settings**, so health checks and probes can opt out without polluting business metrics:
+
+```csharp
+await client.GetAsync<object>("health", configure: c => c.Telemetry.Enabled = false);
+```
+
+The decision is made **after** the request interceptors (it looks at the final effective config), so changing these two inside a request interceptor works as well.
+
+**Almost free when nobody listens**: each signal has its own gate (`ActivitySource.HasListeners()` / `DiagnosticListener.IsEnabled(name)` / `Instrument.Enabled`), and every gate is checked **before the payload is built** — with no listener the library creates no `Activity`, no event object and no tag list, leaving only two `Interlocked` calls and one `Stopwatch.GetTimestamp()` per request (needed by the active-request gauge). If you do not even want that, set `Telemetry.Enabled = false`; that path is identical to not having the feature at all.
+
+Measured (stub `HttpMessageHandler`, no socket, no network — library cost only; 20000 iterations per window, median of several rounds):
+
+| Configuration | Time per request | Allocation per request |
+| --- | ---: | ---: |
+| Telemetry off (`Enabled = false`) | ≈1.0 µs | 1832 B |
+| On by default, **nobody listening** | ≈1.0 µs (difference is within noise) | **1808 B (zero extra)** |
+| On by default, all three signals subscribed | ≈2.1 µs | 3120 B (+1.3 KB) |
+| On by default, `DiagnosticListener` only | ≈1.1 µs | 1896 B (+88 B) |
+
+In other words: **being on by default never makes anyone slower**. The cost only appears once you actually subscribe — and it is the size of the telemetry data you asked for. On real network requests (≈100 µs over loopback) the difference is completely swallowed by I/O noise; the concurrent-throughput guard (`ConcurrencyPerformanceTests`) measures this library at 100%–104% of `HttpClient`.
+
+> One BCL detail: `Instrument.Enabled` is **one-way** — once some `MeterListener` has enabled it, it keeps returning `true` even after that listener is disposed. So after anything in the process has ever subscribed to metrics, every request keeps paying for the tag list (+152 B) until the process ends. That does not affect the default state; it only means "attach a listener temporarily and detach it" will not win the cost back.
+
+**It never affects the outcome of a request**: every telemetry call is wrapped in try/catch. This is not defensive habit — measured behavior is that `ActivitySource.StartActivity` **rethrows** whatever an `ActivityStarted` callback throws (while `Activity.Dispose()` swallows `ActivityStopped` exceptions, and `Counter.Add` rethrows measurement-callback exceptions), and a broken subscriber must not turn into "my request failed".
+
 ## Features
 
 **Aligned with axios**
@@ -1515,6 +1636,7 @@ Key points:
 - 🔁 **Resilient retries**: off by default; attach a policy to retry network errors / timeouts / 408 / 429 / 5xx with a configurable count and interval (exponential backoff, jitter, `Retry-After` priority, idempotent methods only by default). `IAxiosRetryPolicy` lets you plug in any logic; the body is serialized once and resent as-is
 - 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
 - 🚀 **HTTP/2 by default, with automatic downgrade**: h2 already carries the majority of public traffic, so multiplexing and header compression are on out of the box; the downgrade happens inside ALPN during the TLS handshake (same round trip, same connection count), so legacy servers and cleartext `http://` are unaffected. One line (`Connection.HttpVersion = Version11`) opts back into the old protocol; `VersionPolicy = Exact` requires h2 (and enables cleartext h2c); the pool allows multiple h2 connections by default so a single connection's `MAX_CONCURRENT_STREAMS` limit cannot cap throughput
+- 🔭 **Observability (on by default)**: `ActivitySource` / `Meter` / `DiagnosticListener` signals with OpenTelemetry HTTP semantic-convention tags (`http.request.method` / `url.path` / `http.response.status_code` / `network.protocol.version` / `error.type` …), two lines to hook OTel (`AddSource("AxiosNet")` + `AddMeter("AxiosNet")`); one span per logical request (retries recorded as `http.request.resend_count` plus `retry` events), metrics for request duration / active requests / retry count using low-cardinality tags only; nothing is produced when nobody listens, and `Telemetry.Enabled = false` turns it off per request (see [Observability](#observability-traces--metrics--events))
 - 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS); object nodes are `AxiosDynamic` — `data["key"]` indexing works, missing members yield `null` instead of throwing, properties can be added/removed at runtime, and it implements `IDictionary<string,object?>` (so it can be fed back as params/body and `System.Text.Json` serializes it as a plain JSON object). Member access uses the same shape + baked-slot design as `ExpandoObject` (measured on par or slightly faster)
 - 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
 - ⬇️ **File download**: `GetAsync<Stream>` streams to disk with constant memory, `GetAsync<byte[]>` grabs all bytes at once; connections return to the pool when the stream is disposed (connection reuse is verifiable)
@@ -1563,6 +1685,7 @@ Key points:
 | `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
 | (no built-in equivalent) | `HttpConnectionPool` / `ConnectionPoolOptions` |
 | `axios-retry` plugin (`retry` / `retryDelay` / `onRetry`) | `c.Retry.Policy = new RetryPolicy { MaxRetries = 3, Delay = ... }` / `c.Retry.OnRetry` (off by default, see [Retries](#retries)) |
+| — (on the axios side you instrument it yourself via the OTel JS SDK) | Built-in signals: `ActivitySource` / `Meter` / `DiagnosticListener` (see [Observability](#observability-traces--metrics--events)) |
 
 ## Differences from axios
 
@@ -1589,7 +1712,7 @@ Intentional differences driven by the .NET platform:
 
 ## Sample project
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 26 categories of integration calls:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 27 categories of integration calls:
 
 1. The global static facade `Axios.GetAsync`
 2. `Axios.Create` (baseURL / default headers / strongly-typed response)
@@ -1617,12 +1740,13 @@ Intentional differences driven by the .NET platform:
 24. **Binary formats (byte channel both ways)**: the serializer overrides `SerializeToBytes` + the byte inlet — request objects become byte bodies with a self-declared `application/octet-stream`, and responses reach the byte inlet with zero decoding; compared against the non-generic / `byte[]` paths, plus the caller's explicit `ContentType` overriding the self-declared header
 25. **Resilient retries**: off by default, `RetryPolicy` (count / fixed interval / exponential backoff / jitter / `Retry-After`), idempotency rules (POST is not retried by default), `OnRetry` observing each retry, and a custom `IAxiosRetryPolicy`
 26. **HTTP/2**: 2.0 by default with automatic downgrade — the HTTP/1.1-only demo server shows the downgrade (the server echoes the request-line version), one line goes back to 1.1, and `RequestVersionExact` requires h2 or fails
+27. **Observability**: subscribes all three signals by hand (`ActivitySource` / `Meter` / `DiagnosticListener`) — a request that returns 503 twice before succeeding leaves `http.request.resend_count = 2` plus two `retry` events on the span, a failing request is marked `Error` with `error.type`, and the metrics record the duration histogram and retry count; then `Telemetry.Enabled = false` (a probe request produces no telemetry at all) and `CaptureUrl = false` (no full URL when the query string carries a token)
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-The app starts into an **interactive menu**: reflection lists every sample's class name and title (26 core + 9 declarative = 35 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-26.
+The app starts into an **interactive menu**: reflection lists every sample's class name and title (27 core + 10 declarative = 37 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-27.
 
 Client usage follows production conventions: **each sample keeps one static client, created only when null and reused by every later run** (a `private static` field in the sample class with `??=` — no shared-client registry layered on top) — every `AxiosClient` owns a connection pool, so creating a client per run means rebuilding TCP connections every time; samples that install interceptors clear them first on each run, so re-runs behave identically. Item 12 (pool statistics), the handler-injection/pooled scenarios of item 17 (per-run counters), and item 20 (DNS switchover) deliberately create fresh clients: what they demonstrate is "brand-new connections / counters" itself.
 
@@ -1643,7 +1767,7 @@ The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is 
 9. **Multipart upload**: `[Multipart]` + `[Part]` — the model itself is the form, and the server parses it byte-exactly and reports the part list
 10. **Per-frame cap**: the default 8 MB rejects a 9 MB element (`ERR_BAD_RESPONSE`); raising `Limits.MaxStreamFrameLength` to 12 MB lets the same endpoint stream to the end — the sample also spells out that the cap is only a ceiling (nothing is pre-allocated at cap size) and that there is no "unlimited" mode
 
-These 10 items live in the same startup menu as the 26 above (menu items 27-36, with their own demo server started lazily on first use):
+These 10 items live in the same startup menu as the 27 above (menu items 28-37, with their own demo server started lazily on first use):
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1660,7 +1784,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **991** core/declarative cases plus **47** DI-extension cases — **1038** in total (**2076** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **1013** core/declarative cases plus **47** DI-extension cases — **1060** in total (**2120** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1719,7 +1843,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 1038 xUnit tests (991 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 2076 executions)
+# Run all 1060 xUnit tests (1013 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 2120 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1728,9 +1852,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 183 under `WebAPI/`) | 991 | `net8.0` / `net6.0` | 1982 |
+| `AxiosNet.Tests` (core + declarative, incl. 183 under `WebAPI/`) | 1013 | `net8.0` / `net6.0` | 2026 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1038** | | **2076** |
+| **Total** | **1060** | | **2120** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1753,6 +1877,16 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / **each origin must get an independent instance** (two origins alternating requests stay unaffected, neither hijacks the other) / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Resilient retries (`RetryTests`): no retries by default; 5xx / 408 / 429 retried until success, retry cap, 4xx not retried, POST not retried by default (`RetryNonIdempotentMethods` opts in), network errors and timeouts retried, the configured interval actually elapsing, `Retry-After` priority and `MaxDelay` cap, exponential backoff and jitter range, body replay (objects / seekable streams; non-seekable streams fail fast), the `OnRetry` callback, custom policies, per-request on/off over instance defaults, no retry after cancellation, and response interceptors running exactly once
 - Retry combinations (`Audit20261025RetryTests`, 10 cases): a retried stream response stays readable; multipart file parts are replayed; a caller-supplied `StringContent` is resent; a stream that starts at a non-zero offset is rewound to **that** offset; `Timeout` is a per-attempt budget (two 150ms attempts both fit a 300ms budget); the last attempt's failure is the one surfaced; a `MaxDelay` beyond the timer ceiling is rejected with `ERR_BAD_OPTION_VALUE` before sending; `RetryStatusCodes = null` is rejected at assignment; a `StreamContent` part inside multipart fails fast once retry is on (previously `ERR_NETWORK` after burning every retry) and still works when retry is off
+
+- Observability (`TelemetryTests`, 22 cases)
+  - Semantic-convention tags on the span (method / scheme / host / port / path / full URL / status code / protocol version / request and response body sizes), 4xx/5xx accepted by `validateStatus` still marked `Error`, network failures recording `ERR_NETWORK` plus an `exception` event
+  - A caller's `Activity` becomes the parent span; `traceparent` really reaches the server (the test server reads the header)
+  - Retries: `http.request.resend_count` accumulates, `retry` events, the retry counter metric; metric tags stay low-cardinality and carry `error.type` on failure
+  - Active requests are >= 1 while a request is genuinely in flight and **drop back to 0 once it finishes** (the test server delays the response and the test keeps collecting observable instruments; asserting only ">= 1" would never catch a missing `ExitRequest`)
+  - The three `DiagnosticListener` events (Start / Stop / Failed) with their payload types and contents
+  - `CaptureUrl = false` drops `url.full` but keeps `url.path`; a URL carrying `user:pass@` never leaks the credentials into `url.full` (rebuilt via `GetComponents`, no double encoding); `Telemetry.Enabled = false` produces nothing at all — **including the retry path**, which lives in `SendWithRetryAsync` rather than on the main path, so a missed check would leave only the retry metric growing — while the request still works; an instance default of off can be overridden per request; `Clone()` preserves telemetry settings
+  - Window: a request interceptor that takes 200ms inflates neither the span nor `request.duration`, and the two agree with each other
+  - A throwing listener callback (`ActivityStarted` / diagnostic subscriber) does not affect the request outcome
 
 **Serialization and security**
 
@@ -1963,6 +2097,8 @@ How the stages map onto the source files (read together with the [project layout
 | 8 TransformResponse + response interceptors | `Internal/ResponseReader.cs`, `Interceptors/ResponseInterceptorManager.cs` |
 | 9 Wrap-up | `Internal/ResponseStreams.cs` (`TimeoutStream` / `ResponseStreamOwner`), `Internal/DataCast.cs` |
 
+Telemetry hook points (see [Observability](#observability-traces--metrics--events)): after stage 1 the request decides whether to emit and bumps the active-request counter; after stage 4 (URL built) the span opens and `RequestStart` fires; stage 6 increments `http.request.resend_count`, adds a `retry` event and fires `Retry` on every retry decision; between stages 7 and 8 the status code, protocol version and response byte count are filled in, then `RequestStop` (or `RequestFailed`) fires; stage 9 stops the span and decrements the counter in `finally`. A request that throws before it is even formed (config validation / interceptors) is not an HTTP operation, so it records no duration metric.
+
 > The failure path travels the same chain: an exception thrown at any stage is normalized into an `AxiosException` (`ERR_*` code + `Cause` for the underlying exception) and enters the response interceptors' rejected chain — where you can refresh a token and replay, or return a fallback response (see [Interceptors](#interceptors) and [Error handling](#error-handling)).
 
 ## Project layout
@@ -1983,7 +2119,8 @@ How the stages map onto the source files (read together with the [project layout
 │  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings: proxy/credentials/pool/HTTP version + policy/auth
 │  │  │  ├─ AxiosConfig.Limits.cs        # LimitSettings: size, rate, stream idle timeout
 │  │  │  ├─ AxiosConfig.Callbacks.cs     # CallbackSettings: progress callbacks/status validation/timeout text
-│  │  │  └─ AxiosConfig.Retry.cs         # RetrySettings: retry policy + OnRetry callback (no retries by default)
+│  │  │  ├─ AxiosConfig.Retry.cs         # RetrySettings: retry policy + OnRetry callback (no retries by default)
+│  │  │  └─ AxiosConfig.Telemetry.cs     # TelemetrySettings: telemetry switches (Enabled / CaptureUrl)
 │  │  ├─ AxiosContentType.cs     # common Content-Type presets
 │  │  ├─ AxiosCollectionFormat.cs# params collection encoding (Brackets/Multi/Csv/Ssv/Tsv/Pipes)
 │  │  ├─ AxiosStreamFormat.cs    # streaming frame format (NDJSON / SSE / JSON array)
@@ -2004,6 +2141,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  │  ├─ SystemTextJsonSerializer.cs# built-in JSON (default fallback): STJ + JsonSerializerOptions / AxiosJson.Options
 │  │  │  └─ XmlContentSerializer.cs    # built-in XML: cached XmlSerializer, DTD disabled, not AOT-safe
 │  │  ├─ Internal/               # URL/params, request-body dispatch + form/multipart encoding, response reading, traffic metering, dynamic JSON expansion (produces AxiosDynamic), reflection cache, media-type and scalar classification, status text, timeouts and stream wrappers
+│  │  ├─ Telemetry/              # observability: AxiosTelemetry (ActivitySource / Meter / DiagnosticListener) + diagnostic event payloads
 │  │  ├─ Pooling/                # HttpConnectionPool + pool options/statistics/PoolLease + PooledHandlerContext (handler injection)
 │  │  └─ WebAPI/                 # declarative API client (built into the main package, namespace AxiosNet.WebAPI)
 │  │     ├─ ApiClient.cs            # facade: RequestAsync(request) + GetUri(request), a thin wrapper over AxiosClient
@@ -2025,14 +2163,14 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 26 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 10 declarative samples under WebAPI/; the startup menu lists all 36 by reflection — type a number to run, a = all, q = quit
-│  │  ├─ Examples/               # core integration samples (26 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 10 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification, SSE / JSON-array streaming and the per-frame cap; menu items 27-36)
+│  ├─ AxiosNet.Simple/           # 27 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing + observability) + 10 declarative samples under WebAPI/; the startup menu lists all 37 by reflection — type a number to run, a = all, q = quit
+│  │  ├─ Examples/               # core integration samples (27 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 10 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification, SSE / JSON-array streaming and the per-frame cap; menu items 28-37)
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (991 cases × net6.0 / net8.0 = 1982 executions)
-   │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
+   ├─ AxiosNet.Tests/            # xUnit tests (1013 cases × net6.0 / net8.0 = 2026 executions)
+   │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / telemetry probe (all three signals) / shared models
    │  └─ WebAPI/                 # declarative client tests (183 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)
 ```

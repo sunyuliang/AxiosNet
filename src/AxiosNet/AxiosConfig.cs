@@ -14,6 +14,7 @@ public sealed partial class AxiosConfig
     private LimitSettings? _limits;
     private CallbackSettings? _callbacks;
     private RetrySettings? _retry;
+    private TelemetrySettings? _telemetry;
 
     /// <summary>
     /// 序列化相关设置：JSON 选项、内容序列化器、文本编码、查询串与表单字段命名。
@@ -65,6 +66,17 @@ public sealed partial class AxiosConfig
         set => _retry = value;
     }
 
+    /// <summary>
+    /// 可观测性：链路 / 指标 / 事件三路观测点的按请求开关（<see cref="TelemetrySettings.Enabled"/>）与
+    /// URL 采集策略（<see cref="TelemetrySettings.CaptureUrl"/>）。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public TelemetrySettings Telemetry
+    {
+        get => _telemetry ??= new TelemetrySettings();
+        set => _telemetry = value;
+    }
+
     // 库内读取一律走这几个访问器：公共 getter 会懒创建，热路径上每次请求都建对象。
     internal SerializationSettings? SerializationOrNull => _serialization;
 
@@ -75,6 +87,8 @@ public sealed partial class AxiosConfig
     internal CallbackSettings? CallbacksOrNull => _callbacks;
 
     internal RetrySettings? RetryOrNull => _retry;
+
+    internal TelemetrySettings? TelemetryOrNull => _telemetry;
 
     /// <summary>对应 axios baseURL。</summary>
     public string? BaseAddress { get; set; }
@@ -452,6 +466,7 @@ public sealed partial class AxiosConfig
         clone._limits = _limits?.Clone();
         clone._callbacks = _callbacks?.Clone();
         clone._retry = _retry?.Clone();
+        clone._telemetry = _telemetry?.Clone();
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;

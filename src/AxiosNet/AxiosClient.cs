@@ -1,9 +1,11 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Retry;
+using AxiosNet.Telemetry;
 
 namespace AxiosNet;
 
@@ -397,11 +399,23 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 new ObjectDisposedException(nameof(AxiosClient)));
         }
 
+        // 遥测状态（全部是局部量：关闭遥测时不产生任何分配）
+        //   telemetryEnabled —— 本次请求是否产出遥测（在途计数、耗时、span、事件都看它）；
+        //   telemetryStart   —— 单调时钟起点，指标 / 事件 / span 共用（三者必须量同一段）；
+        //   telemetryUri     —— 请求成型的标志：为 null 说明配置校验或拦截器就失败了，那不是一次 HTTP 操作；
+        //   telemetryActivity —— 没有监听者时为 null，后续调用一路判空即可，不需要额外分支。
+        // 后三个都在 URL 拼好之后一起定下来（见步骤 3），判定开关也放在同一处 —— 理由见那里的注释。
+        AxiosConfig? config = null;
+        Uri? telemetryUri = null;
+        var telemetryEnabled = false;
+        var telemetryStart = 0L;
+        Activity? telemetryActivity = null;
+
         try
         {
             // 生效配置：快捷方法传进来的已合并好（见 Shortcut），其余入口在这里合并到实例默认值。
             // 校验一律对生效配置做：两种来源的判定条件相同。
-            var config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
+            config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
             ValidatePerRequestOptions(config);
 
             // 1) 请求拦截器：与 axios 一致，按注册逆序执行
@@ -487,6 +501,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             //    没有重试策略时模板本身就是唯一那条请求，与不重试的旧路径完全一致（不多一次分配）。
             var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
 
+            // 遥测的判定与起点都在这里，三件事同一个理由：
+            //   ① 口径一致 —— 指标与 span 必须量同一段，而 span 需要 URL（标签里要 host / path），只能到这儿才开；
+            //   ② 单一判定 —— 请求拦截器可以整体替换 config，开关必须看**最终**生效配置，提前缓存会看错；
+            //   ③ 在途数只数「真的进了发送阶段」的请求 —— 拦截器 / transformRequest 的准备阶段不算占用。
+            // 代价是「准备阶段就失败」的请求没有遥测（配置校验 / 拦截器 / 序列化失败）：那不是一次 HTTP 操作，
+            // 计进接口耗时反而会污染统计。没有监听者时 StartRequest 返回 null，后续所有遥测调用都是判空直通。
+            telemetryUri = uri;
+            if (AxiosTelemetry.IsEnabled(config))
+            {
+                telemetryEnabled = true;
+                telemetryStart = AxiosTelemetry.Timestamp;
+                AxiosTelemetry.EnterRequest();
+                telemetryActivity = AxiosTelemetry.StartRequest(config, uri);
+            }
+
             // 默认 HTTP/2：现在 h2 是公网流量的主力（占比约一半，1.x 已降到一成多），默认停在 1.1
             // 等于让绝大多数调用方白白丢掉多路复用与头压缩。默认 2.0 不会伤到老服务 —— 降级发生在
             // TLS 握手的 ALPN 里，服务端只认 http/1.1 就直接谈成 1.1，不多一次往返、不多一条连接、
@@ -545,6 +574,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     }
 
                     template.Content = content;
+
+                    // 长度已知时顺手写进 span；未知（chunked / 不可定位流）就不写，不猜。
+                    AxiosTelemetry.SetRequestBodySize(telemetryActivity, content.Headers.ContentLength);
                 }
 
                 ApplyHeaders(template, config);
@@ -644,6 +676,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     streamOwner.Dispose();
                 }
 
+                if (telemetryEnabled)
+                {
+                    // 必须在 template.Dispose() 之前（外层 finally）：那之后正文头已不可读。
+                    AxiosTelemetry.RequestSucceeded(config, uri, result!, telemetryStart, telemetryActivity);
+                }
+
                 return result!;
             }
             finally
@@ -653,8 +691,27 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 template.Dispose();
             }
         }
+        catch (Exception ex)
+        {
+            // 遥测不该改变异常本身：记完原样抛（连栈都不动，这里不包装）。
+            if (telemetryEnabled)
+            {
+                AxiosTelemetry.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryActivity);
+            }
+
+            throw;
+        }
         finally
         {
+            if (telemetryEnabled)
+            {
+                AxiosTelemetry.ExitRequest();
+            }
+
+            // 收 span：即使上面抛异常也要收掉，否则它会一直挂在 Activity.Current 上，
+            // 后续请求的 span 会错误地挂到它下面（helper 内部兜住监听回调的异常）。
+            AxiosTelemetry.StopRequest(telemetryActivity);
+
             ReleaseInFlight();
         }
     }
@@ -748,10 +805,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     delay = Timeouts.Max;
                 }
 
+                // 回调与遥测共用同一个上下文（readonly struct，栈上传递不分配）
+                var retryContext = new AxiosRetryContext(
+                    attempt, policy.MaxRetries, ex, config, failed.Response, delay);
+
                 // 回调在 catch 块里调用（不是 try 里）：它抛出的异常不会被当成「本次尝试失败」
                 // 再去问一次策略，而是按 RetrySettings.OnRetry 的约定原样抛给调用方。
-                retry.OnRetry?.Invoke(new AxiosRetryContext(
-                    attempt, policy.MaxRetries, ex, config, failed.Response, delay));
+                retry.OnRetry?.Invoke(retryContext);
+
+                // 重试计数 / span 的 resend_count 与 retry 事件：观测点放在「决定重试」这一刻，
+                // 与 OnRetry 回调同一语义（不含「次数到顶后的最后一次失败」）。
+                AxiosTelemetry.RequestRetried(retryContext, uri);
 
                 if (delay > TimeSpan.Zero)
                 {

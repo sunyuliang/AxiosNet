@@ -242,6 +242,8 @@ internal static class ResponseReader
         object? data;
         // 已解码的响应正文：文本类响应都会在这里留下原文，供错误体读取与诊断（二进制/流为 null）。
         string? rawText = null;
+        // 实际收到的正文字节数：只有「一次性读完」的路径知道，流式交给调用方后无从统计。
+        long? bodyBytes = null;
         if (config.ResponseType == ResponseType.Stream)
         {
             var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -255,6 +257,7 @@ internal static class ResponseReader
             var declared = message.Content.Headers.ContentLength;
             var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared)
                 .ConfigureAwait(false);
+            bodyBytes = bytes.Length;
 
             var charSet = contentType?.CharSet;
             var responseMediaType = contentType?.MediaType;
@@ -300,6 +303,7 @@ internal static class ResponseReader
         response.StatusText = statusText;
         // 协商结果（1.1 / 2.0 / 3.0）只有这一处拿得到：降级是静默的，调用方靠它判断「有没有真的拿到 h2」。
         response.ProtocolVersion = message.Version;
+        response.BodyBytes = bodyBytes;
         response.Headers = headers;
         response.Config = config;
         response.Request = request;
