@@ -1,3 +1,5 @@
+using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
@@ -255,6 +257,103 @@ public sealed class ResponseParsingTests
     // ---------------------------------------------------------------
     // DataCast：泛型参数与 responseType 不匹配 → ERR_BAD_RESPONSE
     // ---------------------------------------------------------------
+
+    // ---------------------------------------------------------------
+    // 非 JSON 文本：不解析、不抛异常（首个非空白字符闸口）
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task NonJsonText_IsReturnedVerbatim()
+    {
+        // HTML 错误页 / 纯文本端点没有「文档形态」：原样交给调用方，而不是「解析失败再回退」。
+        const string html = "<html><body>502 Bad Gateway</body></html>";
+        await using var server = StartTextServer(html, "text/html");
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        Assert.Equal(html, response.Data);
+    }
+
+    [Theory]
+    [InlineData("null", JsonValueKind.Null)]
+    [InlineData("42", JsonValueKind.Number)]
+    [InlineData("-1.5", JsonValueKind.Number)]
+    [InlineData("true", JsonValueKind.True)]
+    [InlineData("\"text\"", JsonValueKind.String)]
+    [InlineData("[1,2]", JsonValueKind.Array)]
+    [InlineData("{\"a\":1}", JsonValueKind.Object)]
+    [InlineData("  \r\n{\"a\":1}", JsonValueKind.Object)]
+    public async Task JsonDocument_IsParsedForEveryRootForm(string body, JsonValueKind expected)
+    {
+        // 闸口只看首个非空白字符：RFC 8259 允许的每一种根形态都必须仍然被解析成 JsonElement
+        // （漏掉任何一种都会把合法响应降级成字符串，属于行为回归）。
+        await using var server = StartTextServer(body, "application/json");
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        var element = Assert.IsType<JsonElement>(response.Data);
+        Assert.Equal(expected, element.ValueKind);
+    }
+
+    [Fact]
+    public async Task NonJsonText_DoesNotTakeTheExceptionPath()
+    {
+        // 「解析失败再吞掉」这条路每次请求要抛 3 次 JsonException（实测 ~1.5 KB 分配、吞吐掉一个数量级）。
+        // 闸口生效后一次都不该抛。计数按线程过滤：xunit 并行跑其它测试类，全局计数会被它们污染。
+        var threadId = Environment.CurrentManagedThreadId;
+        var jsonExceptions = 0;
+
+        void OnFirstChance(object? sender, FirstChanceExceptionEventArgs e)
+        {
+            if (e.Exception is JsonException && Environment.CurrentManagedThreadId == threadId)
+            {
+                jsonExceptions++;
+            }
+        }
+
+        using var client = new AxiosClient(
+            handler: new FixedTextHandler("<html><body>nope</body></html>", "text/html"));
+
+        AppDomain.CurrentDomain.FirstChanceException += OnFirstChance;
+        try
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                var response = await client.GetAsync("http://stub.local/x");
+                Assert.Equal("<html><body>nope</body></html>", response.Data);
+            }
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= OnFirstChance;
+        }
+
+        Assert.Equal(0, jsonExceptions);
+    }
+
+    /// <summary>固定正文 + 固定 Content-Type 的 Handler：不碰网络，便于确定性地数异常次数。</summary>
+    private sealed class FixedTextHandler : HttpMessageHandler
+    {
+        private readonly byte[] _body;
+        private readonly string _contentType;
+
+        public FixedTextHandler(string body, string contentType)
+        {
+            _body = Encoding.UTF8.GetBytes(body);
+            _contentType = contentType;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var content = new ByteArrayContent(_body);
+            content.Headers.ContentType = new(_contentType);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
 
     [Fact]
     public async Task TextResponse_WithScalarGeneric_IsWrappedAsBadResponse()

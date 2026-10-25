@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-952%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-962%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1577,7 +1577,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **905** core/declarative cases plus **47** DI-extension cases — **952** in total (**1904** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **915** core/declarative cases plus **47** DI-extension cases — **962** in total (**1924** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1636,7 +1636,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 952 xUnit tests (905 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1904 executions)
+# Run all 962 xUnit tests (915 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1924 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1645,9 +1645,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 905 | `net8.0` / `net6.0` | 1810 |
+| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 915 | `net8.0` / `net6.0` | 1830 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **952** | | **1904** |
+| **Total** | **962** | | **1924** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1717,6 +1717,11 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
   - Lookup: 8.2 ns for 5 headers (was 22.6), 13.0 ns for 10 (was 25.0) — `Get` throughput 2.6x. The trade-off is an O(N) scan: beyond ~18 headers a dictionary wins (67 ns vs 27 ns at 40), and request header sets in practice stay under 10
   - Per request (valid JSON response, 2,000 B baseline): `Defaults.RemoveHeaders` 2,680 → **2,304 B**; one per-request header 3,304 → **2,936 B** (no longer copies the whole default set)
   - `SynchronizedList` (transform chains / per-request remove-headers) converted the same way: no lock on the per-request clone, zero-copy snapshot, no boxing when the library enumerates; single-thread stub throughput +7%
+
+- **2026-10-25 non-JSON responses no longer take the exception path** (`ResponseParsingTests`, 10 cases)
+  - a gate before `JsonDocument.Parse` checks that the first non-whitespace character can start a JSON value (`{` `[` `"` `-` digit `t` `f` `n`): HTML error pages and plain-text endpoints used to throw **3** swallowed `JsonException`s per request, now zero
+  - measured (stub, best of 5): text/html 200 **3,288 → 1,816 B (-45%)**, **42.3 µs → 2.9 µs (14x)**; text/plain 3,184 → 1,712 B, 38.1 µs → 3.3 µs; valid JSON responses unchanged (2,000 B)
+  - the gate looks at one character only and cannot skip a valid document (all 8 root forms are pinned by tests); `\uFEFF` counts as whitespace
 
 - **2026-10-24 full-library audit** (`Audit20261024ReviewFixTests`, 18 cases + 3 in `ApiClientResolverConcurrencyTests` + 4 in `HolderDisposalTests` on the DI side)
   - Replaying `response.Config` no longer carries the source instance's cancellation token (a token describes "that one call"); the `*Set` flags are assigned with `if` rather than a ternary, so "not set" is never recorded as an explicit intent
@@ -1927,7 +1932,7 @@ How the stages map onto the source files (read together with the [project layout
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (905 cases × net6.0 / net8.0 = 1810 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (915 cases × net6.0 / net8.0 = 1830 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (142 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)
