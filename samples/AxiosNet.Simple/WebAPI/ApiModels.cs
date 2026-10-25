@@ -140,6 +140,15 @@ public sealed class StreamEventsRequest : IApiRequest<StreamChunk>
 /// <summary>SSE 每帧的载荷（<c>data: {"index":1,"text":"..."}</c>）。</summary>
 public sealed record StreamChunk(int Index, string Text);
 
+/// <summary>
+/// GET /api/stream/pages：JSON 数组流式端点（演示服务器 chunked 下发 <c>[{...},{...}]</c>）。
+/// 与 SSE 用同一个帧类型，差别只在「帧边界怎么找」——数组按顶层元素，SSE 按空行。
+/// </summary>
+[Get("api/stream/pages")]
+public sealed class StreamPagesRequest : IApiRequest<StreamChunk>
+{
+}
+
 // =====================================================================
 // 返回模型：与请求模型一一对应（也可直接用 string / byte[] / Stream 等原始形态）。
 // =====================================================================

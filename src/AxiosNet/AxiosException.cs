@@ -122,6 +122,41 @@ public sealed class AxiosException : Exception
             null);
     }
 
+    /// <summary>
+    /// JSON 数组流里的单个元素超过上限：元素必须能整块交给序列化器，否则内存占用由服务端决定。
+    /// 与 <see cref="StreamFrameTooLarge"/> 同一条线（8 MB），只是措辞点明「元素」而不是「帧」——
+    /// 数组里的分隔符是 <c>,</c>，说「缺少分帧符」会把人引向错误的方向。
+    /// </summary>
+    internal static AxiosException StreamElementTooLarge(AxiosConfig config, HttpRequestMessage? request, string format, int limit)
+    {
+        return new AxiosException(
+            $"{format} element exceeded the {limit} byte limit: one element must fit in a single frame",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            null);
+    }
+
+    /// <summary>
+    /// 流式分帧层面的协议错误（顶层不是数组 / JSON 被截断 / 字节不是合法 JSON）。
+    /// 与「元素无法反序列化」分开：这里连元素边界都还没确定，调用方要查的是服务端协议，不是 DTO。
+    /// </summary>
+    internal static AxiosException StreamMalformed(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        string detail,
+        Exception? inner = null)
+    {
+        return new AxiosException(
+            $"Invalid streamed response: {detail}",
+            ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
     internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, Exception? inner = null)
     {
         return new AxiosException("Request canceled", ErrCanceled, config, request, null, inner);

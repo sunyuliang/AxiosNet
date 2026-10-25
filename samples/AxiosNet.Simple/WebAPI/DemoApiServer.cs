@@ -92,6 +92,13 @@ public sealed class DemoApiServer : IDisposable
                         break;
                     }
 
+                    // JSON 数组端点：同样是 chunked，但正文是一个数组（元素到齐一个交付一个）
+                    if (method == "GET" && path == "/api/stream/pages")
+                    {
+                        await WriteJsonArrayStreamAsync(stream);
+                        break;
+                    }
+
                     var (status, json, extraHeaders) = Route(method, path, query, headers, body);
                     await WriteResponseAsync(stream, status, json, extraHeaders);
                 }
@@ -357,6 +364,50 @@ public sealed class DemoApiServer : IDisposable
         await stream.WriteAsync(Encoding.ASCII.GetBytes($"{data.Length:x}\r\n")).ConfigureAwait(false);
         await stream.WriteAsync(data).ConfigureAwait(false);
         await stream.WriteAsync(Encoding.ASCII.GetBytes("\r\n")).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 流式响应（JSON 数组）：正文是一个 <c>[{...},{...}]</c>，按 chunked 分批下发。
+    /// 第二个元素故意劈成两个 chunk（且切在多字节字符中间），用来演示客户端「按字节增量找元素边界」——
+    /// 元素一收尾就交付，不必等收尾的 <c>]</c>，也不会把劈开的中文解成乱码。
+    /// </summary>
+    private static async Task WriteJsonArrayStreamAsync(NetworkStream stream)
+    {
+        var header =
+            "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            "Connection: close\r\n" +
+            "Transfer-Encoding: chunked\r\n\r\n";
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header)).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("[")).ConfigureAwait(false);
+
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("{\"index\":1,\"text\":\"第 1 页 · page 1\"},"))
+            .ConfigureAwait(false);
+        await Task.Delay(80).ConfigureAwait(false);
+
+        // 劈在「第 2 页」的「第」字中间：三个字节分属两个 chunk
+        var second = Encoding.UTF8.GetBytes("{\"index\":2,\"text\":\"第 2 页 · page 2\"},");
+        var cut = Array.IndexOf(second, (byte)0xE7) + 1;
+        if (cut <= 0)
+        {
+            // 兜底：绝不写空 chunk（长度 0 的 chunk 等于提前结束正文）
+            cut = second.Length / 2;
+        }
+
+        await WriteChunkAsync(stream, second[..cut]).ConfigureAwait(false);
+        await Task.Delay(80).ConfigureAwait(false);
+        await WriteChunkAsync(stream, second[cut..]).ConfigureAwait(false);
+        await Task.Delay(80).ConfigureAwait(false);
+
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("{\"index\":3,\"text\":\"第 3 页 · page 3\"}]"))
+            .ConfigureAwait(false);
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("0\r\n\r\n")).ConfigureAwait(false);
         await stream.FlushAsync().ConfigureAwait(false);
     }
 
