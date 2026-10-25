@@ -138,10 +138,18 @@ public sealed partial class AxiosClient
 
         var perCallConnection = perCall.ConnectionOrNull;
 
-        // HttpVersion 属按请求项（不是实例级），库产出的配置同样合并。
-        if (perCallConnection?.HttpVersion is { } httpVersion)
+        // HttpVersion / VersionPolicy 属按请求项（不是实例级），库产出的配置同样合并。
+        if (perCallConnection is not null)
         {
-            merged.Connection.HttpVersion = httpVersion;
+            if (perCallConnection.HttpVersion is { } httpVersion)
+            {
+                merged.Connection.HttpVersion = httpVersion;
+            }
+
+            if (perCallConnection.VersionPolicy is { } versionPolicy)
+            {
+                merged.Connection.VersionPolicy = versionPolicy;
+            }
         }
 
         // 实例级选项必须合并进来，否则按请求写的值到不了 ValidatePerRequestOptions（它判的是生效配置）。

@@ -110,6 +110,8 @@ public sealed class DemoServer : IDisposable
                     var parts = lines[0].Split(' ');
                     var method = parts[0];
                     var rawUrl = parts[1];
+                    // 请求行版本（HTTP/1.1 等）：/protocol 端点回显它，用于演示 HTTP/2 协商与降级
+                    var version = parts.Length > 2 ? parts[2] : "HTTP/1.1";
                     var path = rawUrl.Contains('?') ? rawUrl[..rawUrl.IndexOf('?')] : rawUrl;
                     var query = rawUrl.Contains('?') ? rawUrl[(rawUrl.IndexOf('?') + 1)..] : string.Empty;
 
@@ -144,7 +146,7 @@ public sealed class DemoServer : IDisposable
                     UpdatePeak(active);
                     try
                     {
-                        var (status, payload, contentType, contentDisposition, location) = Route(method, path, query, headers, body);
+                        var (status, payload, contentType, contentDisposition, location) = Route(method, path, query, version, headers, body);
                         await WriteResponseAsync(stream, status, payload, contentType, contentDisposition, location);
                     }
                     finally
@@ -164,6 +166,7 @@ public sealed class DemoServer : IDisposable
         string method,
         string path,
         string query,
+        string version,
         IReadOnlyDictionary<string, string> headers,
         byte[] body)
     {
@@ -180,6 +183,11 @@ public sealed class DemoServer : IDisposable
             case "GET" when path == "/whoami":
                 // 回报当前实例的端口：DNS 切换示例靠它判断这条请求落在了哪个「IP」上
                 return Json(200, $"{{\"port\":{Port}}}");
+
+            case "GET" when path == "/protocol":
+                // 回显请求行里的协议版本：本服务器只实现 HTTP/1.1，
+                // 客户端默认请求 HTTP/2 时这里应始终看到 HTTP/1.1（协商失败自动降级的结果）
+                return Json(200, $"{{\"requestVersion\":\"{Escape(version)}\",\"serverVersion\":\"HTTP/1.1\"}}");
 
             case "GET" when path == "/users":
                 return Json(200, """

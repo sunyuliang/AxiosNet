@@ -60,6 +60,18 @@ public sealed class ConnectionPoolOptions
     public bool AutomaticDecompression { get; set; } = true;
 
     /// <summary>
+    /// HTTP/2 下是否允许同一 origin 打开多条连接（默认 true）。
+    /// <para>
+    /// 一条 h2 连接能并发跑多少条请求由服务端的 <c>SETTINGS_MAX_CONCURRENT_STREAMS</c> 决定
+    /// （nginx 常见 128、部分网关只有 100）。关掉本项时超出的请求只能在<b>那一条</b>连接上排队，
+    /// 高峰期吞吐被单连接的流上限卡住；打开后按 <see cref="MaxConnectionsPerServer"/> 继续加连接，
+    /// 与 HTTP/1.1 的连接上限口径一致（这也是 gRPC 的推荐配置）。
+    /// </para>
+    /// <para>只用 HTTP/1.1 时本项无影响。</para>
+    /// </summary>
+    public bool EnableMultipleHttp2Connections { get; set; } = true;
+
+    /// <summary>
     /// 池内 origin 节点数上限，默认 1024；0 或负数不限制。
     /// <para>
     /// 每个节点都会建一个 Handler（持有连接池与定时器），目标若来自用户输入（短链解析、多租户域名），
@@ -118,6 +130,7 @@ public sealed class ConnectionPoolOptions
         MaxAutomaticRedirections = MaxAutomaticRedirections,
         UseCookies = UseCookies,
         AutomaticDecompression = AutomaticDecompression,
+        EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,
         MaxEndpointCount = MaxEndpointCount,
         Proxy = Proxy,
         Credentials = Credentials,

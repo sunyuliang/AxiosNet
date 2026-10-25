@@ -486,9 +486,18 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             //    但正文继续复用 —— 上传进度计量器与限速状态都挂在正文上，换一份等于进度清零、白序列化一遍。
             //    没有重试策略时模板本身就是唯一那条请求，与不重试的旧路径完全一致（不多一次分配）。
             var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
+
+            // 默认 HTTP/1.1（与 HttpClient 的默认一致）：升级本库不改变线上协议。
+            // 需要 HTTP/2 时由调用方显式设 Connection.HttpVersion = Version20；此时协商策略默认仍是
+            // RequestVersionOrLower，服务端不支持会自动降级 —— 所以「开 h2」不会让老服务失败。
+            // 策略显式写出来（而不是依赖 BCL 默认值）：「不支持就降级」是库的契约，BCL 哪天改了默认策略
+            // （例如改 Exact）不能让这条承诺静默失效。
+            // 明文 HTTP 上没有 ALPN 可协商，OrLower 一律走 1.1，不会拿 h2c 先验知识去撞只认 1.x 的服务端。
+            var connection = config.ConnectionOrNull;
             var template = new HttpRequestMessage(config.Method, uri)
             {
-                Version = config.ConnectionOrNull?.HttpVersion ?? HttpVersion.Version11
+                Version = connection?.HttpVersion ?? HttpVersion.Version11,
+                VersionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower
             };
 
             // template 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
@@ -799,7 +808,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     {
         var request = new HttpRequestMessage(template.Method, template.RequestUri)
         {
-            Version = template.Version
+            Version = template.Version,
+
+            // 策略必须一起搬：只搬 Version 会把 RequestVersionExact 悄悄变回默认的 OrLower
+            // （重试的第 2 次起行为与第 1 次不一致，且没有任何报错）。
+            VersionPolicy = template.VersionPolicy
         };
 
         foreach (var header in template.Headers)

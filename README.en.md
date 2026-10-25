@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-962%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-975%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -50,6 +50,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Connection pool](#connection-pool)
   - [Why it exists](#why-it-exists)
   - [Usage](#usage)
+  - [HTTP version negotiation (HTTP/1.1 by default)](#http-version-negotiation-http11-by-default)
   - [DNS changes and connection expiry](#dns-changes-and-connection-expiry)
 - [Injecting a custom handler](#injecting-a-custom-handler)
   - [Option 1: HandlerFactory (recommended)](#option-1-handlerfactory-recommended)
@@ -305,13 +306,15 @@ var config = new AxiosConfig
     CancellationToken = cancellationToken,
     // TransformRequest / TransformResponse: IList<Func<object?, AxiosConfig, object?>>
 
-    // —— Connection (instance-level) ——
+    // —— Connection ——
     Connection = new()
     {
         Auth = new AxiosAuth("user", "pass"), // Basic
         MaxRedirects = 5,
         WithCredentials = false,
-        // Proxy / Credentials / HttpVersion / PoolOptions ...
+        HttpVersion = HttpVersion.Version11,                     // default (= HttpClient's default); set Version20 to enable h2
+        VersionPolicy = HttpVersionPolicy.RequestVersionOrLower, // default: negotiate or downgrade (Exact = fail instead)
+        // Proxy / Credentials / PoolOptions ...
     },
 
     // —— Size, rate limiting, and streaming timeout ——
@@ -364,7 +367,7 @@ The default JSON options are **web-style** (camelCase output, case-insensitive i
 >
 > The same applies to an `AxiosClient(pool: ...)` sharing a pool: these four settings and `Connection.PoolOptions` apply to the **pool**, not to an individual instance, so setting them on a shared-pool client's defaults also throws `ERR_BAD_OPTION_VALUE` immediately. Configure them on the `ConnectionPoolOptions` used to create the pool instead (see [Connection pool](#connection-pool)).
 >
-> Settings that are meant to be per-request (`timeout`, `headers`, `params`, `responseType`, `maxContentLength`, `maxRate`, `onUploadProgress`/`onDownloadProgress`, `transformRequest`/`transformResponse`, `validateStatus`, `auth`, `cancellationToken`, `Serialization.RequestEncoding`/`Serialization.ResponseEncoding`, and so on) are not affected. `cancellationToken` may be set either as an instance default or per request; the per-request value wins when both are present.
+> Settings that are meant to be per-request (`timeout`, `headers`, `params`, `responseType`, `maxContentLength`, `maxRate`, `onUploadProgress`/`onDownloadProgress`, `transformRequest`/`transformResponse`, `validateStatus`, `auth`, `httpVersion`/`versionPolicy`, `cancellationToken`, `Serialization.RequestEncoding`/`Serialization.ResponseEncoding`, and so on) are not affected. `cancellationToken` may be set either as an instance default or per request; the per-request value wins when both are present.
 
 The `AxiosConfig` handed to a `configure` callback (quick methods and `RequestAsync(configure)` / `GetUri(configure)`) **is a copy of the instance defaults**: what you read is the effective value, and what you write becomes the effective value. Operations that remove things — `c.Headers.Delete("X-Foo")`, `c.Headers.Clear()` — therefore really drop instance default headers, identically on every entry point. Passing an `AxiosConfig` object to `RequestAsync(config)` is the other path: it is merged onto the instance defaults as a set of per-request overrides.
 
@@ -1290,6 +1293,7 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
     AllowAutoRedirect = true,
     MaxAutomaticRedirections = 5,
     AutomaticDecompression = true,          // gzip/deflate/br
+    EnableMultipleHttp2Connections = true,  // under h2, allow extra connections up to MaxConnectionsPerServer (default true)
     MaxEndpointCount = 1024,                // cap on origin nodes (0 / negative = unlimited)
     UseCookies = false,                     // when on, one shared CookieContainer for the whole pool
     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,   // optional: restrict TLS versions
@@ -1329,6 +1333,50 @@ sharedPool.EvictIdleEndpoints();
 > `AxiosClient.Dispose()` does not interrupt in-flight requests either: while requests are still in flight, disposal of the injected `HttpClient`/`Handler` or the client-owned pool is deferred until the last request finishes (that request performs it), after which no new requests are accepted (`ERR_CANCELED` — never a raw `ObjectDisposedException`).
 
 > Performance notes: sequential and concurrent requests both reuse established TCP connections (measured in the repository tests and samples: 5 sequential requests open only 1 TCP connection; 6 concurrent slow requests with `MaxConnectionsPerServer=2` peak at exactly 2 concurrent). Disposing the pool at shutdown releases all connections; a shared pool is not destroyed when one client is disposed (only the owner disposes it).
+
+### HTTP version negotiation (HTTP/1.1 by default)
+
+Requests go out as **HTTP/1.1** by default (matching `HttpClient`), so upgrading the library **does not change the wire protocol**. When you want HTTP/2 multiplexing and header compression, enabling it takes one line — the policy defaults to `RequestVersionOrLower`, which means **an unsupported server simply downgrades back to 1.1**.
+
+| Configuration | What is actually sent | Notes |
+| --- | --- | --- |
+| Not set (default, = `Version11`) | HTTP/1.1 | Same as `HttpClient`; wire behavior identical to before the upgrade |
+| `HttpVersion = Version20` (policy defaults to OrLower) | https: 2.0 when ALPN picks `h2`, downgraded to 1.1 when the server only offers `http/1.1`. Cleartext http: always 1.1 | The recommended way to enable it |
+| `Version20` + `RequestVersionExact` | 2.0 only, fail when it cannot be negotiated | For when you must confirm the peer really speaks h2; on cleartext this is h2c prior knowledge |
+| `Version11` + any policy | HTTP/1.1 | Explicit; no negotiation at all |
+
+```csharp
+// Default: HTTP/1.1, nothing to configure
+var client = new AxiosClient();
+
+// Enable HTTP/2: one line (an unsupported server downgrades back to 1.1)
+await client.GetAsync(url, c => c.Connection.HttpVersion = HttpVersion.Version20);
+
+// Enable it for a whole instance: set it on the defaults
+var http2 = new AxiosClient(new AxiosConfig
+{
+    BaseAddress = "https://api.example.com/",
+    Connection = { HttpVersion = HttpVersion.Version20 }
+});
+
+// Require h2: fail instead of downgrading
+await client.GetAsync(url, c =>
+{
+    c.Connection.HttpVersion = HttpVersion.Version20;
+    c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+});
+
+// Cleartext h2c (prior knowledge): Exact is the only switch — OrLower always uses 1.1 on cleartext
+await client.GetAsync("http://h2c.example.com/", c =>
+{
+    c.Connection.HttpVersion = HttpVersion.Version20;
+    c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+});
+```
+
+> Why not default to 2.0: **the downgrade itself costs nothing** — ALPN rides along with the TLS handshake that happens anyway, and in a benchmark where every request opens a new connection, requesting 2.0 and explicitly requesting 1.1 produced the same number of handshakes and the same throughput (there is no "try 2.0, then fall back" extra request). But **h2 does behave differently**: it forbids connection-specific headers (`Connection` / `Keep-Alive` / `Proxy-Connection` / `Transfer-Encoding` / `Upgrade`) and does not support connection-bound auth such as NTLM / Negotiate. Defaulting to 1.1 is a promise that "upgrading the library does not change wire behavior"; opt in when you want the h2 payoff.
+>
+> `HttpVersion` / `VersionPolicy` are **per-request items**: both instance defaults and a single request can set them (the request wins), and retried requests keep the same version and policy. Once h2 is on, the pool defaults to `EnableMultipleHttp2Connections = true`: how many requests a single h2 connection can run concurrently is decided by the server's `SETTINGS_MAX_CONCURRENT_STREAMS` (commonly 128 for nginx, as low as 100 on some gateways) — with it disabled, excess requests queue on that one connection; enabled, the pool opens more connections up to `MaxConnectionsPerServer`.
 
 ### DNS changes and connection expiry
 
@@ -1435,6 +1483,7 @@ Key points:
 
 - 🔁 **Resilient retries**: off by default; attach a policy to retry network errors / timeouts / 408 / 429 / 5xx with a configurable count and interval (exponential backoff, jitter, `Retry-After` priority, idempotent methods only by default). `IAxiosRetryPolicy` lets you plug in any logic; the body is serialized once and resent as-is
 - 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
+- 🚀 **Optional HTTP/2 (HTTP/1.1 by default)**: the default matches `HttpClient`, so upgrading never changes wire behavior; one line (`Connection.HttpVersion = Version20`) enables h2 and an unsupported server **automatically downgrades** back to 1.1 (`VersionPolicy = Exact` requires h2 and can also be used for cleartext h2c); the pool allows multiple h2 connections by default so a single connection's `MAX_CONCURRENT_STREAMS` limit cannot cap throughput
 - 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS); object nodes are `AxiosDynamic` — `data["key"]` indexing works, missing members yield `null` instead of throwing, properties can be added/removed at runtime, and it implements `IDictionary<string,object?>` (so it can be fed back as params/body and `System.Text.Json` serializes it as a plain JSON object). Member access uses the same shape + baked-slot design as `ExpandoObject` (measured on par or slightly faster)
 - 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
 - ⬇️ **File download**: `GetAsync<Stream>` streams to disk with constant memory, `GetAsync<byte[]>` grabs all bytes at once; connections return to the pool when the stream is disposed (connection reuse is verifiable)
@@ -1508,7 +1557,7 @@ Intentional differences driven by the .NET platform:
 
 ## Sample project
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 25 categories of integration calls:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 26 categories of integration calls:
 
 1. The global static facade `Axios.GetAsync`
 2. `Axios.Create` (baseURL / default headers / strongly-typed response)
@@ -1535,12 +1584,13 @@ Intentional differences driven by the .NET platform:
 23. **XML serialization (built in)**: switch to `XmlContentSerializer.Instance` — request body, strongly-typed response, non-generic raw text, scalar request bodies bypassing the serializer, the `AxiosContent.Register` auto mode (serializer picked by Content-Type), and the decoupling of forms/multipart from the serializer
 24. **Binary formats (byte channel both ways)**: the serializer overrides `SerializeToBytes` + the byte inlet — request objects become byte bodies with a self-declared `application/octet-stream`, and responses reach the byte inlet with zero decoding; compared against the non-generic / `byte[]` paths, plus the caller's explicit `ContentType` overriding the self-declared header
 25. **Resilient retries**: off by default, `RetryPolicy` (count / fixed interval / exponential backoff / jitter / `Retry-After`), idempotency rules (POST is not retried by default), `OnRetry` observing each retry, and a custom `IAxiosRetryPolicy`
+26. **HTTP/2**: still 1.1 by default, one line enables h2 — the HTTP/1.1-only demo server shows the automatic downgrade (the server echoes the request-line version) — plus `RequestVersionExact` (require h2 or fail)
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-The app starts into an **interactive menu**: reflection lists every sample's class name and title (25 core + 9 declarative = 34 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-25.
+The app starts into an **interactive menu**: reflection lists every sample's class name and title (26 core + 9 declarative = 35 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-26.
 
 Client usage follows production conventions: **each sample keeps one static client, created only when null and reused by every later run** (a `private static` field in the sample class with `??=` — no shared-client registry layered on top) — every `AxiosClient` owns a connection pool, so creating a client per run means rebuilding TCP connections every time; samples that install interceptors clear them first on each run, so re-runs behave identically. Item 12 (pool statistics), the handler-injection/pooled scenarios of item 17 (per-run counters), and item 20 (DNS switchover) deliberately create fresh clients: what they demonstrate is "brand-new connections / counters" itself.
 
@@ -1560,7 +1610,7 @@ The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is 
 8. **Streaming (SSE)**: `RequestStreamAsync` returns `AxiosResponse<IAsyncEnumerable<T>>` — `await` gives you the status code and headers, `await foreach` consumes frames one by one; the demo server streams with `chunked` encoding (terminated by `[DONE]`)
 9. **Multipart upload**: `[Multipart]` + `[Part]` — the model itself is the form, and the server parses it byte-exactly and reports the part list
 
-These 9 items live in the same startup menu as the 25 above (menu items 26-34, with their own demo server started lazily on first use):
+These 9 items live in the same startup menu as the 26 above (menu items 27-35, with their own demo server started lazily on first use):
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1577,7 +1627,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **915** core/declarative cases plus **47** DI-extension cases — **962** in total (**1924** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **928** core/declarative cases plus **47** DI-extension cases — **975** in total (**1950** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1636,7 +1686,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 962 xUnit tests (915 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1924 executions)
+# Run all 975 xUnit tests (928 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1950 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1645,9 +1695,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 915 | `net8.0` / `net6.0` | 1830 |
+| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 928 | `net8.0` / `net6.0` | 1856 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **962** | | **1924** |
+| **Total** | **975** | | **1950** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1665,6 +1715,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - File download: `GetAsync<Stream>` to disk, `ResponseType.ArrayBuffer`, connection reuse after stream disposal, Content-Disposition file name, download timeout
 - `dynamic`: response graphs and dynamic requests (9 dedicated tests covering `GetAsync<dynamic>` / `PostAsync<dynamic>` / static facade / explicit responseType precedence) plus 12 `AxiosDynamic` contract tests (member/index parity, missing members yielding null, chained-access behaviour, runtime add/remove, alternating heterogeneous shapes, the full `IDictionary` surface, JSON round-trip, and feeding a response object back as params/body)
 - Connection pool: connection reuse, max-connection throttling, sharing across instances, idle eviction, multi-origin isolation, dispose semantics; shared-pool fail-fast (connection-level defaults and `pool`/`poolOptions` exclusivity); origin key IDNA normalization (unicode/punycode as the same node, IPv6 brackets preserved); `pool.Options` option isolation
+- HTTP version negotiation (`HttpVersionNegotiationTests`): 1.1 + `RequestVersionOrLower` by default (matching `HttpClient`); with h2 enabled, a TLS server whose ALPN offers only `http/1.1` triggers the downgrade and the request succeeds (real handshake with a self-signed certificate, request line observed server-side), while an `h2`-only server really gets the HTTP/2 connection preface; cleartext servers downgrade to 1.1 as well; `RequestVersionExact` emits the h2c prior-knowledge preface on cleartext; instance-default and per-request overrides for version/policy; the policy survives request cloning on retry; `EnableMultipleHttp2Connections` defaults to on, can be disabled, and is cloned with the options
 - Response reading and generic routing: close-delimited responses without Content-Length, zero-copy return when the length allows exact preallocation; `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / **each origin must get an independent instance** (two origins alternating requests stay unaffected, neither hijacks the other) / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Resilient retries (`RetryTests`): no retries by default; 5xx / 408 / 429 retried until success, retry cap, 4xx not retried, POST not retried by default (`RetryNonIdempotentMethods` opts in), network errors and timeouts retried, the configured interval actually elapsing, `Retry-After` priority and `MaxDelay` cap, exponential backoff and jitter range, body replay (objects / seekable streams; non-seekable streams fail fast), the `OnRetry` callback, custom policies, per-request on/off over instance defaults, no retry after cancellation, and response interceptors running exactly once
@@ -1881,7 +1932,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ AxiosContent.cs         # global injection point for content serialization
 │  │  ├─ AxiosConfig.cs          # request/instance configuration (group entry points + lazy creation)
 │  │  │  ├─ AxiosConfig.Serialization.cs # SerializationSettings: JSON options/serializer/encoding/naming
-│  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings: proxy/credentials/pool/HTTP version/auth
+│  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings: proxy/credentials/pool/HTTP version + policy/auth
 │  │  │  ├─ AxiosConfig.Limits.cs        # LimitSettings: size, rate, stream idle timeout
 │  │  │  ├─ AxiosConfig.Callbacks.cs     # CallbackSettings: progress callbacks/status validation/timeout text
 │  │  │  └─ AxiosConfig.Retry.cs         # RetrySettings: retry policy + OnRetry callback (no retries by default)
@@ -1928,11 +1979,11 @@ How the stages map onto the source files (read together with the [project layout
 ├─ samples/
 │  ├─ AxiosNet.Simple/           # 25 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 9 declarative samples under WebAPI/; the startup menu lists all 34 by reflection — type a number to run, a = all, q = quit
 │  │  ├─ Examples/               # core integration samples (25 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE streaming; menu items 26-34)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE streaming; menu items 27-35)
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (915 cases × net6.0 / net8.0 = 1830 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (926 cases × net6.0 / net8.0 = 1852 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (142 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)

@@ -28,6 +28,10 @@ internal static class DefaultHandlerFactory
             AutomaticDecompression = o.AutomaticDecompression
                 ? DecompressionMethods.All
                 : DecompressionMethods.None,
+
+            // h2 的并发度受服务端 MAX_CONCURRENT_STREAMS 限制：默认（false）超出的请求只能在单条连接上排队，
+            // 高峰期被单连接卡住。打开后按 MaxConnectionsPerServer 继续加连接，与 1.1 的连接上限同口径。
+            EnableMultipleHttp2Connections = o.EnableMultipleHttp2Connections,
             UseCookies = o.UseCookies,
             UseProxy = o.Proxy is not null,
             Proxy = o.Proxy,

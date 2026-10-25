@@ -27,8 +27,36 @@ public sealed partial class AxiosConfig
         /// </summary>
         public ConnectionPoolOptions? PoolOptions { get; set; }
 
-        /// <summary>HTTP 版本，默认 1.1。</summary>
+        /// <summary>
+        /// HTTP 版本。默认未设置（<c>null</c>）= HTTP/1.1（与 <c>HttpClient</c> 的默认一致，
+        /// 升级本库不改变线上协议）。
+        /// <para>
+        /// <b>开启 HTTP/2</b>：设为 <see cref="System.Net.HttpVersion.Version20"/> 即可。此时协商策略默认是
+        /// <c>RequestVersionOrLower</c>（见 <see cref="VersionPolicy"/>），TLS 上通过 ALPN 请求 h2，
+        /// 服务端只支持 1.1 时<b>自动退回 1.1</b>，不会让老服务失败；明文 HTTP（http://）没有 ALPN 可协商，
+        /// 开了也仍是 1.1，不会尝试 h2c 先验知识。
+        /// </para>
+        /// <para>
+        /// 反向：需要强制 HTTP/1.1（某些老网关、NTLM 等连接级认证、必须使用 <c>Connection</c> /
+        /// <c>Keep-Alive</c> / <c>Transfer-Encoding</c> 这类 HTTP/2 禁止的连接级头）时显式设
+        /// <c>HttpVersion = HttpVersion.Version11</c>。
+        /// </para>
+        /// <para>按请求项：实例 defaults 与单次请求都可设置，单次请求覆盖实例默认值。</para>
+        /// </summary>
         public Version? HttpVersion { get; set; }
+
+        /// <summary>
+        /// 版本协商策略（<see cref="System.Net.Http.HttpVersionPolicy"/>），默认
+        /// <c>RequestVersionOrLower</c>：按 <see cref="HttpVersion"/> 发起，服务端不支持就自动降级。
+        /// <para>
+        /// 默认版本是 1.1，此时本项没有实际影响；开了 HTTP/2 之后它决定「服务端不支持怎么办」——
+        /// 保持默认就是自动降级，设为 <c>RequestVersionExact</c> 则是「只用该版本，协商失败就报错」。
+        /// 想在明文 HTTP 上跑 HTTP/2（h2c 先验知识）也必须用 <c>RequestVersionExact</c>，
+        /// <c>RequestVersionOrLower</c> 在明文连接上一律用 1.1。
+        /// </para>
+        /// <para>按请求项：实例 defaults 与单次请求都可设置，单次请求覆盖实例默认值。</para>
+        /// </summary>
+        public HttpVersionPolicy? VersionPolicy { get; set; }
 
         private AxiosAuth? _auth;
 
@@ -93,7 +121,8 @@ public sealed partial class AxiosConfig
         /// <summary>
         /// 把 <paramref name="incoming"/> 里的「按请求」连接项覆盖到本实例（合并层内部使用）。
         /// <para>
-        /// 只由合并层在「来源不是库产出的配置」时调用：<see cref="HttpVersion"/> 属按请求项，另行合并。
+        /// 只由合并层在「来源不是库产出的配置」时调用：<see cref="HttpVersion"/> / <see cref="VersionPolicy"/>
+        /// 属按请求项（库产出的配置同样要带过来），由合并层单独处理，不在这里覆盖。
         /// Auth / WithCredentials / MaxRedirects 的「显式赋值过」标记是语义的一部分
         /// （显式 null 表示本次不带认证），因此保留判断。
         /// </para>

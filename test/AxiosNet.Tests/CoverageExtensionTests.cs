@@ -15,18 +15,8 @@ public sealed class CoverageExtensionTests
 {
     // ---------------------------------------------------------------
     // HttpVersion：请求行版本由 config 决定
+    // （「默认 HTTP/2、明文自动降级 1.1」见 HttpVersionNegotiationTests）
     // ---------------------------------------------------------------
-
-    [Fact]
-    public async Task HttpVersion_DefaultsTo11()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient();
-
-        await client.GetAsync(server.Url);
-
-        Assert.Equal("HTTP/1.1", server.Received[0].Version);
-    }
 
     [Fact]
     public async Task HttpVersion_CanBeDowngradedTo10()

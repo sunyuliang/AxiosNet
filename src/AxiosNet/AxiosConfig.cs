@@ -26,7 +26,7 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>
-    /// 连接相关设置：代理 / 凭据 / 连接池选项 / HTTP 版本 / Basic 认证 / 凭据开关 / 重定向次数。
+    /// 连接相关设置：代理 / 凭据 / 连接池选项 / HTTP 版本与协商策略 / Basic 认证 / 凭据开关 / 重定向次数。
     /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
     /// </summary>
     public ConnectionSettings Connection
