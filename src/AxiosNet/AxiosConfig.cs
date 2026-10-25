@@ -13,6 +13,7 @@ public sealed partial class AxiosConfig
     private ConnectionSettings? _connection;
     private LimitSettings? _limits;
     private CallbackSettings? _callbacks;
+    private RetrySettings? _retry;
 
     /// <summary>
     /// 序列化相关设置：JSON 选项、内容序列化器、文本编码、查询串与表单字段命名。
@@ -54,7 +55,17 @@ public sealed partial class AxiosConfig
         set => _callbacks = value;
     }
 
-    // 库内读取一律走这四个访问器：公共 getter 会懒创建，热路径上每次请求都建对象。
+    /// <summary>
+    /// 弹性重试：策略与每次重试前的回调。<b>默认不重试</b>（不设置 <see cref="RetrySettings.Policy"/> 即可）。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public RetrySettings Retry
+    {
+        get => _retry ??= new RetrySettings();
+        set => _retry = value;
+    }
+
+    // 库内读取一律走这几个访问器：公共 getter 会懒创建，热路径上每次请求都建对象。
     internal SerializationSettings? SerializationOrNull => _serialization;
 
     internal ConnectionSettings? ConnectionOrNull => _connection;
@@ -62,6 +73,8 @@ public sealed partial class AxiosConfig
     internal LimitSettings? LimitsOrNull => _limits;
 
     internal CallbackSettings? CallbacksOrNull => _callbacks;
+
+    internal RetrySettings? RetryOrNull => _retry;
 
     /// <summary>对应 axios baseURL。</summary>
     public string? BaseAddress { get; set; }
@@ -426,6 +439,7 @@ public sealed partial class AxiosConfig
         clone._connection = _connection?.Clone();
         clone._limits = _limits?.Clone();
         clone._callbacks = _callbacks?.Clone();
+        clone._retry = _retry?.Clone();
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;

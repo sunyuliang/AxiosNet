@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-906%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-939%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -46,6 +46,7 @@
 - [拦截器](#拦截器)
 - [错误处理](#错误处理)
 - [超时与取消](#超时与取消)
+- [弹性重试](#弹性重试)
 - [网络连接池](#网络连接池)
   - [为什么需要](#为什么需要)
   - [使用方式](#使用方式)
@@ -331,6 +332,13 @@ var config = new AxiosConfig
         OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
     },
 
+    // —— 弹性重试（默认不重试：Policy 为 null）——
+    Retry = new()
+    {
+        Policy = new RetryPolicy { MaxRetries = 3, Delay = TimeSpan.FromMilliseconds(200) },
+        OnRetry = ctx => Console.WriteLine($"第 {ctx.Attempt} 次失败，{ctx.Delay.TotalMilliseconds}ms 后重试"),
+    },
+
     // —— 序列化 ——
     Serialization = new()
     {
@@ -345,8 +353,8 @@ var config = new AxiosConfig
 };
 ```
 
-> 可选项按领域分成四个子对象：`Serialization` / `Connection` / `Limits` / `Callbacks`。
-> 子对象在**首次访问时懒创建**：完全不碰这四个子对象的配置不会多分配；库内热路径直接访问内部字段，零分配。
+> 可选项按领域分成五个子对象：`Serialization` / `Connection` / `Limits` / `Callbacks` / `Retry`。
+> 子对象在**首次访问时懒创建**：完全不碰这五个子对象的配置不会多分配；库内热路径直接访问内部字段，零分配。
 
 > 进度与限速的小节见 [进度回调、限速与大小限制](#进度回调限速与大小限制)。
 
@@ -1197,6 +1205,74 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 >
 > 超时值上限约 **49.7 天**（底层计时器是 `uint.MaxValue-1` 毫秒）：超过这个值会**收敛到上限**而不是抛异常，因此 `TimeSpan.MaxValue` 也是安全的；真正的无限超时用 `Timeout = TimeSpan.Zero`。负值抛 `ERR_BAD_OPTION_VALUE`。取消/超时异常会保留底层 `OperationCanceledException` 作为 `Cause`，`AxiosException.ToJson()` 与日志都能看到触发点。
 
+## 弹性重试
+
+**默认不重试**：不配置策略时管线完全不进重试分支，行为与分配都和没有这个功能时一致。需要时挂一个策略即可（实例默认或单次请求都行）：
+
+```csharp
+using AxiosNet.Retry;
+
+// 1) 内置策略：最多重试 3 次，首次间隔 200ms、每次翻倍（200/400/800ms）、带抖动
+var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy { MaxRetries = 3 });
+
+// 2) 次数 + 固定间隔：重试 3 次，每次间隔 1 秒
+config.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.FromSeconds(1));
+
+// 3) 指数退避：200ms 起每次翻倍，单次最多等 5 秒
+config.Retry.Policy = RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
+
+// 4) 完全自定义：实现 IAxiosRetryPolicy（按业务码 / 按截止时间 / 按剩余配额……）
+config.Retry.Policy = new MyPolicy();
+
+// 单次请求关掉实例默认的重试（显式赋 null，与「没设置」不同）
+await client.GetAsync("orders", c => c.Retry.Policy = null);
+
+// 观察每次重试（日志 / 埋点）
+client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
+    "第 {Attempt}/{Max} 次尝试失败（{Code}），{Delay}ms 后重试",
+    ctx.Attempt, ctx.MaxRetries, ctx.ErrorCode, ctx.Delay.TotalMilliseconds);
+```
+
+### 默认重试什么
+
+`RetryPolicy` 的内置判定（每一项都可改写）：
+
+| 情况 | 默认 | 说明 |
+|---|---|---|
+| 网络错误 `ERR_NETWORK`、超时 `ECONNABORTED` | 重试 | 连接被拒、DNS 失败、连接中途断开、超时 |
+| 408 / 429 / 5xx | 重试 | 改 `RetryStatusCodes` 可换判定 |
+| 其它 4xx | 不重试 | 请求本身有问题，重发只会再错一次 |
+| 取消 `ERR_CANCELED` | 不重试 | 调用方主动取消（库层面直接挡掉，策略无从干预） |
+| 配置 / URL 错误 | 不重试 | `ERR_BAD_OPTION_VALUE` / `ERR_INVALID_URL` |
+| POST / PATCH | 不重试 | 非幂等：服务端可能已执行，重发会产生重复副作用；`RetryNonIdempotentMethods = true` 打开 |
+
+### 语义约定
+
+- **`Timeout` 是「每次尝试」的预算**，不是全部重试的总预算：3 次重试 × 10s 最坏是 40s。需要总预算请用 `CancellationToken`——它贯穿所有尝试与等待（等待期间取消会抛 `ERR_CANCELED`）。
+- **响应拦截器只跑一次**：重试发生在拦截器链内部，拦截器看到的是最终结果（成功或最后一次失败），不会因为重试被重复执行；请求拦截器与 `transformRequest` 同样只执行一次。
+- **正文只准备一次**：重试复用同一份 `HttpContent`，上传进度计量器跨次累计（`Loaded` 不回跳，百分比由 `Progress` 封顶 100%），也不会把业务对象重新序列化一遍。代价是「来自流的正文」必须可重放：可 seek 的 `Stream`（`MemoryStream` / `FileStream` / multipart 里可 seek 的 `FormFile`）会在每次重试前自动拨回起点；不可 seek 的流（网络流、管道流、直接作为 `data` 传入的 `StreamContent`）在开启重试时**直接抛 `ERR_BAD_OPTION_VALUE`**，而不是等第二次悄悄发出空内容。**自己构造 `HttpContent` 传给 `data`** 时，可重放性由调用方负责——库只能识别自己装配的 multipart。
+- **重试前拨不回起点也会明确报错**：正文流在两次尝试之间被关闭 / 不再可定位时抛 `ERR_BAD_OPTION_VALUE`（`Cause` 是原始的 `ObjectDisposedException`），不漏裸异常，也不会发一个空正文出去。
+- **`Retry-After` 优先**：429 / 503 带 `Retry-After`（秒数或 HTTP 日期）时以服务端给的时间为准，仍受 `MaxDelay` 封顶；`HonorRetryAfter = false` 可关闭。
+- **抖动**：`Jitter = true`（默认）把等待时间随机落在 50%–100%，避免大批客户端在同一时刻一起重试。
+- 次数为负、`Delay` / `MaxDelay` 为负都抛 `ERR_BAD_OPTION_VALUE`，在请求发出前拦下。
+
+### 自定义策略
+
+```csharp
+public sealed class BizRetryPolicy : IAxiosRetryPolicy
+{
+    public int MaxRetries => 2;                     // 硬上限：最多再发 2 次
+
+    // ctx: Attempt / MaxRetries / Exception / Response / StatusCode / ErrorCode / Config / Method
+    public bool ShouldRetry(AxiosRetryContext ctx)
+        => ctx.Response?.GetHeader("X-Biz-Code") == "5001";
+
+    public TimeSpan GetDelay(AxiosRetryContext ctx) => TimeSpan.FromMilliseconds(300);
+}
+```
+
+> 策略实例会被并发请求共享，实现应无状态且线程安全。`ShouldRetry` 返回 `false` 时原始异常原样抛出（不包装、不改错误码）；`GetDelay` 返回负值按「不等待」处理。
+
 ## 网络连接池
 
 ### 为什么需要
@@ -1371,6 +1447,7 @@ using var client3 = Axios.Create(
 
 **额外能力**
 
+- 🔁 **弹性重试**：默认不重试；挂上策略即可按「次数 + 间隔」重试网络错误 / 超时 / 408 / 429 / 5xx（指数退避、抖动、`Retry-After` 优先，默认只重试幂等方法），策略接口 `IAxiosRetryPolicy` 可完全自定义；正文只序列化一次并原样重发
 - 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
 - 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）；对象节点是 `AxiosDynamic`——`data["key"]` 索引可用、缺省成员返回 `null`（不抛）、运行期可增删属性，同时实现 `IDictionary<string,object?>`（可原样回灌 params/请求体，`System.Text.Json` 也按 JSON 对象序列化）；成员访问与 `ExpandoObject` 同构（shape + 固化槽位），实测持平或更快
 - 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
@@ -1418,6 +1495,7 @@ using var client3 = Axios.Create(
 | `AxiosError.code` | `AxiosException.Code`（同名字符串），另有 `Status` / `Cause` / `ToJson()` |
 | `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
 | （无内置） | `HttpConnectionPool` / `ConnectionPoolOptions` |
+| `axios-retry` 插件（`retry` / `retryDelay` / `onRetry`） | `c.Retry.Policy = new RetryPolicy { MaxRetries = 3, Delay = ... }` / `c.Retry.OnRetry`（默认不重试，见[弹性重试](#弹性重试)） |
 
 ## 与 axios 的差异说明
 
@@ -1444,7 +1522,7 @@ using var client3 = Axios.Create(
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 24 类集成调用：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是一个**开箱即用、离线可运行**的控制台示例：内置一个基于 `TcpListener` 的 HTTP/1.1 Keep-Alive 演示服务器，覆盖 25 类集成调用：
 
 1. 全局静态门面 `Axios.GetAsync`
 2. `Axios.Create`（baseURL/默认头/强类型响应）
@@ -1470,12 +1548,13 @@ using var client3 = Axios.Create(
 22. **请求签名**：HMAC-SHA256(token + 时间戳 + nonce + 方法 + 路径 + 请求体哈希)，演示防篡改（改请求体）与防重放（nonce 一次性 + 时间戳窗口）
 23. **XML 序列化（内置）**：换上 `XmlContentSerializer.Instance` —— 请求体、强类型响应、非泛型原文三条路径，标量请求体不经过序列化器，`AxiosContent.Register` 的自动模式（按 Content-Type 选序列化器），以及表单/multipart 与序列化器解耦
 24. **二进制格式（字节通道双向）**：序列化器覆写 `SerializeToBytes` + 字节入口 —— 请求对象自动变字节正文并自报 `application/octet-stream`，响应零解码直达字节入口；对比非泛型 / `byte[]` 路径，并演示调用方显式 `ContentType` 覆盖自报头
+25. **弹性重试**：默认不重试、`RetryPolicy`（次数 / 固定间隔 / 指数退避 / 抖动 / `Retry-After`）、幂等判定（POST 默认不重试）、`OnRetry` 观察每次重试、自定义 `IAxiosRetryPolicy`
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 33 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 24 项。
+启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 34 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 25 项。
 
 客户端的用法即生产惯例：**每个示例一个静态客户端，为空才创建一次，之后所有次运行复用**（示例类内的 `private static` 字段 + `??=`，没有共享注册表这类额外封装）——`AxiosClient` 每实例一条连接池，客户端随用随新弃就等于每次运行都重建 TCP 连接；挂拦截器的示例每次运行先清空再挂，重复运行行为一致。第 12（连接池统计）、第 17 的 Handler 注入与池化场景（带每轮计数）、20（DNS 切换）故意每次新建客户端：它们演示的对象就是「全新连接 / 全新计数器」本身。
 
@@ -1495,7 +1574,7 @@ dotnet run --project samples/AxiosNet.Simple
 8. **流式响应（SSE）**：`RequestStreamAsync` 返回 `AxiosResponse<IAsyncEnumerable<T>>`——`await` 即拿到状态码与响应头，`await foreach` 逐帧消费；演示服务器以 `chunked` 分帧下发（含 `[DONE]` 结束）
 9. **multipart 上传**：`[Multipart]` + `[Part]`——模型自身即表单，服务器按字节精确解析并回报部件清单
 
-这 9 项与上面的 24 项同在启动菜单里（菜单第 25-33 项，自带另一套演示服务器，按选择懒启动）：
+这 9 项与上面的 25 项同在启动菜单里（菜单第 26-34 项，自带另一套演示服务器，按选择懒启动）：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1512,7 +1591,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **859** 个、DI 扩展 **47** 个，合计 **906** 个用例（共 **1812** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **892** 个、DI 扩展 **47** 个，合计 **939** 个用例（共 **1878** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1571,7 +1650,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 906 个 xUnit 单元测试（核心/声明式 859 + DI 47；两个测试项目均为双目标，实际执行 1812 次）
+# 运行全部 939 个 xUnit 单元测试（核心/声明式 892 + DI 47；两个测试项目均为双目标，实际执行 1878 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1580,9 +1659,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 859 | `net8.0` / `net6.0` | 1718 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 892 | `net8.0` / `net6.0` | 1784 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **906** | | **1812** |
+| **合计** | **939** | | **1878** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1600,6 +1679,7 @@ dotnet build AxiosNet.sln -c Release
 - **连接池**：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义；共享池 fail-fast（连接级 defaults 与 `pool`/`poolOptions` 互斥）；origin key IDNA 归一（unicode/punycode 同节点、IPv6 括号保留）；`pool.Options` 选项隔离
 - **响应读取与泛型路由**：无 Content-Length 的关闭 delimiting 响应（缓冲读取未知长度分支）、精确预分配时零拷贝返回；`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
 - **自定义 Handler**：`PROPFIND` 等自定义谓词透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / **每个 origin 必须拿到独立实例**（两个 origin 交替请求互不影响，前一个不被后一个顶掉）/ 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
+- **弹性重试**（`RetryTests`）：默认不重试；5xx / 408 / 429 重试到成功、次数上限、4xx 不重试、POST 默认不重试（`RetryNonIdempotentMethods` 可打开）、网络错误与超时重试、重试间隔真实生效、`Retry-After` 优先与 `MaxDelay` 封顶、指数退避与抖动区间、正文重放（对象 / 可 seek 流；不可 seek 流 fail-fast）、`OnRetry` 回调、自定义策略、单次请求开关实例默认策略、取消后不再重试、响应拦截器只跑一次
 
 **序列化与安全**
 
@@ -1727,10 +1807,11 @@ dotnet build AxiosNet.sln -c Release
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ ⑥ 发送                                                       │
+│ ⑥ 发送（含重试：策略非空时循环 ⑥–⑦）                         │
 │ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
 │ HttpClient.SendAsync(ResponseHeadersRead)                    │
 │ SocketsHttpHandler：Keep-Alive / 重定向 / 自动解压           │
+│ 重试：新 HttpRequestMessage + 复用正文 + 独立超时            │
 └──────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -1778,7 +1859,7 @@ dotnet build AxiosNet.sln -c Release
 | ③ TransformRequest | `AxiosClient.cs` 请求管线 |
 | ④ URL + 请求体 | `Internal/UrlBuilder.cs`、`Internal/RequestBodyFactory.cs`（分派）、`Internal/FormBodyEncoder.cs`（表单）、`Internal/MultipartBodyBuilder.cs`（multipart）、`Internal/ProgressHttpContent.cs` |
 | ⑤ 请求头 + 连接 | `AxiosClient.Config.cs`、`Pooling/HttpConnectionPool.cs`（`LeaseAsync`）、`Pooling/PooledEndpoint.cs` |
-| ⑥ 发送 | `AxiosClient.cs`（`SendAsync`）→ 每 origin 的 `HttpClient` |
+| ⑥ 发送 | `AxiosClient.cs`（`SendWithRetryAsync` / `SendRetryLoopAsync` / `SendCoreAsync`）→ 每 origin 的 `HttpClient`；正文可重放性由 `Internal/RetryBody.cs` 负责 |
 | ⑦ 响应读取 | `Internal/ResponseReader.cs`、`Internal/ResponseTextDecoder.cs`、`Internal/ScalarParser.cs`、`Internal/DynamicJson.cs`、`Serialization/` |
 | ⑧ TransformResponse + 响应拦截器 | `Internal/ResponseReader.cs`、`Interceptors/ResponseInterceptorManager.cs` |
 | ⑨ 收尾 | `Internal/ResponseStreams.cs`（`TimeoutStream` / `ResponseStreamOwner`）、`Internal/DataCast.cs` |
@@ -1802,7 +1883,8 @@ dotnet build AxiosNet.sln -c Release
 │  │  │  ├─ AxiosConfig.Serialization.cs # SerializationSettings：JSON 选项/序列化器/编码/命名
 │  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings：代理/凭据/池选项/HTTP 版本/认证
 │  │  │  ├─ AxiosConfig.Limits.cs        # LimitSettings：体积、速率、流式空闲超时
-│  │  │  └─ AxiosConfig.Callbacks.cs     # CallbackSettings：进度回调/状态校验/超时文案
+│  │  │  ├─ AxiosConfig.Callbacks.cs     # CallbackSettings：进度回调/状态校验/超时文案
+│  │  │  └─ AxiosConfig.Retry.cs         # RetrySettings：重试策略 + OnRetry 回调（默认不重试）
 │  │  ├─ AxiosContentType.cs     # 常用 Content-Type 预置常量
 │  │  ├─ AxiosCollectionFormat.cs# params 集合编码形态（Brackets/Multi/Csv/Ssv/Tsv/Pipes）
 │  │  ├─ AxiosStreamFormat.cs    # 流式帧格式（NDJSON / SSE）
@@ -1817,6 +1899,7 @@ dotnet build AxiosNet.sln -c Release
 │  │  ├─ GlobalUsings.cs         # 全局 using
 │  │  ├─ ResponseType.cs / AxiosAuth.cs          # 响应形态 / Basic 认证
 │  │  ├─ Interceptors/           # 拦截器容器（AxiosInterceptors）+ 请求/响应拦截器管理
+│  │  ├─ Retry/                  # 弹性重试：IAxiosRetryPolicy（策略契约）+ RetryPolicy（次数/间隔/退避/抖动/Retry-After）+ AxiosRetryContext
 │  │  ├─ Serialization/          # IContentSerializer（2 个文本方法 + 一对字节通道 + MediaType）+ 内置 System.Text.Json / XML 实现
 │  │  │  ├─ IContentSerializer.cs      # 序列化契约：Serialize / Deserialize + 字节通道默认实现（DIM）
 │  │  │  ├─ SystemTextJsonSerializer.cs# 内置 JSON（默认回落）：STJ + JsonSerializerOptions / AxiosJson.Options
@@ -1843,13 +1926,13 @@ dotnet build AxiosNet.sln -c Release
 │     ├─ ApiClientResolver.cs            # IApiClientResolver 解析器 + 站点定义/创建（命名站点属主）
 │     └─ ApiClientOwnedAxiosClient.cs     # 自建模式与命名站点持有底层客户端的内部注册项（容器退出时释放）
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 9 项声明式示例；启动菜单反射列出全部 33 项，输入编号运行，a = 全部，q = 退出
-│  │  ├─ Examples/               # 核心集成示例（24 项，IExample 零注册自动进菜单；SampleMenu.cs 为交互菜单，两个示例程序共用）
-│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：9 类示例走真实 HTTP 往返，含授权声明、multipart、全局日志、HMAC 签名/验签与 SSE 流式，菜单第 25-33 项）
+│  ├─ AxiosNet.Simple/           # 25 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 9 项声明式示例；启动菜单反射列出全部 34 项，输入编号运行，a = 全部，q = 退出
+│  │  ├─ Examples/               # 核心集成示例（25 项，IExample 零注册自动进菜单；SampleMenu.cs 为交互菜单，两个示例程序共用）
+│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：9 类示例走真实 HTTP 往返，含授权声明、multipart、全局日志、HMAC 签名/验签与 SSE 流式，菜单第 26-34 项）
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（859 个用例 × net6.0 / net8.0 双目标 = 1718 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（892 个用例 × net6.0 / net8.0 双目标 = 1784 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（142 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（47 个用例 × net6.0 / net8.0 双目标 = 94 次执行，复用主库/WebAPI 测试基建）

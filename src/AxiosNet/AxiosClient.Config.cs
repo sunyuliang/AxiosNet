@@ -118,6 +118,12 @@ public sealed partial class AxiosClient
             merged.Callbacks.MergeFrom(incomingCallbacks);
         }
 
+        // 重试策略属按请求项：本次没碰这一组就沿用实例默认（懒创建，不碰就不分配）。
+        if (perCall.RetryOrNull is { } incomingRetry)
+        {
+            merged.Retry.MergeFrom(incomingRetry);
+        }
+
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
             merged.Serialization.MergeFrom(incomingSerialization);

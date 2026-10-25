@@ -20,6 +20,24 @@ public sealed class DemoServer : IDisposable
     private int _activeRequests;
     private int _peakRequests;
 
+    /// <summary><c>/flaky</c> 的调用计数：按 tag 分别累计（演示重试用：前 N 次失败，之后成功）。</summary>
+    private readonly ConcurrentDictionary<string, int> _flakyAttempts = new(StringComparer.Ordinal);
+
+    /// <summary>取查询串里某个键的值（不处理转义：示例里的值都是 ASCII 简单值）。</summary>
+    private static string? QueryValue(string query, string key)
+    {
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=');
+            if (eq > 0 && string.Equals(pair[..eq], key, StringComparison.OrdinalIgnoreCase))
+            {
+                return pair[(eq + 1)..];
+            }
+        }
+
+        return null;
+    }
+
     private DemoServer(TcpListener listener)
     {
         _listener = listener;
@@ -204,6 +222,24 @@ public sealed class DemoServer : IDisposable
 
             case "GET" when path == "/not-found":
                 return Json(404, """{"message":"resource not found"}""");
+
+            case "GET" when path == "/flaky":
+            {
+                // ?fail=N：同一个 tag 的前 N 次调用返回 503，之后成功（演示弹性重试）
+                var failures = 2;
+                if (QueryValue(query, "fail") is { } failText && int.TryParse(failText, out var parsedFailures))
+                {
+                    // 注意 out 语义：解析失败会把 out 参数写成 0，所以必须和 TryParse 的结果一起判断，
+                    // 不能写成「先 TryParse 再赋值」，否则 ?fail=abc 会变成「永不失败」。
+                    failures = parsedFailures;
+                }
+
+                var tag = QueryValue(query, "tag") ?? "default";
+                var attempt = _flakyAttempts.AddOrUpdate(tag, 1, (_, current) => current + 1);
+                return attempt <= failures
+                    ? Json(503, $"{{\"message\":\"temporarily unavailable\",\"attempt\":{attempt}}}")
+                    : Json(200, $"{{\"ok\":true,\"attempt\":{attempt}}}");
+            }
 
             case "GET" when path == "/slow":
                 var ms = 500;

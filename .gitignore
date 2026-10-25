@@ -49,4 +49,4 @@ coverage.cobertura.xml
 *.cache
 .DS_Store
 Thumbs.db
-/.workbuddy/memory
+memory/

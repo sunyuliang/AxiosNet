@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-906%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-939%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -46,6 +46,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
 - [Interceptors](#interceptors)
 - [Error handling](#error-handling)
 - [Timeouts and cancellation](#timeouts-and-cancellation)
+- [Retries](#retries)
 - [Connection pool](#connection-pool)
   - [Why it exists](#why-it-exists)
   - [Usage](#usage)
@@ -331,6 +332,13 @@ var config = new AxiosConfig
         OnDownloadProgress = e => Console.WriteLine($"↓ {e}"),
     },
 
+    // —— Retries (off by default: Policy is null) ——
+    Retry = new()
+    {
+        Policy = new RetryPolicy { MaxRetries = 3, Delay = TimeSpan.FromMilliseconds(200) },
+        OnRetry = ctx => Console.WriteLine($"attempt {ctx.Attempt} failed, retrying in {ctx.Delay.TotalMilliseconds}ms"),
+    },
+
     // —— Serialization ——
     Serialization = new()
     {
@@ -345,8 +353,8 @@ var config = new AxiosConfig
 };
 ```
 
-> Optional settings are grouped into four sub-objects: `Serialization` / `Connection` / `Limits` / `Callbacks`.
-> They are **created lazily on first access**: configs that never touch these four objects allocate nothing extra, and internal reads go straight to the backing field (zero allocation on the hot path).
+> Optional settings are grouped into five sub-objects: `Serialization` / `Connection` / `Limits` / `Callbacks` / `Retry`.
+> They are **created lazily on first access**: configs that never touch these five objects allocate nothing extra, and internal reads go straight to the backing field (zero allocation on the hot path).
 
 > See [Progress callbacks, rate limiting, and size limits](#progress-callbacks-rate-limiting-and-size-limits) for the progress/rate-limit details.
 
@@ -1183,6 +1191,74 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 >
 > The timeout value is capped at about **49.7 days** (the underlying timer is `uint.MaxValue-1` milliseconds): anything larger is **clamped to that cap** instead of throwing, so `TimeSpan.MaxValue` is safe too; use `Timeout = TimeSpan.Zero` for a genuinely unlimited timeout. Negative values throw `ERR_BAD_OPTION_VALUE`. Cancellation/timeout exceptions keep the underlying `OperationCanceledException` as `Cause`, so `AxiosException.ToJson()` and logs show the trigger point.
 
+## Retries
+
+**No retries by default**: without a policy the pipeline never enters the retry branch, so behavior and allocations are identical to not having the feature at all. Attach a policy when you want retries (instance defaults or a single request):
+
+```csharp
+using AxiosNet.Retry;
+
+// 1) Built-in policy: up to 3 retries, 200ms initial delay, doubling (200/400/800ms), with jitter
+var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy { MaxRetries = 3 });
+
+// 2) Count + fixed interval: 3 retries, 1 second apart
+config.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.FromSeconds(1));
+
+// 3) Exponential backoff: starts at 200ms, doubles each time, capped at 5 seconds
+config.Retry.Policy = RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
+
+// 4) Fully custom: implement IAxiosRetryPolicy (business code / deadline / remaining quota ...)
+config.Retry.Policy = new MyPolicy();
+
+// Disable the instance default retry for a single request (explicit null differs from "not set")
+await client.GetAsync("orders", c => c.Retry.Policy = null);
+
+// Observe each retry (logging / metrics)
+client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
+    "attempt {Attempt}/{Max} failed ({Code}), retrying in {Delay}ms",
+    ctx.Attempt, ctx.MaxRetries, ctx.ErrorCode, ctx.Delay.TotalMilliseconds);
+```
+
+### What gets retried by default
+
+`RetryPolicy`'s built-in rules (each one is overridable):
+
+| Situation | Default | Notes |
+|---|---|---|
+| Network error `ERR_NETWORK`, timeout `ECONNABORTED` | retry | connection refused, DNS failure, connection dropped mid-flight, timeout |
+| 408 / 429 / 5xx | retry | replace the check via `RetryStatusCodes` |
+| Any other 4xx | no retry | the request itself is wrong; resending fails the same way |
+| Cancellation `ERR_CANCELED` | no retry | caller cancelled (blocked by the library; policies cannot override) |
+| Config / URL errors | no retry | `ERR_BAD_OPTION_VALUE` / `ERR_INVALID_URL` |
+| POST / PATCH | no retry | non-idempotent: the server may already have executed it; opt in with `RetryNonIdempotentMethods = true` |
+
+### Semantics
+
+- **`Timeout` is a per-attempt budget**, not a budget for all retries: 3 retries × 10s means up to 40s worst case. For an overall budget use `CancellationToken` — it spans every attempt and every delay (cancelling during a delay throws `ERR_CANCELED`).
+- **Response interceptors run once**: retries happen inside the interceptor chain, so interceptors see only the final outcome (success or the last failure). Request interceptors and `transformRequest` also run exactly once.
+- **The body is prepared once**: retries reuse the same `HttpContent`, so the upload progress meter keeps accumulating (`Loaded` never jumps back, and `Progress` caps the percentage at 100%) and the payload is not serialized again. The catch is that stream-based bodies must be replayable: seekable `Stream`s (`MemoryStream` / `FileStream`, seekable `FormFile`s inside multipart) are rewound automatically before each retry; non-seekable streams (network streams, pipes, a `StreamContent` passed directly as `data`) throw **`ERR_BAD_OPTION_VALUE` as soon as retry is enabled**, instead of silently sending an empty body on the second attempt. When you pass a **self-built `HttpContent`** as `data`, replayability is your responsibility — the library can only inspect the multipart it assembles itself.
+- **A body that cannot be rewound also fails loudly**: if the body stream is closed or no longer seekable between two attempts, the call throws `ERR_BAD_OPTION_VALUE` (with the original `ObjectDisposedException` as `Cause`) instead of leaking a raw exception or sending an empty body.
+- **`Retry-After` wins**: when a 429 / 503 carries `Retry-After` (seconds or an HTTP date), the server's timing is used (still capped by `MaxDelay`); turn it off with `HonorRetryAfter = false`.
+- **Jitter**: `Jitter = true` (default) randomizes the wait within 50%–100% of the computed delay, so a fleet of clients does not retry in lockstep.
+- Negative counts, `Delay` or `MaxDelay` throw `ERR_BAD_OPTION_VALUE` before the request is sent.
+
+### Custom policies
+
+```csharp
+public sealed class BizRetryPolicy : IAxiosRetryPolicy
+{
+    public int MaxRetries => 2;                     // hard cap: at most 2 more sends
+
+    // ctx: Attempt / MaxRetries / Exception / Response / StatusCode / ErrorCode / Config / Method
+    public bool ShouldRetry(AxiosRetryContext ctx)
+        => ctx.Response?.GetHeader("X-Biz-Code") == "5001";
+
+    public TimeSpan GetDelay(AxiosRetryContext ctx) => TimeSpan.FromMilliseconds(300);
+}
+```
+
+> Policy instances are shared by concurrent requests, so implementations must be stateless and thread-safe. When `ShouldRetry` returns `false` the original exception propagates unchanged (no wrapping, no error-code rewrite); a negative value from `GetDelay` is treated as "no wait".
+
 ## Connection pool
 
 ### Why it exists
@@ -1357,6 +1433,7 @@ Key points:
 
 **Additional capabilities**
 
+- 🔁 **Resilient retries**: off by default; attach a policy to retry network errors / timeouts / 408 / 429 / 5xx with a configurable count and interval (exponential backoff, jitter, `Retry-After` priority, idempotent methods only by default). `IAxiosRetryPolicy` lets you plug in any logic; the body is serialized once and resent as-is
 - 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
 - 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS); object nodes are `AxiosDynamic` — `data["key"]` indexing works, missing members yield `null` instead of throwing, properties can be added/removed at runtime, and it implements `IDictionary<string,object?>` (so it can be fed back as params/body and `System.Text.Json` serializes it as a plain JSON object). Member access uses the same shape + baked-slot design as `ExpandoObject` (measured on par or slightly faster)
 - 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
@@ -1404,6 +1481,7 @@ Key points:
 | `AxiosError.code` | `AxiosException.Code` (same string values), plus `Status` / `Cause` / `ToJson()` |
 | `axios.isAxiosError(e)` / `axios.isCancel(e)` | `Axios.IsAxiosError(e)` / `Axios.IsCancel(e)` |
 | (no built-in equivalent) | `HttpConnectionPool` / `ConnectionPoolOptions` |
+| `axios-retry` plugin (`retry` / `retryDelay` / `onRetry`) | `c.Retry.Policy = new RetryPolicy { MaxRetries = 3, Delay = ... }` / `c.Retry.OnRetry` (off by default, see [Retries](#retries)) |
 
 ## Differences from axios
 
@@ -1430,7 +1508,7 @@ Intentional differences driven by the .NET platform:
 
 ## Sample project
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 24 categories of integration calls:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is a **ready-to-run, offline** console sample: it embeds a `TcpListener`-based HTTP/1.1 keep-alive demo server and covers 25 categories of integration calls:
 
 1. The global static facade `Axios.GetAsync`
 2. `Axios.Create` (baseURL / default headers / strongly-typed response)
@@ -1456,12 +1534,13 @@ Intentional differences driven by the .NET platform:
 22. **Request signing**: HMAC-SHA256(token + timestamp + nonce + method + path + body hash), demonstrating tamper protection and replay protection
 23. **XML serialization (built in)**: switch to `XmlContentSerializer.Instance` — request body, strongly-typed response, non-generic raw text, scalar request bodies bypassing the serializer, the `AxiosContent.Register` auto mode (serializer picked by Content-Type), and the decoupling of forms/multipart from the serializer
 24. **Binary formats (byte channel both ways)**: the serializer overrides `SerializeToBytes` + the byte inlet — request objects become byte bodies with a self-declared `application/octet-stream`, and responses reach the byte inlet with zero decoding; compared against the non-generic / `byte[]` paths, plus the caller's explicit `ContentType` overriding the self-declared header
+25. **Resilient retries**: off by default, `RetryPolicy` (count / fixed interval / exponential backoff / jitter / `Retry-After`), idempotency rules (POST is not retried by default), `OnRetry` observing each retry, and a custom `IAxiosRetryPolicy`
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-The app starts into an **interactive menu**: reflection lists every sample's class name and title (24 core + 9 declarative = 33 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-24.
+The app starts into an **interactive menu**: reflection lists every sample's class name and title (25 core + 9 declarative = 34 items; sample classes are never registered by hand — add one and it appears), type a number to run a single sample, `a` to run them all in order, `q` to quit; after each sample finishes you are back at the menu. The numbering above matches menu items 1-25.
 
 Client usage follows production conventions: **each sample keeps one static client, created only when null and reused by every later run** (a `private static` field in the sample class with `??=` — no shared-client registry layered on top) — every `AxiosClient` owns a connection pool, so creating a client per run means rebuilding TCP connections every time; samples that install interceptors clear them first on each run, so re-runs behave identically. Item 12 (pool statistics), the handler-injection/pooled scenarios of item 17 (per-run counters), and item 20 (DNS switchover) deliberately create fresh clients: what they demonstrate is "brand-new connections / counters" itself.
 
@@ -1481,7 +1560,7 @@ The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is 
 8. **Streaming (SSE)**: `RequestStreamAsync` returns `AxiosResponse<IAsyncEnumerable<T>>` — `await` gives you the status code and headers, `await foreach` consumes frames one by one; the demo server streams with `chunked` encoding (terminated by `[DONE]`)
 9. **Multipart upload**: `[Multipart]` + `[Part]` — the model itself is the form, and the server parses it byte-exactly and reports the part list
 
-These 9 items live in the same startup menu as the 24 above (menu items 25-33, with their own demo server started lazily on first use):
+These 9 items live in the same startup menu as the 25 above (menu items 26-34, with their own demo server started lazily on first use):
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1498,7 +1577,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **859** core/declarative cases plus **47** DI-extension cases — **906** in total (**1812** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **892** core/declarative cases plus **47** DI-extension cases — **939** in total (**1878** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1557,7 +1636,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 906 xUnit tests (859 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1812 executions)
+# Run all 939 xUnit tests (892 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1878 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1566,9 +1645,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 859 | `net8.0` / `net6.0` | 1718 |
+| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 892 | `net8.0` / `net6.0` | 1784 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **906** | | **1812** |
+| **Total** | **939** | | **1878** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1588,6 +1667,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Connection pool: connection reuse, max-connection throttling, sharing across instances, idle eviction, multi-origin isolation, dispose semantics; shared-pool fail-fast (connection-level defaults and `pool`/`poolOptions` exclusivity); origin key IDNA normalization (unicode/punycode as the same node, IPv6 brackets preserved); `pool.Options` option isolation
 - Response reading and generic routing: close-delimited responses without Content-Length, zero-copy return when the length allows exact preallocation; `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / **each origin must get an independent instance** (two origins alternating requests stay unaffected, neither hijacks the other) / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
+- Resilient retries (`RetryTests`): no retries by default; 5xx / 408 / 429 retried until success, retry cap, 4xx not retried, POST not retried by default (`RetryNonIdempotentMethods` opts in), network errors and timeouts retried, the configured interval actually elapsing, `Retry-After` priority and `MaxDelay` cap, exponential backoff and jitter range, body replay (objects / seekable streams; non-seekable streams fail fast), the `OnRetry` callback, custom policies, per-request on/off over instance defaults, no retry after cancellation, and response interceptors running exactly once
 
 **Serialization and security**
 
@@ -1715,10 +1795,11 @@ caller
                                      │
                                      ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 6 Send                                                                 │
+│ 6 Send (with retries: the loop repeats 6-7)                            │
 │ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│
 │ HttpClient.SendAsync(ResponseHeadersRead)                              │
 │ SocketsHttpHandler: keep-alive / redirects / auto-decompression        │
+│ retry: new HttpRequestMessage + reused body + own timeout              │
 └────────────────────────────────────────────────────────────────────────┘
                                      │
                                      ▼
@@ -1766,7 +1847,7 @@ How the stages map onto the source files (read together with the [project layout
 | 3 TransformRequest | `AxiosClient.cs` request pipeline |
 | 4 URL + request body | `Internal/UrlBuilder.cs`, `Internal/RequestBodyFactory.cs` (dispatch), `Internal/FormBodyEncoder.cs` (form), `Internal/MultipartBodyBuilder.cs` (multipart), `Internal/ProgressHttpContent.cs` |
 | 5 Headers + connection | `AxiosClient.Config.cs`, `Pooling/HttpConnectionPool.cs` (`LeaseAsync`), `Pooling/PooledEndpoint.cs` |
-| 6 Send | `AxiosClient.cs` (`SendAsync`) → the per-origin `HttpClient` |
+| 6 Send | `AxiosClient.cs` (`SendWithRetryAsync` / `SendRetryLoopAsync` / `SendCoreAsync`) → the per-origin `HttpClient`; body replayability lives in `Internal/RetryBody.cs` |
 | 7 Response read | `Internal/ResponseReader.cs`, `Internal/ResponseTextDecoder.cs`, `Internal/ScalarParser.cs`, `Internal/DynamicJson.cs`, `Serialization/` |
 | 8 TransformResponse + response interceptors | `Internal/ResponseReader.cs`, `Interceptors/ResponseInterceptorManager.cs` |
 | 9 Wrap-up | `Internal/ResponseStreams.cs` (`TimeoutStream` / `ResponseStreamOwner`), `Internal/DataCast.cs` |
@@ -1790,7 +1871,8 @@ How the stages map onto the source files (read together with the [project layout
 │  │  │  ├─ AxiosConfig.Serialization.cs # SerializationSettings: JSON options/serializer/encoding/naming
 │  │  │  ├─ AxiosConfig.Connection.cs    # ConnectionSettings: proxy/credentials/pool/HTTP version/auth
 │  │  │  ├─ AxiosConfig.Limits.cs        # LimitSettings: size, rate, stream idle timeout
-│  │  │  └─ AxiosConfig.Callbacks.cs     # CallbackSettings: progress callbacks/status validation/timeout text
+│  │  │  ├─ AxiosConfig.Callbacks.cs     # CallbackSettings: progress callbacks/status validation/timeout text
+│  │  │  └─ AxiosConfig.Retry.cs         # RetrySettings: retry policy + OnRetry callback (no retries by default)
 │  │  ├─ AxiosContentType.cs     # common Content-Type presets
 │  │  ├─ AxiosCollectionFormat.cs# params collection encoding (Brackets/Multi/Csv/Ssv/Tsv/Pipes)
 │  │  ├─ AxiosStreamFormat.cs    # streaming frame format (NDJSON / SSE)
@@ -1805,6 +1887,7 @@ How the stages map onto the source files (read together with the [project layout
 │  │  ├─ GlobalUsings.cs         # global usings
 │  │  ├─ ResponseType.cs / AxiosAuth.cs          # response shape / Basic auth
 │  │  ├─ Interceptors/           # interceptor container (AxiosInterceptors) + request/response interceptor management
+│  │  ├─ Retry/                  # resilient retries: IAxiosRetryPolicy (contract) + RetryPolicy (count/interval/backoff/jitter/Retry-After) + AxiosRetryContext
 │  │  ├─ Serialization/          # IContentSerializer (2 text methods + a pair of byte-channel hooks + MediaType) + built-in System.Text.Json / XML implementations
 │  │  │  ├─ IContentSerializer.cs      # serialization contract: Serialize / Deserialize + default byte-channel hooks (DIM)
 │  │  │  ├─ SystemTextJsonSerializer.cs# built-in JSON (default fallback): STJ + JsonSerializerOptions / AxiosJson.Options
@@ -1831,13 +1914,13 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 24 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 9 declarative samples under WebAPI/; the startup menu lists all 33 by reflection — type a number to run, a = all, q = quit
-│  │  ├─ Examples/               # core integration samples (24 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE streaming; menu items 25-33)
+│  ├─ AxiosNet.Simple/           # 25 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 9 declarative samples under WebAPI/; the startup menu lists all 34 by reflection — type a number to run, a = all, q = quit
+│  │  ├─ Examples/               # core integration samples (25 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE streaming; menu items 26-34)
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (859 cases × net6.0 / net8.0 = 1718 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (892 cases × net6.0 / net8.0 = 1784 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (142 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)
