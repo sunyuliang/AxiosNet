@@ -1274,6 +1274,19 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>
     /// <c>WithCredentials</c> 只允许复述实例生效值（值相同即等价，不必报错）；
     /// 注入自定义 Handler 时无从判断是否等价，只要写就报错。
+    /// <para>
+    /// 「实例生效值」取连接池的 <see cref="ConnectionPoolOptions.UseCookies"/>，与
+    /// <see cref="ValidateMaxRedirects"/> 取池的 <c>AllowAutoRedirect</c> 同一口径 —— 不能读
+    /// <c>Defaults.WithCredentials</c>：连接级选项在构造时固化进池，构造后再改 <c>Defaults</c>
+    /// 并不生效（文档承诺「静默不生效、不报错」），拿它当生效值会让校验结论与线上行为相反
+    /// （按请求复述池的真实值反被拒，报错文案还声称一个从未生效的值是「实例生效值」）。
+    /// 共享池同理：Cookie 容器由池决定，与本实例 defaults 无关。
+    /// </para>
+    /// <para>
+    /// 必须先按 <see cref="AxiosConfig.WithCredentialsSet"/> 早退：合并产物会清掉继承来的标记
+    /// （见 <c>MergeConfig</c> 的 <c>ClearInstanceOptionFlags</c>），此处的标记只代表「按请求显式写过」。
+    /// 不早退就会让「构造后改过 Defaults」的实例在<b>每个</b>普通请求上都被判成写入了不同的值。
+    /// </para>
     /// </summary>
     private void ValidateWithCredentials(AxiosConfig config)
     {
@@ -1289,17 +1302,24 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return;
         }
 
-        var requestedValue = config.ConnectionOrNull?.WithCredentials ?? false;
-        var defaultsValue = Defaults.ConnectionOrNull?.WithCredentials ?? false;
+        // 本次没写这一项（含快捷方法从 Defaults.Clone() 继承的未设置态）直接放行：
+        // 池已按构造期设置固化，按请求没表态就没有可校验的东西。
+        if (!config.WithCredentialsSet)
+        {
+            return;
+        }
 
-        if (requestedValue == defaultsValue)
+        var requestedValue = config.ConnectionOrNull?.WithCredentials ?? false;
+        var effective = _pool!.EffectiveOptions.UseCookies;
+
+        if (requestedValue == effective)
         {
             return;
         }
 
         throw AxiosException.InvalidOption(
             $"WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {requestedValue}，实例生效值为 {defaultsValue}。"
+            + $"当前按请求为 {requestedValue}，实例生效值为 {effective}。"
             + "要改变它请新建 AxiosClient 并在 defaults 上设置。", config);
     }
 

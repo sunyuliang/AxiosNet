@@ -85,6 +85,10 @@ public sealed partial class AxiosConfig
         /// 对应 axios withCredentials（使用系统默认凭据 / Cookie）。
         /// 仅实例级生效：构造 AxiosClient 时应用到连接池；按请求写<b>不同的值</b>抛异常（相同的值放行）。
         /// 注入自定义 Handler 时由 Handler 自己处理。
+        /// <para>
+        /// 判「相同」比的是<b>连接池的生效值</b>（<see cref="ConnectionPoolOptions.UseCookies"/>），不是
+        /// 本属性：构造后再改本属性不会影响已建成的池，若按本属性判定，会把「复述池真实值」的请求误拒。
+        /// </para>
         /// </summary>
         public bool WithCredentials
         {

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-985%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-993%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1558,7 +1558,7 @@ using var client3 = Axios.Create(
 5. **请求体编码由 `ContentType` 决定**（默认 JSON），不按 data 类型推断：字典不会自动转表单，需要表单时必须显式设 `ContentType = AxiosConfig.FormUrlEncodedContentType`；
 6. 连接池是本库的扩展能力，axios（浏览器/XHR、Node http）没有同构实现；
 7. 请求/响应文本编码可通过 `Serialization.RequestEncoding` / `Serialization.ResponseEncoding` 显式控制（axios 无对应配置项）；
-8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上写**与实例生效值不同**的值会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast），**复述实例的等价设置**则等价于不写、正常放行（`withCredentials` / `maxRedirects` 按**值**比较；`proxy` / `credentials` / `poolOptions` 没有可靠的等值定义，按**引用**比较 —— 只认实例 defaults 上的同一个对象）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头：`configure` 回调里 `c.Headers.Delete("X-Foo")`（或 `c.Headers.Clear()` 清空全部）与 `c.RemoveHeaders.Add("X-Foo")` 等价可用；
+8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` / `poolOptions` 只能在实例级设置；在单次请求上写**与实例生效值不同**的值会**立即抛** `ERR_BAD_OPTION_VALUE`（axios 里是静默不生效，这里选择 fail-fast），**复述实例的等价设置**则等价于不写、正常放行（`withCredentials` / `maxRedirects` 按**连接池的生效值**比较——前者取 `ConnectionPoolOptions.UseCookies`，后者取 `AllowAutoRedirect` / `MaxAutomaticRedirections`：连接级选项在构造时已固化进池，构造后改 `defaults` 并不生效，拿 `defaults` 上的值判定会把「复述池的真实值」误拒；`proxy` / `credentials` / `poolOptions` 没有可靠的等值定义，按**引用**比较 —— 只认实例 defaults 上的同一个对象）；共享池 client 的 defaults 上设置同样立即抛——连接行为由池决定，应配置在 `ConnectionPoolOptions` 上。单次请求要摘掉某个实例默认头：`configure` 回调里 `c.Headers.Delete("X-Foo")`（或 `c.Headers.Clear()` 清空全部）与 `c.RemoveHeaders.Add("X-Foo")` 等价可用；
 9. `maxRate`、`onUploadProgress` / `onDownloadProgress` 由库在 `HttpContent` 与 `Stream` 层自行实现（`HttpClient` 无原生支持），因此对自定义 `HttpContent` 的"已编码字节"统计以实际写入网络流的字节为准；
 10. `transformRequest` / `transformResponse` 的类型是 `object?` 而非泛型链（C# 无法像 JS 那样丢失类型后再自由收窄），需要强类型时在委托内自行转换；
 11. `config.method` 直接用 BCL 的 `HttpMethod`（本库没有自研枚举），因此任意自定义谓词都能发；axios 的 adapter 在 .NET 侧对应 `HttpMessageHandler`，接入点是 `ConnectionPoolOptions.HandlerFactory` 或 `new AxiosClient(handler: ...)`；
@@ -1642,7 +1642,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **938** 个、DI 扩展 **47** 个，合计 **985** 个用例（共 **1970** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **946** 个、DI 扩展 **47** 个，合计 **993** 个用例（共 **1986** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1701,7 +1701,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 985 个 xUnit 单元测试（核心/声明式 938 + DI 47；两个测试项目均为双目标，实际执行 1970 次）
+# 运行全部 993 个 xUnit 单元测试（核心/声明式 946 + DI 47；两个测试项目均为双目标，实际执行 1986 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1710,9 +1710,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 938 | `net8.0` / `net6.0` | 1876 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 946 | `net8.0` / `net6.0` | 1892 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **985** | | **1970** |
+| **合计** | **993** | | **1986** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1795,6 +1795,11 @@ dotnet build AxiosNet.sln -c Release
   - `JsonDocument.Parse` 之前加「首个非空白字符必须是 JSON 起始记号（`{` `[` `"` `-` 数字 `t` `f` `n`）」闸口：HTML 错误页 / 纯文本端点此前每次请求要抛 **3 次**必被吞掉的 `JsonException`，现在一次都不抛
   - 实测（stub，5 轮取最小）：text/html 200 **3,288 → 1,816 B（-45%）**、**42.3 µs → 2.9 µs（14×）**；text/plain 3,184 → 1,712 B、38.1 µs → 3.3 µs；合法 JSON 响应不变（2,000 B）
   - 闸口只看首个字符，按 RFC 8259 不会漏掉任何合法文档（8 种根形态都有用例钉住）；`\uFEFF` 按空白跳过
+
+- **2026-10-25 按请求 `WithCredentials` 校验改比对池的生效值**（`Audit20261025ConnectionOptionTests`，8 个用例）
+  - 口径与 `MaxRedirects` 对齐：不再读 `Defaults.WithCredentials`，改读 `ConnectionPoolOptions.UseCookies`。连接级选项在构造时固化进池，构造后改 `Defaults` 不生效（承诺是「静默不生效、不报错」），拿它当生效值会把「按请求复述池的真实值」误拒，报错文案还声称一个从未生效的值是「实例生效值」
+  - 补 `WithCredentialsSet` 早退：合并产物会清掉继承来的标记，不早退会让「构造后改过 `Defaults`」的实例在**每个**普通请求上都被判成写入了不同的值
+  - 顺带修好「`poolOptions.UseCookies = true` 而 `defaults` 未写（读出来是 false）」时按请求写 `true` 被误拒；共享池同理（Cookie 容器由池决定，与实例 defaults 无关）
 
 - **2026-10-24 全库审查**（`Audit20261024ReviewFixTests`，18 个用例 + DI 侧 `ApiClientResolverConcurrencyTests` 3 个 + `HolderDisposalTests` 4 个）
   - 回放 `response.Config` 不再把来源实例的取消令牌搬过去（令牌描述的是「那一次调用」）：`*Set` 标记改用 `if` 而非三元赋值，避免把「未设置」记成显式意图
@@ -2004,7 +2009,7 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（938 个用例 × net6.0 / net8.0 双目标 = 1876 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（946 个用例 × net6.0 / net8.0 双目标 = 1892 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（142 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（47 个用例 × net6.0 / net8.0 双目标 = 94 次执行，复用主库/WebAPI 测试基建）

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-985%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-993%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1544,7 +1544,7 @@ Intentional differences driven by the .NET platform:
 5. **The request body encoding is decided by `ContentType`** (JSON by default) and is never inferred from the data type: dictionaries are not automatically turned into forms, so you must set `ContentType = AxiosConfig.FormUrlEncodedContentType` explicitly when you need a form;
 6. The connection pool is an extension of this library; axios (browser/XHR, Node http) has no isomorphic implementation;
 7. Request/response text encoding can be controlled explicitly via `Serialization.RequestEncoding` / `Serialization.ResponseEncoding` (axios has no equivalent setting);
-8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` can only be set at the instance level; setting them on a single request **throws immediately** with `ERR_BAD_OPTION_VALUE` (axios silently ignores them — this library chooses fail-fast). **Repeating the instance's own equivalent setting** is allowed and means "write nothing" (`withCredentials` / `maxRedirects` compare by **value**; `proxy` / `credentials` / `poolOptions` have no dependable equality, so they compare by **reference** — only the exact object from the instance defaults is accepted). Setting them on a shared-pool client's defaults also throws immediately, because connection behavior is decided by the pool and must be configured on `ConnectionPoolOptions`;
+8. `proxy` / `credentials` / `withCredentials` / `maxRedirects` can only be set at the instance level; setting them on a single request **throws immediately** with `ERR_BAD_OPTION_VALUE` (axios silently ignores them — this library chooses fail-fast). **Repeating the instance's own equivalent setting** is allowed and means "write nothing" (`withCredentials` / `maxRedirects` compare against the **pool's effective value** — `ConnectionPoolOptions.UseCookies` and `AllowAutoRedirect` / `MaxAutomaticRedirections` respectively: connection-level options are frozen into the pool at construction, so mutating `defaults` afterwards has no effect, and comparing against `defaults` would reject a request that merely repeats the pool's real value; `proxy` / `credentials` / `poolOptions` have no dependable equality, so they compare by **reference** — only the exact object from the instance defaults is accepted). Setting them on a shared-pool client's defaults also throws immediately, because connection behavior is decided by the pool and must be configured on `ConnectionPoolOptions`;
 9. `maxRate`, `onUploadProgress` / `onDownloadProgress` are implemented by the library at the `HttpContent` and `Stream` layers (`HttpClient` has no native support), so for custom `HttpContent` the "encoded bytes" counted are the bytes actually written to the network stream;
 10. `transformRequest` / `transformResponse` take `object?` rather than a generic chain (C# cannot discard a type and narrow it back as freely as JS can); cast inside the delegate when you need strong typing;
 11. `config.method` uses the BCL `HttpMethod` directly (there is no bespoke enum here), so any custom verb can be sent; axios's adapter corresponds to `HttpMessageHandler` on the .NET side, with `ConnectionPoolOptions.HandlerFactory` or `new AxiosClient(handler: ...)` as the entry points.
@@ -1628,7 +1628,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **938** core/declarative cases plus **47** DI-extension cases — **985** in total (**1970** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **946** core/declarative cases plus **47** DI-extension cases — **993** in total (**1986** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1687,7 +1687,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 985 xUnit tests (938 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1970 executions)
+# Run all 993 xUnit tests (946 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1986 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1696,9 +1696,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 938 | `net8.0` / `net6.0` | 1876 |
+| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 946 | `net8.0` / `net6.0` | 1892 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **985** | | **1970** |
+| **Total** | **993** | | **1986** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1782,6 +1782,11 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
   - a gate before `JsonDocument.Parse` checks that the first non-whitespace character can start a JSON value (`{` `[` `"` `-` digit `t` `f` `n`): HTML error pages and plain-text endpoints used to throw **3** swallowed `JsonException`s per request, now zero
   - measured (stub, best of 5): text/html 200 **3,288 → 1,816 B (-45%)**, **42.3 µs → 2.9 µs (14x)**; text/plain 3,184 → 1,712 B, 38.1 µs → 3.3 µs; valid JSON responses unchanged (2,000 B)
   - the gate looks at one character only and cannot skip a valid document (all 8 root forms are pinned by tests); `\uFEFF` counts as whitespace
+
+- **2026-10-25 per-request `WithCredentials` now compares against the pool's effective value** (`Audit20261025ConnectionOptionTests`, 8 cases)
+  - the check now matches `MaxRedirects`: it reads `ConnectionPoolOptions.UseCookies` instead of `Defaults.WithCredentials`. Connection-level options are frozen into the pool at construction, so mutating `Defaults` afterwards has no effect (the documented promise is "silently ignored, no error"); treating it as the effective value rejected a request that merely repeated the pool's real value, and the error message claimed a value that never took effect was "the instance value"
+  - added an early return on `WithCredentialsSet`: the merged config clears the inherited flags, so without it an instance whose `Defaults` were mutated after construction would be judged as writing a different value on **every** ordinary request
+  - also fixes a request writing `true` being rejected when `poolOptions.UseCookies = true` but `defaults` never set it (reads as false); same for shared pools, where the cookie container belongs to the pool, not to the instance defaults
 
 - **2026-10-24 full-library audit** (`Audit20261024ReviewFixTests`, 18 cases + 3 in `ApiClientResolverConcurrencyTests` + 4 in `HolderDisposalTests` on the DI side)
   - Replaying `response.Config` no longer carries the source instance's cancellation token (a token describes "that one call"); the `*Set` flags are assigned with `if` rather than a ternary, so "not set" is never recorded as an explicit intent
@@ -1992,7 +1997,7 @@ How the stages map onto the source files (read together with the [project layout
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (938 cases × net6.0 / net8.0 = 1876 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (946 cases × net6.0 / net8.0 = 1892 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (142 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)
