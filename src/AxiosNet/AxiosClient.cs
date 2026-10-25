@@ -888,10 +888,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             + "（要中断这次请求请抛异常，不要返回 null）。",
             config);
 
-    /// <summary>
-    /// 限制类配置的取值范围校验：负值一律报错，不静默当作「不限制」。
-    /// <c>Timeout=0</c> 不超时；<c>MaxRate=0</c> 等价不限速；<c>null</c> 不限。
-    /// </summary>
     /// <summary>流式失败响应保留的错误体上限：错误详情通常很小，超过这个量说明不是给人看的信息。</summary>
     private const int StreamErrorBodyLimit = 64 * 1024;
 
@@ -956,6 +952,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 限制类配置的取值范围校验：负值一律报错，不静默当作「不限制」。
+    /// <c>Timeout=0</c> 不超时；<c>MaxRate=0</c> 等价不限速；<c>null</c> 不限。
+    /// </summary>
     private static void ValidateRangeConfig(AxiosConfig config)
     {
         if (config.Timeout < TimeSpan.Zero)
