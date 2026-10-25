@@ -8,6 +8,12 @@ namespace AxiosNet.Internal;
 /// 代价是「来自流的正文」第二次发送时流已经在末尾 —— 不拨回起点就会悄悄发出一个空文件 / 空正文，
 /// 所以不可 seek 的流在请求发出<b>之前</b>就被拒绝（<c>ERR_BAD_OPTION_VALUE</c>），而不是等重试时才发现。
 /// </para>
+/// <para>
+/// 检查范围覆盖<b>整条正文的对象图</b>：根级 <see cref="Stream"/> / <see cref="StreamContent"/>，
+/// 以及 multipart 表单里的 <see cref="FormFile"/>、裸流与调用方自带的 <see cref="HttpContent"/> 部件。
+/// 只查根级会漏掉「文件部件里的网络流」这类最常见的上传形态 —— 那时第二次发送的表现是
+/// BCL 抛「流已被消费」→ 被翻译成 <c>ERR_NETWORK</c> → 还会被当成网络错误反复重试。
+/// </para>
 /// </summary>
 internal sealed class RetryBody
 {
@@ -56,15 +62,28 @@ internal sealed class RetryBody
         }
 
         var streams = new List<(Stream, long)>();
-        MultipartOwnership.VisitStreams(data, stream =>
-        {
-            if (!stream.CanSeek)
+        MultipartOwnership.VisitStreams(
+            data,
+            stream =>
             {
-                throw NotReplayable(config, "multipart 文件部件里不可 seek 的流");
-            }
+                if (!stream.CanSeek)
+                {
+                    throw NotReplayable(config, "multipart 文件部件里不可 seek 的流");
+                }
 
-            streams.Add((stream, stream.Position));
-        });
+                streams.Add((stream, stream.Position));
+            },
+            part =>
+            {
+                // 部件级的 HttpContent 由调用方构造，库既拨不回它包着的流、也无从判断可 seek 与否：
+                // 与根级 data 是 StreamContent 同一条规则（一律拒绝），否则第二次发送的表现是
+                // BCL 抛「流已被消费」→ 被翻译成 ERR_NETWORK → 还会被当成网络错误反复重试，
+                // 最终给调用方一个与真实原因（正文不可重放）毫无关系的错误码。
+                if (part is StreamContent)
+                {
+                    throw NotReplayable(config, "multipart 部件里的 StreamContent");
+                }
+            });
 
         return streams.Count == 0 ? null : new RetryBody(streams);
     }
@@ -99,7 +118,8 @@ internal sealed class RetryBody
     private static AxiosException NotReplayable(AxiosConfig config, string what)
         => AxiosException.InvalidOption(
             $"开启重试要求请求体能重发，但当前 data 是{what}："
-            + "重试时第二次发送只会发出空内容。请改用 byte[] / string / 业务对象，"
-            + "或先把内容读进可 seek 的 MemoryStream / FileStream。",
+            + "重试时第二次发送发不出完整正文（只会发出空内容，或直接报「流已被消费」）。"
+            + "请改用 byte[] / string / 业务对象 / FormFile，或先把内容读进可 seek 的 MemoryStream / FileStream；"
+            + "HttpContent 形态（尤其 StreamContent）库无法回拨，请换成上述可重放形态。",
             config);
 }

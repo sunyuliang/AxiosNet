@@ -41,9 +41,12 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     {
     }
 
-    /// <summary>按次数与固定间隔构造（不翻倍、不加抖动，等价于 <see cref="Constant"/>）。</summary>
+    /// <summary>
+    /// 按次数与固定间隔构造：给了 <paramref name="delay"/> 就<b>不翻倍、不加抖动</b>（等价于 <see cref="Constant"/>），
+    /// 不给则沿用默认的指数退避（200ms 起、每次翻倍、带抖动）。
+    /// </summary>
     /// <param name="maxRetries">最大重试次数（不含首次请求），0 表示不重试。</param>
-    /// <param name="delay">每次重试前的固定等待时间；<c>null</c> 用默认值 200ms。</param>
+    /// <param name="delay">每次重试前的固定等待时间；<c>null</c> 用默认值 200ms 并按默认退避翻倍。</param>
     public RetryPolicy(int maxRetries, TimeSpan? delay = null)
     {
         MaxRetries = maxRetries;
@@ -68,7 +71,13 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     /// </summary>
     public double BackoffFactor { get; set; } = 2d;
 
-    /// <summary>单次等待的上限，默认 30 秒（指数退避跑久了的封顶）。</summary>
+    /// <summary>
+    /// 单次等待的上限，默认 30 秒（指数退避跑久了的封顶）。
+    /// <para>
+    /// 必须落在计时器可表示的范围内（约 49.7 天）：等待用 <c>Task.Delay</c> 实现，超出会在请求发出前
+    /// 报 <c>ERR_BAD_OPTION_VALUE</c>，而不是等到真的重试时才抛计时器异常。
+    /// </para>
+    /// </summary>
     public TimeSpan MaxDelay { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
@@ -92,8 +101,21 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     /// </summary>
     public bool RetryNonIdempotentMethods { get; set; }
 
+    private Func<int, bool> _retryStatusCodes = DefaultRetryStatus;
+
     /// <summary>触发重试的状态码判定，默认 408 / 429 / 5xx。</summary>
-    public Func<int, bool> RetryStatusCodes { get; set; } = DefaultRetryStatus;
+    /// <exception cref="ArgumentNullException">赋值为 <c>null</c>：判定是必需项，赋空只会在重试判定处炸成裸空引用。</exception>
+    public Func<int, bool> RetryStatusCodes
+    {
+        get => _retryStatusCodes;
+        set
+        {
+            // 非 null 引用类型：赋 null 是编程错误。等到 ShouldRetry 里再 NRE 更糟 ——
+            // 那是在 catch 块内，会把本次尝试的原始失败一起掩盖掉。
+            ArgumentNullException.ThrowIfNull(value);
+            _retryStatusCodes = value;
+        }
+    }
 
     /// <summary>
     /// 附加条件：返回 <c>false</c> 时不重试（在内置判定之上再做一层收窄，比如「只在特定错误码上重试」）。

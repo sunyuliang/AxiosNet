@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-975%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-985%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1253,11 +1253,12 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 
 - **`Timeout` 是「每次尝试」的预算**，不是全部重试的总预算：3 次重试 × 10s 最坏是 40s。需要总预算请用 `CancellationToken`——它贯穿所有尝试与等待（等待期间取消会抛 `ERR_CANCELED`）。
 - **响应拦截器只跑一次**：重试发生在拦截器链内部，拦截器看到的是最终结果（成功或最后一次失败），不会因为重试被重复执行；请求拦截器与 `transformRequest` 同样只执行一次。
-- **正文只准备一次**：重试复用同一份 `HttpContent`，上传进度计量器跨次累计（`Loaded` 不回跳，百分比由 `Progress` 封顶 100%），也不会把业务对象重新序列化一遍。代价是「来自流的正文」必须可重放：可 seek 的 `Stream`（`MemoryStream` / `FileStream` / multipart 里可 seek 的 `FormFile`）会在每次重试前自动拨回起点；不可 seek 的流（网络流、管道流、直接作为 `data` 传入的 `StreamContent`）在开启重试时**直接抛 `ERR_BAD_OPTION_VALUE`**，而不是等第二次悄悄发出空内容。**自己构造 `HttpContent` 传给 `data`** 时，可重放性由调用方负责——库只能识别自己装配的 multipart。
+- **正文只准备一次**：重试复用同一份 `HttpContent`，上传进度计量器跨次累计（`Loaded` 不回跳，百分比由 `Progress` 封顶 100%），也不会把业务对象重新序列化一遍。代价是「来自流的正文」必须可重放：可 seek 的 `Stream`（`MemoryStream` / `FileStream` / multipart 里可 seek 的 `FormFile`）会在每次重试前自动拨回起点；不可 seek 的流（网络流、管道流）在开启重试时**直接抛 `ERR_BAD_OPTION_VALUE`**，而不是等第二次悄悄发出空内容。检查覆盖**整条正文的对象图**（根级 `data` 与 multipart 表单里的文件部件 / 自建部件）。
+- **`StreamContent` 一律不可重放**：它自带序列化逻辑，库既拨不回它包着的流、也无从判断可 seek 与否，因此无论作为 `data` 还是作为 multipart 部件，开启重试时都抛 `ERR_BAD_OPTION_VALUE`。请改用 `FormFile` / `Stream` / `byte[]` / 业务对象。自己构造的其它 `HttpContent`（`StringContent` / `ByteArrayContent` / `MultipartFormDataContent` 等）可重放性由调用方负责。
 - **重试前拨不回起点也会明确报错**：正文流在两次尝试之间被关闭 / 不再可定位时抛 `ERR_BAD_OPTION_VALUE`（`Cause` 是原始的 `ObjectDisposedException`），不漏裸异常，也不会发一个空正文出去。
 - **`Retry-After` 优先**：429 / 503 带 `Retry-After`（秒数或 HTTP 日期）时以服务端给的时间为准，仍受 `MaxDelay` 封顶；`HonorRetryAfter = false` 可关闭。
 - **抖动**：`Jitter = true`（默认）把等待时间随机落在 50%–100%，避免大批客户端在同一时刻一起重试。
-- 次数为负、`Delay` / `MaxDelay` 为负都抛 `ERR_BAD_OPTION_VALUE`，在请求发出前拦下。
+- 次数为负、`Delay` / `MaxDelay` 为负、`MaxDelay` 超过计时器上限（约 49.7 天）都抛 `ERR_BAD_OPTION_VALUE`，在请求发出前拦下。
 
 ### 自定义策略
 
@@ -1641,7 +1642,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **928** 个、DI 扩展 **47** 个，合计 **975** 个用例（共 **1950** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **938** 个、DI 扩展 **47** 个，合计 **985** 个用例（共 **1970** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1700,7 +1701,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 975 个 xUnit 单元测试（核心/声明式 928 + DI 47；两个测试项目均为双目标，实际执行 1950 次）
+# 运行全部 985 个 xUnit 单元测试（核心/声明式 938 + DI 47；两个测试项目均为双目标，实际执行 1970 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1709,9 +1710,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 928 | `net8.0` / `net6.0` | 1856 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 142 个） | 938 | `net8.0` / `net6.0` | 1876 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **975** | | **1950** |
+| **合计** | **985** | | **1970** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1731,6 +1732,7 @@ dotnet build AxiosNet.sln -c Release
 - **响应读取与泛型路由**：无 Content-Length 的关闭 delimiting 响应（缓冲读取未知长度分支）、精确预分配时零拷贝返回；`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
 - **自定义 Handler**：`PROPFIND` 等自定义谓词透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / **每个 origin 必须拿到独立实例**（两个 origin 交替请求互不影响，前一个不被后一个顶掉）/ 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
 - **弹性重试**（`RetryTests`）：默认不重试；5xx / 408 / 429 重试到成功、次数上限、4xx 不重试、POST 默认不重试（`RetryNonIdempotentMethods` 可打开）、网络错误与超时重试、重试间隔真实生效、`Retry-After` 优先与 `MaxDelay` 封顶、指数退避与抖动区间、正文重放（对象 / 可 seek 流；不可 seek 流 fail-fast）、`OnRetry` 回调、自定义策略、单次请求开关实例默认策略、取消后不再重试、响应拦截器只跑一次
+- **重试的组合形态**（`Audit20261025RetryTests`，10 个用例）：流式响应重试后正文仍可读；multipart 文件部件重放；调用方自带 `StringContent` 重放；流起点非 0 时按**原起点**回拨；`Timeout` 是每次尝试的预算（两次各 150ms 在 300ms 预算下都放行）；重试用尽后抛**最后一次**的失败；`MaxDelay` 超计时器上限在发请求前报 `ERR_BAD_OPTION_VALUE`；`RetryStatusCodes = null` 在赋值处拒绝；multipart 里的 `StreamContent` 部件开启重试时 fail-fast（修复前是 `ERR_NETWORK` + 把重试次数全烧光），不重试时照常可用
 
 **序列化与安全**
 
@@ -1781,6 +1783,13 @@ dotnet build AxiosNet.sln -c Release
   - 查找：5 头 22.6 → **8.2 ns**、10 头 25.0 → **13.0 ns**（`Get` 吞吐 2.6×）；代价是 O(N) 线性扫描，头数 > 18 时慢于字典（40 头 67 ns vs 27 ns）——请求头集合的实际规模在 10 以内，这个取舍换来上面几项分配与 5~10 头的查找速度
   - 每请求分配（合法 JSON 响应，实测 2,000 B 基线）：`Defaults.RemoveHeaders` 2,680 → **2,304 B**；按请求加一个头 3,304 → **2,936 B**（不再整份复制默认头）
   - `SynchronizedList`（transform 链 / 按请求删头名单）同构改造：每请求克隆不再取锁、快照零拷贝、库内枚举不再装箱；单线程 stub 吞吐 +7%
+
+- **2026-10-25 弹性重试审查**（`Audit20261025RetryTests`，10 个用例）
+  - **multipart 部件里的 `StreamContent` 绕过了可重放性检查**（本轮最严重）：此前只检查根级 `data`，文件部件里由调用方自带的 `StreamContent` 完全不受检查。不可 seek 时第二次发送由 BCL 抛「流已被消费」→ 被翻译成 `ERR_NETWORK` → 又被当成网络错误**把重试次数全烧光**，最终错误码与真实原因（正文不可重放）毫无关系。改为遍历整条正文对象图（`MultipartOwnership.VisitStreams` 增加 `onContent` 回调），部件级 `StreamContent` 与根级同规则：发请求前抛 `ERR_BAD_OPTION_VALUE`。不重试时行为不变（自建部件照常可用）
+  - 重试等待没按计时器上限收敛：`MaxDelay` 超过约 49.7 天时 `Task.Delay` 会抛裸 `ArgumentOutOfRangeException`（`Timeout` 早已用 `Timeouts.Clamp` 处理同一个坑）。现在 `MaxDelay` 在配置校验阶段就报 `ERR_BAD_OPTION_VALUE`，自定义策略返回的超限值在使用处收敛到上限
+  - `RetryPolicy.RetryStatusCodes = null` 会在 `ShouldRetry` 里炸裸 NRE（且发生在 catch 块内，会把本次尝试的原始失败一起掩盖）→ 改为在赋值处拒绝
+  - 补齐此前没有覆盖的组合：流式响应重试后正文仍可读、multipart 文件部件重放、调用方 `StringContent` 重放、流起点非 0 时按**原起点**回拨、`Timeout` 是每次尝试的独立预算（两次各 150ms 在 300ms 下都放行）、重试用尽后抛最后一次失败
+  - 文档：`RetryPolicy(int, TimeSpan?)` 的注释此前称「等价于 `Constant`」（`delay` 为 null 时实际仍是指数退避）；`IAxiosRetryPolicy` 补「策略抛出的异常会原样抛出，并掩盖本次尝试的原始失败」；README 双版补「`StreamContent` 一律不可重放（根级与部件同规则）」与 `MaxDelay` 上限
 
 - **2026-10-25 非 JSON 响应不再走异常路径**（`ResponseParsingTests` 10 个用例）
   - `JsonDocument.Parse` 之前加「首个非空白字符必须是 JSON 起始记号（`{` `[` `"` `-` 数字 `t` `f` `n`）」闸口：HTML 错误页 / 纯文本端点此前每次请求要抛 **3 次**必被吞掉的 `JsonException`，现在一次都不抛
@@ -1995,7 +2004,7 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（928 个用例 × net6.0 / net8.0 双目标 = 1856 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（938 个用例 × net6.0 / net8.0 双目标 = 1876 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（142 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（47 个用例 × net6.0 / net8.0 双目标 = 94 次执行，复用主库/WebAPI 测试基建）

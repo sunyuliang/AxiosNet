@@ -12,6 +12,11 @@ namespace AxiosNet.Retry;
 /// 库在调用前已经挡掉了三类不该重试的情况（次数到顶、调用方已取消、错误本身是取消），
 /// 策略里不必再判断这些。
 /// </para>
+/// <para>
+/// <see cref="ShouldRetry"/> / <see cref="GetDelay"/> 抛出的异常会<b>原样抛给调用方</b>，
+/// 并<b>掩盖本次尝试的原始失败</b>（此刻原始异常只存在于调用栈上）。策略里请只做判断，
+/// 需要副作用（日志 / 埋点）请用 <see cref="AxiosConfig.RetrySettings.OnRetry"/>。
+/// </para>
 /// </summary>
 /// <example>
 /// <code>

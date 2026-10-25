@@ -736,6 +736,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     // 策略算错时间不该把请求变成配置错误：负值按「不等待」处理
                     delay = TimeSpan.Zero;
                 }
+                else if (delay > Timeouts.Max)
+                {
+                    // 与 Timeout 同一个坑：Task.Delay 底层也是计时器队列，延迟上限是 uint.MaxValue-1 毫秒，
+                    // 超出会抛裸 ArgumentOutOfRangeException。内置策略的 MaxDelay 有配置期校验兜着，
+                    // 但自定义策略可以返回任意值 —— 在这里收敛，保证不漏裸异常（语义仍是「极长但有限」）。
+                    delay = Timeouts.Max;
+                }
 
                 // 回调在 catch 块里调用（不是 try 里）：它抛出的异常不会被当成「本次尝试失败」
                 // 再去问一次策略，而是按 RetrySettings.OnRetry 的约定原样抛给调用方。
@@ -1202,7 +1209,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 if (policy.MaxDelay < TimeSpan.Zero)
                 {
                     throw AxiosException.InvalidOption(
-                        $"重试间隔上限 MaxDelay 不能为负（当前 {policy.MaxDelay}）：不封顶请设为一个较大的值。", config);
+                        $"重试间隔上限 MaxDelay 不能为负（当前 {policy.MaxDelay}）：不封顶请设为一个较大的值（上限约 49.7 天）。",
+                        config);
+                }
+
+                // 等待走 Task.Delay，与 CancellationTokenSource.CancelAfter 同一个计时器队列（上限约 49.7 天）。
+                // 超限时若等到发送阶段才发现，Task.Delay 会抛裸 ArgumentOutOfRangeException；
+                // 这里在请求发出之前就明确报配置错误（与 Timeout 的收敛不同：MaxDelay 是显式配置的上限，
+                // 静默截断会让调用方以为「最多等这么久」的承诺仍然成立）。
+                if (policy.MaxDelay > Timeouts.Max)
+                {
+                    throw AxiosException.InvalidOption(
+                        $"重试间隔上限 MaxDelay 超出计时器可表示的范围（当前 {policy.MaxDelay}，上限约 49.7 天）："
+                        + "重试等待用 Task.Delay 实现，更长的间隔无法表达。请调小 MaxDelay，"
+                        + "长时间退避请减少次数并用 CancellationToken 控制退出。",
+                        config);
                 }
             }
         }

@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-975%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-985%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1239,11 +1239,12 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 
 - **`Timeout` is a per-attempt budget**, not a budget for all retries: 3 retries × 10s means up to 40s worst case. For an overall budget use `CancellationToken` — it spans every attempt and every delay (cancelling during a delay throws `ERR_CANCELED`).
 - **Response interceptors run once**: retries happen inside the interceptor chain, so interceptors see only the final outcome (success or the last failure). Request interceptors and `transformRequest` also run exactly once.
-- **The body is prepared once**: retries reuse the same `HttpContent`, so the upload progress meter keeps accumulating (`Loaded` never jumps back, and `Progress` caps the percentage at 100%) and the payload is not serialized again. The catch is that stream-based bodies must be replayable: seekable `Stream`s (`MemoryStream` / `FileStream`, seekable `FormFile`s inside multipart) are rewound automatically before each retry; non-seekable streams (network streams, pipes, a `StreamContent` passed directly as `data`) throw **`ERR_BAD_OPTION_VALUE` as soon as retry is enabled**, instead of silently sending an empty body on the second attempt. When you pass a **self-built `HttpContent`** as `data`, replayability is your responsibility — the library can only inspect the multipart it assembles itself.
+- **The body is prepared once**: retries reuse the same `HttpContent`, so the upload progress meter keeps accumulating (`Loaded` never jumps back, and `Progress` caps the percentage at 100%) and the payload is not serialized again. The catch is that stream-based bodies must be replayable: seekable `Stream`s (`MemoryStream` / `FileStream`, seekable `FormFile`s inside multipart) are rewound automatically before each retry; non-seekable streams (network streams, pipes) throw **`ERR_BAD_OPTION_VALUE` as soon as retry is enabled**, instead of silently sending an empty body on the second attempt. The check covers the **whole body object graph** — the root `data` as well as file parts / caller-supplied parts inside a multipart form.
+- **`StreamContent` is never replayable**: it owns its serialization logic, so the library can neither rewind the stream it wraps nor tell whether that stream is seekable. Whether it is the root `data` or a multipart part, enabling retry throws `ERR_BAD_OPTION_VALUE`. Use `FormFile` / `Stream` / `byte[]` / a plain object instead. For any other self-built `HttpContent` (`StringContent` / `ByteArrayContent` / `MultipartFormDataContent`, …) replayability is your responsibility.
 - **A body that cannot be rewound also fails loudly**: if the body stream is closed or no longer seekable between two attempts, the call throws `ERR_BAD_OPTION_VALUE` (with the original `ObjectDisposedException` as `Cause`) instead of leaking a raw exception or sending an empty body.
 - **`Retry-After` wins**: when a 429 / 503 carries `Retry-After` (seconds or an HTTP date), the server's timing is used (still capped by `MaxDelay`); turn it off with `HonorRetryAfter = false`.
 - **Jitter**: `Jitter = true` (default) randomizes the wait within 50%–100% of the computed delay, so a fleet of clients does not retry in lockstep.
-- Negative counts, `Delay` or `MaxDelay` throw `ERR_BAD_OPTION_VALUE` before the request is sent.
+- Negative counts, `Delay` or `MaxDelay`, or a `MaxDelay` beyond the timer ceiling (~49.7 days), throw `ERR_BAD_OPTION_VALUE` before the request is sent.
 
 ### Custom policies
 
@@ -1627,7 +1628,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **928** core/declarative cases plus **47** DI-extension cases — **975** in total (**1950** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **938** core/declarative cases plus **47** DI-extension cases — **985** in total (**1970** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1686,7 +1687,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 975 xUnit tests (928 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1950 executions)
+# Run all 985 xUnit tests (938 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 1970 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1695,9 +1696,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 928 | `net8.0` / `net6.0` | 1856 |
+| `AxiosNet.Tests` (core + declarative, incl. 142 under `WebAPI/`) | 938 | `net8.0` / `net6.0` | 1876 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **975** | | **1950** |
+| **Total** | **985** | | **1970** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1719,6 +1720,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - Response reading and generic routing: close-delimited responses without Content-Length, zero-copy return when the length allows exact preallocation; `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / **each origin must get an independent instance** (two origins alternating requests stay unaffected, neither hijacks the other) / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Resilient retries (`RetryTests`): no retries by default; 5xx / 408 / 429 retried until success, retry cap, 4xx not retried, POST not retried by default (`RetryNonIdempotentMethods` opts in), network errors and timeouts retried, the configured interval actually elapsing, `Retry-After` priority and `MaxDelay` cap, exponential backoff and jitter range, body replay (objects / seekable streams; non-seekable streams fail fast), the `OnRetry` callback, custom policies, per-request on/off over instance defaults, no retry after cancellation, and response interceptors running exactly once
+- Retry combinations (`Audit20261025RetryTests`, 10 cases): a retried stream response stays readable; multipart file parts are replayed; a caller-supplied `StringContent` is resent; a stream that starts at a non-zero offset is rewound to **that** offset; `Timeout` is a per-attempt budget (two 150ms attempts both fit a 300ms budget); the last attempt's failure is the one surfaced; a `MaxDelay` beyond the timer ceiling is rejected with `ERR_BAD_OPTION_VALUE` before sending; `RetryStatusCodes = null` is rejected at assignment; a `StreamContent` part inside multipart fails fast once retry is on (previously `ERR_NETWORK` after burning every retry) and still works when retry is off
 
 **Serialization and security**
 
@@ -1768,6 +1770,13 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
   - Lookup: 8.2 ns for 5 headers (was 22.6), 13.0 ns for 10 (was 25.0) — `Get` throughput 2.6x. The trade-off is an O(N) scan: beyond ~18 headers a dictionary wins (67 ns vs 27 ns at 40), and request header sets in practice stay under 10
   - Per request (valid JSON response, 2,000 B baseline): `Defaults.RemoveHeaders` 2,680 → **2,304 B**; one per-request header 3,304 → **2,936 B** (no longer copies the whole default set)
   - `SynchronizedList` (transform chains / per-request remove-headers) converted the same way: no lock on the per-request clone, zero-copy snapshot, no boxing when the library enumerates; single-thread stub throughput +7%
+
+- **2026-10-25 retry review** (`Audit20261025RetryTests`, 10 cases)
+  - **A `StreamContent` part inside multipart bypassed the replayability check** (the worst find this round): only the root `data` used to be inspected, so a caller-supplied `StreamContent` file part was never checked. With a non-seekable stream, BCL throws "the stream was already consumed" on the second send → translated to `ERR_NETWORK` → treated as a network error, **burning every retry**, and the final error code had nothing to do with the real cause (an unreplayable body). The check now walks the whole body object graph (`MultipartOwnership.VisitStreams` gained an `onContent` callback) and applies the same rule to part-level `StreamContent` as to the root: `ERR_BAD_OPTION_VALUE` before the request is sent. Behaviour without retry is unchanged (self-built parts still work)
+  - The retry wait was not clamped to the timer ceiling: with a `MaxDelay` beyond ~49.7 days, `Task.Delay` throws a raw `ArgumentOutOfRangeException` (`Timeout` has used `Timeouts.Clamp` for the same trap all along). `MaxDelay` is now rejected with `ERR_BAD_OPTION_VALUE` during config validation, and an over-limit value returned by a custom policy is clamped at the call site
+  - `RetryPolicy.RetryStatusCodes = null` blew up with a raw NRE inside `ShouldRetry` (inside a catch block, so it also masked the original attempt failure) → now rejected at assignment
+  - Filled the untested combinations: a retried stream response stays readable, multipart file parts replay, caller `StringContent` is resent, a stream starting at a non-zero offset is rewound to its original offset, `Timeout` is a per-attempt budget (two 150ms attempts fit a 300ms budget), and the last attempt's failure is the one surfaced
+  - Docs: the `RetryPolicy(int, TimeSpan?)` comment claimed "equivalent to `Constant`" (with a null `delay` it still backs off exponentially); `IAxiosRetryPolicy` now states that exceptions thrown by a policy propagate as-is and mask the attempt's original failure; both READMEs document that `StreamContent` is never replayable (root and parts alike) and the `MaxDelay` ceiling
 
 - **2026-10-25 non-JSON responses no longer take the exception path** (`ResponseParsingTests`, 10 cases)
   - a gate before `JsonDocument.Parse` checks that the first non-whitespace character can start a JSON value (`{` `[` `"` `-` digit `t` `f` `n`): HTML error pages and plain-text endpoints used to throw **3** swallowed `JsonException`s per request, now zero
@@ -1983,7 +1992,7 @@ How the stages map onto the source files (read together with the [project layout
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (926 cases × net6.0 / net8.0 = 1852 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (938 cases × net6.0 / net8.0 = 1876 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
    │  └─ WebAPI/                 # declarative client tests (142 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)

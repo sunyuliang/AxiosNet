@@ -124,14 +124,20 @@ internal static class MultipartOwnership
     }
 
     /// <summary>
-    /// 遍历一个根对象里「随正文一起发出去」的流（<see cref="FormFile.Content"/> 与裸 <see cref="Stream"/>）。
+    /// 遍历一个根对象里「随正文一起发出去」的流（<see cref="FormFile.Content"/> 与裸 <see cref="Stream"/>），
+    /// 以及调用方自带的 <see cref="HttpContent"/> 部件。
     /// <para>
     /// 重试要重发同一份正文，而 multipart 的文件部件在第一次发送后流已在末尾：
     /// 由调用方据此记录起点、在每次重试前拨回，否则第二次只会发出空文件。
     /// </para>
+    /// <para>
+    /// <paramref name="visitContent"/> 存在的理由：<see cref="HttpContent"/> 部件不归库装配（它自带序列化逻辑），
+    /// 库里既拨不回它的流也看不到它包着什么 —— 只有调用方（重试前置检查）能对它表态。
+    /// 传 <c>null</c> 表示只关心裸流。
+    /// </para>
     /// </summary>
-    public static void VisitStreams(object? value, Action<Stream> visit)
-        => Walk(value, new HashSet<object>(ReferenceEqualityComparer.Instance), visit, onContent: null);
+    public static void VisitStreams(object? value, Action<Stream> visit, Action<HttpContent>? visitContent = null)
+        => Walk(value, new HashSet<object>(ReferenceEqualityComparer.Instance), visit, visitContent);
 
     /// <summary>
     /// 对象图遍历本体：叶子上分别回调「流」与「<see cref="HttpContent"/>」，容器继续下钻。
