@@ -24,6 +24,16 @@ internal sealed class SynchronizedList<T> : IList<T>
     private static readonly T[] Empty = Array.Empty<T>();
 
     /// <summary>
+    /// 越界消息。与 <see cref="List{T}"/> 的措辞对齐（英文原文是
+    /// "Index was out of range. Must be non-negative and less than the size of the collection."），
+    /// 这样「把 <c>List&lt;T&gt;</c> 换成写时复制的 IList」不会改变调用方看到的错误文案。
+    /// </summary>
+    private const string IndexOutOfRangeMessage = "索引超出范围：必须是非负数且小于集合大小。";
+
+    /// <summary><see cref="Insert"/> 专用：允许插入到末尾，因此上界是「不大于」。</summary>
+    private const string InsertIndexOutOfRangeMessage = "索引超出范围：必须是非负数且不大于集合大小。";
+
+    /// <summary>
     /// 当前版本。只通过 <see cref="Volatile"/> 读、<see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/> 写。
     /// </summary>
     private T[] _items;
@@ -62,12 +72,30 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public T this[int index]
     {
-        get => Volatile.Read(ref _items)[index];
+        get
+        {
+            var items = Volatile.Read(ref _items);
+
+            // 越界必须显式抛 ArgumentOutOfRangeException：本类型是公开的 IList<T>
+            // （AxiosConfig.TransformRequest / RemoveHeaders），调用方按 BCL 契约 catch。
+            // 直接索引数组会漏出 IndexOutOfRangeException，那是「实现细节泄漏成 API 行为」。
+            if ((uint)index >= (uint)items.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), index, IndexOutOfRangeMessage);
+            }
+
+            return items[index];
+        }
         set
         {
             while (true)
             {
                 var current = Volatile.Read(ref _items);
+                if ((uint)index >= (uint)current.Length)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index), index, IndexOutOfRangeMessage);
+                }
+
                 var next = new T[current.Length];
                 Array.Copy(current, next, current.Length);
                 next[index] = value;
@@ -135,6 +163,13 @@ internal sealed class SynchronizedList<T> : IList<T>
         while (true)
         {
             var current = Volatile.Read(ref _items);
+
+            // Insert 允许 index == Count（追加），因此是「大于」而不是「大于等于」。
+            if ((uint)index > (uint)current.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), index, InsertIndexOutOfRangeMessage);
+            }
+
             var next = new T[current.Length + 1];
             Array.Copy(current, next, index);
             next[index] = item;
@@ -187,6 +222,15 @@ internal sealed class SynchronizedList<T> : IList<T>
         while (true)
         {
             var current = Volatile.Read(ref _items);
+
+            // 没有这道闸口时 `new T[current.Length - 1]` 在空表上会变成 `new T[-1]`，
+            // 抛出的是 OverflowException（"Arithmetic operation resulted in an overflow"）——
+            // 信息完全指不出「索引越界」，看起来像库内部算错了。
+            if ((uint)index >= (uint)current.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), index, IndexOutOfRangeMessage);
+            }
+
             var next = new T[current.Length - 1];
             Array.Copy(current, next, index);
             Array.Copy(current, index + 1, next, index, current.Length - index - 1);

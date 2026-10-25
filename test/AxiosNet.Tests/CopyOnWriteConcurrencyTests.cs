@@ -4,10 +4,13 @@ using Xunit;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 写时复制的<b>并发契约</b>：<see cref="AxiosHeaders"/> 与 <c>SynchronizedList</c> 共用同一套 Owners 模型，
-/// 这里锁住它最容易写错的一条 —— 「判定独占」与「真正写入」必须在同一个临界区里。
+/// 写时复制的<b>并发契约</b>：<see cref="AxiosHeaders"/> 与 <c>SynchronizedList</c> 共用同一套表示
+/// —— 实例只持有一个不可变数组，写入 = 算出新数组 + CAS 发布，克隆只共享引用、不复制元素。
+/// 这里锁住三条最容易写错的地方：
 /// <list type="bullet">
-/// <item>丢更新：写方判定独占后、写入前若被克隆/分离插队，旧实现会把这次写入写进一个再无人读取的存储；</item>
+/// <item>丢更新：并发克隆与写入交错时，每一次 <c>Set</c> / <c>Add</c> 都必须落在实例的当前版本上
+/// （CAS 失败要基于新版本重算，不能把算好的新数组硬写进去）；</item>
+/// <item>克隆可见性：克隆拿到的是调用时刻那一版，源之后的写入不能倒灌进克隆；</item>
 /// <item>零复制：共享期间「清空一个空容器」「删除一个不存在的键」不该付整份复制的代价。</item>
 /// </list>
 /// </summary>
@@ -20,14 +23,14 @@ public sealed class CopyOnWriteConcurrencyTests
     [Fact]
     public void Headers_ConcurrentCloneAndSet_NeverLosesUpdate()
     {
-        // 头数放大到 64：分离要复制整份字典，把「判定独占 → 写入」之间的窗口拉长，更容易撞上。
+        // 头数放大到 64：每次写入都要复制整版数组，CAS 环随之变长，并发克隆更容易撞上。
         for (var round = 0; round < 20; round++)
         {
             var source = NewHeaders(64);
             var expected = new ConcurrentBag<string>();
             var stop = 0;
 
-            // 克隆方不停把 Owners 抬起来，逼写方走「分离」路径。
+            // 克隆方不停共享当前版本，逼写方每次都走「算新数组 + CAS 发布」。
             var cloner = Task.Run(() =>
             {
                 while (Volatile.Read(ref stop) == 0)
@@ -99,9 +102,9 @@ public sealed class CopyOnWriteConcurrencyTests
     {
         var source = new AxiosHeaders();
         source.Set("A", "1");
-        _ = source.Clone(); // Owners 变 2
+        _ = source.Clone(); // 克隆与源共享同一版数组
 
-        source.Set("B", "2"); // 源必须先分离再写
+        source.Set("B", "2"); // 写入必须发布新数组，不能改共享的那一版
         var clone = source.Clone();
 
         Assert.Equal("2", clone.Get("B"));
@@ -120,7 +123,7 @@ public sealed class CopyOnWriteConcurrencyTests
 
         var cost = AverageBytes(20_000, source.Clear);
 
-        // 复制实现：每次 new Store + new Dictionary（≈100 B）。快速路径：0 B。
+        // 整份复制的实现每次都要 new 一份存储（≈100 B）；不可变数组模型下空版本是静态单例数组，0 B。
         Assert.True(cost < 32, $"共享空存储上的 Clear() 平均分配 {cost} B —— 疑似仍整份复制。");
         Assert.Equal(0, shared.Count);
     }

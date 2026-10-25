@@ -132,6 +132,9 @@ public static class AxiosContent
         // 注册表为空时任何媒体类型都查不到：先于归一化返回，省掉每请求一次子串 + 大小写转换
         // （零注册是绝大多数应用的形态，这条快路径让「无注入」时查找本身零分配）。
         // 用计数而不是 ConcurrentDictionary.IsEmpty：后者每次都要取全部桶锁。
+        //
+        // 代价（已知并接受）：计数是 TryAdd 成功之后才自增的，所以「刚注册、计数还没自增」的极短窗口里
+        // 这里会返回 null 并回落到内置 JSON —— 最多错过一次查找，而注册是启动期动作，不值得为它加锁。
         if (Volatile.Read(ref _registeredCount) == 0)
         {
             return null;

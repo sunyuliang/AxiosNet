@@ -98,6 +98,14 @@ public sealed class RequestInterceptorManager
 
         lock (_interceptors)
         {
+            // 锁内复查：快照失效后可能有多条请求线程同时在这里排队，
+            // 不复查的话每个都会重建一次（只有最后一个生效，前面几次纯属白分配）。
+            snapshot = Volatile.Read(ref _snapshot);
+            if (snapshot is not null)
+            {
+                return snapshot;
+            }
+
             snapshot = _interceptors.ToArray();
             Array.Reverse(snapshot);
             Volatile.Write(ref _snapshot, snapshot);

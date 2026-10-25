@@ -22,6 +22,21 @@ namespace AxiosNet;
 /// 不同形状各自一条，因此运行期增删属性、异构数组都不会让已有规则失效。
 /// </para>
 /// <para>
+/// <b>新增字段是 O(N²)</b>：每次新增都要复制一份「名字 → 槽位」字典并扩容值数组，逐条建 N 个字段合计复制 N 次。
+/// 实测<b>冷启动</b>建 100 字段约 232 KB、1000 字段约 <b>15.6 MB</b> 垃圾；同一条字段名链第二次建只付 108 KB
+/// （形状迁移缓存命中），所以这笔代价是「每种字段名组合一次」而不是「每个对象一次」。
+/// 字段名随数据变化（把 ID 当键）时会撞上迁移缓存上限、每次都按冷启动付 —— 字段数上百请改用 DTO / 字典，
+/// 本类型面向的是「响应结构不固定、字段数十个以内」的场景。
+/// </para>
+/// <para>
+/// <b>并发语义是「键快照 + 值实时」，不是整体快照</b>：shape 走写时复制 + 原子发布，读路径完全无锁；
+/// 但<b>值数组是原地可写的</b>（DLR 把槽位固化成常量下标，数组必须稳定，不能每次写都换新数组）。
+/// 后果有两条，都是刻意的：一是另一个线程删除了某个键之后，<b>已经捕获旧 shape 的枚举器</b>仍会枚举到该键，
+/// 但值为 <c>null</c>（删除时主动断开引用，否则被删的大对象会被永不回收的槽位长期持有）；
+/// 二是「换数组」的写入（<see cref="Clear"/>、扩容）对在途枚举器不可见，它继续读自己捕获的旧数组。
+/// 写入本身不会抛异常，也不会读到撕裂的值——整数/引用都是整体替换。
+/// </para>
+/// <para>
 /// 注意：动态成员优先于 CLR 成员——<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段（不存在则为 <c>null</c>），
 /// 要字典语义请显式转换：<c>((IDictionary&lt;string, object?&gt;)data).Count</c>。
 /// </para>
@@ -123,8 +138,10 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
     {
         lock (_gate)
         {
-            Volatile.Write(ref _values, Array.Empty<object?>());
+            // 顺序与 Remove 一致：先撤销可见性（shape 换成空），再回收值数组。
+            // 反序的话，「所有键都还在、但每个值都是 null」会成为可观测的中间态。
             Volatile.Write(ref _shape, Shape.Empty);
+            Volatile.Write(ref _values, Array.Empty<object?>());
         }
     }
 
@@ -157,12 +174,22 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             }
 
             var values = Volatile.Read(ref _values);
+
+            // 与「新增」相反的顺序：先撤销可见性，再回收引用。
+            //
+            // 这不能把「键存在但值为 null」彻底消灭（读者在两次读之间被抢占时仍可能撞上），
+            // 但能把触发条件从「跨一个事件」收紧到「同时跨两个事件」：
+            // 反序时（先置 null、后换 shape）只要读者的 shape 读落在 [置 null, 换 shape] 这段里，
+            // 哪怕两次读紧挨着也会读到 null；正序时，紧挨着的两次读不可能既早于换 shape 又晚于置 null。
+            Volatile.Write(ref _shape, shape.WithRemoved(key));
+
             if (slot < values.Length)
             {
-                values[slot] = null; // 断开引用，避免已删除的值被数组继续持有
+                // 断开引用，避免已删除的值被数组继续持有。代价是「已捕获旧 shape 的枚举器」
+                // 之后读这个键会得到 null 而不是旧值——值数组不是快照，见类注释的「并发」一节。
+                Volatile.Write(ref values[slot], null);
             }
 
-            Volatile.Write(ref _shape, shape.WithRemoved(key));
             return true;
         }
     }
@@ -185,7 +212,18 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
         return false;
     }
 
-    /// <summary>按插入顺序枚举键值对（取 shape 快照，枚举期间写入不会抛）。</summary>
+    /// <summary>
+    /// 按插入顺序枚举键值对（取 shape 快照，枚举期间写入不会抛）。
+    /// <para>
+    /// <b>键集合是快照，值不是</b>：枚举期间被删除的键仍会出现，但值为 <c>null</c>
+    /// （删除会主动断开引用）。需要「键值一起定格」请在枚举前自行 <see cref="CopyTo"/>。
+    /// </para>
+    /// <para>
+    /// 反过来，<b>换数组的写入对在途枚举器不可见</b>：枚举器在首次 <c>MoveNext</c> 时连值数组引用一起捕获了，
+    /// 所以 <see cref="Clear"/> 之后它看到的仍是完整的旧内容（键和值都是旧的），而不是一堆 <c>null</c>。
+    /// 能看见的只有原地写入 —— 改值与删除断引用；两者都不改变数组长度，因此不会越界。
+    /// </para>
+    /// </summary>
     public IEnumerator<KeyValuePair<string, object?>> GetEnumerator()
     {
         var shape = Volatile.Read(ref _shape);
@@ -221,14 +259,20 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             var shape = Volatile.Read(ref _shape);
             if (shape.Slots.TryGetValue(name, out var existing))
             {
-                Volatile.Read(ref _values)[existing] = value;
+                // 值数组是「原地可写」的（DLR 把槽位固化成常量下标，数组必须稳定），
+                // 但写必须是 Volatile：读侧全部走 Volatile.Read，普通写没有 release 语义，
+                // 读者能否看到这次更新在形式上没有任何保证。
+                var current = Volatile.Read(ref _values);
+                Volatile.Write(ref current[existing], value);
                 return;
             }
 
             var next = shape.WithAdded(name);
             var slot = next.Slots[name];
             EnsureCapacity(next.NextSlot);
-            Volatile.Read(ref _values)[slot] = value;
+
+            var values = Volatile.Read(ref _values);
+            Volatile.Write(ref values[slot], value);
             Volatile.Write(ref _shape, next); // 值先就位，再发布 shape：并发读不会看到「新 shape + 旧数组」
         }
     }

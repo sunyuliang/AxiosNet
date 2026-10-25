@@ -27,8 +27,20 @@ internal sealed class PooledEndpoint : IDisposable
     /// <summary>
     /// 池已 Dispose：本节点在最后一条租约归还时自行销毁
     /// —— 直接 Dispose 会让「关闭时还有请求在途」的调用方拿到 ObjectDisposedException。
+    /// <para>
+    /// 用 <c>volatile</c> 字段而不是自动属性：这个标记<b>一半在 <see cref="SyncRoot"/> 锁内写</b>
+    /// （<c>HttpConnectionPool.Dispose</c>）、<b>一半在锁外写</b>（<c>HttpConnectionPool.Lease</c> 的竞态兜底），
+    /// 读发生在 <see cref="Release"/> 的锁内。混用同步方式时，只有 <c>volatile</c> 能让「写一定可见」
+    /// 不依赖审查者去推程序序。
+    /// </para>
     /// </summary>
-    public bool DisposeWhenIdle { get; set; }
+    public bool DisposeWhenIdle
+    {
+        get => _disposeWhenIdle;
+        set => _disposeWhenIdle = value;
+    }
+
+    private volatile bool _disposeWhenIdle;
 
     /// <summary>租约计数与释放共用的锁。</summary>
     public object SyncRoot { get; } = new();

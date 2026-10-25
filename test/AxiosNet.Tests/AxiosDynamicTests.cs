@@ -155,6 +155,72 @@ public sealed class AxiosDynamicTests
         Assert.Equal(1L, (long)ReadIndex(data, "a"));
     }
 
+    /// <summary>
+    /// 枚举中途删除：<b>键集合是快照，值不是</b>。
+    /// <para>
+    /// 这是刻意的取舍而不是缺陷：shape 走写时复制，但值数组必须原地可写（DLR 把「名字 → 槽位」
+    /// 固化成常量下标，数组不能每次写都换新的），所以删除时会把槽位置 <c>null</c> 断开引用
+    /// —— 否则被删掉的大对象会被「永不回收的槽位」长期持有。
+    /// 于是「已捕获旧 shape 的枚举器」仍会枚举到这个键，但值为 <c>null</c>。
+    /// 需要键和值一起定格，请先 <see cref="AxiosDynamic.CopyTo"/>。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Enumeration_KeyRemovedMidway_KeepsKeyButYieldsNull()
+    {
+        var node = new AxiosDynamic();
+        node["a"] = 1;
+        node["b"] = 2;
+
+        using var walker = node.GetEnumerator();
+        Assert.True(walker.MoveNext()); // 这一次 MoveNext 捕获 shape / values
+        Assert.Equal("a", walker.Current.Key);
+
+        Assert.True(node.Remove("b"));
+
+        Assert.True(walker.MoveNext());
+        Assert.Equal("b", walker.Current.Key); // 键来自快照：仍然会被枚举到
+        Assert.Null(walker.Current.Value);     // 值不是快照：引用已被断开
+        Assert.False(walker.MoveNext());
+
+        // 新一次枚举看到的是新 shape：b 不在了
+        Assert.Single(node);
+        Assert.Null(node["b"]);
+    }
+
+    /// <summary>
+    /// 枚举中途清空：<b>换数组的写入对在途枚举器不可见</b>（与「删键可见」相对的另一半）。
+    /// <para>
+    /// 枚举器在首次 <c>MoveNext</c> 时把 shape 与值数组<b>引用</b>一起捕获，
+    /// 而 <see cref="AxiosDynamic.Clear"/> 是「换成一个空数组」而不是「逐个槽位置空」，
+    /// 因此它换不掉枚举器手里的那份引用 —— 在途枚举器读到的仍是完整的旧内容，不是一堆 <c>null</c>。
+    /// </para>
+    /// <para>
+    /// 这条语义值得钉住：它决定了「枚举期间清空」不会让调用方拿到半截数据，
+    /// 也说明「值不是快照」只对<b>原地写入</b>（改值 / 删除断引用）成立，对换数组不成立。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Enumeration_ClearMidway_KeepsWholeOldContent()
+    {
+        var node = new AxiosDynamic();
+        node["a"] = 1;
+        node["b"] = 2;
+
+        var seen = new List<string>();
+        foreach (var pair in node)
+        {
+            seen.Add($"{pair.Key}={pair.Value}");
+            if (seen.Count == 1)
+            {
+                node.Clear();
+            }
+        }
+
+        Assert.Equal(new[] { "a=1", "b=2" }, seen); // 键和值都是旧的
+        Assert.Empty(node);                          // 新一次枚举看到空 shape
+    }
+
     [Fact]
     public void CountMemberAccess_IsShadowedByDynamicLookup()
     {

@@ -5,17 +5,17 @@ namespace AxiosNet.Tests;
 
 /// <summary>
 /// <see cref="AxiosHeaders"/> 的「写时复制」：默认头每请求都要克隆一份，但绝大多数请求从不改它，
-/// 所以克隆只共享存储（引用计数 +1），直到任何一方写入才真正复制字典。
+/// 所以克隆只共享那版不可变数组（0 拷贝），直到任何一方写入才产出一版新数组。
 /// <list type="bullet">
-/// <item>语义护栏：分离是对称的（克隆方写入不影响源，源写入也不影响副本），快照失效正确；</item>
-/// <item>分配护栏：克隆成本与头数无关；每请求链路不为「默认头」付按头计的分配。</item>
+/// <item>语义护栏：写入是对称隔离的（克隆方写入不影响源，源写入也不影响副本），旧快照不会被就地改动；</item>
+/// <item>分配护栏：克隆成本与头数无关（恒为实例本身 24 B）；每请求链路不为「默认头」付按头计的分配。</item>
 /// </list>
 /// 阈值均留一倍以上余量，是用例「数量级不退回」的护栏，不是精确基准。
 /// </summary>
 public sealed class HeadersCopyOnWriteTests
 {
     // ------------------------------------------------------------------
-    // 语义：共享 → 写入时分离
+    // 语义：共享 → 写入时发布新版本
     // ------------------------------------------------------------------
 
     [Fact]
@@ -51,7 +51,7 @@ public sealed class HeadersCopyOnWriteTests
     [Fact]
     public void Clone_WriteOnSource_DoesNotAffectClone()
     {
-        // 方向必须对称：共享之后源自己也必须先分离，否则「先克隆、再改实例默认值」会打到已发出的请求上。
+        // 方向必须对称：共享之后源自己写入也必须发布新版本，否则「先克隆、再改实例默认值」会打到已发出的请求上。
         var source = new AxiosHeaders();
         source.Set("Accept", "application/json");
 
@@ -80,9 +80,9 @@ public sealed class HeadersCopyOnWriteTests
     }
 
     [Fact]
-    public void Snapshot_IsInvalidatedByLaterWrites()
+    public void Enumeration_AlwaysReadsCurrentVersion()
     {
-        // 快照数组是缓存的：任何写入都必须让它失效，否则「先枚举一次再改」会读到旧值。
+        // 没有「快照缓存」这一层：每次枚举都直接取当前版本，写入天然生效。
         var headers = new AxiosHeaders();
         headers.Set("A", "1");
         Assert.Equal("1", Assert.Single(headers).Value);
@@ -106,13 +106,42 @@ public sealed class HeadersCopyOnWriteTests
     {
         var source = new AxiosHeaders();
         source.Set("A", "1");
-        _ = CountOf(source); // 建出快照缓存
+        _ = CountOf(source); // 先枚举一次（拿的是那一刻的版本，不影响后续）
 
-        source.Set("B", "2"); // 让缓存失效
+        source.Set("B", "2"); // 发布新版本
         var clone = source.Clone();
 
         Assert.Equal(2, clone.Count);
         Assert.Equal("2", clone.Get("B"));
+    }
+
+    /// <summary>
+    /// 写时复制的<b>正确性前提</b>：写入只能发布新数组，绝不能就地改旧数组。
+    /// <para>
+    /// 用枚举器当「旧版本持有人」来验证：它捕获的是写入前那一版，之后无论 <c>Set</c> / <c>Delete</c>
+    /// 怎么发布新版本，它看到的内容都必须原封不动。如果哪天有人为了省一次复制改成「原地扩容 + 改长度」，
+    /// 这条用例会立刻变红——而按分配量写的护栏（<c>CloneThenSet_PaysExactlyOneNewVersion</c>）未必能发现。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Enumerator_KeepsOldVersion_AfterWrites()
+    {
+        var headers = NewHeaders(2); // X-H0 / X-H1
+        var walker = headers.GetEnumerator();
+        Assert.True(walker.MoveNext());
+        Assert.Equal("X-H0", walker.Current.Key);
+
+        headers.Set("X-New", "1");
+        Assert.True(headers.Delete("X-H1"));
+
+        var rest = new List<string>();
+        while (walker.MoveNext())
+        {
+            rest.Add(walker.Current.Key);
+        }
+
+        Assert.Equal(new[] { "X-H1" }, rest); // 旧数组没被就地改动
+        Assert.Equal(2, headers.Count);       // 当前版本：X-H0 + X-New
     }
 
     [Fact]
@@ -180,8 +209,8 @@ public sealed class HeadersCopyOnWriteTests
         var smallCost = AverageBytes(50_000, () => small.Clone());
         var largeCost = AverageBytes(50_000, () => large.Clone());
 
-        // 复制实现：克隆 10 头的成本 ≈ 10 × 单条（实测 1 头 388 B、10 头 1312 B）。
-        // 写时复制：只分配 AxiosHeaders 对象本身（实测 24 B），与头数无关。
+        // 对照的是被替换掉的旧实现（引用计数 + 字典 + 分离复制）：克隆 10 头 ≈ 10 × 单条，实测 1 头 388 B、10 头 1312 B。
+        // 现在只分配 AxiosHeaders 对象本身（实测 24 B），与头数无关。
         Assert.True(
             largeCost < 300,
             $"10 个头的 AxiosHeaders.Clone() 平均 {largeCost} B/次，超出 300 B 护栏——疑似退回「整份复制」。");
@@ -191,7 +220,7 @@ public sealed class HeadersCopyOnWriteTests
     }
 
     [Fact]
-    public void EmptyHeaders_DoesNotPreallocateDictionary()
+    public void EmptyHeaders_AllocatesInstanceOnly()
     {
         // 空 headers 很常见（懒创建的 Config.Headers、只读一次的默认值）：
         // 空版本是静态单例数组，构造只分配实例本身（实测 24 B）。
@@ -259,19 +288,20 @@ public sealed class HeadersCopyOnWriteTests
     }
 
     [Fact]
-    public void Detach_StaysWithinBudget()
+    public void CloneThenSet_PaysExactlyOneNewVersion()
     {
         var source = NewHeaders(10);
 
         var cost = AverageBytes(20_000, () =>
         {
-            var copy = source.Clone(); // 24 B
-            copy.Set("X-New", "1");    // 首次写入触发分离：复制 10 条字典
+            var copy = source.Clone(); // 24 B（只共享引用）
+            copy.Set("X-New", "1");    // 一次写入 = 一版新数组：11 × 24 B + 24 B 数组头
             GC.KeepAlive(copy);
         });
 
-        // 分离 = 复制一份字典（10 条）+ 一个新存储，实测 504 B；整份「克隆后再深拷贝」的旧形态是 1312 B 起。
-        Assert.True(cost < 620, $"克隆 + 分离写一条平均 {cost} B —— 超出预算，疑似退化成整份深拷贝。");
+        // 实测 312 B = 克隆 24 B + 新数组 288 B；旧实现（字典 + 分离复制）同一形态是 504 B 起。
+        // 预算留到 620 B 是给 Entry 布局变化留余量，不是精确基准。
+        Assert.True(cost < 620, $"克隆 + 写一条平均 {cost} B —— 超出预算，疑似退化成整份深拷贝。");
     }
 
     [Fact]
