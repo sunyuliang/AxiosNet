@@ -124,7 +124,8 @@ public sealed class AxiosException : Exception
 
     /// <summary>
     /// JSON 数组流里的单个元素超过上限：元素必须能整块交给序列化器，否则内存占用由服务端决定。
-    /// 与 <see cref="StreamFrameTooLarge"/> 同一条线（8 MB），只是措辞点明「元素」而不是「帧」——
+    /// 与 <see cref="StreamFrameTooLarge"/> 同一条线（同一个可配置上限，默认 8 MB），
+    /// 只是措辞点明「元素」而不是「帧」——
     /// 数组里的分隔符是 <c>,</c>，说「缺少分帧符」会把人引向错误的方向。
     /// </summary>
     internal static AxiosException StreamElementTooLarge(AxiosConfig config, HttpRequestMessage? request, string format, int limit)

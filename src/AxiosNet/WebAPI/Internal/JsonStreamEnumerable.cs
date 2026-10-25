@@ -21,7 +21,8 @@ namespace AxiosNet.WebAPI.Internal;
 /// <para>
 /// 没有直接用 <c>JsonSerializer.DeserializeAsyncEnumerable</c>：那条路自己反序列化，会绕开
 /// <see cref="IContentSerializer"/>（XML / 第三方 JSON 引擎与自定义选项就全废了），也拿不到
-/// 「8 MB 单元素上限」与统一的 <c>ERR_BAD_RESPONSE</c> 映射。这里只用 reader 找边界，元素仍交给序列化器。
+/// 「单帧上限」（默认 8 MB，可由 <see cref="AxiosConfig.LimitSettings.MaxStreamFrameLength"/> 调整）
+/// 与统一的 <c>ERR_BAD_RESPONSE</c> 映射。这里只用 reader 找边界，元素仍交给序列化器。
 /// </para>
 /// <para>
 /// 响应流只能读一次：<see cref="GetAsyncEnumerator"/> 只允许调用一次，重复枚举直接报错，
@@ -31,9 +32,18 @@ namespace AxiosNet.WebAPI.Internal;
 internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnumerator<T>
 {
     private const int ReadChunk = 8 * 1024;
-    private const int MaxFrameBytes = 8 * 1024 * 1024;
     private const string DoneSentinel = "[DONE]";
     private const string ArrayFormatName = "JSON array";
+
+    /// <summary>
+    /// 单帧 / 单元素上限（字节），构造时从配置解析一次：<c>Limits.MaxStreamFrameLength</c>，
+    /// 未设置时用 <see cref="AxiosConfig.LimitSettings.DefaultStreamFrameLength"/>（8 MB）。
+    /// <para>
+    /// 只在比较与扩容封顶时使用，从不按它预分配 —— 小帧只花初始的 <see cref="ReadChunk"/>。
+    /// 每个流解析一次而不是每帧读配置：帧率高的场景（LLM token 流）每帧一次配置读取纯属白付。
+    /// </para>
+    /// </summary>
+    private readonly int _maxFrameBytes;
 
     private readonly Stream _stream;
     private readonly AxiosConfig _config;
@@ -134,6 +144,11 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _config = config;
         _request = request;
         _format = format;
+
+        // 单帧上限随配置（按请求可覆盖实例默认）：null = 默认 8 MB。
+        // 合法性（1–64 MB）已在发送前的 ValidateRangeConfig 里拦下，这里不再重复判定。
+        _maxFrameBytes = config.LimitsOrNull?.MaxStreamFrameLength
+            ?? AxiosConfig.LimitSettings.DefaultStreamFrameLength;
 
         // framing 校验已经解析过「最终生效的编码」（强制 ResponseEncoding 优先于 charset），
         // 结果直接留给逐行解码复用：每行重跑 ResolveFromCharset 在非 UTF-8 声明时是一次编码表查找。
@@ -324,9 +339,9 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             // 上限按字节数（NDJSON 的缓冲区口径）：按字符算的话 UTF-8 多字节帧最多可灌约
             // 4× 上限的源字节才触发，StringBuilder 的 UTF-16 存储还让内存峰值再翻倍。
             _frameBytes += line.ByteLength;
-            if (_frameBytes > MaxFrameBytes)
+            if (_frameBytes > _maxFrameBytes)
             {
-                throw AxiosException.StreamFrameTooLarge(_config, _request, "SSE", MaxFrameBytes);
+                throw AxiosException.StreamFrameTooLarge(_config, _request, "SSE", _maxFrameBytes);
             }
         }
     }
@@ -564,19 +579,19 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
 
         var total = _elementSpilled + length;
-        if (total > MaxFrameBytes)
+        if (total > _maxFrameBytes)
         {
             // 单个元素必须能整块交给序列化器，否则内存占用由服务端决定
-            throw AxiosException.StreamElementTooLarge(_config, _request, ArrayFormatName, MaxFrameBytes);
+            throw AxiosException.StreamElementTooLarge(_config, _request, ArrayFormatName, _maxFrameBytes);
         }
 
         if (_elementSpill is null)
         {
-            _elementSpill = new byte[Math.Min(Math.Max(ReadChunk, total), MaxFrameBytes)];
+            _elementSpill = new byte[Math.Min(Math.Max(ReadChunk, total), _maxFrameBytes)];
         }
         else if (total > _elementSpill.Length)
         {
-            var grown = new byte[Math.Min(Math.Max(_elementSpill.Length * 2, total), MaxFrameBytes)];
+            var grown = new byte[Math.Min(Math.Max(_elementSpill.Length * 2, total), _maxFrameBytes)];
             Buffer.BlockCopy(_elementSpill, 0, grown, 0, _elementSpilled);
             _elementSpill = grown;
         }
@@ -704,16 +719,16 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
         if (_end == _buffer.Length)
         {
-            if (_buffer.Length >= MaxFrameBytes)
+            if (_buffer.Length >= _maxFrameBytes)
             {
                 // 数组模式撑满缓冲只可能是「单个 token 太大」（元素由多个 token 组成时会在 AppendSpill 先拦下），
                 // 措辞统一成「元素超限」：数组里的分隔符是 ','，说「缺少分帧符」会把人引向错误方向。
                 throw _format == AxiosStreamFormat.JsonArray
-                    ? AxiosException.StreamElementTooLarge(_config, _request, ArrayFormatName, MaxFrameBytes)
-                    : AxiosException.StreamFrameTooLarge(_config, _request, _format.ToString(), MaxFrameBytes);
+                    ? AxiosException.StreamElementTooLarge(_config, _request, ArrayFormatName, _maxFrameBytes)
+                    : AxiosException.StreamFrameTooLarge(_config, _request, _format.ToString(), _maxFrameBytes);
             }
 
-            var grown = new byte[Math.Min(_buffer.Length * 2, MaxFrameBytes)];
+            var grown = new byte[Math.Min(_buffer.Length * 2, _maxFrameBytes)];
             Buffer.BlockCopy(_buffer, 0, grown, 0, _end);
             _buffer = grown;
         }

@@ -1191,6 +1191,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 $"MaxBodyLength 不能为负（当前 {limits.MaxBodyLength}）：不限制请设为 null。", config);
         }
 
+        // 分帧上限：既不能「设 0 当不限制」（分帧器没有关闭语义），也不能大到溢出 int。
+        // 越界在发送前就报，而不是让服务端第一次吐出大帧时在分帧器里炸成裸异常。
+        // 三个边界值都在 LimitSettings 上（默认 / 下界 / 上界同处一地），这里只负责比对。
+        if (limits?.MaxStreamFrameLength is int frameLength
+            && (frameLength < AxiosConfig.LimitSettings.MinStreamFrameLength
+                || frameLength > AxiosConfig.LimitSettings.MaxStreamFrameLengthLimit))
+        {
+            throw AxiosException.InvalidOption(
+                $"MaxStreamFrameLength 超出范围（当前 {frameLength} 字节）：合法区间 "
+                + $"{AxiosConfig.LimitSettings.MinStreamFrameLength}–{AxiosConfig.LimitSettings.MaxStreamFrameLengthLimit} 字节（1–64 MB），"
+                + $"默认 {AxiosConfig.LimitSettings.DefaultStreamFrameLength} 字节（8 MB）。"
+                + "分帧器必须把整帧读进内存才能交给序列化器，因此没有「不限制」语义；更大的正文请用 ResponseType.Stream 自行分块处理。",
+                config);
+        }
+
         // 重试策略的取值范围：次数为负没有语义（「负一次重试」无从执行），等待时间为负同样无意义。
         // 自定义策略只能校验接口上暴露的 MaxRetries；内置实现连等待时间一起校验。
         if (config.RetryOrNull?.Policy is { } retry)

@@ -149,6 +149,15 @@ public sealed class StreamPagesRequest : IApiRequest<StreamChunk>
 {
 }
 
+/// <summary>
+/// GET /api/stream/big-frame：单个元素约 9 MB 的 JSON 数组端点。
+/// 用来演示单帧上限（<c>Limits.MaxStreamFrameLength</c>）：默认 8 MB 下这个帧会被拒。
+/// </summary>
+[Get("api/stream/big-frame")]
+public sealed class StreamBigFrameRequest : IApiRequest<StreamChunk>
+{
+}
+
 // =====================================================================
 // 返回模型：与请求模型一一对应（也可直接用 string / byte[] / Stream 等原始形态）。
 // =====================================================================

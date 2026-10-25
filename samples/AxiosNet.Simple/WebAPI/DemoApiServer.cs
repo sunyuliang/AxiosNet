@@ -99,6 +99,13 @@ public sealed class DemoApiServer : IDisposable
                         break;
                     }
 
+                    // 大帧端点：单个元素约 9 MB，超过默认 8 MB 单帧上限（演示 MaxStreamFrameLength）
+                    if (method == "GET" && path == "/api/stream/big-frame")
+                    {
+                        await WriteBigFrameStreamAsync(stream);
+                        break;
+                    }
+
                     var (status, json, extraHeaders) = Route(method, path, query, headers, body);
                     await WriteResponseAsync(stream, status, json, extraHeaders);
                 }
@@ -406,6 +413,34 @@ public sealed class DemoApiServer : IDisposable
 
         await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("{\"index\":3,\"text\":\"第 3 页 · page 3\"}]"))
             .ConfigureAwait(false);
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes("0\r\n\r\n")).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 流式响应（JSON 数组，单个超大元素）：一个元素约 9 MB，超过默认 8 MB 单帧上限 ——
+    /// 默认配置下客户端在读完这一帧前就报 <c>ERR_BAD_RESPONSE</c>；
+    /// 把 <c>Limits.MaxStreamFrameLength</c> 放大到 12 MB 后可正常逐帧读取。
+    /// </summary>
+    private static async Task WriteBigFrameStreamAsync(NetworkStream stream)
+    {
+        var header =
+            "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            "Connection: close\r\n" +
+            "Transfer-Encoding: chunked\r\n\r\n";
+
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header)).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+
+        // 9 MB 的 ASCII 文本：字符数 = UTF-8 字节数，便于直接对上「8 MB 上限」
+        var text = new string('x', 9 * 1024 * 1024);
+
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("[{\"index\":1,\"text\":\"")).ConfigureAwait(false);
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes(text)).ConfigureAwait(false);
+        await WriteChunkAsync(stream, Encoding.UTF8.GetBytes("\"}]")).ConfigureAwait(false);
 
         await stream.WriteAsync(Encoding.ASCII.GetBytes("0\r\n\r\n")).ConfigureAwait(false);
         await stream.FlushAsync().ConfigureAwait(false);

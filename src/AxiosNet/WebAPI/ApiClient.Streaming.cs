@@ -33,7 +33,8 @@ public sealed partial class ApiClient
     /// <para>
     /// <b>帧格式</b>：<see cref="AxiosStreamFormat.NewlineDelimitedJson"/> 按行；<see cref="AxiosStreamFormat.ServerSentEvents"/>
     /// 按空行；<see cref="AxiosStreamFormat.JsonArray"/> 按顶层数组元素（<c>[{...},{...}]</c>）——三种格式共用同一套
-    /// 字节级分帧、空闲超时与 8 MB 单帧上限，差别只在「帧边界怎么找」。JSON 数组模式要求响应是 UTF-8
+    /// 字节级分帧、空闲超时与单帧上限（默认 8 MB，可由 <see cref="AxiosConfig.LimitSettings.MaxStreamFrameLength"/> 调整），
+    /// 差别只在「帧边界怎么找」。JSON 数组模式要求响应是 UTF-8
     /// （宽字符编码或 gbk 之类非 UTF-8 单字节编码在取流时即报 <c>ERR_BAD_RESPONSE</c>），顶层必须是数组，
     /// 见到收尾的 <c>]</c> 就结束枚举。
     /// </para>

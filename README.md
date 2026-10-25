@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-1022%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1038%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -218,7 +218,7 @@ await foreach (var chunk in response.Data!)
 }
 ```
 
-三种帧格式（`AxiosStreamFormat`），共用同一套字节级分帧、空闲超时与 8 MB 单帧上限，差别只在「帧边界怎么找」：
+三种帧格式（`AxiosStreamFormat`），共用同一套字节级分帧、空闲超时与单帧上限（默认 8 MB，可配置），差别只在「帧边界怎么找」：
 
 | 格式 | 帧边界 | 典型来源 |
 | --- | --- | --- |
@@ -237,11 +237,12 @@ await foreach (var order in pages.Data!)
 ```
 
 - **超时口径**：`Timeout` 对流式请求<b>只覆盖到响应头</b>；正文由 `client.StreamIdleTimeout` 控制——默认 `Zero` 表示不限时（只受取消令牌约束），大于零表示「连续这么久没收到数据」才失败（`ECONNABORTED`，消息里写明 idle）。计时只发生在真实的读写期间：调用方处理上一帧、隔很久才读下一帧不算空闲
+- **单帧上限**：NDJSON 一行 / SSE 一帧 / JSON 数组一个顶层元素，默认 **8 MB**、合法区间 **1–64 MB**（三个边界值都在 `AxiosConfig.LimitSettings` 上：`DefaultStreamFrameLength` / `MinStreamFrameLength` / `MaxStreamFrameLengthLimit`），用 `Limits.MaxStreamFrameLength` 调整，越界在发送前抛 `ERR_BAD_OPTION_VALUE`；`null` = 回到默认。**没有「不限制」语义**——分帧器必须把整帧读进内存才能交给序列化器，放开等于把内存上限交给服务端，真要处理更大的正文请用 `ResponseType.Stream` 自己分块。上限只是天花板：1 KB 的帧只占 8 KB 读缓冲，不按上限预分配；但放大前先算清峰值（读缓冲 + 溢写缓冲 + 解码后的 UTF-16 字符串，约 2–4× 上限）
 - **分帧在字节层**：按 `\n` 切开后再解码，跨块的多字节字符不会被破坏（反过来先解码再切行会解出 `U+FFFD`）；JSON 数组则是先用 `Utf8JsonReader` 找出元素的字节区间再解码，同一个道理
 - **charset 限制**：NDJSON / SSE 依赖 `0x0A` 与字符边界对齐，因此响应 `Content-Type` 声明的 charset 必须是 ASCII 兼容（UTF-8 / US-ASCII / ISO-8859-1 / GBK 等）；`charset=utf-16` / `utf-32` 这类宽字符编码在取流时直接抛 `ERR_BAD_RESPONSE`，而不是静默切出错位的帧。**JSON 数组更严：必须是 UTF-8**（`Utf8JsonReader` 只认 UTF-8 字节，gbk / iso-8859-1 这类「ASCII 兼容但非 UTF-8」的声明同样在取流时报错）；UTF-8 BOM 会被跳过，UTF-16 / UTF-32 的 BOM 直接报错
 - **解析一次**：帧序列化器与逐行编码在**取流时各解析一次**（媒体类型与 charset 对整个响应流都不变），高帧率流的每帧不再查注册表与编码表；流开始后再改 `AxiosContent.Register` 不影响已创建的枚举器
 - **SSE**：多行 `data:` 以换行拼接、`:` 开头的注释当心跳忽略、`event:` / `id:` / `retry:` 忽略、`data: [DONE]` 视为流结束；**NDJSON**：每行一个 JSON，空行跳过
-- **JSON 数组**：`[{...},{...}]` 是最常见的批量 / 分页响应形态，分帧用 `Utf8JsonReader` **增量**做——字符串里的 `,` / `]`、转义序列与嵌套结构都由解析器自己跨过，元素一收尾就交付（**不必等收尾的 `]`**），数组多大都不影响内存占用。跨块元素（大于一次读大小）的已消费前缀溢写到单独缓冲区、交付前拼回一次解码，因此跨块的多字节字符不会被切坏；单个元素超过 8 MB 报 `ERR_BAD_RESPONSE`。顶层必须是数组——`{"items":[...]}` 这种外面又包了一层的形态会报错并点明期望 `[`；标量元素（`[1,2,3]`）同样逐帧交付；见到 `]` 立即结束，不等连接关闭、也不校验尾部字节；没等到 `]` 就断流报 `ERR_BAD_RESPONSE`（消息点明 `closing ']'`，已交付的元素保留）。外层数组的方言跟随 `Serialization.JsonSerializerOptions`（`AllowTrailingCommas` / `ReadCommentHandling` / `MaxDepth`），与元素本身被解析时保持一致
+- **JSON 数组**：`[{...},{...}]` 是最常见的批量 / 分页响应形态，分帧用 `Utf8JsonReader` **增量**做——字符串里的 `,` / `]`、转义序列与嵌套结构都由解析器自己跨过，元素一收尾就交付（**不必等收尾的 `]`**），数组多大都不影响内存占用。跨块元素（大于一次读大小）的已消费前缀溢写到单独缓冲区、交付前拼回一次解码，因此跨块的多字节字符不会被切坏；单个元素超过单帧上限（默认 8 MB，`Limits.MaxStreamFrameLength` 可调）报 `ERR_BAD_RESPONSE`。顶层必须是数组——`{"items":[...]}` 这种外面又包了一层的形态会报错并点明期望 `[`；标量元素（`[1,2,3]`）同样逐帧交付；见到 `]` 立即结束，不等连接关闭、也不校验尾部字节；没等到 `]` 就断流报 `ERR_BAD_RESPONSE`（消息点明 `closing ']'`，已交付的元素保留）。外层数组的方言跟随 `Serialization.JsonSerializerOptions`（`AllowTrailingCommas` / `ReadCommentHandling` / `MaxDepth`），与元素本身被解析时保持一致
 - **所有权**：流只能枚举一次；`await foreach` 结束或 `break` 时枚举器被释放并归还连接，手动 `MoveNextAsync` 的调用方必须自己 `DisposeAsync`，否则该连接会一直被占用
 - **错误**：状态码错误在 `await` 抛出（`ErrorFactory` 同样接管，流式失败响应最多保留 64KB 错误体原文）；帧解析失败 `ERR_BAD_RESPONSE`，中途断流 `ERR_NETWORK`，取消 `ERR_CANCELED`
 
@@ -339,10 +340,11 @@ var config = new AxiosConfig
     // —— 体积、限速与流式超时 ——
     Limits = new()
     {
-        StreamIdleTimeout = null,             // 流式正文空闲超时：null = 沿用 Timeout 总预算；Zero = 正文不限时
-        MaxContentLength = 10 * 1024 * 1024,  // 响应体上限（字节），null = 不限
-        MaxBodyLength = 50 * 1024 * 1024,     // 请求体上限（字节），null = 不限
-        MaxRate = 2 * 1024 * 1024,            // 单向限速（字节/秒），null = 不限
+        StreamIdleTimeout = null,                // 流式正文空闲超时：null = 沿用 Timeout 总预算；Zero = 正文不限时
+        MaxStreamFrameLength = 12 * 1024 * 1024, // 流式单帧上限（字节）：null = 默认 8 MB；合法 1–64 MB
+        MaxContentLength = 10 * 1024 * 1024,     // 响应体上限（字节），null = 不限
+        MaxBodyLength = 50 * 1024 * 1024,        // 请求体上限（字节），null = 不限
+        MaxRate = 2 * 1024 * 1024,               // 单向限速（字节/秒），null = 不限
     },
 
     // —— 回调与状态校验 ——
@@ -847,7 +849,7 @@ await http.PostAsync("upload", bytes, c => c.Limits.MaxBodyLength = 5 * 1024 * 1
 
 - `Limits.MaxContentLength` 对普通（缓冲）响应是**边读边累计**：越界立即中止并释放连接，不会先把 8 MB 全读进内存再判断；对 `ResponseType.Stream` 则是"声明长度先预检 + 读取时边读边计数"两层：声明超限时连响应头都不读正文就失败，chunked / 未声明长度的响应也会在累计越界的那一刻让 `Read`/`ReadAsync` 抛出 `ERR_BAD_RESPONSE`。
 - `Limits.MaxBodyLength` 在发送前按 `Content.Headers.ContentLength` 判断，只对能算出长度的请求体生效（JSON / 表单 / `byte[]` / 裸 `Stream`（可 seek 时有长度））；`multipart/form-data`（`FormFile`）与自定义的未知长度 `HttpContent` 不算长度，不做拦截。
-- 这四个限制项的**负值会抛 `ERR_BAD_OPTION_VALUE`**（此前的实现把负值静默当作"不限制"，调用方会以为限制生效了）。`Limits.MaxRate = 0` 等价于不限速，`Timeout = TimeSpan.Zero` 表示不超时。
+- 这些限制项的**负值会抛 `ERR_BAD_OPTION_VALUE`**（此前的实现把负值静默当作"不限制"，调用方会以为限制生效了）。`Limits.MaxRate = 0` 等价于不限速，`Timeout = TimeSpan.Zero` 表示不超时。`Limits.MaxStreamFrameLength` 另有一层区间校验（1–64 MB）：它没有「不限制」语义，设 0 或超过 64 MB 都在发送前报错。
 
 ## 自定义序列化与数据转换
 
@@ -1512,6 +1514,7 @@ using var client3 = Axios.Create(
 - `auth`（HTTP Basic，用户名不允许含冒号——RFC 7617 用第一个冒号分隔；密码可含冒号）、`withCredentials`、代理、自动重定向（`maxRedirects: 0` 可完全关闭）、gzip/deflate/br 自动解压
 - `axios.getUri(config)` → `client.GetUri(config)`：只拼 URL 不发请求（调试/日志/预签名）
 - `maxContentLength` / `maxBodyLength`：响应体与请求体大小上限，超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`，消息里带实际字节数；未设上限但响应体超过单数组上限（约 2GB，`Array.MaxLength`）时同样抛 `ERR_BAD_RESPONSE` 并提示改用 `ResponseType.Stream`，而不是裸 `OutOfMemoryException`
+- `Limits.MaxStreamFrameLength`（流式单帧上限）：NDJSON 一行 / SSE 一帧 / JSON 数组一个元素，默认 8 MB，合法 1–64 MB，`null` = 默认；越界抛 `ERR_BAD_OPTION_VALUE`。与 `maxContentLength` 不同，**没有「不限制」语义**（整帧必须进内存），且峰值约为上限的 2–4 倍
 - `onUploadProgress` / `onDownloadProgress`：进度事件（已传/总量/百分比/平均速率/预估剩余），上传与下载双向；重定向（307/308）或重试重发正文时**跨次累计**，进度不回跳（百分比封顶 100%）
 - `maxRate`：上传、下载单向限速（字节/秒）
 - `paramsSerializer` / `formFieldNameSelector`：自定义查询串与表单字段名（对应 axios `formSerializer` 的字段名定制）
@@ -1564,6 +1567,7 @@ using var client3 = Axios.Create(
 | `withCredentials` / `proxy` / `maxRedirects` | `Connection` 子对象上的同名属性（**仅实例级**生效：按请求写与实例不同的值会抛 `ERR_BAD_OPTION_VALUE`，见下） |
 | `maxContentLength` / `maxBodyLength` | `Limits` 子对象上的同名属性（`long?`，字节；超限分别抛 `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`） |
 | `maxRate` | `c.Limits.MaxRate`（字节/秒，上传下载共用） |
+| —（无对应配置） | `c.Limits.MaxStreamFrameLength`（流式单帧上限，字节；`null` = 默认 8 MB，合法 1–64 MB） |
 | `onUploadProgress` / `onDownloadProgress` | `Callbacks` 子对象上的同名属性（`Action<AxiosProgressEvent>`） |
 | `timeoutMessage` | `c.Callbacks.TimeoutMessage` |
 | `paramsSerializer` | `c.Serialization.ParamsSerializer` 或实例级 `Defaults.Serialization.ParamsSerializer`（返回已编码查询串） |
@@ -1632,7 +1636,7 @@ using var client3 = Axios.Create(
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 35 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 26 项。
+启动后是**交互菜单**：反射列出全部示例的类名与标题（核心集成 + 声明式客户端共 36 项，示例类零注册，新增即进菜单），输入编号运行单个示例，`a` 顺序运行全部，`q` 退出；每个示例执行完毕自动回到菜单继续选。上面的序号即菜单里的前 26 项。
 
 客户端的用法即生产惯例：**每个示例一个静态客户端，为空才创建一次，之后所有次运行复用**（示例类内的 `private static` 字段 + `??=`，没有共享注册表这类额外封装）——`AxiosClient` 每实例一条连接池，客户端随用随新弃就等于每次运行都重建 TCP 连接；挂拦截器的示例每次运行先清空再挂，重复运行行为一致。第 12（连接池统计）、第 17 的 Handler 注入与池化场景（带每轮计数）、20（DNS 切换）故意每次新建客户端：它们演示的对象就是「全新连接 / 全新计数器」本身。
 
@@ -1640,7 +1644,7 @@ dotnet run --project samples/AxiosNet.Simple
 >
 > 第 19 项是唯一需要额外 NuGet 包（`Newtonsoft.Json`）的示例，仅用于演示**引擎替换**——类库本身仍然零第三方运行时依赖；不需要自定义序列化时可以把 `Newtonsoft.Json` 从示例项目里删掉。
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 的 `WebAPI/` 目录是声明式客户端（[`AxiosNet.WebAPI`](#声明式-api-客户端-axiosnetwebapi对标-refit) 命名空间）的配套示例（同样开箱即用、离线可运行）：请求模型与返回模型集中在 `WebAPI/ApiModels.cs`，9 个示例走真实 HTTP 往返：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 的 `WebAPI/` 目录是声明式客户端（[`AxiosNet.WebAPI`](#声明式-api-客户端-axiosnetwebapi对标-refit) 命名空间）的配套示例（同样开箱即用、离线可运行）：请求模型与返回模型集中在 `WebAPI/ApiModels.cs`，10 个示例走真实 HTTP 往返：
 
 1. **GET 详情**：`[Path]` 绑定 + 返回泛型由请求模型自动确定
 2. **GET 列表**：无标注属性默认 Query、数组 `ids[]=` 绑定、`client.GetUri(request)` 预览 URL
@@ -1651,8 +1655,9 @@ dotnet run --project samples/AxiosNet.Simple
 7. **签名/验签**：`SigningSerializer` 装饰内置 JSON——请求体 HMAC-SHA256 写 `X-Signature`，响应先验签再解析；演示服务器对称校验，未签名请求被 401 拒绝
 8. **流式响应（SSE / JSON 数组）**：`RequestStreamAsync` 返回 `AxiosResponse<IAsyncEnumerable<T>>`——`await` 即拿到状态码与响应头，`await foreach` 逐帧消费；演示服务器以 `chunked` 分别下发 `data: ...` 帧（含 `[DONE]` 结束）与 `[{...},{...}]` 数组（元素劈在两个 chunk 里，且切在多字节字符中间）
 9. **multipart 上传**：`[Multipart]` + `[Part]`——模型自身即表单，服务器按字节精确解析并回报部件清单
+10. **单帧上限**：默认 8 MB 会拒掉 9 MB 的单个元素（`ERR_BAD_RESPONSE`），把 `Limits.MaxStreamFrameLength` 放大到 12 MB 后同一端点可正常逐帧读完；示例同时说明「上限只是天花板，不按上限预分配」与「没有不限制语义」
 
-这 9 项与上面的 26 项同在启动菜单里（菜单第 27-35 项，自带另一套演示服务器，按选择懒启动）：
+这 10 项与上面的 26 项同在启动菜单里（菜单第 27-36 项，自带另一套演示服务器，按选择懒启动）：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1669,7 +1674,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **975** 个、DI 扩展 **47** 个，合计 **1022** 个用例（共 **2044** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **991** 个、DI 扩展 **47** 个，合计 **1038** 个用例（共 **2076** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1728,7 +1733,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 1022 个 xUnit 单元测试（核心/声明式 975 + DI 47；两个测试项目均为双目标，实际执行 2044 次）
+# 运行全部 1038 个 xUnit 单元测试（核心/声明式 991 + DI 47；两个测试项目均为双目标，实际执行 2076 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1737,9 +1742,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 167 个） | 975 | `net8.0` / `net6.0` | 1950 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 183 个） | 991 | `net8.0` / `net6.0` | 1982 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **1022** | | **2044** |
+| **合计** | **1038** | | **2076** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1841,7 +1846,7 @@ dotnet build AxiosNet.sln -c Release
 
 **声明式客户端与 DI**
 
-- **声明式客户端**（`AxiosNet.Tests/WebAPI/`，167 个用例）
+- **声明式客户端**（`AxiosNet.Tests/WebAPI/`，180 个用例）
   - 路由/Path/Query/Header/Body 绑定与端到端（路径转义、绝对 URL 覆盖 BaseAddress、模型与调用处 Configure 钩子、继承属性绑定）
   - 默认 Body（POST/PUT/PATCH + 恰一个未标注非标量属性；标量护栏、多属性歧义维持 Query、显式 `[Query]` 不阻断、DELETE 不参与、未标注字典属性始终平铺查询）
   - 多特性并存（Path+Header、Query+Header、标量 Path+Body+Header、复杂对象 Query+Body；Path/Header 非标量构建期拒绝）
@@ -1850,6 +1855,7 @@ dotnet build AxiosNet.sln -c Release
   - 模型定义校验（缺路由、占位符未绑定/多余绑定、花括号非法、重复占位符、多个请求体、同名参数、null 路径值）与错误缓存
   - 流式请求：生效配置回放不泄漏 `ResponseType.Stream`、挂起读取中取消归 `ERR_CANCELED`、类型不符归 `ERR_BAD_RESPONSE`、消费者停顿不误触空闲超时、非 ASCII 兼容 charset 取流即报错（`Audit20261023B1B8FixTests`，8 个用例）
   - 流式帧格式（`ApiClientStreamingJsonArrayTests`，25 个用例）：JSON 数组按**顶层元素**增量交付——跨块 token 与跨块多字节字符、嵌套容器 / 字符串里的 `]` `,` 不被误判、标量元素、空数组与空正文、UTF-8 BOM（含被劈成两半）、非 UTF-8 charset 取流即报错、顶层非数组 / 非法 JSON / 截断、8 MB 元素上限、空闲超时与单次枚举、方言跟随 `JsonSerializerOptions`
+  - 流式单帧上限可配置（`StreamFrameLimitTests`，16 个用例）：默认 8 MB 不变（配了别的 `Limits` 项也不会把未设置的上限带过去）；三个边界常量（默认 / 下界 / 上界）自洽（默认落在区间内）；`Limits.MaxStreamFrameLength` 放大到 12 MB 后 9 MB 帧可读（NDJSON / SSE / JSON 数组三种格式各一例）；收紧到 1 MB 后 2 MB 帧被拒，按请求既能放大也能收紧实例默认；按请求显式 `null` 回到默认（合并看 `*Set` 标记）；`Clone` 保真；0 / 负数 / 小于 1 MB / 大于 64 MB 在发送前 fail-fast（传输层调用次数为 0）
 - **DI 单例注入**（`AxiosNet.DependencyInjection.Tests`，40 个用例）
   - `AddAxiosClient` 注册形态与 configure 生效、TryAdd 先到先得（抑制时 configure 也不执行）、容器解析后端到端请求
   - `AddApiClient` 自建 / 门面两种模式（BaseAddress 与 configureDefaults、门面复用、缺注册解析期报错、共享客户端不随门面释放、自建与门面互不相干）
@@ -2031,15 +2037,15 @@ dotnet build AxiosNet.sln -c Release
 │     ├─ ApiClientResolver.cs            # IApiClientResolver 解析器 + 站点定义/创建（命名站点属主）
 │     └─ ApiClientOwnedAxiosClient.cs     # 自建模式与命名站点持有底层客户端的内部注册项（容器退出时释放）
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 26 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 9 项声明式示例；启动菜单反射列出全部 35 项，输入编号运行，a = 全部，q = 退出
+│  ├─ AxiosNet.Simple/           # 26 类集成调用示例（内置演示服务器 + multipart 精确解析 + Newtonsoft.Json / XML / 二进制序列化器 + DNS 刷新 + Bearer 令牌 + 请求签名）+ WebAPI/ 10 项声明式示例；启动菜单反射列出全部 36 项，输入编号运行，a = 全部，q = 退出
 │  │  ├─ Examples/               # 核心集成示例（26 项，IExample 零注册自动进菜单；SampleMenu.cs 为交互菜单，两个示例程序共用）
-│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：9 类示例走真实 HTTP 往返，含授权声明、multipart、全局日志、HMAC 签名/验签与 SSE / JSON 数组流式，菜单第 27-35 项）
+│  │  └─ WebAPI/                 # 声明式客户端示例（自带演示服务器：10 类示例走真实 HTTP 往返，含授权声明、multipart、全局日志、HMAC 签名/验签、SSE / JSON 数组流式与单帧上限，菜单第 27-36 项）
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（975 个用例 × net6.0 / net8.0 双目标 = 1950 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（991 个用例 × net6.0 / net8.0 双目标 = 1982 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 共用模型
-   │  └─ WebAPI/                 # 声明式客户端测试（167 个用例，与主库测试同项目同程序集）
+   │  └─ WebAPI/                 # 声明式客户端测试（183 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（47 个用例 × net6.0 / net8.0 双目标 = 94 次执行，复用主库/WebAPI 测试基建）
 ```
 

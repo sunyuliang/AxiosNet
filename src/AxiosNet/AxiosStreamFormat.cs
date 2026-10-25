@@ -21,7 +21,7 @@ public enum AxiosStreamFormat
     /// <para>
     /// 分帧用 <c>Utf8JsonReader</c> 增量做（不先把整个数组读进内存）：字符串里的 <c>,</c> / <c>]</c>、
     /// 转义序列、嵌套对象与数组都由解析器自己跨过，因此数组多大都不影响内存占用，
-    /// 单个元素上限与 NDJSON / SSE 一致（8 MB）。
+    /// 单个元素上限与 NDJSON / SSE 一致（默认 8 MB，可由 <see cref="AxiosConfig.LimitSettings.MaxStreamFrameLength"/> 调整）。
     /// </para>
     /// <para>
     /// 与另外两种格式的差异：JSON 必须是 <b>UTF-8</b>（宽字符编码与 gbk 之类非 UTF-8 单字节编码在取流时

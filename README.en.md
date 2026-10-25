@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-1022%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1038%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -219,7 +219,7 @@ await foreach (var chunk in response.Data!)
 }
 ```
 
-Three frame formats (`AxiosStreamFormat`) share the same byte-level framing, idle timeout and 8 MB per-frame cap — only the way a frame boundary is found differs:
+Three frame formats (`AxiosStreamFormat`) share the same byte-level framing, idle timeout and per-frame cap (8 MB by default, configurable) — only the way a frame boundary is found differs:
 
 | Format | Frame boundary | Typical source |
 | --- | --- | --- |
@@ -238,11 +238,12 @@ await foreach (var order in pages.Data!)
 ```
 
 - **Timeout semantics**: for streaming requests `Timeout` **only covers the response headers**; the body is governed by `client.StreamIdleTimeout` — the default `Zero` means no limit (only the cancellation token applies), while a positive value fails when no data arrives for that long (`ECONNABORTED`, with "idle" in the message)
+- **Per-frame cap**: one NDJSON line / one SSE frame / one top-level JSON array element is capped at **8 MB** by default, valid range **1–64 MB** (all three bounds live on `AxiosConfig.LimitSettings`: `DefaultStreamFrameLength` / `MinStreamFrameLength` / `MaxStreamFrameLengthLimit`), adjustable via `Limits.MaxStreamFrameLength`; out-of-range values throw `ERR_BAD_OPTION_VALUE` before the request is sent, and `null` means "back to the default". There is **no "unlimited" mode** — the framer must hold a whole frame in memory before handing it to the serializer, so lifting the cap hands your memory budget to the server; use `ResponseType.Stream` for anything larger. The cap is only a ceiling: a 1 KB frame occupies the 8 KB read buffer and nothing is pre-allocated at the cap size — but do the math before raising it (read buffer + spill buffer + decoded UTF-16 string ≈ 2–4× the cap)
 - **Framing happens at the byte level**: split on `\n` first, then decode — a multi-byte character split across chunks survives (decoding first and splitting lines afterwards produces `U+FFFD`); the JSON array format follows the same rule, locating each element's byte range with `Utf8JsonReader` before decoding
 - **Charset limits**: NDJSON / SSE depend on `0x0A` lining up with character boundaries, so the response `Content-Type` charset must be ASCII-compatible (UTF-8 / US-ASCII / ISO-8859-1 / GBK, ...); wide encodings such as `charset=utf-16` / `utf-32` throw `ERR_BAD_RESPONSE` when the stream is obtained instead of silently producing misaligned frames. **The JSON array format is stricter: UTF-8 only** (`Utf8JsonReader` understands UTF-8 bytes only, so ASCII-compatible-but-not-UTF-8 declarations like gbk / iso-8859-1 fail the same way); a UTF-8 BOM is skipped, a UTF-16 / UTF-32 BOM is rejected
 - **Resolved once**: the frame serializer and the per-line encoding are each resolved **when the stream is obtained** (media type and charset are constant for the whole response), so high-rate streams no longer hit the registry and encoding table per frame; registering a serializer with `AxiosContent.Register` after the stream starts does not affect an existing enumerator
 - **SSE**: multi-line `data:` joined with newlines, `:` comment lines treated as heartbeats and ignored, `event:` / `id:` / `retry:` ignored, `data: [DONE]` ends the stream; **NDJSON**: one JSON value per line, empty lines skipped
-- **JSON array**: `[{...},{...}]` is the most common batch / paged response shape. Framing is **incremental** via `Utf8JsonReader`: `,` / `]` inside strings, escape sequences and nested containers are all crossed by the parser, every element is delivered as soon as it closes (**no need to wait for the trailing `]`**), and the array size never affects memory usage. An element larger than one read has its consumed prefix spilled into a separate buffer and is stitched back together for a single decode, so multi-byte characters split across chunks survive; a single element over 8 MB is `ERR_BAD_RESPONSE`. The top level must be an array — a wrapped shape like `{"items":[...]}` fails and names the expected `[`; scalar elements (`[1,2,3]`) are delivered frame by frame as well; on `]` enumeration ends immediately without waiting for the connection to close or validating trailing bytes; a stream that ends before `]` is `ERR_BAD_RESPONSE` (the message names the missing `closing ']'`, and already delivered elements are kept). The outer array's dialect follows `Serialization.JsonSerializerOptions` (`AllowTrailingCommas` / `ReadCommentHandling` / `MaxDepth`), matching how the elements themselves are parsed
+- **JSON array**: `[{...},{...}]` is the most common batch / paged response shape. Framing is **incremental** via `Utf8JsonReader`: `,` / `]` inside strings, escape sequences and nested containers are all crossed by the parser, every element is delivered as soon as it closes (**no need to wait for the trailing `]`**), and the array size never affects memory usage. An element larger than one read has its consumed prefix spilled into a separate buffer and is stitched back together for a single decode, so multi-byte characters split across chunks survive; a single element over the per-frame cap (8 MB by default, tunable via `Limits.MaxStreamFrameLength`) is `ERR_BAD_RESPONSE`. The top level must be an array — a wrapped shape like `{"items":[...]}` fails and names the expected `[`; scalar elements (`[1,2,3]`) are delivered frame by frame as well; on `]` enumeration ends immediately without waiting for the connection to close or validating trailing bytes; a stream that ends before `]` is `ERR_BAD_RESPONSE` (the message names the missing `closing ']'`, and already delivered elements are kept). The outer array's dialect follows `Serialization.JsonSerializerOptions` (`AllowTrailingCommas` / `ReadCommentHandling` / `MaxDepth`), matching how the elements themselves are parsed
 - **Ownership**: a stream can be enumerated once; ending or `break`ing an `await foreach` disposes the enumerator and returns the connection, while manual `MoveNextAsync` callers must call `DisposeAsync` themselves or the connection stays occupied
 - **Errors**: status-code errors throw at `await` (honoring `ErrorFactory`; up to 64 KB of the failing response body is preserved), frame parse failures are `ERR_BAD_RESPONSE`, mid-stream disconnects are `ERR_NETWORK`, cancellation is `ERR_CANCELED`
 
@@ -340,10 +341,11 @@ var config = new AxiosConfig
     // —— Size, rate limiting, and streaming timeout ——
     Limits = new()
     {
-        StreamIdleTimeout = null,             // streaming body idle timeout: null = share Timeout; Zero = unlimited
-        MaxContentLength = 10 * 1024 * 1024,  // response body cap (bytes), null = unlimited
-        MaxBodyLength = 50 * 1024 * 1024,     // request body cap (bytes), null = unlimited
-        MaxRate = 2 * 1024 * 1024,            // one-way rate limit (bytes/second), null = unlimited
+        StreamIdleTimeout = null,                // streaming body idle timeout: null = share Timeout; Zero = unlimited
+        MaxStreamFrameLength = 12 * 1024 * 1024, // per-frame cap (bytes): null = 8 MB default; 1–64 MB
+        MaxContentLength = 10 * 1024 * 1024,     // response body cap (bytes), null = unlimited
+        MaxBodyLength = 50 * 1024 * 1024,        // request body cap (bytes), null = unlimited
+        MaxRate = 2 * 1024 * 1024,               // one-way rate limit (bytes/second), null = unlimited
     },
 
     // —— Callbacks and status validation ——
@@ -1499,6 +1501,7 @@ Key points:
 - `auth` (HTTP Basic; the username may not contain a colon — RFC 7617 splits on the first one — while the password may), `withCredentials`, proxy, automatic redirects (`maxRedirects: 0` disables them entirely), automatic gzip/deflate/br decompression
 - `axios.getUri(config)` → `client.GetUri(config)`: builds the URL without sending a request (debugging/logging/pre-signing)
 - `maxContentLength` / `maxBodyLength`: size caps for response and request bodies; exceeding them throws `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST` with the actual byte count in the message. With no cap set, a body larger than a single array can hold (about 2GB, `Array.MaxLength`) also throws `ERR_BAD_RESPONSE` and points you at `ResponseType.Stream`, instead of a bare `OutOfMemoryException`
+- `Limits.MaxStreamFrameLength` (per-frame cap for streaming): one NDJSON line / one SSE frame / one JSON array element, 8 MB by default, valid range 1–64 MB, `null` = default; out-of-range values throw `ERR_BAD_OPTION_VALUE`. Unlike `maxContentLength` there is **no "unlimited" mode** (a whole frame must fit in memory), and peak memory is roughly 2–4× the cap
 - `onUploadProgress` / `onDownloadProgress`: progress events (loaded/total/percentage/average rate/ETA) in both directions; on a 307/308 redirect or a retry that resends the body the counts **accumulate across attempts**, so the progress never jumps back (percentage capped at 100%)
 - `maxRate`: one-way upload/download throttling (bytes/second)
 - `paramsSerializer` / `formFieldNameSelector`: custom query string and form field naming (the field-name customization of axios's `formSerializer`)
@@ -1550,6 +1553,7 @@ Key points:
 | `withCredentials` / `proxy` / `maxRedirects` | Same-named properties on the `Connection` sub-object (**instance-level only**, see below) |
 | `maxContentLength` / `maxBodyLength` | Same-named properties on the `Limits` sub-object (`long?`, bytes; exceeding them throws `ERR_BAD_RESPONSE` / `ERR_BAD_REQUEST`) |
 | `maxRate` | `c.Limits.MaxRate` (bytes/second, shared by upload and download) |
+| — (no equivalent setting) | `c.Limits.MaxStreamFrameLength` (per-frame cap for streaming, bytes; `null` = 8 MB default, valid 1–64 MB) |
 | `onUploadProgress` / `onDownloadProgress` | Same-named properties on the `Callbacks` sub-object (`Action<AxiosProgressEvent>`) |
 | `timeoutMessage` | `c.Callbacks.TimeoutMessage` |
 | `paramsSerializer` | `c.Serialization.ParamsSerializer` or the instance-level `Defaults.Serialization.ParamsSerializer` (returns an already-encoded query string) |
@@ -1626,7 +1630,7 @@ Client usage follows production conventions: **each sample keeps one static clie
 >
 > Item 19 is the only sample that needs an extra NuGet package (`Newtonsoft.Json`), and only to demonstrate **engine replacement** — the library itself still has zero third-party runtime dependencies; if you do not need custom serialization you can remove `Newtonsoft.Json` from the sample project.
 
-The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 9 examples make real HTTP round-trips:
+The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is the companion sample for the declarative client (namespace [`AxiosNet.WebAPI`](#declarative-api-client-axiosnetwebapi-refit-style)) (also ready-to-run and offline): request and response models live in `WebAPI/ApiModels.cs`, and 10 examples make real HTTP round-trips:
 
 1. **GET detail**: `[Path]` binding + the response generic inferred from the request model
 2. **GET list**: unannotated properties bind as query by default, `ids[]=` array binding, `client.GetUri(request)` preview
@@ -1637,8 +1641,9 @@ The `WebAPI/` folder of [`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is 
 7. **Signing/verification**: the `SigningSerializer` decorator around the built-in JSON — request body HMAC-SHA256 into `X-Signature`, response verified before parsing; the demo server verifies symmetrically and rejects unsigned requests with 401
 8. **Streaming (SSE / JSON array)**: `RequestStreamAsync` returns `AxiosResponse<IAsyncEnumerable<T>>` — `await` gives you the status code and headers, `await foreach` consumes frames one by one; the demo server streams with `chunked` encoding, once as `data: ...` frames (terminated by `[DONE]`) and once as a `[{...},{...}]` array whose element is split across two chunks right in the middle of a multi-byte character
 9. **Multipart upload**: `[Multipart]` + `[Part]` — the model itself is the form, and the server parses it byte-exactly and reports the part list
+10. **Per-frame cap**: the default 8 MB rejects a 9 MB element (`ERR_BAD_RESPONSE`); raising `Limits.MaxStreamFrameLength` to 12 MB lets the same endpoint stream to the end — the sample also spells out that the cap is only a ceiling (nothing is pre-allocated at cap size) and that there is no "unlimited" mode
 
-These 9 items live in the same startup menu as the 26 above (menu items 27-35, with their own demo server started lazily on first use):
+These 10 items live in the same startup menu as the 26 above (menu items 27-36, with their own demo server started lazily on first use):
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1655,7 +1660,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **975** core/declarative cases plus **47** DI-extension cases — **1022** in total (**2044** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **991** core/declarative cases plus **47** DI-extension cases — **1038** in total (**2076** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1714,7 +1719,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 1022 xUnit tests (975 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 2044 executions)
+# Run all 1038 xUnit tests (991 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 2076 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1723,9 +1728,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 167 under `WebAPI/`) | 975 | `net8.0` / `net6.0` | 1950 |
+| `AxiosNet.Tests` (core + declarative, incl. 183 under `WebAPI/`) | 991 | `net8.0` / `net6.0` | 1982 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1022** | | **2044** |
+| **Total** | **1038** | | **2076** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1828,7 +1833,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 
 **Declarative client and DI**
 
-- Declarative client (`AxiosNet.Tests/WebAPI/`, 167 cases)
+- Declarative client (`AxiosNet.Tests/WebAPI/`, 182 cases)
   - route/Path/Query/Header/Body binding end-to-end (path escaping, absolute URL overriding BaseAddress, model- and call-site Configure hooks, inherited property bindings)
   - default body (POST/PUT/PATCH + exactly one unannotated non-scalar property; scalar guard, ambiguity with multiple properties stays query, explicit `[Query]` does not block, DELETE excluded, unannotated dictionaries always stay in the flat query)
   - multi-binding (Path+Header, Query+Header, scalar Path+Body+Header in all three places, complex object Query+Body; non-scalar Path/Header rejected at build time)
@@ -1837,6 +1842,7 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
   - model definition validation (missing route, unbound/extra placeholders, malformed braces, duplicate placeholder, multiple bodies, duplicate names, null path value) and error caching
   - streaming: replayed config does not leak `ResponseType.Stream`, cancellation during a pending read maps to `ERR_CANCELED`, a mismatched deserialized type maps to `ERR_BAD_RESPONSE`, consumer pauses do not trip the idle timeout, a non-ASCII-compatible charset fails when the stream is obtained (`Audit20261023B1B8FixTests`, 8 cases)
   - streaming frame formats (`ApiClientStreamingJsonArrayTests`, 25 cases): a JSON array is delivered **element by element** — tokens and multi-byte characters split across chunks, `]` / `,` inside nested containers and strings never mistaken for structure, scalar elements, empty array and empty body, UTF-8 BOM (including a BOM split in half), a non-UTF-8 charset failing when the stream is obtained, a non-array root / invalid JSON / truncation, the 8 MB element cap, idle timeout and single enumeration, and the dialect following `JsonSerializerOptions`
+  - configurable per-frame cap (`StreamFrameLimitTests`, 16 cases): the 8 MB default is unchanged (setting other `Limits` items does not carry an unset cap over); the three bound constants (default / min / max) are self-consistent (the default sits inside the range); a 9 MB frame reads fine once `Limits.MaxStreamFrameLength` is raised to 12 MB (one case each for NDJSON / SSE / JSON array); a 2 MB frame is rejected once the cap is tightened to 1 MB, and a per-request value can both widen and narrow the instance default; an explicit per-request `null` falls back to the default (the merge honours the `*Set` marker); `Clone` keeps the value; 0 / negative / below 1 MB / above 64 MB fail before sending (the transport is never called)
 - Singleton DI registration (`AxiosNet.DependencyInjection.Tests`, 40 cases)
   - `AddAxiosClient` registration shape and configure application, TryAdd first-wins (configure side effects skipped too), end-to-end requests from a resolved client
   - `AddApiClient` in both modes (BaseAddress and configureDefaults applied, facade reusing the registered `AxiosClient`, resolve-time error when none is registered, shared client surviving facade disposal, self-built and facade registrations independent)
@@ -2019,15 +2025,15 @@ How the stages map onto the source files (read together with the [project layout
 │     ├─ ApiClientResolver.cs            # IApiClientResolver + site definitions/creation (owner of the named sites' clients)
 │     └─ ApiClientOwnedAxiosClient.cs     # internal holder for the self-built and named-site clients (released when the container shuts down)
 ├─ samples/
-│  ├─ AxiosNet.Simple/           # 25 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 9 declarative samples under WebAPI/; the startup menu lists all 34 by reflection — type a number to run, a = all, q = quit
-│  │  ├─ Examples/               # core integration samples (25 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
-│  │  └─ WebAPI/                 # declarative client sample (own demo server: 9 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification and SSE / JSON-array streaming; menu items 27-35)
+│  ├─ AxiosNet.Simple/           # 26 categories of integration calls (embedded demo server + exact multipart parsing + Newtonsoft.Json / XML / binary serializers + DNS refresh + bearer tokens + request signing) + 10 declarative samples under WebAPI/; the startup menu lists all 36 by reflection — type a number to run, a = all, q = quit
+│  │  ├─ Examples/               # core integration samples (26 items; IExample classes need no registration to appear in the menu; SampleMenu.cs is the shared interactive menu used by both sample apps)
+│  │  └─ WebAPI/                 # declarative client sample (own demo server: 10 examples over real HTTP round-trips, incl. authorization declarations, multipart, global logging, HMAC signing/verification, SSE / JSON-array streaming and the per-frame cap; menu items 27-36)
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (975 cases × net6.0 / net8.0 = 1950 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (991 cases × net6.0 / net8.0 = 1982 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / shared models
-   │  └─ WebAPI/                 # declarative client tests (167 cases, same project and assembly as the main tests)
+   │  └─ WebAPI/                 # declarative client tests (183 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)
 ```
 
