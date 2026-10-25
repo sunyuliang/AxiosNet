@@ -56,11 +56,28 @@ public sealed class Http2Example : IExample
             Console.WriteLine($"      失败（预期）：code={ex.Code} —— Exact 的语义就是「不支持就报错，不降级」");
         }
 
-        // 4) HTTP/3：本库没有 h3 专属实现（无 QUIC / Alt-Svc），但版本是原样透传的。
-        //    h3 只存在于 QUIC 上，明文目标上 OrLower 会落到 1.1（Exact 则会直接失败）。
+        // 4) HTTP/3：默认仍是 2.0，h3 要显式要求（Version30）。能不能真的跑 h3 先看本机能力。
+        //    h3 只存在于 QUIC 上，明文目标上 OrLower 会落到 1.1（Exact 则在发请求前就报配置错误）。
         Console.WriteLine("  [4] 要求 h3（HttpVersion = Version30，策略默认 OrLower）");
+        Console.WriteLine($"      本机 HTTP/3 能力：{(Http3Support.IsSupported ? "可用" : "不可用 —— " + Http3Support.UnsupportedReason)}");
         var h3 = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version30);
         Console.WriteLine($"      客户端请求 3.0 -> 服务端收到 {h3.Data!.RequestVersion}，响应协商结果 {h3.ProtocolVersion}：明文上不存在 h3，按 OrLower 落 1.1");
+
+        // 5) 「必须 h3」在明文目标上是不可能成立的配置：库在发请求之前就报错，不会白等一次连接超时
+        Console.WriteLine("  [5] 要求必须 h3（VersionPolicy = RequestVersionExact）");
+        try
+        {
+            await http.GetAsync<ProtocolProbe>("protocol", c =>
+            {
+                c.Connection.HttpVersion = HttpVersion.Version30;
+                c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            });
+            Console.WriteLine("      [意外] 明文目标竟然接受了 h3 请求");
+        }
+        catch (AxiosException ex)
+        {
+            Console.WriteLine($"      失败（预期）：code={ex.Code} —— 环境上不可能做到，发请求前就报配置错误");
+        }
 
         Console.WriteLine();
         Console.WriteLine("  要点：");
@@ -69,7 +86,8 @@ public sealed class Http2Example : IExample
         Console.WriteLine("    · 明文 http:// 没有 ALPN 可协商，一律走 1.1 —— 所以默认 2.0 只影响 https，http:// 的线上行为与之前完全一致");
         Console.WriteLine("    · 需要 1.1 时一行退回：Connection.HttpVersion = Version11（老网关、NTLM 认证、必须用连接级头）");
         Console.WriteLine("    · 降级是静默的：response.ProtocolVersion 是「实际用了哪个版本」，日志 / 断言靠它确认有没有真拿到 h2");
-        Console.WriteLine("    · HTTP/3：版本原样透传，但真正跑 h3 需要 .NET 7+ 运行时 + QUIC（MsQuic）；本库没有 Alt-Svc 自动发现");
+        Console.WriteLine("    · HTTP/3：默认仍是 2.0，写 Version30 才用 h3；本机能力查 Http3Support.IsSupported（不支持时 UnsupportedReason 说明缺什么）");
+        Console.WriteLine("    · 「必须 h3」（Exact / OrHigher）在明文目标或没有 QUIC 的环境里会在发请求前报 ERR_BAD_OPTION_VALUE，不会白等超时；本库不做 Alt-Svc 自动发现");
         Console.WriteLine("    · 单条 h2 连接的并发上限由服务端 MAX_CONCURRENT_STREAMS 决定，池默认允许按 MaxConnectionsPerServer 加连接");
         Console.WriteLine("    · 本机示例没有证书，演示的是明文路径；生产环境（https://）走 TLS + ALPN，配置完全一样");
     }

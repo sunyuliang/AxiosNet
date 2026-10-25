@@ -501,6 +501,26 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             //    没有重试策略时模板本身就是唯一那条请求，与不重试的旧路径完全一致（不多一次分配）。
             var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
 
+            // 默认 HTTP/2：现在 h2 是公网流量的主力（占比约一半，1.x 已降到一成多），默认停在 1.1
+            // 等于让绝大多数调用方白白丢掉多路复用与头压缩。默认 2.0 不会伤到老服务 —— 降级发生在
+            // TLS 握手的 ALPN 里，服务端只认 http/1.1 就直接谈成 1.1，不多一次往返、不多一条连接、
+            // 也没有「先试 2.0 再回退」的探测请求；协商不上时用户根本感知不到（代价只是没拿到 h2 的收益）。
+            // 策略显式写出来（而不是依赖 BCL 默认值）：「不支持就降级」是库的契约，BCL 哪天改了默认策略
+            // （例如改 Exact）不能让这条承诺静默失效 —— 一旦变成 Exact，默认 2.0 就会让所有老服务直接失败。
+            // 明文 HTTP 上没有 ALPN 可协商，OrLower 一律走 1.1，不会拿 h2c 先验知识去撞只认 1.x 的服务端；
+            // 也就是说默认 2.0 只影响 https，http:// 的线上行为与之前完全一致。
+            // 反向（需要强制 1.1：老网关、NTLM/Negotiate 这类连接级认证、必须用 Connection/Keep-Alive
+            // 等 h2 禁止的连接级头）：Connection.HttpVersion = Version11。
+            // 想要 HTTP/3 就写 Version30（默认值不变，仍是 2.0）：本机能不能跑 h3 见 Http3Support，
+            // 版本怎么协商、降级后怎么看真实协议见 README 的 HTTP/3 段。
+            var connection = config.ConnectionOrNull;
+            var httpVersion = connection?.HttpVersion ?? HttpVersion.Version20;
+            var versionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower;
+
+            // HTTP/3 的前置校验：只在真的要 h3 时走（h2 / 1.1 请求一次 Major 比较就返回）。
+            // 位置在遥测起点之前：这属于「准备阶段就失败」的配置错误，不是一次 HTTP 操作，计进耗时只会污染统计。
+            ValidateHttp3Request(uri, httpVersion, versionPolicy, config);
+
             // 遥测的判定与起点都在这里，三件事同一个理由：
             //   ① 口径一致 —— 指标与 span 必须量同一段，而 span 需要 URL（标签里要 host / path），只能到这儿才开；
             //   ② 单一判定 —— 请求拦截器可以整体替换 config，开关必须看**最终**生效配置，提前缓存会看错；
@@ -516,21 +536,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 telemetryActivity = AxiosTelemetry.StartRequest(config, uri);
             }
 
-            // 默认 HTTP/2：现在 h2 是公网流量的主力（占比约一半，1.x 已降到一成多），默认停在 1.1
-            // 等于让绝大多数调用方白白丢掉多路复用与头压缩。默认 2.0 不会伤到老服务 —— 降级发生在
-            // TLS 握手的 ALPN 里，服务端只认 http/1.1 就直接谈成 1.1，不多一次往返、不多一条连接、
-            // 也没有「先试 2.0 再回退」的探测请求；协商不上时用户根本感知不到（代价只是没拿到 h2 的收益）。
-            // 策略显式写出来（而不是依赖 BCL 默认值）：「不支持就降级」是库的契约，BCL 哪天改了默认策略
-            // （例如改 Exact）不能让这条承诺静默失效 —— 一旦变成 Exact，默认 2.0 就会让所有老服务直接失败。
-            // 明文 HTTP 上没有 ALPN 可协商，OrLower 一律走 1.1，不会拿 h2c 先验知识去撞只认 1.x 的服务端；
-            // 也就是说默认 2.0 只影响 https，http:// 的线上行为与之前完全一致。
-            // 反向（需要强制 1.1：老网关、NTLM/Negotiate 这类连接级认证、必须用 Connection/Keep-Alive
-            // 等 h2 禁止的连接级头）：Connection.HttpVersion = Version11。
-            var connection = config.ConnectionOrNull;
             var template = new HttpRequestMessage(config.Method, uri)
             {
-                Version = connection?.HttpVersion ?? HttpVersion.Version20,
-                VersionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower
+                Version = httpVersion,
+                VersionPolicy = versionPolicy
             };
 
             // template 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
@@ -1214,6 +1223,47 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         {
             // 错误体可能含敏感信息：清空后再归还，避免下一个租用方读到上一请求的正文。
             ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+        }
+    }
+
+    /// <summary>
+    /// 「明确要求 HTTP/3」时的前置校验：环境上不可能做到就立刻报配置错误，
+    /// 而不是让调用方拿一次莫名其妙的连接超时 / 网络错误去猜原因。
+    /// <para>
+    /// 只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>：这两个策略的语义是「必须至少 3.0」，
+    /// 环境上做不到就没有任何成功的可能。而 <c>RequestVersionOrLower</c>（默认策略）的契约本来就是
+    /// 「能 h3 就 h3、不能就降级」，降级是它的正常路径（真实版本看 <see cref="AxiosResponse.ProtocolVersion"/>），
+    /// 拦下来反而破坏了默认语义 —— 所以在它上面<b>一律放行</b>。
+    /// </para>
+    /// <para>
+    /// 判据用 <see cref="Http3Support"/>（本地能力）而不是「服务端支不支持」：后者只能发请求才知道，
+    /// 那种失败仍然走 <c>ERR_NETWORK</c>。
+    /// </para>
+    /// </summary>
+    private static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
+    {
+        if (version.Major < 3 || policy == HttpVersionPolicy.RequestVersionOrLower)
+        {
+            return;
+        }
+
+        // 明文目标上不存在 h3（QUIC 自带 TLS 1.3，没有「明文 h3」这种东西）：这类配置错误与运行时不支持
+        // 混在一起报，会让人去查 MsQuic 而真凶其实是 http://。
+        if (uri.Scheme != Uri.UriSchemeHttps)
+        {
+            throw AxiosException.InvalidOption(
+                $"HTTP/3 只能跑在 QUIC（TLS 1.3 over UDP）上，{uri.Scheme}:// 目标不存在 h3："
+                + "请改用 https 目标；要在明文目标上自动落到 1.1，请把 VersionPolicy 设为 RequestVersionOrLower。",
+                config);
+        }
+
+        if (!Http3Support.IsSupported)
+        {
+            throw AxiosException.InvalidOption(
+                $"当前环境跑不了 HTTP/3，无法满足 HttpVersion = 3.0 + VersionPolicy = {policy}："
+                + $"{Http3Support.UnsupportedReason}。"
+                + "想要「有 h3 就用 h3、没有就自动降级」，请把 VersionPolicy 设为 RequestVersionOrLower。",
+                config);
         }
     }
 

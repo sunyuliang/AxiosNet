@@ -168,27 +168,41 @@ public sealed class Audit20261025RetryTests
         Assert.Equal("payload", Encoding.UTF8.GetString(server.Received[1].Body));
     }
 
+    /// <summary>
+    /// Timeout 是「每次尝试」的预算，不是「整条请求（含重试）」的总预算。
+    /// <para>
+    /// 口径的算术必须让两种实现在时间轴上分叉，而不是靠「差一点点」：
+    /// 4 次尝试 × 300ms 服务端延迟 + 1000ms 预算 ——
+    /// 独立预算时每次 300ms 远小于 1000ms（余量 700ms）；共享预算时第 4 次尝试起跑
+    /// 已经耗掉 900ms，只剩 100ms 却要等 300ms，必然超时。
+    /// </para>
+    /// <para>
+    /// 余量不能再收紧：CI 满载时 <c>Task.Delay</c> 与线程池注入可能晚到数百毫秒
+    /// （实测记录见 <c>StreamCancellationTests</c> 的预算注释），
+    /// 「300ms 预算配 150ms 延迟」这种 1:2 的窄口径会周期性假失败 ——
+    /// 失败信息看起来像「超时预算被整条请求共享」，实际只是机器忙。
+    /// </para>
+    /// </summary>
     [Fact]
     public async Task TimeoutBudget_IsPerAttempt_NotForWholeRequest()
     {
+        const int attempts = 4;
         var calls = 0;
         await using var server = TestHttpServer.Start(async _ =>
         {
             var call = Interlocked.Increment(ref calls);
-            await Task.Delay(150);
-            return call == 1
+            await Task.Delay(300);
+            return call < attempts
                 ? TestJson.Response(new { error = "boom" }, statusCode: 500)
                 : TestJson.Response(new { ok = true });
         });
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(1) } });
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(attempts - 1) } });
 
-        // Timeout 是「每次尝试」的预算：两次各 150ms 都在 300ms 以内，
-        // 若按「整条请求共享一份预算」实现，第二次尝试会被第一次耗掉的预算挤掉。
-        var response = await client.GetAsync(server.Url + "x", c => c.Timeout = TimeSpan.FromMilliseconds(300));
+        var response = await client.GetAsync(server.Url + "x", c => c.Timeout = TimeSpan.FromMilliseconds(1000));
 
         Assert.Equal(200, response.Status);
-        Assert.Equal(2, server.Received.Count);
+        Assert.Equal(attempts, server.Received.Count);
     }
 
     [Fact]

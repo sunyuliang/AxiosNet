@@ -41,6 +41,14 @@ public sealed partial class AxiosConfig
         /// <c>Upgrade</c> 这类 HTTP/2 禁止的连接级头时，显式设
         /// <c>HttpVersion = HttpVersion.Version11</c>（可只对单次请求设置）。
         /// </para>
+        /// <para>
+        /// <b>HTTP/3</b>：显式设 <c>HttpVersion.Version30</c> 即要求 h3。h3 只能跑在 QUIC（TLS 1.3 over UDP）上，
+        /// 所以只有 https 目标有意义，且要求运行时 / 系统组件齐备 —— 本机行不行查 <see cref="Http3Support"/>。
+        /// 与默认策略 <c>OrLower</c> 搭配时，环境或服务端不支持就<b>静默降级</b>到 h2 / 1.1（真实版本看
+        /// <see cref="AxiosResponse.ProtocolVersion"/>）；与 <c>Exact</c> 搭配时是「必须 h3」，环境上不可能做到
+        /// （明文目标、运行时没有 QUIC）会在发请求前抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+        /// 默认值仍是 2.0：h3 是显式选择，不会因为「本机支持」就自动升级。
+        /// </para>
         /// <para>按请求项：实例 defaults 与单次请求都可设置，单次请求覆盖实例默认值。</para>
         /// </summary>
         public Version? HttpVersion { get; set; }
@@ -53,6 +61,11 @@ public sealed partial class AxiosConfig
         /// 设为 <c>RequestVersionExact</c> 则是「只用该版本，协商不上就报错」，用于必须确认对端说 h2 的场景。
         /// 想在明文 HTTP 上跑 HTTP/2（h2c 先验知识）也必须用 <c>RequestVersionExact</c>，
         /// <c>RequestVersionOrLower</c> 在明文连接上一律用 1.1。
+        /// </para>
+        /// <para>
+        /// 配合 <c>HttpVersion = Version30</c> 时，本项就是 h3 的严格度开关：<c>OrLower</c>（默认）=
+        /// 「有 h3 就用 h3、没有就降级」，<c>Exact</c> = 「必须 h3」—— 环境上不可能做到（明文目标 /
+        /// 运行时没有 QUIC）在发请求前就报配置错误，环境可以但服务端不支持才报 <c>ERR_NETWORK</c>。
         /// </para>
         /// <para>按请求项：实例 defaults 与单次请求都可设置，单次请求覆盖实例默认值。</para>
         /// </summary>

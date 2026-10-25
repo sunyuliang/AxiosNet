@@ -302,6 +302,51 @@ public sealed class TelemetryTests
         Assert.Null(duration.Tag(TagStatusCode));
     }
 
+    /// <summary>
+    /// instrument 的元数据（名字 / 类型 / 单位 / 描述 / Meter 名与版本）本身就是对外契约：
+    /// OpenTelemetry 的 <c>AddMeter("AxiosNet")</c> 收到的就是这些，改名或改单位会让已经画好的仪表盘静默失效。
+    /// <para>
+    /// 这条用例不需要引 OpenTelemetry 包 —— SDK 最终也是通过 <see cref="MeterListener"/> 拿 instrument，
+    /// 所以「MeterListener 看到什么」就是「SDK 看到什么」。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Metrics_InstrumentMetadata_IsStableForOpenTelemetry()
+    {
+        var instruments = new List<Instrument>();
+        using var listener = new MeterListener
+        {
+            // 只记录元数据，不 EnableMeasurementEvents：不给别的用例加测量开销
+            InstrumentPublished = (instrument, _) =>
+            {
+                if (instrument.Meter.Name == AxiosTelemetry.MeterName)
+                {
+                    instruments.Add(instrument);
+                }
+            }
+        };
+        listener.Start();
+
+        Assert.Equal(3, instruments.Count);   // 指标数量也是契约：新增一个就要同步双版 README
+
+        // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
+        var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
+        Assert.All(instruments, instrument => Assert.Equal(assemblyVersion, instrument.Meter.Version));
+
+        var duration = Assert.IsType<Histogram<double>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.RequestDurationInstrumentName));
+        Assert.Equal("s", duration.Unit);     // 秒：与 OpenTelemetry HTTP semconv 的时长单位一致
+        Assert.False(string.IsNullOrWhiteSpace(duration.Description));
+
+        var active = Assert.IsType<ObservableGauge<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.ActiveRequestsInstrumentName));
+        Assert.Equal("{request}", active.Unit);
+
+        var retries = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.RetriesInstrumentName));
+        Assert.Equal("{retry}", retries.Unit);
+    }
+
     [Fact]
     public async Task Metrics_ActiveRequests_RisesWhileRequestInFlight()
     {

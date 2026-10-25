@@ -309,7 +309,8 @@ public sealed class HttpVersionNegotiationTests
     }
 
     // ------------------------------------------------------------------
-    // HTTP/3：本库没有 h3 专属实现（无 QUIC / Alt-Svc），但版本原样透传
+    // HTTP/3：版本原样透传（本库不做 Alt-Svc 发现）；「环境不可能」的严格策略由
+    // Http3SupportTests 覆盖
     // ------------------------------------------------------------------
 
     [Fact]
@@ -328,10 +329,11 @@ public sealed class HttpVersionNegotiationTests
     }
 
     [Fact]
-    public async Task Http3WithExactPolicy_FailsAsNetworkError()
+    public async Task Http3WithExactPolicy_OnCleartext_FailsBeforeSending()
     {
-        // Exact + 3.0 = 「必须是 h3」：QUIC 建不起来就该失败，但错误必须走库的错误码，
-        // 不能把 BCL 的 HttpRequestException 漏给调用方（也覆盖 .NET 6 运行时没有 QUIC 的情况）。
+        // Exact + 3.0 = 「必须是 h3」：明文目标上不可能成立，属于配置错误而不是网络故障，
+        // 所以要在发请求之前就报库的错误码（一个 TCP 连接都不建），不能把 BCL 的 HttpRequestException
+        // 漏给调用方，也不能让调用方拿着 ERR_NETWORK 去查网络。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
@@ -341,7 +343,8 @@ public sealed class HttpVersionNegotiationTests
             c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         }));
 
-        Assert.Equal("ERR_NETWORK", ex.Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Equal(0, server.TotalConnections);
     }
 
     private static ConnectionPoolOptions TrustAnyCertificate() => new()

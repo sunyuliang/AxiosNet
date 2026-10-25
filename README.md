@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-1060%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1069%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -60,6 +60,7 @@
   - [链路：ActivitySource](#链路activitysource)
   - [指标：Meter](#指标meter)
   - [事件：DiagnosticListener](#事件diagnosticlistener)
+  - [接 OpenTelemetry（实测）](#接-opentelemetry实测)
   - [配置与开销](#配置与开销)
 - [特性](#特性)
 - [axios ↔ AxiosNet 对照表](#axios--axiosnet-对照表)
@@ -338,7 +339,7 @@ var config = new AxiosConfig
         Auth = new AxiosAuth("user", "pass"), // Basic
         MaxRedirects = 5,
         WithCredentials = false,
-        HttpVersion = HttpVersion.Version20,                     // 默认 2.0；退回 1.1 改成 Version11
+        HttpVersion = HttpVersion.Version20,                     // 默认 2.0；退回 1.1 改成 Version11，要 h3 改成 Version30
         VersionPolicy = HttpVersionPolicy.RequestVersionOrLower, // 默认：协商不上就降级（Exact = 不支持就报错）
         // Proxy / Credentials / PoolOptions ...
     },
@@ -1393,7 +1394,8 @@ sharedPool.EvictIdleEndpoints();
 | `Version20` + `RequestVersionExact` | 只发 2.0，协商不上就报错 | 需要确认对端真的支持 h2 时用；明文上等于 h2c 先验知识 |
 | `HttpVersion = Version11`（策略默认 OrLower） | HTTP/1.1 | 退回老协议：老网关、NTLM 认证、必须用连接级头 |
 | `Version11` + `RequestVersionExact` | HTTP/1.1 | 显式声明「只用 1.1」，连协商都不做 |
-| `HttpVersion = Version30`（策略默认 OrLower） | 有 QUIC 且服务端支持 h3 时 3.0；否则降级 h2 / 1.1。明文一律 1.1 | 见下方 HTTP/3 说明：需要 .NET 7+ 运行时与 MsQuic，本库不做 Alt-Svc 自动发现 |
+| `HttpVersion = Version30`（策略默认 OrLower） | 有 QUIC 且服务端支持 h3 时 3.0；否则降级 h2 / 1.1。明文一律 1.1 | h3 是显式选择（默认仍是 2.0）；本机能力查 `Http3Support`，严格模式（`Exact` / `OrHigher`）下环境不可能做到会在发请求前报 `ERR_BAD_OPTION_VALUE` |
+| `Version30` + `RequestVersionExact` | 只发 3.0，做不到就报错 | 必须 h3 时用：明文目标 / 运行时没有 QUIC 属配置错误（发请求前报 `ERR_BAD_OPTION_VALUE`），服务端不支持则 `ERR_NETWORK` |
 
 ```csharp
 // 默认：HTTP/2，什么都不用配（服务端不支持自动降级回 1.1）
@@ -1422,6 +1424,20 @@ await client.GetAsync("http://h2c.example.com/", c =>
     c.Connection.HttpVersion = HttpVersion.Version20;
     c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
 });
+
+// 优先 HTTP/3：环境或服务端不支持就静默降级（实际版本看 response.ProtocolVersion）
+await client.GetAsync(url, c => c.Connection.HttpVersion = HttpVersion.Version30);
+
+// 必须 HTTP/3：环境上不可能做到（明文目标 / 没有 QUIC）会在发请求前抛 ERR_BAD_OPTION_VALUE
+// 想「做不到就走 h2」而不是报错，就先问本机能力再决定用哪套配置
+if (Http3Support.IsSupported)
+{
+    await client.GetAsync(url, c =>
+    {
+        c.Connection.HttpVersion = HttpVersion.Version30;
+        c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+    });
+}
 ```
 
 > **为什么默认 2.0 是安全的**：降级发生在 TLS 握手的 ALPN 阶段（ClientHello 同时带 `h2` 与 `http/1.1`，服务端挑一个），与握手同一次往返。实测在「每个请求都重新建连」的最坏场景下，请求 2.0 与显式 1.1 的握手次数、耗时完全一致，不存在额外开销。明文 `http://` 上没有 ALPN 可协商，`OrLower` 一律用 1.1，也不会拿 h2c 先验知识去撞只认 1.x 的服务端——**默认值只影响 https**。
@@ -1432,7 +1448,7 @@ await client.GetAsync("http://h2c.example.com/", c =>
 
 > **怎么确认实际用的是哪个版本**：降级是静默的，所以 `AxiosResponse.ProtocolVersion` 暴露了这次请求**真正协商到**的版本（取自响应的 `Version`）。请求意图看 `Config.Connection.HttpVersion`，实际结果看 `ProtocolVersion` —— 两者不同就说明发生了降级。
 >
-> **HTTP/3**：版本是原样透传的（`HttpVersion` 是 `Version?`，写 `Version30` 不需要改库），但本库**没有 h3 专属实现**：不做 Alt-Svc 自动发现，也没有 QUIC 相关配置。真要跑 h3 需要 ① .NET 7+ 运行时，② 可用的 MsQuic（Windows 11 / Server 2022+ 自带，Windows 10 与多数 Linux 发行版需另装 `libmsquic`），③ 服务端在 UDP 443 上支持 h3。三者缺一：`OrLower` 会降级回 h2 / 1.1（实测 3.0 在只给 `h2` 的 TLS 服务端上确实回落到 h2），`Exact` 则报 `ERR_NETWORK`。h3 只能跑在 QUIC（TLS 1.3 over UDP）上，明文 `http://` 上不存在 h3，`OrLower` 一律落 1.1。
+> **HTTP/3**：默认仍是 2.0，h3 是**显式选择** —— 设 `HttpVersion = Version30` 即可（版本原样透传给 BCL）。能不能真的跑 h3 取决于三件事：① 运行时支持 —— .NET 7+ 默认开启，**.NET 6 运行时默认关闭**（需在 runtimeconfig.json 的 `configProperties` 里写 `"System.Net.SocketsHttpHandler.Http3Support": true`，或启动前设环境变量 `DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP3SUPPORT=1`）；② QUIC 组件可用 —— Windows 11 / Server 2022+ 自带 MsQuic，Windows 10 与多数 Linux 发行版需另装 `libmsquic`，容器里还要放行 UDP 443；③ 服务端在 UDP 443 上支持 h3。前两项查 `Http3Support.IsSupported`（不支持时 `UnsupportedReason` 直接说明缺什么）。**策略决定严格度**：默认 `OrLower` = 「有 h3 就用 h3，没有就降级」，降级是静默的（真实版本看 `ProtocolVersion`）；`Exact` / `OrHigher` = 「必须 h3」，环境上不可能做到（明文目标、运行时没有 QUIC）会在**发请求前**抛 `ERR_BAD_OPTION_VALUE` —— 不会白等一次连接超时，环境可以但服务端不支持才报 `ERR_NETWORK`。本库不做 Alt-Svc 自动发现，也没有 QUIC 调优项（握手 / 空闲超时由运行时与系统管理）。
 
 ### DNS 变更与连接过期
 
@@ -1513,7 +1529,7 @@ using var client3 = Axios.Create(
 
 ## 可观测性（Traces / Metrics / Events）
 
-三路观测点（链路 / 指标 / 事件）**默认开启**，名字统一是 `AxiosNet`。接 OpenTelemetry 只要两行：
+三路观测点（链路 / 指标 / 事件）**默认开启**，名字统一是 `AxiosNet`。接 OpenTelemetry 只要两行（耗时直方图另需一个 View，原因见[接 OpenTelemetry](#接-opentelemetry实测)）：
 ```csharp
 builder.Services.AddOpenTelemetry()
     .WithTracing(t => t.AddSource(AxiosTelemetry.ActivitySourceName)) // "AxiosNet"
@@ -1579,6 +1595,40 @@ builder.Services.AddOpenTelemetry()
 | `AxiosNet.Retry` | `AxiosRetryContext`（与 `OnRetry` 回调同一个结构体） | 每次「决定重试」 |
 
 `DiagnosticListener` 这一路是给「只要日志 / 埋点、不想引 OpenTelemetry」的场景准备的，也是 .NET 6 上唯一能看到请求级事件的通道。
+
+### 接 OpenTelemetry（实测）
+
+上面那两行就能接上，库这边不需要任何适配代码（另需给耗时直方图配一个 View，原因见下）。以下是拿真实 OTel SDK 跑出来的结果（`OpenTelemetry` 1.9.0 + `OpenTelemetry.Exporter.InMemory` + `OpenTelemetry.Instrumentation.Http` 1.9.0，宿主 .NET 8，引用的是 net6.0 的库程序集）：
+
+| 验证项 | 实测结果 |
+| --- | --- |
+| `AddSource("AxiosNet")` | span 正常收到；InstrumentationScope 名 `AxiosNet`，版本跟程序集走（`1.0.1.0`） |
+| `AddMeter("AxiosNet")` | 三个指标全部收到，类型 `Histogram` / `LongGauge` / `LongSum`，单位 `s` / `{request}` / `{retry}`，标签与上表一致 |
+| span 层级 | 业务 span → 本库 span → BCL `System.Net.Http` span，`ParentSpanId` 逐层对上，同一条 `TraceId` |
+| 重试 | 一次逻辑请求仍是**一个** span，`http.request.resend_count = 2`，另带两条 `retry` 事件 |
+| 失败 | 404 的 span `Status = Error`、`error.type = 404`，并有一条 `exception` 事件 |
+| 在途数 | 请求进行中采集到 `1`，结束后回落到 `0` |
+| `Telemetry.Enabled = false` | 本库不出 span、不出指标；**但 BCL 的 `System.Net.Http` span 照旧**（那是 BCL 自己的源，库管不到） |
+
+**有一项必须自己配：耗时直方图的分桶。** 本指标按语义约定用**秒**，而 OTel .NET 的默认边界 `0, 5, 10, 25, …, 10000` 是按毫秒量纲设计的 —— 不配 View 的话，正常请求会全部落进 `(0, 5]` 这一个桶，5 ms 和 4 s 在面板上长得一样。加一个 View 即可（边界取 semconv 对 `http.client.request.duration` 的推荐值）：
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddSource(AxiosTelemetry.ActivitySourceName))   // "AxiosNet"
+    .WithMetrics(m => m
+        .AddMeter(AxiosTelemetry.MeterName)                             // "AxiosNet"
+        .AddView(
+            AxiosTelemetry.RequestDurationInstrumentName,
+            new ExplicitBucketHistogramConfiguration
+            {
+                // 秒为单位，从 5 ms 到 10 s
+                Boundaries = new[] { 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10 }
+            }));
+```
+
+配上之后实测分桶变成秒级：2 ms 的 404 落进 `(0.005, 0.01]`，0.5 s 的慢请求落进 `(0.5, 0.75]`。库这边**没法**替你设默认分桶 —— instrument 自带分桶建议（`InstrumentAdvice`）是 .NET 9 才有的 API，net6.0 的单目标程序集用不了；官方的 `OpenTelemetry.Instrumentation.Http` 同样是秒单位、同样要自己配 View，口径一致。
+
+**.NET 6 / 7 宿主上的差异**：BCL 从 .NET 8 才开始为 `HttpClient` 产出 `System.Net.Http` span。在 .NET 6 宿主上实测（同一套代码、`-f net6.0`），指标与标签完全一致，但**只有本库这一个 span**，底下没有 BCL 的子 span。这恰好是[库自己开一层 span](#为什么还要库自己开一层-span)的理由：在 .NET 6 上不这么做，一次请求在 trace 里就是空白。
 
 ### 配置与开销
 
@@ -1647,7 +1697,7 @@ await client.GetAsync<object>("health", configure: c => c.Telemetry.Enabled = fa
 
 - 🔁 **弹性重试**：默认不重试；挂上策略即可按「次数 + 间隔」重试网络错误 / 超时 / 408 / 429 / 5xx（指数退避、抖动、`Retry-After` 优先，默认只重试幂等方法），策略接口 `IAxiosRetryPolicy` 可完全自定义；正文只序列化一次并原样重发
 - 🔌 **网络连接池** `HttpConnectionPool`：按 `scheme://host:port` 池化并复用 `SocketsHttpHandler`，`MaxConnectionsPerServer` 限流、连接生命周期与空闲回收、后台空闲 origin 驱逐、多客户端共享同一池、租约统计
-- 🚀 **默认 HTTP/2，不支持时自动降级**：h2 已是公网流量主力，默认即启用多路复用与头部压缩；降级在 TLS 的 ALPN 里完成（同一次握手，不多往返、不多连接），老服务与明文 `http://` 都不受影响。需要老协议时一行 `Connection.HttpVersion = Version11` 退回；`VersionPolicy = Exact` 可要求必须 h2（也用于明文 h2c）；池默认允许 h2 多连接，避免单连接的 `MAX_CONCURRENT_STREAMS` 上限卡住吞吐
+- 🚀 **默认 HTTP/2，不支持时自动降级**：h2 已是公网流量主力，默认即启用多路复用与头部压缩；降级在 TLS 的 ALPN 里完成（同一次握手，不多往返、不多连接），老服务与明文 `http://` 都不受影响。需要老协议时一行 `Connection.HttpVersion = Version11` 退回；`VersionPolicy = Exact` 可要求必须 h2（也用于明文 h2c）；池默认允许 h2 多连接，避免单连接的 `MAX_CONCURRENT_STREAMS` 上限卡住吞吐；要 **HTTP/3** 就写 `Version30`（默认值不变，仍是 2.0），本机能力查 `Http3Support`，`Exact` / `OrHigher` 下环境不可能做到会在发请求前报 `ERR_BAD_OPTION_VALUE`
 - 🔭 **可观测性（默认开启）**：`ActivitySource` / `Meter` / `DiagnosticListener` 三路观测点，标签取 OpenTelemetry HTTP 语义约定（`http.request.method` / `url.path` / `http.response.status_code` / `network.protocol.version` / `error.type` …），接 OTel 一行 `AddSource("AxiosNet")` + `AddMeter("AxiosNet")`；一个逻辑请求一个 span（重试记在 `http.request.resend_count` + `retry` 事件），指标含耗时直方图 / 在途请求数 / 重试次数且只用低基数标签；没人订阅时零产出，也可按请求 `Telemetry.Enabled = false` 单独关掉（详见[可观测性](#可观测性traces--metrics--events)）
 - 🧩 **dynamic 支持**：`GetAsync<dynamic>` / `ResponseType.Dynamic` 直接 `data.address.city`、`data.items[0].id`，无需定义 DTO（对标 JS 里直接访问 `response.data.xxx`）；对象节点是 `AxiosDynamic`——`data["key"]` 索引可用、缺省成员返回 `null`（不抛）、运行期可增删属性，同时实现 `IDictionary<string,object?>`（可原样回灌 params/请求体，`System.Text.Json` 也按 JSON 对象序列化）；成员访问与 `ExpandoObject` 同构（shape + 固化槽位），实测持平或更快
 - 📦 泛型强类型响应 `GetAsync<T>` 与非泛型 `JsonElement` 响应并存
@@ -1797,7 +1847,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **为什么一份就够**：.NET 只保证“高版本运行时能加载低版本程序集”这一个方向，而库用到的 API 在 6.0 已全部存在，没有任何 7/8/9 专属调用，所以没必要为每个运行时重复编译。像 `System.Text.Json` 这类共享框架程序集，在 .NET 8 应用里运行时自动使用 8.x 版本，不是把 6.x 一起带过去。
 - **不支持 .NET Framework**，也不支持 .NET Core 3.1 及更早：连接池直接建立在 `SocketsHttpHandler` 上（`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`），`netstandard2.0` 的 BCL 契约里没有这个类型；3.1 又缺 `DateOnly`/`TimeOnly`、`ReadAsStreamAsync(CancellationToken)`、`ConcurrentDictionary.TryRemove(KeyValuePair)` 等一批 API，补兼容层的改动量与收益不成比例。
 - **为什么下限是 .NET 6**：`DateOnly` / `TimeOnly`、`HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` 都是 6.0 前后才补齐的；再往下要多维护一层 `#if`，而 .NET 5 已停止支持。当前源码**零 `#if`**。
-- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **1013** 个、DI 扩展 **47** 个，合计 **1060** 个用例（共 **2120** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
+- **验证方式**：测试项目仍是 `net8.0` + `net6.0` 双目标，同一份出厂程序集在两种运行时上各跑一遍全部用例：核心与声明式 **1022** 个、DI 扩展 **47** 个，合计 **1069** 个用例（共 **2138** 次执行，全部通过）。这样恰好覆盖最常见的消费形态——.NET 8 应用加载 `net6.0` 资产。
 
 ```xml
 <!-- 消费方无需任何配置：项目目标框架 >= net6.0 即可引用 -->
@@ -1856,7 +1906,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # 构建（Debug）：类库产出单份 net6.0 资产
 dotnet build AxiosNet.sln
 
-# 运行全部 1060 个 xUnit 单元测试（核心/声明式 1013 + DI 47；两个测试项目均为双目标，实际执行 2120 次）
+# 运行全部 1069 个 xUnit 单元测试（核心/声明式 1022 + DI 47；两个测试项目均为双目标，实际执行 2138 次）
 dotnet test AxiosNet.sln
 
 # Release
@@ -1865,9 +1915,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 183 个） | 1013 | `net8.0` / `net6.0` | 2026 |
+| `AxiosNet.Tests`（核心 + 声明式，含 `WebAPI/` 183 个） | 1022 | `net8.0` / `net6.0` | 2044 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **1060** | | **2120** |
+| **合计** | **1069** | | **2138** |
 
 测试项目使用自研的轻量 HTTP/1.1 Keep-Alive 测试服务器（`TcpListener`，零 NuGet 依赖），可直接观测真实 TCP 连接复用数与峰值并发，覆盖：
 
@@ -1883,7 +1933,8 @@ dotnet build AxiosNet.sln -c Release
 - **文件下载**：`GetAsync<Stream>` 落盘、`ResponseType.ArrayBuffer`、流释放后连接复用、Content-Disposition 文件名、下载超时
 - **dynamic**：共 21 个专项测试——响应图与请求 9 个（`GetAsync<dynamic>` / `PostAsync<dynamic>` / 静态门面 / 显式 responseType 优先），`AxiosDynamic` 契约 12 个（成员与索引一致、缺省成员返回 null、深链行为、运行期增删、异构 shape 交替读、完整 `IDictionary` 表面、JSON 正反序列化、响应对象直接回灌 params/请求体）
 - **连接池**：连接复用、最大连接数限流、跨实例共享、空闲驱逐、多 origin 隔离、Dispose 语义；共享池 fail-fast（连接级 defaults 与 `pool`/`poolOptions` 互斥）；origin key IDNA 归一（unicode/punycode 同节点、IPv6 括号保留）；`pool.Options` 选项隔离
-- **HTTP 版本协商**（`HttpVersionNegotiationTests`，18 个用例）：默认 2.0 + `RequestVersionOrLower`；默认配置下 TLS 服务端 ALPN 只给 `http/1.1` 时自动降级并成功（自签证书的真实握手，服务端观察请求行）、只给 `h2` 时真的按 h2 起手（观察连接序言）；明文服务端默认降级到 1.1、显式 1.1 + `Exact` 也不误发 h2c 序言；`RequestVersionExact` 在明文上发出 h2 先验知识序言；实例默认与按请求覆盖版本/策略；重试复制请求时版本与策略都不丢；**协商结果对调用方可见**（`ProtocolVersion` 取自响应而非请求，降级后能读到 1.1）；**HTTP/3 透传**（3.0 + OrLower 在明文上落 1.1、3.0 + Exact 失败时归 `ERR_NETWORK`）；`EnableMultipleHttp2Connections` 默认开启、可关闭、随选项克隆
+- **HTTP 版本协商**（`HttpVersionNegotiationTests`，18 个用例）：默认 2.0 + `RequestVersionOrLower`；默认配置下 TLS 服务端 ALPN 只给 `http/1.1` 时自动降级并成功（自签证书的真实握手，服务端观察请求行）、只给 `h2` 时真的按 h2 起手（观察连接序言）；明文服务端默认降级到 1.1、显式 1.1 + `Exact` 也不误发 h2c 序言；`RequestVersionExact` 在明文上发出 h2 先验知识序言；实例默认与按请求覆盖版本/策略；重试复制请求时版本与策略都不丢；**协商结果对调用方可见**（`ProtocolVersion` 取自响应而非请求，降级后能读到 1.1）；**HTTP/3 透传**（3.0 + OrLower 在明文上落 1.1、3.0 + Exact 在明文上发请求前就报 `ERR_BAD_OPTION_VALUE`）；`EnableMultipleHttp2Connections` 默认开启、可关闭、随选项克隆
+- **HTTP/3 能力**（`Http3SupportTests`，8 个用例）：`Http3Support.IsSupported` 与运行时 `QuicConnection.IsSupported` 交叉一致、不支持时必须给得出原因（错误信息直接引用它）；默认 `OrLower` 下 3.0 原样交给 BCL（不在客户端被拦下）；`Exact` / `OrHigher` 在明文目标或运行时没有 QUIC 时**一个 TCP 连接都不建**就报 `ERR_BAD_OPTION_VALUE`；1.1 + `Exact` 的老场景不被误伤；重试时 h3 的版本与策略都不丢
 - **响应读取与泛型路由**：无 Content-Length 的关闭 delimiting 响应（缓冲读取未知长度分支）、精确预分配时零拷贝返回；`GetAsync<Stream>` 与显式 `responseType` 不匹配时统一包装为 `ERR_BAD_RESPONSE`（不漏裸 `InvalidCastException`）
 - **自定义 Handler**：`PROPFIND` 等自定义谓词透传、`DelegatingHandler` 直接注入（含 disposeHandler 语义）、`HandlerFactory` 按 origin 调用一次 / **每个 origin 必须拿到独立实例**（两个 origin 交替请求互不影响，前一个不被后一个顶掉）/ 包装默认 Handler / 返回 null 时抛 `InvalidOperationException`、与 pool/poolOptions 及实例级选项的 fail-fast
 - **弹性重试**（`RetryTests`）：默认不重试；5xx / 408 / 429 重试到成功、次数上限、4xx 不重试、POST 默认不重试（`RetryNonIdempotentMethods` 可打开）、网络错误与超时重试、重试间隔真实生效、`Retry-After` 优先与 `MaxDelay` 封顶、指数退避与抖动区间、正文重放（对象 / 可 seek 流；不可 seek 流 fail-fast）、`OnRetry` 回调、自定义策略、单次请求开关实例默认策略、取消后不再重试、响应拦截器只跑一次
@@ -2180,7 +2231,7 @@ dotnet build AxiosNet.sln -c Release
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI 扩展示例（Generic Host 六场景：核心单例 / 自建 / 门面 / 容器授权 / 多站点命名注册 / 键名服务；Examples/ 下 IExample 零注册进菜单）
 │  └─ AxiosNet.Aot/              # Native AOT / 裁剪示例（PublishAot + TrimmerRootAssembly + STJ 源生成上下文；自带回环服务器，断网可跑，演示 axios 风格与声明式两种用法）
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit 单元测试（1013 个用例 × net6.0 / net8.0 双目标 = 2026 次执行）
+   ├─ AxiosNet.Tests/            # xUnit 单元测试（1022 个用例 × net6.0 / net8.0 双目标 = 2044 次执行）
    │  ├─ Infrastructure/         # 自研 Keep-Alive 测试服务器 / 性能服务器 / 遥测探针（三路监听）/ 共用模型
    │  └─ WebAPI/                 # 声明式客户端测试（183 个用例，与主库测试同项目同程序集）
    └─ AxiosNet.DependencyInjection.Tests/ # DI 扩展测试（47 个用例 × net6.0 / net8.0 双目标 = 94 次执行，复用主库/WebAPI 测试基建）

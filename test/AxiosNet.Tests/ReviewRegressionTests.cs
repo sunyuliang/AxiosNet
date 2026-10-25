@@ -217,13 +217,25 @@ public sealed class ReviewRegressionTests
 
     /// <summary>
     /// 同步 Read 上调用方自己传的令牌语义不变：外部取消 → ERR_CANCELED（这里验证外部令牌中途取消）。
+    /// <para>
+    /// 这条用例曾经是「取消与正文到达赛跑」：正文只延迟 800ms，取消用 <c>CancelAfter(150)</c>。
+    /// 两者都靠线程池上的计时器，CI 满载时回调可能晚到数秒（实测记录见 <c>StreamCancellationTests</c>），
+    /// 谁先到全看排队 —— 正文先到，Read 就正常读到数据，用例报「没有抛异常」，
+    /// 看起来像取消处理失效，实际只是调度抖动。
+    /// </para>
+    /// <para>
+    /// 现在两头都拆掉计时器：正文延迟放大到 3s（与 <c>StreamRead_HonorsExternalCancellation</c> 同一口径），
+    /// 取消改由独立线程触发 —— <see cref="Thread.Sleep(int)"/> + <see cref="CancellationTokenSource.Cancel()"/>
+    /// 不排线程池队列，也不会晚到。读早于取消就阻塞被打断，晚于取消就撞上已取消的令牌，
+    /// 两条路径都是 <c>ERR_CANCELED</c>。
+    /// </para>
     /// </summary>
     [Fact]
     public async Task StreamExternalCancel_InterruptsBlockedSyncRead()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(
             Body: Encoding.UTF8.GetBytes("{\"ok\":true}"),
-            BodyDelay: TimeSpan.FromMilliseconds(800)));
+            BodyDelay: TimeSpan.FromSeconds(3)));
 
         using var client = new AxiosClient();
         using var cts = new CancellationTokenSource();
@@ -234,12 +246,29 @@ public sealed class ReviewRegressionTests
             cts.Token);
 
         await using var stream = response.Data!;
-        cts.CancelAfter(TimeSpan.FromMilliseconds(150));
 
-        var ex = await Task.Run(() => Assert.Throws<AxiosException>(
-            () => stream.Read(new byte[16], 0, 16)));
+        var canceller = new Thread(() =>
+        {
+            Thread.Sleep(150);
+            cts.Cancel();
+        })
+        {
+            IsBackground = true
+        };
+        canceller.Start();
 
-        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+        try
+        {
+            var ex = await Task.Run(() => Assert.Throws<AxiosException>(
+                () => stream.Read(new byte[16], 0, 16)));
+
+            Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+        }
+        finally
+        {
+            // 取消线程必须收尾：否则 cts 可能在取消进行中被释放
+            canceller.Join();
+        }
     }
 
     [Fact]

@@ -57,7 +57,14 @@ public static class AxiosTelemetry
     /// <summary>事件名：一次失败尝试后决定重试（载荷 <see cref="AxiosRetryContext"/>）。</summary>
     public const string RetryEventName = "AxiosNet.Retry";
 
-    /// <summary>指标名：逻辑请求耗时直方图（单位秒，含重试与等待）。</summary>
+    /// <summary>
+    /// 指标名：逻辑请求耗时直方图（单位秒，含重试与等待）。
+    /// <para>
+    /// 接 OpenTelemetry 时要为它配一个 <c>View</c> 指定分桶边界：OTel .NET 的默认边界
+    /// （<c>0, 5, 10, 25 … 10000</c>）是按毫秒量纲设计的，而本指标按语义约定用秒，
+    /// 不配的话正常请求会全落进 <c>(0, 5]</c> 一个桶，5 ms 与 4 s 分不开。
+    /// </para>
+    /// </summary>
     public const string RequestDurationInstrumentName = "axiosnet.client.request.duration";
 
     /// <summary>指标名：当前在途请求数（ObservableGauge，收集时读取）。</summary>

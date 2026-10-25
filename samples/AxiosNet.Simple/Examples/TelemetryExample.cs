@@ -14,11 +14,18 @@ namespace AxiosNet.Simple.Examples;
 /// （查询串里有令牌时不记录完整 URL）。
 /// </para>
 /// <para>
-/// 接 OpenTelemetry 时不用这些手工订阅，两行即可（示例项目不引 OTel 包，这里只写出来）：
+/// 接 OpenTelemetry 时不用这些手工订阅（示例项目不引 OTel 包，这里只写出来）：两行订阅 + 一个 View。
+/// View 不是可选项 —— 耗时直方图按语义约定用<b>秒</b>，而 OTel .NET 的默认分桶边界是按毫秒设计的
+/// （0, 5, 10, 25 … 10000），不配的话正常请求会全落进 (0, 5] 一个桶，5 ms 和 4 s 分不开。
 /// <code>
 /// builder.Services.AddOpenTelemetry()
 ///     .WithTracing(t =&gt; t.AddSource("AxiosNet"))
-///     .WithMetrics(m =&gt; m.AddMeter("AxiosNet"));
+///     .WithMetrics(m =&gt; m
+///         .AddMeter("AxiosNet")
+///         .AddView("axiosnet.client.request.duration", new ExplicitBucketHistogramConfiguration
+///         {
+///             Boundaries = new[] { 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10 }
+///         }));
 /// </code>
 /// </para>
 /// </summary>
@@ -189,7 +196,8 @@ public sealed class TelemetryExample : IExample
         Console.WriteLine("    · 三路都默认开启，但「有人订阅才产出」：没人听时不建 span、不发事件，指标退化为几次空检查");
         Console.WriteLine("    · span 名按语义约定取方法（GET / POST），URL 放标签；标签用 OpenTelemetry HTTP semconv 标准名，后端不用额外映射");
         Console.WriteLine("    · 一次逻辑请求一个 span：重试次数记在 http.request.resend_count，每次重试再加一条 retry 事件");
-        Console.WriteLine("    · 底层那次真实 I/O 的 span 由 BCL 自己产出（.NET 8+ 的 System.Net.Http），会自然挂在本库 span 下面");
+        Console.WriteLine("    · 底层那次真实 I/O 的 span 由 BCL 自己产出（.NET 8+ 的 System.Net.Http），会自然挂在本库 span 下面；.NET 6 上 BCL 不产出，只剩本库这一个 span");
+        Console.WriteLine("    · 接 OpenTelemetry：AddSource / AddMeter 订阅，再给耗时直方图配一个 View（秒单位 vs OTel 默认的毫秒边界），详见 README");
         Console.WriteLine("    · 耗时直方图的标签只有方法 / 主机 / 端口 / 状态码 / 错误类型，都是低基数维度，不会把指标打爆");
         Console.WriteLine("    · Telemetry.Enabled = false：健康检查、探针请求不进业务指标；CaptureUrl = false：查询串带令牌时不记完整 URL");
         Console.WriteLine("    · 遥测绝不影响请求：订阅方回调抛异常会被兜住（实测 ActivitySource 会把 ActivityStarted 的异常往外抛，库自己接了）");

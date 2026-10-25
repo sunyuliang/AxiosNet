@@ -3,7 +3,7 @@
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![language](https://img.shields.io/badge/C%23-12-239120)](https://learn.microsoft.com/dotnet/csharp/)
-[![tests](https://img.shields.io/badge/tests-1060%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1069%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -60,6 +60,7 @@ An **axios-style HTTP client for .NET (C#)** whose API maps one-to-one onto the 
   - [Traces: ActivitySource](#traces-activitysource)
   - [Metrics: Meter](#metrics-meter)
   - [Events: DiagnosticListener](#events-diagnosticlistener)
+  - [OpenTelemetry integration (measured)](#opentelemetry-integration-measured)
   - [Configuration and overhead](#configuration-and-overhead)
 - [Features](#features)
 - [axios ↔ AxiosNet mapping](#axios--axiosnet-mapping)
@@ -1380,7 +1381,8 @@ Requests go out as **HTTP/2** by default: h2 now carries roughly half of all pub
 | `Version20` + `RequestVersionExact` | 2.0 only, fail when it cannot be negotiated | For when you must confirm the peer really speaks h2; on cleartext this is h2c prior knowledge |
 | `HttpVersion = Version11` (policy defaults to OrLower) | HTTP/1.1 | Opt back into the old protocol: legacy gateways, NTLM auth, required connection-level headers |
 | `Version11` + `RequestVersionExact` | HTTP/1.1 | Explicit "1.1 only", no negotiation at all |
-| `HttpVersion = Version30` (policy defaults to OrLower) | 3.0 when QUIC is available and the server speaks h3; otherwise downgraded to h2 / 1.1. Cleartext: always 1.1 | See the HTTP/3 note below: needs the .NET 7+ runtime and MsQuic; this library does no Alt-Svc discovery |
+| `HttpVersion = Version30` (policy defaults to OrLower) | 3.0 when QUIC is available and the server speaks h3; otherwise downgraded to h2 / 1.1. Cleartext: always 1.1 | h3 is an explicit choice (the default is still 2.0); check `Http3Support` for local capability — under `Exact` / `OrHigher` an impossible environment fails before the request is sent with `ERR_BAD_OPTION_VALUE` |
+| `Version30` + `RequestVersionExact` | 3.0 only, fail when it cannot be done | For "must be h3": cleartext targets / a runtime without QUIC are configuration errors (`ERR_BAD_OPTION_VALUE` before sending), a server that does not speak h3 yields `ERR_NETWORK` |
 
 ```csharp
 // Default: HTTP/2, nothing to configure (an unsupported server downgrades to 1.1)
@@ -1409,6 +1411,22 @@ await client.GetAsync("http://h2c.example.com/", c =>
     c.Connection.HttpVersion = HttpVersion.Version20;
     c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
 });
+
+// Prefer HTTP/3: silently downgraded when the environment or the server cannot do it
+// (read the real version from response.ProtocolVersion)
+await client.GetAsync(url, c => c.Connection.HttpVersion = HttpVersion.Version30);
+
+// Require HTTP/3: an impossible environment (cleartext target, no QUIC) throws
+// ERR_BAD_OPTION_VALUE before the request is sent. To fall back to h2 instead of
+// failing, ask the machine first and pick the configuration yourself.
+if (Http3Support.IsSupported)
+{
+    await client.GetAsync(url, c =>
+    {
+        c.Connection.HttpVersion = HttpVersion.Version30;
+        c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+    });
+}
 ```
 
 > **Why defaulting to 2.0 is safe**: the downgrade happens during ALPN in the TLS handshake (the ClientHello offers both `h2` and `http/1.1`, the server picks one), i.e. within the handshake that happens anyway. In a benchmark covering the worst case — every request opening a new connection — requesting 2.0 and explicitly requesting 1.1 produced identical handshake counts and timings; there is no extra cost. Cleartext `http://` has no ALPN to negotiate, so `OrLower` always uses 1.1 and never fires h2c prior knowledge at servers that only speak 1.x — **the default only affects https**.
@@ -1419,7 +1437,7 @@ await client.GetAsync("http://h2c.example.com/", c =>
 
 > **How to tell which version you actually got**: the downgrade is silent, so `AxiosResponse.ProtocolVersion` exposes the version that was **really negotiated** (taken from the response's `Version`). Intent lives in `Config.Connection.HttpVersion`, the outcome in `ProtocolVersion` — if they differ, a downgrade happened.
 >
-> **HTTP/3**: the version is passed straight through (`HttpVersion` is a `Version?`, so writing `Version30` needs no library change), but this library has **no h3-specific implementation**: no Alt-Svc discovery and no QUIC knobs. Real h3 needs (1) the .NET 7+ runtime, (2) a working MsQuic (bundled on Windows 11 / Server 2022+, an extra `libmsquic` install on Windows 10 and most Linux distributions), and (3) a server that speaks h3 on UDP 443. Missing any of the three: `OrLower` downgrades to h2 / 1.1 (verified — 3.0 really does land on h2 against an `h2`-only TLS server), while `Exact` fails with `ERR_NETWORK`. h3 only exists over QUIC (TLS 1.3 over UDP); cleartext `http://` has no h3, so `OrLower` always lands on 1.1.
+> **HTTP/3**: the default is still 2.0 — h3 is an **explicit choice**: set `HttpVersion = Version30` (the version is passed straight through to the BCL). Whether h3 can actually run depends on three things: (1) runtime support — on by default since .NET 7, **off by default on the .NET 6 runtime** (add `"System.Net.SocketsHttpHandler.Http3Support": true` to `configProperties` in runtimeconfig.json, or set `DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP3SUPPORT=1` before start-up); (2) a working QUIC stack — MsQuic ships with Windows 11 / Server 2022+, Windows 10 and most Linux distributions need an extra `libmsquic` install, and containers must allow UDP 443; (3) a server that speaks h3 on UDP 443. Check the first two with `Http3Support.IsSupported` (`UnsupportedReason` says exactly what is missing). **The policy sets the strictness**: the default `OrLower` means "h3 when possible, otherwise downgrade" and the downgrade is silent (read the real version from `ProtocolVersion`); `Exact` / `OrHigher` mean "must be h3" — an impossible environment (cleartext target, no QUIC in the runtime) throws `ERR_BAD_OPTION_VALUE` **before the request is sent** (no wasted connection timeout), while a capable environment with a server that does not speak h3 yields `ERR_NETWORK`. This library does no Alt-Svc discovery and exposes no QUIC tuning knobs (handshake / idle timeouts belong to the runtime and the OS).
 
 ### DNS changes and connection expiry
 
@@ -1500,7 +1518,7 @@ Key points:
 
 ## Observability (traces / metrics / events)
 
-All three signal types (traces / metrics / events) are **on by default**, and all three use the name `AxiosNet`. Hooking up OpenTelemetry takes two lines:
+All three signal types (traces / metrics / events) are **on by default**, and all three use the name `AxiosNet`. Hooking up OpenTelemetry takes two lines (the duration histogram additionally needs a View — see [OpenTelemetry integration](#opentelemetry-integration-measured)):
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -1567,6 +1585,40 @@ Listener name `AxiosNet.DiagnosticListener`, four events, all with public payloa
 | `AxiosNet.Retry` | `AxiosRetryContext` (the same struct the `OnRetry` callback receives) | Every "decided to retry" |
 
 This channel exists for "I only want logs / analytics and do not want OpenTelemetry", and it is also the only way to see per-request events on .NET 6.
+
+### OpenTelemetry integration (measured)
+
+The two lines above are enough to hook it up — no adapter code on the library side (you also need one View for the duration histogram, explained below). The results below come from a real OTel SDK run (`OpenTelemetry` 1.9.0 + `OpenTelemetry.Exporter.InMemory` + `OpenTelemetry.Instrumentation.Http` 1.9.0, host .NET 8, referencing the net6.0 library assembly):
+
+| Check | Measured result |
+| --- | --- |
+| `AddSource("AxiosNet")` | Spans arrive; instrumentation scope name `AxiosNet`, version taken from the assembly (`1.0.1.0`) |
+| `AddMeter("AxiosNet")` | All three metrics arrive: `Histogram` / `LongGauge` / `LongSum`, units `s` / `{request}` / `{retry}`, tags exactly as listed above |
+| Span hierarchy | Your span → library span → BCL `System.Net.Http` span, `ParentSpanId` matching at each level, one shared `TraceId` |
+| Retries | Still **one** span per logical request: `http.request.resend_count = 2` plus two `retry` events |
+| Failures | The 404 span has `Status = Error`, `error.type = 404`, and an `exception` event |
+| In-flight gauge | Collected `1` while the request was running, back to `0` afterwards |
+| `Telemetry.Enabled = false` | No library span, no metrics; **the BCL `System.Net.Http` span still appears** (that source belongs to the BCL, the library cannot switch it off) |
+
+**One thing you must configure: the duration histogram buckets.** This metric is in **seconds** per the semantic conventions, while the OTel .NET default boundaries `0, 5, 10, 25, …, 10000` are designed for milliseconds — without a View, every normal request lands in the single `(0, 5]` bucket and 5 ms looks identical to 4 s. One View fixes it (boundaries are the semconv recommendation for `http.client.request.duration`):
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddSource(AxiosTelemetry.ActivitySourceName))   // "AxiosNet"
+    .WithMetrics(m => m
+        .AddMeter(AxiosTelemetry.MeterName)                             // "AxiosNet"
+        .AddView(
+            AxiosTelemetry.RequestDurationInstrumentName,
+            new ExplicitBucketHistogramConfiguration
+            {
+                // seconds, from 5 ms to 10 s
+                Boundaries = new[] { 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10 }
+            }));
+```
+
+Measured after adding it: the 2 ms 404 falls into `(0.005, 0.01]`, the 0.5 s slow request into `(0.5, 0.75]`. The library **cannot** set default buckets for you — per-instrument bucket advice (`InstrumentAdvice`) is a .NET 9 API, unavailable to a single-target net6.0 assembly; the official `OpenTelemetry.Instrumentation.Http` is also in seconds and also requires a View, so the behaviour matches.
+
+**Difference on .NET 6 / 7 hosts**: the BCL only started emitting `System.Net.Http` spans for `HttpClient` in .NET 8. Measured on a .NET 6 host (same code, `-f net6.0`): metrics and tags are identical, but **only the library span exists** — there is no BCL child span underneath. That is exactly why the library opens [its own span](#why-the-library-opens-a-span-of-its-own): without it, a request is blank in the trace on .NET 6.
 
 ### Configuration and overhead
 
@@ -1635,7 +1687,7 @@ In other words: **being on by default never makes anyone slower**. The cost only
 
 - 🔁 **Resilient retries**: off by default; attach a policy to retry network errors / timeouts / 408 / 429 / 5xx with a configurable count and interval (exponential backoff, jitter, `Retry-After` priority, idempotent methods only by default). `IAxiosRetryPolicy` lets you plug in any logic; the body is serialized once and resent as-is
 - 🔌 **Connection pool** `HttpConnectionPool`: pools and reuses `SocketsHttpHandler` per `scheme://host:port`, with `MaxConnectionsPerServer` throttling, connection lifetime and idle recycling, background eviction of idle origins, one pool shared by multiple clients, and lease statistics
-- 🚀 **HTTP/2 by default, with automatic downgrade**: h2 already carries the majority of public traffic, so multiplexing and header compression are on out of the box; the downgrade happens inside ALPN during the TLS handshake (same round trip, same connection count), so legacy servers and cleartext `http://` are unaffected. One line (`Connection.HttpVersion = Version11`) opts back into the old protocol; `VersionPolicy = Exact` requires h2 (and enables cleartext h2c); the pool allows multiple h2 connections by default so a single connection's `MAX_CONCURRENT_STREAMS` limit cannot cap throughput
+- 🚀 **HTTP/2 by default, with automatic downgrade**: h2 already carries the majority of public traffic, so multiplexing and header compression are on out of the box; the downgrade happens inside ALPN during the TLS handshake (same round trip, same connection count), so legacy servers and cleartext `http://` are unaffected. One line (`Connection.HttpVersion = Version11`) opts back into the old protocol; `VersionPolicy = Exact` requires h2 (and enables cleartext h2c); the pool allows multiple h2 connections by default so a single connection's `MAX_CONCURRENT_STREAMS` limit cannot cap throughput; for **HTTP/3** just write `Version30` (the default stays 2.0), check `Http3Support` for local capability, and `Exact` / `OrHigher` fail with `ERR_BAD_OPTION_VALUE` before sending when the environment cannot possibly do it
 - 🔭 **Observability (on by default)**: `ActivitySource` / `Meter` / `DiagnosticListener` signals with OpenTelemetry HTTP semantic-convention tags (`http.request.method` / `url.path` / `http.response.status_code` / `network.protocol.version` / `error.type` …), two lines to hook OTel (`AddSource("AxiosNet")` + `AddMeter("AxiosNet")`); one span per logical request (retries recorded as `http.request.resend_count` plus `retry` events), metrics for request duration / active requests / retry count using low-cardinality tags only; nothing is produced when nobody listens, and `Telemetry.Enabled = false` turns it off per request (see [Observability](#observability-traces--metrics--events))
 - 🧩 **dynamic support**: `GetAsync<dynamic>` / `ResponseType.Dynamic` lets you write `data.address.city` or `data.items[0].id` without declaring a DTO (mirroring `response.data.xxx` in JS); object nodes are `AxiosDynamic` — `data["key"]` indexing works, missing members yield `null` instead of throwing, properties can be added/removed at runtime, and it implements `IDictionary<string,object?>` (so it can be fed back as params/body and `System.Text.Json` serializes it as a plain JSON object). Member access uses the same shape + baked-slot design as `ExpandoObject` (measured on par or slightly faster)
 - 📦 Generic strongly-typed responses via `GetAsync<T>` alongside non-generic `JsonElement` responses
@@ -1784,7 +1836,7 @@ The library **targets `net6.0` only**; a single assembly covers every runtime fr
 - **Why one target is enough**: .NET only guarantees one direction — "a newer runtime can load an older assembly" — and every API the library uses already exists in 6.0, with no 7/8/9-only calls, so there is no value in recompiling per runtime. Shared-framework assemblies such as `System.Text.Json` automatically resolve to the 8.x version in a .NET 8 app at runtime; 6.x is not carried along.
 - **.NET Framework is not supported**, nor is .NET Core 3.1 or earlier: the connection pool is built directly on `SocketsHttpHandler` (`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `SslOptions` / `HandlerFactory`), a type absent from the `netstandard2.0` BCL contract; 3.1 additionally lacks `DateOnly`/`TimeOnly`, `ReadAsStreamAsync(CancellationToken)`, `ConcurrentDictionary.TryRemove(KeyValuePair)`, and a batch of other APIs, so the compatibility work would not be worth the gain.
 - **Why the floor is .NET 6**: `DateOnly` / `TimeOnly` and `HttpContent.SerializeToStreamAsync(Stream, TransportContext, CancellationToken)` only arrived around 6.0; going lower would require maintaining another layer of `#if`, and .NET 5 is out of support. The current source has **zero `#if`**.
-- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **1013** core/declarative cases plus **47** DI-extension cases — **1060** in total (**2120** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
+- **How it is verified**: the test project still targets both `net8.0` and `net6.0`, running every case on each runtime against the same shipped assembly: **1022** core/declarative cases plus **47** DI-extension cases — **1069** in total (**2138** executions, all passing). That exactly covers the most common consumption shape — a .NET 8 app loading the `net6.0` asset.
 
 ```xml
 <!-- Consumers need no configuration: any target framework >= net6.0 can reference it -->
@@ -1843,7 +1895,7 @@ dotnet publish samples/AxiosNet.Aot -c Release -r win-x64
 # Build (Debug): the library produces a single net6.0 asset
 dotnet build AxiosNet.sln
 
-# Run all 1060 xUnit tests (1013 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 2120 executions)
+# Run all 1069 xUnit tests (1022 core/declarative + 47 DI; both test projects target net8.0 + net6.0, so 2138 executions)
 dotnet test AxiosNet.sln
 
 # Release
@@ -1852,9 +1904,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative, incl. 183 under `WebAPI/`) | 1013 | `net8.0` / `net6.0` | 2026 |
+| `AxiosNet.Tests` (core + declarative, incl. 183 under `WebAPI/`) | 1022 | `net8.0` / `net6.0` | 2044 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1060** | | **2120** |
+| **Total** | **1069** | | **2138** |
 
 The test project uses a self-contained lightweight HTTP/1.1 keep-alive test server (`TcpListener`, zero NuGet dependencies) that directly observes real TCP connection reuse counts and peak concurrency. Coverage includes:
 
@@ -1872,7 +1924,8 @@ The test project uses a self-contained lightweight HTTP/1.1 keep-alive test serv
 - File download: `GetAsync<Stream>` to disk, `ResponseType.ArrayBuffer`, connection reuse after stream disposal, Content-Disposition file name, download timeout
 - `dynamic`: response graphs and dynamic requests (9 dedicated tests covering `GetAsync<dynamic>` / `PostAsync<dynamic>` / static facade / explicit responseType precedence) plus 12 `AxiosDynamic` contract tests (member/index parity, missing members yielding null, chained-access behaviour, runtime add/remove, alternating heterogeneous shapes, the full `IDictionary` surface, JSON round-trip, and feeding a response object back as params/body)
 - Connection pool: connection reuse, max-connection throttling, sharing across instances, idle eviction, multi-origin isolation, dispose semantics; shared-pool fail-fast (connection-level defaults and `pool`/`poolOptions` exclusivity); origin key IDNA normalization (unicode/punycode as the same node, IPv6 brackets preserved); `pool.Options` option isolation
-- HTTP version negotiation (`HttpVersionNegotiationTests`, 18 cases): 2.0 + `RequestVersionOrLower` by default; with the default configuration a TLS server whose ALPN offers only `http/1.1` triggers the downgrade and the request succeeds (real handshake with a self-signed certificate, request line observed server-side), while an `h2`-only server really gets the HTTP/2 connection preface; cleartext servers downgrade to 1.1 by default, and an explicit 1.1 + `Exact` never emits the h2c preface by mistake; `RequestVersionExact` emits the h2c prior-knowledge preface on cleartext; instance-default and per-request overrides for version/policy; both version and policy survive request cloning on retry; **the negotiated version is observable** (`ProtocolVersion` comes from the response, not the request, so a downgrade reads back as 1.1); **HTTP/3 passthrough** (3.0 + OrLower lands on 1.1 over cleartext, 3.0 + Exact fails as `ERR_NETWORK`); `EnableMultipleHttp2Connections` defaults to on, can be disabled, and is cloned with the options
+- HTTP version negotiation (`HttpVersionNegotiationTests`, 18 cases): 2.0 + `RequestVersionOrLower` by default; with the default configuration a TLS server whose ALPN offers only `http/1.1` triggers the downgrade and the request succeeds (real handshake with a self-signed certificate, request line observed server-side), while an `h2`-only server really gets the HTTP/2 connection preface; cleartext servers downgrade to 1.1 by default, and an explicit 1.1 + `Exact` never emits the h2c preface by mistake; `RequestVersionExact` emits the h2c prior-knowledge preface on cleartext; instance-default and per-request overrides for version/policy; both version and policy survive request cloning on retry; **the negotiated version is observable** (`ProtocolVersion` comes from the response, not the request, so a downgrade reads back as 1.1); **HTTP/3 passthrough** (3.0 + OrLower lands on 1.1 over cleartext, 3.0 + Exact fails as `ERR_BAD_OPTION_VALUE` before sending on cleartext); `EnableMultipleHttp2Connections` defaults to on, can be disabled, and is cloned with the options
+- HTTP/3 capability (`Http3SupportTests`, 8 cases): `Http3Support.IsSupported` agrees with the runtime's own `QuicConnection.IsSupported`, and an unsupported verdict always comes with a reason (the error message quotes it); the default `OrLower` hands 3.0 straight to the BCL (never blocked client-side); `Exact` / `OrHigher` fail with `ERR_BAD_OPTION_VALUE` **without opening a single TCP connection** on cleartext targets or when the runtime lacks QUIC; the legacy 1.1 + `Exact` case is unaffected; version and policy survive every retry attempt
 - Response reading and generic routing: close-delimited responses without Content-Length, zero-copy return when the length allows exact preallocation; `GetAsync<Stream>` combined with an incompatible explicit `responseType` is uniformly wrapped as `ERR_BAD_RESPONSE` (no raw `InvalidCastException` leaking out)
 - Custom handlers: passthrough of custom `HttpMethod`s such as `PROPFIND`, direct `DelegatingHandler` injection (including `disposeHandler` semantics), `HandlerFactory` called once per origin / **each origin must get an independent instance** (two origins alternating requests stay unaffected, neither hijacks the other) / wrapping the default handler / throwing `InvalidOperationException` on a null return, plus fail-fast with pool/poolOptions and instance-level options
 - Resilient retries (`RetryTests`): no retries by default; 5xx / 408 / 429 retried until success, retry cap, 4xx not retried, POST not retried by default (`RetryNonIdempotentMethods` opts in), network errors and timeouts retried, the configured interval actually elapsing, `Retry-After` priority and `MaxDelay` cap, exponential backoff and jitter range, body replay (objects / seekable streams; non-seekable streams fail fast), the `OnRetry` callback, custom policies, per-request on/off over instance defaults, no retry after cancellation, and response interceptors running exactly once
@@ -2169,7 +2222,7 @@ Telemetry hook points (see [Observability](#observability-traces--metrics--event
 │  ├─ AxiosNet.Simple.DependencyInjection/ # DI extension sample (Generic Host, six scenarios: core singleton / self-built / facade / container authorization / named multi-site / keyed services; IExample classes under Examples/ need no registration to appear in the menu)
 │  └─ AxiosNet.Aot/              # Native AOT / trimming sample (PublishAot + TrimmerRootAssembly + STJ source-generated context; self-contained loopback server that works offline, demonstrating both the axios-style and declarative APIs)
 └─ test/
-   ├─ AxiosNet.Tests/            # xUnit tests (1013 cases × net6.0 / net8.0 = 2026 executions)
+   ├─ AxiosNet.Tests/            # xUnit tests (1022 cases × net6.0 / net8.0 = 2044 executions)
    │  ├─ Infrastructure/         # self-built keep-alive test server / perf server / telemetry probe (all three signals) / shared models
    │  └─ WebAPI/                 # declarative client tests (183 cases, same project and assembly as the main tests)
    └─ AxiosNet.DependencyInjection.Tests/ # DI extension tests (47 cases × net6.0 / net8.0 = 94 executions, reuses the main/WebAPI test infrastructure)
