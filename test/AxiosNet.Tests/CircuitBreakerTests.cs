@@ -138,6 +138,34 @@ public sealed class CircuitBreakerTests
         // 网络层失败算
         Assert.True(new AxiosCircuitContext("h", uri, null, new HttpRequestException("dns failure")).IsFailure);
         Assert.True(new AxiosCircuitContext("h", uri, null, new IOException("connection reset")).IsFailure);
+
+        // validateStatus 放行的 5xx 没有异常，但状态码仍要落账：算失败、不算成功
+        var accepted5xx = new AxiosCircuitContext("h", uri, statusCode: 500);
+        Assert.Equal(500, accepted5xx.StatusCode);
+        Assert.False(accepted5xx.IsSuccess);
+        Assert.True(accepted5xx.IsFailure);
+
+        // 放行的 4xx：既不算失败，也不再算成功（与抛异常那条路一致：不清零失败计数）
+        var accepted4xx = new AxiosCircuitContext("h", uri, statusCode: 404);
+        Assert.False(accepted4xx.IsSuccess);
+        Assert.False(accepted4xx.IsFailure);
+    }
+
+    [Fact]
+    public async Task ValidateStatusAccepted5xx_StillOpensCircuit()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
+
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak };
+        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+
+        // validateStatus 放行 5xx：请求本身不抛错，但熔断必须照样记账
+        var response = await client.GetAsync(server.Url + "x", c => c.Callbacks.ValidateStatus = _ => true);
+        Assert.Equal(500, response.Status);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
+
+        var rejected = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
+        Assert.Equal(AxiosException.ErrCircuitOpen, rejected.Code);
     }
 
     // ------------------------------------------------------------------

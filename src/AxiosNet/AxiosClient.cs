@@ -1170,11 +1170,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             throw;
         }
 
-        // 走到这里说明响应已被 validateStatus 接受（非 2xx 都在 SendCoreAsync 里抛掉了）。
+        // 走到这里说明响应已被 validateStatus 接受，但仍可能是 5xx（validateStatus 放行时没有异常）——
+        // 把状态码一并回报，熔断才能与「非 2xx 抛异常」那条路记同一本账。
         // 回报放在 try 之外：策略抛出的异常不该被上面那个 catch 当成「本次尝试失败」再记一笔。
         try
         {
-            policy.Record(context);
+            policy.Record(new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, statusCode: response.Status));
         }
         catch
         {

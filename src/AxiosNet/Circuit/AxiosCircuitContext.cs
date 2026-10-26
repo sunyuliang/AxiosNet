@@ -20,15 +20,21 @@ public readonly struct AxiosCircuitContext
     /// <param name="uri">本次请求的最终地址（已合并 baseURL 与 params）。</param>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="exception">
-    /// 本次尝试抛出的异常；<c>null</c> 表示<b>成功</b>（响应已被 <c>validateStatus</c> 接受）。
+    /// 本次尝试抛出的异常；<c>null</c> 表示请求拿到了响应且被 <c>validateStatus</c> 接受
+    /// （是否算成功还要看 <paramref name="statusCode"/>，见 <see cref="IsSuccess"/>）。
     /// </param>
     /// <param name="retryAfter">被熔断拒绝时的建议等待（只有 <see cref="AxiosConfig.CircuitSettings.OnRejected"/> 回调里有值）。</param>
+    /// <param name="statusCode">
+    /// 本次尝试拿到的 HTTP 状态码（<c>validateStatus</c> 放行的响应没有异常，状态码只能由调用方补上）；
+    /// 没有响应时为 <c>null</c>。显式传入时优先于异常里携带的状态码。
+    /// </param>
     public AxiosCircuitContext(
         string host,
         Uri uri,
         AxiosConfig? config = null,
         Exception? exception = null,
-        TimeSpan retryAfter = default)
+        TimeSpan retryAfter = default,
+        int? statusCode = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(uri);
@@ -40,7 +46,7 @@ public readonly struct AxiosCircuitContext
         RetryAfter = retryAfter;
 
         // 状态码在这里固定下来：与 AxiosRetryContext 同理，响应对象可能被后续尝试复用/改写。
-        StatusCode = (exception as AxiosException)?.Status;
+        StatusCode = statusCode ?? (exception as AxiosException)?.Status;
     }
 
     /// <summary>
@@ -82,8 +88,15 @@ public readonly struct AxiosCircuitContext
     /// </summary>
     public TimeSpan RetryAfter { get; }
 
-    /// <summary>本次尝试是否成功（没有异常）。</summary>
-    public bool IsSuccess => Exception is null;
+    /// <summary>
+    /// 本次尝试是否成功：拿到响应（或手工构造的上下文没有异常），且状态码不是 4xx / 5xx。
+    /// <para>
+    /// <c>validateStatus</c> 放行的非 2xx 不再一律算成功：4xx 与 5xx 保持与「抛异常那条路」一致的口径
+    /// （见 <see cref="IsFailure"/>），否则同一个 500 会因 <c>validateStatus</c> 的配置不同而记出两种账。
+    /// 3xx 视为成功（未跟随的重定向是终态响应）。
+    /// </para>
+    /// </summary>
+    public bool IsSuccess => Exception is null && (StatusCode is null || StatusCode < 400);
 
     /// <summary>
     /// 本次尝试是否算<b>下游故障</b>（熔断计数的唯一口径）。
@@ -105,6 +118,13 @@ public readonly struct AxiosCircuitContext
     {
         get
         {
+            // 有响应：只认 5xx。4xx（含 408 / 429）是请求侧问题。
+            // 这里必须先看状态码：validateStatus 放行 5xx 时异常为 null，但状态码照样代表下游故障。
+            if (StatusCode is int status)
+            {
+                return status >= 500;
+            }
+
             if (Exception is null)
             {
                 return false;
@@ -113,12 +133,6 @@ public readonly struct AxiosCircuitContext
             if (Exception is OperationCanceledException)
             {
                 return false;
-            }
-
-            // 有响应：只认 5xx。4xx（含 408 / 429）是请求侧问题。
-            if (StatusCode is int status)
-            {
-                return status >= 500;
             }
 
             return Exception switch
