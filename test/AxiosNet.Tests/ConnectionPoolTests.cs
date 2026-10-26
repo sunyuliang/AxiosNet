@@ -93,9 +93,13 @@ public sealed class ConnectionPoolTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
+        // 闲置窗口不能压到「刚用完就要过期」的量级：本用例要断言「刚发过请求的节点还在」
+        // （104→105 与 116→118 两处），而断言与请求之间只要有 > 闲置窗口 的调度停顿
+        // （GC、线程池排队、并行用例抢 CPU），后台清扫就会把那个节点合法淘汰掉，断言随即假红。
+        // 2 秒给断言留 10 倍余量，清扫间隔仍取 80ms，保证「后台驱逐」这条路本身被真正走到。
         var poolOptions = new ConnectionPoolOptions
         {
-            IdleHandlerLifetime = TimeSpan.FromMilliseconds(200),
+            IdleHandlerLifetime = TimeSpan.FromSeconds(2),
             EvictionInterval = TimeSpan.FromMilliseconds(80)
         };
         using var pool = new HttpConnectionPool(poolOptions);
@@ -104,7 +108,7 @@ public sealed class ConnectionPoolTests
         await client.GetAsync(server.Url);
         Assert.Equal(1, pool.GetStatistics().EndpointCount);
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
         while (pool.GetStatistics().EndpointCount > 0 && DateTime.UtcNow < deadline)
         {
             await Task.Delay(50);

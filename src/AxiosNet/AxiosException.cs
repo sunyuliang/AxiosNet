@@ -279,7 +279,7 @@ public sealed class AxiosException : Exception
         return new AxiosException(message, ErrBadOptionValue, config, null, null, inner);
     }
 
-    internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage request, AxiosResponse response)
+    internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage? request, AxiosResponse response)
     {
         var code = response.Status >= 500 ? ErrBadResponse : ErrBadRequest;
         return new AxiosException(

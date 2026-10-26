@@ -259,36 +259,17 @@ internal static class ResponseReader
                 .ConfigureAwait(false);
             bodyBytes = bytes.Length;
 
-            var charSet = contentType?.CharSet;
-            var responseMediaType = contentType?.MediaType;
-
-            // 文本还是二进制由 Content-Type 决定（无 Content-Type 视为文本）；二进制连解码都不做。
-            var textual = MediaTypes.IsTextual(responseMediaType);
-
-            // 只要字节的调用（arraybuffer / byte[] / 二进制业务对象）不解码；
-            // 其余只解码一次，文本在 ConvertData 里按需使用。
-            var text = NeedsText(config, dataType, textual)
-                ? ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding)
-                : null;
-            rawText = text;
-            data = ConvertData(config, request, dataType, bytes, text, charSet, textual, responseMediaType, lenient);
-
-            // transformResponse：反序列化之后依次加工 Data。
-            // 调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，不让裸异常从管线深处漏出。
-            if (config.TransformResponseSnapshot is { } responseTransforms)
-            {
-                foreach (var transform in responseTransforms)
-                {
-                    try
-                    {
-                        data = transform(data, config);
-                    }
-                    catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-                    {
-                        throw AxiosException.ResponseTransformFailed(config, request, ex);
-                    }
-                }
-            }
+            // 解码 → 按类型转换 → transformResponse 三段与短路响应共用（见 ConvertBody）：
+            // 「正文从网络来」与「正文从缓存 / mock 来」必须走同一套解析规则，否则命中会悄悄换一种行为。
+            data = ConvertBody(
+                config,
+                request,
+                dataType,
+                bytes,
+                contentType?.MediaType,
+                contentType?.CharSet,
+                lenient,
+                out rawText);
         }
 
         // 泛型调用方已把目标类型的响应对象造好交过来：就地填充，
@@ -370,13 +351,223 @@ internal static class ResponseReader
     }
 
     /// <summary>
+    /// 从「已经读完的原始字节」装配 Data：解码 → 按 responseType / 目标类型转换 → transformResponse。
+    /// <para>
+    /// 网络响应与短路响应（缓存命中 / mock / 离线回放）共用这一段，两条路径的解析规则、错误模型与
+    /// transform 语义因此完全一致 —— 「命中缓存」不会变成另一种解析行为。
+    /// </para>
+    /// <para><paramref name="rawText"/> 回传解码后的正文（只要字节的分支为 <c>null</c>），调用方据此决定是否保留原文。</para>
+    /// </summary>
+    internal static object? ConvertBody(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        Type? dataType,
+        byte[] bytes,
+        string? mediaType,
+        string? charSet,
+        bool lenient,
+        out string? rawText)
+    {
+        // 文本还是二进制由 Content-Type 决定（无 Content-Type 视为文本）；二进制连解码都不做。
+        var textual = MediaTypes.IsTextual(mediaType);
+
+        // 只要字节的调用（arraybuffer / byte[] / 二进制业务对象）不解码；
+        // 其余只解码一次，文本在 ConvertData 里按需使用。
+        var text = NeedsText(config, dataType, textual)
+            ? ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding)
+            : null;
+
+        rawText = text;
+
+        object? data = ConvertData(config, request, dataType, bytes, text, charSet, textual, mediaType, lenient);
+
+        // transformResponse：反序列化之后依次加工 Data。
+        // 调用方代码抛什么都在这里归一到 ERR_BAD_RESPONSE，不让裸异常从管线深处漏出。
+        if (config.TransformResponseSnapshot is { } responseTransforms)
+        {
+            foreach (var transform in responseTransforms)
+            {
+                try
+                {
+                    data = transform(data, config);
+                }
+                catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                {
+                    throw AxiosException.ResponseTransformFailed(config, request, ex);
+                }
+            }
+        }
+
+        return data;
+    }
+
+    /// <summary>
+    /// 短路响应的装配：语义与 <see cref="ReadAsync"/> 完全一致，只是正文（如果有）不来自网络。
+    /// <para>
+    /// <see cref="AxiosShortCircuit.Body"/> 按<b>本次调用</b>的 responseType / 目标类型重新解析 —— 这是缓存
+    /// 必须走字节而不是对象图的原因：同一份字节喂给 <c>GetAsync&lt;User&gt;</c> 与 <c>GetAsync&lt;string&gt;</c>
+    /// 应当得到不同形态。<see cref="AxiosShortCircuit.Data"/> 则原样交付，不解析也不跑 transformResponse
+    /// （它是「结果」而不是「正文」，再加工一次等于让 transform 执行次数取决于缓存状态）。
+    /// </para>
+    /// <para>
+    /// <paramref name="lenient"/> 为 true（状态码不合法）时解析失败回退原文，与网络路径同口径；
+    /// 此时响应对象还会保留 <see cref="AxiosResponse.RawText"/>，供错误上下文使用。
+    /// </para>
+    /// </summary>
+    internal static AxiosResponse ReadShortCircuit(
+        AxiosShortCircuit reply,
+        AxiosConfig config,
+        Type? dataType,
+        AxiosResponse? target,
+        bool lenient)
+    {
+        var status = reply.Status;
+
+        if (status is < 100 or > 999)
+        {
+            throw AxiosException.InvalidOption(
+                $"AxiosShortCircuit.Status 必须在 100–999 之间（当前 {status}）：它是最终响应的状态码，"
+                + "不合法会让 validateStatus 与错误模型都无从判断。", config);
+        }
+
+        // 两种载荷表达的是「同一件事」的两种形态：同时给等于没说清要不要重新解析，报错而不是猜。
+        if (reply.Body is not null && reply.Data is not null)
+        {
+            throw AxiosException.InvalidOption(
+                "AxiosShortCircuit 不能同时设置 Body 与 Data：Body 是原始正文（按本次调用的类型重新解析），"
+                + "Data 是已成型的结果（原样交付），请二选一。", config);
+        }
+
+        var statusText = reply.StatusText ?? StatusTextMap.Get(status);
+        var headers = BuildShortCircuitHeaders(reply, config);
+
+        // 与网络路径同一份上下文：transformResponse / 序列化器读到的 Headers 必须与 response.Headers 同实例。
+        var (mediaType, charSet) = ReadContentType(headers);
+        config.Response = new AxiosResponseInfo(status, statusText, headers, mediaType, charSet);
+
+        object? data;
+        string? rawText = null;
+        long? bodyBytes = null;
+
+        if (reply.Body is { } body)
+        {
+            bodyBytes = body.Length;
+
+            if (config.ResponseType == ResponseType.Stream)
+            {
+                // 流式：与网络路径一致，正文以流交出。每次调用新建一份，缓存里的字节数组不随流的所有权漂移。
+                data = new MemoryStream(body, writable: false);
+            }
+            else
+            {
+                data = ConvertBody(config, null, dataType, body, mediaType, charSet, lenient, out rawText);
+
+                // arraybuffer / byte[] 形态会把正文数组原样交出。网络路径的数组是「这一次读到的」，
+                // 而这里交的是调用方给的那一个 —— 两个调用共享它，等于让一次写入污染后续命中。
+                // 复制一份，保持「每份响应都是独立对象」这条既有约定（Stream 形态已经各自新建流）。
+                if (ReferenceEquals(data, body))
+                {
+                    data = (byte[])body.Clone();
+                }
+            }
+        }
+        else
+        {
+            data = reply.Data;
+
+            // 已成型结果里只有字符串能充当「错误原文」；对象没有「原文」概念，不硬转成 ToString()。
+            rawText = lenient ? data as string : null;
+        }
+
+        var response = target ?? new AxiosResponse();
+        response.Data = data;
+        response.RawText = lenient ? rawText : null;
+        response.Status = status;
+        response.StatusText = statusText;
+        response.ProtocolVersion = reply.ProtocolVersion;
+        response.BodyBytes = bodyBytes;
+        response.Headers = headers;
+        response.Config = config;
+
+        // 这次没有发出任何请求：不伪造一个已释放的 HttpRequestMessage 让调用方误以为发过。
+        response.Request = null;
+        return response;
+    }
+
+    /// <summary>
+    /// 短路响应头：调用方给的字典原样搬进大小写不敏感的只读字典，<see cref="AxiosShortCircuit.ContentType"/>
+    /// 作为 <c>Content-Type</c> 覆盖同名项。
+    /// <para>
+    /// 头名（token）与头值（拒 C0，除 HTAB）各过一道与请求头相同的校验：短路响应最终会进日志、
+    /// 会喂给 transformResponse，脏头一样会把下游解析器带偏；抛出的 <see cref="ArgumentException"/>
+    /// 在这里归一到 <c>ERR_BAD_OPTION_VALUE</c>，与管线其他配置错误同一形态。
+    /// </para>
+    /// </summary>
+    private static Dictionary<string, IEnumerable<string>> BuildShortCircuitHeaders(
+        AxiosShortCircuit reply,
+        AxiosConfig config)
+    {
+        var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            if (reply.Headers is { Count: > 0 } source)
+            {
+                foreach (var header in source)
+                {
+                    // 空头名 / null 值等于「没有这个头」：静默跳过而不是当成空串（空 Content-Type 会变成空媒体类型）
+                    if (string.IsNullOrEmpty(header.Key) || header.Value is null)
+                    {
+                        continue;
+                    }
+
+                    // 名与值各过一道闸：值挡 C0 注入，名挡非 token（`X-A: 1\r\nX-B` 这类名字不会上送，
+                    // 但会原样进日志与 transformResponse 读到的头字典，必须与请求头同一把尺子）。
+                    var name = AxiosHeaders.ValidateHeaderName(header.Key);
+                    AxiosHeaders.ValidateHeaderValue(name, header.Value);
+                    headers[name] = new[] { header.Value };
+                }
+            }
+
+            if (reply.ContentType is { Length: > 0 } contentType)
+            {
+                AxiosHeaders.ValidateHeaderValue("Content-Type", contentType);
+                headers["Content-Type"] = new[] { contentType };
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            throw AxiosException.InvalidOption($"短路响应的响应头非法：{ex.Message}", config);
+        }
+
+        return headers;
+    }
+
+    /// <summary>
+    /// 从响应头里取出媒体类型与字符集（等价于 BCL 解析 <c>Content-Type</c> 的结果）。
+    /// <para>短路响应没有 <see cref="System.Net.Http.HttpContent"/> 可借，头是调用方给的字典，只能自己解析。</para>
+    /// </summary>
+    private static (string? MediaType, string? CharSet) ReadContentType(
+        IReadOnlyDictionary<string, IEnumerable<string>> headers)
+    {
+        if (headers.TryGetValue("Content-Type", out var values)
+            && values.FirstOrDefault() is { Length: > 0 } value
+            && MediaTypeHeaderValue.TryParse(value, out var parsed))
+        {
+            return (parsed.MediaType, parsed.CharSet);
+        }
+
+        return (null, null);
+    }
+
+    /// <summary>
     /// 按 responseType / 目标类型把「原始字节 + 已解码文本」转换为 Data：
     /// 字节、文本、dynamic 图、基础类型由框架给出，只有<b>业务对象</b>交给 <see cref="IContentSerializer"/>。
     /// <para><paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始内容，不抛异常。</para>
     /// </summary>
     private static object? ConvertData(
         AxiosConfig config,
-        HttpRequestMessage request,
+        HttpRequestMessage? request,
         Type? dataType,
         byte[] bytes,
         string? text,

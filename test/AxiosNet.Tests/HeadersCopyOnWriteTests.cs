@@ -1,4 +1,5 @@
 using System.Net;
+using AxiosNet.Tests.Infrastructure;
 using Xunit;
 
 namespace AxiosNet.Tests;
@@ -11,7 +12,12 @@ namespace AxiosNet.Tests;
 /// <item>分配护栏：克隆成本与头数无关（恒为实例本身 24 B）；每请求链路不为「默认头」付按头计的分配。</item>
 /// </list>
 /// 阈值均留一倍以上余量，是用例「数量级不退回」的护栏，不是精确基准。
+/// <para>
+/// 分配测量用进程级计数器，因此整类放在 <see cref="AllocationCollection"/>（独占集合）里跑：
+/// 与其它集合并行时，别人的分配会被算进我们的账上。
+/// </para>
 /// </summary>
+[Collection(AllocationCollection.Name)]
 public sealed class HeadersCopyOnWriteTests
 {
     // ------------------------------------------------------------------
@@ -314,6 +320,9 @@ public sealed class HeadersCopyOnWriteTests
         // 不是按头计费：net8 上 1 头 136 B / 5 头 288 B / 10 头 568 B，net6 上 1 头 296 B / 5 头 600 B。
         // 所以这里不用绝对阈值（换个运行时或改个头数，阈值就变成噪音），改为「现场测一遍裸 BCL 再相减」，
         // 只钉我们自己的那一份：AxiosNet 的边际成本 − 裸 BCL 的边际成本 ≤ 64 B。
+        //
+        // 两个成本必须同一口径测：都走进程级计数（见 MeasureRequestAsync）。混用「线程级 + 进程级」
+        // 相减会得到一个既不是前者也不是后者的数，护栏照样会假红。
         using var bare = new AxiosClient(handler: new StubHandler());
         using var rich = new AxiosClient(handler: new StubHandler());
         for (var i = 0; i < DefaultHeaderNames.Length; i++)
@@ -324,8 +333,8 @@ public sealed class HeadersCopyOnWriteTests
         await Send(bare);
         await Send(rich);
 
-        var bareCost = MeasureRequest(bare);
-        var richCost = MeasureRequest(rich);
+        var bareCost = await MeasureRequestAsync(bare);
+        var richCost = await MeasureRequestAsync(rich);
         var ours = richCost - bareCost;
         var bcl = MeasureBclHeaderCost();
 
@@ -391,33 +400,68 @@ public sealed class HeadersCopyOnWriteTests
 
     private static Task Send(AxiosClient client) => client.GetAsync("http://localhost/x");
 
-    private static long MeasureRequest(AxiosClient client)
+    /// <summary>
+    /// 一次请求的平均分配字节数。
+    /// <para>
+    /// 计数口径是进程级 <see cref="GC.GetTotalAllocatedBytes(bool)"/>，不是「当前线程」：请求管线是异步的，
+    /// 续体会落到别的线程上，线程级计数在那种情况下记的是半份账（这正是本用例此前偶发虚高的原因）。
+    /// 进程级计数与线程归属无关，前提是「进程里没有别的分配源」—— 由
+    /// <see cref="Infrastructure.AllocationCollection"/>（独占集合）保证。
+    /// </para>
+    /// <para>
+    /// 三轮取最小值：tier-1 JIT、GC 后台线程这类一次性分配会抬高某一轮，最小值把它们剔掉。
+    /// 这也让测量可以放心用 <c>await</c>（每轮多出来的测试自身状态机分配，在 bare / rich 相减时抵消）。
+    /// </para>
+    /// </summary>
+    private static async Task<long> MeasureRequestAsync(AxiosClient client)
     {
-        const int iterations = 2_000;
+        const int iterations = 1_000;
+
+        // 预热：把管线里的静态构造、字典扩容、tier-0 编译都付掉，不进测量窗口。
         for (var i = 0; i < 100; i++)
         {
-            client.GetAsync("http://localhost/x").GetAwaiter().GetResult();
+            await client.GetAsync("http://localhost/x").ConfigureAwait(false);
         }
 
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < iterations; i++)
+        var best = long.MaxValue;
+        for (var round = 0; round < MeasurementRounds; round++)
         {
-            client.GetAsync("http://localhost/x").GetAwaiter().GetResult();
+            var before = GC.GetTotalAllocatedBytes(precise: true);
+            for (var i = 0; i < iterations; i++)
+            {
+                await client.GetAsync("http://localhost/x").ConfigureAwait(false);
+            }
+
+            best = Math.Min(best, (GC.GetTotalAllocatedBytes(precise: true) - before) / iterations);
         }
 
-        return (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;
+        return best;
     }
 
+    /// <summary>测量轮数：每项测量跑几轮、取最小值（见 <see cref="MeasureRequestAsync"/> 的说明）。</summary>
+    private const int MeasurementRounds = 3;
+
+    /// <summary>
+    /// 一段同步循环的「每次分配字节数」，口径与 <see cref="MeasureRequestAsync"/> 一致（进程级 + 取最小轮）。
+    /// <para>用同一个计数器，才能把「我们的成本」与「裸 BCL 的成本」直接相减 —— 两个不同口径相减没有意义。</para>
+    /// </summary>
     private static long AverageBytes(int iterations, Action action)
     {
         action();
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < iterations; i++)
+
+        var best = long.MaxValue;
+        for (var round = 0; round < MeasurementRounds; round++)
         {
-            action();
+            var before = GC.GetTotalAllocatedBytes(precise: true);
+            for (var i = 0; i < iterations; i++)
+            {
+                action();
+            }
+
+            best = Math.Min(best, (GC.GetTotalAllocatedBytes(precise: true) - before) / iterations);
         }
 
-        return (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;
+        return best;
     }
 
     /// <summary>不碰网络的 Handler：响应固定，便于确定性地测量配置与头部开销。</summary>

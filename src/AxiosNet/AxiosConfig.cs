@@ -246,6 +246,20 @@ public sealed partial class AxiosConfig
     /// </summary>
     public object? Data { get; set; }
 
+    /// <summary>
+    /// 短路响应：设置后本次请求<b>不发送</b>，直接以这份结果作为响应（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。
+    /// <para>
+    /// 这是给「请求拦截器里查缓存并命中」准备的出口：拦截器只能改配置、无法直接返回响应，把本项填上，
+    /// 管线会在拦截器之后、编码与发送之前转去交付它 —— 闸门 / 连接 / 重试 / 熔断 / 遥测都不参与，
+    /// 但反序列化、transformResponse、状态码校验与响应拦截器照常执行。
+    /// </para>
+    /// <para>
+    /// <b>只属于本次请求</b>：<see cref="Clone"/> 不复制它，因此放在 <see cref="AxiosClient.Defaults"/> 上不生效，
+    /// 回放 <see cref="AxiosResponse.Config"/> 也不会重放上一次的短路结果（否则那条请求会永远不发出去）。
+    /// </para>
+    /// </summary>
+    public AxiosShortCircuit? ShortCircuit { get; set; }
+
     private TimeSpan _timeout;
 
     /// <summary>
@@ -484,6 +498,10 @@ public sealed partial class AxiosConfig
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;
+
+        // 短路响应同属「那一次请求」：跟着克隆走，会让下一次请求不发出去就返回旧结果
+        // （回放 response.Config 是最常见的触发方式）；作为实例默认值也没有意义。
+        clone.ShortCircuit = null;
 
         // 「显式赋过 Auth」属于那一次赋值，不属于「这份配置的内容」：
         // 回放 response.Config（或任何克隆）时，Auth 的值已是生效结果，不能再被当成按请求意图 ——

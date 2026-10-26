@@ -650,6 +650,16 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
+    /// <summary>
+    /// 头名校验的共用入口：RFC 7230 token，返回去首尾空白后的名称。
+    /// <para>
+    /// 请求头走 <see cref="Set(string, string?)"/>，而<b>构造出来的响应头</b>（短路响应由调用方给字典）
+    /// 没有请求头那条路径可走 —— 但脏头一样会进日志、喂给 transformResponse，必须是同一把尺子。
+    /// </para>
+    /// </summary>
+    /// <exception cref="ArgumentException">名称为空、含控制字符或非 token 字符。</exception>
+    internal static string ValidateHeaderName(string name) => ValidateName(name);
+
     /// <summary>RFC 7230 token 字符（头名的字符集）。</summary>
     private static bool IsTokenChar(char c)
         => (c >= 'a' && c <= 'z')

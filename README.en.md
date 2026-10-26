@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1124%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1144%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -43,6 +43,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 - [Serialization](#serialization)
 - [Retries](#retries)
 - [Circuit breaker](#circuit-breaker)
+- [Short circuit](#short-circuit)
 - [Connection pool](#connection-pool)
   - [HTTP versions](#http-versions)
   - [Custom handlers](#custom-handlers)
@@ -82,6 +83,7 @@ Everything it does on one screen; details in the linked sections.
 | Swappable serialization | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` |
 | Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | Circuit breaker | Per-host Closed/Open/HalfOpen state machine | `c.Circuit.Policy = new CircuitBreaker()` |
+| Short circuit | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
 | Connection pool | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` |
 | HTTP versions | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
 | Custom handlers | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
@@ -618,6 +620,52 @@ Failure accounting matches the retry gate (**cancels and 4xx never count**):
 - The state table has a soft cap (`MaxTrackedHosts`, 512 by default): when full it only evicts entries whose loss changes no decision (closed, or open with an expired cooldown); **open / half-open entries are never dropped**.
 - Custom policies: implement `IAxiosCircuitPolicy` (`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`); `ctx` exposes `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure`. Policies **are stateful** and shared concurrently, so you own thread safety.
 
+## Short circuit
+
+Sometimes the request should not be sent but a response is still needed — cache hits, mocks, offline replay, contract tests. Set `c.ShortCircuit` and the request is **not sent**; the result is delivered as this call's response.
+
+```csharp
+// Cache hit: the request interceptor is the natural place — it can only mutate config,
+// and ShortCircuit is the "here is the response" exit it otherwise lacks.
+client.Interceptors.Request.Use(config =>
+{
+    if (config.Url is { } url && cache.TryGetValue(url, out var entry))
+    {
+        config.ShortCircuit = new AxiosShortCircuit
+        {
+            Status = entry.Status,
+            ContentType = entry.ContentType,                              // keep the charset
+            Headers = new Dictionary<string, string> { ["X-Cache"] = "HIT" },
+            Body = entry.Body                                            // bytes: parsed per call
+        };
+    }
+
+    return config;
+});
+
+// Mock / fixture: the data is already materialised
+var response = await client.GetAsync<User>("users/1",
+    c => c.ShortCircuit = AxiosShortCircuit.From(new User { Id = 1, Name = "stub" }));
+```
+
+What is skipped is the HTTP operation itself; what is kept is the response-side semantics:
+
+| Stage | On a short circuit |
+| --- | --- |
+| Concurrency gate / queueing, pool lease, sending, retries, circuit breaker | not involved |
+| Telemetry span and in-flight metrics | not produced (count hits in your own cache) |
+| Range validation (`Timeout` / size limits) | as usual (a config error does not vanish on a hit) |
+| Deserialization by `ResponseType` / generic argument, `transformResponse` | as usual |
+| `ValidateStatus` (non-2xx throws `AxiosException`), response interceptors | as usual |
+
+- **Two payloads, pick one**: `Body` is raw bytes (what a cache stores — the same bytes must yield different shapes for `GetAsync<User>` and `GetAsync<string>`); `Data` is an already-materialised result (for mocks: not parsed, `transformResponse` not run, ownership stays with you).
+- **`Body` + `Stream` / `byte[]`**: a fresh `MemoryStream` per call, and the byte array is copied — two calls never share an object, so a cache entry cannot be mutated by one of them.
+- **Scoped to one request**: `AxiosConfig.Clone` clears it, so setting it on `Defaults` does nothing and replaying `response.Config` does not replay the previous short circuit.
+- **Cancellation still wins**: an already-cancelled token throws `ERR_CANCELED` instead of returning a hit.
+- **Headers are validated too**: names must be valid tokens and values must be free of control characters (the same gate as request headers); a violation throws `ERR_BAD_OPTION_VALUE` — dirty headers would otherwise reach logs and `transformResponse`.
+- The only visible trace is `response.Request == null` (no request was made); `ProtocolVersion` stays `null` unless you set it.
+- A cache entry needs at least `Status` / `ContentType` / `Body`; the `Content-Type` header drives text decoding, so dropping the charset garbles non-UTF-8 bodies on hits.
+
 ## Connection pool
 
 `AxiosClient` builds its own pool (`HttpConnectionPool`) keyed by `scheme://host:port`: one tuned `SocketsHttpHandler` per origin, requests sharing keep-alive TCP connections.
@@ -883,6 +931,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `CancellationToken` | `default` | External cancellation |
 | `TransformRequest` / `TransformResponse` | empty | Transform chains |
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |
+| `ShortCircuit` | `null` | Deliver a response without sending (this request only) |
 
 Seven sub-objects (created lazily on first access):
 
@@ -927,6 +976,7 @@ Seven sub-objects (created lazily on first access):
 | `axios-retry` plugin | `c.Retry.Policy` / `c.Retry.OnRetry` |
 | — (needs opossum or similar) | `c.Circuit.Policy` / `c.Circuit.OnRejected` |
 | — (needs the OTel JS SDK) | Built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
+| — (axios-cache-interceptor and friends) | `c.ShortCircuit` (cache hit / mock / offline replay) |
 | — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `QueueTimeout` |
 
 Intentional differences from axios:
@@ -943,7 +993,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 38 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 39 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -951,7 +1001,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **28 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker.
+- **29 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit.
 - **10 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap.
 
 Two more samples:
@@ -999,11 +1049,11 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1077 | `net8.0` / `net6.0` | 2154 |
+| `AxiosNet.Tests` (core + declarative) | 1097 | `net8.0` / `net6.0` | 2194 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1124** | | **2248** |
+| **Total** | **1144** | | **2288** |
 
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, telemetry, declarative binding and DI registration.
+Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding and DI registration.
 
 ### Benchmarks
 
@@ -1041,7 +1091,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
 │  │  ├─ AxiosConfig*.cs              # configuration (top level + seven sub-objects)
 │  │  ├─ AxiosHeaders.cs              # request headers
-│  │  ├─ AxiosResponse.cs / AxiosException.cs
+│  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy
 │  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
@@ -1051,7 +1101,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (38 items) / DI / Aot
+├─ samples/                           # Simple (39 items) / DI / Aot
 └─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
 ```
 

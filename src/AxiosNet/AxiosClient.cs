@@ -394,10 +394,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 请求入口：按固定顺序驱动整条管线 ——
-    /// 合并 → 校验（实例级）→ 拦截 → 校验（范围 + 闸门）→ 编码 → 发送 → 收尾。
+    /// 合并 → 校验（实例级）→ 拦截 → 规范化 →（短路 | 校验 + 闸门 → 编码 → 发送）→ 收尾。
     /// <para>
-    /// 顺序是契约（<c>ValidateRangeConfig</c> 在拦截器之后、闸门在校验之后、遥测起点在 URL 拼好之后），
-    /// 每处的理由写在对应阶段方法上。<paramref name="target"/> 是调用方预造的响应对象，管线就地填充。
+    /// 顺序是契约（<c>ValidateRangeConfig</c> 在拦截器之后、闸门在校验之后、遥测起点在 URL 拼好之后、
+    /// 短路在拦截器之后且在校验与闸门之前），每处的理由写在对应阶段方法上。
+    /// <paramref name="target"/> 是调用方预造的响应对象，管线就地填充。
     /// </para>
     /// </summary>
     private async Task<AxiosResponse> SendAsync(
@@ -427,11 +428,23 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 阶段 3：拦截 —— 请求拦截器按注册逆序执行（与 axios 一致）。
             config = await InterceptRequestAsync(config).ConfigureAwait(false);
 
-            // 阶段 4：规范化 + 校验（范围 + 闸门）—— 必须看拦截器**之后**的配置：
+            // 阶段 4a：规范化 + 阶段 4b：范围校验 + 阶段 4c：短路 + 阶段 4d：闸门 —— 都必须看拦截器**之后**的配置：
             // 判早了就成了「校验旧配置、发新配置」，等于允许拦截器写 Timeout = -1 绕过护栏
             // （hasTimeout 随后为 false，静默不超时）；反过来也允许拦截器修正调用方的非法值。
             ApplyAutoResponseType(config, dataType);
+
+            // 范围校验判的是「这份配置自身是否可执行」，与会不会真的发出请求无关：放在短路之前，
+            // 让 Timeout = -1 这类错误总是报出来。否则同一个 bug 在网络路径报错、在缓存命中时静默通过
+            // —— 错误报不报取决于缓存状态，是最难查的一类不一致。
             ValidateRangeConfig(config);
+
+            // 闸门与编码看的是「这次 HTTP 操作」：短路不产生操作，并发名额 / 连接租约 / HTTP3 都无从谈起。
+            if (config.ShortCircuit is { } shortCircuit)
+            {
+                return await CompleteShortCircuitAsync(shortCircuit, config, dataType, target)
+                    .ConfigureAwait(false);
+            }
+
             var gate = ResolveConcurrencyGate(config);
 
             // 阶段 5：编码 —— transformRequest → URL / 协议 → 正文 / 请求头。
@@ -770,36 +783,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 return invoked;
             };
 
-            var chain = invoker;
-            foreach (var interceptor in responseInterceptors)
-            {
-                var previous = chain;
-                var fulfilled = interceptor.OnFulfilled;
-                var rejected = interceptor.OnRejected;
-                chain = async () =>
-                {
-                    AxiosResponse response;
-                    try
-                    {
-                        response = await previous().ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (rejected is null)
-                        {
-                            throw;
-                        }
-
-                        // 返回 null 会被当成「响应就是 null」交回调用方，GetAsync<T> 随后炸 NRE —— 明确报错。
-                        return (await rejected(ex).ConfigureAwait(false))
-                            ?? throw NullInterceptorResult(ctx.Config);
-                    }
-
-                    return (await fulfilled(response).ConfigureAwait(false))
-                        ?? throw NullInterceptorResult(ctx.Config);
-                };
-            }
-
+            var chain = WrapWithInterceptors(invoker, responseInterceptors, ctx.Config);
             return (await chain().ConfigureAwait(false), streamOwner);
         }
         catch
@@ -815,6 +799,106 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// 把拦截器按注册顺序套在末端调用外面，最内层是「真正产生响应的那一步」。
+    /// <para>
+    /// 网络路径与短路路径共用这一份责任链：短路响应若绕过拦截器，「命中缓存」就成了对调用方可见的行为差异
+    /// —— 而拦截器正是统一拆包、加解密、日志所在的地方。返回 <c>null</c> 就地报错，不让它传到调用方远处炸 NRE。
+    /// </para>
+    /// </summary>
+    private static Func<Task<AxiosResponse>> WrapWithInterceptors(
+        Func<Task<AxiosResponse>> invoker,
+        ResponseInterceptor[] responseInterceptors,
+        AxiosConfig config)
+    {
+        var chain = invoker;
+
+        foreach (var interceptor in responseInterceptors)
+        {
+            var previous = chain;
+            var fulfilled = interceptor.OnFulfilled;
+            var rejected = interceptor.OnRejected;
+            chain = async () =>
+            {
+                AxiosResponse response;
+                try
+                {
+                    response = await previous().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    if (rejected is null)
+                    {
+                        throw;
+                    }
+
+                    // 返回 null 会被当成「响应就是 null」交回调用方，GetAsync<T> 随后炸 NRE —— 明确报错。
+                    return (await rejected(ex).ConfigureAwait(false))
+                        ?? throw NullInterceptorResult(config);
+                }
+
+                return (await fulfilled(response).ConfigureAwait(false))
+                    ?? throw NullInterceptorResult(config);
+            };
+        }
+
+        return chain;
+    }
+
+    /// <summary>
+    /// 阶段 4c —— 短路：交付调用方给的响应，本次请求<b>不发送</b>。
+    /// <para>
+    /// 保留的只有「响应方向」的语义：按本次调用的类型反序列化、跑 transformResponse、过
+    /// <see cref="AxiosConfig.CallbackSettings.ValidateStatus"/>、过响应拦截器 —— 调用方看不出这与一次真实响应
+    /// 有什么区别（唯一可辨的痕迹是 <see cref="AxiosResponse.Request"/> 为 <c>null</c>）。跳过的都是
+    /// 「一次 HTTP 操作」本身：并发闸门、编码、连接租约、发送、重试、熔断、遥测 span。
+    /// </para>
+    /// <para>
+    /// 范围校验不在此列 —— 它在进来之前就跑完了（<see cref="ValidateRangeConfig"/>）：那判的是配置自身是否可执行，
+    /// 与会不会真的发出请求无关。
+    /// </para>
+    /// </summary>
+    private async Task<AxiosResponse> CompleteShortCircuitAsync(
+        AxiosShortCircuit reply,
+        AxiosConfig config,
+        Type? dataType,
+        AxiosResponse? target)
+    {
+        // 没有 I/O 也尊重调用方的取消意图：同一个调用点，短路与否不该改变「已取消」的结论。
+        if (config.CancellationToken.IsCancellationRequested)
+        {
+            throw AxiosException.Canceled(config, null);
+        }
+
+        var validateStatus = config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
+        var statusAccepted = validateStatus(reply.Status);
+
+        // 状态码不合法时按宽松口径解析（与网络路径同口径）：404 + HTML 也能带着 Status/Response 抛错，
+        // 而不是先在反序列化处炸成 ERR_BAD_RESPONSE 把两者全丢。
+        var response = ResponseReader.ReadShortCircuit(reply, config, dataType, target, lenient: !statusAccepted);
+
+        // 末端：不合法状态码在这里抛 —— 放在链内才能被拦截器的 OnRejected 接住（与网络路径一致）。
+        Task<AxiosResponse> Terminal()
+        {
+            if (!statusAccepted)
+            {
+                throw AxiosException.FromResponse(config, null, response);
+            }
+
+            return Task.FromResult(response);
+        }
+
+        var responseInterceptors = Interceptors.Response.Snapshot();
+        if (responseInterceptors.Length == 0)
+        {
+            // 空链：直接交付，不为「一次都不包装」建委托链（与发送路径同一条优化）。
+            return await Terminal().ConfigureAwait(false);
+        }
+
+        var chain = WrapWithInterceptors(Terminal, responseInterceptors, config);
+        return await chain().ConfigureAwait(false);
     }
 
     /// <summary>

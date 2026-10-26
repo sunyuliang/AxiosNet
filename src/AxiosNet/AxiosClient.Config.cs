@@ -42,6 +42,14 @@ public sealed partial class AxiosClient
         merged.Params = perCall.Params ?? merged.Params;
         merged.Data = perCall.Data ?? merged.Data;
 
+        // 短路响应只在「按请求写的意图」上生效：库产出的生效配置（快捷方法的产物、本方法的产物）里它是
+        // 上一次请求已经发生过的事，回放 response.Config 时带上它等于让那条请求永远不发出去。
+        // 与 BaseAddress / CancellationToken 同一个门禁（都是「这条配置来自某个实例的某一次调用」）。
+        if (!perCall.EffectiveMerged)
+        {
+            merged.ShortCircuit = perCall.ShortCircuit;
+        }
+
         // BaseAddress 与连接级选项同属「实例来源」：回放一份生效配置（response.Config）时，
         // 上一实例的基地址不能覆盖目标实例的 —— 否则请求会静默发到旧服务端。
         if (!instanceSourced)
