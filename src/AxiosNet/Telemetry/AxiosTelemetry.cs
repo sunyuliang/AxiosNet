@@ -676,7 +676,7 @@ public static class AxiosTelemetry
 
         if (config.TelemetryOrNull?.CaptureUrl ?? true)
         {
-            activity.SetTag(TagFullUrl, UrlForTelemetry(uri));
+            activity.SetTag(TagFullUrl, UrlForTelemetry(uri, config.TelemetryOrNull?.CaptureQuery ?? false));
         }
     }
 
@@ -684,14 +684,27 @@ public static class AxiosTelemetry
     /// <c>url.full</c> 的取值：完整 URL，但**去掉 userinfo**（<c>https://user:pass@host/</c> 的凭据不该进 span ——
     /// span 会进第三方后端，而凭据在那里既没用也不安全）。
     /// <para>
-    /// 没有 userinfo 时直接用 <see cref="Uri.AbsoluteUri"/>（零额外处理）；有才走 <c>GetComponents</c> 重建，
-    /// 因为它返回的仍是「已转义」的形态（<c>UriFormat.UriEscaped</c>），不会二次编码。
+    /// 查询串默认也不写（<paramref name="includeQuery"/> = <c>false</c>）：<c>?access_token=...</c> / 签名
+    /// 同样是凭据，默认上报等于把它们送进第三方后端。需要排障时用 <c>Telemetry.CaptureQuery = true</c> 显式打开。
+    /// </para>
+    /// <para>
+    /// 没有 userinfo 且要查询串时直接用 <see cref="Uri.AbsoluteUri"/>（零额外处理）；否则走 <c>GetComponents</c> 重建，
+    /// 它返回的仍是「已转义」的形态（<c>UriFormat.UriEscaped</c>），不会二次编码。
     /// </para>
     /// </summary>
-    private static string UrlForTelemetry(Uri uri)
-        => uri.UserInfo.Length == 0
-            ? uri.AbsoluteUri
-            : uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped);
+    private static string UrlForTelemetry(Uri uri, bool includeQuery)
+    {
+        if (uri.UserInfo.Length == 0 && includeQuery)
+        {
+            return uri.AbsoluteUri;
+        }
+
+        var components = includeQuery
+            ? UriComponents.HttpRequestUrl
+            : UriComponents.HttpRequestUrl & ~UriComponents.Query;
+
+        return uri.GetComponents(components, UriFormat.UriEscaped);
+    }
 
     /// <summary>
     /// 耗时直方图：标签与方法 / 主机 / 端口 + 状态码 + 错误类型（全是低基数维度）。

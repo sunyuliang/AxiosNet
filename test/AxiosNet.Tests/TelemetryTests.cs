@@ -826,6 +826,40 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task Default_OmitsQueryFromFullUrl()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("no-query");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient();
+        await client.GetAsync(server.Url + path + "?access_token=secret");
+
+        // 默认不把查询串写进 span：token / 签名会随 span 上报到第三方后端
+        var span = Assert.Single(probe.Spans);
+        var fullUrl = Assert.IsType<string>(span.GetTagItem(TagFullUrl));
+        Assert.Contains("/" + path, fullUrl);
+        Assert.DoesNotContain("access_token", fullUrl);
+        Assert.DoesNotContain("secret", fullUrl);
+    }
+
+    [Fact]
+    public async Task CaptureQuery_True_IncludesQuery()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("with-query");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient(new AxiosConfig { Telemetry = { CaptureQuery = true } });
+        await client.GetAsync(server.Url + path + "?access_token=secret");
+
+        // 排障需要时显式打开
+        var span = Assert.Single(probe.Spans);
+        var fullUrl = Assert.IsType<string>(span.GetTagItem(TagFullUrl));
+        Assert.Contains("access_token=secret", fullUrl);
+    }
+
+    [Fact]
     public async Task CaptureUrl_StripsCredentialsFromFullUrl()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

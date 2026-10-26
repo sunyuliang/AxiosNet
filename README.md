@@ -792,7 +792,7 @@ builder.Services.AddOpenTelemetry()
 | 标签 | 说明 |
 | --- | --- |
 | `http.request.method` / `url.scheme` / `server.address` / `server.port` / `url.path` | 目标与方法 |
-| `url.full` | 完整 URL（去 userinfo）；`Telemetry.CaptureUrl = false` 时不写 |
+| `url.full` | 完整 URL（去 userinfo，默认不含查询串）；`Telemetry.CaptureUrl = false` 时不写，`CaptureQuery = true` 时才带查询串 |
 | `http.response.status_code` / `network.protocol.version` | 状态码 / 真正用到的协议版本 |
 | `http.request.body.size` / `http.response.body.size` | 字节数（未知不写） |
 | `http.request.resend_count` | 已重试次数 |
@@ -947,7 +947,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 **`Circuit`** — `Policy`（`null` = 不熔断）/ `OnRejected`
 
-**`Telemetry`** — `Enabled`（`null` = 开启）/ `CaptureUrl`（`null` = 记录）
+**`Telemetry`** — `Enabled`（`null` = 开启）/ `CaptureUrl`（`null` = 记录，不含查询串）/ `CaptureQuery`（`null` = 不记查询串）
 
 > 按请求显式赋 `null` 可以关掉实例默认的 `Retry.Policy` / `Circuit.Policy`，这与「没设置」是两种语义。
 
