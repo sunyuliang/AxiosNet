@@ -47,6 +47,27 @@ public sealed class Audit20261025RetryTests
     }
 
     [Fact]
+    public async Task CallerProvidedMultipartContent_WithNestedStreamPart_FailsFast()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+
+        // 根级 data 本身是调用方构造的 MultipartFormDataContent：里面还嵌着 StreamContent。
+        // 只判根级类型会漏掉这层嵌套，第二次发送就会发出空文件。
+        using var multipart = new MultipartFormDataContent();
+        multipart.Add(
+            new StreamContent(new NonSeekableStream(Encoding.UTF8.GetBytes("nested"))),
+            "f",
+            "a.txt");
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "u", multipart));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public async Task MultipartStreamContentPart_WithoutRetry_IsSentAsIs()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

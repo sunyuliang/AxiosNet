@@ -39,11 +39,7 @@ internal sealed class RetryBody
             // 调用方自备的 HttpContent 由它自己决定能否重发；只有「明确包着流」的形态会被拦下，
             // 其余（StringContent / ByteArrayContent / 自实现）按可重放对待。
             case HttpContent content:
-                if (content is StreamContent)
-                {
-                    throw NotReplayable(config, "StreamContent");
-                }
-
+                EnsureReplayableContent(content, config);
                 return null;
 
             case Stream stream:
@@ -112,6 +108,27 @@ internal sealed class RetryBody
                     config,
                     ex);
             }
+        }
+    }
+
+    /// <summary>
+    /// 调用方自备的 <see cref="HttpContent"/>：逐层下钻 multipart 部件，
+    /// 任何一个包着流的部件都会让第二次发送发出空文件，必须在请求发出前就拒绝。
+    /// </summary>
+    private static void EnsureReplayableContent(HttpContent content, AxiosConfig config)
+    {
+        switch (content)
+        {
+            case StreamContent:
+                throw NotReplayable(config, "StreamContent");
+
+            case MultipartContent multipart:
+                foreach (var part in multipart)
+                {
+                    EnsureReplayableContent(part, config);
+                }
+
+                return;
         }
     }
 
