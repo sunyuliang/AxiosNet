@@ -316,6 +316,10 @@ public sealed class NamedApiClientRegistrationTests
 
         // 释放后 Get 从未解析过的站点同样抛错：否则会新建一个没有属主的客户端，连接池直接泄漏
         Assert.Throws<ObjectDisposedException>(() => resolver.Get("never-resolved"));
+
+        // Try 语义是不抛：已释放时同样只返回 false（与 Get 的差别就在这里）
+        Assert.False(resolver.TryGet("a", out _));
+        Assert.False(resolver.TryGet("never-resolved", out _));
     }
 
     // ---- 参数守卫与链式返回 ----

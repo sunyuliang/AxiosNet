@@ -103,19 +103,40 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             return false;
         }
 
-        return TryGetCore(name, out client);
+        return TryGetCore(name, out client, throwIfDisposed: false);
     }
 
-    private bool TryGetCore(string name, [MaybeNullWhen(false)] out ApiClient client)
+    /// <summary>
+    /// 已释放时：<paramref name="throwIfDisposed"/> 为真按 <c>Get</c> 的语义抛
+    /// <see cref="ObjectDisposedException"/>，否则按 <c>TryGet</c> 的语义返回 <c>true</c>（= 已处理，调用方返回 false）。
+    /// </summary>
+    private bool TryHandleDisposed(bool throwIfDisposed, out ApiClient client)
+    {
+        client = null!;
+
+        if (Volatile.Read(ref _disposed) == 0)
+        {
+            return false;
+        }
+
+        if (throwIfDisposed)
+        {
+            throw new ObjectDisposedException(nameof(ApiClientResolver));
+        }
+
+        return true;
+    }
+
+    private bool TryGetCore(string name, [MaybeNullWhen(false)] out ApiClient client, bool throwIfDisposed = true)
     {
         // 第一层（全局锁）：只做字典查询与定义查找，不执行任何用户代码。
         object siteGate;
         ApiClientDefinition? definition;
         lock (_gate)
         {
-            if (Volatile.Read(ref _disposed) == 1)
+            if (TryHandleDisposed(throwIfDisposed, out client))
             {
-                throw new ObjectDisposedException(nameof(ApiClientResolver));
+                return false;
             }
 
             if (_clients.TryGetValue(name, out client))
@@ -140,9 +161,9 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         {
             lock (_gate)
             {
-                if (Volatile.Read(ref _disposed) == 1)
+                if (TryHandleDisposed(throwIfDisposed, out client))
                 {
-                    throw new ObjectDisposedException(nameof(ApiClientResolver));
+                    return false;
                 }
 
                 if (_clients.TryGetValue(name, out client))
@@ -174,7 +195,14 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
                 {
                     // 创建期间容器已退出：没人会持有这个 holder，就地释放而不登记
                     holder.Dispose();
-                    throw new ObjectDisposedException(nameof(ApiClientResolver));
+
+                    if (throwIfDisposed)
+                    {
+                        throw new ObjectDisposedException(nameof(ApiClientResolver));
+                    }
+
+                    client = null!;
+                    return false;
                 }
 
                 _owned.Add(holder);
