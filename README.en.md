@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/nuget/v/AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1085%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1124%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -37,6 +37,7 @@ An axios-style HTTP client for .NET: the request API mirrors JS [axios](https://
 - [Data transforms](#data-transforms)
 - [Serialization](#serialization)
 - [Retries](#retries)
+- [Circuit breaker](#circuit-breaker)
 - [Connection pool](#connection-pool)
   - [HTTP versions (HTTP/2 by default, HTTP/3 opt-in)](#http-versions-http2-by-default-http3-opt-in)
   - [Custom handlers](#custom-handlers)
@@ -425,8 +426,9 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_NETWORK` | connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
 | `ERR_QUEUE_TIMEOUT` | every concurrency slot stayed busy past `Limits.QueueTimeout` (request never sent) |
+| `ERR_CIRCUIT_OPEN` | the circuit breaker is open, so the request was **never sent** (`RetryAfter` carries the suggested wait) |
 | `ERR_INVALID_URL` | invalid URL, relative URL without `BaseAddress`, non-http(s) scheme |
-| `ERR_BAD_OPTION_VALUE` | invalid option value (per-request instance-only option, multipart header/body mismatch, scalar `Params`, out-of-range retry settings…) |
+| `ERR_BAD_OPTION_VALUE` | invalid option value (per-request instance-only option, multipart header/body mismatch, scalar `Params`, out-of-range retry / circuit settings…) |
 
 Custom success range (2xx by default):
 
@@ -586,6 +588,53 @@ Semantics:
 - Interceptors, `transformRequest` and body serialization run once; the response interceptor sees the final outcome.
 - The body must be replayable: seekable streams are rewound before each attempt; non-seekable streams and `StreamContent` (root or multipart part) throw `ERR_BAD_OPTION_VALUE` as soon as retries are enabled.
 - Custom policies implement `IAxiosRetryPolicy` (`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`); `ctx` exposes `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`. Instances are shared concurrently — keep them stateless.
+
+## Circuit breaker
+
+Retries answer "this attempt failed — try again?". A circuit breaker answers "the downstream is down — stop trying at all". Off by default; attach a policy to enable it:
+
+```csharp
+using AxiosNet.Circuit;
+
+var breaker = new CircuitBreaker
+{
+    FailureThreshold = 5,                       // open after 5 consecutive downstream failures
+    BreakDuration = TimeSpan.FromSeconds(30),   // cool down for 30 s, then probe
+    HalfOpenAttempts = 1                        // allow exactly one probe while half-open
+};
+
+breaker.StateChanged += change => logger.LogWarning(
+    "{Host} circuit: {From} -> {To}", change.Host, change.Previous, change.Current);
+
+var client = Axios.Create(c => c.Circuit.Policy = breaker);
+
+// Health checks / probes must not be blocked by the breaker: bypass it for one request
+await client.GetAsync("health", c => c.Circuit.Policy = null);
+
+// Manual recovery (drop every host's counters, so the next request starts from zero)
+breaker.Reset();
+```
+
+State machine: `Closed` → (consecutive failures reach `FailureThreshold`) → `Open` → (after `BreakDuration`) → `HalfOpen` → (probe succeeds) → `Closed`; a failed probe goes **straight back** to `Open` with a fresh timer (no need to accumulate the threshold again).
+
+Failure classification is aligned with the retry gate (**cancellation / 4xx never count**):
+
+| Outcome | Counts as failure? |
+| --- | --- |
+| `ERR_NETWORK` / `ECONNABORTED` (timeout) | yes |
+| 5xx | yes |
+| 4xx (including 408 / 429) | no (and does not reset the counter) |
+| `ERR_CANCELED` | no |
+| config / URL / body (de)serialization errors | no |
+
+Semantics:
+
+- **Counted per host**: the key defaults to `host:port` (`uri.Authority`), so two services on the same host are two downstreams; `KeySelector` can merge ports (`ctx => ctx.Uri.Host`) or isolate tenants by route prefix.
+- A rejected request is **never sent**: no connection, no pool lease — it fails immediately with `ERR_CIRCUIT_OPEN`, and `AxiosException.RetryAfter` carries the suggested wait (remaining cool-down; `null` when the policy cannot tell).
+- With retries enabled the gate sits **before every attempt**, so once the breaker opens the next retry is stopped immediately (no wasted backoff wait), and `ERR_CIRCUIT_OPEN` itself is never retried.
+- Each attempt is counted separately: 3 retries + the initial failure = 4 entries. A single request that hits four 5xx in a row is good evidence the downstream is down.
+- The state table is bounded (`MaxTrackedHosts`, default 512, a soft cap): when full, only entries whose loss cannot change a decision are evicted (closed, or open with an expired cool-down). Entries that are **currently breaking or probing are never dropped** — the cap may be exceeded briefly rather than let a just-declared-unhealthy downstream slip through.
+- Custom policies implement `IAxiosCircuitPolicy` (`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`); `ctx` exposes `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure`. Unlike retry policies they are **stateful** and shared concurrently — you own the thread safety.
 
 ## Connection pool
 
@@ -925,6 +974,13 @@ Six grouped sub-objects:
 | `Policy` | `null` (no retries) | `IAxiosRetryPolicy`; explicit `null` per request disables the instance policy |
 | `OnRetry` | `null` | `Action<AxiosRetryContext>` |
 
+**`Circuit`**
+
+| Member | Default | Notes |
+| --- | --- | --- |
+| `Policy` | `null` (no breaker) | `IAxiosCircuitPolicy`; explicit `null` per request bypasses the instance breaker |
+| `OnRejected` | `null` | `Action<AxiosCircuitContext>`, fired when a request is rejected (not sent); `ctx.RetryAfter` carries the suggested wait |
+
 **`Telemetry`**
 
 | Member | Default | Notes |
@@ -961,6 +1017,7 @@ Six grouped sub-objects:
 | `AxiosError.code` | `AxiosException.Code` (plus `Status` / `Cause` / `ToJson()`) |
 | `axios.isAxiosError` / `isCancel` | `Axios.IsAxiosError` / `Axios.IsCancel` |
 | `axios-retry` plugin | `c.Retry.Policy` / `c.Retry.OnRetry` |
+| — (no axios built-in; opossum in JS) | `c.Circuit.Policy` / `c.Circuit.OnRejected` |
 | — (needs the OTel JS SDK) | built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
 | — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `Limits.MaxConcurrentRequests` / `QueueTimeout` (in-flight gate + `ERR_QUEUE_TIMEOUT`) |
 
@@ -978,15 +1035,15 @@ Intentional differences:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server and 37 scenarios:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server and 38 scenarios:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
 ```
 
-It starts an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit). The 27 core scenarios cover: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic request and response, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handlers, single-file upload, Newtonsoft.Json replacement, DNS refresh, Bearer tokens, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, and observability.
+It starts an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit). The 28 core scenarios cover: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic request and response, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handlers, single-file upload, Newtonsoft.Json replacement, DNS refresh, Bearer tokens, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, and the circuit breaker.
 
-The 10 declarative scenarios (menu items 28–37) cover: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing and verification, streaming (SSE / JSON array), multipart upload, and the streaming frame limit.
+The 10 declarative scenarios (menu items 29–38) cover: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing and verification, streaming (SSE / JSON array), multipart upload, and the streaming frame limit.
 
 Two more samples:
 
@@ -1033,11 +1090,11 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Target frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1038 | `net8.0` / `net6.0` | 2076 |
+| `AxiosNet.Tests` (core + declarative) | 1077 | `net8.0` / `net6.0` | 2154 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1085** | | **2170** |
+| **Total** | **1124** | | **2248** |
 
-Tests run against a hand-rolled `TcpListener` HTTP/1.1 keep-alive server over real TCP, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress / rate / size limits, the connection pool and protocol negotiation, streaming, retries, telemetry, declarative binding and DI registration.
+Tests run against a hand-rolled `TcpListener` HTTP/1.1 keep-alive server over real TCP, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress / rate / size limits, the connection pool and protocol negotiation, streaming, retries, the circuit breaker, telemetry, declarative binding and DI registration.
 
 The solution also contains `test/AxiosNet.Benchmarks` (single target `net8.0`), which no test runs:
 `dotnet build AxiosNet.sln` builds it (one BenchmarkDotNet restore), `dotnet test` ignores it, and CI
@@ -1082,18 +1139,19 @@ noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md
 │  ├─ AxiosNet/                       # library (single target net6.0)
 │  │  ├─ Axios.cs                     # static facade
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
-│  │  ├─ AxiosConfig*.cs              # config (top level + six groups)
+│  │  ├─ AxiosConfig*.cs              # config (top level + seven groups)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy
+│  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML implementations
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / stats + handler injection
 │  │  ├─ WebAPI/                      # declarative API client
 │  │  └─ Internal/                    # URL building, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (37 scenarios) / DI / Aot
+├─ samples/                           # Simple (38 scenarios) / DI / Aot
 └─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
 ```
 

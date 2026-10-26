@@ -37,6 +37,11 @@ public sealed class AxiosException : Exception
     /// </summary>
     public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
 
+    /// <summary>
+    /// 熔断打开：请求<b>没有发出</b>（<see cref="AxiosConfig.Circuit"/>）。等冷却期结束或调用方自行降级。
+    /// </summary>
+    public const string ErrCircuitOpen = "ERR_CIRCUIT_OPEN";
+
     public bool IsAxiosError => true;
 
     public string? Code { get; }
@@ -57,6 +62,15 @@ public sealed class AxiosException : Exception
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
     public int? Status => Response?.Status;
 
+    /// <summary>
+    /// 熔断拒绝时的建议等待时间（只有 <see cref="ErrCircuitOpen"/> 才可能有值）。
+    /// <para>
+    /// 由策略给出，是「冷却期还剩多久」的估计：<c>null</c> 表示策略说不准（例如半开态的探测名额
+    /// 随时可能释放）。它只是建议值 —— 库不会据此排队或自动重试。
+    /// </para>
+    /// </summary>
+    public TimeSpan? RetryAfter { get; }
+
     /// <summary>底层异常（例如网络错误的 <see cref="System.Net.Http.HttpRequestException"/>、JSON 解析异常）。</summary>
     public Exception? Cause => InnerException;
 
@@ -66,13 +80,15 @@ public sealed class AxiosException : Exception
         AxiosConfig? config,
         HttpRequestMessage? request,
         AxiosResponse? response,
-        Exception? innerException)
+        Exception? innerException,
+        TimeSpan? retryAfter = null)
         : base(message, innerException)
     {
         Code = code;
         Config = config;
         Request = request;
         Response = response;
+        RetryAfter = retryAfter;
     }
 
     /// <summary>
@@ -208,6 +224,39 @@ public sealed class AxiosException : Exception
     {
         return new AxiosException("Network Error", ErrNetwork, config, request, null, inner);
     }
+
+    /// <summary>
+    /// 熔断拒绝：<b>请求没有发出</b>（没有连接、没有流量、没有副作用）。
+    /// <para>
+    /// 消息里带上计数维度（默认 <c>host:port</c>）与建议等待时间，方便直接落日志：
+    /// 调用方看到的不该只是一句「失败了」，而是「谁挂了、还有多久可能恢复」。
+    /// </para>
+    /// </summary>
+    internal static AxiosException CircuitOpen(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        string host,
+        TimeSpan retryAfter)
+    {
+        var hint = retryAfter > TimeSpan.Zero
+            ? $" (retry after {FormatWait(retryAfter)})"
+            : string.Empty;
+
+        return new AxiosException(
+            $"Circuit breaker is open for {host}: the request was not sent{hint}",
+            ErrCircuitOpen,
+            config,
+            request,
+            null,
+            null,
+            retryAfter > TimeSpan.Zero ? retryAfter : null);
+    }
+
+    /// <summary>等待时长的可读形式：不足 1 秒用毫秒（否则冷却只剩 400ms 会写成「retry after 0s」）。</summary>
+    private static string FormatWait(TimeSpan value)
+        => value >= TimeSpan.FromSeconds(1)
+            ? $"{value.TotalSeconds:0.##}s"
+            : $"{value.TotalMilliseconds:0}ms";
 
     internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null, string? message = null)
     {

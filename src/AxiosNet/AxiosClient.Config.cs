@@ -126,6 +126,12 @@ public sealed partial class AxiosClient
             merged.Retry.MergeFrom(incomingRetry);
         }
 
+        // 熔断同理：本次没碰这一组就沿用实例默认；显式赋 null 则压住实例默认（健康检查不被熔断挡住）。
+        if (perCall.CircuitOrNull is { } incomingCircuit)
+        {
+            merged.Circuit.MergeFrom(incomingCircuit);
+        }
+
         // 遥测开关同属按请求项：健康检查这类请求可以单独关掉，不影响实例默认。
         if (perCall.TelemetryOrNull is { } incomingTelemetry)
         {

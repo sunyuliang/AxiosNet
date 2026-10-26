@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using AxiosNet.Circuit;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
@@ -617,6 +618,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 // 重试配置：没有策略 = 不重试（默认），下面的发送循环退化为一次尝试。
                 var retry = config.RetryOrNull;
 
+                // 熔断配置：没有策略 = 不熔断（默认），下面的每次尝试前都不做准入判定。
+                var circuit = config.CircuitOrNull;
+
                 // 正文可重放性：重试复用同一份正文，来自流的正文必须能拨回起点，
                 // 否则第二次发送只会发出空内容 —— 在发请求之前就拦下，而不是等重试时才发现。
                 var bodyRewind = retry?.Policy is { MaxRetries: > 0 } ? RetryBody.Prepare(config) : null;
@@ -635,7 +639,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     {
                         // 空链：直接调用，省掉闭包 + 委托 + 责任链包装的每请求分配。
                         var (direct, owner) = await SendWithRetryAsync(
-                                template, config, uri, externalToken, dataType, target, streamResponse, retry, bodyRewind, gate)
+                                template, config, uri, externalToken, dataType, target, streamResponse, retry, circuit, bodyRewind, gate)
                             .ConfigureAwait(false);
 
                         streamOwner = owner;
@@ -646,7 +650,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         Func<Task<AxiosResponse>> invoker = async () =>
                         {
                             var (invoked, owner) = await SendWithRetryAsync(
-                                    template, config, uri, externalToken, dataType, target, streamResponse, retry, bodyRewind, gate)
+                                    template, config, uri, externalToken, dataType, target, streamResponse, retry, circuit, bodyRewind, gate)
                                 .ConfigureAwait(false);
 
                             streamOwner = owner;
@@ -759,17 +763,18 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         AxiosResponse? target,
         bool streamResponse,
         AxiosConfig.RetrySettings? retry,
+        AxiosConfig.CircuitSettings? circuit,
         RetryBody? bodyRewind,
         ConcurrencyGate? gate)
     {
         var policy = retry?.Policy;
         if (policy is null || policy.MaxRetries <= 0)
         {
-            return SendCoreAsync(template, config, uri, externalToken, dataType, target, streamResponse, gate);
+            return SendAttemptAsync(template, config, uri, externalToken, dataType, target, streamResponse, circuit, gate);
         }
 
         return SendRetryLoopAsync(
-            template, config, uri, externalToken, dataType, target, streamResponse, retry!, policy, bodyRewind, gate);
+            template, config, uri, externalToken, dataType, target, streamResponse, retry!, policy, circuit, bodyRewind, gate);
     }
 
     /// <summary>
@@ -778,6 +783,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 每次尝试换一条新的 <see cref="HttpRequestMessage"/>（同一实例不能发两次），正文与请求头沿用模板。
     /// 每次尝试有<b>独立的超时预算</b>（<see cref="AxiosConfig.Timeout"/> 是单次尝试的上限，不是全部重试的总预算），
     /// 调用方的 <see cref="AxiosConfig.CancellationToken"/> 则贯穿所有尝试与等待。
+    /// </para>
+    /// <para>
+    /// 熔断闸门在每次尝试之前（见 <see cref="SendAttemptAsync"/>）：熔断一旦打开，下一次尝试会被立刻拦下，
+    /// 不再白等一轮退避 —— 这正是「重试 + 熔断」一起开的意义（重试是再试一次，熔断是先别试）。
     /// </para>
     /// </summary>
     private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendRetryLoopAsync(
@@ -790,6 +799,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         bool streamResponse,
         AxiosConfig.RetrySettings retry,
         IAxiosRetryPolicy policy,
+        AxiosConfig.CircuitSettings? circuit,
         RetryBody? bodyRewind,
         ConcurrencyGate? gate)
     {
@@ -807,7 +817,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var request = attempt == 1 ? template : CloneRequest(template);
             try
             {
-                return await SendCoreAsync(request, config, uri, externalToken, dataType, target, streamResponse, gate)
+                return await SendAttemptAsync(request, config, uri, externalToken, dataType, target, streamResponse, circuit, gate)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -875,7 +885,116 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 库层面的「不该重试」：次数到顶、调用方已取消、错误本身就是取消。
+    /// 一次尝试的入口：先过熔断闸门，再发送；结果按「成功 / 下游故障 / 与下游无关」回报给策略。
+    /// <para>
+    /// 没有熔断策略时直接转给 <see cref="SendCoreAsync"/>（多一层方法调用，不建状态机、不分配上下文）：
+    /// 不开熔断的请求与没有这个功能时完全一致。
+    /// </para>
+    /// </summary>
+    private Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendAttemptAsync(
+        HttpRequestMessage request,
+        AxiosConfig config,
+        Uri uri,
+        CancellationToken externalToken,
+        Type? dataType,
+        AxiosResponse? target,
+        bool streamResponse,
+        AxiosConfig.CircuitSettings? circuit,
+        ConcurrencyGate? gate)
+    {
+        if (circuit?.Policy is not { } policy)
+        {
+            return SendCoreAsync(request, config, uri, externalToken, dataType, target, streamResponse, gate);
+        }
+
+        return SendWithCircuitAsync(
+            request, config, uri, externalToken, dataType, target, streamResponse, circuit, policy, gate);
+    }
+
+    /// <summary>
+    /// 带熔断的单次尝试：放行 → 发送 → 回报结果。
+    /// <para>
+    /// 拒绝时<b>不发请求</b>（不建连、不占连接池租约），直接抛 <c>ERR_CIRCUIT_OPEN</c>。
+    /// 回报必须恰好一次：成功 / 失败 / 取消都在这里收口，半开态的探测名额靠它归还 ——
+    /// 漏掉「取消」这一支会让熔断器卡在半开，永远等不到恢复。
+    /// </para>
+    /// </summary>
+    private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendWithCircuitAsync(
+        HttpRequestMessage request,
+        AxiosConfig config,
+        Uri uri,
+        CancellationToken externalToken,
+        Type? dataType,
+        AxiosResponse? target,
+        bool streamResponse,
+        AxiosConfig.CircuitSettings circuit,
+        IAxiosCircuitPolicy policy,
+        ConcurrencyGate? gate)
+    {
+        // 调用方已取消就先报取消：熔断拒绝只是一句「没发出去」，会把真正的退出原因（取消）盖掉。
+        if (externalToken.IsCancellationRequested)
+        {
+            throw AxiosException.Canceled(config, request);
+        }
+
+        var context = new AxiosCircuitContext(CircuitHost(uri), uri, config);
+
+        if (!policy.ShouldAllow(context))
+        {
+            // 建议等待时间：策略说不准时给零，错误消息里就不带「retry after」。
+            var retryAfter = policy.GetRetryAfter(context);
+
+            // 回调在抛错之前调用：它抛出的异常按「OnRejected 的约定」原样抛给调用方，
+            // 不会被当成一次「下游故障」再去改熔断状态（此刻请求根本没发出去）。
+            // 上下文里补上建议等待，回调不必为了写日志去 catch 异常。
+            circuit.OnRejected?.Invoke(new AxiosCircuitContext(context.Host, uri, config, retryAfter: retryAfter));
+
+            throw AxiosException.CircuitOpen(config, request, context.Host, retryAfter);
+        }
+
+        AxiosResponse response;
+        IDisposable? streamOwner;
+
+        try
+        {
+            (response, streamOwner) = await SendCoreAsync(
+                    request, config, uri, externalToken, dataType, target, streamResponse, gate)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // 失败结论要带上异常：策略据此区分「下游故障」（网络 / 超时 / 5xx）与「取消 / 4xx」。
+            // 这里不接策略异常 —— 它按约定原样抛给调用方（并掩盖本次尝试的原始失败）。
+            policy.Record(new AxiosCircuitContext(context.Host, uri, config, ex));
+            throw;
+        }
+
+        // 走到这里说明响应已被 validateStatus 接受（非 2xx 都在 SendCoreAsync 里抛掉了）。
+        // 回报放在 try 之外：策略抛出的异常不该被上面那个 catch 当成「本次尝试失败」再记一笔。
+        try
+        {
+            policy.Record(context);
+        }
+        catch
+        {
+            // 策略抛异常按约定原样抛给调用方，但不能顺带漏掉流式正文的租约：
+            // 那条租约占着该 origin 的并发额度，不释放会让连接池慢慢「少一格」。
+            streamOwner?.Dispose();
+            throw;
+        }
+
+        return (response, streamOwner);
+    }
+
+    /// <summary>
+    /// 熔断的计数维度：默认 <c>host:port</c>（同一 host 的不同端口是两个独立下游）。
+    /// <para>非分层 URI（理论上不该出现在这里）退化为 host，再退化为空串 —— 空 key 也能正常计数。</para>
+    /// </summary>
+    private static string CircuitHost(Uri uri)
+        => uri.Authority is { Length: > 0 } authority ? authority : uri.Host;
+
+    /// <summary>
+    /// 库层面的「不该重试」：次数到顶、调用方已取消、错误本身就是取消、被熔断拦下。
     /// 其余判断交给策略（<see cref="IAxiosRetryPolicy.ShouldRetry"/>）。
     /// </summary>
     private static bool CanRetry(AxiosRetryContext context, CancellationToken externalToken, IAxiosRetryPolicy policy)
@@ -898,6 +1017,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         if (context.Exception is AxiosException { Code: AxiosException.ErrCanceled })
         {
+            return false;
+        }
+
+        if (context.Exception is AxiosException { Code: AxiosException.ErrCircuitOpen })
+        {
+            // 熔断拒绝不是「一次失败的尝试」（请求根本没发出去）：再重试只会在同一个开着的闸门上
+            // 再撞一次，既不会成功，也把等待时间白白拉长。
             return false;
         }
 
@@ -1422,6 +1548,43 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         + "长时间退避请减少次数并用 CancellationToken 控制退出。",
                         config);
                 }
+            }
+        }
+
+        // 熔断策略的取值范围：「连续 0 次失败就熔断」「放行 0 个探测」「冷却 0 秒」都没有可执行语义，
+        // 静默取默认值只会让调用方以为配置生效了。与重试同理，只校验内置实现暴露的项。
+        if (config.CircuitOrNull?.Policy is CircuitBreaker breaker)
+        {
+            if (breaker.FailureThreshold < 1)
+            {
+                throw AxiosException.InvalidOption(
+                    $"熔断阈值 FailureThreshold 必须 >= 1（当前 {breaker.FailureThreshold}）："
+                    + "它表示「连续多少次下游故障后打开熔断」，不熔断请把 Circuit.Policy 设为 null。",
+                    config);
+            }
+
+            if (breaker.HalfOpenAttempts < 1)
+            {
+                throw AxiosException.InvalidOption(
+                    $"半开探测名额 HalfOpenAttempts 必须 >= 1（当前 {breaker.HalfOpenAttempts}）："
+                    + "一个探测都不放行的熔断器永远无法恢复。",
+                    config);
+            }
+
+            if (breaker.MaxTrackedHosts < 1)
+            {
+                throw AxiosException.InvalidOption(
+                    $"熔断跟踪维度上限 MaxTrackedHosts 必须 >= 1（当前 {breaker.MaxTrackedHosts}）："
+                    + "上限为 0 会让每个请求都新建一条状态、记不住任何失败。",
+                    config);
+            }
+
+            if (breaker.BreakDuration <= TimeSpan.Zero)
+            {
+                throw AxiosException.InvalidOption(
+                    $"熔断冷却时长 BreakDuration 必须 > 0（当前 {breaker.BreakDuration}）："
+                    + "零冷却等价于「一打开就立刻探测」，熔断形同虚设；不熔断请把 Circuit.Policy 设为 null。",
+                    config);
             }
         }
     }

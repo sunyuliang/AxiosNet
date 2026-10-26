@@ -14,6 +14,7 @@ public sealed partial class AxiosConfig
     private LimitSettings? _limits;
     private CallbackSettings? _callbacks;
     private RetrySettings? _retry;
+    private CircuitSettings? _circuit;
     private TelemetrySettings? _telemetry;
 
     /// <summary>
@@ -67,6 +68,16 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>
+    /// 熔断：策略与被拒绝时的回调。<b>默认不熔断</b>（不设置 <see cref="CircuitSettings.Policy"/> 即可）。
+    /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
+    /// </summary>
+    public CircuitSettings Circuit
+    {
+        get => _circuit ??= new CircuitSettings();
+        set => _circuit = value;
+    }
+
+    /// <summary>
     /// 可观测性：链路 / 指标 / 事件三路观测点的按请求开关（<see cref="TelemetrySettings.Enabled"/>）与
     /// URL 采集策略（<see cref="TelemetrySettings.CaptureUrl"/>）。
     /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
@@ -87,6 +98,8 @@ public sealed partial class AxiosConfig
     internal CallbackSettings? CallbacksOrNull => _callbacks;
 
     internal RetrySettings? RetryOrNull => _retry;
+
+    internal CircuitSettings? CircuitOrNull => _circuit;
 
     internal TelemetrySettings? TelemetryOrNull => _telemetry;
 
@@ -466,6 +479,7 @@ public sealed partial class AxiosConfig
         clone._limits = _limits?.Clone();
         clone._callbacks = _callbacks?.Clone();
         clone._retry = _retry?.Clone();
+        clone._circuit = _circuit?.Clone();
         clone._telemetry = _telemetry?.Clone();
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
