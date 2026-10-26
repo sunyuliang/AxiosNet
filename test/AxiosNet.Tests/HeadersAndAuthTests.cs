@@ -58,6 +58,23 @@ public sealed class HeadersAndAuthTests
     }
 
     [Fact]
+    public void Set_Batch_RejectsControlCharactersInValue()
+    {
+        var headers = new AxiosHeaders();
+
+        // 批量路径与单条 Set 必须同一闸口：第 k 条非法时前 k-1 条已生效。
+        var ex = Assert.Throws<ArgumentException>(() => headers.Set(new[]
+        {
+            new KeyValuePair<string, string?>("X-Ok", "1"),
+            new KeyValuePair<string, string?>("X-Bad", "a\r\nInjected: 1")
+        }));
+
+        Assert.Equal("value", ex.ParamName);
+        Assert.Equal("1", headers.Get("X-Ok"));
+        Assert.False(headers.Has("X-Bad"));
+    }
+
+    [Fact]
     public void Indexer_ReadsAndWrites_IncludingNullDelete()
     {
         var headers = new AxiosHeaders();

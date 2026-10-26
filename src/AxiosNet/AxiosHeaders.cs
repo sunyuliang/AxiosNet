@@ -159,7 +159,15 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         {
             foreach (var kv in headers)
             {
-                ops.Add((ValidateName(kv.Key), kv.Value));
+                var name = ValidateName(kv.Key);
+
+                // 与单条 Set 同口径：null 等价删除（不校验取值），其余一律过 CR/LF 闸口。
+                if (kv.Value is not null)
+                {
+                    ValidateHeaderValue(name, kv.Value);
+                }
+
+                ops.Add((name, kv.Value));
             }
         }
         catch
