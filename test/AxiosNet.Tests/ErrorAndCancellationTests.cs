@@ -73,7 +73,9 @@ public sealed class ErrorAndCancellationTests
     {
         await using var server = TestHttpServer.Start(async _ =>
         {
-            await Task.Delay(2_000);
+            // 20 秒才回包：必须远大于下面的 5 秒预算，否则「超时没生效、只是刚好等到回包」
+            // 与「超时生效了」分不开（此前是 2 秒延迟配 2 秒预算，CI 满载时两种情形同长）。
+            await Task.Delay(20_000);
             return TestJson.Response(new { ok = true });
         });
 
@@ -87,7 +89,10 @@ public sealed class ErrorAndCancellationTests
 
         Assert.Equal("ECONNABORTED", ex.Code);
         Assert.Contains("timeout", ex.Message);
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"实际耗时 {stopwatch.Elapsed}，超时未及时生效");
+
+        // 5 秒：给调度抖动留足余量（CI 上计时器回调实测可晚到 2~3 秒），
+        // 又远小于「自己等完」的 20 秒。
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"实际耗时 {stopwatch.Elapsed}，超时未及时生效");
     }
 
     [Fact]

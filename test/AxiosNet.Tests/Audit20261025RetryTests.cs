@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -7,7 +8,13 @@ namespace AxiosNet.Tests;
 /// <summary>
 /// 弹性重试的第四轮审查：补齐此前没有覆盖的组合（流式响应 / multipart 部件 / 调用方自带正文 /
 /// 流起点偏移 / 超时预算口径 / 最终错误），并锁定本轮修掉的两个缺陷。
+/// <para>
+/// 放进 <see cref="TimingCollection"/>：<c>TimeoutBudget_IsPerAttempt_NotForWholeRequest</c>
+/// 靠服务端延迟的算术区分「每次尝试一份预算」与「整条请求一份预算」，与其它集合并行跑时
+/// 调度抖动会吃掉余量（GitHub Actions 上曾因此假失败）。
+/// </para>
 /// </summary>
+[Collection(TimingCollection.Name)]
 public sealed class Audit20261025RetryTests
 {
     /// <summary>零等待策略：只验证重试语义，不让用例真的等。</summary>
@@ -172,26 +179,30 @@ public sealed class Audit20261025RetryTests
     /// Timeout 是「每次尝试」的预算，不是「整条请求（含重试）」的总预算。
     /// <para>
     /// 口径的算术必须让两种实现在时间轴上分叉，而不是靠「差一点点」：
-    /// 4 次尝试 × 300ms 服务端延迟 + 1000ms 预算 ——
-    /// 独立预算时每次 300ms 远小于 1000ms（余量 700ms）；共享预算时第 4 次尝试起跑
-    /// 已经耗掉 900ms，只剩 100ms 却要等 300ms，必然超时。
+    /// 8 次尝试 × 300ms 服务端延迟 ≈ 2.4s，而预算是 2s ——
+    /// 独立预算时每次 300ms 远小于 2000ms（余量 1700ms）；共享预算时第 7 次尝试起跑
+    /// 已经耗掉 1.8s，只剩 200ms 却要等 300ms，必然超时。
     /// </para>
     /// <para>
     /// 余量不能再收紧：CI 满载时 <c>Task.Delay</c> 与线程池注入可能晚到数百毫秒
-    /// （实测记录见 <c>StreamCancellationTests</c> 的预算注释），
-    /// 「300ms 预算配 150ms 延迟」这种 1:2 的窄口径会周期性假失败 ——
-    /// 失败信息看起来像「超时预算被整条请求共享」，实际只是机器忙。
+    /// （实测记录见 <c>StreamCancellationTests</c> 的预算注释）。此前是「4 次 × 300ms + 1000ms 预算」，
+    /// 单次余量只有 700ms，GitHub Actions 上曾把「实现正确但机器忙」判成
+    /// 「超时预算被整条请求共享」。因此这里同时做两件事：把单次余量抬到 1700ms，
+    /// 并把整类放进 <see cref="TimingCollection"/> 独占运行。
     /// </para>
     /// </summary>
     [Fact]
     public async Task TimeoutBudget_IsPerAttempt_NotForWholeRequest()
     {
-        const int attempts = 4;
+        const int attempts = 8;
+        const int attemptDelayMs = 300;
+        var timeout = TimeSpan.FromMilliseconds(2000);
+
         var calls = 0;
         await using var server = TestHttpServer.Start(async _ =>
         {
             var call = Interlocked.Increment(ref calls);
-            await Task.Delay(300);
+            await Task.Delay(attemptDelayMs);
             return call < attempts
                 ? TestJson.Response(new { error = "boom" }, statusCode: 500)
                 : TestJson.Response(new { ok = true });
@@ -199,10 +210,20 @@ public sealed class Audit20261025RetryTests
 
         using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(attempts - 1) } });
 
-        var response = await client.GetAsync(server.Url + "x", c => c.Timeout = TimeSpan.FromMilliseconds(1000));
+        var clock = Stopwatch.StartNew();
+        var response = await client.GetAsync(server.Url + "x", c => c.Timeout = timeout);
+        clock.Stop();
 
         Assert.Equal(200, response.Status);
         Assert.Equal(attempts, server.Received.Count);
+
+        // 用例的区分力靠这条不变式：总耗时（≈2.4s）必须真的超过 Timeout。
+        // 若没超过（服务端延迟被吞掉 / 尝试次数不对），本用例就什么都没证明 ——
+        // 那种「绿」比红更危险，所以显式断言出来。
+        Assert.True(
+            clock.Elapsed > timeout,
+            $"总耗时 {clock.Elapsed} 未超过 Timeout {timeout}：本用例没有区分「每次尝试一份预算」与"
+            + "「整条请求一份预算」的能力（检查服务端延迟是否生效、尝试次数是否正确）。");
     }
 
     [Fact]

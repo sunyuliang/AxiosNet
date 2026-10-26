@@ -13,20 +13,46 @@ namespace AxiosNet.Tests;
 /// <item>同步入口绝不对内层流做同步 I/O：内层是 async-only 流（同步成员抛 <see cref="NotSupportedException"/>）时，
 /// 同步读也必须照常工作，并且能被令牌打断——否则「已经超时了，同步读还卡在 socket 上」的洞会重新出现。</item>
 /// </list>
+/// <para>
+/// 整类放进 <see cref="TimingCollection"/>：这里的断言都是「必须在预算内被打断」，
+/// 而同步读会阻塞线程池线程（<see cref="Internal.BlockingWait"/>），与其它集合并行跑时
+/// 线程池注入会被拖慢，正确实现也会超预算。
+/// </para>
 /// </summary>
+[Collection(TimingCollection.Name)]
 public sealed class StreamCancellationTests
 {
     /// <summary>
-    /// 期望在 250ms 内被打断；给 2 秒的宽松上限，避免 CI 抖动导致假失败。
-    /// <para>只用于「服务端稍后会自然返回」的用例（3s / 4s 延迟）：这类断言必须把
-    /// 「被超时/取消打断」与「自己等完」区分开，预算不能放大。</para>
+    /// 「必须在预算内被打断」类用例的预算。
+    /// <para>
+    /// 这类断言的作用是把「被超时 / 取消打断」与「自己等完」区分开，所以两个时间必须差一个数量级：
+    /// 自然完成时间取 20 秒以上（<see cref="SlowBodyDelay"/>、限速总时长），预算取 5 秒。
+    /// </para>
+    /// <para>
+    /// 曾经是「自然 3s / 预算 2s」：两者只差 1 秒。CI 满载时一次取消回调晚到 2.19 秒
+    /// （GitHub Actions 实测总耗时 2.34s）就落在预算之外 —— 实现是对的，判成失败。
+    /// 预算既不能贴着自然完成时间设，也不能贴着调度抖动设。
+    /// </para>
     /// </summary>
-    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// 服务端「先发响应头、很久之后才发正文」的延迟。
+    /// <para>
+    /// 下界：必须远大于 <see cref="Budget"/> —— 被打断失败时实现会一直等到正文，
+    /// 两者太近就分不清「取消生效了」与「刚好等到数据了」。
+    /// </para>
+    /// <para>
+    /// 上界：必须小于 <see cref="LongTimeout"/> —— 否则先到的是「请求超时」（ECONNABORTED），
+    /// 用例就变成在测超时而不是外部取消了。
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan SlowBodyDelay = TimeSpan.FromSeconds(20);
 
     /// <summary>
     /// 同步入口阻塞的是线程池线程，超时计时器的回调同样要线程池：CI 满载时回调可能晚到数秒（实测约 3.3s）。
     /// 对「限速等待必须被超时打断」的用例，预算只需远小于「限速自己等完」的时间
-    /// （64KB @1KB/s ≈ 64s），2 秒的 <see cref="Budget"/> 在这里过于接近调度抖动幅度。
+    /// （64KB @1KB/s ≈ 64s），而 <see cref="Budget"/> 对一次阻塞读来说仍嫌紧。
     /// </summary>
     private static readonly TimeSpan BlockingReadBudget = TimeSpan.FromSeconds(10);
 
@@ -36,8 +62,8 @@ public sealed class StreamCancellationTests
     /// <para>
     /// 计时器回调要排进线程池，CI 满载时线程池注入慢，回调可能晚到数秒 ——
     /// 实测 GitHub Actions 上 <c>BufferedResponse_HonorsTimeoutDuringBodyRead</c> 耗时 2.12s
-    /// （同步读用例约 3.3s）。2 秒的 <see cref="Budget"/> 落在调度抖动范围内，
-    /// 会把「实现正确但机器忙」误判成失败。
+    /// （同步读用例约 3.3s）。<see cref="Budget"/> 的 5 秒仍落在调度抖动的量级上，
+    /// 把「实现正确但机器忙」误判成失败。
     /// </para>
     /// <para>只用于内层流不会自行结束的用例；有自然返回时间的仍然用 <see cref="Budget"/>。</para>
     /// </summary>
@@ -233,7 +259,7 @@ public sealed class StreamCancellationTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(
             Body: new byte[4096],
             ContentType: "application/octet-stream",
-            BodyDelay: TimeSpan.FromSeconds(3)));
+            BodyDelay: SlowBodyDelay));
 
         using var client = new AxiosClient();
         using var cts = new CancellationTokenSource();
@@ -307,7 +333,7 @@ public sealed class StreamCancellationTests
             : new TestResponse(
                 Body: new byte[4096],
                 ContentType: "application/octet-stream",
-                BodyDelay: TimeSpan.FromSeconds(3)));
+                BodyDelay: SlowBodyDelay));
 
         using var client = new AxiosClient();
 
@@ -406,7 +432,9 @@ public sealed class StreamCancellationTests
         var clock = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "upload", payload, c =>
         {
-            c.Limits.MaxRate = 64 * 1024; // 4 秒才能传完，必须被 250ms 的超时打断
+            // 256KB @ 8KB/s ≈ 32 秒才能传完，必须被 250ms 的超时打断。
+            // 速率压得足够低，才能把「被打断」与「限速自己等完」清楚地区分开（后者远大于 Budget）。
+            c.Limits.MaxRate = 8 * 1024;
             c.Timeout = ShortTimeout;
         }));
         clock.Stop();
