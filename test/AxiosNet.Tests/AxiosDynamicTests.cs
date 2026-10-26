@@ -47,6 +47,28 @@ public sealed class AxiosDynamicTests
     }
 
     [Fact]
+    public void Keys_IsSnapshot_MutationDoesNotLeak()
+    {
+        dynamic firstDynamic = new AxiosDynamic();
+        firstDynamic.a = 1;
+        firstDynamic.b = 2;
+
+        dynamic secondDynamic = new AxiosDynamic();
+        secondDynamic.a = 1;
+        secondDynamic.b = 2;
+
+        var first = (AxiosDynamic)firstDynamic;
+        var second = (AxiosDynamic)secondDynamic;
+
+        // 键集合是快照（定长数组）：改不动，也不会波及共享形状（否则同形状的实例会一起少字段）
+        var keys = first.Keys;
+        Assert.Throws<NotSupportedException>(() => keys.Remove("a"));
+
+        Assert.Equal(new[] { "a", "b" }, first.Keys);
+        Assert.Equal(new[] { "a", "b" }, second.Keys);
+    }
+
+    [Fact]
     public void AddPropertyAfterRead_IsVisibleOnNextRead()
     {
         dynamic data = new AxiosDynamic();

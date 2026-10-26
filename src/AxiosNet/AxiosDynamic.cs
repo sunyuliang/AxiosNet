@@ -91,8 +91,21 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
     /// <summary>属性个数（按 JSON 字段计，不含 CLR 成员）。</summary>
     public int Count => Volatile.Read(ref _shape).Count;
 
-    /// <summary>键集合（按插入顺序）。</summary>
-    public ICollection<string> Keys => Volatile.Read(ref _shape).Slots.Keys;
+    /// <summary>
+    /// 键集合（按插入顺序的快照）。
+    /// <para>不能直接把 <c>Shape.Slots.Keys</c> 交出去：那是共享形状里的可变视图，
+    /// 调用方一个 <c>Remove</c> 就会改坏同形状的所有实例。与 <see cref="Values"/> 一样给快照。</para>
+    /// </summary>
+    public ICollection<string> Keys
+    {
+        get
+        {
+            var shape = Volatile.Read(ref _shape);
+            var keys = new string[shape.Count];
+            shape.Slots.Keys.CopyTo(keys, 0);
+            return keys;
+        }
+    }
 
     /// <summary>值集合（按插入顺序的快照）。</summary>
     public ICollection<object?> Values
