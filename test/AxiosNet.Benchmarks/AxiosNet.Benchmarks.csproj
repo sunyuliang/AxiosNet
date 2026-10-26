@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 独立的性能基准资产：单目标 net8.0（BenchmarkDotNet 的宿主运行时），
+         不进 NuGet 包、不被 src/ 引用。主库仍是单目标 net6.0 + 零第三方运行时依赖，
+         BenchmarkDotNet 只存在于本基准进程里。 -->
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AxiosNet.Benchmarks</RootNamespace>
+    <AssemblyName>AxiosNet.Benchmarks</AssemblyName>
+
+    <!-- 基准永远不该测未优化的 IL：不论 Debug / Release 都开优化。
+         仍请用 -c Release 运行（BDN 按构建配置做校验，命令见 README）。 -->
+    <Optimize>true</Optimize>
+
+    <!-- 不是产品资产：不打包、不被 dotnet test 收集 -->
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 不能加 PrivateAssets="all"：BDN 会生成一个引用本程序集的临时项目，
+         它靠传递引用拿到 BenchmarkDotNet.Engines 等类型；私有化后生成项目直接编译失败。
+         本项目 IsPackable=false，不存在"泄漏到包"的风险。 -->
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+  </ItemGroup>
+
+</Project>

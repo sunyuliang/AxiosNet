@@ -48,6 +48,7 @@ An axios-style HTTP client for .NET: the request API mirrors JS [axios](https://
 - [Samples](#samples)
 - [Runtime support and AOT](#runtime-support-and-aot)
 - [Build and test](#build-and-test)
+- [Benchmarks](#benchmarks)
 - [Project layout](#project-layout)
 - [License](#license)
 
@@ -1038,6 +1039,41 @@ dotnet build AxiosNet.sln -c Release
 
 Tests run against a hand-rolled `TcpListener` HTTP/1.1 keep-alive server over real TCP, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress / rate / size limits, the connection pool and protocol negotiation, streaming, retries, telemetry, declarative binding and DI registration.
 
+The solution also contains `test/AxiosNet.Benchmarks` (single target `net8.0`), which no test runs:
+`dotnet build AxiosNet.sln` builds it (one BenchmarkDotNet restore), `dotnet test` ignores it, and CI
+never runs it — benchmark numbers are meaningless on a shared runner.
+
+## Benchmarks
+
+[`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) is a standalone BenchmarkDotNet project that turns
+"did this change help, and did it regress anything else?" into readable numbers. It targets `net8.0` only,
+sets `IsPackable=false` and is not referenced by `src/`, so the library keeps its
+"single `net6.0` target, zero third-party runtime dependencies" contract.
+
+Keep the two jobs apart: `AxiosNet.Tests/ConcurrencyPerformanceTests` is a **concurrency correctness** test —
+85% threshold, 3 × 1s rounds, median of paired ratios, ±15% across processes. It catches collapses, it cannot
+resolve 3%. Use the benchmarks to quantify a change, keep that test as the floor.
+
+```bash
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --list flat
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*Merge*'
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*'
+```
+
+| Group | Hot spot | Baseline |
+| --- | --- | --- |
+| `RequestPipelineBenchmarks` | Full request path (real loopback socket) | `HttpClient_GetString` |
+| `ConcurrentPipelineBenchmarks` | Per-request cost with 8 in flight | `HttpClient_Concurrent` |
+| `ConfigMergeBenchmarks` | `MergeConfig` / header merge | `GetUri_NoMerge` |
+| `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` primitives | — (absolute values) |
+| `FormEncodingBenchmarks` | Form flattening + percent-encoding | `PostForm_FlatAscii` |
+| `DynamicDeserializationBenchmarks` | `dynamic` deserialization | `Typed` |
+| `StreamingFramingBenchmarks` | Stream framing (NDJSON / SSE / JSON array) | `Ndjson` |
+
+`Ratio` is an in-run ratio against the baseline (more portable than absolute ns, still machine-specific);
+`Allocated` is bytes per operation (stable across runs). Reading guide, before/after workflow and known
+noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
+
 ## Project layout
 
 ```
@@ -1058,7 +1094,7 @@ Tests run against a hand-rolled `TcpListener` HTTP/1.1 keep-alive server over re
 │  │  └─ Internal/                    # URL building, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
 ├─ samples/                           # Simple (37 scenarios) / DI / Aot
-└─ test/                              # AxiosNet.Tests / DependencyInjection.Tests
+└─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
 ```
 
 ## License

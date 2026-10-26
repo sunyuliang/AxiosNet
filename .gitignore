@@ -27,6 +27,12 @@ coverage/
 coverage.opencover.xml
 coverage.cobertura.xml
 
+# ---- 性能基准产物（test/AxiosNet.Benchmarks）----
+# BDN 每次运行都会在项目目录下重建这份产物（含生成的临时项目与结果报告），
+# 前后对比用的基线副本（.baseline）同理，都不入库。
+BenchmarkDotNet.Artifacts/
+.baseline/
+
 # ---- Visual Studio ----
 .vs/
 *.userprefs

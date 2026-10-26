@@ -48,6 +48,7 @@ axios 风格的 .NET HTTP 客户端：请求写法与 JS 的 [axios](https://git
 - [示例项目](#示例项目)
 - [运行时支持与 AOT](#运行时支持与-aot)
 - [构建与测试](#构建与测试)
+- [性能基准](#性能基准)
 - [项目结构](#项目结构)
 - [License](#license)
 
@@ -1038,6 +1039,39 @@ dotnet build AxiosNet.sln -c Release
 
 测试用自研的 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、遥测、声明式绑定与 DI 注册。
 
+解决方案里还有一个不参与测试的 `test/AxiosNet.Benchmarks`（性能基准，单目标 `net8.0`）：
+`dotnet build AxiosNet.sln` 会顺带构建它，需要还原一次 BenchmarkDotNet；`dotnet test` 不碰它，
+CI 也不跑它（基准对机器状态敏感，共享 runner 上的数字没有意义）。
+
+## 性能基准
+
+[`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) 是独立的 BenchmarkDotNet 项目，
+用来把「这次优化有没有效果、有没有退化」变成可读的数字。它单目标 `net8.0`、`IsPackable=false`、
+不被 `src/` 引用，因此主库「单目标 `net6.0` + 零第三方运行时依赖」的约定不受影响。
+
+两者分工要说清楚：`AxiosNet.Tests/ConcurrencyPerformanceTests` 是**并发正确性测试** ——
+门槛 85%、3 轮 × 1 秒、判定取中位，跨进程摆动 ±15%，它负责拦住「塌方」，读不出 3% 的差异；
+量化改动看基准，守底线看那条用例。
+
+```bash
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --list flat
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*Merge*'
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*'
+```
+
+| 组 | 热点 | 基线 |
+| --- | --- | --- |
+| `RequestPipelineBenchmarks` | 请求全链路（真实回环 socket） | `HttpClient_GetString` |
+| `ConcurrentPipelineBenchmarks` | 8 条在飞时的每请求成本 | `HttpClient_Concurrent` |
+| `ConfigMergeBenchmarks` | `MergeConfig` / 请求头合并 | `GetUri_NoMerge` |
+| `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` 原语 | —（看绝对值） |
+| `FormEncodingBenchmarks` | 表单展平 + 百分号编码 | `PostForm_FlatAscii` |
+| `DynamicDeserializationBenchmarks` | `dynamic` 反序列化 | `Typed` |
+| `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` |
+
+`Ratio` 是同一次运行内相对基线的比值（比绝对 ns 可移植，但仍带本机特性），`Allocated` 是每操作分配量（跨运行稳定）；
+读法、前后对比流程与已知噪声见 [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md)。
+
 ## 项目结构
 
 ```
@@ -1058,7 +1092,7 @@ dotnet build AxiosNet.sln -c Release
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
 ├─ samples/                           # Simple（37 项）/ DI / Aot
-└─ test/                              # AxiosNet.Tests / DependencyInjection.Tests
+└─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
 ```
 
 ## License
