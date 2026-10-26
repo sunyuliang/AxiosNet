@@ -302,6 +302,29 @@ public sealed class HardeningTests
     }
 
     [Fact]
+    public void Clone_CopiesMutableDictionaryContainers()
+    {
+        var sentinel = new object();
+        var defaults = new AxiosConfig
+        {
+            Params = new Dictionary<string, object?> { ["p"] = sentinel },
+            Data = new Dictionary<string, object?> { ["d"] = 1 }
+        };
+
+        var clone = defaults.Clone();
+
+        // 只复制容器：拦截器往克隆的 Params / Data 字典里加项，不能污染实例默认值
+        ((Dictionary<string, object?>)clone.Params!)["added"] = 2;
+        ((Dictionary<string, object?>)clone.Data!)["added"] = 2;
+
+        Assert.Single((Dictionary<string, object?>)defaults.Params!);
+        Assert.Single((Dictionary<string, object?>)defaults.Data!);
+
+        // 元素仍按引用共享：这里不深拷贝业务对象
+        Assert.Same(sentinel, ((Dictionary<string, object?>)clone.Params!)["p"]);
+    }
+
+    [Fact]
     public async Task NullParamsAndData_ClearInheritedDefaults()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

@@ -502,7 +502,7 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>深拷贝（Headers / transform 链独立，Params / Data 等引用成员按引用共享）。</summary>
+    /// <summary>深拷贝（Headers / transform 链 / Params / Data 的字典容器独立；其余引用成员按引用共享）。</summary>
     /// <remarks>
     /// 用 <see cref="object.MemberwiseClone"/> 而非 new + 逐属性赋值：构造函数会创建 4 个集合，
     /// 且各带 <c>*Set</c> 标记的 setter 会把「未显式设置」误置为 true；字段级复制原样保留真实状态。
@@ -527,6 +527,11 @@ public sealed partial class AxiosConfig
         clone._retry = _retry?.Clone();
         clone._circuit = _circuit?.Clone();
         clone._telemetry = _telemetry?.Clone();
+
+        // Params / Data 是引用成员：字典最容易被就地修改（请求拦截器往 Params 里加一项是常见写法），
+        // 与实例默认值共享同一份会污染后续所有请求。这里只复制容器，元素仍按引用共享（不深拷贝业务对象）。
+        clone._params = CloneContainer(_params);
+        clone._data = CloneContainer(_data);
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;
@@ -556,6 +561,19 @@ public sealed partial class AxiosConfig
 
         return clone;
     }
+
+    /// <summary>
+    /// <see cref="Params"/> / <see cref="Data"/> 的容器级复制：只认最容易被就地修改且语义明确的字典，
+    /// 其余类型（匿名对象 / 集合 / 流 / 字符串）原样共享 —— 深拷贝任意业务对象既不可靠，也不该在配置克隆里做。
+    /// </summary>
+    private static object? CloneContainer(object? value) => value switch
+    {
+        Dictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary, dictionary.Comparer),
+        IDictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary),
+        Dictionary<string, string> dictionary => new Dictionary<string, string>(dictionary, dictionary.Comparer),
+        IDictionary<string, string> dictionary => new Dictionary<string, string>(dictionary),
+        _ => value
+    };
 
     /// <summary>
     /// 把外部传入的 transform 集合包成线程安全实现（已是则原样复用）。
