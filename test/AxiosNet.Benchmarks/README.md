@@ -315,7 +315,7 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 
 - 同一类里的变体必须**只差被测变量**：服务器、载荷、并发度、Handler 对齐口径都要一致，
   否则测的是「两个场景的差异」而不是「一段代码的成本」。
-- 新增热点时同步更新：本文件的表格、根 README 的「性能基准」一节，以及新类上的
+- 新增热点时同步更新：本文件的表格、根 README「构建与测试 › 性能基准」的分组表，以及新类上的
   `[BenchmarkGroup]`（分组 + 口径说明）与 `[BenchmarkHint]`（怎么读）。菜单是运行时反射发现，
   不需要在任何清单里登记；漏写特性也不会让类消失 —— 缺分组会落进「未分组」，缺读法会在那一行提示补上。
 - 改了 `ConcurrencyPerformanceTests` 里的 `CreateComparableHandler` 对齐口径，
