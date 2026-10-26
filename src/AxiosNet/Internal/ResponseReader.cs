@@ -455,8 +455,9 @@ internal static class ResponseReader
 
             if (config.ResponseType == ResponseType.Stream)
             {
-                // 流式：与网络路径一致，正文以流交出。每次调用新建一份，缓存里的字节数组不随流的所有权漂移。
-                data = new MemoryStream(body, writable: false);
+                // 流式：与网络路径一致，正文以流交出。底层字节数组必须复制 —— 只新建 MemoryStream
+                // 而共享同一个 byte[] 时，调用方通过流读到的仍是缓存条目本身，写入即污染后续命中。
+                data = new MemoryStream((byte[])body.Clone(), writable: false);
             }
             else
             {

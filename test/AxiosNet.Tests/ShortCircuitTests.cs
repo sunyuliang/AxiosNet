@@ -327,8 +327,13 @@ public sealed class ShortCircuitTests
         // 每次新建：缓存里的字节数组不随某一条流的所有权漂移
         Assert.NotSame(first.Data, second.Data);
 
+        // 独立的不只流对象本身：底层字节数组也必须复制 —— 改写缓存条目后，已交付的流不应跟着变
+        var expected = """{"name":"cached","age":1}""";
+        var cached = reply.Body!;
+        cached[0] = (byte)'X';
+
         using var reader = new StreamReader(first.Data!);
-        Assert.Equal("""{"name":"cached","age":1}""", await reader.ReadToEndAsync());
+        Assert.Equal(expected, await reader.ReadToEndAsync());
     }
 
     [Fact]
