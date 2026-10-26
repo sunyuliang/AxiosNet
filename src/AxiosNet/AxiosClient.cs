@@ -27,30 +27,22 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private int _resourcesDisposed;
 
     /// <summary>
-    /// 在途并发闸门（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>）。
-    /// <para>
-    /// 懒创建：首个<b>受限</b>请求时按当时的生效上限建出信号量并固定 —— 这样
-    /// <c>Axios.Defaults.Limits.MaxConcurrentRequests = 8</c> 这种「构造之后再配默认值」的写法
-    /// 只要在首个请求之前就仍然有效。之后改上限会报错（见 <see cref="ResolveConcurrencyGate"/>），
-    /// 不静默沿用旧值：调用方设了上限却按别的上限跑，比报错危险得多。
-    /// </para>
+    /// 在途并发闸门（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>）。懒创建：首个<b>受限</b>请求时
+    /// 按当时的生效上限建出信号量并固定 —— 这样「构造之后再配默认值」只要在首个请求之前就仍然有效。
+    /// 之后改上限会报错（见 <see cref="ResolveConcurrencyGate"/>），不静默沿用旧值。
     /// </summary>
     private ConcurrencyGate? _gate;
 
     /// <summary>
     /// 对应 axios instance.defaults。
     /// <para>
-    /// 连接级选项（<see cref="AxiosConfig.ConnectionSettings.WithCredentials"/> /
-    /// <see cref="AxiosConfig.ConnectionSettings.MaxRedirects"/> /
-    /// <see cref="AxiosConfig.ConnectionSettings.Proxy"/> / <see cref="AxiosConfig.ConnectionSettings.Credentials"/> /
-    /// <see cref="AxiosConfig.ConnectionSettings.PoolOptions"/>）在<b>构造时已固化</b>进连接池 / Handler，
-    /// 构造后再修改不生效（校验与池配置都以构造期快照为准，不会有任何报错提示）——
+    /// 连接级选项（<c>WithCredentials</c> / <c>MaxRedirects</c> / <c>Proxy</c> / <c>Credentials</c> /
+    /// <c>PoolOptions</c>）在<b>构造时已固化</b>进连接池 / Handler，构造后再修改不生效且不报错 ——
     /// 要改变它们请新建实例。其余配置（头、transform、超时等）随时可改。
     /// </para>
     /// <para>
     /// 另有一项不属于连接级选项、但同样有固化时点：<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>
-    /// 的并发闸门在<b>首个受限请求</b>时按当时的上限创建（因此构造之后再配默认值仍然有效），
-    /// 此后改它会抛 <c>ERR_BAD_OPTION_VALUE</c> 而不是静默沿用旧上限。
+    /// 的闸门在<b>首个受限请求</b>时创建（因此构造后再配默认值仍有效），此后改它会抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </para>
     /// </summary>
     public AxiosConfig Defaults { get; }
@@ -265,10 +257,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        // 一律按「本实例的生效配置」算：回放 response.Config 时，其中的 BaseAddress 等实例级项
+        // 一律按「本实例的生效配置」算：回放 response.Config 时其中的 BaseAddress 等实例级项
         // 由 MergeConfig 的 instanceSourced 门禁让位给本实例默认值，与 RequestAsync 实际发出的地址一致。
-        // （此前「生效配置原样使用」那个分支是为了让 GetUri(Action) 里写的 BaseAddress 不被门禁吞掉，
-        //  那个需求现在由 GetUri(Action) 直接拼装满足，不再需要它。）
         var merged = MergeConfig(config);
         return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.ParamsSerializer, config: merged)
             .AbsoluteUri;
@@ -340,18 +330,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 把调用方交进来的配置整理成「本次请求的生效配置」：普通配置（按请求补丁）原样返回，
-    /// 由 <see cref="SendAsync"/> 合并到实例默认值。
+    /// 把调用方交进来的配置整理成「本次请求的生效配置」：普通配置（按请求补丁）原样返回，由
+    /// <see cref="SendAsync"/> 合并到实例默认值；带 <see cref="AxiosConfig.EffectiveMerged"/> 的生效配置
+    /// （典型是回放 <see cref="AxiosResponse.Config"/>）在这里<b>直接合并</b> —— 合并只读 perCall、不写它，
+    /// 不必先克隆一份只为「清标记让 SendAsync 走合并分支」。
     /// <para>
-    /// 带 <see cref="AxiosConfig.EffectiveMerged"/> 的生效配置（典型是回放 <see cref="AxiosResponse.Config"/>）
-    /// 在这里<b>直接合并</b>：合并只读 perCall、不写它，不需要先 <see cref="AxiosConfig.Clone"/> 一份 ——
-    /// 那份克隆只是用来「清掉标记让 SendAsync 走合并分支」，白白多一次深拷。
-    /// </para>
-    /// <para>
-    /// 合并产物在这里（而不是 <c>MergeConfig</c> 里）置 <c>EffectiveMerged</c>：
-    /// 标记的含义是「本次请求已合并、SendAsync 不必再合并」，只对这条路径成立；
-    /// <c>MergeConfig</c> 的其他调用方（SendAsync 的常规合并、<c>GetUri</c>）拿到的产物
-    /// 仍按「未合并的输入」处理，与 <c>GetUri</c> 既有的 <c>EffectiveMerged ? 原样 : 合并</c> 判定兼容。
+    /// <c>EffectiveMerged</c> 在这里（而不是 <c>MergeConfig</c> 里）置：标记含义是「本次请求已合并、
+    /// SendAsync 不必再合并」，只对这条路径成立；<c>MergeConfig</c> 的其他调用方拿到的产物仍按未合并输入处理。
     /// </para>
     /// </summary>
     private AxiosConfig PreparePerCall(AxiosConfig config)
@@ -382,46 +367,48 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 请求入口：已释放拦截、在途计数（配合 <see cref="Dispose"/> 的推迟释放）、合并与校验，
-    /// 然后跑完整管线（拦截器 → 编码 → 发送 → 读取 → 转换）。
-    /// <paramref name="target"/> 是调用方预造的响应对象，管线就地填充。
-    /// <para>守卫与计数归还必须成对：任何一处抛异常都靠 finally 归还最后一条租约。</para>
+    /// 阶段 0 —— 入口守卫：先占一个在途名额，再复核释放标记（先占位再复核，不会出现
+    /// 「拿着已释放的 Handler / 池跑到一半」的中间态）。
+    /// <para>必须在调用方的 <c>try</c> 之外：它在名额还没占上时就抛，那时不该再归还。</para>
+    /// </summary>
+    private void EnterInFlight(AxiosConfig config)
+    {
+        // ObjectDisposedException.ThrowIf 是 .NET 7 才有的 API，手写以兼容 net6.0 目标。
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            throw DisposedError(config);
+        }
+
+        Interlocked.Increment(ref _inFlight);
+
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            ReleaseInFlight();
+            throw DisposedError(config);
+        }
+    }
+
+    /// <summary>已释放实例上的请求统一报 <c>ERR_CANCELED</c>，不漏裸 <see cref="ObjectDisposedException"/>。</summary>
+    private static AxiosException DisposedError(AxiosConfig config)
+        => AxiosException.Canceled(config, null, DisposedMessage, new ObjectDisposedException(nameof(AxiosClient)));
+
+    /// <summary>
+    /// 请求入口：按固定顺序驱动整条管线 ——
+    /// 合并 → 校验（实例级）→ 拦截 → 校验（范围 + 闸门）→ 编码 → 发送 → 收尾。
+    /// <para>
+    /// 顺序是契约（<c>ValidateRangeConfig</c> 在拦截器之后、闸门在校验之后、遥测起点在 URL 拼好之后），
+    /// 每处的理由写在对应阶段方法上。<paramref name="target"/> 是调用方预造的响应对象，管线就地填充。
+    /// </para>
     /// </summary>
     private async Task<AxiosResponse> SendAsync(
         AxiosConfig perCallConfig,
         Type? dataType,
         AxiosResponse? target = null)
     {
-        // ObjectDisposedException.ThrowIf 是 .NET 7 才有的 API，手写以兼容 net6.0 目标。
-        if (Volatile.Read(ref _disposed) == 1)
-        {
-            // 统一错误模型：已释放的实例不再漏出裸 ObjectDisposedException
-            throw AxiosException.Canceled(
-                perCallConfig,
-                null,
-                DisposedMessage,
-                new ObjectDisposedException(nameof(AxiosClient)));
-        }
+        // 阶段 0：守卫。放在 try 之外 —— 它抛的时候名额还没占上，finally 里的归还不能跟着跑。
+        EnterInFlight(perCallConfig);
 
-        // 先占位再复核：请求要么完整跑在释放之前，要么明确收到错误，
-        // 不会出现「拿着已释放的 Handler/池跑到一半」的中间态。
-        Interlocked.Increment(ref _inFlight);
-        if (Volatile.Read(ref _disposed) == 1)
-        {
-            ReleaseInFlight();
-            throw AxiosException.Canceled(
-                perCallConfig,
-                null,
-                DisposedMessage,
-                new ObjectDisposedException(nameof(AxiosClient)));
-        }
-
-        // 遥测状态（全部是局部量：关闭遥测时不产生任何分配）
-        //   telemetryEnabled —— 本次请求是否产出遥测（在途计数、耗时、span、事件都看它）；
-        //   telemetryStart   —— 单调时钟起点，指标 / 事件 / span 共用（三者必须量同一段）；
-        //   telemetryUri     —— 请求成型的标志：为 null 说明配置校验或拦截器就失败了，那不是一次 HTTP 操作；
-        //   telemetryActivity —— 没有监听者时为 null，后续调用一路判空即可，不需要额外分支。
-        // 后三个都在 URL 拼好之后一起定下来（见步骤 3），判定开关也放在同一处 —— 理由见那里的注释。
+        // 遥测状态全是局部量：关闭遥测时零分配；后三项在 URL 拼好之后才定（见阶段 5）。
         AxiosConfig? config = null;
         Uri? telemetryUri = null;
         var telemetryEnabled = false;
@@ -430,282 +417,50 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         try
         {
-            // 生效配置：快捷方法传进来的已合并好（见 Shortcut），其余入口在这里合并到实例默认值。
-            // 校验一律对生效配置做：两种来源的判定条件相同。
-            config = perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
+            // 阶段 1：合并 —— 得到本次请求的生效配置。
+            config = MergeEffectiveConfig(perCallConfig);
+
+            // 阶段 2：校验（实例级选项）—— 这几项构造期已固化进连接池，拦截器改不了（改了也不生效），
+            // 所以判在拦截器之前，保证「拦截器看到的一定是发得出去的配置」。
             ValidatePerRequestOptions(config);
 
-            // 1) 请求拦截器：与 axios 一致，按注册逆序执行
-            //    注意：实例级选项（Proxy / Credentials / WithCredentials / MaxRedirects / PoolOptions）
-            //    在构造期已固化进连接池，拦截器里改它们不生效也不报错 —— 请新建实例配置
-            foreach (var interceptor in Interceptors.Request.SnapshotReversed())
-            {
-                AxiosConfig next;
-                try
-                {
-                    // 返回 null Task 与下面返回 null 结果同罪：提前给出可定位的错误，
-                    // 不让 await null 炸成裸 NullReferenceException（同步结果请用 Task.FromResult）
-                    var pending = interceptor.OnFulfilled(config)
-                        ?? throw AxiosException.InvalidOption(
-                            "请求拦截器返回了 null Task：OnFulfilled / OnRejected 必须返回 Task<AxiosConfig> 实例"
-                            + "（同步结果请用 Task.FromResult 包装）。",
-                            config);
-                    next = await pending.ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    if (interceptor.OnRejected is null)
-                    {
-                        throw;
-                    }
+            // 阶段 3：拦截 —— 请求拦截器按注册逆序执行（与 axios 一致）。
+            config = await InterceptRequestAsync(config).ConfigureAwait(false);
 
-                    next = await interceptor.OnRejected(ex).ConfigureAwait(false);
-                }
-
-                // 返回 null 会在下一行炸成裸 NullReferenceException，调用方看不出是哪层拦截器出的错。
-                config = next ?? throw AxiosException.InvalidOption(
-                    "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
-                    + "（要做修改请改传入的 config 后端返回它）。",
-                    config);
-            }
-
-            // 泛型 <dynamic>/<object> 与 <Stream> 的响应形态自动切换（对标 responseType:
-            // 'dynamic' / 'stream'）。判据是 ResponseTypeSet（调用方显式设置过）而不是当前值：
-            // Json 是字段默认值，只看值会把「Defaults 上显式设过 Json」也当成未表态。
-            // 位置必须在请求拦截器之后：拦截器可以整体替换 config（返回一个新 AxiosConfig），
-            // 在它之前切换会在拦截器换配置时静默丢失，最终在反序列化阶段报 ERR_BAD_RESPONSE ——
-            // 错误表象与真实原因（拦截器换了配置）相距甚远（与下面的 ValidateRangeConfig 同理）。
-            // 自动切换不置 ResponseTypeSet：否则回放生效配置时会被当成调用方显式意图。
-            if (!config.ResponseTypeSet)
-            {
-                if (dataType == typeof(object))
-                {
-                    config.SetResponseTypeAuto(ResponseType.Dynamic);
-                }
-                else if (dataType == typeof(Stream))
-                {
-                    config.SetResponseTypeAuto(ResponseType.Stream);
-                }
-            }
-
-            // 负值没有合理语义，静默当作「不限制」会让调用方以为限制生效了。
-            // 必须校验**拦截器之后**的生效配置：拦截器可以替换 / 改写 config，
-            // 在校验前跑就等于允许「拦截器写 Timeout = -1」绕过护栏（hasTimeout 随后为 false，
-            // 静默变成不超时）。放在这里也允许拦截器修正调用方的非法值。
+            // 阶段 4：规范化 + 校验（范围 + 闸门）—— 必须看拦截器**之后**的配置：
+            // 判早了就成了「校验旧配置、发新配置」，等于允许拦截器写 Timeout = -1 绕过护栏
+            // （hasTimeout 随后为 false，静默不超时）；反过来也允许拦截器修正调用方的非法值。
+            ApplyAutoResponseType(config, dataType);
             ValidateRangeConfig(config);
-
-            // 并发闸门（在途条数上限）。位置与 ValidateRangeConfig 相同：必须在拦截器之后，
-            // 否则拦截器换掉 config 时闸门会按旧上限走；也必须在真正发送之前 ——
-            // 它是一次请求能否发出的前提，不能等到发送阶段才发现没名额。
             var gate = ResolveConcurrencyGate(config);
 
-            // 2) transformRequest：拦截器之后、编码之前依次作用于数据
-            // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
-            // 快照访问器拿具体 List：foreach 走结构体枚举器，不装箱。
-            if (config.TransformRequestSnapshot is { } requestTransforms)
-            {
-                foreach (var transform in requestTransforms)
-                {
-                    try
-                    {
-                        config.Data = transform(config.Data, config);
-                    }
-                    catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-                    {
-                        throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
-                    }
-                }
-            }
+            // 阶段 5：编码 —— transformRequest → URL / 协议 → 正文 / 请求头。
+            ApplyRequestTransforms(config);
+            var plan = BuildRequestPlan(config);
 
-            // 3) 构造 URI 与「请求模板」
-            //    正文与请求头只准备一次：重试必须换一条新的 HttpRequestMessage（同一实例发不了两次），
-            //    但正文继续复用 —— 上传进度计量器与限速状态都挂在正文上，换一份等于进度清零、白序列化一遍。
-            //    没有重试策略时模板本身就是唯一那条请求，与不重试的旧路径完全一致（不多一次分配）。
-            var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
-
-            // 默认 HTTP/2：现在 h2 是公网流量的主力（占比约一半，1.x 已降到一成多），默认停在 1.1
-            // 等于让绝大多数调用方白白丢掉多路复用与头压缩。默认 2.0 不会伤到老服务 —— 降级发生在
-            // TLS 握手的 ALPN 里，服务端只认 http/1.1 就直接谈成 1.1，不多一次往返、不多一条连接、
-            // 也没有「先试 2.0 再回退」的探测请求；协商不上时用户根本感知不到（代价只是没拿到 h2 的收益）。
-            // 策略显式写出来（而不是依赖 BCL 默认值）：「不支持就降级」是库的契约，BCL 哪天改了默认策略
-            // （例如改 Exact）不能让这条承诺静默失效 —— 一旦变成 Exact，默认 2.0 就会让所有老服务直接失败。
-            // 明文 HTTP 上没有 ALPN 可协商，OrLower 一律走 1.1，不会拿 h2c 先验知识去撞只认 1.x 的服务端；
-            // 也就是说默认 2.0 只影响 https，http:// 的线上行为与之前完全一致。
-            // 反向（需要强制 1.1：老网关、NTLM/Negotiate 这类连接级认证、必须用 Connection/Keep-Alive
-            // 等 h2 禁止的连接级头）：Connection.HttpVersion = Version11。
-            // 想要 HTTP/3 就写 Version30（默认值不变，仍是 2.0）：本机能不能跑 h3 见 Http3Support，
-            // 版本怎么协商、降级后怎么看真实协议见 README 的 HTTP/3 段。
-            var connection = config.ConnectionOrNull;
-            var httpVersion = connection?.HttpVersion ?? HttpVersion.Version20;
-            var versionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower;
-
-            // HTTP/3 的前置校验：只在真的要 h3 时走（h2 / 1.1 请求一次 Major 比较就返回）。
-            // 位置在遥测起点之前：这属于「准备阶段就失败」的配置错误，不是一次 HTTP 操作，计进耗时只会污染统计。
-            ValidateHttp3Request(uri, httpVersion, versionPolicy, config);
-
-            // 遥测的判定与起点都在这里，三件事同一个理由：
-            //   ① 口径一致 —— 指标与 span 必须量同一段，而 span 需要 URL（标签里要 host / path），只能到这儿才开；
-            //   ② 单一判定 —— 请求拦截器可以整体替换 config，开关必须看**最终**生效配置，提前缓存会看错；
-            //   ③ 在途数只数「真的进了发送阶段」的请求 —— 拦截器 / transformRequest 的准备阶段不算占用。
-            // 代价是「准备阶段就失败」的请求没有遥测（配置校验 / 拦截器 / 序列化失败）：那不是一次 HTTP 操作，
-            // 计进接口耗时反而会污染统计。没有监听者时 StartRequest 返回 null，后续所有遥测调用都是判空直通。
-            telemetryUri = uri;
+            // 遥测起点：必须在这里，因为 span 要 URL（标签里的 host / path），且开关要看最终生效配置；
+            // 在途数也只数「真的进了发送阶段」的请求 —— 准备阶段就失败的不是一次 HTTP 操作。
+            telemetryUri = plan.Uri;
             if (AxiosTelemetry.IsEnabled(config))
             {
                 telemetryEnabled = true;
                 telemetryStart = AxiosTelemetry.Timestamp;
                 AxiosTelemetry.EnterRequest();
-                telemetryActivity = AxiosTelemetry.StartRequest(config, uri);
+                telemetryActivity = AxiosTelemetry.StartRequest(config, plan.Uri);
             }
 
-            var template = new HttpRequestMessage(config.Method, uri)
-            {
-                Version = httpVersion,
-                VersionPolicy = versionPolicy
-            };
+            var template = CreateRequestMessage(config, plan, telemetryActivity);
 
-            // template 一旦创建就持有请求体（可能是调用方的 FileStream / FormFile），
-            // 所以从这里到方法结束的所有路径都必须先释放它。
+            // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try
             {
-                HttpContent? content;
-                try
-                {
-                    content = RequestBodyFactory.Create(config.Data, config);
-                }
-                catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-                {
-                    // 序列化失败同样走统一错误模型；取消类异常原样抛出，保留 IsCancel 语义。
-                    // 声明式表单的 config.Data 只是内部表单字典：报请求模型名，别把 Dictionary`2 这种实现细节漏给调用方。
-                    throw AxiosException.BadRequestPayload(
-                        config,
-                        template,
-                        config.Data is DeclaredForm declared
-                            ? declared.SourceName ?? declared.GetType().Name
-                            : config.Data?.GetType().Name ?? "null",
-                        ex);
-                }
-
-                // 上传进度 / 限速：包一层流量统计（头部复制，序列化逻辑不变）
-                var callbacks = config.CallbacksOrNull;
-                var maxRate = config.LimitsOrNull?.MaxRate;
-                if (content is not null && (callbacks?.OnUploadProgress is not null || maxRate is > 0))
-                {
-                    content = new ProgressHttpContent(content, callbacks?.OnUploadProgress, maxRate, config);
-                }
-
-                if (content is not null)
-                {
-                    if (config.LimitsOrNull?.MaxBodyLength is long maxBody
-                        && content.Headers.ContentLength is long bodyLength
-                        && bodyLength > maxBody)
-                    {
-                        content.Dispose();
-                        throw AxiosException.MaxBodyLength(config, template, bodyLength, maxBody);
-                    }
-
-                    template.Content = content;
-
-                    // 长度已知时顺手写进 span；未知（chunked / 不可定位流）就不写，不猜。
-                    AxiosTelemetry.SetRequestBodySize(telemetryActivity, content.Headers.ContentLength);
-                }
-
-                ApplyHeaders(template, config);
-
-                var externalToken = config.CancellationToken;
-                var streamResponse = config.ResponseType == ResponseType.Stream;
-
-                // 重试配置：没有策略 = 不重试（默认），下面的发送循环退化为一次尝试。
-                var retry = config.RetryOrNull;
-
-                // 熔断配置：没有策略 = 不熔断（默认），下面的每次尝试前都不做准入判定。
-                var circuit = config.CircuitOrNull;
-
-                // 正文可重放性：重试复用同一份正文，来自流的正文必须能拨回起点，
-                // 否则第二次发送只会发出空内容 —— 在发请求之前就拦下，而不是等重试时才发现。
-                var bodyRewind = retry?.Policy is { MaxRetries: > 0 } ? RetryBody.Prepare(config) : null;
-
-                // 流式正文的所有权交给调用方：拦截器抛异常或丢弃响应时由这里兜底释放，
-                // 否则租约永不归还，该 origin 节点再也不会被驱逐。
-                IDisposable? streamOwner = null;
-
-                // 5) 响应拦截器：按注册顺序包装成责任链
-                //    重试在链内（见 SendWithRetryAsync）：拦截器只看到最终结果，不会因重试被重复执行。
-                var responseInterceptors = Interceptors.Response.Snapshot();
-                AxiosResponse? result;
-                try
-                {
-                    if (responseInterceptors.Length == 0)
-                    {
-                        // 空链：直接调用，省掉闭包 + 委托 + 责任链包装的每请求分配。
-                        var (direct, owner) = await SendWithRetryAsync(
-                                template, config, uri, externalToken, dataType, target, streamResponse, retry, circuit, bodyRewind, gate)
-                            .ConfigureAwait(false);
-
-                        streamOwner = owner;
-                        result = direct;
-                    }
-                    else
-                    {
-                        Func<Task<AxiosResponse>> invoker = async () =>
-                        {
-                            var (invoked, owner) = await SendWithRetryAsync(
-                                    template, config, uri, externalToken, dataType, target, streamResponse, retry, circuit, bodyRewind, gate)
-                                .ConfigureAwait(false);
-
-                            streamOwner = owner;
-                            return invoked;
-                        };
-
-                        var chain = invoker;
-                        foreach (var interceptor in responseInterceptors)
-                        {
-                            var previous = chain;
-                            var fulfilled = interceptor.OnFulfilled;
-                            var rejected = interceptor.OnRejected;
-                            chain = async () =>
-                            {
-                                AxiosResponse response;
-                                try
-                                {
-                                    response = await previous().ConfigureAwait(false);
-                                }
-                                catch (Exception ex)
-                                {
-                                    if (rejected is null)
-                                    {
-                                        throw;
-                                    }
-
-                                    // 返回 null 会被当成「响应就是 null」交回调用方，GetAsync<T> 随后炸 NRE —— 明确报错。
-                                    return (await rejected(ex).ConfigureAwait(false))
-                                        ?? throw NullInterceptorResult(config);
-                                }
-
-                                return (await fulfilled(response).ConfigureAwait(false))
-                                    ?? throw NullInterceptorResult(config);
-                            };
-                        }
-
-                        result = await chain().ConfigureAwait(false);
-                    }
-                }
-                catch
-                {
-                    try
-                    {
-                        streamOwner?.Dispose();
-                    }
-                    catch
-                    {
-                        // 兜底释放失败不能掩盖拦截器的原始异常
-                    }
-
-                    throw;
-                }
+                // 阶段 6：发送 —— 响应拦截器链 + 重试 / 熔断（重试在链内，见 SendWithRetryAsync）。
+                var (result, streamOwner) = await RunResponseInterceptorsAsync(
+                        template, SendContext.From(config, plan.Uri, dataType, target, gate))
+                    .ConfigureAwait(false);
 
                 // 拦截器返回了新实例：原流式正文已无引用，需要在这里释放。
-                if (streamOwner is not null && !ReferenceEquals(result?.Data, streamOwner))
+                if (streamOwner is not null && !ReferenceEquals(result.Data, streamOwner))
                 {
                     streamOwner.Dispose();
                 }
@@ -713,21 +468,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 if (telemetryEnabled)
                 {
                     // 必须在 template.Dispose() 之前（外层 finally）：那之后正文头已不可读。
-                    AxiosTelemetry.RequestSucceeded(config, uri, result!, telemetryStart, telemetryActivity);
+                    AxiosTelemetry.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryActivity);
                 }
 
-                return result!;
+                return result;
             }
             finally
             {
-                // 正文随模板一起释放：所有尝试共享同一份正文（见 RetryBody），
-                // 中途换出来的请求只摘不释放（SendWithRetryAsync 的 finally）。
+                // 正文随模板一起释放；重试换出来的请求只摘不释放（见 SendRetryLoopAsync 的 finally）。
                 template.Dispose();
             }
         }
         catch (Exception ex)
         {
-            // 遥测不该改变异常本身：记完原样抛（连栈都不动，这里不包装）。
+            // 遥测不该改变异常本身：记完原样抛（连栈都不动）。
             if (telemetryEnabled)
             {
                 AxiosTelemetry.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryActivity);
@@ -742,8 +496,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 AxiosTelemetry.ExitRequest();
             }
 
-            // 收 span：即使上面抛异常也要收掉，否则它会一直挂在 Activity.Current 上，
-            // 后续请求的 span 会错误地挂到它下面（helper 内部兜住监听回调的异常）。
+            // 必须收 span：否则它会一直挂在 Activity.Current 上，后续请求的 span 会错挂到它下面。
             AxiosTelemetry.StopRequest(telemetryActivity);
 
             ReleaseInFlight();
@@ -751,58 +504,448 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 带重试的发送入口：<b>没有策略时零开销</b>——直接把单次发送的 Task 交回去，
-    /// 不为「一次都不重试」的循环建状态机（热路径上每个请求都建一个纯属白分配）。
+    /// 阶段 1 —— 合并：把按请求配置落到实例默认值上。
+    /// <para>已是合并产物的配置（<see cref="AxiosConfig.EffectiveMerged"/>）直接用：二次合并会把按请求项
+    /// 当成实例默认项再走一遍。</para>
     /// </summary>
-    private Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendWithRetryAsync(
-        HttpRequestMessage template,
-        AxiosConfig config,
-        Uri uri,
-        CancellationToken externalToken,
-        Type? dataType,
-        AxiosResponse? target,
-        bool streamResponse,
-        AxiosConfig.RetrySettings? retry,
-        AxiosConfig.CircuitSettings? circuit,
-        RetryBody? bodyRewind,
-        ConcurrencyGate? gate)
+    private AxiosConfig MergeEffectiveConfig(AxiosConfig perCallConfig)
+        => perCallConfig.EffectiveMerged ? perCallConfig : MergeConfig(perCallConfig);
+
+    /// <summary>
+    /// 阶段 3 —— 拦截：请求拦截器按注册逆序执行（与 axios 一致），返回最终生效配置。
+    /// <para>
+    /// 两种「空返回」就地报错（返回 null Task 会在 await 处炸成裸 NRE，返回 null 配置会让下一层拿到 null）；
+    /// 返回 <see cref="ValueTask{TResult}"/> 是为了没有拦截器时不为此建一个只装 config 的 Task。
+    /// </para>
+    /// </summary>
+    private async ValueTask<AxiosConfig> InterceptRequestAsync(AxiosConfig config)
     {
-        var policy = retry?.Policy;
-        if (policy is null || policy.MaxRetries <= 0)
+        foreach (var interceptor in Interceptors.Request.SnapshotReversed())
         {
-            return SendAttemptAsync(template, config, uri, externalToken, dataType, target, streamResponse, circuit, gate);
+            AxiosConfig next;
+            try
+            {
+                // 返回 null Task 与下面返回 null 结果同罪：提前给出可定位的错误，
+                // 不让 await null 炸成裸 NullReferenceException（同步结果请用 Task.FromResult）
+                var pending = interceptor.OnFulfilled(config)
+                    ?? throw AxiosException.InvalidOption(
+                        "请求拦截器返回了 null Task：OnFulfilled / OnRejected 必须返回 Task<AxiosConfig> 实例"
+                        + "（同步结果请用 Task.FromResult 包装）。",
+                        config);
+                next = await pending.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                if (interceptor.OnRejected is null)
+                {
+                    throw;
+                }
+
+                next = await interceptor.OnRejected(ex).ConfigureAwait(false);
+            }
+
+            // 返回 null 会在下一行炸成裸 NullReferenceException，调用方看不出是哪层拦截器出的错。
+            config = next ?? throw AxiosException.InvalidOption(
+                "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
+                + "（要做修改请改传入的 config 后端返回它）。",
+                config);
         }
 
-        return SendRetryLoopAsync(
-            template, config, uri, externalToken, dataType, target, streamResponse, retry!, policy, circuit, bodyRewind, gate);
+        return config;
     }
 
     /// <summary>
-    /// 重试循环（只在配置了策略时才会走到）。
+    /// 阶段 4a —— 规范化：泛型 <c>&lt;dynamic&gt;</c> / <c>&lt;object&gt;</c> 与 <c>&lt;Stream&gt;</c> 的响应形态
+    /// 自动切换（对标 responseType: 'dynamic' / 'stream'）。判据是 <see cref="AxiosConfig.ResponseTypeSet"/>
+    /// 而非当前值（Json 是默认值，只看值分不清「没表态」）；位置必须在拦截器之后（拦截器可整体替换 config）。
+    /// 切换本身不置该标记，否则回放生效配置时会被当成调用方显式意图。
+    /// </summary>
+    private static void ApplyAutoResponseType(AxiosConfig config, Type? dataType)
+    {
+        if (config.ResponseTypeSet)
+        {
+            return;
+        }
+
+        if (dataType == typeof(object))
+        {
+            config.SetResponseTypeAuto(ResponseType.Dynamic);
+        }
+        else if (dataType == typeof(Stream))
+        {
+            config.SetResponseTypeAuto(ResponseType.Stream);
+        }
+    }
+
+    /// <summary>
+    /// 阶段 5a —— 编码：<c>transformRequest</c> 依次作用于数据（拦截器之后、序列化之前）。
+    /// <para>先判空：链延迟创建，空链不值得为一次枚举建出集合与快照。</para>
+    /// </summary>
+    private static void ApplyRequestTransforms(AxiosConfig config)
+    {
+        if (config.TransformRequestSnapshot is not { } requestTransforms)
+        {
+            return;
+        }
+
+        foreach (var transform in requestTransforms)
+        {
+            try
+            {
+                config.Data = transform(config.Data, config);
+            }
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+            {
+                throw AxiosException.BadRequestPayload(config, null, "transformRequest", ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 一次请求的「成型结果」：最终 URL 与协议协商参数。三样必须一起算（h3 校验要同时看
+    /// URL 的 scheme 与版本策略）。结构体：热路径上不多一次堆分配。
+    /// </summary>
+    private readonly struct RequestPlan
+    {
+        public RequestPlan(Uri uri, Version version, HttpVersionPolicy versionPolicy)
+        {
+            Uri = uri;
+            Version = version;
+            VersionPolicy = versionPolicy;
+        }
+
+        /// <summary>最终请求 URL（已合并 baseURL / params 并转义）。</summary>
+        public Uri Uri { get; }
+
+        /// <summary>请求的 HTTP 版本（默认 2.0，理由见 <see cref="BuildRequestPlan"/>）。</summary>
+        public Version Version { get; }
+
+        /// <summary>版本协商策略（默认 <see cref="HttpVersionPolicy.RequestVersionOrLower"/>）。</summary>
+        public HttpVersionPolicy VersionPolicy { get; }
+    }
+
+    /// <summary>
+    /// 阶段 5b —— 成型：拼出最终 URL、确定协议协商参数，并做 HTTP/3 的前置校验。
     /// <para>
-    /// 每次尝试换一条新的 <see cref="HttpRequestMessage"/>（同一实例不能发两次），正文与请求头沿用模板。
-    /// 每次尝试有<b>独立的超时预算</b>（<see cref="AxiosConfig.Timeout"/> 是单次尝试的上限，不是全部重试的总预算），
-    /// 调用方的 <see cref="AxiosConfig.CancellationToken"/> 则贯穿所有尝试与等待。
+    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>：h2 已是公网流量主力，
+    /// 而 OrLower 的降级发生在 TLS 的 ALPN 里（不多往返、不多连接），老服务照样谈成 1.1；
+    /// 策略显式写出来是因为「不支持就降级」是库的契约，不能随 BCL 默认值变化而静默失效。
+    /// 明文 http:// 没有 ALPN，一律 1.1 —— 默认值只影响 https。要强制 1.1 写 Version11，
+    /// 要 h3 写 Version30（本机能力见 <see cref="Http3Support"/>，协商与降级后的观测见 README）。
     /// </para>
+    /// <para>h3 校验放在遥测起点之前：那是「准备阶段就失败」的配置错误，不是一次 HTTP 操作。</para>
+    /// </summary>
+    private static RequestPlan BuildRequestPlan(AxiosConfig config)
+    {
+        var uri = UrlBuilder.Build(
+            config.BaseAddress,
+            config.Url,
+            config.Params,
+            config.SerializationOrNull?.ParamsSerializer,
+            config: config);
+
+        var connection = config.ConnectionOrNull;
+        var httpVersion = connection?.HttpVersion ?? HttpVersion.Version20;
+        var versionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower;
+
+        // HTTP/3 的前置校验：只在真的要 h3 时走（h2 / 1.1 请求一次 Major 比较就返回）。
+        ValidateHttp3Request(uri, httpVersion, versionPolicy, config);
+
+        return new RequestPlan(uri, httpVersion, versionPolicy);
+    }
+
+    /// <summary>
+    /// 阶段 5c —— 编码：建请求模板（正文 + 请求头）。正文只准备一次：重试要换新的
+    /// <see cref="HttpRequestMessage"/>（同一实例发不了两次），但正文继续复用 —— 上传进度与限速状态都挂在
+    /// 正文上，换一份等于进度清零、白序列化一遍。成功返回时模板所有权交给调用方；内部失败自己释放。
+    /// </summary>
+    private static HttpRequestMessage CreateRequestMessage(
+        AxiosConfig config,
+        RequestPlan plan,
+        Activity? telemetryActivity)
+    {
+        var template = new HttpRequestMessage(config.Method, plan.Uri)
+        {
+            Version = plan.Version,
+            VersionPolicy = plan.VersionPolicy
+        };
+
+        try
+        {
+            HttpContent? content;
+            try
+            {
+                content = RequestBodyFactory.Create(config.Data, config);
+            }
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+            {
+                // 序列化失败同样走统一错误模型；取消类异常原样抛出，保留 IsCancel 语义。
+                // 声明式表单的 config.Data 只是内部表单字典：报请求模型名，别把 Dictionary`2 这种实现细节漏给调用方。
+                throw AxiosException.BadRequestPayload(
+                    config,
+                    template,
+                    config.Data is DeclaredForm declared
+                        ? declared.SourceName ?? declared.GetType().Name
+                        : config.Data?.GetType().Name ?? "null",
+                    ex);
+            }
+
+            // 上传进度 / 限速：包一层流量统计（头部复制，序列化逻辑不变）
+            var callbacks = config.CallbacksOrNull;
+            var maxRate = config.LimitsOrNull?.MaxRate;
+            if (content is not null && (callbacks?.OnUploadProgress is not null || maxRate is > 0))
+            {
+                content = new ProgressHttpContent(content, callbacks?.OnUploadProgress, maxRate, config);
+            }
+
+            if (content is not null)
+            {
+                if (config.LimitsOrNull?.MaxBodyLength is long maxBody
+                    && content.Headers.ContentLength is long bodyLength
+                    && bodyLength > maxBody)
+                {
+                    content.Dispose();
+                    throw AxiosException.MaxBodyLength(config, template, bodyLength, maxBody);
+                }
+
+                template.Content = content;
+
+                // 长度已知时顺手写进 span；未知（chunked / 不可定位流）就不写，不猜。
+                AxiosTelemetry.SetRequestBodySize(telemetryActivity, content.Headers.ContentLength);
+            }
+
+            ApplyHeaders(template, config);
+            return template;
+        }
+        catch
+        {
+            template.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 阶段 6 —— 发送：重试 / 熔断的发送循环，外面按注册顺序套上响应拦截器责任链。
     /// <para>
-    /// 熔断闸门在每次尝试之前（见 <see cref="SendAttemptAsync"/>）：熔断一旦打开，下一次尝试会被立刻拦下，
-    /// 不再白等一轮退避 —— 这正是「重试 + 熔断」一起开的意义（重试是再试一次，熔断是先别试）。
+    /// 重试在链内：拦截器只看到最终结果，不会因重试被重复执行。返回的 <c>StreamOwner</c> 是流式正文的
+    /// 所有权凭证 —— 成功路径交调用方兜底（拦截器可能换掉响应），失败路径在这里就地释放。
+    /// </para>
+    /// </summary>
+    private Task<(AxiosResponse Response, IDisposable? StreamOwner)> RunResponseInterceptorsAsync(
+        HttpRequestMessage template,
+        SendContext ctx)
+    {
+        var responseInterceptors = Interceptors.Response.Snapshot();
+
+        if (responseInterceptors.Length == 0)
+        {
+            // 空链：把发送的 Task 原样交回去，省掉闭包 + 委托 + 责任链 + 状态机（热路径）。
+            // 这条路径没有能抛异常的拦截器，也就不需要兜底释放。
+            return SendWithRetryAsync(template, ctx);
+        }
+
+        return RunResponseChainAsync(template, ctx, responseInterceptors);
+    }
+
+    /// <summary>
+    /// 响应拦截器责任链（只在有拦截器时走到）：按注册顺序包装，最内层是真正的发送。
+    /// <para>链内任何一层抛异常都要把流式正文的租约还回去，否则该 origin 节点再也不会被驱逐。</para>
+    /// </summary>
+    private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> RunResponseChainAsync(
+        HttpRequestMessage template,
+        SendContext ctx,
+        ResponseInterceptor[] responseInterceptors)
+    {
+        // 流式正文的所有权：拦截器抛异常或丢弃响应时由这里兜底释放。
+        IDisposable? streamOwner = null;
+
+        try
+        {
+            // 责任链的末端：真正发送（重试 / 熔断在这一层里面）
+            Func<Task<AxiosResponse>> invoker = async () =>
+            {
+                var (invoked, owner) = await SendWithRetryAsync(template, ctx).ConfigureAwait(false);
+
+                streamOwner = owner;
+                return invoked;
+            };
+
+            var chain = invoker;
+            foreach (var interceptor in responseInterceptors)
+            {
+                var previous = chain;
+                var fulfilled = interceptor.OnFulfilled;
+                var rejected = interceptor.OnRejected;
+                chain = async () =>
+                {
+                    AxiosResponse response;
+                    try
+                    {
+                        response = await previous().ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (rejected is null)
+                        {
+                            throw;
+                        }
+
+                        // 返回 null 会被当成「响应就是 null」交回调用方，GetAsync<T> 随后炸 NRE —— 明确报错。
+                        return (await rejected(ex).ConfigureAwait(false))
+                            ?? throw NullInterceptorResult(ctx.Config);
+                    }
+
+                    return (await fulfilled(response).ConfigureAwait(false))
+                        ?? throw NullInterceptorResult(ctx.Config);
+                };
+            }
+
+            return (await chain().ConfigureAwait(false), streamOwner);
+        }
+        catch
+        {
+            try
+            {
+                streamOwner?.Dispose();
+            }
+            catch
+            {
+                // 兜底释放失败不能掩盖拦截器的原始异常
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 一次请求在「发送阶段」不变的输入（模板之外的全部），打成结构体收敛五个发送方法的十来个人参：
+    /// 它们全是「看起来都能互换」的引用与令牌，按位置传错的代价是静默发错请求或漏还资源。
+    /// 值传递、栈上复制，不产生堆分配。
+    /// <para>
+    /// 不含 <see cref="HttpRequestMessage"/>：它逐次尝试变（重试必须换新实例，见 <see cref="CloneRequest"/>），
+    /// 混进来会让「这一次用的是哪条请求」变得不明确。
+    /// </para>
+    /// </summary>
+    private readonly struct SendContext
+    {
+        private SendContext(
+            AxiosConfig config,
+            Uri uri,
+            CancellationToken externalToken,
+            Type? dataType,
+            AxiosResponse? target,
+            bool streamResponse,
+            AxiosConfig.RetrySettings? retry,
+            AxiosConfig.CircuitSettings? circuit,
+            RetryBody? bodyRewind,
+            ConcurrencyGate? gate)
+        {
+            Config = config;
+            Uri = uri;
+            ExternalToken = externalToken;
+            DataType = dataType;
+            Target = target;
+            StreamResponse = streamResponse;
+            Retry = retry;
+            Circuit = circuit;
+            BodyRewind = bodyRewind;
+            Gate = gate;
+        }
+
+        /// <summary>
+        /// 唯一创建入口：派生项（令牌 / 流式标记 / 重试与熔断配置 / 正文可重放性）在这里一次算清，
+        /// 调用点只交「生效配置 + 本次请求的外部输入」。
+        /// </summary>
+        public static SendContext From(
+            AxiosConfig config,
+            Uri uri,
+            Type? dataType,
+            AxiosResponse? target,
+            ConcurrencyGate? gate)
+        {
+            var retry = config.RetryOrNull;
+
+            return new SendContext(
+                config,
+                uri,
+                config.CancellationToken,
+                dataType,
+                target,
+                config.ResponseType == ResponseType.Stream,
+                retry,
+                config.CircuitOrNull,
+
+                // 正文可重放性：重试复用同一份正文，来自流的正文必须能拨回起点，
+                // 否则第二次发送只会发出空内容 —— 在发请求之前就拦下，而不是等重试时才发现。
+                retry?.Policy is { MaxRetries: > 0 } ? RetryBody.Prepare(config) : null,
+                gate);
+        }
+
+        /// <summary>本次请求的生效配置（合并 + 拦截器之后的最终形态）。</summary>
+        public AxiosConfig Config { get; }
+
+        /// <summary>最终 URL：错误上下文与遥测标签都用它。</summary>
+        public Uri Uri { get; }
+
+        /// <summary>调用方令牌：贯穿所有尝试与退避等待。</summary>
+        public CancellationToken ExternalToken { get; }
+
+        /// <summary>泛型入口的目标类型（非泛型入口为 <c>null</c>），决定反序列化成什么。</summary>
+        public Type? DataType { get; }
+
+        /// <summary>调用方预造的响应对象：管线就地填充，省掉一次类型转换与再分配。</summary>
+        public AxiosResponse? Target { get; }
+
+        /// <summary>是否流式响应（<c>ResponseType == Stream</c>）。</summary>
+        public bool StreamResponse { get; }
+
+        /// <summary>重试配置：<c>null</c> = 不重试（默认）。</summary>
+        public AxiosConfig.RetrySettings? Retry { get; }
+
+        /// <summary>熔断配置：<c>null</c> = 不熔断（默认）。</summary>
+        public AxiosConfig.CircuitSettings? Circuit { get; }
+
+        /// <summary>正文可重放性检查：只在「真的会重试」时才建，否则为 <c>null</c>。</summary>
+        public RetryBody? BodyRewind { get; }
+
+        /// <summary>并发闸门：<c>null</c> = 本次不限并发。</summary>
+        public ConcurrencyGate? Gate { get; }
+    }
+
+    /// <summary>
+    /// 带重试的发送入口：没有策略时<b>零开销</b>——直接交回单次发送的 Task，
+    /// 不为「一次都不重试」的循环建状态机。
+    /// </summary>
+    private Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendWithRetryAsync(
+        HttpRequestMessage template,
+        SendContext ctx)
+    {
+        var policy = ctx.Retry?.Policy;
+        if (policy is null || policy.MaxRetries <= 0)
+        {
+            return SendAttemptAsync(template, ctx);
+        }
+
+        return SendRetryLoopAsync(template, ctx, policy);
+    }
+
+    /// <summary>
+    /// 重试循环（只在配置了策略时走到）。每次尝试换一条新请求（同一实例不能发两次），正文与请求头沿用模板；
+    /// 每次尝试有<b>独立的超时预算</b>（<see cref="AxiosConfig.Timeout"/> 是单次尝试上限，不是总预算），
+    /// 调用方令牌则贯穿所有尝试与等待。
+    /// <para>
+    /// 熔断闸门在每次尝试之前（见 <see cref="SendAttemptAsync"/>）：熔断一旦打开，下一次尝试被立刻拦下，
+    /// 不再白等一轮退避 —— 这正是「重试 + 熔断」一起开的意义。
     /// </para>
     /// </summary>
     private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendRetryLoopAsync(
         HttpRequestMessage template,
-        AxiosConfig config,
-        Uri uri,
-        CancellationToken externalToken,
-        Type? dataType,
-        AxiosResponse? target,
-        bool streamResponse,
-        AxiosConfig.RetrySettings retry,
-        IAxiosRetryPolicy policy,
-        AxiosConfig.CircuitSettings? circuit,
-        RetryBody? bodyRewind,
-        ConcurrencyGate? gate)
+        SendContext ctx,
+        IAxiosRetryPolicy policy)
     {
+        var retry = ctx.Retry!;
+        var externalToken = ctx.ExternalToken;
+
         for (var attempt = 1; ; attempt++)
         {
             if (attempt > 1)
@@ -810,15 +953,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 // 同一份正文再发一次：来自流的正文要先把读指针拨回起点。
                 // 放在 try 外面是有意的 —— 拨不动（流被关闭 / 不支持定位）说明正文已不可重放，
                 // 这不是「一次失败的尝试」，不该再拿去问策略要不要重试。
-                bodyRewind?.Rewind(config);
+                ctx.BodyRewind?.Rewind(ctx.Config);
             }
 
             // 首次尝试直接用模板，后续尝试按模板复制（模板本身不能再发，也不该被后续尝试改写）
             var request = attempt == 1 ? template : CloneRequest(template);
             try
             {
-                return await SendAttemptAsync(request, config, uri, externalToken, dataType, target, streamResponse, circuit, gate)
-                    .ConfigureAwait(false);
+                return await SendAttemptAsync(request, ctx).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -826,7 +968,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 // 直接冒到调用方（SendCoreAsync 已把超时/取消翻译成 AxiosException，
                 // 能漏到这里的裸 OperationCanceledException 只可能来自调用方取消）。
                 var failed = new AxiosRetryContext(
-                    attempt, policy.MaxRetries, ex, config, (ex as AxiosException)?.Response);
+                    attempt, policy.MaxRetries, ex, ctx.Config, (ex as AxiosException)?.Response);
 
                 if (!CanRetry(failed, externalToken, policy))
                 {
@@ -841,15 +983,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
                 else if (delay > Timeouts.Max)
                 {
-                    // 与 Timeout 同一个坑：Task.Delay 底层也是计时器队列，延迟上限是 uint.MaxValue-1 毫秒，
-                    // 超出会抛裸 ArgumentOutOfRangeException。内置策略的 MaxDelay 有配置期校验兜着，
-                    // 但自定义策略可以返回任意值 —— 在这里收敛，保证不漏裸异常（语义仍是「极长但有限」）。
+                    // 与 Timeout 同一个坑：Task.Delay 底层是计时器队列，上限 uint.MaxValue-1 毫秒，
+                    // 超出会抛裸异常。内置策略有配置期校验兜着，自定义策略可以返回任意值 —— 在这里收敛。
                     delay = Timeouts.Max;
                 }
 
-                // 回调与遥测共用同一个上下文（readonly struct，栈上传递不分配）
+                // 回调与遥测共用同一个上下文
                 var retryContext = new AxiosRetryContext(
-                    attempt, policy.MaxRetries, ex, config, failed.Response, delay);
+                    attempt, policy.MaxRetries, ex, ctx.Config, failed.Response, delay);
 
                 // 回调在 catch 块里调用（不是 try 里）：它抛出的异常不会被当成「本次尝试失败」
                 // 再去问一次策略，而是按 RetrySettings.OnRetry 的约定原样抛给调用方。
@@ -857,7 +998,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
                 // 重试计数 / span 的 resend_count 与 retry 事件：观测点放在「决定重试」这一刻，
                 // 与 OnRetry 回调同一语义（不含「次数到顶后的最后一次失败」）。
-                AxiosTelemetry.RequestRetried(retryContext, uri);
+                AxiosTelemetry.RequestRetried(retryContext, ctx.Uri);
 
                 if (delay > TimeSpan.Zero)
                 {
@@ -868,7 +1009,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     catch (OperationCanceledException oce)
                     {
                         // 等待期间被取消：仍按统一错误模型报「已取消」，而不是漏出裸 TaskCanceledException
-                        throw AxiosException.Canceled(config, request, "请求在重试等待期间被取消", oce);
+                        throw AxiosException.Canceled(ctx.Config, request, "请求在重试等待期间被取消", oce);
                     }
                 }
             }
@@ -885,71 +1026,49 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 一次尝试的入口：先过熔断闸门，再发送；结果按「成功 / 下游故障 / 与下游无关」回报给策略。
-    /// <para>
-    /// 没有熔断策略时直接转给 <see cref="SendCoreAsync"/>（多一层方法调用，不建状态机、不分配上下文）：
-    /// 不开熔断的请求与没有这个功能时完全一致。
-    /// </para>
+    /// 一次尝试的入口：先过熔断闸门，再发送。没有熔断策略时直接转给 <see cref="SendCoreAsync"/>
+    /// （多一层方法调用，不建状态机）：不开熔断的请求与没有这个功能时完全一致。
     /// </summary>
     private Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendAttemptAsync(
         HttpRequestMessage request,
-        AxiosConfig config,
-        Uri uri,
-        CancellationToken externalToken,
-        Type? dataType,
-        AxiosResponse? target,
-        bool streamResponse,
-        AxiosConfig.CircuitSettings? circuit,
-        ConcurrencyGate? gate)
+        SendContext ctx)
     {
-        if (circuit?.Policy is not { } policy)
+        if (ctx.Circuit?.Policy is not { } policy)
         {
-            return SendCoreAsync(request, config, uri, externalToken, dataType, target, streamResponse, gate);
+            return SendCoreAsync(request, ctx);
         }
 
-        return SendWithCircuitAsync(
-            request, config, uri, externalToken, dataType, target, streamResponse, circuit, policy, gate);
+        return SendWithCircuitAsync(request, ctx, policy);
     }
 
     /// <summary>
-    /// 带熔断的单次尝试：放行 → 发送 → 回报结果。
-    /// <para>
-    /// 拒绝时<b>不发请求</b>（不建连、不占连接池租约），直接抛 <c>ERR_CIRCUIT_OPEN</c>。
-    /// 回报必须恰好一次：成功 / 失败 / 取消都在这里收口，半开态的探测名额靠它归还 ——
-    /// 漏掉「取消」这一支会让熔断器卡在半开，永远等不到恢复。
-    /// </para>
+    /// 带熔断的单次尝试：放行 → 发送 → 回报结果。拒绝时<b>不发请求</b>（不建连、不占租约），直接抛
+    /// <c>ERR_CIRCUIT_OPEN</c>。回报必须恰好一次 —— 漏掉「取消」这一支会让熔断器卡在半开，永远等不到恢复。
     /// </summary>
     private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendWithCircuitAsync(
         HttpRequestMessage request,
-        AxiosConfig config,
-        Uri uri,
-        CancellationToken externalToken,
-        Type? dataType,
-        AxiosResponse? target,
-        bool streamResponse,
-        AxiosConfig.CircuitSettings circuit,
-        IAxiosCircuitPolicy policy,
-        ConcurrencyGate? gate)
+        SendContext ctx,
+        IAxiosCircuitPolicy policy)
     {
         // 调用方已取消就先报取消：熔断拒绝只是一句「没发出去」，会把真正的退出原因（取消）盖掉。
-        if (externalToken.IsCancellationRequested)
+        if (ctx.ExternalToken.IsCancellationRequested)
         {
-            throw AxiosException.Canceled(config, request);
+            throw AxiosException.Canceled(ctx.Config, request);
         }
 
-        var context = new AxiosCircuitContext(CircuitHost(uri), uri, config);
+        var context = new AxiosCircuitContext(CircuitHost(ctx.Uri), ctx.Uri, ctx.Config);
 
         if (!policy.ShouldAllow(context))
         {
             // 建议等待时间：策略说不准时给零，错误消息里就不带「retry after」。
             var retryAfter = policy.GetRetryAfter(context);
 
-            // 回调在抛错之前调用：它抛出的异常按「OnRejected 的约定」原样抛给调用方，
-            // 不会被当成一次「下游故障」再去改熔断状态（此刻请求根本没发出去）。
-            // 上下文里补上建议等待，回调不必为了写日志去 catch 异常。
-            circuit.OnRejected?.Invoke(new AxiosCircuitContext(context.Host, uri, config, retryAfter: retryAfter));
+            // 回调在抛错之前调用：它抛出的异常按约定原样抛给调用方，不会被当成「下游故障」去改熔断状态
+            // （此刻请求根本没发出去）。上下文里补上建议等待，回调不必为了写日志去 catch 异常。
+            ctx.Circuit!.OnRejected?.Invoke(
+                new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, retryAfter: retryAfter));
 
-            throw AxiosException.CircuitOpen(config, request, context.Host, retryAfter);
+            throw AxiosException.CircuitOpen(ctx.Config, request, context.Host, retryAfter);
         }
 
         AxiosResponse response;
@@ -957,15 +1076,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         try
         {
-            (response, streamOwner) = await SendCoreAsync(
-                    request, config, uri, externalToken, dataType, target, streamResponse, gate)
-                .ConfigureAwait(false);
+            (response, streamOwner) = await SendCoreAsync(request, ctx).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             // 失败结论要带上异常：策略据此区分「下游故障」（网络 / 超时 / 5xx）与「取消 / 4xx」。
             // 这里不接策略异常 —— 它按约定原样抛给调用方（并掩盖本次尝试的原始失败）。
-            policy.Record(new AxiosCircuitContext(context.Host, uri, config, ex));
+            policy.Record(new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, ex));
             throw;
         }
 
@@ -977,8 +1094,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
         catch
         {
-            // 策略抛异常按约定原样抛给调用方，但不能顺带漏掉流式正文的租约：
-            // 那条租约占着该 origin 的并发额度，不释放会让连接池慢慢「少一格」。
+            // 策略异常按约定原样抛给调用方，但不能顺带漏掉流式正文的租约 —— 它占着该 origin 的并发额度。
             streamOwner?.Dispose();
             throw;
         }
@@ -987,15 +1103,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 熔断的计数维度：默认 <c>host:port</c>（同一 host 的不同端口是两个独立下游）。
-    /// <para>非分层 URI（理论上不该出现在这里）退化为 host，再退化为空串 —— 空 key 也能正常计数。</para>
+    /// 熔断的计数维度：<c>host:port</c>（同一 host 的不同端口是两个独立下游）。
+    /// 非分层 URI 退化为 host，再退化为空串 —— 空 key 也能正常计数。
     /// </summary>
     private static string CircuitHost(Uri uri)
         => uri.Authority is { Length: > 0 } authority ? authority : uri.Host;
 
     /// <summary>
-    /// 库层面的「不该重试」：次数到顶、调用方已取消、错误本身就是取消、被熔断拦下。
-    /// 其余判断交给策略（<see cref="IAxiosRetryPolicy.ShouldRetry"/>）。
+    /// 库层面的「不该重试」：次数到顶、调用方已取消、错误本身就是取消、被熔断拦下；其余交给策略判断。
     /// </summary>
     private static bool CanRetry(AxiosRetryContext context, CancellationToken externalToken, IAxiosRetryPolicy policy)
     {
@@ -1031,11 +1146,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 按模板复制一条可发送的请求（请求头逐个复制，正文沿用同一份）。
-    /// <para>
+    /// 按模板复制一条可发送的请求（请求头逐个搬运，正文沿用同一份）。
     /// 用 <c>TryAddWithoutValidation</c> 而不是赋值：模板上的头已经过 <c>ApplyHeaders</c> 的校验与分流，
     /// 这里只做搬运，不再触发一次校验（也避免 BCL 对个别头的规范化改写）。
-    /// </para>
     /// </summary>
     private static HttpRequestMessage CloneRequest(HttpRequestMessage template)
     {
@@ -1058,48 +1171,68 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 单次发送：建本次尝试的超时令牌，然后发送 + 读取 + 状态码校验。
+    /// 一次尝试的时间预算：超时令牌源 + 流式响应的剩余预算计时器。粒度定在「一次尝试」上，
+    /// 「每次重试都有独立超时预算」才是自然结果，而不是从第一次尝试起算一次总预算。
     /// <para>
-    /// 超时源建在这里（而不是调用方）是为了让「每次重试都有独立的超时预算」成为自然结果：
-    /// 计时器跟着一次尝试走，而不是从第一次尝试开始算一次总预算。
+    /// 只有「有超时」才建独立令牌源：无超时时 <see cref="Token"/> 直接是调用方令牌，建 linked CTS
+    /// 换不来任何行为差异，却要每请求付一次 CTS + 注册。结构体而非类：热路径不为此多一次堆分配。
     /// </para>
     /// </summary>
-    private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendCoreAsync(
-        HttpRequestMessage request,
-        AxiosConfig config,
-        Uri uri,
-        CancellationToken externalToken,
-        Type? dataType,
-        AxiosResponse? target,
-        bool streamResponse,
-        ConcurrencyGate? gate)
+    private readonly struct AttemptBudget : IDisposable
     {
-        PoolLease? lease = null;
+        private readonly CancellationTokenSource? _timeoutCts;
+        private readonly CancellationToken _externalToken;
+        private readonly Stopwatch? _clock;
+        private readonly TimeSpan _timeout;
 
-        // 流式正文的所有权随后随返回值交给调用方（拦截器抛异常时由调用方兜底释放）。
-        IDisposable? streamOwner = null;
-
-        // 并发槽位：与 lease 同一粒度（一次尝试一份）、同一释放点（finally）。
-        // 声明在 try 之外只是为了 finally 能看见它；**取值在 try 之内** —— 占位成功之后
-        // 任何一步失败（建超时源、租连接、发送、读正文）都必须把名额还回去，
-        // 漏还一次就等于永久少一个并发名额，且只表现为「越来越慢」，极难排查。
-        IDisposable? slot = null;
-
-        try
+        private AttemptBudget(
+            CancellationTokenSource? timeoutCts,
+            CancellationToken externalToken,
+            Stopwatch? clock,
+            TimeSpan timeout)
         {
-            // 并发闸门：先占在途名额，再建超时预算 —— 排队时间不计入 Timeout（队列有自己的 QueueTimeout）。
-            // 放在这里而不是调用方，是为了让「每次重试各自取槽」成为自然结果：退避等待期间不占名额。
-            slot = gate is null
-                ? null
-                : await gate
-                    .AcquireAsync(config, request, externalToken, config.LimitsOrNull?.QueueTimeout)
-                    .ConfigureAwait(false);
+            _timeoutCts = timeoutCts;
+            _externalToken = externalToken;
+            _clock = clock;
+            _timeout = timeout;
+            Token = timeoutCts?.Token ?? externalToken;
+        }
 
-            var hasTimeout = config.Timeout > TimeSpan.Zero;
+        /// <summary>交给底层每次 I/O 的令牌：无超时时就是调用方令牌（None 时不注册、不分配）。</summary>
+        public CancellationToken Token { get; }
 
-            // 只有「有超时」才需要独立令牌源：无超时时 sendToken 直接复用调用方令牌，
-            // 建 linked CTS 换不来任何行为差异，却要每请求付一次 CTS + 注册。
-            using CancellationTokenSource? timeoutCts = hasTimeout
+        /// <summary>
+        /// 流式响应的剩余预算：只有「流式 + 有超时」才有值（其余组合下计时器纯属白分配）。
+        /// 流式响应的 timeout 要延续到正文读完，所以记录起点算剩余。
+        /// </summary>
+        public TimeSpan? StreamRemaining => _clock is null ? null : _timeout - _clock.Elapsed;
+
+        /// <summary>
+        /// 取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>；否则就是本次尝试超时 → <c>ERR_TIMEOUT</c>。
+        /// 租连接 / 发送 / 读正文三处判定条件完全一致，集中在这里以免其中一处漏判而把两者搞反。
+        /// </summary>
+        public AxiosException Translate(
+            OperationCanceledException exception,
+            AxiosConfig config,
+            HttpRequestMessage request)
+        {
+            return !_externalToken.IsCancellationRequested && _timeoutCts is { IsCancellationRequested: true }
+                ? AxiosException.Timeout(config, request, exception)
+                : AxiosException.Canceled(config, request, exception);
+        }
+
+        public void Dispose() => _timeoutCts?.Dispose();
+
+        /// <summary>按生效配置建预算：超时上限收敛到计时器可表示的范围（见 <see cref="Timeouts.Clamp"/>）。</summary>
+        public static AttemptBudget Start(
+            AxiosConfig config,
+            CancellationToken externalToken,
+            bool streamResponse)
+        {
+            var timeout = config.Timeout;
+            var hasTimeout = timeout > TimeSpan.Zero;
+
+            var timeoutCts = hasTimeout
                 ? (externalToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
                     : new CancellationTokenSource())
@@ -1109,144 +1242,71 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             {
                 // CancelAfter 上限约 49.7 天（uint.MaxValue-1 毫秒），越界抛裸 ArgumentOutOfRangeException：
                 // 收敛到上限，语义等价于「极长但有限」。
-                timeoutCts.CancelAfter(Timeouts.Clamp(config.Timeout));
+                timeoutCts.CancelAfter(Timeouts.Clamp(timeout));
             }
 
-            // 交给底层每次 I/O 的令牌：无超时时就是调用方令牌（None 时不注册、不分配）。
-            var sendToken = timeoutCts?.Token ?? externalToken;
+            // 流式 + 有超时才用得上计时器（口径见 StreamRemaining）。
+            var clock = streamResponse && hasTimeout ? Stopwatch.StartNew() : null;
 
-            // 流式响应的 timeout 要延续到正文读完：记录起点用于算剩余预算。
-            // 只有「流式 + 有超时」用得上，其余组合下计时器纯属白分配。
-            var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
+            return new AttemptBudget(timeoutCts, externalToken, clock, timeout);
+        }
+    }
 
-            // 注入 Handler：固定 HttpClient；默认实例：按 origin 租用（连接复用 + 并发上限）。
-            // 租用也走异步入口：已取消/已超时的请求在租用前就被截断，异常同样翻译成统一错误模型。
-            var httpClient = _customClient;
-            if (httpClient is null)
-            {
-                try
-                {
-                    lease = await _pool!.LeaseAsync(uri, config, sendToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException ex)
-                {
-                    if (!externalToken.IsCancellationRequested && timeoutCts is { IsCancellationRequested: true })
-                    {
-                        throw AxiosException.Timeout(config, request, ex);
-                    }
+    /// <summary>
+    /// 一次尝试的完整生命周期：占并发槽位 → 建超时预算 → 取连接 → 发送 → 读取 → 转换。
+    /// 资源释放点全部收在 finally：并发槽位与连接租约都是一次尝试一份，漏还一次就等于永久少一个名额 / 一格连接，
+    /// 且只表现为「越来越慢」，极难排查。唯一例外是流式响应 —— 租约、消息与槽位随正文流转交调用方（见阶段 6）。
+    /// </summary>
+    private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendCoreAsync(
+        HttpRequestMessage request,
+        SendContext ctx)
+    {
+        var config = ctx.Config;
 
-                    throw AxiosException.Canceled(config, request, ex);
-                }
+        PoolLease? lease = null;
 
-                httpClient = lease.Client;
+        // 流式正文的所有权随后随返回值交给调用方（拦截器抛异常时由调用方兜底释放）。
+        IDisposable? streamOwner = null;
 
-                // 「这次是不是顺手新建了 origin 节点」写进 span：首个请求要付 Handler 构造 + TLS 握手，
-                // 时长毛刺里有一类原因就是它。自定义 Handler 注入时没有池，这条标签自然缺席。
-                AxiosTelemetry.TagPoolReuse(lease.EndpointReused);
-            }
+        // 并发槽位：与 lease 同一粒度、同一释放点。声明在 try 之外只为 finally 能看见它，
+        // **取值在 try 之内** —— 占位成功之后任何一步失败都必须把名额还回去。
+        IDisposable? slot = null;
 
-            HttpResponseMessage responseMessage;
-            try
-            {
-                responseMessage = await httpClient
-                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sendToken)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException ex)
-            {
-                if (!externalToken.IsCancellationRequested && timeoutCts is { IsCancellationRequested: true })
-                {
-                    throw AxiosException.Timeout(config, request, ex);
-                }
+        try
+        {
+            // 阶段 1：并发槽位 —— 先占在途名额，再建超时预算（排队时间不计入 Timeout）。
+            slot = await EnterSlotAsync(request, ctx).ConfigureAwait(false);
 
-                throw AxiosException.Canceled(config, request, ex);
-            }
-            catch (HttpRequestException ex) when (FindAxiosException(ex) is { } translated)
-            {
-                // 正文序列化（含上传进度回调）抛出的库异常会被 HttpClient 包成
-                // HttpRequestException：原样还原，否则「回调写错」会被误报成 ERR_NETWORK。
-                ExceptionDispatchInfo.Capture(translated).Throw();
-                throw;
-            }
-            catch (HttpRequestException ex)
-            {
-                throw AxiosException.Network(config, request, ex);
-            }
-            catch (IOException ex)
-            {
-                throw AxiosException.Network(config, request, ex);
-            }
-            catch (NotSupportedException ex)
-            {
-                // 自定义 Handler / Content 不支持某种能力时不要把裸异常漏给调用方。
-                throw AxiosException.Network(config, request, ex);
-            }
+            // 阶段 2：时间预算 —— 一次尝试一份超时令牌源。
+            using var budget = AttemptBudget.Start(config, ctx.ExternalToken, ctx.StreamResponse);
 
-            AxiosResponse response;
-            bool statusAccepted;
-            try
-            {
-                // 状态码接受性只判定一次：它同时决定宽松解析与是否抛错，
-                // 判两次会让有副作用的 validateStatus（计数、日志）执行两遍。
-                var validateStatus = config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
-                statusAccepted = validateStatus((int)responseMessage.StatusCode);
+            // 阶段 3：取连接 —— 注入 Handler 时固定用它，默认实例按 origin 租（连接复用 + 并发上限）。
+            var (httpClient, leased) = await LeaseClientAsync(request, ctx, budget).ConfigureAwait(false);
+            lease = leased;
 
-                // 状态码不合法时宽松解析：否则 404 + HTML 会在反序列化处抛错，
-                // 把本该带 Status/Response 的 ERR_BAD_REQUEST 变成 ERR_BAD_RESPONSE 且两者全丢。
-                response = await ResponseReader.ReadAsync(
-                        responseMessage,
-                        request,
-                        config,
-                        sendToken,
-                        dataType,
-                        target,
-                        lenient: !statusAccepted)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException ex)
-            {
-                responseMessage.Dispose();
-                if (!externalToken.IsCancellationRequested && timeoutCts is { IsCancellationRequested: true })
-                {
-                    throw AxiosException.Timeout(config, request, ex);
-                }
+            // 阶段 4：发送 —— 只到响应头，正文留给读取阶段。
+            var responseMessage = await SendRequestAsync(httpClient, request, ctx, budget).ConfigureAwait(false);
 
-                throw AxiosException.Canceled(config, request, ex);
-            }
-            catch (IOException ex)
-            {
-                // 连接中途断开 / 正文被截断（HttpIOException）：统一成 ERR_NETWORK。
-                responseMessage.Dispose();
-                throw AxiosException.Network(config, request, ex);
-            }
-            catch (HttpRequestException ex)
-            {
-                // 自定义 Handler 的正文流可能直接抛 HttpRequestException（BCL 抛 HttpIOException）：
-                // 与上面的 IO 失败同一错误码，不能让裸异常穿过统一错误模型。
-                responseMessage.Dispose();
-                throw AxiosException.Network(config, request, ex);
-            }
-            catch
-            {
-                // 读取/解析失败（含长度超限、反序列化失败）：先释放响应，避免连接泄漏
-                responseMessage.Dispose();
-                throw;
-            }
+            // 阶段 5：读取 —— 状态码接受性只判一次，它同时决定宽松解析与是否抛错。
+            var (response, statusAccepted) = await ReadResponseAsync(responseMessage, request, ctx, budget)
+                .ConfigureAwait(false);
 
+            // 阶段 6：转换 —— 状态码 → 异常；流式正文 → 计时流 + 资源所有权转移。
+            //
             // stream 模式下消息不能释放（正文流从它取出），所有权转移给 ResponseStreamOwner。
-            if (!streamResponse)
+            if (!ctx.StreamResponse)
             {
                 responseMessage.Dispose();
             }
 
             if (!statusAccepted)
             {
-                if (streamResponse)
+                if (ctx.StreamResponse)
                 {
                     // 失败响应没人读正文：先把一段错误体抢救成文本（ApiErrorContext 的唯一来源），
                     // 再立即释放内容把连接还回池，否则这条连接会被一个永远不会被读取的流一直占住。
                     response.RawText = await ReadStreamErrorBodyAsync(
-                            response.Data as Stream, config, sendToken)
+                            response.Data as Stream, config, budget.Token)
                         .ConfigureAwait(false);
 
                     (response.Data as IDisposable)?.Dispose();
@@ -1257,7 +1317,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 throw AxiosException.FromResponse(config, request, response);
             }
 
-            if (streamResponse && response.Data is Stream body)
+            if (ctx.StreamResponse && response.Data is Stream body)
             {
                 // 流式正文的超时口径：显式 StreamIdleTimeout 时「Timeout 只到响应头」，
                 // 正文按空闲超时（或完全不限）；未设置时保持「整条流共享剩余预算」。
@@ -1265,21 +1325,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     ? new TimeoutStream(
                         body,
                         remaining: null,
-                        externalToken,
+                        ctx.ExternalToken,
                         config,
                         request,
                         idleTimeout > TimeSpan.Zero ? idleTimeout : null)
                     : new TimeoutStream(
                         body,
-                        clock is not null ? config.Timeout - clock.Elapsed : null,
-                        externalToken,
+                        budget.StreamRemaining,
+                        ctx.ExternalToken,
                         config,
                         request);
 
-                // 租约与 HttpResponseMessage 一并转移给流：下载期间该 origin 仍算活跃，
-                // 流 Dispose 时统一释放（否则消息本体永久悬空）。
-                // 并发槽位同理：流式响应在调用方读正文的整段时间里仍算「在途」，
-                // 提前归还等于让并发上限对下载失效（下载恰恰是最该被限的那类请求）。
+                // 租约与 HttpResponseMessage 一并转移给流：下载期间该 origin 仍算活跃，流 Dispose 时统一释放。
+                // 并发槽位同理 —— 流式响应在调用方读正文的整段时间里仍算「在途」，提前归还等于让并发上限
+                // 对下载失效（下载恰恰是最该被限的那类请求）。
                 wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease, slot);
                 lease = null;
                 slot = null;
@@ -1306,6 +1365,157 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             // 槽位在所有失败路径上都归还；流式成功路径已把它转交给正文流（slot = null）。
             slot?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 阶段 1 —— 并发槽位：先占在途名额，再建超时预算 —— 排队时间不计入 <see cref="AxiosConfig.Timeout"/>
+    /// （队列有自己的 <see cref="AxiosConfig.LimitSettings.QueueTimeout"/>）。放在「每次尝试」里是为了让
+    /// 「每次重试各自取槽」成为自然结果：退避等待期间不占名额。返回值必须由调用方在 finally 归还（幂等）。
+    /// </summary>
+    private static async ValueTask<IDisposable?> EnterSlotAsync(HttpRequestMessage request, SendContext ctx)
+    {
+        if (ctx.Gate is not { } gate)
+        {
+            return null;
+        }
+
+        return await gate
+            .AcquireAsync(ctx.Config, request, ctx.ExternalToken, ctx.Config.LimitsOrNull?.QueueTimeout)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 阶段 3 —— 取连接：注入 Handler 时固定用它的 <see cref="HttpClient"/>；默认实例按 origin 租一条
+    /// （连接复用 + 每 origin 并发上限）。租用也走异步入口，已取消 / 已超时的请求在租用前就被截断，
+    /// 异常同样翻译成统一错误模型（见 <see cref="AttemptBudget.Translate"/>）。
+    /// <para>
+    /// 「这次是不是顺手新建了 origin 节点」写进 span：首个请求要付 Handler 构造 + TLS 握手，
+    /// 时长毛刺里有一类原因就是它。自定义 Handler 注入时没有池，这条标签自然缺席。
+    /// 返回 <see cref="ValueTask{TResult}"/>：两种取法都不会真的挂起，用 Task 会让每个请求白建一个 Task。
+    /// </para>
+    /// </summary>
+    private async ValueTask<(HttpClient Client, PoolLease? Lease)> LeaseClientAsync(
+        HttpRequestMessage request,
+        SendContext ctx,
+        AttemptBudget budget)
+    {
+        // 注入 Handler：固定 HttpClient，没有租约要归还。
+        if (_customClient is { } custom)
+        {
+            return (custom, null);
+        }
+
+        PoolLease lease;
+        try
+        {
+            lease = await _pool!.LeaseAsync(ctx.Uri, ctx.Config, budget.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw budget.Translate(ex, ctx.Config, request);
+        }
+
+        AxiosTelemetry.TagPoolReuse(lease.EndpointReused);
+        return (lease.Client, lease);
+    }
+
+    /// <summary>
+    /// 阶段 4 —— 发送：只到响应头（<see cref="HttpCompletionOption.ResponseHeadersRead"/>），正文留给读取阶段
+    /// （也让库 span 能单独量出正文下载时间）。异常在这里统一翻译成错误模型：取消 / 超时、网络、
+    /// 以及被 <see cref="HttpRequestException"/> 包住的库异常 —— 后者是「正文序列化 / 上传进度回调写错」的形态，
+    /// 原样还原才不会误报成 ERR_NETWORK。
+    /// </summary>
+    private static async Task<HttpResponseMessage> SendRequestAsync(
+        HttpClient client,
+        HttpRequestMessage request,
+        SendContext ctx,
+        AttemptBudget budget)
+    {
+        try
+        {
+            return await client
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw budget.Translate(ex, ctx.Config, request);
+        }
+        catch (HttpRequestException ex) when (FindAxiosException(ex) is { } translated)
+        {
+            // 正文序列化（含上传进度回调）抛出的库异常会被 HttpClient 包成
+            // HttpRequestException：原样还原，否则「回调写错」会被误报成 ERR_NETWORK。
+            ExceptionDispatchInfo.Capture(translated).Throw();
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw AxiosException.Network(ctx.Config, request, ex);
+        }
+        catch (IOException ex)
+        {
+            throw AxiosException.Network(ctx.Config, request, ex);
+        }
+        catch (NotSupportedException ex)
+        {
+            // 自定义 Handler / Content 不支持某种能力时不要把裸异常漏给调用方。
+            throw AxiosException.Network(ctx.Config, request, ex);
+        }
+    }
+
+    /// <summary>
+    /// 阶段 5 —— 读取：先判定状态码接受性，再把正文读成 <see cref="AxiosResponse"/>。
+    /// 接受性只判定一次（它同时决定宽松解析与是否抛错），判两次会让有副作用的 validateStatus 执行两遍；
+    /// 不合法时宽松解析，否则 404 + HTML 会在反序列化处抛错，把本该带 Status/Response 的 ERR_BAD_REQUEST
+    /// 变成 ERR_BAD_RESPONSE 且两者全丢。任何失败路径都先释放响应消息（成功路径见阶段 6）。
+    /// </summary>
+    private static async Task<(AxiosResponse Response, bool StatusAccepted)> ReadResponseAsync(
+        HttpResponseMessage responseMessage,
+        HttpRequestMessage request,
+        SendContext ctx,
+        AttemptBudget budget)
+    {
+        try
+        {
+            var validateStatus = ctx.Config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
+            var statusAccepted = validateStatus((int)responseMessage.StatusCode);
+
+            var response = await ResponseReader.ReadAsync(
+                    responseMessage,
+                    request,
+                    ctx.Config,
+                    budget.Token,
+                    ctx.DataType,
+                    ctx.Target,
+                    lenient: !statusAccepted)
+                .ConfigureAwait(false);
+
+            return (response, statusAccepted);
+        }
+        catch (OperationCanceledException ex)
+        {
+            responseMessage.Dispose();
+            throw budget.Translate(ex, ctx.Config, request);
+        }
+        catch (IOException ex)
+        {
+            // 连接中途断开 / 正文被截断（HttpIOException）：统一成 ERR_NETWORK。
+            responseMessage.Dispose();
+            throw AxiosException.Network(ctx.Config, request, ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            // 自定义 Handler 的正文流可能直接抛 HttpRequestException（BCL 抛 HttpIOException）：
+            // 与上面的 IO 失败同一错误码，不能让裸异常穿过统一错误模型。
+            responseMessage.Dispose();
+            throw AxiosException.Network(ctx.Config, request, ex);
+        }
+        catch
+        {
+            // 读取/解析失败（含长度超限、反序列化失败）：先释放响应，避免连接泄漏
+            responseMessage.Dispose();
+            throw;
         }
     }
 
@@ -1341,11 +1551,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private const int StreamErrorBodyLimit = 64 * 1024;
 
     /// <summary>
-    /// 把流式失败响应的正文读成文本（最多 <see cref="StreamErrorBodyLimit"/> 字节）。
-    /// <para>
-    /// 状态码错误时正文里通常就是错误详情；不读的话调用方只能看到一句 "status code 400"。
-    /// 读取失败 / 超时 / 超限都只保留已读部分，不掩盖原始 HTTP 错误。
-    /// </para>
+    /// 把流式失败响应的正文读成文本（最多 <see cref="StreamErrorBodyLimit"/> 字节）。不读的话调用方只能看到
+    /// 一句 "status code 400"；读取失败 / 超时 / 超限都只保留已读部分，不掩盖原始 HTTP 错误。
     /// </summary>
     private static async Task<string?> ReadStreamErrorBodyAsync(
         Stream? body,
@@ -1365,7 +1572,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return null;
         }
 
-        // 失败路径的一次性缓冲：走 ArrayPool，大错误体 + 高频重试时不再每请求一块 64KB。
+        // 失败路径的一次性缓冲走 ArrayPool，大错误体 + 高频重试时不再每请求一块 64KB。
         // Rent 可能返回比 limit 大的缓冲，读取上限仍按 limit 算（抢救量有契约上限）。
         var buffer = ArrayPool<byte>.Shared.Rent(limit);
         var total = 0;
@@ -1402,18 +1609,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 「明确要求 HTTP/3」时的前置校验：环境上不可能做到就立刻报配置错误，
-    /// 而不是让调用方拿一次莫名其妙的连接超时 / 网络错误去猜原因。
-    /// <para>
-    /// 只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>：这两个策略的语义是「必须至少 3.0」，
-    /// 环境上做不到就没有任何成功的可能。而 <c>RequestVersionOrLower</c>（默认策略）的契约本来就是
-    /// 「能 h3 就 h3、不能就降级」，降级是它的正常路径（真实版本看 <see cref="AxiosResponse.ProtocolVersion"/>），
-    /// 拦下来反而破坏了默认语义 —— 所以在它上面<b>一律放行</b>。
-    /// </para>
-    /// <para>
-    /// 判据用 <see cref="Http3Support"/>（本地能力）而不是「服务端支不支持」：后者只能发请求才知道，
-    /// 那种失败仍然走 <c>ERR_NETWORK</c>。
-    /// </para>
+    /// 「明确要求 HTTP/3」时的前置校验：环境上不可能做到就立刻报配置错误，而不是让调用方拿一次
+    /// 莫名其妙的连接超时去猜原因。只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>
+    /// （语义是「必须至少 3.0」，做不到就没有任何成功可能）；<c>RequestVersionOrLower</c> 的契约本就是
+    /// 「能 h3 就 h3、不能就降级」，降级是正常路径（真实版本看 <see cref="AxiosResponse.ProtocolVersion"/>），
+    /// 拦下来反而破坏默认语义。判据用本地能力 <see cref="Http3Support"/> 而非「服务端支不支持」——
+    /// 后者只能发请求才知道，那种失败仍走 <c>ERR_NETWORK</c>。
     /// </summary>
     private static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
     {
@@ -1495,9 +1696,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 $"QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
         }
 
-        // 分帧上限：既不能「设 0 当不限制」（分帧器没有关闭语义），也不能大到溢出 int。
-        // 越界在发送前就报，而不是让服务端第一次吐出大帧时在分帧器里炸成裸异常。
-        // 三个边界值都在 LimitSettings 上（默认 / 下界 / 上界同处一地），这里只负责比对。
+        // 分帧上限：既不能「设 0 当不限制」（分帧器没有关闭语义），也不能大到溢出 int —— 越界在发送前就报，
+        // 而不是等第一次大帧在分帧器里炸成裸异常。三个边界值都在 LimitSettings 上，这里只负责比对。
         if (limits?.MaxStreamFrameLength is int frameLength
             && (frameLength < AxiosConfig.LimitSettings.MinStreamFrameLength
                 || frameLength > AxiosConfig.LimitSettings.MaxStreamFrameLengthLimit))
@@ -1510,8 +1710,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 config);
         }
 
-        // 重试策略的取值范围：次数为负没有语义（「负一次重试」无从执行），等待时间为负同样无意义。
-        // 自定义策略只能校验接口上暴露的 MaxRetries；内置实现连等待时间一起校验。
+        // 重试策略的取值范围：次数为负没有语义，等待时间为负同样无意义。自定义策略只能校验接口上的
+        // MaxRetries；内置实现连等待时间一起校验。
         if (config.RetryOrNull?.Policy is { } retry)
         {
             if (retry.MaxRetries < 0)
@@ -1536,10 +1736,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         config);
                 }
 
-                // 等待走 Task.Delay，与 CancellationTokenSource.CancelAfter 同一个计时器队列（上限约 49.7 天）。
-                // 超限时若等到发送阶段才发现，Task.Delay 会抛裸 ArgumentOutOfRangeException；
-                // 这里在请求发出之前就明确报配置错误（与 Timeout 的收敛不同：MaxDelay 是显式配置的上限，
-                // 静默截断会让调用方以为「最多等这么久」的承诺仍然成立）。
+                // 等待走 Task.Delay，与 CancelAfter 同一个计时器队列（上限约 49.7 天）。这里在发请求之前就
+                // 明确报错而不是像 Timeout 那样静默收敛：MaxDelay 是显式配置的上限，截断会让「最多等这么久」失效。
                 if (policy.MaxDelay > Timeouts.Max)
                 {
                     throw AxiosException.InvalidOption(
@@ -1590,13 +1788,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 解析（必要时懒创建）本实例的并发闸门。
-    /// <para>
-    /// 闸门是实例级资源：信号量的容量在创建时固定，之后无法重建（重建会让已在排队的请求
-    /// 永远等一个不再被归还的名额）。因此这里对「本次生效上限 ≠ 闸门容量」一律报错，
-    /// 而不是静默按旧上限跑 —— 调用方设了上限却按别的上限执行，比直接失败更难查。
-    /// 两种来源都会走到这里：按请求写了不同的值、以及构造之后改了 <c>Defaults</c>。
-    /// </para>
+    /// 解析（必要时懒创建）本实例的并发闸门。闸门是实例级资源：信号量容量创建时固定、之后无法重建
+    /// （重建会让已在排队的请求永远等一个不再被归还的名额），所以「本次生效上限 ≠ 闸门容量」一律报错，
+    /// 而不是静默按旧上限跑 —— 设了上限却按别的上限执行，比直接失败更难查。两种来源都会走到这里：
+    /// 按请求写了不同的值、以及构造之后改了 <c>Defaults</c>。
     /// <para>
     /// 未设置（<c>null</c>）时不建闸门；实例已有闸门时按闸门走（<c>null</c> 视为「本次没表态」，
     /// 因为「本次不限制」在共享信号量的模型下无法表达）。
@@ -1652,13 +1847,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造池时已固定：
     /// 按请求复述实例的等价设置放行，写入别的值报错。
     /// <para>
-    /// 等价判定分两类：<see cref="AxiosConfig.ConnectionSettings.WithCredentials"/> /
-    /// <see cref="AxiosConfig.ConnectionSettings.MaxRedirects"/> 是值类型，按<b>值</b>比较；
-    /// <see cref="AxiosConfig.ConnectionSettings.Proxy"/> / <see cref="AxiosConfig.ConnectionSettings.Credentials"/> /
-    /// <see cref="AxiosConfig.ConnectionSettings.PoolOptions"/> 没有可靠的等值定义（代理/凭据/连接选项的「相同」取决于
-    /// 各自实现），按<b>引用</b>比较 —— 即只有「把实例 defaults 上的同一个对象再写一遍」才放行。
+    /// 等价判定分两类：<c>WithCredentials</c> / <c>MaxRedirects</c> 是值类型，按<b>值</b>比较；
+    /// Proxy / Credentials / PoolOptions 没有可靠的等值定义（「相同」取决于各自实现），按<b>引用</b>比较 ——
+    /// 只有「把实例 defaults 上的同一个对象再写一遍」才放行。判定对象是合并后的生效配置，不必追是谁写的。
     /// </para>
-    /// <para>判定对象是合并后的生效配置，因此只需比对，不用追是谁写的。</para>
     /// </summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {
@@ -1691,20 +1883,18 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// <c>WithCredentials</c> 只允许复述实例生效值（值相同即等价，不必报错）；
-    /// 注入自定义 Handler 时无从判断是否等价，只要写就报错。
+    /// <c>WithCredentials</c> 只允许复述实例生效值（值相同即等价）；注入自定义 Handler 时无从判断是否等价，
+    /// 只要写就报错。
     /// <para>
-    /// 「实例生效值」取连接池的 <see cref="ConnectionPoolOptions.UseCookies"/>，与
-    /// <see cref="ValidateMaxRedirects"/> 取池的 <c>AllowAutoRedirect</c> 同一口径 —— 不能读
-    /// <c>Defaults.WithCredentials</c>：连接级选项在构造时固化进池，构造后再改 <c>Defaults</c>
-    /// 并不生效（文档承诺「静默不生效、不报错」），拿它当生效值会让校验结论与线上行为相反
-    /// （按请求复述池的真实值反被拒，报错文案还声称一个从未生效的值是「实例生效值」）。
+    /// 「实例生效值」取池的 <see cref="ConnectionPoolOptions.UseCookies"/>，与 <see cref="ValidateMaxRedirects"/>
+    /// 取池的 <c>AllowAutoRedirect</c> 同一口径 —— 不能读 <c>Defaults.WithCredentials</c>：连接级选项构造时
+    /// 已固化进池，构造后再改 <c>Defaults</c> 静默不生效，拿它当生效值会让校验结论与线上行为相反。
     /// 共享池同理：Cookie 容器由池决定，与本实例 defaults 无关。
     /// </para>
     /// <para>
     /// 必须先按 <see cref="AxiosConfig.WithCredentialsSet"/> 早退：合并产物会清掉继承来的标记
     /// （见 <c>MergeConfig</c> 的 <c>ClearInstanceOptionFlags</c>），此处的标记只代表「按请求显式写过」。
-    /// 不早退就会让「构造后改过 Defaults」的实例在<b>每个</b>普通请求上都被判成写入了不同的值。
+    /// 否则「构造后改过 Defaults」的实例会在<b>每个</b>普通请求上被判成写入了不同的值。
     /// </para>
     /// </summary>
     private void ValidateWithCredentials(AxiosConfig config)
@@ -1760,10 +1950,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             return;
         }
 
-        // 未显式写过（含快捷方法从 Defaults.Clone() 继承的未设置态）直接放行；
-        // 显式写过必须与池的生效值比对。不能拿属性默认值 5 做相等短路：
-        // poolOptions 配了别的重定向策略时，Defaults.MaxRedirects（未设置 = 5）与池生效值背离，
-        // 按请求显式写的值会被静默放行（文档承诺抛 ERR_BAD_OPTION_VALUE）。
+        // 未显式写过（含快捷方法从 Defaults.Clone() 继承的未设置态）直接放行。不能拿属性默认值 5 做相等短路：
+        // poolOptions 配了别的重定向策略时它与池生效值背离，按请求显式写的值会被静默放行（文档承诺抛错）。
         if (!config.MaxRedirectsSet)
         {
             return;
