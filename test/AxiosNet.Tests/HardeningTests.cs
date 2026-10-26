@@ -267,17 +267,19 @@ public sealed class HardeningTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public void PostAsync_WithNullConfig_ThrowsArgumentNullException()
+    public async Task PostAsync_WithNullConfig_FallsBackToEmptyBody()
     {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
         // 重载决议：AxiosConfig 比 object 更具体，`PostAsync(url, null)` 会走到这个重载。
-        var ex = Assert.Throws<ArgumentNullException>(() =>
-        {
-            _ = client.PostAsync("http://127.0.0.1:1/x", (AxiosConfig)null!);
-        });
+        // null 等价于「没有要传的配置」：按空正文 POST 走，与 PostAsync(url) 一致。
+        var response = await client.PostAsync(server.Url + "x", (AxiosConfig)null!);
 
-        Assert.Equal("config", ex.ParamName);
+        Assert.Equal(200, response.Status);
+        var received = Assert.Single(server.Received);
+        Assert.Equal("POST", received.Method);
+        Assert.Empty(received.Body);
     }
 
     [Fact]

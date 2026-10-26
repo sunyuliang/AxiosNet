@@ -379,11 +379,15 @@ public sealed partial class AxiosClient
             || MediaTypes.Is(contentType, AxiosContentType.MultipartFormData);
 
     /// <summary>把 url/method 填进调用方传入的配置，交给管线按常规路径合并到实例默认值。</summary>
-    private static AxiosConfig WithUrl(AxiosConfig config, string url, HttpMethod method)
+    private AxiosConfig WithUrl(AxiosConfig? config, string url, HttpMethod method)
     {
-        // PostAsync(url, null) 的重载决议会落到本方法的调用方（AxiosConfig 比 object 更具体），
-        // 没有这层守卫就是一句 NullReferenceException。
-        ArgumentNullException.ThrowIfNull(config);
+        // PostAsync(url, null) 的重载决议会落到本方法的调用方（AxiosConfig 比 object 更具体）。
+        // null 表示「没有要传的配置」，按普通快捷路径（空 data）处理 —— 与 PostAsync(url) 等价，
+        // 而不是让一个很常见的「空正文 POST」写法变成 ArgumentNullException。
+        if (config is null)
+        {
+            return Shortcut(url, method, null, default);
+        }
 
         // 与快捷方法同一套 fail-fast：url 为 null / 空白时同样不能静默落到 baseAddress
         if (string.IsNullOrWhiteSpace(url))
