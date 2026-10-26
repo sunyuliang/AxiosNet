@@ -230,7 +230,12 @@ public sealed partial class AxiosClient
         catch
         {
             // 这个响应已经交不到调用方手里了：流式正文必须在这里释放，否则租约永不归还。
-            (typed.RawData as IDisposable)?.Dispose();
+            // 唯一例外是短路响应（Request == null）：Data 的所有权在调用方，类型不匹配也不能替它释放。
+            if (typed.Request is not null)
+            {
+                (typed.RawData as IDisposable)?.Dispose();
+            }
+
             typed.RawData = null;
             throw;
         }
@@ -248,8 +253,12 @@ public sealed partial class AxiosClient
         catch
         {
             // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：响应已交不出去，
-            // 流式正文必须在这里释放，否则租约永不归还。
-            (response.Data as IDisposable)?.Dispose();
+            // 流式正文必须在这里释放，否则租约永不归还。短路响应除外（Data 归调用方）。
+            if (response.Request is not null)
+            {
+                (response.Data as IDisposable)?.Dispose();
+            }
+
             response.Data = null;
             throw;
         }

@@ -357,6 +357,24 @@ public sealed class ShortCircuitTests
     }
 
     [Fact]
+    public async Task DataOwnership_StaysWithCaller_WhenGenericTypeMismatches()
+    {
+        using var client = new AxiosClient();
+
+        var owned = new TrackingStream();
+        var reply = new AxiosShortCircuit { Data = owned };
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync<Person>("http://127.0.0.1:9/never", c => c.ShortCircuit = reply));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        // 短路响应的 Data 所有权归调用方：类型不匹配导致响应交不出去时也不能替调用方释放
+        Assert.False(owned.Disposed);
+        owned.Dispose();
+    }
+
+    [Fact]
     public async Task BodyAndData_AreMutuallyExclusive()
     {
         using var client = new AxiosClient();
@@ -497,5 +515,17 @@ public sealed class ShortCircuitTests
 
         // 顺带：一次都没发出去（探针的过滤依赖路径，真发了就会被上面两条抓到）
         Assert.Empty(server.Received);
+    }
+
+    /// <summary>记录是否被释放的流：用来断言「所有权归调用方」的对象没有被库提前 Dispose。</summary>
+    private sealed class TrackingStream : MemoryStream
+    {
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
     }
 }
