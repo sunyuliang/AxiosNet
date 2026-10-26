@@ -337,6 +337,26 @@ public sealed class ShortCircuitTests
     }
 
     [Fact]
+    public async Task BodyOverMaxContentLength_IsRejected()
+    {
+        using var client = new AxiosClient();
+        const string url = "http://127.0.0.1:9/never";
+
+        var reply = new AxiosShortCircuit { Body = new byte[] { 1, 2, 3, 4 }, ContentType = "application/octet-stream" };
+
+        // 命中短路不能豁免体积上限：同一份配置，行为不该取决于有没有发请求
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(
+            url,
+            c =>
+            {
+                c.ShortCircuit = reply;
+                c.Limits.MaxContentLength = 3;
+            }));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+    }
+
+    [Fact]
     public async Task BodyAndData_AreMutuallyExclusive()
     {
         using var client = new AxiosClient();

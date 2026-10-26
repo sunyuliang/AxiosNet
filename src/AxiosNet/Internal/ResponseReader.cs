@@ -451,6 +451,13 @@ internal static class ResponseReader
 
         if (reply.Body is { } body)
         {
+            // 体积上限属于「配置自身的校验」，命中短路同样生效（README：范围校验照常）：
+            // 与网络路径同一口径，超限直接失败，而不是把超大正文交给调用方。
+            if (config.LimitsOrNull?.MaxContentLength is long maxLength && body.Length > maxLength)
+            {
+                throw AxiosException.MaxContentLength(config, null!, body.Length, maxLength);
+            }
+
             bodyBytes = body.Length;
 
             if (config.ResponseType == ResponseType.Stream)
