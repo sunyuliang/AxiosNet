@@ -27,6 +27,16 @@ public sealed class AxiosException : Exception
     /// <summary>配置项非法或无法按请求生效（例如按请求设置代理）。</summary>
     public const string ErrBadOptionValue = "ERR_BAD_OPTION_VALUE";
 
+    /// <summary>
+    /// 并发闸门排队超时：等不到空闲槽位（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/> +
+    /// <see cref="AxiosConfig.LimitSettings.QueueTimeout"/>）。
+    /// <para>
+    /// 与 <see cref="ErrConnAborted"/> 分开：请求根本没发出去，重试同样的请求也未必能排上，
+    /// 调用方该做的是降速 / 扩容 / 退避，而不是排查网络或调大 <see cref="AxiosConfig.Timeout"/>。
+    /// </para>
+    /// </summary>
+    public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
+
     public bool IsAxiosError => true;
 
     public string? Code { get; }
@@ -152,6 +162,32 @@ public sealed class AxiosException : Exception
         return new AxiosException(
             $"Invalid streamed response: {detail}",
             ErrBadResponse,
+            config,
+            request,
+            null,
+            inner);
+    }
+
+    /// <summary>
+    /// 并发闸门排队超时：在 <see cref="AxiosConfig.LimitSettings.QueueTimeout"/> 之内没等到空闲槽位。
+    /// <para>
+    /// 请求<b>没有发出去</b>（<see cref="Request"/> 是那条没排上队的待发请求，不是一次已完成的 HTTP 操作），
+    /// 消息里给出上限与等待时长，便于区分「服务端慢」与「本地并发压满」。
+    /// </para>
+    /// </summary>
+    internal static AxiosException QueueTimeout(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        TimeSpan waited,
+        int maxConcurrency,
+        Exception? inner = null)
+    {
+        return new AxiosException(
+            $"no free concurrency slot within {waited.TotalMilliseconds:0}ms "
+            + $"(MaxConcurrentRequests = {maxConcurrency}): "
+            + "reduce parallelism, raise Limits.MaxConcurrentRequests / Limits.QueueTimeout, "
+            + "or back off and retry on ERR_QUEUE_TIMEOUT",
+            ErrQueueTimeout,
             config,
             request,
             null,

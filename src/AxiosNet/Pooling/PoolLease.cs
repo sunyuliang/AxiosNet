@@ -9,10 +9,11 @@ public sealed class PoolLease : IDisposable
     private readonly PooledEndpoint _endpoint;
     private int _returned;
 
-    internal PoolLease(HttpConnectionPool pool, PooledEndpoint endpoint)
+    internal PoolLease(HttpConnectionPool pool, PooledEndpoint endpoint, bool endpointReused)
     {
         _pool = pool;
         _endpoint = endpoint;
+        EndpointReused = endpointReused;
     }
 
     /// <summary>该 origin 上复用的 HttpClient。</summary>
@@ -20,6 +21,16 @@ public sealed class PoolLease : IDisposable
 
     /// <summary>租约对应的 origin（scheme://host:port）。</summary>
     public string Origin => _endpoint.Origin;
+
+    /// <summary>
+    /// 本次租约是否复用了池中<b>已存在</b>的 origin 节点；<c>false</c> 表示这一租约顺手新建了节点
+    /// （新 Handler + 新 HttpClient，首个请求还要付 TLS 握手，通常明显慢于后续请求）。
+    /// <para>
+    /// 注意它<b>不是</b>「TCP 连接是否复用」：连接级复用发生在 <see cref="SocketsHttpHandler"/> 内部，
+    /// 库这一层看不见（.NET 8+ 才有 <c>http.client.connection.duration</c> 这类内置指标）。
+    /// </para>
+    /// </summary>
+    public bool EndpointReused { get; }
 
     public void Dispose()
     {

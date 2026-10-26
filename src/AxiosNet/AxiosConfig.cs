@@ -37,7 +37,7 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>
-    /// 体积、速率、流式超时与流式单帧上限。
+    /// 体积、速率、在途并发上限、流式超时与流式单帧上限。
     /// <para>首次读取时懒创建；不写入任何项时不分配对象。</para>
     /// </summary>
     public LimitSettings Limits

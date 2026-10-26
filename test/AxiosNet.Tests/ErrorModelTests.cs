@@ -77,6 +77,9 @@ public sealed class ErrorModelTests
         Assert.Equal("ERR_CANCELED", AxiosException.ErrCanceled);
         Assert.Equal("ERR_INVALID_URL", AxiosException.ErrInvalidUrl);
         Assert.Equal("ERR_BAD_OPTION_VALUE", AxiosException.ErrBadOptionValue);
+
+        // 库里自定义的错误码（axios 没有对应项，命名沿用同一风格）
+        Assert.Equal("ERR_QUEUE_TIMEOUT", AxiosException.ErrQueueTimeout);
     }
 
     [Fact]

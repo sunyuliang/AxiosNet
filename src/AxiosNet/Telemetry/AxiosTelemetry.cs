@@ -73,6 +73,48 @@ public static class AxiosTelemetry
     /// <summary>指标名：重试次数（Counter，每次「决定重试」计 1）。</summary>
     public const string RetriesInstrumentName = "axiosnet.client.request.retries";
 
+    /// <summary>
+    /// 指标名：租约次数（Counter，每次成功租用 origin 节点计 1）。
+    /// <para>
+    /// 带 <c>axiosnet.pool.endpoint.reused</c> 标签（<c>true</c> / <c>false</c>）：<b>比率请由后端用两个序列算</b>
+    /// （<c>1 - reused=false / 全部</c>），不要指望这里给出一个「复用率」Gauge —— 采样点与计数窗口对不齐时，
+    /// Gauge 算出来的比率是不可信的。
+    /// </para>
+    /// <para>
+    /// <b>口径边界</b>：这里量的是「池内 origin 节点（Handler + HttpClient）是否命中」，
+    /// <b>不是</b> TCP 连接复用 —— 后者发生在 <see cref="System.Net.Http.SocketsHttpHandler"/> 内部，
+    /// .NET 6/7 上根本不可观测（.NET 8+ 才有 <c>http.client.connection.duration</c>）。
+    /// 一个 origin 每次都新建 TCP、但节点一直命中，这里会报 100% 复用。
+    /// </para>
+    /// </summary>
+    public const string PoolLeasesInstrumentName = "axiosnet.client.pool.leases";
+
+    /// <summary>指标名：新建 origin 节点数（Counter）。与租约数一除即节点命中率，与驱逐数相减即当前节点数。</summary>
+    public const string PoolEndpointsCreatedInstrumentName = "axiosnet.client.pool.endpoints.created";
+
+    /// <summary>
+    /// 指标名：驱逐 origin 节点数（Counter），带 <c>axiosnet.pool.eviction.reason</c>
+    /// （<c>idle</c> / <c>capacity</c> / <c>manual</c> / <c>clear</c> / <c>dispose</c>）。
+    /// </summary>
+    public const string PoolEndpointsEvictedInstrumentName = "axiosnet.client.pool.endpoints.evicted";
+
+    /// <summary>
+    /// 指标名：当前活跃租约数（ObservableGauge，进程级水位）。
+    /// <para>
+    /// 与 <see cref="ActiveRequestsInstrumentName"/> 的区别是**正文下载期间仍然计入**：流式响应拿到响应头后
+    /// 请求就算结束（在途数 -1），但租约要等正文流 <c>Dispose</c> 才归还 —— 「长下载占了多少并发额度」
+    /// 只能看这个指标。
+    /// </para>
+    /// </summary>
+    public const string ActiveLeasesInstrumentName = "axiosnet.client.pool.active_leases";
+
+    // 驱逐原因：指标标签的取值，属对外契约（后端按它分面板）。
+    internal const string EvictionReasonIdle = "idle";
+    internal const string EvictionReasonCapacity = "capacity";
+    internal const string EvictionReasonManual = "manual";
+    internal const string EvictionReasonClear = "clear";
+    internal const string EvictionReasonDispose = "dispose";
+
     // 标签名一律取 OpenTelemetry HTTP 语义约定的标准名（v1.27）：后端 / Collector 无需额外映射。
     private const string TagMethod = "http.request.method";
     private const string TagScheme = "url.scheme";
@@ -87,6 +129,11 @@ public static class AxiosTelemetry
     private const string TagRequestBodySize = "http.request.body.size";
     private const string TagResponseBodySize = "http.response.body.size";
 
+    // 库自有标签（语义约定没有对应项）：一律 axiosnet. 前缀，与已有的 axiosnet.retry.delay_ms 一致。
+    private const string TagErrorCode = "axiosnet.error.code";
+    private const string TagEndpointReused = "axiosnet.pool.endpoint.reused";
+    private const string TagEvictionReason = "axiosnet.pool.eviction.reason";
+
     internal static readonly ActivitySource Source;
 
     internal static readonly DiagnosticListener Listener;
@@ -95,8 +142,17 @@ public static class AxiosTelemetry
 
     private static readonly Counter<long> Retries;
 
+    private static readonly Counter<long> PoolLeases;
+
+    private static readonly Counter<long> PoolEndpointsCreated;
+
+    private static readonly Counter<long> PoolEndpointsEvicted;
+
     /// <summary>在途请求数（全进程）：用 ObservableGauge 收集而不是每次请求调 instrument —— 见静态构造。</summary>
     private static long _activeRequests;
+
+    /// <summary>活跃租约数（全进程，跨所有池）：正文下载期间仍然计入，见 <see cref="ActiveLeasesInstrumentName"/>。</summary>
+    private static long _activeLeases;
 
     static AxiosTelemetry()
     {
@@ -126,6 +182,31 @@ public static class AxiosTelemetry
             RetriesInstrumentName,
             unit: "{retry}",
             description: "按策略决定重试的次数（不含首次请求）。");
+
+        // 池域指标：BCL 在 net6/7 上完全没有对应项，net8+ 的内置指标只覆盖 socket 层（连接数 / 排队 / 连接时长），
+        // 「按 origin 复用的 Handler 节点」是库独有的语义层 —— 不重复，也不冲突。
+        PoolLeases = meter.CreateCounter<long>(
+            PoolLeasesInstrumentName,
+            unit: "{lease}",
+            description: "成功租用 origin 节点的次数；axiosnet.pool.endpoint.reused=false 表示本次新建了节点。");
+
+        PoolEndpointsCreated = meter.CreateCounter<long>(
+            PoolEndpointsCreatedInstrumentName,
+            unit: "{endpoint}",
+            description: "新建的 origin 节点数（Handler + HttpClient），即节点未命中的次数。");
+
+        PoolEndpointsEvicted = meter.CreateCounter<long>(
+            PoolEndpointsEvictedInstrumentName,
+            unit: "{endpoint}",
+            description: "被驱逐并释放的 origin 节点数，按 axiosnet.pool.eviction.reason 区分原因。");
+
+        // 与在途请求数同一手法（net6.0 没有 UpDownCounter）：进 / 出各一次 Interlocked，收集时读。
+        // 计的是「持有租约」的请求，含正文还没读完的流式响应 —— 这正是它相对 active_requests 的价值。
+        meter.CreateObservableGauge(
+            ActiveLeasesInstrumentName,
+            () => Volatile.Read(ref _activeLeases),
+            unit: "{lease}",
+            description: "当前持有 origin 节点租约的请求数（含正文下载中的流式响应）。");
     }
 
     /// <summary>单调时钟时间戳（配合 <see cref="ElapsedSeconds"/> 算耗时，不受系统时间调整影响）。</summary>
@@ -143,6 +224,128 @@ public static class AxiosTelemetry
 
     /// <summary>请求离开发送管线：在途 -1。</summary>
     internal static void ExitRequest() => Interlocked.Decrement(ref _activeRequests);
+
+    /// <summary>租约生效：活跃租约 +1（与 <see cref="ExitLease"/> 必须成对）。</summary>
+    internal static void EnterLease() => Interlocked.Increment(ref _activeLeases);
+
+    /// <summary>租约归还：活跃租约 -1。</summary>
+    internal static void ExitLease() => Interlocked.Decrement(ref _activeLeases);
+
+    /// <summary>
+    /// 一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），节点是新建时再记一条
+    /// <c>pool.endpoints.created</c>。
+    /// <para>
+    /// 标签里只放主机 / 端口 / 布尔值 —— 池的基数天然被 <see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>
+    /// 框住，与请求指标的 <c>server.address</c> 同一口径。
+    /// </para>
+    /// <para>
+    /// 池域指标<b>不受 <see cref="AxiosConfig.TelemetrySettings.Enabled"/> 约束</b>：它描述的是池这个资源
+    /// （谁占了连接额度、谁在建节点），不是某一次请求的产出；健康检查照样会建节点，那一份成本就是真的。
+    /// </para>
+    /// </summary>
+    internal static void RecordLease(string host, int port, bool reused)
+    {
+        if (!PoolLeases.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            PoolLeases.Add(1, LeaseTags(host, port, reused));
+        }
+        catch
+        {
+            // 测量回调抛异常不能影响租用（见类注释）
+        }
+    }
+
+    /// <summary>新建了一个 origin 节点：<c>pool.endpoints.created</c> +1。</summary>
+    internal static void RecordEndpointCreated(string host, int port)
+    {
+        if (!PoolEndpointsCreated.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var tags = new TagList
+            {
+                { TagServerAddress, host },
+                { TagServerPort, port }
+            };
+            PoolEndpointsCreated.Add(1, tags);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>驱逐了一个 origin 节点：<c>pool.endpoints.evicted</c> +1，带原因与目标。</summary>
+    internal static void RecordEndpointEvicted(string reason, string host, int port)
+    {
+        if (!PoolEndpointsEvicted.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var tags = new TagList
+            {
+                { TagEvictionReason, reason },
+                { TagServerAddress, host },
+                { TagServerPort, port }
+            };
+            PoolEndpointsEvicted.Add(1, tags);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
+    /// 把「这次租约是否复用了已有节点」写到当前 span 上。
+    /// <para>
+    /// 这里用 <see cref="Activity.Current"/> 是**有意的**，且必须先确认它就是本库的 span：
+    /// 租用发生在 <c>SendCoreAsync</c> 里，那一层的参数里没有 span，为一个标签把 <see cref="Activity"/>
+    /// 从 <c>RequestAsync</c> 一路传下来只会让三个私有方法的签名都多一个参数。
+    /// 归属判定与 <see cref="RequestRetried"/> 同一口径 —— 调用方自己的 span 上不写库的标签。
+    /// </para>
+    /// </summary>
+    internal static void TagPoolReuse(bool reused)
+    {
+        var activity = Activity.Current;
+        if (activity is null || !ReferenceEquals(activity.Source, Source))
+        {
+            return;
+        }
+
+        try
+        {
+            // 重试时这个方法会被再次调用：第一次尝试建了节点（false）之后的尝试都是复用（true），
+            // 直接覆盖会把「这个请求付了建节点的代价」这条最有用的信息冲掉。所以一旦写过就不再改
+            // —— 重试路径上只多一次 GetTagItem（不分配），比「按 attempt 传参」划算。
+            if (reused && activity.GetTagItem(TagEndpointReused) is not null)
+            {
+                return;
+            }
+
+            // 用 "true"/"false" 字面量而不是 bool：字面量是驻留字符串，不产生每请求的装箱分配。
+            activity.SetTag(TagEndpointReused, reused ? "true" : "false");
+        }
+        catch
+        {
+        }
+    }
+
+    private static TagList LeaseTags(string host, int port, bool reused) => new()
+    {
+        { TagServerAddress, host },
+        { TagServerPort, port },
+        { TagEndpointReused, reused ? "true" : "false" }
+    };
 
     /// <summary>
     /// 请求已成型（拦截器与 transformRequest 跑完、URL 已拼好）：开 span 并发出
@@ -320,6 +523,15 @@ public static class AxiosTelemetry
                 }
 
                 activity.SetTag(TagErrorType, errorType);
+
+                // error.type 与库错误码是两个维度，不能互相替代：有状态码时 error.type 取状态码（语义约定），
+                // 「这次失败被归到哪一类」（ERR_NETWORK / ECONNABORTED / ERR_CANCELED / ERR_BAD_RESPONSE）
+                // 就无处可写了。没有状态码时两者取值相同，但仍写一次 —— 后端不必按「有没有 status」分支。
+                if (axiosException?.Code is string code)
+                {
+                    activity.SetTag(TagErrorCode, code);
+                }
+
                 activity.SetStatus(ActivityStatusCode.Error, exception.Message);
 
                 // net6.0 没有 Activity.AddException（.NET 9 才有），按语义约定手工记一条 exception 事件：

@@ -140,6 +140,14 @@ public sealed partial class AxiosClient
         if (perCall.LimitsOrNull is { } incomingLimits)
         {
             merged.Limits.MergeFrom(incomingLimits);
+
+            // 并发上限属实例级（闸门是实例共享资源）：库产出的配置里它是「来源实例的生效值」，
+            // 不能搬到本实例 —— 否则回放 response.Config 会给目标实例凭空加一道闸门，
+            // 或撞上「与闸门容量不同」的报错。其余限制项（体积 / 速率 / 排队耐心）都是按请求项，照常合并。
+            if (instanceSourced)
+            {
+                merged.Limits.MaxConcurrentRequests = Defaults.LimitsOrNull?.MaxConcurrentRequests;
+            }
         }
 
         var perCallConnection = perCall.ConnectionOrNull;

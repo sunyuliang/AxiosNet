@@ -26,6 +26,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private int _resourcesDisposed;
 
     /// <summary>
+    /// 在途并发闸门（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>）。
+    /// <para>
+    /// 懒创建：首个<b>受限</b>请求时按当时的生效上限建出信号量并固定 —— 这样
+    /// <c>Axios.Defaults.Limits.MaxConcurrentRequests = 8</c> 这种「构造之后再配默认值」的写法
+    /// 只要在首个请求之前就仍然有效。之后改上限会报错（见 <see cref="ResolveConcurrencyGate"/>），
+    /// 不静默沿用旧值：调用方设了上限却按别的上限跑，比报错危险得多。
+    /// </para>
+    /// </summary>
+    private ConcurrencyGate? _gate;
+
+    /// <summary>
     /// 对应 axios instance.defaults。
     /// <para>
     /// 连接级选项（<see cref="AxiosConfig.ConnectionSettings.WithCredentials"/> /
@@ -34,6 +45,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <see cref="AxiosConfig.ConnectionSettings.PoolOptions"/>）在<b>构造时已固化</b>进连接池 / Handler，
     /// 构造后再修改不生效（校验与池配置都以构造期快照为准，不会有任何报错提示）——
     /// 要改变它们请新建实例。其余配置（头、transform、超时等）随时可改。
+    /// </para>
+    /// <para>
+    /// 另有一项不属于连接级选项、但同样有固化时点：<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>
+    /// 的并发闸门在<b>首个受限请求</b>时按当时的上限创建（因此构造之后再配默认值仍然有效），
+    /// 此后改它会抛 <c>ERR_BAD_OPTION_VALUE</c> 而不是静默沿用旧上限。
     /// </para>
     /// </summary>
     public AxiosConfig Defaults { get; }
@@ -477,6 +493,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 静默变成不超时）。放在这里也允许拦截器修正调用方的非法值。
             ValidateRangeConfig(config);
 
+            // 并发闸门（在途条数上限）。位置与 ValidateRangeConfig 相同：必须在拦截器之后，
+            // 否则拦截器换掉 config 时闸门会按旧上限走；也必须在真正发送之前 ——
+            // 它是一次请求能否发出的前提，不能等到发送阶段才发现没名额。
+            var gate = ResolveConcurrencyGate(config);
+
             // 2) transformRequest：拦截器之后、编码之前依次作用于数据
             // 先判空：TransformRequest 延迟创建，空链不值得为一次枚举建出集合与快照。
             // 快照访问器拿具体 List：foreach 走结构体枚举器，不装箱。
@@ -614,7 +635,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     {
                         // 空链：直接调用，省掉闭包 + 委托 + 责任链包装的每请求分配。
                         var (direct, owner) = await SendWithRetryAsync(
-                                template, config, uri, externalToken, dataType, target, streamResponse, retry, bodyRewind)
+                                template, config, uri, externalToken, dataType, target, streamResponse, retry, bodyRewind, gate)
                             .ConfigureAwait(false);
 
                         streamOwner = owner;
@@ -625,7 +646,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                         Func<Task<AxiosResponse>> invoker = async () =>
                         {
                             var (invoked, owner) = await SendWithRetryAsync(
-                                    template, config, uri, externalToken, dataType, target, streamResponse, retry, bodyRewind)
+                                    template, config, uri, externalToken, dataType, target, streamResponse, retry, bodyRewind, gate)
                                 .ConfigureAwait(false);
 
                             streamOwner = owner;
@@ -738,16 +759,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         AxiosResponse? target,
         bool streamResponse,
         AxiosConfig.RetrySettings? retry,
-        RetryBody? bodyRewind)
+        RetryBody? bodyRewind,
+        ConcurrencyGate? gate)
     {
         var policy = retry?.Policy;
         if (policy is null || policy.MaxRetries <= 0)
         {
-            return SendCoreAsync(template, config, uri, externalToken, dataType, target, streamResponse);
+            return SendCoreAsync(template, config, uri, externalToken, dataType, target, streamResponse, gate);
         }
 
         return SendRetryLoopAsync(
-            template, config, uri, externalToken, dataType, target, streamResponse, retry!, policy, bodyRewind);
+            template, config, uri, externalToken, dataType, target, streamResponse, retry!, policy, bodyRewind, gate);
     }
 
     /// <summary>
@@ -768,7 +790,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         bool streamResponse,
         AxiosConfig.RetrySettings retry,
         IAxiosRetryPolicy policy,
-        RetryBody? bodyRewind)
+        RetryBody? bodyRewind,
+        ConcurrencyGate? gate)
     {
         for (var attempt = 1; ; attempt++)
         {
@@ -784,7 +807,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             var request = attempt == 1 ? template : CloneRequest(template);
             try
             {
-                return await SendCoreAsync(request, config, uri, externalToken, dataType, target, streamResponse)
+                return await SendCoreAsync(request, config, uri, externalToken, dataType, target, streamResponse, gate)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -922,38 +945,54 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         CancellationToken externalToken,
         Type? dataType,
         AxiosResponse? target,
-        bool streamResponse)
+        bool streamResponse,
+        ConcurrencyGate? gate)
     {
-        var hasTimeout = config.Timeout > TimeSpan.Zero;
-
-        // 只有「有超时」才需要独立令牌源：无超时时 sendToken 直接复用调用方令牌，
-        // 建 linked CTS 换不来任何行为差异，却要每请求付一次 CTS + 注册。
-        using CancellationTokenSource? timeoutCts = hasTimeout
-            ? (externalToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
-                : new CancellationTokenSource())
-            : null;
-
-        if (timeoutCts is not null)
-        {
-            // CancelAfter 上限约 49.7 天（uint.MaxValue-1 毫秒），越界抛裸 ArgumentOutOfRangeException：
-            // 收敛到上限，语义等价于「极长但有限」。
-            timeoutCts.CancelAfter(Timeouts.Clamp(config.Timeout));
-        }
-
-        // 交给底层每次 I/O 的令牌：无超时时就是调用方令牌（None 时不注册、不分配）。
-        var sendToken = timeoutCts?.Token ?? externalToken;
-
-        // 流式响应的 timeout 要延续到正文读完：记录起点用于算剩余预算。
-        // 只有「流式 + 有超时」用得上，其余组合下计时器纯属白分配。
-        var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
-
         PoolLease? lease = null;
 
         // 流式正文的所有权随后随返回值交给调用方（拦截器抛异常时由调用方兜底释放）。
         IDisposable? streamOwner = null;
+
+        // 并发槽位：与 lease 同一粒度（一次尝试一份）、同一释放点（finally）。
+        // 声明在 try 之外只是为了 finally 能看见它；**取值在 try 之内** —— 占位成功之后
+        // 任何一步失败（建超时源、租连接、发送、读正文）都必须把名额还回去，
+        // 漏还一次就等于永久少一个并发名额，且只表现为「越来越慢」，极难排查。
+        IDisposable? slot = null;
+
         try
         {
+            // 并发闸门：先占在途名额，再建超时预算 —— 排队时间不计入 Timeout（队列有自己的 QueueTimeout）。
+            // 放在这里而不是调用方，是为了让「每次重试各自取槽」成为自然结果：退避等待期间不占名额。
+            slot = gate is null
+                ? null
+                : await gate
+                    .AcquireAsync(config, request, externalToken, config.LimitsOrNull?.QueueTimeout)
+                    .ConfigureAwait(false);
+
+            var hasTimeout = config.Timeout > TimeSpan.Zero;
+
+            // 只有「有超时」才需要独立令牌源：无超时时 sendToken 直接复用调用方令牌，
+            // 建 linked CTS 换不来任何行为差异，却要每请求付一次 CTS + 注册。
+            using CancellationTokenSource? timeoutCts = hasTimeout
+                ? (externalToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
+                    : new CancellationTokenSource())
+                : null;
+
+            if (timeoutCts is not null)
+            {
+                // CancelAfter 上限约 49.7 天（uint.MaxValue-1 毫秒），越界抛裸 ArgumentOutOfRangeException：
+                // 收敛到上限，语义等价于「极长但有限」。
+                timeoutCts.CancelAfter(Timeouts.Clamp(config.Timeout));
+            }
+
+            // 交给底层每次 I/O 的令牌：无超时时就是调用方令牌（None 时不注册、不分配）。
+            var sendToken = timeoutCts?.Token ?? externalToken;
+
+            // 流式响应的 timeout 要延续到正文读完：记录起点用于算剩余预算。
+            // 只有「流式 + 有超时」用得上，其余组合下计时器纯属白分配。
+            var clock = streamResponse && hasTimeout ? System.Diagnostics.Stopwatch.StartNew() : null;
+
             // 注入 Handler：固定 HttpClient；默认实例：按 origin 租用（连接复用 + 并发上限）。
             // 租用也走异步入口：已取消/已超时的请求在租用前就被截断，异常同样翻译成统一错误模型。
             var httpClient = _customClient;
@@ -974,6 +1013,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
 
                 httpClient = lease.Client;
+
+                // 「这次是不是顺手新建了 origin 节点」写进 span：首个请求要付 Handler 构造 + TLS 握手，
+                // 时长毛刺里有一类原因就是它。自定义 Handler 注入时没有池，这条标签自然缺席。
+                AxiosTelemetry.TagPoolReuse(lease.EndpointReused);
             }
 
             HttpResponseMessage responseMessage;
@@ -1109,8 +1152,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
                 // 租约与 HttpResponseMessage 一并转移给流：下载期间该 origin 仍算活跃，
                 // 流 Dispose 时统一释放（否则消息本体永久悬空）。
-                wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease);
+                // 并发槽位同理：流式响应在调用方读正文的整段时间里仍算「在途」，
+                // 提前归还等于让并发上限对下载失效（下载恰恰是最该被限的那类请求）。
+                wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease, slot);
                 lease = null;
+                slot = null;
 
                 response.Data = wrapped;
                 streamOwner = wrapped;
@@ -1131,6 +1177,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         finally
         {
             lease?.Dispose();
+
+            // 槽位在所有失败路径上都归还；流式成功路径已把它转交给正文流（slot = null）。
+            slot?.Dispose();
         }
     }
 
@@ -1305,6 +1354,21 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 $"MaxBodyLength 不能为负（当前 {limits.MaxBodyLength}）：不限制请设为 null。", config);
         }
 
+        // 并发上限：0 与负数都没有语义（「同时最多 0 条请求」等于永久失败），
+        // 静默当成「不限制」会让调用方以为限流生效了 —— 与 MaxRate / MaxContentLength 同一条线。
+        if (limits?.MaxConcurrentRequests is int maxConcurrency && maxConcurrency < 1)
+        {
+            throw AxiosException.InvalidOption(
+                $"MaxConcurrentRequests 必须是正整数（当前 {maxConcurrency}）：不限制请设为 null，"
+                + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
+        }
+
+        if (limits?.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
+        {
+            throw AxiosException.InvalidOption(
+                $"QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
+        }
+
         // 分帧上限：既不能「设 0 当不限制」（分帧器没有关闭语义），也不能大到溢出 int。
         // 越界在发送前就报，而不是让服务端第一次吐出大帧时在分帧器里炸成裸异常。
         // 三个边界值都在 LimitSettings 上（默认 / 下界 / 上界同处一地），这里只负责比对。
@@ -1360,6 +1424,65 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// 解析（必要时懒创建）本实例的并发闸门。
+    /// <para>
+    /// 闸门是实例级资源：信号量的容量在创建时固定，之后无法重建（重建会让已在排队的请求
+    /// 永远等一个不再被归还的名额）。因此这里对「本次生效上限 ≠ 闸门容量」一律报错，
+    /// 而不是静默按旧上限跑 —— 调用方设了上限却按别的上限执行，比直接失败更难查。
+    /// 两种来源都会走到这里：按请求写了不同的值、以及构造之后改了 <c>Defaults</c>。
+    /// </para>
+    /// <para>
+    /// 未设置（<c>null</c>）时不建闸门；实例已有闸门时按闸门走（<c>null</c> 视为「本次没表态」，
+    /// 因为「本次不限制」在共享信号量的模型下无法表达）。
+    /// </para>
+    /// </summary>
+    private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
+    {
+        var requested = config.LimitsOrNull?.MaxConcurrentRequests;
+        var existing = Volatile.Read(ref _gate);
+
+        if (existing is not null)
+        {
+            if (requested is int value && value != existing.MaxConcurrency)
+            {
+                throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
+            }
+
+            return existing;
+        }
+
+        if (requested is not int limit)
+        {
+            return null;
+        }
+
+        var created = new ConcurrencyGate(limit);
+
+        // 并发首请求：输的一方用赢家的闸门，容量不同则报错（两个线程带着不同上限同时首次请求）
+        var winner = Interlocked.CompareExchange(ref _gate, created, null);
+        if (winner is null)
+        {
+            return created;
+        }
+
+        if (winner.MaxConcurrency != limit)
+        {
+            throw ConcurrencyMismatch(config, limit, winner.MaxConcurrency);
+        }
+
+        return winner;
+    }
+
+    private static AxiosException ConcurrencyMismatch(AxiosConfig config, int requested, int effective)
+    {
+        return AxiosException.InvalidOption(
+            $"MaxConcurrentRequests 是实例级配置（并发闸门在首个受限请求时创建并固定为 {effective}），"
+            + $"本次生效配置要求 {requested}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
+            + "要改变上限请新建 AxiosClient 并在 defaults 上设置。",
+            config);
     }
 
     /// <summary>

@@ -282,15 +282,23 @@ internal sealed class ResponseStreamOwner : DelegatingStream
 {
     private readonly HttpResponseMessage? _message;
     private readonly PoolLease? _lease;
+    private readonly IDisposable? _slot;
 
-    public ResponseStreamOwner(Stream inner, HttpResponseMessage? message, PoolLease? lease)
+    public ResponseStreamOwner(Stream inner, HttpResponseMessage? message, PoolLease? lease, IDisposable? slot = null)
         : base(inner)
     {
         _message = message;
         _lease = lease;
+        _slot = slot;
     }
 
-    /// <summary>释放响应消息与租约；两者都不能因为前一个抛异常而被跳过。内层流由基类释放。</summary>
+    /// <summary>
+    /// 释放响应消息、租约与并发槽位；三者都不能因为前一个抛异常而被跳过。内层流由基类释放。
+    /// <para>
+    /// 并发槽位（<see cref="ConcurrencyGate"/> 的租约）必须一起延后到这里：流式响应在调用方读正文的
+    /// 整段时间里都算在途，提前归还会让 <c>MaxConcurrentRequests</c> 对下载完全失效。
+    /// </para>
+    /// </summary>
     protected override void OnReleased()
     {
         try
@@ -299,7 +307,14 @@ internal sealed class ResponseStreamOwner : DelegatingStream
         }
         finally
         {
-            _lease?.Dispose();
+            try
+            {
+                _lease?.Dispose();
+            }
+            finally
+            {
+                _slot?.Dispose();
+            }
         }
     }
 }

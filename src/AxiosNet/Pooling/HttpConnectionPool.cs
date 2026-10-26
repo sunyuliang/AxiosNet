@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
 
@@ -152,6 +153,9 @@ public sealed class HttpConnectionPool : IDisposable
 
         while (true)
         {
+            // 本次迭代是否真的新建并发布了节点（竞态落选的那个不算：刚建好就释放，没有任何请求用过它）
+            var createdNode = false;
+
             // 稳态（origin 已在池里）只做一次哈希查找：
             // ① 容量检查里的 _endpoints.Count 是「拿全桶锁 + 逐表统计」的 O(n) 操作，只有真要新建节点时才需要；
             // ② GetOrAdd 的工厂是带捕获的闭包，热路径上每次调用都会分配一个对象。
@@ -165,6 +169,14 @@ public sealed class HttpConnectionPool : IDisposable
                 if (!ReferenceEquals(created, endpoint))
                 {
                     created.Dispose();
+                }
+                else
+                {
+                    createdNode = true;
+
+                    // 节点创建是「一次性事件」（每个 origin 一次），不在租用热路径的重复成本里；
+                    // 且此刻没有任何锁在手上，测量回调（监听者代码）可以安全同步执行。
+                    AxiosTelemetry.RecordEndpointCreated(origin.Host, origin.Port);
                 }
             }
 
@@ -180,7 +192,10 @@ public sealed class HttpConnectionPool : IDisposable
                 }
 
                 Interlocked.Increment(ref _totalLeases);
-                return new PoolLease(this, endpoint);
+
+                // 只有成功拿到租约才算一次租用：容量拒绝 / 关闭竞态抛出去的那些不该进指标。
+                AxiosTelemetry.RecordLease(origin.Host, origin.Port, reused: !createdNode);
+                return new PoolLease(this, endpoint, endpointReused: !createdNode);
             }
 
             // 节点恰好在获取到锁之前被驱逐：移除后重试，会新建新节点
@@ -204,14 +219,29 @@ public sealed class HttpConnectionPool : IDisposable
         endpoint.Release();
     }
 
-    /// <summary>节点退租时把自己从字典摘掉（池已关闭的优雅回收路径）。</summary>
+    /// <summary>
+    /// 节点退租时把自己从字典摘掉（池已关闭的优雅回收路径）。
+    /// <para>
+    /// 这里也要上报一次驱逐：<see cref="Dispose"/> 只处理「关闭时已经没有租约」的节点，在途的那些先打
+    /// <see cref="PooledEndpoint.DisposeWhenIdle"/> 标记、等最后一条租约归还才真正释放 —— 漏掉这一条，
+    /// 「created - evicted = 当前节点数」在「关闭时还有请求在飞」的场景下就会对不上。
+    /// </para>
+    /// <para>
+    /// 只有真的摘掉才上报：已被 <see cref="Clear"/> / <see cref="Dispose"/> 处理过的节点这里 <c>TryRemove</c>
+    /// 会失败，重复上报会让等式偏向负数。
+    /// </para>
+    /// </summary>
     internal void Forget(PooledEndpoint endpoint)
     {
-        _endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(endpoint.Key, endpoint));
+        if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(endpoint.Key, endpoint)))
+        {
+            AxiosTelemetry.RecordEndpointEvicted(
+                AxiosTelemetry.EvictionReasonDispose, endpoint.Key.Host, endpoint.Key.Port);
+        }
     }
 
     /// <summary>手动驱逐空闲超过 IdleHandlerLifetime 的 origin 节点。</summary>
-    public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue);
+    public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue, AxiosTelemetry.EvictionReasonManual);
 
     /// <summary>
     /// 新建 origin 节点前的容量检查：达到 <see cref="ConnectionPoolOptions.MaxEndpointCount"/> 时
@@ -226,7 +256,7 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        if (EvictIdle(TimeSpan.Zero, limit: 1) > 0)
+        if (EvictIdle(TimeSpan.Zero, limit: 1, AxiosTelemetry.EvictionReasonCapacity) > 0)
         {
             return;
         }
@@ -237,7 +267,14 @@ public sealed class HttpConnectionPool : IDisposable
             config);
     }
 
-    private int EvictIdle(TimeSpan minIdle, int limit)
+    /// <summary>
+    /// 驱逐空闲节点。<paramref name="reason"/> 只用于指标标签：同样一条「节点被关掉」，是后台清扫
+    /// （<c>idle</c>）、容量挤兑（<c>capacity</c>）还是人手动清的（<c>manual</c>），排障时是完全不同的三件事。
+    /// 另外三条路径各自直接上报 <c>clear</c> / <c>dispose</c>：<see cref="Clear"/>、<see cref="Dispose"/>
+    /// 与「关闭时还有租约在飞、等租约归还才释放」的 <see cref="Forget"/> —— 它们的语义是「整池清空」，
+    /// 与「按空闲时长挑几个」不是一回事。
+    /// </summary>
+    private int EvictIdle(TimeSpan minIdle, int limit, string reason)
     {
         // InfiniteTimeSpan 是 -1ms，而下面的判定是「空闲时长 < minIdle 才跳过」：
         // 不特判的话所有空闲节点都会被判成可驱逐，手动调用会把整个池清空。
@@ -299,6 +336,9 @@ public sealed class HttpConnectionPool : IDisposable
             foreach (var endpoint in pending)
             {
                 endpoint.ReleaseResources();
+
+                // 先释放再上报：监听者回调里抛异常不该让一个已经摘出池子的节点漏掉 Handler。
+                AxiosTelemetry.RecordEndpointEvicted(reason, endpoint.Key.Host, endpoint.Key.Port);
             }
         }
 
@@ -314,7 +354,9 @@ public sealed class HttpConnectionPool : IDisposable
 
         try
         {
-            EvictIdleEndpoints();
+            // 后台定时清扫：与「人手动调 EvictIdleEndpoints()」区分开（指标标签不同），
+            // 否则看不出「节点是被定时器扫掉的还是被谁手动清的」。
+            EvictIdle(_options.IdleHandlerLifetime, int.MaxValue, AxiosTelemetry.EvictionReasonIdle);
         }
         catch
         {
@@ -333,6 +375,8 @@ public sealed class HttpConnectionPool : IDisposable
             if (_endpoints.TryRemove(pair))
             {
                 pair.Value.Dispose();
+                AxiosTelemetry.RecordEndpointEvicted(
+                    AxiosTelemetry.EvictionReasonClear, pair.Key.Host, pair.Key.Port);
             }
         }
     }
@@ -406,6 +450,8 @@ public sealed class HttpConnectionPool : IDisposable
             foreach (var endpoint in pending)
             {
                 endpoint.ReleaseResources();
+                AxiosTelemetry.RecordEndpointEvicted(
+                    AxiosTelemetry.EvictionReasonDispose, endpoint.Key.Host, endpoint.Key.Port);
             }
         }
     }

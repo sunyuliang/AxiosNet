@@ -1,3 +1,5 @@
+using AxiosNet.Telemetry;
+
 namespace AxiosNet.Pooling;
 
 /// <summary>
@@ -98,6 +100,10 @@ internal sealed class PooledEndpoint : IDisposable
 
             ActiveLeases++;
             LastUsedUtc = DateTime.UtcNow;
+
+            // 进程级「活跃租约」水位（ObservableGauge 收集时读）。放在锁内是安全的：
+            // EnterLease 只是一次 Interlocked，不会触发任何监听回调 —— 能被采集器看到的只有计数本身。
+            AxiosTelemetry.EnterLease();
             return true;
         }
     }
@@ -105,11 +111,13 @@ internal sealed class PooledEndpoint : IDisposable
     public void Release()
     {
         var retire = false;
+        var released = false;
         lock (SyncRoot)
         {
             if (ActiveLeases > 0)
             {
                 ActiveLeases--;
+                released = true;
             }
 
             LastUsedUtc = DateTime.UtcNow;
@@ -119,6 +127,12 @@ internal sealed class PooledEndpoint : IDisposable
                 IsDisposed = true;
                 retire = true;
             }
+        }
+
+        // 只有真的减掉了才减水位：重复 Dispose / 关闭竞态里的多余 Release 不能让计数器漂到负数。
+        if (released)
+        {
+            AxiosTelemetry.ExitLease();
         }
 
         if (retire)

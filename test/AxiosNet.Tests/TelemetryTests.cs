@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Sockets;
+using AxiosNet.Pooling;
 using AxiosNet.Retry;
 using AxiosNet.Telemetry;
 using AxiosNet.Tests.Infrastructure;
@@ -47,6 +48,11 @@ public sealed class TelemetryTests
     private const string TagResendCount = "http.request.resend_count";
     private const string TagRequestBodySize = "http.request.body.size";
     private const string TagResponseBodySize = "http.response.body.size";
+
+    // 库自有标签（语义约定没有对应项）
+    private const string TagErrorCode = "axiosnet.error.code";
+    private const string TagEndpointReused = "axiosnet.pool.endpoint.reused";
+    private const string TagEvictionReason = "axiosnet.pool.eviction.reason";
 
     /// <summary>每个用例独有的路径片段：并行用例之间的 span / 事件靠它区分。</summary>
     private static string UniquePath(string name) => $"telemetry/{name}-{Guid.NewGuid():N}";
@@ -150,6 +156,26 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task Span_OnHttpError_RecordsLibraryErrorCode()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
+        var path = UniquePath("error-code");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient();
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        var span = Assert.Single(probe.Spans);
+
+        // error.type 与库错误码是两个维度：前者是「服务端说了什么」（语义约定要求状态码优先），
+        // 后者是「库把这次失败归到哪一类」。只留 error.type 的话，「503 被归成 ERR_BAD_RESPONSE」
+        // 这个信息在 span 上就没了（只能翻异常消息）。
+        Assert.Equal("503", span.GetTagItem(TagErrorType));
+        Assert.Equal(AxiosException.ErrBadResponse, span.GetTagItem(TagErrorCode));
+    }
+
+    [Fact]
     public async Task Span_OnNetworkError_RecordsErrorCodeAndExceptionEvent()
     {
         var port = ClosedPort();
@@ -162,6 +188,8 @@ public sealed class TelemetryTests
 
         var span = Assert.Single(probe.Spans);
         Assert.Equal(AxiosException.ErrNetwork, span.GetTagItem(TagErrorType));
+        // 没有状态码时两者取值相同：仍然写一次，后端不必按「有没有 status」分支
+        Assert.Equal(AxiosException.ErrNetwork, span.GetTagItem(TagErrorCode));
         Assert.Equal(ActivityStatusCode.Error, span.Status);
 
         // net6.0 没有 Activity.AddException，库按语义约定手记一条 exception 事件
@@ -219,6 +247,264 @@ public sealed class TelemetryTests
         var received = Assert.Single(server.Received);
         Assert.True(received.Headers.TryGetValue("traceparent", out var traceParent), "服务端没有收到 traceparent");
         Assert.Contains(caller!.TraceId.ToHexString(), traceParent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ------------------------------------------------------------------
+    // 连接池：租约 / 节点 / 驱逐
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Span_RecordsWhetherPoolEndpointWasReused()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("pool-reuse");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient();
+        await client.GetAsync(server.Url + path);
+        await client.GetAsync(server.Url + path);
+
+        var spans = probe.Spans;
+        Assert.Equal(2, spans.Count);
+
+        // 第一个请求顺手新建了 origin 节点（新 Handler + 新 HttpClient），第二个复用它 ——
+        // 「首个请求为什么慢」在 trace 里能直接看出来，不用去猜是不是 TLS 握手
+        Assert.Equal("false", spans[0].GetTagItem(TagEndpointReused));
+        Assert.Equal("true", spans[1].GetTagItem(TagEndpointReused));
+    }
+
+    [Fact]
+    public async Task Metrics_PoolLeases_DistinguishNewEndpointFromReuse()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("pool-leases");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient();
+        await client.GetAsync(server.Url + path);
+        await client.GetAsync(server.Url + path);
+
+        var leases = probe.MeasurementsOf(AxiosTelemetry.PoolLeasesInstrumentName);
+        Assert.Equal(2, leases.Count);
+        Assert.All(leases, measurement => Assert.Equal(1d, measurement.Value));
+
+        // 复用率由后端用这两个序列算，库这里只给事实（每租一次 1，带 reused 标签）
+        Assert.Equal("false", leases[0].Tag(TagEndpointReused));
+        Assert.Equal("true", leases[1].Tag(TagEndpointReused));
+        Assert.Equal("127.0.0.1", leases[0].Tag(TagServerAddress));
+        Assert.Equal(server.Port, leases[0].Tag(TagServerPort));
+
+        // 两次租约只建了一个节点：与 leases 一除就是节点命中率
+        var created = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsCreatedInstrumentName));
+        Assert.Equal(1d, created.Value);
+        Assert.Equal(server.Port, created.Tag(TagServerPort));
+    }
+
+    [Fact]
+    public async Task Metrics_PoolEviction_RecordsReasonForManualEviction()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("pool-evict-manual");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        // EvictionInterval = 0：不起后台定时器，否则它可能在本用例断言前就把节点扫掉
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            EvictionInterval = TimeSpan.Zero,
+            IdleHandlerLifetime = TimeSpan.Zero
+        });
+        using var client = new AxiosClient(pool: pool);
+
+        await client.GetAsync(server.Url + path);
+        Assert.Equal(1, pool.EvictIdleEndpoints());
+
+        var evicted = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
+        Assert.Equal(1d, evicted.Value);
+        Assert.Equal("manual", evicted.Tag(TagEvictionReason));
+        Assert.Equal(server.Port, evicted.Tag(TagServerPort));
+    }
+
+    [Fact]
+    public async Task Metrics_PoolEviction_RecordsReasonForCapacityPressure()
+    {
+        await using var first = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        await using var second = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("pool-evict-capacity");
+        using var probe = new TelemetryProbe(first.Port, path);
+
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            MaxEndpointCount = 1,          // 第二个 origin 只能靠驱逐第一个腾位置
+            EvictionInterval = TimeSpan.Zero,
+            IdleHandlerLifetime = TimeSpan.Zero
+        });
+        using var client = new AxiosClient(pool: pool);
+
+        await client.GetAsync(first.Url + path);
+        await client.GetAsync(second.Url + path);
+
+        var evicted = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
+        Assert.Equal("capacity", evicted.Tag(TagEvictionReason));
+        Assert.Equal(first.Port, evicted.Tag(TagServerPort));
+    }
+
+    [Fact]
+    public async Task Metrics_PoolEviction_RecordsReasonForDisposeWhileLeaseInFlight()
+    {
+        // 关闭时还有请求在飞：Dispose 只处理「已经空闲」的节点，在途那个先打 DisposeWhenIdle 标记、
+        // 等最后一条租约归还才真正释放（Forget）。这条路径以前不上报，会让
+        // 「created - evicted = 当前节点数」在「关闭时还有请求在飞」的场景下对不上。
+        await using var server = TestHttpServer.Start(
+            _ => TestJson.Response(new { ok = true }) with { BodyDelay = TimeSpan.FromMilliseconds(500) });
+
+        var path = UniquePath("pool-evict-inflight");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        var pool = new HttpConnectionPool(new ConnectionPoolOptions { EvictionInterval = TimeSpan.Zero });
+        using var client = new AxiosClient(pool: pool);
+
+        // 流式：拿到响应头就返回，租约还捏在正文流手里
+        var response = await client.GetAsync(server.Url + path, configure: c => c.ResponseType = ResponseType.Stream);
+
+        pool.Dispose();
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
+
+        await Assert.IsAssignableFrom<Stream>(response.Data).DisposeAsync();
+
+        var evicted = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
+        Assert.Equal("dispose", evicted.Tag(TagEvictionReason));
+        Assert.Equal(server.Port, evicted.Tag(TagServerPort));
+
+        // 重复 Dispose 不能重复上报（TryRemove 失败即不上报）
+        pool.Dispose();
+        Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
+    }
+
+    [Fact]
+    public async Task Metrics_ActiveLeases_StayUpWhileStreamingBodyIsOpen()
+    {
+        // 活跃租约是进程级水位（无标签，无法按用例隔离），与 active_requests 同一套断言策略：
+        // 只钉「下载中 >= 1、归还后 == 0」。本集合禁并行，此刻进程里没有别的请求。
+        var observed = new List<long>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Name == AxiosTelemetry.ActiveLeasesInstrumentName)
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            lock (observed)
+            {
+                observed.Add(value);
+            }
+        });
+        listener.Start();
+
+        // 响应头先发、正文延迟 500ms：这一段正是 active_requests 已经归零、租约却还占着的窗口
+        await using var server = TestHttpServer.Start(
+            _ => TestJson.Response(new { ok = true }) with { BodyDelay = TimeSpan.FromMilliseconds(500) });
+
+        using var client = new AxiosClient();
+        var response = await client.GetAsync(
+            server.Url + UniquePath("active-leases"),
+            configure: c => c.ResponseType = ResponseType.Stream);
+
+        listener.RecordObservableInstruments();
+        lock (observed)
+        {
+            Assert.Contains(observed, value => value >= 1);
+        }
+
+        var body = Assert.IsAssignableFrom<Stream>(response.Data);
+        await body.DisposeAsync();
+
+        var settle = Stopwatch.StartNew();
+        while (settle.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            listener.RecordObservableInstruments();
+            lock (observed)
+            {
+                if (observed[observed.Count - 1] == 0)
+                {
+                    break;
+                }
+            }
+
+            await Task.Delay(10);
+        }
+
+        lock (observed)
+        {
+            Assert.NotEmpty(observed);
+            Assert.Equal(0, observed[observed.Count - 1]);
+        }
+    }
+
+    [Fact]
+    public async Task PoolReuseTag_IsWrittenToLibrarySpanOnly()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("pool-reuse-owner");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var callerSource = new ActivitySource("AxiosNet.Tests.PoolReuseCaller");
+        using var callerListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == callerSource.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(callerListener);
+
+        using var client = new AxiosClient();
+
+        // ① 遥测开：标签写在库自己的 span 上，调用方的 span 一个字节都不许动
+        using (var caller = callerSource.StartActivity("caller-on", ActivityKind.Internal))
+        {
+            Assert.NotNull(caller);
+            await client.GetAsync(server.Url + path);
+            Assert.Equal("false", Assert.Single(probe.Spans).GetTagItem(TagEndpointReused));
+            Assert.Empty(caller.TagObjects);
+        }
+
+        // ② 遥测关：没有库的 span，此时 Activity.Current 就是调用方的 span ——
+        // 这才是「归属判定」真正起作用的场景（少了它，库的标签会直接写进别人的 span）。
+        using (var caller = callerSource.StartActivity("caller-off", ActivityKind.Internal))
+        {
+            Assert.NotNull(caller);
+            await client.GetAsync(server.Url + path, configure: c => c.Telemetry.Enabled = false);
+            Assert.Single(probe.Spans);      // 只有第 ① 次那条
+            Assert.Empty(caller.TagObjects);
+        }
+    }
+
+    [Fact]
+    public async Task PoolReuseTag_KeepsFirstAttemptValueAcrossRetries()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(_ => Interlocked.Increment(ref calls) <= 1
+            ? TestJson.Response(new { error = "boom" }, statusCode: 500)
+            : TestJson.Response(new { ok = true }));
+
+        var path = UniquePath("pool-reuse-retry");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) } });
+        await client.GetAsync(server.Url + path);
+
+        // 第 1 次尝试建了节点（false），第 2 次是复用（true）：标签必须留住「这个请求付了建节点的代价」。
+        // 直接覆盖的话，重试过的请求会一律显示 true —— 恰好是「慢请求」那一类，信息正好反了。
+        var span = Assert.Single(probe.Spans);
+        Assert.Equal("false", span.GetTagItem(TagEndpointReused));
+
+        // 两次尝试 = 两次租约：leases 数的是「租约次数」，不是请求数（请求维度看 request.duration）
+        var leases = probe.MeasurementsOf(AxiosTelemetry.PoolLeasesInstrumentName);
+        Assert.Equal(2, leases.Count);
+        Assert.All(leases, measurement => Assert.Equal(1d, measurement.Value));
     }
 
     // ------------------------------------------------------------------
@@ -327,7 +613,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(3, instruments.Count);   // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(7, instruments.Count);   // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -345,6 +631,23 @@ public sealed class TelemetryTests
         var retries = Assert.IsType<Counter<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.RetriesInstrumentName));
         Assert.Equal("{retry}", retries.Unit);
+
+        // 池域：语义约定里没有对应项（内置指标只覆盖 socket 层），单位用 {lease} / {endpoint}
+        var leases = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.PoolLeasesInstrumentName));
+        Assert.Equal("{lease}", leases.Unit);
+
+        var created = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.PoolEndpointsCreatedInstrumentName));
+        Assert.Equal("{endpoint}", created.Unit);
+
+        var evicted = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
+        Assert.Equal("{endpoint}", evicted.Unit);
+
+        var activeLeases = Assert.IsType<ObservableGauge<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.ActiveLeasesInstrumentName));
+        Assert.Equal("{lease}", activeLeases.Unit);
     }
 
     [Fact]
@@ -590,6 +893,30 @@ public sealed class TelemetryTests
         Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.RequestDurationInstrumentName));
         Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.RetriesInstrumentName));
         Assert.Empty(probe.Events);
+    }
+
+    [Fact]
+    public async Task Disabled_StillRecordsPoolLeaseMetrics()
+    {
+        // 池域指标是「池这个资源」的视图，不是某一次请求的产出：租约 / 建节点 / 驱逐三者必须能互相对账
+        // （命中率 = 1 - created / leases，当前节点数 = created - evicted）。按请求开关把它们切两半，
+        // 会让这些除法在「探针请求关了遥测」的服务上系统性失真 —— 所以这里刻意**不**跟随 Telemetry.Enabled。
+        // 改这段行为前先看这条用例：它存在的意义就是把「故意的」和「漏判的」区分开。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("disabled-pool");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient(new AxiosConfig { Telemetry = { Enabled = false } });
+        await client.GetAsync(server.Url + path);
+
+        // 请求级三路一律没有
+        Assert.Empty(probe.Spans);
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.RequestDurationInstrumentName));
+        Assert.Empty(probe.Events);
+
+        // 池域两路照旧
+        Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolLeasesInstrumentName));
+        Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsCreatedInstrumentName));
     }
 
     [Fact]
