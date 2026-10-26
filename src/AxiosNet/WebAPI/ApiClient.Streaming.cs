@@ -89,17 +89,32 @@ public sealed partial class ApiClient
 
         var raw = await SendAsync<Stream>(request, config, cancellationToken).ConfigureAwait(false);
         var body = raw.Data
-            ?? throw new InvalidOperationException(
-                "流式响应没有拿到正文流：响应拦截器把 Data 换成了 null，流式请求不能被拦截器替换成非流对象。");
+            ?? throw AxiosException.BadResponse(
+                raw.Config ?? config,
+                raw.Request,
+                "Stream",
+                new InvalidOperationException(
+                    "流式响应没有拿到正文流：响应拦截器把 Data 换成了 null，流式请求不能被拦截器替换成非流对象。"));
 
         var info = raw.Config?.Response;
-        var frames = new JsonStreamEnumerable<TItem>(
-            body,
-            raw.Config ?? config,
-            raw.Request,
-            format,
-            info?.CharSet,
-            info?.MediaType);
+        JsonStreamEnumerable<TItem> frames;
+        try
+        {
+            frames = new JsonStreamEnumerable<TItem>(
+                body,
+                raw.Config ?? config,
+                raw.Request,
+                format,
+                info?.CharSet,
+                info?.MediaType);
+        }
+        catch
+        {
+            // 构造失败时正文流已经交到本方法手里（占着该 origin 的租约与并发槽）：
+            // 这里必须兜底释放，否则一次配置错误就会永久漏掉一份连接额度。
+            body.Dispose();
+            throw;
+        }
 
         return new AxiosResponse<IAsyncEnumerable<TItem>>
         {

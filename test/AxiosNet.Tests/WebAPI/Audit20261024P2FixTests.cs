@@ -73,6 +73,26 @@ public sealed class Audit20261024P2FixTests
         Assert.Equal(200, response.Status);
     }
 
+    [Fact]
+    public async Task InterceptorReplacingStreamWithNull_ThrowsAxiosException()
+    {
+        using var client = CreateStreamingClient(
+            new CharsetAwareHandler("application/x-ndjson", Encoding.UTF8.GetBytes("{\"n\":1}\n")));
+
+        // 响应拦截器把 Data 换成 null：不能漏出裸 InvalidOperationException（破坏统一错误模型），
+        // 且必须报 ERR_BAD_RESPONSE，让调用方按 c.Code 分类处理。
+        client.Axios.Interceptors.Response.Use(
+            response =>
+            {
+                response.Data = null;
+                return response;
+            });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestStreamAsync(new FrameRequest()));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+    }
+
     // ---------------------------------------------------------------
     // 辅助
     // ---------------------------------------------------------------
