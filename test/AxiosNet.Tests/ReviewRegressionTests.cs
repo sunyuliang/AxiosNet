@@ -6,7 +6,14 @@ namespace AxiosNet.Tests;
 
 /// <summary>
 /// 全项目体检后的回归用例：每个用例对应一处已复现的缺陷，修复前后必须能区分。
+/// <para>
+/// 整类放进 <see cref="TimingCollection"/>：这里既有「必须在预算内被打断」的流式超时用例，
+/// 又有同步读（会阻塞线程池线程）的用例。与其它集合并行跑时，线程池注入变慢会让
+/// <b>正确</b>的实现超预算 —— GitHub Actions 上就出现过 500ms 预算在响应头阶段被吃光，
+/// 用例还没读到正文就抛了 <c>timeout of 500ms exceeded</c>。
+/// </para>
 /// </summary>
+[Collection(TimingCollection.Name)]
 public sealed class ReviewRegressionTests
 {
     // ---------------------------------------------------------------
@@ -175,7 +182,7 @@ public sealed class ReviewRegressionTests
     [Fact]
     public async Task StreamTimeout_AppliesToBodyRead()
     {
-        await using var server = StartSlowBodyServer(TimeSpan.FromSeconds(3));
+        await using var server = StartSlowBodyServer(SlowBodyDelay);
 
         using var client = new AxiosClient();
         await client.WarmUpAsync(server.Url + "warmup");
@@ -197,7 +204,7 @@ public sealed class ReviewRegressionTests
     [Fact]
     public async Task StreamTimeout_InterruptsBlockedSyncRead()
     {
-        await using var server = StartSlowBodyServer(TimeSpan.FromSeconds(3));
+        await using var server = StartSlowBodyServer(SlowBodyDelay);
 
         using var client = new AxiosClient();
         await client.WarmUpAsync(server.Url + "warmup");
@@ -224,7 +231,8 @@ public sealed class ReviewRegressionTests
     /// 看起来像取消处理失效，实际只是调度抖动。
     /// </para>
     /// <para>
-    /// 现在两头都拆掉计时器：正文延迟放大到 3s（与 <c>StreamRead_HonorsExternalCancellation</c> 同一口径），
+    /// 现在两头都拆掉计时器：正文延迟放大到 <see cref="SlowBodyDelay"/>（与
+    /// <c>StreamRead_HonorsExternalCancellation</c> 同一口径），
     /// 取消改由独立线程触发 —— <see cref="Thread.Sleep(int)"/> + <see cref="CancellationTokenSource.Cancel()"/>
     /// 不排线程池队列，也不会晚到。读早于取消就阻塞被打断，晚于取消就撞上已取消的令牌，
     /// 两条路径都是 <c>ERR_CANCELED</c>。
@@ -235,7 +243,7 @@ public sealed class ReviewRegressionTests
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(
             Body: Encoding.UTF8.GetBytes("{\"ok\":true}"),
-            BodyDelay: TimeSpan.FromSeconds(3)));
+            BodyDelay: SlowBodyDelay));
 
         using var client = new AxiosClient();
         using var cts = new CancellationTokenSource();
@@ -306,10 +314,24 @@ public sealed class ReviewRegressionTests
     // ---------------------------------------------------------------
 
     /// <summary>
-    /// 正文读取阶段的超时预算：500ms 是「连接已预热」下的宽裕值（本地往返只有微秒级），
-    /// 又远小于正文延迟（3 秒），保证超时一定落在正文阶段而不是响应头阶段。
+    /// 正文读取阶段的超时预算。必须同时满足两头：
+    /// <list type="bullet">
+    /// <item>远大于「已预热连接的一次本地往返」——否则预算会先被响应头阶段吃掉，用例根本进不到正文阶段；</item>
+    /// <item>远小于正文延迟（<see cref="SlowBodyDelay"/>）——否则读会自己等到正文，区分不出「超时生效」。</item>
+    /// </list>
+    /// <para>
+    /// 曾经是 500ms vs 3s：本地测试一直绿，但 GitHub Actions 满载时响应头阶段的调度抖动就能吃掉 500ms，
+    /// 于是 <c>GetAsync</c> 先抛 <c>timeout of 500ms exceeded</c>，看起来像正文超时失效。
+    /// 现在与 <c>StreamCancellationTests</c> 同一口径：预算与自然完成时间差一个数量级。
+    /// </para>
     /// </summary>
-    private static readonly TimeSpan BodyReadTimeout = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan BodyReadTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// 服务端「先发响应头、再延迟正文」的延迟：必须远大于 <see cref="BodyReadTimeout"/>，
+    /// 这样「被超时打断」与「自己等到正文」才不会混淆，调度抖动晚到几秒也仍有充足余量。
+    /// </summary>
+    private static readonly TimeSpan SlowBodyDelay = TimeSpan.FromSeconds(20);
 
     /// <summary>
     /// 「先发响应头、再延迟正文」的测试服务器，并为预热留一个立即返回的 <c>/warmup</c>。
