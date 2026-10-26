@@ -118,9 +118,9 @@ internal sealed class TrafficMeter
         var seconds = (_clock.Elapsed - _roundStartClock).TotalSeconds;
         double? rate = seconds > 0 && roundBytes > 0 ? roundBytes / seconds : null;
 
-        // 上报的 Loaded 封顶在 total：重试重发时累计是真实发送量（可能 2×total），
-        // 但调用方看到的进度不该超过 100%；限速与速率仍按真实字节算。
-        var loaded = _total is long cap && _loaded > cap ? cap : _loaded;
+        // Loaded 仍是累计真实发送量（两轮重发就是 2×total）——这是刻意的「单调推进」语义；
+        // AxiosProgressEvent.Progress 自己封顶 1，调用方看到的百分比不会超过 100%。
+        var loaded = _loaded;
 
         TimeSpan? estimated = rate is > 0 && _total is long total && total > roundBytes
             ? TimeSpan.FromSeconds((total - roundBytes) / rate.Value)

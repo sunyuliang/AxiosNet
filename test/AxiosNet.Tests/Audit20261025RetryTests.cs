@@ -265,7 +265,7 @@ public sealed class Audit20261025RetryTests
     }
 
     [Fact]
-    public async Task UploadProgress_AcrossRetry_StaysWithinTotal()
+    public async Task UploadProgress_AcrossRetry_StaysMonotonicAndPercentCapped()
     {
         var calls = 0;
         await using var server = TestHttpServer.Start(_ => Interlocked.Increment(ref calls) == 1
@@ -285,9 +285,10 @@ public sealed class Audit20261025RetryTests
         Assert.Equal(200, response.Status);
         Assert.Equal(2, calls);
 
-        // 第二轮重发同一份正文：累计发送量是 2×total，但上报进度不能超过 100%
+        // 第二轮重发同一份正文：Loaded 是累计真实发送量（2×total，单调不回落），
+        // 而 Progress 自己封顶 100%，调用方不会看到 >100% 的百分比。
         Assert.NotEmpty(events);
-        Assert.All(events, e => Assert.True(e.Loaded <= payload.Length, $"Loaded {e.Loaded} > {payload.Length}"));
-        Assert.Equal(payload.Length, events[^1].Loaded);
+        Assert.Equal(payload.Length * 2, events[^1].Loaded);
+        Assert.All(events, e => Assert.True(e.Progress is null || e.Progress <= 1d));
     }
 }
