@@ -554,7 +554,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     throw;
                 }
 
-                next = await interceptor.OnRejected(ex).ConfigureAwait(false);
+                // 与 OnFulfilled 同一道守卫：返回 null Task 不能炸成裸 NullReferenceException
+                var rejected = interceptor.OnRejected(ex)
+                    ?? throw AxiosException.InvalidOption(
+                        "请求拦截器的 OnRejected 返回了 null Task：必须返回 Task<AxiosConfig> 实例"
+                        + "（同步结果请用 Task.FromResult 包装）。",
+                        config);
+                next = await rejected.ConfigureAwait(false);
             }
 
             // 返回 null 会在下一行炸成裸 NullReferenceException，调用方看不出是哪层拦截器出的错。

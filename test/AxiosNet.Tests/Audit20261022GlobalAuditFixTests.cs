@@ -335,6 +335,23 @@ public sealed class Audit20261022GlobalAuditFixTests
         Assert.Empty(server.Received);
     }
 
+    [Fact]
+    public async Task RequestInterceptor_OnRejectedReturningNullTask_ThrowsAxiosException()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        // OnFulfilled 先抛，再让 OnRejected 返回 null：两条路径都要给出可定位的配置错误而不是裸 NRE
+        client.Interceptors.Request.Use(
+            (Func<AxiosConfig, Task<AxiosConfig>>)(_ => throw new InvalidOperationException("boom")),
+            (Func<Exception, Task<AxiosConfig>>)(_ => null!));
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Contains("null Task", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
     // ===============================================================
     // Bug 10：GetStatistics 的 EndpointCount 与 Endpoints 快照不一致
     // ===============================================================
