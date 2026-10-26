@@ -24,6 +24,9 @@ internal sealed class TrafficMeter
     /// </summary>
     private long _roundStart;
 
+    /// <summary>本轮起点的时钟快照：速率与限速都按「本轮增量 / 本轮耗时」算，退避等待不算传输时间。</summary>
+    private TimeSpan _roundStartClock;
+
     private long _lastReportMs = -ReportIntervalMs;
     private bool _completed;
 
@@ -46,8 +49,10 @@ internal sealed class TrafficMeter
             return TimeSpan.Zero;
         }
 
-        var expected = TimeSpan.FromSeconds((double)_loaded / rate);
-        var delta = expected - _clock.Elapsed;
+        var bytes = _loaded - _roundStart;
+        var elapsed = _clock.Elapsed - _roundStartClock;
+        var expected = TimeSpan.FromSeconds((double)bytes / rate);
+        var delta = expected - elapsed;
         return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
     }
 
@@ -96,23 +101,32 @@ internal sealed class TrafficMeter
     /// <summary>
     /// 开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，<b>累计值与计时器保留</b> ——
     /// 307/308 重定向或重试会再次写出同一份正文，共用计量器才能让进度单调推进而不是掉回 0。
-    /// <para>同时把「本轮起点」推到当前累计值：完成判定按增量算，第二轮才不会一开始就判成已传满。</para>
+    /// <para>同时把「本轮起点」推到当前累计值、重置本轮计时：完成判定按增量算，第二轮才不会一开始就判成已传满；
+    /// 速率与限速也只算本轮，退避等待不计入传输时长。</para>
     /// </summary>
     public void Restart()
     {
         _completed = false;
         _roundStart = _loaded;
+        _roundStartClock = _clock.Elapsed;
     }
 
     private AxiosProgressEvent BuildEvent(bool upload)
     {
-        var seconds = _clock.Elapsed.TotalSeconds;
-        double? rate = seconds > 0 && _loaded > 0 ? _loaded / seconds : null;
-        TimeSpan? estimated = rate is > 0 && _total is long total && total > _loaded
-            ? TimeSpan.FromSeconds((total - _loaded) / rate.Value)
+        // 只按本轮增量算：重发正文时第二轮一开始累计值就等于 total，按累计算会一路 >100%。
+        var roundBytes = _loaded - _roundStart;
+        var seconds = (_clock.Elapsed - _roundStartClock).TotalSeconds;
+        double? rate = seconds > 0 && roundBytes > 0 ? roundBytes / seconds : null;
+
+        // 上报的 Loaded 封顶在 total：重试重发时累计是真实发送量（可能 2×total），
+        // 但调用方看到的进度不该超过 100%；限速与速率仍按真实字节算。
+        var loaded = _total is long cap && _loaded > cap ? cap : _loaded;
+
+        TimeSpan? estimated = rate is > 0 && _total is long total && total > roundBytes
+            ? TimeSpan.FromSeconds((total - roundBytes) / rate.Value)
             : null;
 
-        return new AxiosProgressEvent(_loaded, _total, rate, estimated, upload);
+        return new AxiosProgressEvent(loaded, _total, rate, estimated, upload);
     }
 }
 

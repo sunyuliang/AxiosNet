@@ -263,4 +263,31 @@ public sealed class Audit20261025RetryTests
         Assert.Equal(503, ex.Status);
         Assert.Equal(2, server.Received.Count);
     }
+
+    [Fact]
+    public async Task UploadProgress_AcrossRetry_StaysWithinTotal()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(_ => Interlocked.Increment(ref calls) == 1
+            ? new TestResponse(503)
+            : TestJson.Response(new { ok = true }));
+
+        var events = new List<AxiosProgressEvent>();
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(1) } });
+
+        var payload = new byte[64 * 1024];
+        var response = await client.PostAsync(server.Url + "u", payload, c =>
+        {
+            c.ContentType = AxiosContentType.OctetStream;
+            c.Callbacks.OnUploadProgress = events.Add;
+        });
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal(2, calls);
+
+        // 第二轮重发同一份正文：累计发送量是 2×total，但上报进度不能超过 100%
+        Assert.NotEmpty(events);
+        Assert.All(events, e => Assert.True(e.Loaded <= payload.Length, $"Loaded {e.Loaded} > {payload.Length}"));
+        Assert.Equal(payload.Length, events[^1].Loaded);
+    }
 }
