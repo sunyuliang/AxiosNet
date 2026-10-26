@@ -1112,10 +1112,29 @@ Keep the two jobs apart: `AxiosNet.Tests/ConcurrencyPerformanceTests` is a **con
 resolve 3%. Use the benchmarks to quantify a change, keep that test as the floor.
 
 ```bash
+# Interactive menu: pick a group, run it, read the digest (7 groups, each with a reading hint)
+dotnet run -c Release --project test/AxiosNet.Benchmarks
+
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --list flat
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*Merge*'
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*'
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isolated
 ```
+
+No arguments opens the menu (pick a group → run → digest → back to the menu; `a` runs everything,
+`s` is a smoke run, `m` switches execution mode, `q` quits). With arguments, they are passed to
+BenchmarkDotNet unchanged, so scripts keep working.
+
+Execution is **in-process** by default: no temporary project, no rebuild, no child process — it benchmarks
+the assembly you just built (`-c Release` stays Release, `-c Debug` stays Debug). Add `--isolated` to get
+BenchmarkDotNet's "generated project + one process per case" back; use it when the numbers go into a commit
+message or a before/after comparison. Absolute timings from the two modes must not be mixed
+(`Allocated` is trustworthy in both).
+
+Both paths print a digest at the end: rows grouped by parameter set with the baseline first,
+**ratios recomputed against the declared baseline** (BDN's `Ratio` column can pick the wrong time baseline
+in multi-parameter groups), one time unit per table and humanised allocation sizes. The digest only
+presents, it never judges — judging rules are in the benchmark project README.
 
 | Group | Hot spot | Baseline |
 | --- | --- | --- |

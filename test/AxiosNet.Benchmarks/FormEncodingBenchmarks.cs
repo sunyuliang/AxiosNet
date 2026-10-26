@@ -28,6 +28,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("表单百分号编码：扁平 ASCII（基线）/ 全转义 / 嵌套键名，5 与 50 字段两档")]
+[BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]
+[BenchmarkHint("比值 = 编码成本 / 基础成本，看全转义与嵌套键名各贵多少")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

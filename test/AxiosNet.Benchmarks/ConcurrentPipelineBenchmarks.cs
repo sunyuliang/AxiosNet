@@ -26,6 +26,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("并发吞吐（8 在飞）：HttpClient 基线 vs AxiosNet，Mean 为每请求成本")]
+[BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]
+[BenchmarkHint("Mean 已是每请求成本（OperationsPerInvoke = 8），吞吐比 = 1 / 比值")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

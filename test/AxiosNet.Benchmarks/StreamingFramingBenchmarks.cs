@@ -26,6 +26,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("流式分帧：NDJSON（基线）/ SSE / JSON 数组，10 与 100 与 1000 帧三档")]
+[BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]
+[BenchmarkHint("比值 = 格式差；Frames 三档的斜率 = 每帧成本，小档位剩余才是取流开销")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

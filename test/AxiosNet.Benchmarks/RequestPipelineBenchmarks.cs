@@ -25,6 +25,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("请求全链路（回环 socket）：HttpClient 基线 vs AxiosNet GET 字符串 / GET 强类型 / POST JSON")]
+[BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]
+[BenchmarkHint("比值 = 单请求时间比，吞吐比 = 1 / 比值；绝对值跨轮能差 30%，别当门槛")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

@@ -1111,10 +1111,25 @@ CI 也不跑它（基准对机器状态敏感，共享 runner 上的数字没有
 量化改动看基准，守底线看那条用例。
 
 ```bash
+# 交互菜单：选组运行，跑完打印摘要（7 组带读法说明）
+dotnet run -c Release --project test/AxiosNet.Benchmarks
+
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --list flat
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*Merge*'
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*'
+dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isolated
 ```
+
+不带参数进菜单（选组 → 跑 → 看摘要 → 回到菜单，`a` 跑全部、`s` 冒烟、`m` 切换执行方式、`q` 退出）；
+带参数时参数原样交给 BenchmarkDotNet，脚本行为不变。
+
+默认**同进程**执行：不生成临时项目、不重建、不另起进程，跑的就是当前这个程序集（`-c Release` 就是 Release，
+`-c Debug` 就是 Debug）。要写进提交信息、或与历史基线做前后对比时加 `--isolated`，
+切回 BDN 的「临时项目 + 每个用例一个独立进程」——两种方式的绝对耗时不能混着比（`Allocated` 两者都可信）。
+
+两种通道跑完都会打印一张摘要表：按参数组合分组、基线排第一、**比值按声明基线重算**
+（不抄 BDN 在多参数组里会认错基线的 `Ratio` 列），时间列统一单位、分配量按量级显示。
+摘要只呈现不判定，判定口径见下面几行与基准项目的 README。
 
 | 组 | 热点 | 基线 |
 | --- | --- | --- |

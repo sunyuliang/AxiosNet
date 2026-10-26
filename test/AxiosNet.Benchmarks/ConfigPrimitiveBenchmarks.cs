@@ -22,6 +22,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("合并原语：AxiosConfig.Clone / AxiosHeaders 读、幂等写、克隆")]
+[BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]
+[BenchmarkHint("没有基线，看绝对值与 Allocated：Headers_Clone 应恒为 24 B，Headers_Set_Same 应为 0")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

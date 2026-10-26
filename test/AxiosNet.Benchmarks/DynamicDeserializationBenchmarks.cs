@@ -25,6 +25,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("dynamic 反序列化：强类型基线 vs AxiosDynamic 对象图 vs JsonElement vs 加成员访问")]
+[BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]
+[BenchmarkHint("比值 = dynamic 比强类型贵几倍；Wide 两行看每节点成本随图变大怎么放大")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

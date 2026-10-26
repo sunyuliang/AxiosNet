@@ -24,6 +24,8 @@ namespace AxiosNet.Benchmarks;
 /// </para>
 /// </summary>
 [Description("配置合并 / 头合并：GetUri 合并 vs 不合并（实例头数 × 按请求头数）")]
+[BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]
+[BenchmarkHint("比值 − 1 = 把按请求补丁合到默认值上的增量；每多一批按请求头就多复制一版条目数组")]
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [HideColumns("Job")]

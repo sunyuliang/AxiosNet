@@ -37,6 +37,9 @@ AxiosNet 的**量化性能基线**。这里只度量、不判定：没有门槛�
 ```bash
 cd test/AxiosNet.Benchmarks
 
+# 默认入口：交互菜单（选组 → 跑 → 看摘要 → 回到菜单）
+dotnet run -c Release
+
 # 列出全部基准（不运行）
 dotnet run -c Release -- --list flat
 
@@ -48,17 +51,75 @@ dotnet run -c Release -- --filter '*' --job short
 
 # 完整一轮（默认就会导出 md / csv / html 三份报告）
 dotnet run -c Release -- --filter '*'
+
+# 要写进提交信息 / 与历史基线比时：切回 BDN 的隔离执行
+dotnet run -c Release -- --filter '*' --isolated
 ```
+
+不带参数时进菜单；标准输入被重定向（管道 / CI）时退回打印用法 —— 菜单会阻塞在 `ReadLine` 上，
+在非交互环境里那就是挂住。带参数时行为与以前完全一致，脚本不受影响。
 
 **务必用 `-c Release`**：BDN 按构建配置做校验，Debug 下的数字不该进任何结论。
 
 产物（生成的临时项目、报告）落在**当前工作目录**的 `BenchmarkDotNet.Artifacts/`，
 所以先 `cd` 进项目目录再跑，产物才会在项目下；该目录与 `.baseline/` 都已 gitignore。
 
+### 执行方式：同进程（默认）/ 隔离
+
+BDN 默认的 `CsProjCoreToolchain` 会为作业**生成一个临时项目、`dotnet build` 一遍，再为每个用例起一个子进程**——
+这就是「跑个基准怎么还在编译」的来源。本项目默认改成同进程（`InProcessEmitToolchain`）：
+不生成项目、不重建、不另起进程，跑的就是**当前这个程序集**（`-c Release` 就是 Release，`-c Debug` 就是 Debug），
+一次运行的固定开销从几十秒降到亚秒级。
+
+| 方式 | 开关 | 适合 | 代价 |
+| --- | --- | --- | --- |
+| 同进程（默认） | `--in-process` | 边改边看、冒烟、定位「哪一段变贵了」 | 所有用例共用一个进程：JIT 分层、GC 堆、线程池状态会互相影响，绝对数会偏高且随组顺序漂 |
+| 隔离 | `--isolated` | 写进提交信息 / PR、与 `.baseline` 前后对比 | 每个作业先编译一次临时项目（几十秒），每个用例一个子进程 |
+
+同进程仍然走 BDN 的 emit 桩，`InvocationCount` / `UnrollFactor` / `MemoryDiagnoser` 都保留，
+所以**分配量（`Allocated`）在同进程下依旧可信**——它不依赖进程隔离。不可信的是绝对耗时。
+两种方式的数字**不要混着比**：同一台机器上 `Headers_Clone` 同进程 7.3 ns、隔离 5.8 ns，
+差的是测量环境而不是代码。
+
+Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模式关掉了这条校验 ——
+「Debug 就 Debug」是你的选择，但那种数字只能确认跑得通，启动时会有明确提示。
+
 默认作业是 **3 预热 + 8 迭代**（见 [`BenchmarkConfig.cs`](BenchmarkConfig.cs)），
-比 BDN 的 `DefaultJob`（6 + 15）轻一档：45 个基准的完整一轮在本机实测 **8 分 41 秒** ——
+比 BDN 的 `DefaultJob`（6 + 15）轻一档：45 个基准的完整一轮在本机实测 **8 分 41 秒**（隔离模式）——
 「前后各跑一轮」才落得进日常流程。代价是置信区间更宽，所以判定的第一依据是 `Allocated`（确定性量），
-第二依据是同运行内的 `Ratio`；要更窄的区间就用 BDN 内置作业覆盖：`--job long`。
+第二依据是同运行内的比值；要更窄的区间就用作业覆盖：`--job long`。
+
+`--job` 是**真覆盖**：作业只从 `BenchmarkConfig` 来，命令行给的那个会替换掉默认作业。
+（早先的写法是程序集上的 `[assembly: SimpleJob]`，而 BDN 的 `--job` 是往配置里**追加**作业 ——
+实测 `--job short` 会让 6 个基准跑 12 次，同一张表里混进两套迭代次数。这正是本项目最忌的「口径混用」，
+所以改成单一来源。）可用作业名：`default / dry / short / medium / long / verylong`，拼错会提示后回退默认作业。
+
+## 菜单与结果摘要
+
+菜单只做两件事：把「选哪一组」和「这组怎么读」放在一起，以及跑完把 BDN 的报告重新排成一张能直接读的表。
+编号 / 标题 / 读法全部来自各基准类自己身上的特性（`[Description]` / `[BenchmarkGroup]` / `[BenchmarkHint]`），
+菜单启动时反射发现（判据只有一条：类里有 `[Benchmark]` 方法），**没有任何清单需要维护**：
+新加一个基准类只改它自己的文件，编译进程序集就在菜单里了。分组按「数字里含不含网络往返」切，
+分组的先后由 `[BenchmarkGroup(..., Order = n)]` 定：
+
+- 输入编号跑一组，跑完回到菜单；
+- `a` = 顺序跑全部（默认作业，本机 8~9 分钟）；
+- `s` = 冒烟跑全部（`--job short`，3 轮，只确认跑得通）；
+- `m` = 在同进程 / 隔离之间切换（当前方式印在标题下方，每组摘要末尾也会标一次）；
+- `q` = 退出。
+
+跑完打印的摘要（与 BDN 自己那张表并存，口径不同、不冲突）：
+
+| 处理 | 原因 |
+| --- | --- |
+| 按参数组合分组、组内**基线排第一** | BDN 的行序是全局 FastestToSlowest，多参数组里各组合会交错，「这行是拿谁比出来的」就看不出来了 |
+| **比值自己重算**（同参数组合 + `[Benchmark(Baseline = true)]`） | BDN 的 `Ratio` 列在多参数组里会把非基线行当成时间基线（见「怎么读数字」第 2 点）；摘要不抄它 |
+| 时间列整张表一个单位 | 一行 ns 一行 µs 的表格没法横向比大小 |
+| `Allocated` 按量级显示 B / KB / MB | 绝对值从 0 B 到几十 KB，统一用字节读不出量级 |
+| 误差列 = 99.9% 置信区间半宽 | 与 BDN 的 `Error` 列同口径，`GetConfidenceInterval` 算，不手拼 |
+
+摘要只**呈现**不判定：没有阈值、没有通过 / 不通过。判定口径仍是下面几节写的那些。
+
 
 ## 七组基准
 
@@ -96,6 +157,8 @@ BDN 在多参数组里会把「不是声明基线的那一行」当成时间基�
 而**同一块**的 `Alloc Ratio` 仍老实以 `Ndjson` 为 1.00（198.16 / 190.13 KB = 1.04）。
 也就是说同一份报告里，时间比值和分配比值的基线可以不是同一个。读多参数组时二选一：
 自己用 `Mean` 除声明基线行的 `Mean`，或者只信「基线行确实是 1.00」的那些块。
+跑完打印的摘要表已经按这个口径重算过（同参数组合 + `[Benchmark(Baseline = true)]`），可以直接用；
+BDN 报告里的 `Ratio` 列仍要按上面说的自己核对。
 
 **3. 跨运行对比时，`Allocated` 比 `Mean` 稳得多。**
 判断「有没有退化」时先看分配量有没有变，再看 `Mean` 的差值有没有超出 `Error`
@@ -114,15 +177,18 @@ cd test/AxiosNet.Benchmarks
 # 0) 先把上一轮的产物清掉：BDN 不会删旧文件，混轮对比是这套流程最容易踩的坑
 rm -rf BenchmarkDotNet.Artifacts
 
-# 1) 改动前，在干净的工作区跑一轮
+# 1) 改动前，在干净的工作区跑一轮（前后两轮必须同一执行方式）
 git stash
-dotnet run -c Release -- --filter '*'
+dotnet run -c Release -- --filter '*' --isolated
 mv BenchmarkDotNet.Artifacts .baseline
 
 # 2) 改完再跑一轮
 git stash pop
-dotnet run -c Release -- --filter '*'
+dotnet run -c Release -- --filter '*' --isolated
 ```
+
+两轮都用 `--isolated`：同进程模式的绝对数受组顺序、JIT 分层与共享堆影响，前后两轮之间会漂 ——
+用它做前后对比，差值里混的是测量环境而不是代码。`--job` 同理，两轮必须一致。
 
 不用 `--exporters json`：BDN 默认就导出 `-report-github.md`（紧凑表格）、`-report.csv`（脚本友好）
 和 `-report.html`，三份都带 `Mean` / `Error` / `StdDev` / `Allocated`，有基线的组还有 `Ratio`。
@@ -161,12 +227,15 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 
 ## 已知噪声与陷阱
 
+- **同进程与隔离的数字不能混比**：同一台机器 `Headers_Clone` 同进程 7.3 ns、隔离 5.8 ns，
+  差的是测量环境（共享 GC 堆 / JIT 分层 / 线程池）而不是代码。同进程适合「这次改动方向对不对」，
+  隔离适合「有没有退化」；`Allocated` 两者都可信。
 - **回环 socket 组**：单请求 ~100 µs 里含 TCP 往返与线程池调度，绝对值会随机器负载摆；
   比值稳，绝对值不稳。测的时候别开其他吃 CPU 的进程。
 - **`FakeHttpHandler` 的恒定开销**：每次请求多一次 `HttpResponseMessage` + `ByteArrayContent` 分配
   （约 2 次、共 ~200 B）。它对同一类里的各个变体是恒定的，看差值 / 比值时被抵消；看绝对值时要记得它在里面。
 - **`--job short` 只能冒烟**：3 轮迭代下 `RatioSD` 能到 0.2，`Mean` 的 `Error` 能超过 `Mean` 本身。
-  任何写进提交信息、PR 或本文档的数字都必须来自默认作业。
+  任何写进提交信息、PR 或本文档的数字都必须来自默认作业。（它是覆盖而不是追加，见「快速开始」。）
 - **旧产物不会自动清掉**：BDN 只写不删。重跑时若只加了部分 `--exporters`，就会出现
   「`-report.csv` 是新的、`-report-full-compressed.json` 是上一轮的」这种混轮目录 ——
   我们复查时就撞上过一次（同一目录下 JSON 里 `AxiosNet_GetString` 是 146.6 µs，
@@ -246,6 +315,8 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 
 - 同一类里的变体必须**只差被测变量**：服务器、载荷、并发度、Handler 对齐口径都要一致，
   否则测的是「两个场景的差异」而不是「一段代码的成本」。
-- 新增热点时同步更新本文件的表格与根 README 的「性能基准」一节。
+- 新增热点时同步更新：本文件的表格、根 README 的「性能基准」一节，以及新类上的
+  `[BenchmarkGroup]`（分组 + 口径说明）与 `[BenchmarkHint]`（怎么读）。菜单是运行时反射发现，
+  不需要在任何清单里登记；漏写特性也不会让类消失 —— 缺分组会落进「未分组」，缺读法会在那一行提示补上。
 - 改了 `ConcurrencyPerformanceTests` 里的 `CreateComparableHandler` 对齐口径，
   必须同步改 `Infrastructure/ComparableHttpClientHandler.cs`（两处的比值要能互相印证）。
