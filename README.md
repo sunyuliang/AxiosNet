@@ -617,6 +617,7 @@ breaker.Reset();                                                 // 运维手工
 - 被拒请求**不发出**：不建连、不占租约，直接抛 `ERR_CIRCUIT_OPEN`，`AxiosException.RetryAfter` 给建议等待。
 - 与重试同时开：闸门在**每次尝试之前**，熔断打开后重试的下一轮会被立刻拦下；`ERR_CIRCUIT_OPEN` 本身不重试。
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
+- **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
 - 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度，正在熔断 / 半开的条目不会被丢。
 - 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure`。策略**有状态**且被并发共享，需自己保证线程安全。
 
