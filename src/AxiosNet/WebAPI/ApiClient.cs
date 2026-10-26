@@ -171,9 +171,15 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var config = new AxiosConfig
         {
             Method = metadata.Method,
-            Url = metadata.ResolveUrl(request, UrlParameterFormatter),
-            Params = metadata.ResolveQuery(request, UrlParameterFormatter)
+            Url = metadata.ResolveUrl(request, UrlParameterFormatter)
         };
+
+        // 只在确实绑到参数时才写：合并层现在把「显式写 null」当成摘掉实例默认值，
+        // 而模型里没有查询参数应当继承默认参数（两种模型形态一致，见 ResolveQuery 的注释）。
+        if (metadata.ResolveQuery(request, UrlParameterFormatter) is { } query)
+        {
+            config.Params = query;
+        }
 
         var body = ResolveBody(metadata, request, config);
         if (body is not null)

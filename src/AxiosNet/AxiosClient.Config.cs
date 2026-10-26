@@ -39,8 +39,18 @@ public sealed partial class AxiosClient
         var instanceSourced = perCall.InstanceOptionsInherited || perCall.EffectiveMerged;
 
         merged.Url = perCall.Url ?? merged.Url;
-        merged.Params = perCall.Params ?? merged.Params;
-        merged.Data = perCall.Data ?? merged.Data;
+
+        // Params / Data 按「是否显式赋值」合并，而不是按 null：按请求写 null 是摘掉实例默认值的唯一表达方式
+        // （与头用 Delete 表达删除同一个语义）。未赋值时继承实例默认值，与旧行为一致。
+        if (perCall.ParamsSet)
+        {
+            merged.Params = perCall.Params;
+        }
+
+        if (perCall.DataSet)
+        {
+            merged.Data = perCall.Data;
+        }
 
         // 短路响应只在「按请求写的意图」上生效：库产出的生效配置（快捷方法的产物、本方法的产物）里它是
         // 上一次请求已经发生过的事，回放 response.Config 时带上它等于让那条请求永远不发出去。

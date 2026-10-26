@@ -283,6 +283,31 @@ public sealed class HardeningTests
     }
 
     [Fact]
+    public async Task NullParamsAndData_ClearInheritedDefaults()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Data = new { inherited = true },
+            Params = new { inherited = 1 }
+        });
+
+        // 按请求显式写 null 是「摘掉实例默认值」的唯一表达方式：不写（未赋值）才继承默认值。
+        var response = await client.RequestAsync(new AxiosConfig
+        {
+            Url = server.Url + "x",
+            Method = HttpMethod.Post,
+            Data = null,
+            Params = null
+        });
+
+        Assert.Equal(200, response.Status);
+        var received = Assert.Single(server.Received);
+        Assert.Equal("/x", received.Path);
+        Assert.Empty(received.Body);
+    }
+
+    [Fact]
     public async Task PostAsync_WithNullBody_StillWorks()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

@@ -176,8 +176,8 @@ internal sealed partial class RequestModelMetadata
     /// 没有任何查询参数时返回 <c>null</c>（省掉空字典）。
     /// <para>
     /// 「有绑定但值全为 null」同样返回 <c>null</c>：此时与「没有任何绑定」一样没有参数要发，
-    /// 两种模型形态必须行为一致。合并层对非 null <c>Params</c> 做整体替换，
-    /// 返回空字典会静默清掉实例默认参数（如 DI 场景配在 defaults 上的 api_key）。
+    /// 两种模型形态必须行为一致。注意合并层把「显式写 null」当作摘掉实例默认值，
+    /// 因此调用方拿到 <c>null</c> 时不要写进配置（写了会清掉 defaults 上的 api_key）。
     /// </para>
     /// </summary>
     /// <param name="request">请求模型实例。</param>

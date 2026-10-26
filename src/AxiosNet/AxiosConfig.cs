@@ -177,6 +177,8 @@ public sealed partial class AxiosConfig
     internal string[]? RemoveHeadersSnapshot
         => _removeHeaders is { Count: > 0 } ? _removeHeaders.Snapshot() : null;
 
+    private object? _params;
+
     /// <summary>
     /// 对应 axios params，会被序列化为 query string。
     /// <para>
@@ -185,7 +187,21 @@ public sealed partial class AxiosConfig
     /// </para>
     /// <para>标量无法表达键名，抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）而不是静默丢弃。</para>
     /// </summary>
-    public object? Params { get; set; }
+    public object? Params
+    {
+        get => _params;
+        set
+        {
+            _params = value;
+            ParamsSet = true;
+        }
+    }
+
+    /// <summary>
+    /// 是否被显式赋值过（包括赋 <c>null</c>）。
+    /// <para>合并时用它区分「没写」与「写了 null」：后者用于摘掉实例默认值。</para>
+    /// </summary>
+    internal bool ParamsSet { get; private set; }
 
     /// <summary>库默认的请求体媒体类型（等价于 <see cref="AxiosContentType.Json"/>）。</summary>
     public const string JsonContentType = AxiosContentType.Json;
@@ -239,12 +255,28 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool ContentTypeSet { get; private set; }
 
+    private object? _data;
+
     /// <summary>
     /// 对应 axios data：请求体原始数据。
     /// 对象 / 字典 / dynamic / 集合按 <see cref="ContentType"/> 编码；基础类型直接取文本；
     /// string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent 原样发送。
     /// </summary>
-    public object? Data { get; set; }
+    public object? Data
+    {
+        get => _data;
+        set
+        {
+            _data = value;
+            DataSet = true;
+        }
+    }
+
+    /// <summary>
+    /// 是否被显式赋值过（包括赋 <c>null</c>）。
+    /// <para>合并时用它区分「没写」与「写了 null」：后者用于摘掉实例默认值。</para>
+    /// </summary>
+    internal bool DataSet { get; private set; }
 
     /// <summary>
     /// 短路响应：设置后本次请求<b>不发送</b>，直接以这份结果作为响应（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。
