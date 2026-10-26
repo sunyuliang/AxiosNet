@@ -378,10 +378,34 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             }
         }
 
-        var victim = closedIdle ?? closed ?? staleOpen;
-        if (victim is not null)
+        // 上面的挑选是无锁快照，读与删之间该条目可能已被并发请求推进（Closed → Open、
+        // 冷却到期 → HalfOpen）。逐个候选在自己的 Gate 内复核后再删，避免淘汰掉正在熔断的条目。
+        if (TryEvict(closedIdle) || TryEvict(closed) || TryEvict(staleOpen))
         {
-            _hosts.TryRemove(victim, out _);
+            return;
+        }
+    }
+
+    /// <summary>在目标条目的 <see cref="HostState.Gate"/> 内复核「丢了不改变判定」并移除。</summary>
+    private bool TryEvict(string? key)
+    {
+        if (key is null || !_hosts.TryGetValue(key, out var state))
+        {
+            return false;
+        }
+
+        lock (state.Gate)
+        {
+            var evictable = state.State switch
+            {
+                AxiosCircuitState.Closed => true,
+                // 冷却过期的打开态：下次访问本来就会转半开探测，丢掉等价。
+                AxiosCircuitState.Open => IsCooledDown(state) && state.ProbesInFlight == 0,
+                _ => false
+            };
+
+            // 按「键 + 实例」移除：期间若已被别人删掉并重建，不能误删新建的那一条。
+            return evictable && _hosts.TryRemove(new KeyValuePair<string, HostState>(key, state));
         }
     }
 

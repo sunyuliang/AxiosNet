@@ -382,6 +382,33 @@ public sealed class CircuitBreakerTests
     }
 
     [Fact]
+    public void OpenCircuitEntry_SurvivesRepeatedEvictionPressure()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = TimeSpan.FromSeconds(30),
+            MaxTrackedHosts = 1
+        };
+
+        var uri = new Uri("https://down.example.com/x");
+        var open = new AxiosCircuitContext("down", uri);
+
+        Assert.True(breaker.ShouldAllow(open));
+        breaker.Record(new AxiosCircuitContext("down", uri, statusCode: 500));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState("down"));
+
+        // 反复制造淘汰压力（每次新 host 都会触发一次 Evict）：淘汰的挑选是无锁快照，
+        // 删除前必须在自己的 Gate 内复核，否则会把刚转入 Open 的条目误删。
+        for (var i = 0; i < 50; i++)
+        {
+            breaker.ShouldAllow(new AxiosCircuitContext("new-" + i, uri));
+            Assert.Equal(AxiosCircuitState.Open, breaker.GetState("down"));
+            Assert.False(breaker.ShouldAllow(open));
+        }
+    }
+
+    [Fact]
     public async Task CustomPolicy_DrivesTheGateOncePerAttempt()
     {
         var calls = 0;
