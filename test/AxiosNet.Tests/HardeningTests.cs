@@ -283,6 +283,25 @@ public sealed class HardeningTests
     }
 
     [Fact]
+    public async Task ConfigOverloads_ExistForPutPatchHeadOptions()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(204, "No Content"));
+        using var client = new AxiosClient();
+
+        // 与 GET/DELETE/POST 对齐：这四个方法也要能直接传完整配置
+        var put = await client.PutAsync(server.Url + "x", new AxiosConfig { Data = new { n = 1 } });
+        var patch = await client.PatchAsync(server.Url + "x", new AxiosConfig { Data = new { n = 2 } });
+        var options = await client.OptionsAsync(server.Url + "x", new AxiosConfig());
+        var head = await client.HeadAsync(server.Url + "x", new AxiosConfig());
+
+        Assert.Equal(204, put.Status);
+        Assert.Equal(204, patch.Status);
+        Assert.Equal(204, options.Status);
+        Assert.Equal(204, head.Status);
+        Assert.Equal(new[] { "PUT", "PATCH", "OPTIONS", "HEAD" }, server.Received.Select(r => r.Method));
+    }
+
+    [Fact]
     public async Task NullParamsAndData_ClearInheritedDefaults()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

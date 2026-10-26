@@ -64,6 +64,12 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data));
 
+    public Task<AxiosResponse> HeadAsync(string url, AxiosConfig config)
+        => SendAsync(WithUrl(config, url, HttpMethod.Head), null);
+
+    public Task<AxiosResponse<T>> HeadAsync<T>(string url, AxiosConfig config)
+        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Head));
+
     public Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken), null);
 
@@ -77,6 +83,12 @@ public sealed partial class AxiosClient
     /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data));
+
+    public Task<AxiosResponse> OptionsAsync(string url, AxiosConfig config)
+        => SendAsync(WithUrl(config, url, HttpMethod.Options), null);
+
+    public Task<AxiosResponse<T>> OptionsAsync<T>(string url, AxiosConfig config)
+        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Options));
 
     public Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendAsync(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data), null);
@@ -96,11 +108,23 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PutAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data));
 
+    public Task<AxiosResponse> PutAsync(string url, AxiosConfig config)
+        => SendAsync(WithUrl(config, url, HttpMethod.Put), null);
+
+    public Task<AxiosResponse<T>> PutAsync<T>(string url, AxiosConfig config)
+        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Put));
+
     public Task<AxiosResponse> PatchAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendAsync(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data), null);
 
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
+
+    public Task<AxiosResponse> PatchAsync(string url, AxiosConfig config)
+        => SendAsync(WithUrl(config, url, HttpMethod.Patch), null);
+
+    public Task<AxiosResponse<T>> PatchAsync<T>(string url, AxiosConfig config)
+        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Patch));
 
     // ------------------------------------------------------------------
     // 表单快捷方法（对应 axios postForm / putForm / patchForm）
