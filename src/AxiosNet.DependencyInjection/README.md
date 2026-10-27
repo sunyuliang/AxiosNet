@@ -81,6 +81,31 @@ if (resolver.TryGet("b", out var b)) { /* b 站点已注册 */ }
 - 解析器**释放后**调 `Get` / `TryGet` 抛 `ObjectDisposedException`（已解析与未解析过的站点一致）；站点创建失败（`configure` 抛错、授权提供方解析失败）当场释放已建的连接池并原样透出异常
 - .NET 8+ 消费方也可完全用官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`），示例场景 6 有完整演示；两种方案可共存
 
+### AddApiInterface：接口级声明注册
+
+把接口级声明（`ApiClient.Create<T>()` 生成的代理）注册为单例，解析时自动取容器里的 `ApiClient`：
+
+```csharp
+using AxiosNet.WebAPI.DependencyInjection;
+
+// 默认站点：需先 AddApiClient(...) 注册未命名的 ApiClient
+builder.Services.AddApiClient("https://api.example.com");
+builder.Services.AddApiInterface<IUserApi>();
+
+// 命名站点：解析 IApiClientResolver.Get("a")
+builder.Services.AddApiClient("a", "https://a.example.com");
+builder.Services.AddApiInterface<IUserApi>("a");
+
+public sealed class UsersService(IUserApi api)
+{
+    public Task<AxiosResponse<User>> GetAsync(int id) => api.GetAsync(id);
+}
+```
+
+- 代理在**首次解析时创建**并按单例复用（DispatchProxy 生成类型的成本只付一次）
+- 容器缺 `ApiClient` / 未注册对应站点时，解析抛 `InvalidOperationException`，消息直接给出缺哪一步
+- 依赖 Reflection.Emit，**仅 JIT**：Native AOT 下解析即抛 `PlatformNotSupportedException`
+
 ### 容器授权：IAuthorizationProvider 单例自动装配
 
 ```csharp
@@ -174,6 +199,31 @@ if (resolver.TryGet("b", out var b)) { /* site b is registered */ }
 - Named sites are exposed **only through the resolver** — no unnamed `ApiClient` is registered (use the nameless overload for single-site scenarios)
 - A duplicate name throws `InvalidOperationException` **at registration time**; each site's underlying client is owned by the resolver and released when the container shuts down
 - On .NET 8+ you can also use the official keyed services end-to-end (`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`) — see scenario 6 of the sample; both approaches can coexist
+
+### AddApiInterface: interface declaration registration
+
+Register interface declarations (proxies produced by `ApiClient.Create<T>()`) as singletons; resolution pulls the container's `ApiClient`:
+
+```csharp
+using AxiosNet.WebAPI.DependencyInjection;
+
+// Default site: register an unkeyed ApiClient first
+builder.Services.AddApiClient("https://api.example.com");
+builder.Services.AddApiInterface<IUserApi>();
+
+// Named site: resolved via IApiClientResolver.Get("a")
+builder.Services.AddApiClient("a", "https://a.example.com");
+builder.Services.AddApiInterface<IUserApi>("a");
+
+public sealed class UsersService(IUserApi api)
+{
+    public Task<AxiosResponse<User>> GetAsync(int id) => api.GetAsync(id);
+}
+```
+
+- The proxy is created on **first resolution** and reused as a singleton (DispatchProxy type generation is paid once)
+- If the container has no `ApiClient` or the named site is missing, resolution throws `InvalidOperationException` with the missing step spelled out
+- Relies on Reflection.Emit, so it is **JIT-only**: resolution throws `PlatformNotSupportedException` under Native AOT
 
 ### Authorization from the container
 

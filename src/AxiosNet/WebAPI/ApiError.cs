@@ -19,13 +19,13 @@ public sealed class ApiErrorContext
         Error = error;
     }
 
-    /// <summary>本次请求模型实例（可读取其属性做分支处理）。</summary>
+    /// <summary>本次请求载荷：请求模型实例；接口级声明时为 <see cref="ApiInterfaceInvocation"/>（可按接口类型 / 方法名 / 参数做分支）。</summary>
     public object Request { get; }
 
-    /// <summary>本次请求模型类型（即 <c>Request.GetType()</c>）。</summary>
+    /// <summary>本次请求载荷类型（即 <c>Request.GetType()</c>；接口级声明时为 <see cref="ApiInterfaceInvocation"/>）。</summary>
     public Type RequestType => Request.GetType();
 
-    /// <summary>本次请求的生效配置（实例默认值 + 模型绑定 + 按请求回调的合并结果）。</summary>
+    /// <summary>本次请求的生效配置（实例默认值 + 载荷绑定 + 按请求回调的合并结果）。</summary>
     public AxiosConfig Config => Error.Config!;
 
     /// <summary>原始异常（<c>Code</c> / <c>Cause</c> / <c>Request</c> 都在它上面）。</summary>

@@ -48,7 +48,7 @@ public sealed partial class ApiClient
             config.Limits.StreamIdleTimeout = _streamIdleTimeout;
         }
 
-        await ApplyAuthorizationAsync(metadata, request, config, cancellationToken).ConfigureAwait(false);
+        await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
 
         var raw = await SendAsync<Stream>(request, config, cancellationToken).ConfigureAwait(false);
         var body = raw.Data ?? throw AxiosException.BadResponse(raw.Config ?? config, raw.Request, "Stream", new InvalidOperationException("流式响应没有拿到正文流：响应拦截器把 Data 换成了 null，流式请求不能被拦截器替换成非流对象。"));

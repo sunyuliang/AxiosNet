@@ -3,11 +3,11 @@ using System.Net.Http;
 namespace AxiosNet.WebAPI;
 
 /// <summary>
-/// 请求模型的路由声明：HTTP 方法 + 路径模板。每个请求模型必须且只能标注一个本特性或其子类。
-/// 路径模板中的 <c>{name}</c> 占位符由 <see cref="PathAttribute"/> 属性填充（值做 URL 转义）；模板可以是相对路径（合并实例 BaseAddress）或绝对 URL。
+/// 路由声明：HTTP 方法 + 路径模板。请求模型标在类上、接口级声明标在接口方法上；每份声明必须且只能标注一个本特性或其子类。
+/// 路径模板中的 <c>{name}</c> 占位符由 <see cref="PathAttribute"/> 属性 / 参数填充（值做 URL 转义）；模板可以是相对路径（合并实例 BaseAddress）或绝对 URL。
 /// 可直接传字符串方法名（归一化为大写），也可用内置子类；自定义谓词继承本类。
 /// </summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public class HttpApiAttribute : Attribute
 {
     /// <summary>HTTP 方法与路径模板。两个参数都要求非空。</summary>
@@ -56,7 +56,7 @@ public class HttpApiAttribute : Attribute
 }
 
 /// <summary>GET 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class GetAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
@@ -66,7 +66,7 @@ public sealed class GetAttribute : HttpApiAttribute
 }
 
 /// <summary>POST 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class PostAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
@@ -76,7 +76,7 @@ public sealed class PostAttribute : HttpApiAttribute
 }
 
 /// <summary>PUT 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class PutAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
@@ -86,7 +86,7 @@ public sealed class PutAttribute : HttpApiAttribute
 }
 
 /// <summary>PATCH 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class PatchAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
@@ -96,7 +96,7 @@ public sealed class PatchAttribute : HttpApiAttribute
 }
 
 /// <summary>DELETE 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class DeleteAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
@@ -106,7 +106,7 @@ public sealed class DeleteAttribute : HttpApiAttribute
 }
 
 /// <summary>HEAD 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class HeadAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
@@ -116,7 +116,7 @@ public sealed class HeadAttribute : HttpApiAttribute
 }
 
 /// <summary>OPTIONS 请求的路由声明。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class OptionsAttribute : HttpApiAttribute
 {
     /// <inheritdoc />

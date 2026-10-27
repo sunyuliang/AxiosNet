@@ -2,12 +2,12 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1162%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1187%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
 
-An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, streaming responses, an in-flight concurrency gate, a declarative API client, and OpenTelemetry instrumentation.
+An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, streaming responses, an in-flight concurrency gate, a declarative API client (models or interfaces), and OpenTelemetry instrumentation.
 
 | Item | Value |
 | --- | --- |
@@ -30,7 +30,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Short circuit](#short-circuit) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
-| Engineering | [Declarative API client](#declarative-api-client) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
+| Engineering | [Declarative API client](#declarative-api-client) · [Interface declarations](#interface-declarations) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
 ---
 
@@ -141,6 +141,7 @@ Four groups of capabilities; details in the linked sections.
 | HTTP versions | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
 | Custom handlers | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
 | Declarative client | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
+| Interface declarations | Methods on an interface; `Create<T>()` generates the proxy | `[Get("users/{id}")] Task<AxiosResponse<User>> GetAsync([Path] int id)` |
 | Dependency injection | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
 | Native AOT | Declared `IsTrimmable`, trims with 0 warnings | Source-generated `JsonSerializerContext` |
 
@@ -152,7 +153,7 @@ Three entry points, identical capabilities:
 | --- | --- | --- |
 | Static facade | `Axios.GetAsync(...)` / `Axios.Defaults` / `Axios.Interceptors` | Scripts, single-endpoint apps |
 | Instance | `Axios.Create(c => ...)` or `new AxiosClient(config)` | The normal case: one set of defaults + one pool |
-| Declarative | `new ApiClient(baseAddress)` | Many endpoints, describe requests with models ([details](#declarative-api-client)) |
+| Declarative | `new ApiClient(baseAddress)` | Many endpoints, describe requests with models or interfaces ([details](#declarative-api-client)) |
 
 **Instance defaults vs per-request**: what you set in `Axios.Create` are instance defaults; the trailing `configure` argument configures a single request. `configure` receives a **copy** of the instance defaults, so you can really remove a default header:
 
@@ -872,6 +873,37 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 - Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory).
 - Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); `client.StreamIdleTimeout` controls streaming body idle timeout.
 
+## Interface declarations
+
+When writing a request model per endpoint is too much, hand the interface to `client.Create<T>()`: routes live on methods, binding attributes on parameters, and `DispatchProxy` generates the implementation at runtime. Binding semantics are the **same kernel** as request models (path-template validation, duplicate detection, default body inference, scalar guard, static headers and authorization all identical).
+
+```csharp
+[Headers("Accept: application/json")]                    // interface-level static headers
+public interface IUserApi
+{
+    [Get("users/{id}")]
+    Task<AxiosResponse<User>> GetAsync(
+        [Path] int id,
+        [Query("verbose")] string? verbose = null,
+        [Header("X-Trace")] string? trace = null,
+        CancellationToken cancellationToken = default);
+
+    [Post("users")]
+    Task<AxiosResponse<User>> CreateAsync(UserPayload payload, CancellationToken cancellationToken = default);
+}
+
+var api = client.Create<IUserApi>();
+var response = await api.GetAsync(5);
+```
+
+- Every method must carry exactly one route attribute; the return type must be `Task<AxiosResponse<T>>` (no synchronous returns / `ValueTask` / generic methods / `ref`·`out`).
+- `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
+- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface; with base interfaces, static headers and authorization merge in the **derived interface's scope** (the same base method can carry different static headers per derived interface).
+- Invalid declarations (missing route, multiple bodies, duplicate parameter names, streaming return…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws).
+- Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
+- Multipart and streaming responses are not supported yet (keep using `RequestStreamAsync(...)` or request models); interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
+- The proxy is built on `DispatchProxy` (Reflection.Emit) and is **JIT-only**: `Create<T>()` throws `PlatformNotSupportedException` under Native AOT, and trimming requires rooting the interface plus its parameter / return types.
+
 ## Dependency injection
 
 ```csharp
@@ -901,11 +933,13 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `AddApiClient(baseAddress, configureDefaults, configure)` | Singleton `ApiClient` (owns its transport) |
 | `AddApiClient(configure)` | Singleton `ApiClient` (reuses the container's `AxiosClient`) |
 | `AddApiClient(name, baseAddress, ...)` | Singleton `IApiClientResolver` + named site |
+| `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | Singleton interface proxy (default / named site) |
 
 - TryAdd semantics: already registered means not registered twice, so no second pool is created.
 - `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` from the container attach automatically; explicit values in `configure` win.
 - Lifetime belongs to the container: disposing an injected `ApiClient` does not dispose the shared underlying client.
 - Multi-site via `IApiClientResolver.Get(name)` / `TryGet` / `Names`; on .NET 8+ keyed services (`AddKeyedSingleton` + `[FromKeyedServices]`) work too.
+- Interface declarations register directly: `services.AddApiInterface<IUserApi>()` (unkeyed `ApiClient`) or `AddApiInterface<IUserApi>("a")` (named site); the proxy is reused as a singleton and is JIT-only.
 
 ## Configuration reference
 
@@ -988,7 +1022,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 39 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 41 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -997,7 +1031,7 @@ dotnet run --project samples/AxiosNet.Simple
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
 - **29 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit.
-- **10 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap.
+- **12 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation.
 
 Two more samples:
 
@@ -1032,7 +1066,7 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
-Not available under AOT: `dynamic` responses and runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`).
+Not available under AOT: `dynamic` responses and runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and interface declarations via `Create<T>()` (`DispatchProxy` relies on Reflection.Emit and throws `PlatformNotSupportedException` at call time; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`).
 
 ## Build and test
 
@@ -1044,11 +1078,11 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1115 | `net8.0` / `net6.0` | 2230 |
-| `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1162** | | **2324** |
+| `AxiosNet.Tests` (core + declarative) | 1130 | `net8.0` / `net6.0` | 2260 |
+| `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
+| **Total** | **1187** | | **2374** |
 
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding and DI registration.
+Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
 ### Benchmarks
 
@@ -1093,10 +1127,10 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML implementations
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / statistics + handler injection
-│  │  ├─ WebAPI/                      # declarative API client
+│  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (39 items) / DI / Aot
+├─ samples/                           # Simple (41 items) / DI / Aot
 └─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
 ```
 

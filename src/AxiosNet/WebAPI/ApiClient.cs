@@ -93,7 +93,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var metadata = RequestModelMetadata.Get(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        await ApplyAuthorizationAsync(metadata, request, config, cancellationToken).ConfigureAwait(false);
+        await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
 
         return await SendAsync<TResponse>(request, config, cancellationToken).ConfigureAwait(false);
     }
@@ -170,13 +170,13 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 跳过；<see cref="AccessTokenProvider"/> 先写头，<see cref="Authorization"/> 最后执行（可覆盖前者）。</summary>
-    private async ValueTask ApplyAuthorizationAsync(
-        RequestModelMetadata metadata,
+    internal async ValueTask ApplyAuthorizationAsync(
+        ApiAuthorization authorization,
         object request,
         AxiosConfig config,
         CancellationToken cancellationToken)
     {
-        if (metadata.Authorization.Mode == ApiAuthorizationMode.Anonymous)
+        if (authorization.Mode == ApiAuthorizationMode.Anonymous)
         {
             return;
         }
@@ -188,7 +188,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             var token = await AccessTokenProvider.GetTokenAsync(context, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(token))
             {
-                config.Headers.Set("Authorization", metadata.Authorization.Scheme + " " + token);
+                config.Headers.Set("Authorization", authorization.Scheme + " " + token);
             }
         }
 
@@ -204,7 +204,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             || (Axios.Defaults.HasHeaders && Axios.Defaults.Headers.Has("Authorization"));
 
     /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>。</summary>
-    private async Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
+    internal async Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
         object request,
         AxiosConfig config,
         CancellationToken cancellationToken)

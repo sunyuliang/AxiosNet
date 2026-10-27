@@ -2,12 +2,12 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1162%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1187%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
 
-axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com/axios/axios)，并补齐服务端真正需要的部分：按 origin 复用的连接池、重试、熔断、流式响应、在途并发闸门、声明式 API 客户端、OpenTelemetry 观测点。
+axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com/axios/axios)，并补齐服务端真正需要的部分：按 origin 复用的连接池、重试、熔断、流式响应、在途并发闸门、声明式 API 客户端（模型 / 接口两种声明）、OpenTelemetry 观测点。
 
 | 项 | 值 |
 | --- | --- |
@@ -30,7 +30,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性 | [重试](#重试) · [熔断](#熔断) · [短路响应](#短路响应) |
 | 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
-| 工程化 | [声明式 API 客户端](#声明式-api-客户端) · [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
+| 工程化 | [声明式 API 客户端](#声明式-api-客户端) · [接口级声明](#接口级声明) · [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
 
 ---
 
@@ -141,6 +141,7 @@ string url = http.GetUri(c =>
 | HTTP 版本 | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
 | 自定义 Handler | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
 | 声明式客户端 | 用模型 + 特性描述请求 | `[Get("users/{id}")] class X : IApiRequest<User>` |
+| 接口级声明 | 接口 + 方法特性，`Create<T>()` 直接生成代理 | `[Get("users/{id}")] Task<AxiosResponse<User>> GetAsync([Path] int id)` |
 | 依赖注入 | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
 | Native AOT | 已声明 `IsTrimmable`，裁剪 0 警告 | 源生成 `JsonSerializerContext` |
 
@@ -152,7 +153,7 @@ string url = http.GetUri(c =>
 | --- | --- | --- |
 | 静态门面 | `Axios.GetAsync(...)` / `Axios.Defaults` / `Axios.Interceptors` | 脚本、单站点应用 |
 | 实例 | `Axios.Create(c => ...)` 或 `new AxiosClient(config)` | 常规用法：一套默认值 + 一条连接池 |
-| 声明式 | `new ApiClient(baseAddress)` | 接口多，用模型描述请求（见[声明式](#声明式-api-客户端)） |
+| 声明式 | `new ApiClient(baseAddress)` | 接口多，用模型或接口描述请求（见[声明式](#声明式-api-客户端)） |
 
 **实例默认值 vs 单次请求**：`Axios.Create` 里配的是实例默认值，快捷方法末尾的 `configure` 配本次请求。`configure` 拿到的是实例默认值的**副本**，所以能真正摘掉默认头：
 
@@ -872,6 +873,37 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。
 - 其它：`client.UrlParameterFormatter` 接管 `[Path]` / `[Query]` 文本形态；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；`client.StreamIdleTimeout` 控制流式正文空闲超时。
 
+## 接口级声明
+
+不想为每个端点写请求模型时，可直接把接口交给 `client.Create<T>()`：路由写在方法上、绑定特性写在参数上，运行时由 `DispatchProxy` 生成代理。绑定语义与请求模型**同一套内核**（路径模板校验、重名检测、默认 Body 推断、标量护栏、静态头、授权全部一致）。
+
+```csharp
+[Headers("Accept: application/json")]                    // 接口级静态头
+public interface IUserApi
+{
+    [Get("users/{id}")]
+    Task<AxiosResponse<User>> GetAsync(
+        [Path] int id,
+        [Query("verbose")] string? verbose = null,
+        [Header("X-Trace")] string? trace = null,
+        CancellationToken cancellationToken = default);
+
+    [Post("users")]
+    Task<AxiosResponse<User>> CreateAsync(UserPayload payload, CancellationToken cancellationToken = default);
+}
+
+var api = client.Create<IUserApi>();
+var response = await api.GetAsync(5);
+```
+
+- 每个方法必须标注且只标注一个路由特性；返回类型必须是 `Task<AxiosResponse<T>>`（不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`）。
+- `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
+- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。
+- 接口写在非法（缺路由、多个 Body、参数重名、流式返回…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛）。
+- 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
+- 暂不支持 multipart 与流式响应（流式仍用 `RequestStreamAsync(...)` 或请求模型）；接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
+- 代理基于 `DispatchProxy`（Reflection.Emit），**仅 JIT**：Native AOT 下 `Create<T>()` 抛 `PlatformNotSupportedException`；裁剪时需 root 接口类型及其参数 / 返回类型。
+
 ## 依赖注入
 
 ```csharp
@@ -901,11 +933,13 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `AddApiClient(baseAddress, configureDefaults, configure)` | 单例 `ApiClient`（自建底层客户端） |
 | `AddApiClient(configure)` | 单例 `ApiClient`（复用容器里的 `AxiosClient`） |
 | `AddApiClient(name, baseAddress, ...)` | 单例 `IApiClientResolver` + 命名站点 |
+| `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | 单例接口代理（默认 / 命名站点） |
 
 - TryAdd 语义：已注册不重复注册，不会建出第二条池。
 - 容器里的 `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` 自动挂到 `ApiClient`，`configure` 里显式设置的优先。
 - 生命周期归容器：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端。
 - 多站点用 `IApiClientResolver.Get(name)` / `TryGet` / `Names`；.NET 8+ 也可用键名服务（`AddKeyedSingleton` + `[FromKeyedServices]`）。
+- 接口级声明可直接注册：`services.AddApiInterface<IUserApi>()`（取未命名 `ApiClient`）或 `AddApiInterface<IUserApi>("a")`（取命名站点）；代理按单例复用，仅在 JIT 下可用。
 
 ## 配置速查
 
@@ -988,7 +1022,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 39 项：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 41 项：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -997,7 +1031,7 @@ dotnet run --project samples/AxiosNet.Simple
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
 - **核心 29 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应。
-- **声明式 10 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限。
+- **声明式 12 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验。
 
 另有两个示例：
 
@@ -1032,7 +1066,7 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
-AOT 下不可用：`dynamic` 响应与运行期才确定的类型、`XmlContentSerializer`、匿名对象作为 params / 表单值、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）。
+AOT 下不可用：`dynamic` 响应与运行期才确定的类型、`XmlContentSerializer`、匿名对象作为 params / 表单值、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）、接口级声明 `Create<T>()`（`DispatchProxy` 依赖 Reflection.Emit，调用时抛 `PlatformNotSupportedException`；`ValidateInterfaces(Assembly)` 同受裁剪影响，改用 `ValidateInterfaces(typeof(IA), ...)`）。
 
 ## 构建与测试
 
@@ -1044,11 +1078,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1115 | `net8.0` / `net6.0` | 2230 |
-| `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **1162** | | **2324** |
+| `AxiosNet.Tests`（核心 + 声明式） | 1130 | `net8.0` / `net6.0` | 2260 |
+| `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
+| **合计** | **1187** | | **2374** |
 
-测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定与 DI 注册。
+测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
 ### 性能基准
 
@@ -1093,10 +1127,10 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML 实现
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + 池选项 / 统计 + Handler 注入
-│  │  ├─ WebAPI/                      # 声明式 API 客户端
+│  │  ├─ WebAPI/                      # 声明式 API 客户端（模型 / 接口）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（39 项）/ DI / Aot
+├─ samples/                           # Simple（41 项）/ DI / Aot
 └─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
 ```
 
