@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1202%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1207%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1096,9 +1096,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1145 | `net8.0` / `net6.0` | 2290 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1150 | `net8.0` / `net6.0` | 2300 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **合计** | **1202** | | **2404** |
+| **合计** | **1207** | | **2414** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

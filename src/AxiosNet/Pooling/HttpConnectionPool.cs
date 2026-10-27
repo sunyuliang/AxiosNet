@@ -213,10 +213,15 @@ public sealed class HttpConnectionPool : IDisposable
     }
 
     /// <summary>驱逐空闲节点；<paramref name="reason"/> 只用于指标标签。</summary>
+    /// <remarks>
+    /// 两条路径都不物化字典快照：全量清扫顺序无关，直接枚举（<see cref="ConcurrentDictionary{TKey,TValue}"/>
+    /// 的枚举器是结构体，零分配）；限额驱逐（容量不足取 LRU）逐轮挑一个，轮数按「条数 + 限额」封顶。
+    /// 后台定时器按周期跑这条路径，快照数组（每节点约 32 B）会随节点数线性变成常驻垃圾。
+    /// </remarks>
     private int EvictIdle(TimeSpan minIdle, int limit, string reason)
     {
         // InfiniteTimeSpan 是 -1ms，不特判的话所有空闲节点都会被判成可驱逐。
-        if (minIdle == Timeout.InfiniteTimeSpan)
+        if (minIdle == Timeout.InfiniteTimeSpan || limit <= 0)
         {
             return 0;
         }
@@ -225,39 +230,47 @@ public sealed class HttpConnectionPool : IDisposable
         var now = DateTime.UtcNow;
         List<PooledEndpoint>? pending = null;
 
-        // 按 LastUsedUtc 升序扫，limit: 1 时才能驱逐最久未使用的空闲节点；可驱逐性仍以锁内复核为准。
-        var candidates = _endpoints.ToArray();
-
-        // 全量清扫时顺序无关，跳过排序。
-        if (limit < candidates.Length)
+        if (limit == int.MaxValue)
         {
-            Array.Sort(candidates, static (a, b) => a.Value.LastUsedUtc.CompareTo(b.Value.LastUsedUtc));
-        }
-
-        foreach (var pair in candidates)
-        {
-            if (evicted >= limit)
+            // 全量清扫：可驱逐性以锁内复核为准，顺序无关。
+            foreach (var pair in _endpoints)
             {
-                break;
+                TryEvictIdle(pair.Key, pair.Value, minIdle, now, ref pending, ref evicted);
             }
-
-            var endpoint = pair.Value;
-            lock (endpoint.SyncRoot)
+        }
+        else
+        {
+            // 限额驱逐：每轮挑「最久未使用且此刻可驱逐」的一个。轮数按「条数 + 限额」封顶：
+            // 正常情况下每轮都能摘掉一个，只有在挑选与摘除之间被别的线程抢先时才会空转一轮
+            //（限额驱逐只服务 EnsureCapacity，正常最多驱逐一两个）。
+            var maxRounds = _endpoints.Count + limit;
+            for (var round = 0; round < maxRounds && evicted < limit; round++)
             {
-                if (endpoint.IsDisposed
-                    || endpoint.ActiveLeases > 0
-                    || now - endpoint.LastUsedUtc < minIdle)
+                var oldest = DateTime.MaxValue;
+                var found = false;
+                var candidateKey = default(OriginKey);
+                PooledEndpoint? candidate = null;
+
+                foreach (var pair in _endpoints)
                 {
-                    continue;
+                    var endpoint = pair.Value;
+                    if (endpoint.LastUsedUtc >= oldest || !IsEvictable(endpoint, minIdle, now))
+                    {
+                        continue;
+                    }
+
+                    oldest = endpoint.LastUsedUtc;
+                    candidateKey = pair.Key;
+                    candidate = endpoint;
+                    found = true;
                 }
 
-                // 先摘字典再置标记，两步都成功才收集起来、锁外统一释放。
-                if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(pair.Key, endpoint))
-                    && endpoint.MarkDisposed())
+                if (!found)
                 {
-                    (pending ??= new List<PooledEndpoint>(1)).Add(endpoint);
-                    evicted++;
+                    break;
                 }
+
+                TryEvictIdle(candidateKey, candidate!, minIdle, now, ref pending, ref evicted);
             }
         }
 
@@ -274,6 +287,45 @@ public sealed class HttpConnectionPool : IDisposable
         }
 
         return evicted;
+    }
+
+    /// <summary>锁内判定「此刻驱逐它等价于什么都没发生」。</summary>
+    private static bool IsEvictable(PooledEndpoint endpoint, TimeSpan minIdle, DateTime now)
+    {
+        lock (endpoint.SyncRoot)
+        {
+            return !endpoint.IsDisposed
+                && endpoint.ActiveLeases == 0
+                && now - endpoint.LastUsedUtc >= minIdle;
+        }
+    }
+
+    /// <summary>在锁内复核可驱逐性后摘除并计入待释放列表（释放仍在锁外）。</summary>
+    private void TryEvictIdle(
+        OriginKey key,
+        PooledEndpoint endpoint,
+        TimeSpan minIdle,
+        DateTime now,
+        ref List<PooledEndpoint>? pending,
+        ref int evicted)
+    {
+        lock (endpoint.SyncRoot)
+        {
+            if (endpoint.IsDisposed
+                || endpoint.ActiveLeases > 0
+                || now - endpoint.LastUsedUtc < minIdle)
+            {
+                return;
+            }
+
+            // 先摘字典再置标记，两步都成功才收集起来、锁外统一释放。
+            if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(key, endpoint))
+                && endpoint.MarkDisposed())
+            {
+                (pending ??= new List<PooledEndpoint>(1)).Add(endpoint);
+                evicted++;
+            }
+        }
     }
 
     private void EvictIdleEndpoints(object? state)

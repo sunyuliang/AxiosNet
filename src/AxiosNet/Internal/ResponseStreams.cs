@@ -66,15 +66,49 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>每次成功读到数据后重置的空闲计时；<see cref="TimeSpan.Zero"/> 表示未启用。</summary>
     private readonly TimeSpan _idleTimeout;
 
-    protected override async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
+    /// <summary>
+    /// 读一块。内层同步完成（缓冲命中的常见情形）时整条链路零分配：不建状态机、结果原样透传；
+    /// 真异步或故障才落到异步路径。同步抛出的异常同样要翻译（否则空闲计时不会撤销）。
+    /// </summary>
+    protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
         ThrowIfBudgetExhausted();
 
-        var (token, perCallCts) = Link(callerToken);
+        var token = Link(callerToken);
         ArmIdleTimer();
+
+        ValueTask<int> pending;
         try
         {
-            return await Inner.ReadAsync(buffer, token).ConfigureAwait(false);
+            pending = Inner.ReadAsync(buffer, token);
+
+            if (pending.IsCompletedSuccessfully)
+            {
+                DisarmIdleTimer();
+                return pending;
+            }
+        }
+        catch (OperationCanceledException ex)
+        {
+            DisarmIdleTimer();
+            ThrowIfTimedOutOrCanceled(callerToken, ex);
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        {
+            DisarmIdleTimer();
+            throw AxiosException.Network(_config, _request, ex);
+        }
+
+        return FinishReadAsync(pending, callerToken);
+    }
+
+    /// <summary>内层未同步完成时的读路径：翻译取消 / 超时 / IO 失败，并撤销空闲计时。</summary>
+    private async ValueTask<int> FinishReadAsync(ValueTask<int> pending, CancellationToken callerToken)
+    {
+        try
+        {
+            return await pending.ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
         {
@@ -89,7 +123,6 @@ internal sealed class TimeoutStream : DelegatingStream
         finally
         {
             DisarmIdleTimer();
-            perCallCts?.Dispose();
         }
     }
 
@@ -114,7 +147,7 @@ internal sealed class TimeoutStream : DelegatingStream
     {
         ThrowIfBudgetExhausted();
 
-        var (token, perCallCts) = Link(callerToken);
+        var token = Link(callerToken);
         ArmIdleTimer();
         try
         {
@@ -132,7 +165,6 @@ internal sealed class TimeoutStream : DelegatingStream
         finally
         {
             DisarmIdleTimer();
-            perCallCts?.Dispose();
         }
     }
 
@@ -140,7 +172,7 @@ internal sealed class TimeoutStream : DelegatingStream
     {
         ThrowIfBudgetExhausted();
 
-        var (token, perCallCts) = Link(callerToken);
+        var token = Link(callerToken);
         ArmIdleTimer();
         try
         {
@@ -158,25 +190,25 @@ internal sealed class TimeoutStream : DelegatingStream
         finally
         {
             DisarmIdleTimer();
-            perCallCts?.Dispose();
         }
     }
 
     /// <summary>
     /// 把本次调用的令牌链接到「外部取消 + 超时」上：无令牌或已知令牌直接复用预建的链接源，
     /// 反复传同一个自备令牌时按缓存复用。换令牌才释放上一个（单读者顺序读保证其读写已返回）。
+    /// 上一代链接源由本方法自己回收，调用方不持有任何要释放的 CTS。
     /// </summary>
-    private (CancellationToken Token, CancellationTokenSource? Cts) Link(CancellationToken callerToken)
+    private CancellationToken Link(CancellationToken callerToken)
     {
         var linked = _linkedCts.Token;
         if (!callerToken.CanBeCanceled || callerToken == linked || callerToken == _externalToken)
         {
-            return (linked, null);
+            return linked;
         }
 
         if (callerToken == _cachedCallerToken && _cachedCallerCts is not null)
         {
-            return (_cachedCallerCts.Token, null);
+            return _cachedCallerCts.Token;
         }
 
         var cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken, linked);
@@ -186,7 +218,7 @@ internal sealed class TimeoutStream : DelegatingStream
 
         // 释放被替换的旧链接源。
         previous?.Dispose();
-        return (cts.Token, null);
+        return cts.Token;
     }
 
     /// <summary>预算在构造时即耗尽：确定性失败，不与「已到达的字节」赛跑。</summary>

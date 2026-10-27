@@ -172,11 +172,56 @@ internal sealed class ProgressReadStream : DelegatingStream
 
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
-    protected override async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    /// <summary>
+    /// 读一块并记账。内层同步完成（缓冲命中的常见情形）时整条链路零分配；
+    /// 只有真的异步等待或需要限速睡一会儿时，才落到异步路径。
+    /// </summary>
+    protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
-        var read = await Inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        var pending = Inner.ReadAsync(buffer, cancellationToken);
+
+        // IsCompletedSuccessfully 为 false 覆盖「真异步」与「同步故障」两种情形，
+        // 后者要与原来一样经 await 抛出（异常栈与错误翻译都在异步路径里）。
+        if (!pending.IsCompletedSuccessfully)
+        {
+            return ReadSlowAsync(pending, cancellationToken);
+        }
+
+        var read = pending.Result;
+        ThrowIfOverLimit(read);
+
+        if (read <= 0)
+        {
+            Report(force: true);
+            return new ValueTask<int>(read);
+        }
+
+        _meter.Add(read);
+
+        var delay = _meter.ComputeDelay();
+        if (delay > TimeSpan.Zero)
+        {
+            return DelayThenReportAsync(delay, read, cancellationToken);
+        }
+
+        Report(force: false);
+        return new ValueTask<int>(read);
+    }
+
+    /// <summary>内层未同步完成时的读路径：语义与快路径一致，只是要等。</summary>
+    private async ValueTask<int> ReadSlowAsync(ValueTask<int> pending, CancellationToken cancellationToken)
+    {
+        var read = await pending.ConfigureAwait(false);
         ThrowIfOverLimit(read);
         await TrackAsync(read, cancellationToken).ConfigureAwait(false);
+        return read;
+    }
+
+    /// <summary>限速：先睡够「应耗时 - 实际耗时」再上报进度。</summary>
+    private async ValueTask<int> DelayThenReportAsync(TimeSpan delay, int read, CancellationToken cancellationToken)
+    {
+        await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        Report(force: false);
         return read;
     }
 

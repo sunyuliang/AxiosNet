@@ -21,7 +21,12 @@ internal sealed class ConcurrencyGate
     /// 取一个在途槽位；返回的租约必须释放（<see cref="IDisposable.Dispose"/> 幂等）。
     /// 排队期间被取消抛 <c>ERR_CANCELED</c>；等待上限 <c>queueTimeout</c> 为 <c>null</c> 一直等、<c>Zero</c> 不排队。
     /// </summary>
-    public async ValueTask<IDisposable> AcquireAsync(
+    /// <remarks>
+    /// 本方法刻意<b>不是</b> <c>async</c>：稳态下槽位总是立刻可得，这条快路径每请求都要走一次，
+    /// 进了状态机就白付一层异步机制（实测约 140 B/请求）。只有真的要排队时才落到
+    /// <see cref="AcquireQueuedAsync"/> 的异步路径。
+    /// </remarks>
+    public ValueTask<IDisposable> AcquireAsync(
         AxiosConfig config,
         HttpRequestMessage request,
         CancellationToken cancellationToken,
@@ -36,9 +41,19 @@ internal sealed class ConcurrencyGate
         // 快路径：非阻塞尝试（Wait(0) 只做一次原子计数）。
         if (_slots.Wait(0))
         {
-            return new SlotLease(_slots);
+            return new ValueTask<IDisposable>(new SlotLease(_slots));
         }
 
+        return AcquireQueuedAsync(config, request, cancellationToken, queueTimeout);
+    }
+
+    /// <summary>槽位已满的慢路径：显式「不排队」立刻失败，否则等排队上限或调用方令牌。</summary>
+    private async ValueTask<IDisposable> AcquireQueuedAsync(
+        AxiosConfig config,
+        HttpRequestMessage request,
+        CancellationToken cancellationToken,
+        TimeSpan? queueTimeout)
+    {
         // 显式「不排队」：满了立刻失败，连计时器都不建。
         if (queueTimeout == TimeSpan.Zero)
         {

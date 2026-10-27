@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1202%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1207%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1096,9 +1096,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1145 | `net8.0` / `net6.0` | 2290 |
+| `AxiosNet.Tests` (core + declarative) | 1150 | `net8.0` / `net6.0` | 2300 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **Total** | **1202** | | **2404** |
+| **Total** | **1207** | | **2414** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
