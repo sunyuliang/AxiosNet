@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Pooling;
@@ -322,6 +323,44 @@ public sealed class HardeningTests
 
         // 元素仍按引用共享：这里不深拷贝业务对象
         Assert.Same(sentinel, ((Dictionary<string, object?>)clone.Params!)["p"]);
+    }
+
+    [Fact]
+    public void Clone_PreservesDictionaryFamilyAndComparer()
+    {
+        var defaults = new AxiosConfig
+        {
+            Params = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["Api_Key"] = 1 },
+            Data = new SortedDictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["A"] = 1 }
+        };
+
+        var clone = defaults.Clone();
+
+        // comparer 决定「大小写是否敏感」：复制时丢掉它，调用方在拦截器里换个大小写就查不到自己刚设的键
+        var parameters = Assert.IsType<Dictionary<string, object?>>(clone.Params);
+        Assert.True(parameters.ContainsKey("api_key"));
+
+        // 非 Dictionary 的字典同样保真：类型不变（SortedDictionary 的有序语义），comparer 也不变
+        var body = Assert.IsType<SortedDictionary<string, object?>>(clone.Data);
+        Assert.True(body.ContainsKey("a"));
+
+        // 保真的前提仍是「独立容器」：改克隆不能回到实例默认值
+        parameters["added"] = 2;
+        Assert.Single((Dictionary<string, object?>)defaults.Params!);
+    }
+
+    [Fact]
+    public void Clone_PreservesConcurrentDictionary()
+    {
+        var source = new ConcurrentDictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        source["Key"] = 1;
+
+        var clone = new AxiosConfig { Params = source }.Clone();
+
+        // 线程安全字典是最容易被当成「可以共享」的那一类：这里既不能共享，也不能退化成 Dictionary
+        var parameters = Assert.IsType<ConcurrentDictionary<string, object?>>(clone.Params);
+        Assert.NotSame(source, parameters);
+        Assert.True(parameters.ContainsKey("key"));
     }
 
     [Fact]

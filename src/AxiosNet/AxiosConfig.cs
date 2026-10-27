@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AxiosNet.Internal;
 using AxiosNet.Serialization;
 
@@ -186,6 +187,12 @@ public sealed partial class AxiosConfig
     /// 嵌套对象 <c>a[b]=v</c>，null 跳过）/ 已序列化好的查询串（<see cref="string"/>，原样拼进 URL）。
     /// </para>
     /// <para>标量无法表达键名，抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）而不是静默丢弃。</para>
+    /// <para>
+    /// 与实例默认值按「<b>是否赋值过</b>」合并，而不是按取值是否为 <c>null</c>：
+    /// 不碰本项 = 继承实例默认值；<b>显式赋 <c>null</c> = 摘掉实例默认值</b>。
+    /// 这两种意图必须分开表达，否则「把默认参数清空」在合并层就无从书写
+    /// （同 <see cref="RemoveHeaders"/> 用「删除名单」而不是「设为 null」来表达摘头）。
+    /// </para>
     /// </summary>
     public object? Params
     {
@@ -261,6 +268,12 @@ public sealed partial class AxiosConfig
     /// 对应 axios data：请求体原始数据。
     /// 对象 / 字典 / dynamic / 集合按 <see cref="ContentType"/> 编码；基础类型直接取文本；
     /// string / byte[] / ReadOnlyMemory&lt;byte&gt; / Stream / HttpContent 原样发送。
+    /// <para>
+    /// 与实例默认值按「<b>是否赋值过</b>」合并，而不是按取值是否为 <c>null</c>：
+    /// 不碰本项 = 继承实例默认值；<b>显式赋 <c>null</c> = 摘掉实例默认值</b>（发空正文）。
+    /// 注意快捷方法 <c>PostAsync(url)</c> 这类「不传 data」的调用不会写本项，因此仍继承实例默认值 ——
+    /// 要发空正文请在配置里显式写 <c>Data = null</c>。
+    /// </para>
     /// </summary>
     public object? Data
     {
@@ -512,9 +525,13 @@ public sealed partial class AxiosConfig
     {
         var clone = (AxiosConfig)MemberwiseClone();
 
+        // 成员按「谁拥有它、能不能拦截写入」分三组，复制策略不同（不要按「集合 / 对象」去推）：
+        //   ① 库自有集合（Headers / transform 链 / 删头名单）→ 共享一版不可变数组，写入自己发布新版本；
+        //   ② 调用方容器（Params / Data）→ 隔离，复制一份（用户持有可变引用，没有不可变版本可共享）；
+        //   ③ 设置分组（*Settings）→ 各自 Clone()（懒创建，未使用过的分组保持 null）。
         clone._headers = _headers?.Clone();
 
-        // transform 链与删头名单走写时复制共享（见 SynchronizedList.ShareIfNotEmpty）：只读用法零拷贝，
+        // ① transform 链与删头名单走写时复制共享（见 SynchronizedList.ShareIfNotEmpty）：只读用法零拷贝，
         // 任意一方写入都发布自己的新数组。此前每请求都整份拷贝，实例配了 transform 时白付一次全量复制。
         // 空链在克隆侧保持 null（ShareIfNotEmpty 读的是同一版不可变数组，不存在「判空后被清空」的窗口）。
         clone._removeHeaders = _removeHeaders?.ShareIfNotEmpty();
@@ -528,10 +545,11 @@ public sealed partial class AxiosConfig
         clone._circuit = _circuit?.Clone();
         clone._telemetry = _telemetry?.Clone();
 
-        // Params / Data 是引用成员：字典最容易被就地修改（请求拦截器往 Params 里加一项是常见写法），
-        // 与实例默认值共享同一份会污染后续所有请求。这里只复制容器，元素仍按引用共享（不深拷贝业务对象）。
-        clone._params = CloneContainer(_params);
-        clone._data = CloneContainer(_data);
+        // 与上面「能共享就共享」相反的一组，判据不是「集合还是对象」而是「这份容器归谁所有、能不能拦截写入」：
+        // 库自己的集合有不可变版本可共享；Params / Data 装的是调用方持有的可变容器，没有不可变版本，只能隔离。
+        // 两者的取舍与代价见 IsolateMutableContainer 的 remarks。
+        clone._params = IsolateMutableContainer(_params);
+        clone._data = IsolateMutableContainer(_data);
 
         // 响应上下文属于「某一次响应」：带进下一次请求只会让序列化器读到上一个请求的状态。
         clone.Response = null;
@@ -563,17 +581,57 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>
-    /// <see cref="Params"/> / <see cref="Data"/> 的容器级复制：只认最容易被就地修改且语义明确的字典，
-    /// 其余类型（匿名对象 / 集合 / 流 / 字符串）原样共享 —— 深拷贝任意业务对象既不可靠，也不该在配置克隆里做。
+    /// <see cref="Params"/> / <see cref="Data"/> 的<b>隔离</b>：把调用方持有的可变容器复制一份，让克隆体与实例默认值
+    /// 不再指向同一个可变对象。只认最容易被就地修改、且能保真复制的字典；其余类型（匿名对象 / 集合 / 流 / 字符串）
+    /// 原样共享 —— 深拷贝任意业务对象既不可靠，也不该在配置克隆里做。
     /// </summary>
-    private static object? CloneContainer(object? value) => value switch
+    /// <remarks>
+    /// <b>为什么这里不像 <see cref="AxiosHeaders"/> / <see cref="Internal.SynchronizedList{T}"/> 那样只共享一版不可变数组？</b>
+    /// 那两套的前提是「容器归库所有 + 条目不可变 + 写入方发布新版本」。本项的静态类型是 <see cref="object"/>，
+    /// 装的是调用方自己的可变 <see cref="Dictionary{TKey,TValue}"/>：库既没法让它不可变，也没有任何写入拦截点
+    /// （用户直接 <c>dict["x"] = 1</c> 就改了）。CAS 在「不可变不可得」时的等价实现只有一种 ——
+    /// 在唯一的共享点（本方法）把「共享可变对象」换成「各持一份」。所以这里是 <b>Isolate</b>，不是 Share。
+    /// <para>
+    /// <b>保真范围</b>：BCL 里带 comparer 的字符串键字典（<see cref="Dictionary{TKey,TValue}"/> /
+    /// <see cref="SortedDictionary{TKey,TValue}"/> / <see cref="SortedList{TKey,TValue}"/> /
+    /// <see cref="ConcurrentDictionary{TKey,TValue}"/>）按原类型 + 原 comparer 复制 —— 丢 comparer 会让
+    /// 「大小写不敏感」这类语义悄悄消失，调用方在拦截器里换个大小写就查不到自己刚设的键。
+    /// 其余 <see cref="IDictionary{TKey,TValue}"/> 实现（自定义类型，含 <see cref="AxiosDynamic"/>）没有通用的
+    /// comparer 读取口，只能退化成 <see cref="Dictionary{TKey,TValue}"/>：内容与枚举顺序不变，运行时类型会变。
+    /// 库自己对这些容器只做枚举（序列化查询串 / 表单），不按键查找，所以退化不影响发出去的请求。
+    /// </para>
+    /// <para>
+    /// 成本：<c>null</c> 与匿名对象 / 字符串 / 集合全部零分配，只有字典形态才付一次复制。
+    /// 克隆次数：常规路径每请求一次（快捷方法置了 <c>EffectiveMerged</c>，不再走 <see cref="AxiosClient"/> 的合并克隆）；
+    /// <c>GetAsync(url, config)</c> 这类「直接收配置」的重载会克隆两次 —— 先克隆调用方配置，再克隆实例默认值。
+    /// </para>
+    /// </remarks>
+    private static object? IsolateMutableContainer(object? value)
     {
-        Dictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary, dictionary.Comparer),
-        IDictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary),
-        Dictionary<string, string> dictionary => new Dictionary<string, string>(dictionary, dictionary.Comparer),
-        IDictionary<string, string> dictionary => new Dictionary<string, string>(dictionary),
-        _ => value
-    };
+        // 最常见的形态是「没设过」（null）与「匿名对象 / 字符串」：先挡掉 null，少走一圈类型判定。
+        if (value is null)
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            // 具体类型必须排在接口之前，否则会被 IDictionary 分支接走并退化成 Dictionary。
+            Dictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary, dictionary.Comparer),
+            Dictionary<string, string> dictionary => new Dictionary<string, string>(dictionary, dictionary.Comparer),
+            SortedDictionary<string, object?> dictionary => new SortedDictionary<string, object?>(dictionary, dictionary.Comparer),
+            SortedDictionary<string, string> dictionary => new SortedDictionary<string, string>(dictionary, dictionary.Comparer),
+            SortedList<string, object?> dictionary => new SortedList<string, object?>(dictionary, dictionary.Comparer),
+            SortedList<string, string> dictionary => new SortedList<string, string>(dictionary, dictionary.Comparer),
+            ConcurrentDictionary<string, object?> dictionary => new ConcurrentDictionary<string, object?>(dictionary, dictionary.Comparer),
+            ConcurrentDictionary<string, string> dictionary => new ConcurrentDictionary<string, string>(dictionary, dictionary.Comparer),
+
+            // 自定义实现：读不到 comparer，只能退化。内容与顺序不变，运行时类型会变（见 remarks）。
+            IDictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary),
+            IDictionary<string, string> dictionary => new Dictionary<string, string>(dictionary),
+            _ => value
+        };
+    }
 
     /// <summary>
     /// 把外部传入的 transform 集合包成线程安全实现（已是则原样复用）。

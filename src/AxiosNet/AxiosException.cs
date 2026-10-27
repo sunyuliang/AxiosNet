@@ -380,7 +380,16 @@ public sealed class AxiosException : Exception
             inner);
     }
 
-    internal static AxiosException MaxContentLength(AxiosConfig config, HttpRequestMessage request, long actual, long limit)
+    /// <summary>
+    /// 响应体超过 <c>Limits.MaxContentLength</c>。
+    /// <para>
+    /// <paramref name="request"/> 允许为 <c>null</c>：短路响应命中时压根没有发过请求，
+    /// 但体积上限属于「配置自身的校验」，同一份配置的行为不该取决于有没有真的发出请求。
+    /// 声明成可空是为了让这条路径不必写 <c>null!</c> —— 否则日后有人在这里补一句
+    /// <c>ArgumentNullException.ThrowIfNull</c>，短路超限就会变成裸 NRE 而不是 <c>ERR_BAD_RESPONSE</c>。
+    /// </para>
+    /// </summary>
+    internal static AxiosException MaxContentLength(AxiosConfig config, HttpRequestMessage? request, long actual, long limit)
     {
         return new AxiosException(
             $"maxContentLength size of {limit} exceeded (got {actual} bytes)",

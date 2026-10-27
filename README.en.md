@@ -171,6 +171,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 ```
 
 - **Instance-level only**: `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` (fixed when the pool is built) and `Limits.MaxConcurrentRequests` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
+- **`Params` / `Data` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Data = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Data`; write `Data = null` to send an empty body.
 - Dispose a client when done (`using`); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
 
 ## Requests
@@ -184,6 +185,8 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 | `RequestAsync(config)` / `RequestAsync<T>(config)` | Pass a full `AxiosConfig` |
 | `GetUri(config)` / `GetUri(c => ...)` | Build the URL only |
 | `Interceptors` / `Defaults` / `Pool` / `UsesConnectionPool` | Instance members |
+
+All seven verbs also have an overload that takes a full `AxiosConfig` (`GetAsync(url, config)` / `PostAsync(url, config)` …): `config.Url` / `config.Method` are overridden by the `url` / verb, everything else merges into the instance defaults as usual. That is why `PostAsync(url, null)` means "no config to pass" and behaves like `PostAsync(url)` (empty body) instead of throwing `ArgumentNullException`.
 
 - `url` may be relative (resolved against `BaseAddress`) or absolute; `null` / blank throws `ERR_INVALID_URL` — to hit the base address itself pass `"/"` explicitly.
 - `Method` is BCL's `HttpMethod`, so custom verbs work: `new HttpMethod("PROPFIND")`.

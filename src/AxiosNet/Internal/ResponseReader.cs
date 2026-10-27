@@ -455,7 +455,7 @@ internal static class ResponseReader
             // 与网络路径同一口径，超限直接失败，而不是把超大正文交给调用方。
             if (config.LimitsOrNull?.MaxContentLength is long maxLength && body.Length > maxLength)
             {
-                throw AxiosException.MaxContentLength(config, null!, body.Length, maxLength);
+                throw AxiosException.MaxContentLength(config, null, body.Length, maxLength);
             }
 
             bodyBytes = body.Length;

@@ -171,6 +171,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 ```
 
 - **只在实例级生效**：`Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions`（建池时固化）、`Limits.MaxConcurrentRequests`（首个受限请求时固化）。单次请求写**不同的值**会抛 `ERR_BAD_OPTION_VALUE`（复述实例的值则放行），避免「设了没生效」。
+- **`Params` / `Data` 按「有没有赋值过」合并，不按是否为 `null`**：不碰这两项 = 继承实例默认值；显式写 `c.Params = null` / `c.Data = null` = 摘掉实例默认值（与 `Headers.Delete` 用「删除」表达摘头同一个道理）。所以 `PostAsync(url)` 这种不传 `data` 的调用仍会带上 `Defaults.Data`，要发空正文得显式写 `Data = null`。
 - 实例用完即弃（`using`），连接池与 Handler 随之释放；在途请求不会被打断，只是不再接受新请求。
 
 ## 请求
@@ -184,6 +185,8 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 | `RequestAsync(config)` / `RequestAsync<T>(config)` | 传完整 `AxiosConfig` |
 | `GetUri(config)` / `GetUri(c => ...)` | 只拼 URL，不发请求 |
 | `Interceptors` / `Defaults` / `Pool` / `UsesConnectionPool` | 实例成员 |
+
+以上七个方法还各有一套直接收完整 `AxiosConfig` 的重载（`GetAsync(url, config)` / `PostAsync(url, config)` …）：`config.Url` / `config.Method` 会被 `url` / 方法名覆盖，其余项按常规合并到实例默认值。`PostAsync(url, null)` 因此按「没有要传的配置」处理，等价于 `PostAsync(url)`（发空正文），不再抛 `ArgumentNullException`。
 
 - `url` 可相对（拼 `BaseAddress`）可绝对；`null` / 空白串抛 `ERR_INVALID_URL`——要请求基地址本身请显式传 `"/"`。
 - `Method` 直接用 BCL 的 `HttpMethod`，自定义谓词照发：`new HttpMethod("PROPFIND")`。
@@ -825,6 +828,7 @@ builder.Services.AddOpenTelemetry()
 ```csharp
 await client.GetAsync<object>("health", c => c.Telemetry.Enabled = false);      // 完全不产出
 await client.GetAsync<object>("api",    c => c.Telemetry.CaptureUrl = false);   // 不写 url.full
+await client.GetAsync<object>("api?token=...", c => c.Telemetry.CaptureQuery = true);   // 把查询串也写进 url.full
 ```
 
 ## 声明式 API 客户端
