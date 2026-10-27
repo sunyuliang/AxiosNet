@@ -199,7 +199,7 @@ public sealed class TelemetryExample : IExample
         Console.WriteLine("    · 底层那次真实 I/O 的 span 由 BCL 自己产出（.NET 8+ 的 System.Net.Http），会自然挂在本库 span 下面；.NET 6 上 BCL 不产出，只剩本库这一个 span");
         Console.WriteLine("    · 接 OpenTelemetry：AddSource / AddMeter 订阅，再给耗时直方图配一个 View（秒单位 vs OTel 默认的毫秒边界），详见 README");
         Console.WriteLine("    · 耗时直方图的标签只有方法 / 主机 / 端口 / 状态码 / 错误类型，都是低基数维度，不会把指标打爆");
-        Console.WriteLine("    · Telemetry.Enabled = false：健康检查、探针请求不进业务指标；CaptureUrl = false：查询串带令牌时不记完整 URL");
+        Console.WriteLine("    · Telemetry.Enabled = false：健康检查、探针请求不进业务指标；url.full 默认不含查询串（令牌不会进遥测），确需查询串时显式设 CaptureQuery = true");
         Console.WriteLine("    · 遥测绝不影响请求：订阅方回调抛异常会被兜住（实测 ActivitySource 会把 ActivityStarted 的异常往外抛，库自己接了）");
 
         // 内层订阅同样要退订：菜单里后续示例还在同一进程跑，留着订阅会让它们白付遥测开销。

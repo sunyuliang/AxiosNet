@@ -43,6 +43,11 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
+  <!-- 测试需要确定性地复现熔断淘汰的「快照后状态被并发推进」竞态（CircuitBreaker 的内部测试钩子）。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="AxiosNet.Tests" />
+  </ItemGroup>
+
   <!-- 把仓库根目录的 README / LICENSE 打进包 -->
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />

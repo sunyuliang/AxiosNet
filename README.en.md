@@ -792,7 +792,7 @@ builder.Services.AddOpenTelemetry()
 | Tag | Notes |
 | --- | --- |
 | `http.request.method` / `url.scheme` / `server.address` / `server.port` / `url.path` | Target and method |
-| `url.full` | Full URL (userinfo stripped); omitted when `Telemetry.CaptureUrl = false` |
+| `url.full` | Full URL (userinfo stripped, query string omitted by default); omitted when `Telemetry.CaptureUrl = false`, include the query with `Telemetry.CaptureQuery = true` |
 | `http.response.status_code` / `network.protocol.version` | Status code / protocol actually used |
 | `http.request.body.size` / `http.response.body.size` | Byte counts (omitted when unknown) |
 | `http.request.resend_count` | Number of retries so far |
@@ -825,6 +825,7 @@ builder.Services.AddOpenTelemetry()
 ```csharp
 await client.GetAsync<object>("health", c => c.Telemetry.Enabled = false);      // produce nothing
 await client.GetAsync<object>("api",    c => c.Telemetry.CaptureUrl = false);   // omit url.full
+await client.GetAsync<object>("api?token=...", c => c.Telemetry.CaptureQuery = true);   // include the query in url.full
 ```
 
 ## Declarative API client
@@ -947,7 +948,7 @@ Seven sub-objects (created lazily on first access):
 
 **`Circuit`** — `Policy` (`null` = no breaker) / `OnRejected`
 
-**`Telemetry`** — `Enabled` (`null` = on) / `CaptureUrl` (`null` = capture)
+**`Telemetry`** — `Enabled` (`null` = on) / `CaptureUrl` (`null` = capture, without the query string) / `CaptureQuery` (`null` = omit the query string)
 
 > Assigning `null` per request disables the instance's `Retry.Policy` / `Circuit.Policy` — that is a different state from "not set".
 

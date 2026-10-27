@@ -288,6 +288,14 @@ public sealed class Audit20261025RetryTests
         // 第二轮重发同一份正文：Loaded 是累计真实发送量（2×total，单调不回落），
         // 而 Progress 自己封顶 100%，调用方不会看到 >100% 的百分比。
         Assert.NotEmpty(events);
+
+        for (var i = 1; i < events.Count; i++)
+        {
+            Assert.True(
+                events[i].Loaded >= events[i - 1].Loaded,
+                $"上传进度回退：{events[i - 1].Loaded} -> {events[i].Loaded}");
+        }
+
         Assert.Equal(payload.Length * 2, events[^1].Loaded);
         Assert.All(events, e => Assert.True(e.Progress is null || e.Progress <= 1d));
     }

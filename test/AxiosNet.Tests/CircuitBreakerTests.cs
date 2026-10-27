@@ -398,14 +398,47 @@ public sealed class CircuitBreakerTests
         breaker.Record(new AxiosCircuitContext("down", uri, statusCode: 500));
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState("down"));
 
-        // 反复制造淘汰压力（每次新 host 都会触发一次 Evict）：淘汰的挑选是无锁快照，
-        // 删除前必须在自己的 Gate 内复核，否则会把刚转入 Open 的条目误删。
+        // 反复制造淘汰压力（每次新 host 都会触发一次 Evict）：已处于 Open 的条目不会被选中。
+        // 「快照之后才转入 Open」的交错由 CandidateChangedDuringEviction_IsRecheckedUnderGate 覆盖。
         for (var i = 0; i < 50; i++)
         {
             breaker.ShouldAllow(new AxiosCircuitContext("new-" + i, uri));
             Assert.Equal(AxiosCircuitState.Open, breaker.GetState("down"));
             Assert.False(breaker.ShouldAllow(open));
         }
+    }
+
+    [Fact]
+    public void CandidateChangedDuringEviction_IsRecheckedUnderGate()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = TimeSpan.FromSeconds(30),
+            MaxTrackedHosts = 1
+        };
+
+        var uri = new Uri("https://down.example.com/x");
+        var down = new AxiosCircuitContext("down", uri);
+
+        Assert.True(breaker.ShouldAllow(down));
+
+        // 候选是在无锁快照里选出的：这里在「选中之后、删除之前」把 down 推进成 Open，
+        // 模拟并发请求恰好在这个窗口里回报失败。复核若不在该条目的 Gate 内做，down 会被
+        // 当成闭合态误删 —— 下次请求重建状态并直接放行一个已知不可用的下游。
+        breaker.EvictionCandidateChosen = key =>
+        {
+            if (key == "down")
+            {
+                breaker.Record(new AxiosCircuitContext("down", uri, statusCode: 500));
+            }
+        };
+
+        // 新 host 触发 Evict；上限是软上限：没有可删的条目时宁可超限，也不丢正在熔断的账。
+        breaker.ShouldAllow(new AxiosCircuitContext("new-0", uri));
+
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState("down"));
+        Assert.False(breaker.ShouldAllow(down));
     }
 
     [Fact]

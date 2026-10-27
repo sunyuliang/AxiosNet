@@ -120,6 +120,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     public int TrackedHostCount => _hosts.Count;
 
     /// <summary>
+    /// 测试专用：淘汰候选选出后、按 Gate 复核前触发（参数为候选 key），
+    /// 用来确定性地复现「无锁快照之后条目被并发推进」的竞态。生产代码不要设置。
+    /// </summary>
+    internal Action<string>? EvictionCandidateChosen { get; set; }
+
+    /// <summary>
     /// 某个维度当前的状态；未跟踪过（= 从未失败）的维度返回 <see cref="AxiosCircuitState.Closed"/>。
     /// </summary>
     public AxiosCircuitState GetState(string host)
@@ -380,6 +386,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         // 上面的挑选是无锁快照，读与删之间该条目可能已被并发请求推进（Closed → Open、
         // 冷却到期 → HalfOpen）。逐个候选在自己的 Gate 内复核后再删，避免淘汰掉正在熔断的条目。
+        var candidate = closedIdle ?? closed ?? staleOpen;
+        if (candidate is not null)
+        {
+            EvictionCandidateChosen?.Invoke(candidate);
+        }
+
         if (TryEvict(closedIdle) || TryEvict(closed) || TryEvict(staleOpen))
         {
             return;
