@@ -153,7 +153,7 @@ string url = http.GetUri(c =>
 | 入口 | 创建方式 | 适用 |
 | --- | --- | --- |
 | 静态门面 | `Axios.GetAsync(...)` / `Axios.Defaults` / `Axios.Interceptors` | 脚本、单站点应用 |
-| 实例 | `Axios.Create(c => ...)` 或 `new AxiosClient(config)` | 常规用法：一套默认值 + 一条连接池 |
+| 实例 | `Axios.Create(c => ...)` 或 `new AxiosClient(config)` | 常规用法：长生命周期持有，一套默认值 + 一条连接池 |
 | 声明式 | `new ApiClient(baseAddress)` | 接口多，用模型或接口描述请求（见[声明式](#声明式-api-客户端)） |
 
 **实例默认值 vs 单次请求**：`Axios.Create` 里配的是实例默认值，快捷方法末尾的 `configure` 配本次请求。`configure` 拿到的是实例默认值的**副本**，所以能真正摘掉默认头：
@@ -165,7 +165,8 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 
 - **只在实例级生效**：`Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions`（建池时固化）、`Limits.MaxConcurrentRequests`（首个受限请求时固化）。单次请求写**不同的值**会抛 `ERR_BAD_OPTION_VALUE`（复述实例的值则放行），避免「设了没生效」。
 - **`Params` / `Data` 按「有没有赋值过」合并，不按是否为 `null`**：不碰这两项 = 继承实例默认值；显式写 `c.Params = null` / `c.Data = null` = 摘掉实例默认值（与 `Headers.Delete` 用「删除」表达摘头同一个道理）。所以 `PostAsync(url)` 这种不传 `data` 的调用仍会带上 `Defaults.Data`，要发空正文得显式写 `Data = null`。
-- 实例用完即弃（`using`），连接池与 Handler 随之释放；在途请求不会被打断，只是不再接受新请求。
+- **一个站点一个实例，不要按请求新建**：每个实例自建一条连接池，`Axios.Create` / `new AxiosClient` 各建一套 Handler；按请求新建等于退化成 `new HttpClient()` 那个经典坑——长连接不复用，连接与句柄持续增长。要换默认值就换实例，要共享连接就共享池（见[连接池](#连接池)）；DI 场景直接用 `AddAxiosClient` 注册单例。
+- 实例用 `using`（或交给 DI 容器持有）收尾，连接池与 Handler 随之释放；在途请求不会被打断，只是不再接受新请求。
 
 ## 请求
 
@@ -667,6 +668,10 @@ var response = await client.GetAsync<User>("users/1",
 ## 连接池
 
 `AxiosClient` 默认自建一条按 `scheme://host:port` 隔离的连接池（`HttpConnectionPool`）：每个 origin 一个调优过的 `SocketsHttpHandler`，请求共享 TCP 长连接。
+
+> **不要按请求建客户端**：`Axios.Create` / `new AxiosClient` 各自建一条池，按请求新建 = 每请求一套 Handler，长连接不再复用（就是 `new HttpClient()` 那个经典坑）。一个站点一个实例；多个客户端要共享连接，就显式传同一条池（下面的用法 2），DI 里用 `AddAxiosClient` 注册单例。
+>
+> **丢弃实例前必须 `Dispose`**：未释放的池由后台驱逐定时器持有，GC 收不走，它的连接要等到 `IdleHandlerLifetime`（默认 5 分钟）之后才被回收。
 
 ```csharp
 using AxiosNet.Pooling;

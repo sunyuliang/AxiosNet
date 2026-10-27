@@ -153,7 +153,7 @@ Three entry points, identical capabilities:
 | Entry point | How to create | Use for |
 | --- | --- | --- |
 | Static facade | `Axios.GetAsync(...)` / `Axios.Defaults` / `Axios.Interceptors` | Scripts, single-endpoint apps |
-| Instance | `Axios.Create(c => ...)` or `new AxiosClient(config)` | The normal case: one set of defaults + one pool |
+| Instance | `Axios.Create(c => ...)` or `new AxiosClient(config)` | The normal case: one long-lived instance — one set of defaults + one pool |
 | Declarative | `new ApiClient(baseAddress)` | Many endpoints, describe requests with models or interfaces ([details](#declarative-api-client)) |
 
 **Instance defaults vs per-request**: what you set in `Axios.Create` are instance defaults; the trailing `configure` argument configures a single request. `configure` receives a **copy** of the instance defaults, so you can really remove a default header:
@@ -165,7 +165,8 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 
 - **Instance-level only**: `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` (fixed when the pool is built) and `Limits.MaxConcurrentRequests` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
 - **`Params` / `Data` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Data = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Data`; write `Data = null` to send an empty body.
-- Dispose a client when done (`using`); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
+- **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
+- Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
 
 ## Requests
 
@@ -667,6 +668,10 @@ What is skipped is the HTTP operation itself; what is kept is the response-side 
 ## Connection pool
 
 `AxiosClient` builds its own pool (`HttpConnectionPool`) keyed by `scheme://host:port`: one tuned `SocketsHttpHandler` per origin, requests sharing keep-alive TCP connections.
+
+> **Do not create a client per request**: `Axios.Create` / `new AxiosClient` each build their own pool, so one-per-request means one handler set per request and no keep-alive reuse — the classic `new HttpClient()` pitfall. Keep one instance per site; to share connections across clients pass the same pool explicitly (usage 2 below), or register a singleton with `AddAxiosClient` in DI.
+>
+> **Always `Dispose` before dropping an instance**: an undisposed pool is held by its background eviction timer and is never garbage-collected; its connections are only reclaimed once `IdleHandlerLifetime` (5 min by default) elapses.
 
 ```csharp
 using AxiosNet.Pooling;
