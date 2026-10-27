@@ -1,8 +1,8 @@
-# AxiosNet
+﻿# AxiosNet
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1207%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1391%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1096,11 +1096,44 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1150 | `net8.0` / `net6.0` | 2300 |
+| `AxiosNet.Tests` (core + declarative) | 1334 | `net8.0` / `net6.0` | 2668 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **Total** | **1207** | | **2414** |
+| **Total** | **1391** | | **2782** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
+
+Line coverage **92.4%**, branch coverage **89.6%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`).
+Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
+
+```bash
+dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \
+  --filter "FullyQualifiedName!~ConcurrencyPerformanceTests&FullyQualifiedName!~AllocationSweepTests&FullyQualifiedName!~AllocationTests&FullyQualifiedName!~HeadersCopyOnWriteTests"
+```
+
+A plain `dotnet test` still runs everything, excluded classes included.
+
+### Test suite organised by feature
+
+The folder layout of `test/AxiosNet.Tests` is the feature list — pick the folder first, then the file:
+
+| Folder | What it covers |
+| --- | --- |
+| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the seven sub-objects |
+| `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
+| `Governance/` | Concurrency gate, progress callbacks and rate limiting |
+| `Resilience/` | Retry policies and timing, circuit-breaker state machine, short circuits |
+| `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
+| `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse` |
+| `Connectivity/` | Connection pool, handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
+| `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry |
+| `Errors/` | Error model, error codes, `ToJson` snapshot |
+| `Regression/` | Allocation guards (isolated collection + precise counting, process- or thread-wide), concurrent throughput |
+| `WebAPI/` | Declarative model binding and validation, authorization, streaming, interface proxies and startup validation |
+| `Infrastructure/` | Test plumbing: HTTP server, models, telemetry probe, isolated collections |
+
+Timing-sensitive cases (upper-bound duration assertions, telling "placeholder vs budget" apart) and allocation cases each run in isolation — see `Infrastructure/TimingCollection.cs` and `Infrastructure/AllocationCollection.cs`.
+
+`AxiosNet.DependencyInjection.Tests` follows the same rule with two groups: `Registration/` (registration extensions and named clients) and `Lifecycle/` (concurrent resolution and holder disposal).
 
 ### Benchmarks
 
@@ -1148,8 +1181,11 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (41 items) / DI / Aot
-└─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
+├─ samples/                           # Simple (43 items) / DI / Aot
+└─ test/
+   ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
+   ├─ AxiosNet.DependencyInjection.Tests/
+   └─ AxiosNet.Benchmarks/
 ```
 
 ## License

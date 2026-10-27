@@ -1,8 +1,8 @@
-# AxiosNet
+﻿# AxiosNet
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1207%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1391%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1096,11 +1096,44 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1150 | `net8.0` / `net6.0` | 2300 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1334 | `net8.0` / `net6.0` | 2668 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **合计** | **1207** | | **2414** |
+| **合计** | **1391** | | **2782** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
+
+行覆盖率 **92.4%**、分支覆盖率 **89.6%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`）。
+采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
+
+```bash
+dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \
+  --filter "FullyQualifiedName!~ConcurrencyPerformanceTests&FullyQualifiedName!~AllocationSweepTests&FullyQualifiedName!~AllocationTests&FullyQualifiedName!~HeadersCopyOnWriteTests"
+```
+
+普通 `dotnet test` 仍然全跑（含被排除的这几类）。
+
+### 用例按功能分类
+
+`test/AxiosNet.Tests` 的目录结构就是功能清单——找用例先看目录，再找文件名：
+
+| 目录 | 覆盖范围 |
+| --- | --- |
+| `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与七个子对象 |
+| `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
+| `Governance/` | 并发闸门、进度回调与限速 |
+| `Resilience/` | 重试策略与计时、熔断状态机、短路响应 |
+| `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
+| `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse` |
+| `Connectivity/` | 连接池、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
+| `Diagnostics/` | Activity / Meter / DiagnosticListener 三路遥测 |
+| `Errors/` | 错误模型、错误码、`ToJson` 快照 |
+| `Regression/` | 分配护栏（独占集合 + 精确计数，进程级 / 线程级两种口径）、并发吞吐 |
+| `WebAPI/` | 声明式模型绑定与校验、授权、流式、接口级代理与启动期校验 |
+| `Infrastructure/` | 测试基建：HTTP 服务器、模型、遥测探针、独占集合 |
+
+时序敏感用例（断言上限耗时、靠「占位 vs 预算」区分口径）与分配用例各自独占运行，见 `Infrastructure/TimingCollection.cs`、`Infrastructure/AllocationCollection.cs`。
+
+`AxiosNet.DependencyInjection.Tests` 同规则分两组：`Registration/`（注册扩展与命名注册）、`Lifecycle/`（并发解析与持有者释放）。
 
 ### 性能基准
 
@@ -1148,8 +1181,11 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ WebAPI/                      # 声明式 API 客户端（模型 / 接口）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（41 项）/ DI / Aot
-└─ test/                              # AxiosNet.Tests / DependencyInjection.Tests / Benchmarks
+├─ samples/                           # Simple（43 项）/ DI / Aot
+└─ test/
+   ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
+   ├─ AxiosNet.DependencyInjection.Tests/
+   └─ AxiosNet.Benchmarks/
 ```
 
 ## License

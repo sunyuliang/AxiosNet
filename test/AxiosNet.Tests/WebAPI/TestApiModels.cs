@@ -1,4 +1,4 @@
-using AxiosNet.Tests.Infrastructure;
+﻿using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 
 namespace AxiosNet.Tests.WebAPI;
@@ -368,4 +368,67 @@ public sealed class BlankMethodRequest : IApiRequest<object>
 [HttpApi("get", " ")]
 public sealed class BlankPathRequest : IApiRequest<object>
 {
+}
+
+// ---- 声明式绑定的边界形态样例（原先与流式替身放在同一个文件里） ----
+
+[Get("items")]
+public sealed class AllNullQueryRequest : IApiRequest<Person>
+{
+    [Query]
+    public string? Filter { get; set; }
+}
+
+[Get("items")]
+public sealed class NoQueryBindingRequest : IApiRequest<Person>
+{
+    [ApiIgnore]
+    public string? Hidden { get; set; }
+}
+
+[Post("report")]
+public sealed class DateOnlyBodyCandidateRequest : IApiRequest<Person>
+{
+    public DateOnly When { get; set; }
+}
+
+[Post("upload")]
+public sealed class UriBodyCandidateRequest : IApiRequest<Person>
+{
+    public Uri Callback { get; set; } = null!;
+}
+
+[Get("reports/{day}")]
+public sealed class DateOnlyPathRequest : IApiRequest<Person>
+{
+    [Path]
+    public DateOnly Day { get; set; }
+}
+
+[Get("items")]
+public sealed class IgnoredInheritedPageRequest : PagedRequestBase, IApiRequest<Person>
+{
+    [ApiIgnore]
+    public override int Page { get; set; }
+}
+
+/// <summary>同一个值分别落在路径 / 请求头 / 查询串，用于校验三处文本化一致。</summary>
+[Get("flags/{flag}")]
+public sealed class ScalarTextRequest : IApiRequest<Person>
+{
+    [Path]
+    public bool Flag { get; set; }
+
+    [Header("X-Dry-Run")]
+    public bool DryRun { get; set; }
+
+    [Query]
+    public DateTime When { get; set; }
+}
+
+/// <summary>基类带查询绑定，派生类用 [ApiIgnore] 覆盖：该属性应完全不参与绑定。</summary>
+public class PagedRequestBase
+{
+    [Query("page")]
+    public virtual int Page { get; set; }
 }
