@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1187%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1192%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -896,12 +896,28 @@ var api = client.Create<IUserApi>();
 var response = await api.GetAsync(5);
 ```
 
-- Every method must carry exactly one route attribute; the return type must be `Task<AxiosResponse<T>>` (no synchronous returns / `ValueTask` / generic methods / `ref`·`out`).
-- `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
+Multipart and streaming are declared on the interface the same way (semantics match request models one-to-one):
+
+```csharp
+[Post("upload")]
+[Multipart]                                              // parameters are the form
+Task<AxiosResponse<UploadResult>> UploadAsync(
+    [Part("Title")] string title,
+    [Part(FileName = "data.bin")] byte[] blob,
+    CancellationToken cancellationToken = default);
+
+[Get("stream/events")]
+[Stream(AxiosStreamFormat.ServerSentEvents)]            // omit for NDJSON
+Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
+```
+
+- Every method must carry exactly one route attribute; the return type must be `Task<AxiosResponse<T>>` (no synchronous returns / `ValueTask` / generic methods / `ref`·`out`). Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method.
+- `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface; with base interfaces, static headers and authorization merge in the **derived interface's scope** (the same base method can carry different static headers per derived interface).
-- Invalid declarations (missing route, multiple bodies, duplicate parameter names, streaming return…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws).
+- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws).
 - Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
-- Multipart and streaming responses are not supported yet (keep using `RequestStreamAsync(...)` or request models); interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
+- Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
+- Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
 - The proxy is built on `DispatchProxy` (Reflection.Emit) and is **JIT-only**: `Create<T>()` throws `PlatformNotSupportedException` under Native AOT, and trimming requires rooting the interface plus its parameter / return types.
 
 ## Dependency injection
@@ -1022,7 +1038,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 41 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 43 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1031,7 +1047,7 @@ dotnet run --project samples/AxiosNet.Simple
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
 - **29 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit.
-- **12 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation.
+- **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
 
@@ -1078,9 +1094,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1130 | `net8.0` / `net6.0` | 2260 |
+| `AxiosNet.Tests` (core + declarative) | 1135 | `net8.0` / `net6.0` | 2270 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **Total** | **1187** | | **2374** |
+| **Total** | **1192** | | **2384** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

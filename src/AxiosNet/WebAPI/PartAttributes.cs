@@ -1,24 +1,25 @@
-using System.Reflection;
 using System.Text.Json.Serialization;
+using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
 
-/// <summary>声明请求模型的请求体是 <c>multipart/form-data</c>：模型自身即表单，未标注参数特性的属性默认按部件绑定（字段名 = 属性名）。
-/// 标了 <see cref="PartAttribute"/> 的属性可覆盖字段名、文件名与部件 Content-Type；与 <c>[Body]</c> 互斥。</summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
+/// <summary>声明请求体是 <c>multipart/form-data</c>：请求模型标在类上、接口级声明标在方法上。
+/// 模型自身即表单，未标注参数特性的属性 / 参数默认按部件绑定（字段名 = 属性名 / 参数名）。
+/// 标了 <see cref="PartAttribute"/> 的成员可覆盖字段名、文件名与部件 Content-Type；与 <c>[Body]</c> 互斥。</summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class MultipartAttribute : Attribute
 {
 }
 
 /// <summary>
-/// multipart 模型上的部件声明：覆盖部件字段名，并把 byte[] / Stream 类属性声明成带文件名 / Content-Type 的文件部件。
-/// 名字优先级：<see cref="Name"/> &gt; <see cref="FormFile.FieldName"/> &gt; 默认名（<see cref="JsonPropertyNameAttribute"/> 或属性名）。
+/// multipart 的部件声明（请求模型属性 / 接口方法参数）：覆盖部件字段名，并把 byte[] / Stream 类值声明成带文件名 / Content-Type 的文件部件。
+/// 名字优先级：<see cref="Name"/> &gt; <see cref="FormFile.FieldName"/> &gt; 默认名（<see cref="JsonPropertyNameAttribute"/> 或属性名 / 参数名）。
 /// byte[] / Stream 未声明文件名时 filename = 字段名、类型 = <c>application/octet-stream</c>；字符串 / 标量永远是普通字段，集合逐项应用。
 /// </summary>
-[AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class PartAttribute : Attribute
 {
-    /// <summary>声明一个部件（字段名回退到 [JsonPropertyName] / 属性名）。</summary>
+    /// <summary>声明一个部件（字段名回退到 [JsonPropertyName] / 属性名 / 参数名）。</summary>
     public PartAttribute()
     {
     }
@@ -42,15 +43,15 @@ public sealed class PartAttribute : Attribute
     public string? ContentType { get; set; }
 }
 
-/// <summary>解析后的部件绑定（<c>RequestModelMetadata.ResolveBody</c> 装配表单用）。</summary>
+/// <summary>解析后的部件绑定（请求模型 / 接口方法装配表单共用）。</summary>
 /// <param name="Name">部件字段名（已解析：显式声明或默认名）。</param>
-/// <param name="Property">读取部件值的属性。</param>
+/// <param name="Source">读取部件值的绑定来源（属性或方法参数）。</param>
 /// <param name="HasExplicitName">名字是否由 <see cref="PartAttribute.Name"/> 显式指定（决定它是否压过 FormFile.FieldName）。</param>
 /// <param name="FileName">声明的文件名；null 表示沿用值 / builder 默认。</param>
 /// <param name="ContentType">声明的部件 Content-Type；null 表示沿用值 / builder 默认。</param>
 internal readonly record struct PartBinding(
     string Name,
-    PropertyInfo Property,
+    IValueSource Source,
     bool HasExplicitName,
     string? FileName,
     string? ContentType);

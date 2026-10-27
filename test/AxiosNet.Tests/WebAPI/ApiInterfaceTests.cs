@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -108,6 +109,65 @@ public interface IWrongReturnApi
 public interface IStreamingApi
 {
     [Get("x")]
+    Task<AxiosResponse<IAsyncEnumerable<StreamFrame>>> GetAsync();
+}
+
+// ---- 阶段 2：接口级 multipart / 流式 ----
+
+public interface IUploadApi
+{
+    [Post("upload")]
+    [Multipart]
+    Task<AxiosResponse<Person>> UploadAsync(
+        [Part("title")] string title,
+        [Part("blob")] byte[] blob,
+        [Part("extra", FileName = "a.txt", ContentType = "text/plain")] byte[] extra,
+        CancellationToken cancellationToken = default);
+
+    [Post("upload/default")]
+    [Multipart]
+    Task<AxiosResponse<Person>> UploadDefaultAsync(string note, byte[] payload);
+}
+
+public interface IStreamApi
+{
+    [Get("stream/sse")]
+    [Stream(AxiosStreamFormat.ServerSentEvents)]
+    Task<AxiosResponse<IAsyncEnumerable<StreamFrame>>> SseAsync();
+
+    [Get("stream/json-array")]
+    [Stream(AxiosStreamFormat.JsonArray)]
+    Task<AxiosResponse<IAsyncEnumerable<StreamFrame>>> JsonArrayAsync();
+}
+
+public sealed record StreamFrame(int N, string? Text);
+
+// ---- 阶段 2 非法声明 ----
+
+public interface IStreamWithoutMultipartApi
+{
+    [Post("x")]
+    Task<AxiosResponse<Person>> PostAsync([Part] string value);
+}
+
+public interface IMultipartWithBodyApi
+{
+    [Post("x")]
+    [Multipart]
+    Task<AxiosResponse<Person>> PostAsync([Body] Person payload);
+}
+
+public interface IStreamOnPlainApi
+{
+    [Get("x")]
+    [Stream]
+    Task<AxiosResponse<Person>> GetAsync();
+}
+
+public interface IInvalidStreamFormatApi
+{
+    [Get("x")]
+    [Stream((AxiosStreamFormat)99)]
     Task<AxiosResponse<IAsyncEnumerable<Person>>> GetAsync();
 }
 
@@ -293,13 +353,110 @@ public sealed class ApiInterfaceTests
             typeof(IMissingRouteApi),
             typeof(IMultipleBodyApi),
             typeof(IWrongReturnApi),
-            typeof(IStreamingApi));
+            typeof(IStreamWithoutMultipartApi),
+            typeof(IMultipartWithBodyApi),
+            typeof(IStreamOnPlainApi),
+            typeof(IInvalidStreamFormatApi));
 
         Assert.Contains(errors, error => error.Contains("缺少路由特性"));
         Assert.Contains(errors, error => error.Contains("[Body]"));
         Assert.Contains(errors, error => error.Contains("Task<AxiosResponse<T>>"));
-        Assert.Contains(errors, error => error.Contains("流式"));
-        Assert.Empty(ApiClient.ValidateInterfaces(typeof(IUserApi)));
+        Assert.Contains(errors, error => error.Contains("[Part]") && error.Contains("[Multipart]"));
+        Assert.Contains(errors, error => error.Contains("互斥"));
+        Assert.Contains(errors, error => error.Contains("[Stream]"));
+        Assert.Contains(errors, error => error.Contains("99"));
+        Assert.Empty(ApiClient.ValidateInterfaces(
+            typeof(IUserApi),
+            typeof(IUploadApi),
+            typeof(IStreamApi),
+            typeof(IStreamingApi)));
+    }
+
+    // ------------------------------------------------------------------
+    // 阶段 2：接口级 multipart
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Multipart_PartsUseDeclaredNameFileAndContentType()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = CreateClient(server);
+
+        await client.Create<IUploadApi>().UploadAsync("年报", [1, 2, 3], [4, 5]);
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("POST", received.Method);
+        Assert.Equal("/upload", received.Path);
+        Assert.StartsWith("multipart/form-data; boundary=", received.Headers["Content-Type"]);
+
+        var body = Encoding.UTF8.GetString(received.Body);
+        Assert.Contains("name=title", body);
+        Assert.Contains("年报", body);
+        Assert.Contains("name=blob; filename=blob", body);           // byte[] → 文件部件（默认 filename = 字段名）
+        Assert.Contains("name=extra; filename=a.txt", body);         // [Part(FileName)] 覆盖文件名
+        Assert.Contains("text/plain", body);                         // [Part(ContentType)] 覆盖类型
+        Assert.True(received.Body.AsSpan().IndexOf(new byte[] { 1, 2, 3 }) >= 0);
+        Assert.True(received.Body.AsSpan().IndexOf(new byte[] { 4, 5 }) >= 0);
+    }
+
+    [Fact]
+    public async Task Multipart_UnannotatedParameters_UseParameterNames()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = CreateClient(server);
+
+        await client.Create<IUploadApi>().UploadDefaultAsync("n1", [9]);
+
+        var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
+        Assert.Contains("name=note", body);
+        Assert.Contains("n1", body);
+        Assert.Contains("name=payload; filename=payload", body);
+    }
+
+    // ------------------------------------------------------------------
+    // 阶段 2：接口级流式
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Stream_DefaultFormatIsNdjson()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("{\"n\":1,\"text\":\"a\"}\n{\"n\":2,\"text\":\"b\"}\n"),
+            ContentType: "application/x-ndjson"));
+        using var client = CreateClient(server);
+
+        var response = await client.Create<IStreamingApi>().GetAsync();
+
+        Assert.Equal(200, response.Status);
+        var frames = await CollectAsync(response.Data!);
+        Assert.Equal(new[] { 1, 2 }, frames.Select(frame => frame.N));
+        Assert.Equal(new[] { "a", "b" }, frames.Select(frame => frame.Text));
+    }
+
+    [Fact]
+    public async Task Stream_ServerSentEvents_FormatIsDeclared()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("data: {\"n\":1}\n\ndata: {\"n\":2}\n\n"),
+            ContentType: "text/event-stream"));
+        using var client = CreateClient(server);
+
+        var response = await client.Create<IStreamApi>().SseAsync();
+
+        Assert.Equal(new[] { 1, 2 }, (await CollectAsync(response.Data!)).Select(frame => frame.N));
+    }
+
+    [Fact]
+    public async Task Stream_JsonArray_FormatIsDeclared()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("[{\"n\":1},{\"n\":2}]"),
+            ContentType: "application/json"));
+        using var client = CreateClient(server);
+
+        var response = await client.Create<IStreamApi>().JsonArrayAsync();
+
+        Assert.Equal(new[] { 1, 2 }, (await CollectAsync(response.Data!)).Select(frame => frame.N));
     }
 
     [Fact]
@@ -343,6 +500,17 @@ public sealed class ApiInterfaceTests
 
         Assert.Equal(20, server.Received.Count);
         Assert.All(server.Received, request => Assert.StartsWith("/users/", request.Path));
+    }
+
+    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
+    {
+        var items = new List<T>();
+        await foreach (var item in source.ConfigureAwait(false))
+        {
+            items.Add(item);
+        }
+
+        return items;
     }
 
     private sealed class CapturingErrorFactory : IApiErrorFactory

@@ -136,7 +136,7 @@ internal static class InterfaceDeclaration
         return false;
     }
 
-    /// <summary>接口级流式响应（<c>IAsyncEnumerable&lt;T&gt;</c>）不属于第一阶段：返回明确的阶段提示。</summary>
+    /// <summary>接口级流式响应：返回 <c>Task&lt;AxiosResponse&lt;IAsyncEnumerable&lt;T&gt;&gt;&gt;</c> 时正文按帧交付。</summary>
     public static bool IsStreamingResponse(Type responseType)
         => responseType.IsGenericType && responseType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>);
 
@@ -214,9 +214,25 @@ internal static class InterfaceDeclaration
         {
             errors.Add($"{display} 的返回类型是 {method.ReturnType.Name}：接口方法必须返回 Task<AxiosResponse<T>>（接口级声明不支持同步返回 / ValueTask）。");
         }
-        else if (IsStreamingResponse(responseType))
+
+        // [Stream] 只用于流式方法；帧格式值必须落在枚举内（只可能由显式 (AxiosStreamFormat)n 产生）。
+        var stream = method.GetCustomAttribute<StreamAttribute>(inherit: false);
+        if (stream is not null)
         {
-            errors.Add($"{display} 返回 IAsyncEnumerable<{GetGenericName(responseType)}>：接口级流式响应暂未支持（阶段 2），请改用 client.RequestStreamAsync(...) 或请求模型。");
+            if (!hasResponseType)
+            {
+                errors.Add($"{display} 标注了 [Stream]，但返回类型不是 Task<AxiosResponse<T>>："
+                    + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
+            }
+            else if (!IsStreamingResponse(responseType))
+            {
+                errors.Add($"{display} 标注了 [Stream]，但返回类型是 Task<AxiosResponse<{responseType.Name}>>："
+                    + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
+            }
+            else if (!Enum.IsDefined(typeof(AxiosStreamFormat), stream.Format))
+            {
+                errors.Add($"{display} 的 [Stream] 帧格式值 {(int)stream.Format} 无效：请使用 AxiosStreamFormat 的已定义值。");
+            }
         }
 
         var parameters = method.GetParameters();
@@ -241,6 +257,7 @@ internal static class InterfaceDeclaration
                 && parameter.GetCustomAttribute<QueryAttribute>() is null
                 && parameter.GetCustomAttribute<HeaderAttribute>() is null
                 && parameter.GetCustomAttribute<HeaderCollectionAttribute>() is null
+                && parameter.GetCustomAttribute<PartAttribute>() is null
                 && parameter.GetCustomAttribute<BodyAttribute>() is null);
 
             if (parameter.ParameterType == typeof(CancellationToken))
@@ -248,7 +265,7 @@ internal static class InterfaceDeclaration
                 cancellationTokenCount++;
                 if (hasBinding)
                 {
-                    errors.Add($"{parameterDisplay} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Body。");
+                    errors.Add($"{parameterDisplay} 是 CancellationToken，不能同时标注 Path / Query / Header / HeaderCollection / Part / Body。");
                 }
 
                 continue;
@@ -285,6 +302,4 @@ internal static class InterfaceDeclaration
 
     private static string TrimAttributeSuffix(string name)
         => name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name;
-
-    private static string GetGenericName(Type type) => type.GetGenericArguments()[0].Name;
 }

@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1187%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1192%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -896,12 +896,28 @@ var api = client.Create<IUserApi>();
 var response = await api.GetAsync(5);
 ```
 
-- 每个方法必须标注且只标注一个路由特性；返回类型必须是 `Task<AxiosResponse<T>>`（不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`）。
-- `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
+multipart 与流式同样直接写在接口上（语义与请求模型一一对应）：
+
+```csharp
+[Post("upload")]
+[Multipart]                                              // 参数即表单
+Task<AxiosResponse<UploadResult>> UploadAsync(
+    [Part("Title")] string title,
+    [Part(FileName = "data.bin")] byte[] blob,
+    CancellationToken cancellationToken = default);
+
+[Get("stream/events")]
+[Stream(AxiosStreamFormat.ServerSentEvents)]            // 省略 = NDJSON
+Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
+```
+
+- 每个方法必须标注且只标注一个路由特性；返回类型必须是 `Task<AxiosResponse<T>>`（不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`）。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法。
+- `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。
-- 接口写在非法（缺路由、多个 Body、参数重名、流式返回…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛）。
+- 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛）。
 - 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
-- 暂不支持 multipart 与流式响应（流式仍用 `RequestStreamAsync(...)` 或请求模型）；接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
+- 接口级流式：帧格式用 `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` 声明，省略按 NDJSON；返回流只能枚举一次，超时与错误口径与 `RequestStreamAsync(...)` 完全一致。
+- 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
 - 代理基于 `DispatchProxy`（Reflection.Emit），**仅 JIT**：Native AOT 下 `Create<T>()` 抛 `PlatformNotSupportedException`；裁剪时需 root 接口类型及其参数 / 返回类型。
 
 ## 依赖注入
@@ -1022,7 +1038,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 41 项：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 43 项：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1031,7 +1047,7 @@ dotnet run --project samples/AxiosNet.Simple
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
 - **核心 29 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应。
-- **声明式 12 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验。
+- **声明式 14 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式。
 
 另有两个示例：
 
@@ -1078,9 +1094,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1130 | `net8.0` / `net6.0` | 2260 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1135 | `net8.0` / `net6.0` | 2270 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **合计** | **1187** | | **2374** |
+| **合计** | **1192** | | **2384** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

@@ -40,6 +40,18 @@ public sealed partial class ApiClient
         var metadata = RequestModelMetadata.Get(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
+        return await SendStreamAsync<TItem>(request, metadata.Authorization, config, cancellationToken, format)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>流式发送内核：请求模型与接口级声明（<c>[Stream]</c>）共用这一份实现。</summary>
+    internal async Task<AxiosResponse<IAsyncEnumerable<TItem>>> SendStreamAsync<TItem>(
+        object request,
+        ApiAuthorization authorization,
+        AxiosConfig config,
+        CancellationToken cancellationToken,
+        AxiosStreamFormat format)
+    {
         // 正文按帧消费：responseType 固定 Stream，正文超时口径交给 StreamIdleTimeout。
         // 优先级：按请求 configure 显式写过的值 > 本门面显式设置过的值 > 底层客户端默认值。
         config.SetResponseTypeAuto(ResponseType.Stream);
@@ -48,7 +60,7 @@ public sealed partial class ApiClient
             config.Limits.StreamIdleTimeout = _streamIdleTimeout;
         }
 
-        await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
+        await ApplyAuthorizationAsync(authorization, request, config, cancellationToken).ConfigureAwait(false);
 
         var raw = await SendAsync<Stream>(request, config, cancellationToken).ConfigureAwait(false);
         var body = raw.Data ?? throw AxiosException.BadResponse(raw.Config ?? config, raw.Request, "Stream", new InvalidOperationException("流式响应没有拿到正文流：响应拦截器把 Data 换成了 null，流式请求不能被拦截器替换成非流对象。"));
