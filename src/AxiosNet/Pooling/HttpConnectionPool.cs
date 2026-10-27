@@ -121,28 +121,33 @@ public sealed class HttpConnectionPool : IDisposable
     {
         ValidateSharedKey(key);
 
-        if (SharedPools.TryGetValue(key, out var existing))
+        // 循环而不是「取一次 + 补一次」：登记与 Release 可能并发，落选后不能假定表里还有这一项
+        // （索引取值会抛 KeyNotFoundException），回到顶部重走一遍即可。
+        while (true)
         {
-            EnsureSameOptions(key, existing, options);
-            return existing;
-        }
+            if (SharedPools.TryGetValue(key, out var existing))
+            {
+                EnsureSameOptions(key, existing, options);
+                return existing;
+            }
 
-        // 先建后登记：选项合法性由构造函数统一收口（非法时抛 ERR_BAD_OPTION_VALUE）。
-        var created = new HttpConnectionPool(options);
+            // 先建后登记：选项合法性由构造函数统一收口（非法时抛 ERR_BAD_OPTION_VALUE）。
+            var created = new HttpConnectionPool(options);
 
-        if (!SharedPools.TryAdd(key, created))
-        {
-            // 竞态落选：自己这条必须释放（不释放会被后台驱逐定时器永久持有），再用赢家那条复核配置。
+            if (SharedPools.TryAdd(key, created))
+            {
+                return created;
+            }
+
+            // 竞态落选：自己这条必须释放（不释放会被后台驱逐定时器永久持有），再重走一遍复核配置。
             created.Dispose();
-            var winner = SharedPools[key];
-            EnsureSameOptions(key, winner, options);
-            return winner;
         }
-
-        return created;
     }
 
-    /// <summary>按 key 取已登记的池；没有则 <c>false</c>（不创建）。</summary>
+    /// <summary>
+    /// 按 key 取已登记的池；没有则 <c>false</c>（不创建）。key 为 <c>null</c> 或空白同样返回 <c>false</c>——
+    /// Try 语义不抛，与 <see cref="GetOrCreate"/> / <see cref="Release"/> 的严格校验区分开。
+    /// </summary>
     public static bool TryGet(string key, [NotNullWhen(true)] out HttpConnectionPool? pool)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -156,8 +161,10 @@ public sealed class HttpConnectionPool : IDisposable
 
     /// <summary>
     /// 摘除命名池并优雅释放它（空闲节点立即释放，在途请求的节点等租约归还）；返回是否命中。
-    /// 仍在用这条池的客户端此后发请求会抛 <see cref="ObjectDisposedException"/>——它与自己
-    /// <c>Dispose</c> 掉一条共享池的后果相同，属显式的收尾动作，不是自动回收。
+    /// 摘除后仍在用这条池的客户端发请求会拿到 <c>ERR_CANCELED</c>（发送管线把池的
+    /// <see cref="ObjectDisposedException"/> 翻译成统一错误模型），只有直接调 <see cref="Lease(Uri)"/>
+    /// 才会看到裸的 <see cref="ObjectDisposedException"/>。它与自己 <c>Dispose</c> 掉一条共享池的
+    /// 后果相同，属显式的收尾动作，不是自动回收。
     /// </summary>
     public static bool Release(string key)
     {

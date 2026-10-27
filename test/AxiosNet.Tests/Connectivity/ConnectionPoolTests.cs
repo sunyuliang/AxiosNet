@@ -1404,6 +1404,50 @@ public sealed class ConnectionPoolTests
         Assert.Throws<ArgumentException>(() => HttpConnectionPool.Release(key));
     }
 
+    // 与 Release 抢同一个 key：登记与摘除并发时不许抛（落选后不能假定表里还有这一项）。
+    [Fact]
+    public void NamedPool_GetOrCreate_RacingWithRelease_DoesNotThrow()
+    {
+        var key = UniquePoolKey();
+        var failures = new ConcurrentBag<Exception>();
+
+        Parallel.For(0, 32, i =>
+        {
+            try
+            {
+                if (i % 4 == 0)
+                {
+                    HttpConnectionPool.Release(key);
+                }
+                else
+                {
+                    HttpConnectionPool.GetOrCreate(key);
+                }
+            }
+            catch (Exception ex)
+            {
+                failures.Add(ex);
+            }
+        });
+
+        HttpConnectionPool.Release(key);
+        Assert.Empty(failures);
+    }
+
+    // 命名池被 Release 之后，客户端发请求仍然走统一错误模型：ERR_CANCELED，不是裸 ObjectDisposedException。
+    [Fact]
+    public async Task NamedPool_AfterRelease_ClientRequest_ReportsCanceled()
+    {
+        var key = UniquePoolKey();
+        var pool = HttpConnectionPool.GetOrCreate(key);
+        using var client = new AxiosClient(pool: pool);
+
+        HttpConnectionPool.Release(key);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("http://127.0.0.1:9500/x"));
+        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+    }
+
     // key 为 null：ArgumentNullException（与库里其余入口的入参校验同一口径）。
     [Fact]
     public void NamedPool_NullKey_IsRejected()
