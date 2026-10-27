@@ -428,6 +428,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_CANCELED` | `CancellationToken` 取消，或客户端已释放 |
 | `ERR_QUEUE_TIMEOUT` | 并发槽位一直占满，超过 `QueueTimeout`（请求未发出） |
 | `ERR_CIRCUIT_OPEN` | 熔断打开，请求**没有发出**（`RetryAfter` 给建议等待） |
+| `ERR_POOL_EXHAUSTED` | 连接池 origin 基数饱和（全部在途、无可驱逐空闲节点），请求未发出；可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试 |
 | `ERR_INVALID_URL` | URL 非法、相对地址但没有 `BaseAddress`、非 http(s) scheme |
 | `ERR_BAD_OPTION_VALUE` | 选项取值非法（按请求写实例级选项、multipart 头体矛盾、`Params` 是标量、重试 / 熔断配置越界等） |
 
@@ -713,7 +714,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | 自动重定向；`MaxRedirects = 0` 关闭 |
 | `AutomaticDecompression` | `true` | gzip / deflate / br |
 | `EnableMultipleHttp2Connections` | `true` | h2 下允许按 `MaxConnectionsPerServer` 继续加连接 |
-| `MaxEndpointCount` | 1024 | origin 节点上限，满了先驱逐最久未用的空闲节点 |
+| `MaxEndpointCount` | 1024 | origin 节点上限，满了先驱逐最久未用的空闲节点；若全部在途（无可驱逐），新建节点抛 `ERR_POOL_EXHAUSTED`（请求未发出，可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试） |
 | `UseCookies` | `false` | 打开后整个池共用一份 `CookieContainer` |
 | `Proxy` / `Credentials` | `null` | 不设代理时**不使用**系统 / 环境代理；要走系统代理请设 `HttpClient.DefaultProxy` |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | 证书校验、TLS 版本、客户端证书 |

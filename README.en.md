@@ -428,6 +428,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
 | `ERR_QUEUE_TIMEOUT` | Concurrency slots stayed full past `QueueTimeout` (request never sent) |
 | `ERR_CIRCUIT_OPEN` | Circuit is open, request **not sent** (`RetryAfter` suggests how long to wait) |
+| `ERR_POOL_EXHAUSTED` | Pool origin cardinality saturated (all in flight, no evictable idle node); request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry |
 | `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme |
 | `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…) |
 
@@ -714,7 +715,7 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | Auto-redirect; `MaxRedirects = 0` disables |
 | `AutomaticDecompression` | `true` | gzip / deflate / br |
 | `EnableMultipleHttp2Connections` | `true` | Under h2, allow more connections up to `MaxConnectionsPerServer` |
-| `MaxEndpointCount` | 1024 | Origin node cap; evicts the least recently used idle node |
+| `MaxEndpointCount` | 1024 | Origin node cap; evicts the least recently used idle node; if all are in use, creating a new node throws `ERR_POOL_EXHAUSTED` (request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry) |
 | `UseCookies` | `false` | When on, the whole pool shares one `CookieContainer` |
 | `Proxy` / `Credentials` | `null` | With no proxy set, system / env proxies are **not** used; set `HttpClient.DefaultProxy` if you want them |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | Certificate validation, TLS versions, client certificates |

@@ -168,7 +168,7 @@ public sealed class ErrorModelTests
         using var client = new AxiosClient(pool: pool);
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
 
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Equal(AxiosException.ErrPoolExhausted, ex.Code);
         // 请求期从池里抛出的错误同样要指回本次请求的配置，而不是 Config == null
         Assert.NotNull(ex.Config);
         Assert.Empty(server.Received);

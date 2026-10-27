@@ -33,6 +33,14 @@ public sealed class AxiosException : Exception
     /// <summary>熔断打开：请求<b>没有发出</b>（<see cref="AxiosConfig.Circuit"/>）。</summary>
     public const string ErrCircuitOpen = "ERR_CIRCUIT_OPEN";
 
+    /// <summary>
+    /// 连接池 origin 基数饱和（<see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>）：
+    /// 同时「在途」的不同 host:port 数量达上限，且没有可驱逐的空闲节点。请求根本没发出去，
+    /// 与 <see cref="ErrQueueTimeout"/> / <see cref="ErrCircuitOpen"/> 同族——可观测、默认不自动重发、
+    /// 调用方应降扇出 / 调大上限 / 退避后重试。
+    /// </summary>
+    public const string ErrPoolExhausted = "ERR_POOL_EXHAUSTED";
+
     public bool IsAxiosError => true;
 
     public string? Code { get; }
@@ -189,6 +197,26 @@ public sealed class AxiosException : Exception
             null,
             null,
             retryAfter > TimeSpan.Zero ? retryAfter : null);
+    }
+
+    /// <summary>
+    /// 连接池 origin 基数饱和：distinct origin 同时「在途」的数量触顶 <see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>，
+    /// 且没有可驱逐的空闲节点。请求没有发出去；与 <see cref="ErrQueueTimeout"/> / <see cref="ErrCircuitOpen"/> 同族，
+    /// 默认不自动重发。调用方应调大 <c>MaxEndpointCount</c>、用 <c>Limits.MaxConcurrentRequests</c> +
+    /// <c>Limits.QueueTimeout</c> 收扇出、显式 <c>Clear()</c> 回收，或退避后重试。
+    /// </summary>
+    internal static AxiosException PoolExhausted(AxiosConfig? config, HttpRequestMessage? request, int max, Exception? inner = null)
+    {
+        return new AxiosException(
+            $"connection pool origin capacity exhausted (MaxEndpointCount = {max}): no idle node to evict "
+            + "and all nodes are in use. Raise ConnectionPoolOptions.MaxEndpointCount, "
+            + "cap fan-out with Limits.MaxConcurrentRequests / Limits.QueueTimeout, call Clear() to reclaim, "
+            + "or back off and retry on ERR_POOL_EXHAUSTED",
+            ErrPoolExhausted,
+            config,
+            request,
+            null,
+            inner);
     }
 
     /// <summary>等待时长的可读形式：不足 1 秒用毫秒。</summary>

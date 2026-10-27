@@ -329,7 +329,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>手动驱逐空闲超过 IdleHandlerLifetime 的 origin 节点。</summary>
     public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue, AxiosTelemetry.EvictionReasonManual);
 
-    /// <summary>新建节点前的容量检查：达到上限时先驱逐最久未使用的空闲节点，全部在途才拒绝。</summary>
+    /// <summary>新建节点前的容量检查：达到上限时先驱逐最久未使用的空闲节点，全部在途才拒绝（抛 <see cref="AxiosException.ErrPoolExhausted"/>，可观测、默认不自动重发）。</summary>
     private void EnsureCapacity(OriginKey origin, AxiosConfig? config)
     {
         var max = _options.MaxEndpointCount;
@@ -343,10 +343,9 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        throw AxiosException.InvalidOption(
-            $"连接池的 origin 节点数已达上限 {max}，且没有可驱逐的空闲节点（可能全部在途）。"
-            + "可提高 ConnectionPoolOptions.MaxEndpointCount，或显式调用 Clear() 回收。",
-            config);
+        // 运行期资源饱和，按「资源错误」而非「配置错误」报（之前误用 ErrBadOptionValue，会杀掉默认重试）。
+        // 与 ERR_QUEUE_TIMEOUT / ERR_CIRCUIT_OPEN 同哲学：可观测、默认不自动重发、文案引导退避。
+        throw AxiosException.PoolExhausted(config, request: null, max);
     }
 
     /// <summary>驱逐空闲节点；<paramref name="reason"/> 只用于指标标签。</summary>

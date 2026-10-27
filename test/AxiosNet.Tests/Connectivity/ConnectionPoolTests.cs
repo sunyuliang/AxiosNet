@@ -697,7 +697,7 @@ public sealed class ConnectionPoolTests
         await WaitUntilAsync(() => first.Received.Count > 0);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(second.Url + "b"));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Equal(AxiosException.ErrPoolExhausted, ex.Code);
 
         Assert.Equal(200, (await slow).Status);
     }

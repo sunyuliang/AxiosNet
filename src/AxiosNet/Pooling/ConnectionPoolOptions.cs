@@ -46,7 +46,10 @@ public sealed class ConnectionPoolOptions
     /// <summary>HTTP/2 下是否允许同一 origin 打开多条连接（默认 true）；只用 HTTP/1.1 时无影响。</summary>
     public bool EnableMultipleHttp2Connections { get; set; } = true;
 
-    /// <summary>池内 origin 节点数上限，默认 1024；0 或负数不限制（软上限：容量检查与插入非原子）。</summary>
+    /// <summary>
+    /// 池内 origin 节点数上限，默认 1024；0 或负数不限制（软上限：容量检查与插入非原子）。
+    /// 全部在途且没有可驱逐的空闲节点时，新建节点抛 <see cref="AxiosException.ErrPoolExhausted"/>（请求没有发出，默认不自动重发）。
+    /// </summary>
     public int MaxEndpointCount { get; set; } = 1024;
 
     /// <summary>代理；为 null 时不使用系统/环境代理，需要时设为 <see cref="System.Net.Http.HttpClient.DefaultProxy"/>。</summary>
