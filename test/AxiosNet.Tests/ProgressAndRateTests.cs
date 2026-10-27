@@ -163,6 +163,43 @@ public sealed class ProgressAndRateTests
             $"同步读限速未生效：{stopwatch.ElapsedMilliseconds}ms 就读完了 {size} 字节（目标 {rate} B/s）");
     }
 
+    /// <summary>
+    /// 限速计时从「首字节到达」起算：拿到响应后调用方先停一会儿再读，这段停顿不能被当成已消耗的限速预算。
+    /// 旧实现把计量器构造时刻当起点，停顿越久限速越弱（CI 上线程池排队 190ms 时，64KB 只用 62ms 就读完；
+    /// 停顿超过整段应耗时后限速等于没有）。
+    /// </summary>
+    [Fact]
+    public async Task MaxRate_SyncReading_DoesNotCreditIdleBeforeFirstRead()
+    {
+        const int size = 64 * 1024;
+        const long rate = 256 * 1024; // 256 KB/s -> 约 250ms
+
+        await using var server = TestHttpServer.Start(_ => Binary(size));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Stream>(server.Url + "file", c => c.Limits.MaxRate = rate);
+        await using var stream = response.Data!;
+
+        // 模拟「响应已就绪，但调用方隔了一段时间才开始读」。
+        await Task.Delay(190);
+
+        var stopwatch = Stopwatch.StartNew();
+        using var buffer = new MemoryStream();
+        var chunk = new byte[16 * 1024];
+        int read;
+        while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            buffer.Write(chunk, 0, read);
+        }
+
+        stopwatch.Stop();
+
+        Assert.Equal(size, buffer.ToArray().Length);
+        Assert.True(
+            stopwatch.ElapsedMilliseconds >= 120,
+            $"读前停顿抵掉了限速预算：{stopwatch.ElapsedMilliseconds}ms 就读完了 {size} 字节（目标 {rate} B/s）");
+    }
+
     [Fact]
     public async Task MaxRate_ThrottlesUpload()
     {

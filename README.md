@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1193%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1194%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -368,6 +368,7 @@ await http.PostAsync("upload", payload, c =>
 - `MaxContentLength`：普通响应边读边累计越界即中止；`ResponseType.Stream` 先按声明长度预检，再读取时累计。
 - `MaxBodyLength` 只对能算出长度的正文生效（JSON / 表单 / `byte[]` / 可 seek 流）；multipart 不拦截。
 - 负值一律 `ERR_BAD_OPTION_VALUE`；`MaxRate = 0` 等于不限速。
+- `MaxRate` 的计时从**实际传输首字节**起算：拿到响应到开始读之间的空档（线程排队、业务先做别的事）不算已消耗预算，晚读不会让限速变松。
 
 ### 在途并发上限
 
@@ -1094,9 +1095,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1136 | `net8.0` / `net6.0` | 2272 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1137 | `net8.0` / `net6.0` | 2274 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **合计** | **1193** | | **2386** |
+| **合计** | **1194** | | **2388** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

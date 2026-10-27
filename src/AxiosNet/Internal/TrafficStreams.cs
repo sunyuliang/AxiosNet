@@ -22,6 +22,13 @@ internal sealed class TrafficMeter
     /// <summary>本轮起点的时钟快照：速率与限速按本轮增量与本轮耗时算。</summary>
     private TimeSpan _roundStartClock;
 
+    /// <summary>
+    /// 本轮是否已定起点：由首字节到达时惰性确定，而不是计量器构造时。
+    /// 否则「响应已就绪 → 调用方稍后才开始读」的这段间隔会被当成已消耗的限速预算，
+    /// 停顿越久限速越弱（间隔超过整段应耗时后限速等于没有）。
+    /// </summary>
+    private bool _roundStarted;
+
     private long _lastReportMs = -ReportIntervalMs;
     private bool _completed;
 
@@ -34,7 +41,16 @@ internal sealed class TrafficMeter
 
     public long Loaded => _loaded;
 
-    public void Add(int count) => _loaded += count;
+    /// <summary>累计本轮字节；首字节在此定下本轮计时起点（见 <see cref="_roundStarted"/>）。</summary>
+    public void Add(int count)
+    {
+        if (!_roundStarted)
+        {
+            BeginRound();
+        }
+
+        _loaded += count;
+    }
 
     /// <summary>按平均速率反算「当前应耗时 - 实际耗时」；不限速时返回零。</summary>
     public TimeSpan ComputeDelay()
@@ -89,10 +105,17 @@ internal sealed class TrafficMeter
     /// <summary>完成时强制上报一次。</summary>
     public void Complete(bool upload) => Report(force: true, upload);
 
-    /// <summary>开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，累计值与计时器保留。</summary>
+    /// <summary>开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，并把本轮起点推进到此刻。</summary>
     public void Restart()
     {
         _completed = false;
+        BeginRound();
+    }
+
+    /// <summary>把本轮起点钉在此刻：累计值快照 + 时钟快照，同时标记本轮已开始计时。</summary>
+    private void BeginRound()
+    {
+        _roundStarted = true;
         _roundStart = _loaded;
         _roundStartClock = _clock.Elapsed;
     }
