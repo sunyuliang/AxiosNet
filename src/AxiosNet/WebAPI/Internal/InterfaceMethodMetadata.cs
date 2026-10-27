@@ -321,9 +321,20 @@ internal sealed class InterfaceMethodMetadata
 
         if (_isMultipart)
         {
-            if (ResolveMultipartBody(args) is { } form)
+            object? resolved;
+            try
             {
-                config.Data = form;
+                resolved = ResolveMultipartBody(args);
+            }
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+            {
+                // 与请求模型的 ResolveBody 一致：表单装配失败（延迟迭代器抛错等）归 ERR_BAD_REQUEST。
+                throw AxiosException.BadRequestPayload(config, request: null, $"{_interfaceType!.Name}.{_methodName}", ex);
+            }
+
+            if (resolved is not null)
+            {
+                config.Data = resolved;
             }
 
             // 与请求模型一致：multipart 方法默认 content-type，显式配置优先。

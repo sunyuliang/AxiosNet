@@ -129,6 +129,13 @@ public interface IUploadApi
     Task<AxiosResponse<Person>> UploadDefaultAsync(string note, byte[] payload);
 }
 
+public interface IBrokenMultipartApi
+{
+    [Post("upload/broken")]
+    [Multipart]
+    Task<AxiosResponse<Person>> UploadAsync([Part(FileName = "x")] IEnumerable<string> values);
+}
+
 public interface IStreamApi
 {
     [Get("stream/sse")]
@@ -413,6 +420,20 @@ public sealed class ApiInterfaceTests
         Assert.Contains("name=payload; filename=payload", body);
     }
 
+    [Fact]
+    public async Task Multipart_LazyIteratorFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = CreateClient(server);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.Create<IBrokenMultipartApi>().UploadAsync(ThrowingSequence()));
+
+        // 与请求模型的 ResolveBody 一致：装配失败归 ERR_BAD_REQUEST，且一个字节都没发出去。
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Empty(server.Received);
+    }
+
     // ------------------------------------------------------------------
     // 阶段 2：接口级流式
     // ------------------------------------------------------------------
@@ -511,6 +532,12 @@ public sealed class ApiInterfaceTests
         }
 
         return items;
+    }
+
+    private static IEnumerable<string> ThrowingSequence()
+    {
+        yield return "first";
+        throw new InvalidOperationException("boom");
     }
 
     private sealed class CapturingErrorFactory : IApiErrorFactory

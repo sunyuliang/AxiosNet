@@ -13,7 +13,7 @@ public sealed partial class ApiClient
     /// </summary>
     /// <remarks>
     /// 依赖 DispatchProxy（Reflection.Emit）：仅 JIT 可用，Native AOT 下抛 <see cref="PlatformNotSupportedException"/>。
-    /// 接口必须为 public，且每个方法必须返回 <c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>。
+    /// 接口必须为 public，且每个方法必须返回 <c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>（<c>T</c> 为 <c>IAsyncEnumerable&lt;U&gt;</c> 时按流式处理）。
     /// </remarks>
     [RequiresUnreferencedCode("接口级声明通过反射读取接口方法、参数特性与类型；裁剪时需 root 接口及其参数 / 返回类型。")]
     public T Create<T>() where T : class
