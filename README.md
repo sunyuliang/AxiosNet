@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1144%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1162%20passed-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -23,74 +23,16 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 ## 目录
 
-- [支持什么](#支持什么)
-- [安装](#安装)
-- [快速上手](#快速上手)
-- [客户端](#客户端)
-- [请求](#请求)
-  - [方法与 URL](#方法与-url)
-  - [查询参数 params](#查询参数-params)
-  - [请求体 data 与 ContentType](#请求体-data-与-contenttype)
-  - [表单与文件上传](#表单与文件上传)
-  - [响应类型与下载](#响应类型与下载)
-  - [流式响应](#流式响应)
-  - [超时与取消](#超时与取消)
-  - [进度、限速与大小上限](#进度限速与大小上限)
-  - [在途并发上限](#在途并发上限)
-- [错误处理](#错误处理)
-- [拦截器](#拦截器)
-- [数据转换](#数据转换)
-- [序列化](#序列化)
-- [重试](#重试)
-- [熔断](#熔断)
-- [短路响应](#短路响应)
-- [连接池](#连接池)
-  - [HTTP 版本](#http-版本)
-  - [自定义 Handler](#自定义-handler)
-- [可观测性](#可观测性)
-- [声明式 API 客户端](#声明式-api-客户端)
-- [依赖注入](#依赖注入)
-- [配置速查](#配置速查)
-- [与 axios 对照](#与-axios-对照)
-- [示例项目](#示例项目)
-- [运行时与 AOT](#运行时与-aot)
-- [构建与测试](#构建与测试)
-- [项目结构](#项目结构)
-- [License](#license)
+| 分组 | 章节 |
+| --- | --- |
+| 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) |
+| 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [表单与文件上传](#表单与文件上传) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [在途并发上限](#在途并发上限) |
+| 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
+| 弹性 | [重试](#重试) · [熔断](#熔断) · [短路响应](#短路响应) |
+| 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
+| 工程化 | [声明式 API 客户端](#声明式-api-客户端) · [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
 
 ---
-
-## 支持什么
-
-一张表看清全部能力与入口，细节见对应章节。
-
-| 能力 | 一句话 | 怎么做 |
-| --- | --- | --- |
-| 四种调用形态 | 原文 / `JsonElement` / `dynamic` / 强类型 | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
-| 客户端实例 | 一套 baseURL + 超时 + 默认头 | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
-| 只拼 URL | 不发请求，拿最终 URL | `client.GetUri(c => ...)` |
-| 查询参数 | 对象 / 字典 / 集合 / 已编码串 | `c.Params = new { page = 2 }` |
-| 请求体 | 编码只看 `ContentType`，不猜类型 | `c.ContentType = AxiosContentType.FormUrlEncoded` |
-| 表单与上传 | multipart 字段 + 文件，或裸流直传 | `PostFormAsync(...)` / `FormFile` / `Stream` |
-| 响应类型 | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
-| 流式响应 | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
-| 超时与取消 | 全程总预算 + `CancellationToken` | `c.Timeout = ...` / `cancellationToken:` |
-| 进度与限速 | 上传下载进度、字节限速、体积上限 | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
-| 在途并发闸门 | 限制同时发出的请求条数并排队 | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
-| 统一错误模型 | 所有失败都是 `AxiosException`，带稳定 `Code` | `catch (AxiosException ex) { ex.Code }` |
-| 拦截器 | 请求 / 响应双向，可异步 | `client.Interceptors.Request.Use(...)` |
-| 数据转换 | axios 同构的两条 transform 链 | `c.TransformRequest.Add(...)` |
-| 序列化可替换 | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` |
-| 弹性重试 | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
-| 熔断 | 按 host 计数的 Closed/Open/HalfOpen 状态机 | `c.Circuit.Policy = new CircuitBreaker()` |
-| 短路响应 | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
-| 连接池 | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 可共享 |
-| HTTP 版本 | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
-| 自定义 Handler | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
-| 可观测性 | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
-| 声明式客户端 | 用模型 + 特性描述请求 | `[Get("users/{id}")] class X : IApiRequest<User>` |
-| 依赖注入 | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| Native AOT | 已声明 `IsTrimmable`，裁剪 0 警告 | 源生成 `JsonSerializerContext` |
 
 ## 安装
 
@@ -152,6 +94,55 @@ string url = http.GetUri(c =>
 });
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
+
+## 支持什么
+
+按能力分四组，细节见对应章节。
+
+**请求与响应**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| 四种调用形态 | 原文 / `JsonElement` / `dynamic` / 强类型 | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
+| 客户端实例 | 一套 baseURL + 超时 + 默认头 | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
+| 只拼 URL | 不发请求，拿最终 URL | `client.GetUri(c => ...)` |
+| 查询参数 | 对象 / 字典 / 集合 / 已编码串 | `c.Params = new { page = 2 }` |
+| 请求体 | 编码只看 `ContentType`，不猜类型 | `c.ContentType = AxiosContentType.FormUrlEncoded` |
+| 表单与上传 | multipart 字段 + 文件，或裸流直传 | `PostFormAsync(...)` / `FormFile` / `Stream` |
+| 响应类型 | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
+| 流式响应 | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
+| 超时与取消 | 全程总预算 + `CancellationToken` | `c.Timeout = ...` / `cancellationToken:` |
+
+**流量治理**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| 进度与限速 | 上传下载进度、字节限速、体积上限 | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
+| 在途并发闸门 | 限制同时发出的请求条数并排队 | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
+| 弹性重试 | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
+| 熔断 | 按 host 计数的 Closed/Open/HalfOpen 状态机 | `c.Circuit.Policy = new CircuitBreaker()` |
+| 短路响应 | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
+
+**数据与错误**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| 统一错误模型 | 所有失败都是 `AxiosException`，带稳定 `Code` | `catch (AxiosException ex) { ex.Code }` |
+| 拦截器 | 请求 / 响应双向，可异步 | `client.Interceptors.Request.Use(...)` |
+| 数据转换 | axios 同构的两条 transform 链 | `c.TransformRequest.Add(...)` |
+| 序列化可替换 | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` |
+| 可观测性 | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
+
+**连接与工程化**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| 连接池 | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 可共享 |
+| HTTP 版本 | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
+| 自定义 Handler | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
+| 声明式客户端 | 用模型 + 特性描述请求 | `[Get("users/{id}")] class X : IApiRequest<User>` |
+| 依赖注入 | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
+| Native AOT | 已声明 `IsTrimmable`，裁剪 0 警告 | 源生成 `JsonSerializerContext` |
 
 ## 客户端
 
@@ -1053,9 +1044,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1097 | `net8.0` / `net6.0` | 2194 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1115 | `net8.0` / `net6.0` | 2230 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **合计** | **1144** | | **2288** |
+| **合计** | **1162** | | **2324** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定与 DI 注册。
 

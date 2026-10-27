@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1144%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1162%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -23,74 +23,16 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 ## Table of contents
 
-- [What it supports](#what-it-supports)
-- [Install](#install)
-- [Quick start](#quick-start)
-- [Clients](#clients)
-- [Requests](#requests)
-  - [Methods and URLs](#methods-and-urls)
-  - [Query parameters](#query-parameters)
-  - [Body and ContentType](#body-and-contenttype)
-  - [Forms and uploads](#forms-and-uploads)
-  - [Response types and downloads](#response-types-and-downloads)
-  - [Streaming responses](#streaming-responses)
-  - [Timeouts and cancellation](#timeouts-and-cancellation)
-  - [Progress, rate and size limits](#progress-rate-and-size-limits)
-  - [In-flight concurrency cap](#in-flight-concurrency-cap)
-- [Errors](#errors)
-- [Interceptors](#interceptors)
-- [Data transforms](#data-transforms)
-- [Serialization](#serialization)
-- [Retries](#retries)
-- [Circuit breaker](#circuit-breaker)
-- [Short circuit](#short-circuit)
-- [Connection pool](#connection-pool)
-  - [HTTP versions](#http-versions)
-  - [Custom handlers](#custom-handlers)
-- [Observability](#observability)
-- [Declarative API client](#declarative-api-client)
-- [Dependency injection](#dependency-injection)
-- [Configuration reference](#configuration-reference)
-- [axios comparison](#axios-comparison)
-- [Samples](#samples)
-- [Runtime and AOT](#runtime-and-aot)
-- [Build and test](#build-and-test)
-- [Project layout](#project-layout)
-- [License](#license)
+| Group | Sections |
+| --- | --- |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) |
+| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
+| Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
+| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Short circuit](#short-circuit) |
+| Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
+| Engineering | [Declarative API client](#declarative-api-client) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
 ---
-
-## What it supports
-
-Everything it does on one screen; details in the linked sections.
-
-| Capability | What you get | How |
-| --- | --- | --- |
-| Four response shapes | Raw text / `JsonElement` / `dynamic` / strong type | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
-| Client instance | One baseURL + timeout + default headers | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
-| URL only | Build the final URL without sending | `client.GetUri(c => ...)` |
-| Query parameters | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
-| Request body | Encoding decided by `ContentType` alone, never guessed | `c.ContentType = AxiosContentType.FormUrlEncoded` |
-| Forms and uploads | Multipart fields + files, or a raw stream | `PostFormAsync(...)` / `FormFile` / `Stream` |
-| Five response types | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
-| Streaming | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
-| Timeouts and cancellation | Total budget plus `CancellationToken` | `c.Timeout = ...` / `cancellationToken:` |
-| Progress and throttling | Upload/download progress, byte rate cap, size caps | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
-| In-flight gate | Cap concurrent requests and queue the rest | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
-| Unified errors | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
-| Interceptors | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
-| Data transforms | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
-| Swappable serialization | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` |
-| Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
-| Circuit breaker | Per-host Closed/Open/HalfOpen state machine | `c.Circuit.Policy = new CircuitBreaker()` |
-| Short circuit | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
-| Connection pool | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` |
-| HTTP versions | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
-| Custom handlers | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
-| Observability | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
-| Declarative client | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
-| Dependency injection | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| Native AOT | Declared `IsTrimmable`, trims with 0 warnings | Source-generated `JsonSerializerContext` |
 
 ## Install
 
@@ -152,6 +94,55 @@ string url = http.GetUri(c =>
 });
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
+
+## What it supports
+
+Four groups of capabilities; details in the linked sections.
+
+**Requests and responses**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| Four response shapes | Raw text / `JsonElement` / `dynamic` / strong type | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
+| Client instance | One baseURL + timeout + default headers | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
+| URL only | Build the final URL without sending | `client.GetUri(c => ...)` |
+| Query parameters | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
+| Request body | Encoding decided by `ContentType` alone, never guessed | `c.ContentType = AxiosContentType.FormUrlEncoded` |
+| Forms and uploads | Multipart fields + files, or a raw stream | `PostFormAsync(...)` / `FormFile` / `Stream` |
+| Five response types | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
+| Streaming | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
+| Timeouts and cancellation | Total budget plus `CancellationToken` | `c.Timeout = ...` / `cancellationToken:` |
+
+**Traffic control**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| Progress and throttling | Upload/download progress, byte rate cap, size caps | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
+| In-flight gate | Cap concurrent requests and queue the rest | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
+| Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
+| Circuit breaker | Per-host Closed/Open/HalfOpen state machine | `c.Circuit.Policy = new CircuitBreaker()` |
+| Short circuit | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
+
+**Data and errors**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| Unified errors | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
+| Interceptors | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
+| Data transforms | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
+| Swappable serialization | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` |
+| Observability | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
+
+**Transport and engineering**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| Connection pool | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` |
+| HTTP versions | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
+| Custom handlers | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
+| Declarative client | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
+| Dependency injection | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
+| Native AOT | Declared `IsTrimmable`, trims with 0 warnings | Source-generated `JsonSerializerContext` |
 
 ## Clients
 
@@ -1053,9 +1044,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1097 | `net8.0` / `net6.0` | 2194 |
+| `AxiosNet.Tests` (core + declarative) | 1115 | `net8.0` / `net6.0` | 2230 |
 | `AxiosNet.DependencyInjection.Tests` | 47 | `net8.0` / `net6.0` | 94 |
-| **Total** | **1144** | | **2288** |
+| **Total** | **1162** | | **2324** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding and DI registration.
 
