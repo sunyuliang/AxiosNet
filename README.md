@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1391%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.4%25_(branch_89.6%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1402%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.4%25_(branch_89.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -138,7 +138,7 @@ string url = http.GetUri(c =>
 
 | 能力 | 一句话 | 怎么做 |
 | --- | --- | --- |
-| 连接池 | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 可共享 |
+| 连接池 | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 或 `HttpConnectionPool.GetOrCreate("key")` 可共享 |
 | HTTP 版本 | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
 | 自定义 Handler | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
 | 声明式客户端 | 用模型 + 特性描述请求 | `[Get("users/{id}")] class X : IApiRequest<User>` |
@@ -693,6 +693,13 @@ using var payClient2  = Axios.Create(c => c.BaseAddress = "https://pay.example.c
 // 3) 看状态 / 手动驱逐
 ConnectionPoolStatistics stats = sharedPool.GetStatistics();
 sharedPool.EvictIdleEndpoints();
+
+// 4) 命名共享池：按名字取同一条进程级池（options 只在首次创建时生效）
+var named = HttpConnectionPool.GetOrCreate("orders", new ConnectionPoolOptions { MaxConnectionsPerServer = 64 });
+using var a = Axios.Create(c => c.BaseAddress = "https://order.example.com/", pool: HttpConnectionPool.GetOrCreate("orders"));
+using var b = Axios.Create(c => c.BaseAddress = "https://pay.example.com/",   pool: HttpConnectionPool.GetOrCreate("orders"));
+
+HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名再取会新建一条
 ```
 
 | 选项 | 默认 | 说明 |
@@ -714,6 +721,8 @@ sharedPool.EvictIdleEndpoints();
 
 - `Dispose()` 是优雅关闭：空闲节点立即释放，有在途请求的节点等租约归还后回收；`Clear()` 立即释放全部节点（会打断在途）。
 - DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；服务发现用 `HandlerFactory` + `ctx.CreateDefaultHandler()` 设 `ConnectCallback`。
+- **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
+- 想知道「池是不是被建太多了」看指标 `axiosnet.client.pool.active_pools`（存活池数）与 `.shared_pools`（命名池条目数）。
 
 ### HTTP 版本
 
@@ -816,10 +825,13 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.pool.endpoints.created` | `Counter<long>` | `{endpoint}` | server.address / server.port |
 | `axiosnet.client.pool.endpoints.evicted` | `Counter<long>` | `{endpoint}` | server.address / server.port / `axiosnet.pool.eviction.reason` |
 | `axiosnet.client.pool.active_leases` | `ObservableGauge<long>` | `{lease}` | 无 |
+| `axiosnet.client.pool.active_pools` | `ObservableGauge<long>` | `{pool}` | 无 |
+| `axiosnet.client.pool.shared_pools` | `ObservableGauge<long>` | `{pool}` | 无 |
 
 - 指标只用低基数标签；URL 路径只进 span。
 - `request.duration` 是逻辑请求耗时（含重试与退避）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Telemetry.Enabled` 影响。
+- `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
 
 **Events**（`DiagnosticListener` 名 `AxiosNet.DiagnosticListener`）：`AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`，载荷是公开类型（`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`）。
 
@@ -1046,7 +1058,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 43 项：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 44 项：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1054,7 +1066,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
-- **核心 29 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应。
+- **核心 30 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、命名共享池。
 - **声明式 14 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式。
 
 另有两个示例：
@@ -1102,13 +1114,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1334 | `net8.0` / `net6.0` | 2668 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1345 | `net8.0` / `net6.0` | 2690 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **合计** | **1391** | | **2782** |
+| **合计** | **1402** | | **2804** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.4%**、分支覆盖率 **89.6%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`）。
+行覆盖率 **92.4%**、分支覆盖率 **89.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1130,7 +1142,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 | `Resilience/` | 重试策略与计时、熔断状态机、短路响应 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
 | `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse` |
-| `Connectivity/` | 连接池、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
+| `Connectivity/` | 连接池（含命名共享池）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener 三路遥测 |
 | `Errors/` | 错误模型、错误码、`ToJson` 快照 |
 | `Regression/` | 分配护栏（独占集合 + 精确计数，进程级 / 线程级两种口径）、并发吞吐 |
@@ -1187,7 +1199,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ WebAPI/                      # 声明式 API 客户端（模型 / 接口）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（43 项）/ DI / Aot
+├─ samples/                           # Simple（44 项）/ DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/

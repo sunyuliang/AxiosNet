@@ -54,6 +54,12 @@ public static class AxiosTelemetry
     /// <summary>指标名：当前活跃租约数（ObservableGauge），正文下载期间仍然计入。</summary>
     public const string ActiveLeasesInstrumentName = "axiosnet.client.pool.active_leases";
 
+    /// <summary>指标名：当前存活（未 <c>Dispose</c>）的连接池数（ObservableGauge）。</summary>
+    public const string ActivePoolsInstrumentName = "axiosnet.client.pool.active_pools";
+
+    /// <summary>指标名：命名共享池表里的条目数（ObservableGauge），即 <see cref="Pooling.HttpConnectionPool"/> 的 <c>SharedCount</c>。</summary>
+    public const string SharedPoolsInstrumentName = "axiosnet.client.pool.shared_pools";
+
     // 驱逐原因：指标标签的取值，属对外契约（后端按它分面板）。
     internal const string EvictionReasonIdle = "idle";
     internal const string EvictionReasonCapacity = "capacity";
@@ -100,6 +106,9 @@ public static class AxiosTelemetry
     /// <summary>活跃租约数（全进程，跨所有池）：正文下载期间仍然计入。</summary>
     private static long _activeLeases;
 
+    /// <summary>存活池数（全进程）：建池 +1、<c>Dispose</c> -1，用来发现「池被建了太多」。</summary>
+    private static long _livePools;
+
     static AxiosTelemetry()
     {
         // 版本跟着程序集走：后端据此区分同一个源的不同版本。
@@ -124,6 +133,12 @@ public static class AxiosTelemetry
 
         // 与在途请求数同一手法：计的是持有租约的请求，含正文还没读完的流式响应。
         meter.CreateObservableGauge(ActiveLeasesInstrumentName, () => Volatile.Read(ref _activeLeases), unit: "{lease}", description: "当前持有 origin 节点租约的请求数（含正文下载中的流式响应）。");
+
+        // 池的个数而不是池里的连接数：这条水位上涨 = 有地方在反复建池（典型是「按请求 new 客户端」）。
+        meter.CreateObservableGauge(ActivePoolsInstrumentName, () => Volatile.Read(ref _livePools), unit: "{pool}", description: "当前存活（未 Dispose）的连接池数；持续增长说明有代码在反复建池。");
+
+        // 条目数是 int（字典 Count），统一抬成 long：与其余水位的观测类型一致。
+        meter.CreateObservableGauge(SharedPoolsInstrumentName, () => (long)Pooling.HttpConnectionPool.SharedCount, unit: "{pool}", description: "命名共享池表（HttpConnectionPool.GetOrCreate）里的条目数。");
     }
 
     /// <summary>单调时钟时间戳（配合 <see cref="ElapsedSeconds"/> 算耗时，不受系统时间调整影响）。</summary>
@@ -147,6 +162,12 @@ public static class AxiosTelemetry
 
     /// <summary>租约归还：活跃租约 -1。</summary>
     internal static void ExitLease() => Interlocked.Decrement(ref _activeLeases);
+
+    /// <summary>建成一条池：存活池数 +1（与 <see cref="ExitPool"/> 必须成对，池的 <c>Dispose</c> 幂等）。</summary>
+    internal static void EnterPool() => Interlocked.Increment(ref _livePools);
+
+    /// <summary>池被释放：存活池数 -1。</summary>
+    internal static void ExitPool() => Interlocked.Decrement(ref _livePools);
 
     /// <summary>
     /// 一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），节点是新建时再记一条

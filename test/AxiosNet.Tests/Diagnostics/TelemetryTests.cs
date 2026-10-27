@@ -562,7 +562,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(7, instruments.Count);   // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(9, instruments.Count);   // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -597,6 +597,76 @@ public sealed class TelemetryTests
         var activeLeases = Assert.IsType<ObservableGauge<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.ActiveLeasesInstrumentName));
         Assert.Equal("{lease}", activeLeases.Unit);
+
+        // 池的个数（不是池里的连接数）：这条水位上涨 = 有代码在反复建池
+        var activePools = Assert.IsType<ObservableGauge<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.ActivePoolsInstrumentName));
+        Assert.Equal("{pool}", activePools.Unit);
+
+        var sharedPools = Assert.IsType<ObservableGauge<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.SharedPoolsInstrumentName));
+        Assert.Equal("{pool}", sharedPools.Unit);
+    }
+
+    // 存活池数是进程级水位（无标签）：只钉方向——自己这批池被算进去、释放后掉下来；
+    // 不钉绝对值（并行集合此刻也可能在建池）。这条指标存在的意义就是让「反复建池」能在面板上看见。
+    [Fact]
+    public void Metrics_ActivePools_TracksLivePools()
+    {
+        var observed = new List<long>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Name == AxiosTelemetry.ActivePoolsInstrumentName)
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            lock (observed)
+            {
+                observed.Add(value);
+            }
+        });
+        listener.Start();
+
+        long Sample()
+        {
+            lock (observed)
+            {
+                observed.Clear();
+            }
+
+            listener.RecordObservableInstruments();
+
+            lock (observed)
+            {
+                return observed.Count == 0 ? 0 : observed[^1];
+            }
+        }
+
+        var before = Sample();
+
+        // 不建后台定时器：这条用例只验计数，64 条池足够压过并行集合的噪声
+        var pools = Enumerable.Range(0, 64)
+            .Select(_ => new HttpConnectionPool(new ConnectionPoolOptions { EvictionInterval = TimeSpan.Zero }))
+            .ToArray();
+
+        var during = Sample();
+        Assert.True(during >= before + pools.Length, $"存活池数没计入新建的池：{before} -> {during}");
+
+        foreach (var pool in pools)
+        {
+            pool.Dispose();
+        }
+
+        var after = Sample();
+
+        // 留一半余量给并行集合：只要求「自己这批的份量确实掉下去了」
+        Assert.True(after <= during - (pools.Length / 2), $"释放后存活池数没掉下来：{during} -> {after}");
     }
 
     [Fact]

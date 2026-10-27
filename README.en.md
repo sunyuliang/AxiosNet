@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1391%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.4%25_(branch_89.6%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1402%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.4%25_(branch_89.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -138,7 +138,7 @@ Four groups of capabilities; details in the linked sections.
 
 | Capability | What you get | How |
 | --- | --- | --- |
-| Connection pool | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` |
+| Connection pool | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` or `HttpConnectionPool.GetOrCreate("key")` |
 | HTTP versions | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
 | Custom handlers | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
 | Declarative client | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
@@ -693,6 +693,14 @@ using var payClient2  = Axios.Create(c => c.BaseAddress = "https://pay.example.c
 // 3) Inspect / evict
 ConnectionPoolStatistics stats = sharedPool.GetStatistics();
 sharedPool.EvictIdleEndpoints();
+
+// 4) Named shared pool: the same name always yields the same process-wide pool
+//    (options only apply the first time the pool is created)
+var named = HttpConnectionPool.GetOrCreate("orders", new ConnectionPoolOptions { MaxConnectionsPerServer = 64 });
+using var a = Axios.Create(c => c.BaseAddress = "https://order.example.com/", pool: HttpConnectionPool.GetOrCreate("orders"));
+using var b = Axios.Create(c => c.BaseAddress = "https://pay.example.com/",   pool: HttpConnectionPool.GetOrCreate("orders"));
+
+HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the next call builds a new one
 ```
 
 | Option | Default | Notes |
@@ -714,6 +722,8 @@ sharedPool.EvictIdleEndpoints();
 
 - `Dispose()` is a graceful shutdown: idle nodes go immediately, nodes with in-flight requests are reclaimed once leases return. `Clear()` drops every node now (interrupting in-flight requests).
 - How fast DNS changes converge is governed by `PooledConnectionLifetime`; for service discovery use `HandlerFactory` + `ctx.CreateDefaultHandler()` with a `ConnectCallback`.
+- **Named shared pools** (usage 4) cover "several clients want to reuse connections without passing a pool object around". The key is supplied by the caller — there is **no options fingerprint**: reference members such as `HandlerFactory` / `Proxy` / `Credentials` / the certificate callbacks have no reliable structural equality, so two "identical looking" configurations throw instead of silently sharing one pool. Three rules: the same name returns the same pool; `options` only apply on first creation (passing a **different** configuration later throws `ERR_BAD_OPTION_VALUE` rather than being silently ignored); pools in the registry are owned by nobody — disposing a client does not close them, `Release(key)` does.
+- To see whether pools are being built too often, watch `axiosnet.client.pool.active_pools` (live pools) and `.shared_pools` (named registry entries).
 
 ### HTTP versions
 
@@ -816,10 +826,13 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.pool.endpoints.created` | `Counter<long>` | `{endpoint}` | server.address / server.port |
 | `axiosnet.client.pool.endpoints.evicted` | `Counter<long>` | `{endpoint}` | server.address / server.port / `axiosnet.pool.eviction.reason` |
 | `axiosnet.client.pool.active_leases` | `ObservableGauge<long>` | `{lease}` | none |
+| `axiosnet.client.pool.active_pools` | `ObservableGauge<long>` | `{pool}` | none |
+| `axiosnet.client.pool.shared_pools` | `ObservableGauge<long>` | `{pool}` | none |
 
 - Metrics only carry low-cardinality tags; URL paths live in spans only.
 - `request.duration` is the logical request duration (including retries and backoff); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
 - Pool metrics describe the pool as a resource and are unaffected by `Telemetry.Enabled`.
+- `pool.active_pools` counts live pools (+1 on creation, -1 on `Dispose`) and `pool.shared_pools` counts entries in the named registry: a rising `active_pools` means some code keeps building pools — typically a client per request.
 
 **Events** (`DiagnosticListener` named `AxiosNet.DiagnosticListener`): `AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`, with public payload types (`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`).
 
@@ -1046,7 +1059,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 43 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 44 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1054,7 +1067,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **29 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit.
+- **30 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool.
 - **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
@@ -1102,13 +1115,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1334 | `net8.0` / `net6.0` | 2668 |
+| `AxiosNet.Tests` (core + declarative) | 1345 | `net8.0` / `net6.0` | 2690 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **Total** | **1391** | | **2782** |
+| **Total** | **1402** | | **2804** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **92.4%**, branch coverage **89.6%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`).
+Line coverage **92.4%**, branch coverage **89.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`).
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1130,7 +1143,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Resilience/` | Retry policies and timing, circuit-breaker state machine, short circuits |
 | `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
 | `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse` |
-| `Connectivity/` | Connection pool, handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
+| `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry |
 | `Errors/` | Error model, error codes, `ToJson` snapshot |
 | `Regression/` | Allocation guards (isolated collection + precise counting, process- or thread-wide), concurrent throughput |
@@ -1187,7 +1200,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (43 items) / DI / Aot
+├─ samples/                           # Simple (44 items) / DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/

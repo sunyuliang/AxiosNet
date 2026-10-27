@@ -1269,6 +1269,169 @@ public sealed class ConnectionPoolTests
             }
         })).ToArray();
 
+    // ------------------------------------------------------------------
+    // 命名共享池（进程级表：key 由调用方给，不做配置指纹）
+    // ------------------------------------------------------------------
+
+    /// <summary>用例独占的池名：表是进程级的，用随机 key 避免与并行用例互相干扰。</summary>
+    private static string UniquePoolKey() => "test-pool-" + Guid.NewGuid().ToString("N");
+
+    // 同一 key 取两次是同一条池（命名共享的本意）。
+    [Fact]
+    public void NamedPool_GetOrCreate_SameKey_ReturnsSameInstance()
+    {
+        var key = UniquePoolKey();
+
+        var first = HttpConnectionPool.GetOrCreate(key);
+        var second = HttpConnectionPool.GetOrCreate(key);
+
+        try
+        {
+            Assert.Same(first, second);
+            Assert.True(HttpConnectionPool.TryGet(key, out var looked));
+            Assert.Same(first, looked);
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
+    // 只取池（不传 options）是幂等的：重复传一份等价配置同样放行。
+    [Fact]
+    public void NamedPool_GetOrCreate_EquivalentOptions_IsIdempotent()
+    {
+        var key = UniquePoolKey();
+        var options = new ConnectionPoolOptions { MaxConnectionsPerServer = 8, EvictionInterval = TimeSpan.Zero };
+
+        var first = HttpConnectionPool.GetOrCreate(key, options);
+        var second = HttpConnectionPool.GetOrCreate(key, options);
+
+        try
+        {
+            Assert.Same(first, second);
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
+    // 同一 key 上传了不同配置：明确报错，不静默忽略第二次的配置。
+    [Fact]
+    public void NamedPool_GetOrCreate_ConflictingOptions_ThrowsAxiosException()
+    {
+        var key = UniquePoolKey();
+        var first = HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { MaxConnectionsPerServer = 8 });
+
+        try
+        {
+            var ex = Assert.Throws<AxiosException>(() =>
+                HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { MaxConnectionsPerServer = 16 }));
+
+            Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+            Assert.Contains(key, ex.Message, StringComparison.Ordinal);
+            Assert.Same(first, HttpConnectionPool.GetOrCreate(key));   // 报错后原池仍在
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
+    // 委托 / 代理这类引用成员没有可靠的结构等价：两份「长得一样」的配置也不共用一条池。
+    [Fact]
+    public void NamedPool_GetOrCreate_DistinctHandlerFactoryInstances_Conflict()
+    {
+        var key = UniquePoolKey();
+        HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { HandlerFactory = _ => new HttpClientHandler() });
+
+        try
+        {
+            Assert.Throws<AxiosException>(() =>
+                HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { HandlerFactory = _ => new HttpClientHandler() }));
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
+    // Release 摘除并优雅释放：此后取不到，旧引用上的租约也报 ObjectDisposedException。
+    [Fact]
+    public void NamedPool_Release_RemovesAndDisposesPool()
+    {
+        var key = UniquePoolKey();
+        var pool = HttpConnectionPool.GetOrCreate(key);
+
+        Assert.True(HttpConnectionPool.Release(key));
+        Assert.False(HttpConnectionPool.Release(key));            // 重复释放：不命中
+        Assert.False(HttpConnectionPool.TryGet(key, out _));
+        Assert.Throws<ObjectDisposedException>(() => pool.Lease(new Uri("http://127.0.0.1:9500/x")));
+    }
+
+    // 命名池不归客户端所有：客户端 Dispose 之后池照样能用（与显式传的共享池同一语义）。
+    [Fact]
+    public void NamedPool_IsNotOwnedByClient()
+    {
+        var key = UniquePoolKey();
+        var pool = HttpConnectionPool.GetOrCreate(key);
+
+        try
+        {
+            var client = new AxiosClient(pool: pool);
+            client.Dispose();
+
+            using (pool.Lease(new Uri("http://127.0.0.1:9500/x")))
+            {
+            }
+
+            Assert.Equal(1, pool.GetStatistics().EndpointCount);   // 客户端释放后池照样能建节点
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
+    // key 为空白：直接拒绝（空 key 会让互不相干的调用方意外共享同一条池）。
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void NamedPool_BlankKey_IsRejected(string key)
+    {
+        Assert.Throws<ArgumentException>(() => HttpConnectionPool.GetOrCreate(key));
+        Assert.Throws<ArgumentException>(() => HttpConnectionPool.Release(key));
+    }
+
+    // key 为 null：ArgumentNullException（与库里其余入口的入参校验同一口径）。
+    [Fact]
+    public void NamedPool_NullKey_IsRejected()
+    {
+        Assert.Throws<ArgumentNullException>(() => HttpConnectionPool.GetOrCreate(null!));
+        Assert.Throws<ArgumentNullException>(() => HttpConnectionPool.Release(null!));
+    }
+
+    // 并发抢占同一个新 key：只能有一条池活下来（落选的那条必须被释放，否则后台定时器会永久持有它）。
+    [Fact]
+    public void NamedPool_ConcurrentGetOrCreate_YieldsOnePool()
+    {
+        var key = UniquePoolKey();
+        var results = new HttpConnectionPool[16];
+
+        try
+        {
+            Parallel.For(0, results.Length, i => results[i] = HttpConnectionPool.GetOrCreate(key));
+
+            Assert.All(results, pool => Assert.Same(results[0], pool));
+            Assert.Same(results[0], HttpConnectionPool.GetOrCreate(key));
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
     /// <summary>记录 Handler 创建/释放次数：用于断言驱逐与关闭「不漏释放、不重复释放」。</summary>
     private sealed class HandlerLedger
     {

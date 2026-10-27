@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
@@ -9,6 +10,12 @@ namespace AxiosNet.Pooling;
 /// </summary>
 public sealed class HttpConnectionPool : IDisposable
 {
+    /// <summary>
+    /// 进程级命名池表：key 由调用方给（不做配置指纹），生命周期到 <see cref="Release"/> 为止。
+    /// 表里的池不归任何 <see cref="AxiosClient"/> 所有——客户端释放不会关掉它。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, HttpConnectionPool> SharedPools = new(StringComparer.Ordinal);
+
     private readonly ConcurrentDictionary<OriginKey, PooledEndpoint> _endpoints = new();
     private readonly ConnectionPoolOptions _options;
     private readonly CookieContainer? _cookies;
@@ -29,6 +36,9 @@ public sealed class HttpConnectionPool : IDisposable
         {
             _evictionTimer = new Timer(EvictIdleEndpoints, state: null, dueTime: _options.EvictionInterval, period: _options.EvictionInterval);
         }
+
+        // 存活池数（进程级水位）：先校验后计数，非法选项不该留下半条池。
+        AxiosTelemetry.EnterPool();
     }
 
     /// <summary>
@@ -91,6 +101,126 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>是否为非法的负时长（<see cref="Timeout.InfiniteTimeSpan"/> 表示「不限」，放行）。</summary>
     private static bool IsNegativeLimit(TimeSpan value)
         => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
+
+    // ---- 命名共享池 ----
+
+    /// <summary>命名池表里的条目数（<see cref="GetOrCreate"/> 建出来、还没被 <see cref="Release"/> 的池）。</summary>
+    public static int SharedCount => SharedPools.Count;
+
+    /// <summary>
+    /// 按 key 取进程级共享池：没有就建一条登记进去，有就直接返回同一条。
+    /// 等价于「给这条池起个名字」，用来替代随手 <c>static readonly</c>，也省掉按请求建池的坑
+    /// （见 <see cref="AxiosClient"/> 文档：一个站点一个实例，或共享同一条池）。
+    /// </summary>
+    /// <param name="key">池的名字（区分大小写、按原文比较）；同名的池共享 Handler 与连接。</param>
+    /// <param name="options">
+    /// 只在首次创建时生效。只想取池就传 <c>null</c>；同一 key 上再传一份**不同**的配置会抛
+    /// <c>ERR_BAD_OPTION_VALUE</c>（引用成员按同一实例判定），避免「第二次传的配置被静默忽略」。
+    /// </param>
+    public static HttpConnectionPool GetOrCreate(string key, ConnectionPoolOptions? options = null)
+    {
+        ValidateSharedKey(key);
+
+        if (SharedPools.TryGetValue(key, out var existing))
+        {
+            EnsureSameOptions(key, existing, options);
+            return existing;
+        }
+
+        // 先建后登记：选项合法性由构造函数统一收口（非法时抛 ERR_BAD_OPTION_VALUE）。
+        var created = new HttpConnectionPool(options);
+
+        if (!SharedPools.TryAdd(key, created))
+        {
+            // 竞态落选：自己这条必须释放（不释放会被后台驱逐定时器永久持有），再用赢家那条复核配置。
+            created.Dispose();
+            var winner = SharedPools[key];
+            EnsureSameOptions(key, winner, options);
+            return winner;
+        }
+
+        return created;
+    }
+
+    /// <summary>按 key 取已登记的池；没有则 <c>false</c>（不创建）。</summary>
+    public static bool TryGet(string key, [NotNullWhen(true)] out HttpConnectionPool? pool)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            pool = null;
+            return false;
+        }
+
+        return SharedPools.TryGetValue(key, out pool);
+    }
+
+    /// <summary>
+    /// 摘除命名池并优雅释放它（空闲节点立即释放，在途请求的节点等租约归还）；返回是否命中。
+    /// 仍在用这条池的客户端此后发请求会抛 <see cref="ObjectDisposedException"/>——它与自己
+    /// <c>Dispose</c> 掉一条共享池的后果相同，属显式的收尾动作，不是自动回收。
+    /// </summary>
+    public static bool Release(string key)
+    {
+        ValidateSharedKey(key);
+
+        if (!SharedPools.TryRemove(key, out var pool))
+        {
+            return false;
+        }
+
+        pool.Dispose();
+        return true;
+    }
+
+    private static void ValidateSharedKey(string key)
+    {
+        if (key is null)
+        {
+            throw new ArgumentNullException(nameof(key), "命名池的 key 不能为 null。");
+        }
+
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            throw new ArgumentException("命名池的 key 不能为空或空白。", nameof(key));
+        }
+    }
+
+    /// <summary>同一 key 上重复传 options 时的校验：一致放行（幂等初始化），不一致明确报错。</summary>
+    private static void EnsureSameOptions(string key, HttpConnectionPool pool, ConnectionPoolOptions? options)
+    {
+        if (options is null || SameOptions(pool._options, options))
+        {
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"命名池 '{key}' 已用另一份 ConnectionPoolOptions 创建：同一 key 上重复取池请不要传 options，"
+            + "或让两次传入的配置完全一致（HandlerFactory / Proxy / Credentials / 证书回调等引用成员按同一实例判定）。");
+    }
+
+    /// <summary>
+    /// 两份选项是否等价：标量逐项比，引用成员（委托 / 代理 / 凭据）按同一实例判——
+    /// 它们没有可靠的结构等价（两个长得一样的 lambda 也可能行为不同），宁可报错也不静默共用一条池。
+    /// </summary>
+    private static bool SameOptions(ConnectionPoolOptions a, ConnectionPoolOptions b)
+        => a.MaxConnectionsPerServer == b.MaxConnectionsPerServer
+           && a.PooledConnectionLifetime == b.PooledConnectionLifetime
+           && a.PooledConnectionIdleTimeout == b.PooledConnectionIdleTimeout
+           && a.ConnectTimeout == b.ConnectTimeout
+           && a.IdleHandlerLifetime == b.IdleHandlerLifetime
+           && a.EvictionInterval == b.EvictionInterval
+           && a.AllowAutoRedirect == b.AllowAutoRedirect
+           && a.MaxAutomaticRedirections == b.MaxAutomaticRedirections
+           && a.UseCookies == b.UseCookies
+           && a.AutomaticDecompression == b.AutomaticDecompression
+           && a.EnableMultipleHttp2Connections == b.EnableMultipleHttp2Connections
+           && a.MaxEndpointCount == b.MaxEndpointCount
+           && a.EnabledSslProtocols == b.EnabledSslProtocols
+           && ReferenceEquals(a.Proxy, b.Proxy)
+           && ReferenceEquals(a.Credentials, b.Credentials)
+           && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
+           && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
+           && ReferenceEquals(a.HandlerFactory, b.HandlerFactory);
 
     /// <summary>池实际生效的选项（副本；修改它不会影响池）。</summary>
     public ConnectionPoolOptions Options => _options.Clone();
@@ -389,6 +519,9 @@ public sealed class HttpConnectionPool : IDisposable
         {
             return;
         }
+
+        // 与存活池数成对：Dispose 幂等（第二次进来上面就返回了），不会重复减。
+        AxiosTelemetry.ExitPool();
 
         _evictionTimer?.Dispose();
 
