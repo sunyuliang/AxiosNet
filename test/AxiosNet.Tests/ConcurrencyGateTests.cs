@@ -11,7 +11,13 @@ namespace AxiosNet.Tests;
 /// 排队超时给 <c>ERR_QUEUE_TIMEOUT</c>（不是 <c>ECONNABORTED</c>）、排队时间不计入 <c>Timeout</c>、
 /// 流式响应的槽位占到正文流释放为止、按请求写不同上限报 <c>ERR_BAD_OPTION_VALUE</c>。
 /// </para>
+/// <para>
+/// 整类放进 <see cref="TimingCollection"/>：这里的用例靠「占位时长 vs 超时预算」的算术区分口径
+/// （例如占位 300ms、<c>Timeout</c> 200ms），排队与在途请求本身就会占用线程池；
+/// 与其它集合并行跑时调度停顿会让正确实现撞上 200ms 预算而假红。
+/// </para>
 /// </summary>
+[Collection(TimingCollection.Name)]
 public sealed class ConcurrencyGateTests
 {
     /// <summary>让服务端每个请求都停一会儿：没有闸门时并发数会明显超过 1。</summary>

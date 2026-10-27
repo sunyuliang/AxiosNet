@@ -5,7 +5,12 @@ namespace AxiosNet.Tests;
 
 /// <summary>
 /// P1：上传/下载进度回调与限速（maxRate）。
+/// <para>
+/// 整类放进 <see cref="TimingCollection"/>：限速用例断言的是真实耗时，同步读还会阻塞线程池线程
+/// （<see cref="Internal.BlockingWait"/>）；与其它集合并行跑时既会拖慢别人，也会被别人拖慢。
+/// </para>
 /// </summary>
+[Collection(TimingCollection.Name)]
 public sealed class ProgressAndRateTests
 {
     private static TestResponse Binary(int size)
