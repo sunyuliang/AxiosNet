@@ -3,9 +3,7 @@ using AxiosNet.Pooling;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 12. 网络连接池：TCP 连接复用、并发上限、跨实例共享。
-/// </summary>
+/// <summary>12. 网络连接池：TCP 连接复用、并发上限、跨实例共享。</summary>
 public sealed class ConnectionPoolExample : IExample
 {
     public int Number => 12;
@@ -16,8 +14,7 @@ public sealed class ConnectionPoolExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 本示例的客户端与池故意每次运行新建：三个场景都要用「全新池」数连接数与峰值并发，
-        // 静态复用会让第二次运行的统计从上一轮的热连接开始，期望值不再成立
+        // 客户端与池每次运行新建：每个场景都要用全新池来数连接数与峰值并发
 
         var baseUrl = context.BaseUrl;
         var server = context.Server;

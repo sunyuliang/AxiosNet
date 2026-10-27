@@ -3,9 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 14. 文件下载：流式落盘（内存占用恒定）、一次性字节，以及用 Content-Disposition 取文件名。
-/// </summary>
+/// <summary>14. 文件下载：流式落盘、一次性字节，以及用 Content-Disposition 取文件名。</summary>
 public sealed class DownloadExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>

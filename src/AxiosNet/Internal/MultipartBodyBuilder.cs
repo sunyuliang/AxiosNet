@@ -5,13 +5,8 @@ using System.Text.Json;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// <c>multipart/form-data</c> 通道：标量 / 嵌套对象 → 普通字段，
-/// <see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件；
-/// 数组 / 集合展开为同名重复部件。
-/// <para>
-/// 部件声明覆盖（字段名 / 文件名 / Content-Type，由声明式层随值传入）在文件部件装配处
-/// 一次性应用：包装、校验与所有权登记都只有这一处。
-/// </para>
+/// <c>multipart/form-data</c> 通道：标量 / 嵌套对象 → 普通字段，<see cref="FormFile"/> / Stream / byte[] / HttpContent → 文件部件，
+/// 数组 / 集合展开为同名重复部件；部件声明覆盖在文件部件装配处一次性应用。
 /// </summary>
 internal static class MultipartBodyBuilder
 {
@@ -23,10 +18,8 @@ internal static class MultipartBodyBuilder
         Encoding encoding,
         AxiosConfig config)
     {
-        // 用户显式声明 boundary 时沿用（部分服务端会校验），否则由 MultipartFormDataContent 生成随机边界。
-        // 构造放进 try：BCL 对非法 boundary（超长 / 含限定字符集之外的字符）抛 ArgumentException，
-        // 那与「字段名非法」同属调用方选项错误，统一成带配置上下文的 ERR_BAD_OPTION_VALUE
-        // （放在 try 外会被 AxiosClient 收成 ERR_BAD_REQUEST「请求体序列化失败」，分类错位）。
+        // 显式声明 boundary 时沿用（部分服务端会校验），否则由 MultipartFormDataContent 生成随机边界。
+        // 构造放进 try：非法 boundary 抛 ArgumentException，需归成带配置上下文的 ERR_BAD_OPTION_VALUE。
         MultipartFormDataContent content;
         try
         {
@@ -39,9 +32,7 @@ internal static class MultipartBodyBuilder
         {
             throw AxiosException.InvalidOption(
                 $"multipart boundary 非法：{ex.Message}"
-                + "（RFC 2046：boundary 不超过 70 字符，且只含限定字符集；不指定时由库自动生成）。",
-                config,
-                ex);
+                + "（RFC 2046：boundary 不超过 70 字符，且只含限定字符集；不指定时由库自动生成）。", config, ex);
         }
 
         try
@@ -54,11 +45,10 @@ internal static class MultipartBodyBuilder
             // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
             content.Dispose();
 
-            // 只释放容器覆盖不到「还没轮到装配」的那些：第 N 个部件失败时，第 N+1 个裸 Stream
-            // 还没被包成 StreamContent，但它同样已经交过所有权（README：装配失败即释放已交进来的流）。
+            // 再释放容器覆盖不到的「还没轮到装配」的裸流（它们同样已交过所有权）。
             MultipartOwnership.DisposeOwned(data);
 
-            // 字段名 / 声明值非法属于调用方选项错误：换成带配置上下文的 ERR_BAD_OPTION_VALUE。
+            // 字段名 / 声明值非法属于调用方选项错误，换成带配置上下文的 ERR_BAD_OPTION_VALUE。
             if (ex is InvalidMultipartOptionException invalid)
             {
                 throw AxiosException.InvalidOption(invalid.Message, config, invalid);
@@ -87,8 +77,7 @@ internal static class MultipartBodyBuilder
         HashSet<object>? visited,
         PartOverride partOverride = default)
     {
-        // 表单字段名选择器由 config 决定（含实例默认值），递归每一层都从同一份配置读取。
-        // 带上 config 而不是只带选择器：失败路径要用它给异常补请求上下文。
+        // 字段名选择器从 config 读取（含实例默认值）；带 config 是为了失败路径能补请求上下文。
         var nameSelector = config.SerializationOrNull?.FormFieldNameSelector;
         switch (value)
         {
@@ -96,8 +85,7 @@ internal static class MultipartBodyBuilder
                 return;
 
             case FormFile file:
-                // 值的自带声明（FieldName / FileName / ContentType）是默认值，声明覆盖在装配处压过它；
-                // 值的流所有权随即转给 StreamContent，失败路径由 AddFilePart 就地释放
+                // 值自带的声明是默认值，声明覆盖压过它；流所有权随即转给 StreamContent。
                 AddFilePart(
                     content,
                     name,
@@ -111,8 +99,7 @@ internal static class MultipartBodyBuilder
 
             case HttpContent part:
             {
-                // 调用方自带部件内容：Add 在部件已带 Content-Disposition 时完全不碰它，
-                // 因此这里只补缺失的 Name，其余（尤其 filename）原样保留。
+                // 调用方自带部件：只补缺失的 Name，其余（尤其 filename）原样保留。
                 string field;
                 try
                 {
@@ -120,7 +107,7 @@ internal static class MultipartBodyBuilder
                 }
                 catch
                 {
-                    // 同上：交进来的内容按「随请求释放」处理，装配失败不能把释放责任退回调用方
+                    // 交进来的内容按「随请求释放」处理，装配失败不能把释放责任退回调用方。
                     part.Dispose();
                     throw;
                 }
@@ -188,8 +175,7 @@ internal static class MultipartBodyBuilder
                 return;
             }
 
-            // 只实现 IReadOnlyDictionary 的字典（如自研只读视图）不命中上面的泛型字典分支，
-            // 落进 IEnumerable 会把每个 KeyValuePair 当 POCO 反射成 Key/Value 两个字段。
+            // 只实现 IReadOnlyDictionary 的字典要单独处理，否则会被当 POCO 反射成 Key/Value 字段。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
                 visited = ObjectGraph.Enter(visited, readOnlyDictionary);
@@ -270,8 +256,7 @@ internal static class MultipartBodyBuilder
             return;
         }
 
-        // 嵌套 POCO：public 可读属性；命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
-        // 刻意不读 JsonSerializerOptions.PropertyNamingPolicy：表单与序列化器解耦。
+        // 嵌套 POCO：public 可读属性，命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
         visited = ObjectGraph.Enter(visited, value);
         try
         {
@@ -310,12 +295,7 @@ internal static class MultipartBodyBuilder
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    CollectJsonElementParts(
-                        BodyFields.CombineName(nameSelector, name, property.Name),
-                        property.Value,
-                        content,
-                        encoding,
-                        nameSelector);
+                    CollectJsonElementParts(BodyFields.CombineName(nameSelector, name, property.Name), property.Value, content, encoding, nameSelector);
                 }
 
                 break;
@@ -342,25 +322,9 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>
-    /// 把一个文件类值加入容器：字段名 / 文件名 / Content-Type 在这里统一解析，
-    /// 声明覆盖压过值自带的声明（<paramref name="valueFileName"/> 等），后者再压过默认值。
-    /// <para>
-    /// 二进制内容默认「字段名即文件名 + octet-stream」（与 byte[] 既有行为一致）；
-    /// 流 / <see cref="FormFile"/> 的默认值由调用方所给的值决定。
-    /// </para>
+    /// 把一个文件类值加入容器：字段名 / 文件名 / Content-Type 按「声明覆盖 &gt; 值自带 &gt; 默认值」解析。
     /// </summary>
-    /// <param name="content">目标表单（部件加入后由它持有释放责任）。</param>
-    /// <param name="name">字段名（[JsonPropertyName] / 属性名，再经 FormFieldNameSelector）。</param>
-    /// <param name="part">已构造好的部件内容（失败路径由本方法就地释放）。</param>
-    /// <param name="config">本次请求的生效配置（非法 Content-Type 的错误要带请求上下文）。</param>
-    /// <param name="partOverride">声明式层传入的覆盖项（没有声明时为 default）。</param>
-    /// <param name="valueFileName">值自带的文件名（如 <see cref="FormFile.FileName"/>）。</param>
-    /// <param name="valueContentType">值自带的 Content-Type。</param>
-    /// <param name="valueFieldName">值自带的字段名（如 <see cref="FormFile.FieldName"/>）。</param>
-    /// <remarks>
-    /// 名字校验必须在「部件交出所有权」之前完成：<paramref name="part"/> 已经构造好（Stream 形态下
-    /// 它持有调用方的流），校验失败时它还没加入容器，容器的 Dispose 覆盖不到它 —— 就地释放是唯一机会。
-    /// </remarks>
+    /// <remarks>名字校验必须在部件交出所有权之前完成，否则容器的 Dispose 覆盖不到它。</remarks>
     private static void AddFilePart(
         MultipartFormDataContent content,
         string? name,
@@ -380,9 +344,7 @@ internal static class MultipartBodyBuilder
 
             ValidateDeclaredValue(partOverride);
 
-            // contentType 三条来源（声明覆盖 / 值自带 / 默认 octet-stream）都已在各自入口校验过控制字符，
-            // 这里仍走统一入口再拦一次（第三方部件自带的头值不可信）；带上 config 是为了让
-            // 真出现非法值时错误里保留请求上下文（ERR_BAD_OPTION_VALUE，不是 ERR_BAD_REQUEST）。
+            // 三条来源都已在各自入口校验过控制字符，这里仍走统一入口再拦一次（第三方头值不可信）。
             RequestContentType.Set(part, contentType, config);
             content.Add(part, field, fileName);
         }
@@ -394,13 +356,7 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>
-    /// 校验声明式层传入的文件名 / Content-Type。
-    /// <para>
-    /// 与 <see cref="FormFile"/> 的构造契约一致（文件名进 quoted-string、Content-Type 是头值）；
-    /// 抛出的 <see cref="ArgumentException"/> 属于「配置写错了」而不是「请求体序列化失败」，
-    /// 在这里统一换成 <see cref="InvalidMultipartOptionException"/>
-    /// （由 <see cref="Create"/> 转成 <c>ERR_BAD_OPTION_VALUE</c>）。
-    /// </para>
+    /// 校验声明式层传入的文件名 / Content-Type，非法时换成 <see cref="InvalidMultipartOptionException"/>。
     /// </summary>
     private static void ValidateDeclaredValue(PartOverride partOverride)
     {
@@ -412,8 +368,7 @@ internal static class MultipartBodyBuilder
                 throw new ArgumentException(
                     $"文件名包含不能出现在 Content-Disposition 里的字符（{invalid}）：'{fileName}'。"
                     + "双引号、反斜杠、CR/LF 与其它控制字符会破坏头部语法或让服务端收到的文件名错位；"
-                    + "中文可以正常使用（会按 RFC 5987 编码）。",
-                    nameof(fileName));
+                    + "中文可以正常使用（会按 RFC 5987 编码）。", nameof(fileName));
             }
 
             if (partOverride.ContentType is { } contentType)
@@ -432,9 +387,8 @@ internal static class MultipartBodyBuilder
         new($"部件声明的字段名 / 文件名 / Content-Type 非法：{ex.Message}", ex);
 
     /// <summary>
-    /// 加入调用方自带的部件：已有 Content-Disposition 时只补缺失的 Name
-    /// （保留 filename / 类型等一切用户设置），走基类 Add 避免二次改写；
-    /// 没有 disposition 时交给 <see cref="MultipartFormDataContent"/> 按 name 生成。
+    /// 加入调用方自带的部件：已有 Content-Disposition 时只补缺失的 Name，否则交给
+    /// <see cref="MultipartFormDataContent"/> 按 name 生成。
     /// </summary>
     private static void AddUserPart(MultipartFormDataContent content, HttpContent part, string name)
     {
@@ -457,14 +411,11 @@ internal static class MultipartBodyBuilder
     {
         if (string.IsNullOrEmpty(name))
         {
-            // 与「名字含非法字符」同属调用方的配置错误，用同一个异常类型：
-            // 上层据此统一转成 ERR_BAD_OPTION_VALUE，而不是误报成 ERR_BAD_REQUEST（请求体序列化失败）。
-            throw new InvalidMultipartOptionException(
-                "multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
+            // 与「名字含非法字符」同属配置错误，上层统一转成 ERR_BAD_OPTION_VALUE。
+            throw new InvalidMultipartOptionException("multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
         }
 
-        // 字段名最终写进 Content-Disposition 的 name="..."（quoted-string）。
-        // 反斜杠与控制字符不会让 .NET 报错，而是让服务端拿到错位或带引号的键名；引号与换行直接破坏语法。
+        // 字段名最终写进 Content-Disposition 的 quoted-string，非法字符会破坏语法或让键名错位。
         if (DispositionTokens.FindInvalidCharacter(name) is { } invalid)
         {
             throw new InvalidMultipartOptionException(

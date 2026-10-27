@@ -1,18 +1,14 @@
 namespace AxiosNet.Pooling;
 
-/// <summary>
-/// 连接池创建单个 origin 的 Handler 时传入的上下文，配合 <see cref="ConnectionPoolOptions.HandlerFactory"/> 使用。
-/// <para>
-/// 典型用法：在默认的 <see cref="SocketsHttpHandler"/> 外面套自己的 <see cref="DelegatingHandler"/>
-/// （日志、签名、重试、埋点），同时保留按 origin 隔离、连接复用与并发上限：
+/// <summary>连接池创建单个 origin 的 Handler 时传入的上下文，配合 <see cref="ConnectionPoolOptions.HandlerFactory"/> 使用。</summary>
+/// <example>
 /// <code>
 /// var pool = new HttpConnectionPool(new ConnectionPoolOptions
 /// {
 ///     HandlerFactory = ctx => new TraceHandler { InnerHandler = ctx.CreateDefaultHandler() }
 /// });
 /// </code>
-/// </para>
-/// </summary>
+/// </example>
 public sealed class PooledHandlerContext
 {
     internal PooledHandlerContext(
@@ -38,15 +34,10 @@ public sealed class PooledHandlerContext
 
     /// <summary>
     /// 池共享的 Cookie 容器（<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空）。
-    /// 自定义工厂若自行构造内层 Handler，应把它挂到 <c>SocketsHttpHandler.CookieContainer</c> 上，
-    /// 否则同一池里的 Cookie 会被按 origin 切开。
+    /// 自行构造内层 Handler 时应挂到 <c>SocketsHttpHandler.CookieContainer</c> 上。
     /// </summary>
     public CookieContainer? CookieContainer { get; }
 
-    /// <summary>
-    /// 按当前池选项创建一个库默认的 <see cref="SocketsHttpHandler"/>（连接数、生命周期、重定向、解压、
-    /// 代理、证书校验、共享 Cookie 容器都已配好）。可以修改属性，或作为
-    /// <see cref="DelegatingHandler.InnerHandler"/> 被包装。
-    /// </summary>
+    /// <summary>按当前池选项创建一个库默认的 <see cref="SocketsHttpHandler"/>（连接数、生命周期、TLS、Cookie 容器均已配好）。</summary>
     public SocketsHttpHandler CreateDefaultHandler() => DefaultHandlerFactory.Create(Options, CookieContainer);
 }

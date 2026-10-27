@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
@@ -43,13 +43,13 @@ public sealed class Audit20261022P2FixTests
 
         Assert.NotEmpty(loaded);
 
-        // 单调不减：旧实现每次重发都新建计量器，第二次会从 0 重新报
+        // 单调不减：重发不应让计量器从 0 重新报。
         for (var i = 1; i < loaded.Count; i++)
         {
             Assert.True(loaded[i] >= loaded[i - 1], $"进度回跳：{loaded[i - 1]} → {loaded[i]}");
         }
 
-        // 跨次累计：两次发送的总字节都会计入（旧实现的上界是单份 payload）
+        // 跨次累计：两次发送的总字节都要计入。
         Assert.True(loaded[^1] > payload.Length, $"最后一次上报 {loaded[^1]} 未跨次累计");
 
         // 百分比封顶 100%：累计超过 total 时不能报出 >1 的进度

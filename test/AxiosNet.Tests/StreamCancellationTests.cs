@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using AxiosNet.Tests.Infrastructure;
@@ -23,49 +23,24 @@ namespace AxiosNet.Tests;
 public sealed class StreamCancellationTests
 {
     /// <summary>
-    /// 「必须在预算内被打断」类用例的预算。
-    /// <para>
-    /// 这类断言的作用是把「被超时 / 取消打断」与「自己等完」区分开，所以两个时间必须差一个数量级：
-    /// 自然完成时间取 20 秒以上（<see cref="SlowBodyDelay"/>、限速总时长），预算取 5 秒。
-    /// </para>
-    /// <para>
-    /// 曾经是「自然 3s / 预算 2s」：两者只差 1 秒。CI 满载时一次取消回调晚到 2.19 秒
-    /// （GitHub Actions 实测总耗时 2.34s）就落在预算之外 —— 实现是对的，判成失败。
-    /// 预算既不能贴着自然完成时间设，也不能贴着调度抖动设。
-    /// </para>
+    /// 「必须在预算内被打断」类用例的预算：自然完成时间取 20 秒以上、预算取 5 秒，
+    /// 两者差一个数量级才能区分「被打断」与「自己等完」。
     /// </summary>
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// 服务端「先发响应头、很久之后才发正文」的延迟。
-    /// <para>
-    /// 下界：必须远大于 <see cref="Budget"/> —— 被打断失败时实现会一直等到正文，
-    /// 两者太近就分不清「取消生效了」与「刚好等到数据了」。
-    /// </para>
-    /// <para>
-    /// 上界：必须小于 <see cref="LongTimeout"/> —— 否则先到的是「请求超时」（ECONNABORTED），
-    /// 用例就变成在测超时而不是外部取消了。
-    /// </para>
+    /// 服务端「先发响应头、很久之后才发正文」的延迟：必须远大于 <see cref="Budget"/>、小于 <see cref="LongTimeout"/>。
     /// </summary>
     private static readonly TimeSpan SlowBodyDelay = TimeSpan.FromSeconds(20);
 
     /// <summary>
-    /// 同步入口阻塞的是线程池线程，超时计时器的回调同样要线程池：CI 满载时回调可能晚到数秒（实测约 3.3s）。
-    /// 对「限速等待必须被超时打断」的用例，预算只需远小于「限速自己等完」的时间
-    /// （64KB @1KB/s ≈ 64s），而 <see cref="Budget"/> 对一次阻塞读来说仍嫌紧。
+    /// 同步入口阻塞线程池线程时的预算：远小于「限速自己等完」的时间（64KB @1KB/s ≈ 64s），
+    /// 又留够线程池注入与计时器回调的延迟。
     /// </summary>
     private static readonly TimeSpan BlockingReadBudget = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// 「内层流永不返回」的用例专用预算：断言只需证明超时/取消确实生效（否则会一直等下去），
-    /// 不必精确到几百毫秒。
-    /// <para>
-    /// 计时器回调要排进线程池，CI 满载时线程池注入慢，回调可能晚到数秒 ——
-    /// 实测 GitHub Actions 上 <c>BufferedResponse_HonorsTimeoutDuringBodyRead</c> 耗时 2.12s
-    /// （同步读用例约 3.3s）。<see cref="Budget"/> 的 5 秒仍落在调度抖动的量级上，
-    /// 把「实现正确但机器忙」误判成失败。
-    /// </para>
-    /// <para>只用于内层流不会自行结束的用例；有自然返回时间的仍然用 <see cref="Budget"/>。</para>
+    /// 「内层流永不返回」的用例专用预算：只需证明超时 / 取消确实生效，不必精确到几百毫秒。
     /// </summary>
     private static readonly TimeSpan HungReadBudget = TimeSpan.FromSeconds(10);
 
@@ -256,10 +231,7 @@ public sealed class StreamCancellationTests
     [InlineData(true)]
     public async Task StreamRead_HonorsExternalCancellation(bool asyncRead)
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[4096],
-            ContentType: "application/octet-stream",
-            BodyDelay: SlowBodyDelay));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[4096], ContentType: "application/octet-stream", BodyDelay: SlowBodyDelay));
 
         using var client = new AxiosClient();
         using var cts = new CancellationTokenSource();

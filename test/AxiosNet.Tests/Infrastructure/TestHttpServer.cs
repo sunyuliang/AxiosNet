@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -184,11 +184,7 @@ public sealed class TestHttpServer : IAsyncDisposable
                     }
                     catch (Exception ex)
                     {
-                        response = new TestResponse(
-                            500,
-                            "Internal Server Error",
-                            Encoding.UTF8.GetBytes(ex.ToString()),
-                            "text/plain; charset=utf-8");
+                        response = new TestResponse(500, "Internal Server Error", Encoding.UTF8.GetBytes(ex.ToString()), "text/plain; charset=utf-8");
                     }
 
                     try

@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 9. 其他 responseType：text / arraybuffer。
-/// </summary>
+/// <summary>9. 其他 responseType：text / arraybuffer。</summary>
 public sealed class ResponseTypesExample : IExample
 {
     /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>
@@ -24,10 +22,7 @@ public sealed class ResponseTypesExample : IExample
         var textResponse = await http.GetAsync(context.BaseUrl, c => c.ResponseType = ResponseType.Text);
         Console.WriteLine($"  text: {textResponse.Data}");
 
-        var bytesResponse = await http.PostAsync<byte[]>(
-            context.BaseUrl + "echo",
-            new byte[] { 1, 2, 3, 250, 255 },
-            c => c.ResponseType = ResponseType.ArrayBuffer);
+        var bytesResponse = await http.PostAsync<byte[]>(context.BaseUrl + "echo", new byte[] { 1, 2, 3, 250, 255 }, c => c.ResponseType = ResponseType.ArrayBuffer);
         Console.WriteLine($"  arraybuffer 回显: {string.Join(",", bytesResponse.Data!)}");
     }
 }

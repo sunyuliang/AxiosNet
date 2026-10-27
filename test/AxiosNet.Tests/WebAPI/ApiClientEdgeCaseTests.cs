@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -179,9 +179,7 @@ public sealed class ApiClientEdgeCaseTests
     public async Task Get_ByteArrayResponse_ReceivesRawBytes()
     {
         var payload = new byte[] { 0x00, 0xFF, 0x10, 0x7F, 0x80 };
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload, ContentType: "application/octet-stream"));
 
         using var client = CreateClient(server);
 
@@ -195,9 +193,7 @@ public sealed class ApiClientEdgeCaseTests
     public async Task Get_StreamResponse_AutoSwitchesAndDeliversBody()
     {
         var payload = Encoding.UTF8.GetBytes("stream-payload-0123456789");
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload, ContentType: "application/octet-stream"));
 
         using var client = CreateClient(server);
 

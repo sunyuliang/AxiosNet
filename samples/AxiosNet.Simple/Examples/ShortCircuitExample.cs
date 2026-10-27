@@ -3,13 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 29. 短路响应：不发请求、直接交付调用方给的响应。
-/// <para>
-/// 演示四件事：命中不产生网络（用耗时对比）、同一份字节按本次调用的类型重新解析、
-/// 在请求拦截器里接一层缓存（这是短路的动机）、mock 与错误语义与真实响应一致。
-/// </para>
-/// </summary>
+/// <summary>29. 短路响应：不发请求、直接交付调用方给的响应。</summary>
 public sealed class ShortCircuitExample : IExample
 {
     public int Number => 29;
@@ -22,10 +16,8 @@ public sealed class ShortCircuitExample : IExample
 
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
-        // 「缓存条目」的形态就是三样：状态码 + Content-Type + 原始字节（Real 响应先取一份）
-        var body = (await client.GetAsync<byte[]>(
-            "users/1",
-            c => c.ResponseType = ResponseType.ArrayBuffer)).Data!;
+        // 缓存条目 = 状态码 + Content-Type + 原始字节（先用 Real 响应取一份）
+        var body = (await client.GetAsync<byte[]>("users/1", c => c.ResponseType = ResponseType.ArrayBuffer)).Data!;
 
         var entry = new AxiosShortCircuit
         {
@@ -48,7 +40,7 @@ public sealed class ShortCircuitExample : IExample
         Console.WriteLine($"  直发 {direct}ms  vs  短路 {shortCircuited}ms（同样的正文，后者没有发出请求）");
         Console.WriteLine($"  短路响应的状态：{cached.Status} {cached.StatusText}，Request = {(cached.Request is null ? "null" : "非 null")}");
 
-        // 2) 同一份字节喂给两个泛型入口：形状跟着本次调用变（所以缓存的是字节，不是对象图）
+        // 2) 同一份字节喂给两个泛型入口：形状跟着本次调用变
         var typed = await client.GetAsync<User>("users/1", c => c.ShortCircuit = entry);
         var text = await client.GetAsync<string>("users/1", c => c.ShortCircuit = entry);
 
@@ -56,7 +48,6 @@ public sealed class ShortCircuitExample : IExample
         Console.WriteLine($"  GetAsync<string> → {Shorten(text.Data!)}");
 
         // 3) 拦截器接一层缓存：请求拦截器命中就不发，响应拦截器负责写入
-        //    （拦截器只能改配置，没有「直接给响应」的出口 —— ShortCircuit 就是那个出口）
         var cache = new Dictionary<string, AxiosShortCircuit>(StringComparer.OrdinalIgnoreCase);
 
         client.Interceptors.Request.Use(config =>
@@ -71,7 +62,7 @@ public sealed class ShortCircuitExample : IExample
 
         client.Interceptors.Response.Use(response =>
         {
-            // 只有拿得到字节的响应才值得缓存：不同泛型各自的 Data 形态写不回缓存条目
+            // 只缓存拿得到字节的响应
             if (response.Data is byte[] bytes && response.Config?.Url is { } url)
             {
                 cache[url] = new AxiosShortCircuit
@@ -85,9 +76,7 @@ public sealed class ShortCircuitExample : IExample
             return response;
         });
 
-        var miss = await client.GetAsync<byte[]>(
-            "users/1?from=cache",
-            c => c.ResponseType = ResponseType.ArrayBuffer);
+        var miss = await client.GetAsync<byte[]>("users/1?from=cache", c => c.ResponseType = ResponseType.ArrayBuffer);
 
         stopwatch.Restart();
         var hit = await client.GetAsync<User>("users/1?from=cache");
@@ -98,7 +87,7 @@ public sealed class ShortCircuitExample : IExample
             + $"{hit.Data!.Name} 来自缓存");
         Console.WriteLine($"  缓存条目数：{cache.Count}");
 
-        // 4) mock：Data 直接给，不解析也不跑 transformResponse（它是「结果」不是「正文」）
+        // 4) mock：Data 直接给，不解析也不跑 transformResponse
         var stub = new User(99, "stub", 0, false, 0, null, null);
         var mocked = await client.GetAsync<User>("users/1", c => c.ShortCircuit = AxiosShortCircuit.From(stub));
 

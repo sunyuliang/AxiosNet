@@ -6,22 +6,15 @@ internal sealed record RequestInterceptor(
     Func<Exception, Task<AxiosConfig>>? OnRejected);
 
 /// <summary>
-/// 请求拦截器管理器，对应 axios.interceptors.request。执行顺序与 axios 一致：
-/// 按注册顺序的<b>逆序</b>执行（后注册的先执行）。
-/// <para>
-/// <b>与 axios 的有意分歧</b>：<see cref="RequestInterceptor.OnRejected"/> 只捕获<b>同一拦截器自己的
-/// <c>OnFulfilled</c></b> 抛出的异常，不捕获发送阶段（建连 / 超时 / 取消 / 网络）的错误。
-/// axios 里 rejected 能兜住 dispatch 异常，但返回的 config 会被当作「再发一次请求」——
-/// 一个只做日志的 rejected 就会把 POST 静默重发。要感知发送错误请用响应拦截器的 <c>OnRejected</c>。
-/// </para>
+/// 请求拦截器管理器，对应 axios.interceptors.request：按注册顺序的<b>逆序</b>执行（后注册的先执行）。
+/// <see cref="RequestInterceptor.OnRejected"/> 只捕获同一拦截器自己的 <c>OnFulfilled</c> 异常，不捕获发送阶段的错误。
 /// </summary>
 public sealed class RequestInterceptorManager
 {
     private readonly List<RequestInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册/弹出/清空才失效，避免每请求重建 List（含逆序副本）。
-    // 用数组而不是 IReadOnlyList：数组的 foreach 编译成下标循环，不会把枚举器装箱。
+    // 快照缓存：注册 / 弹出 / 清空时失效；用数组是为了让 foreach 编译成下标循环，不装箱。
     private RequestInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
@@ -45,9 +38,7 @@ public sealed class RequestInterceptorManager
         Func<Exception, AxiosConfig>? onRejected = null)
     {
         ArgumentNullException.ThrowIfNull(onFulfilled);
-        return Use(
-            config => Task.FromResult(onFulfilled(config)),
-            onRejected is null ? null : ex => Task.FromResult(onRejected(ex)));
+        return Use(config => Task.FromResult(onFulfilled(config)), onRejected is null ? null : ex => Task.FromResult(onRejected(ex)));
     }
 
     /// <summary>移除指定拦截器（对应 axios eject）。</summary>
@@ -89,7 +80,6 @@ public sealed class RequestInterceptorManager
     internal RequestInterceptor[] SnapshotReversed()
     {
         // 稳态零锁：快照是不可变数组，写侧只在注册 / 弹出 / 清空时换引用。
-        // 只在快照失效后的第一次读取才进锁重建（每次请求都会走这里，锁是热路径开销）。
         var snapshot = Volatile.Read(ref _snapshot);
         if (snapshot is not null)
         {
@@ -98,8 +88,7 @@ public sealed class RequestInterceptorManager
 
         lock (_interceptors)
         {
-            // 锁内复查：快照失效后可能有多条请求线程同时在这里排队，
-            // 不复查的话每个都会重建一次（只有最后一个生效，前面几次纯属白分配）。
+            // 锁内复查：多条线程同时排队时只重建一次。
             snapshot = Volatile.Read(ref _snapshot);
             if (snapshot is not null)
             {

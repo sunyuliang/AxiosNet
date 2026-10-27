@@ -4,12 +4,7 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// dynamic 类型支持（对标 JS/axios 中 response.data.xxx 的直接访问）：
-/// - 响应：对象/嵌套对象/数组/标量/null，对象节点是 <see cref="AxiosDynamic"/>；
-/// - 请求：dynamic（ExpandoObject / AxiosDynamic）作为 data 发送 JSON、作为 params 序列化；
-/// - 调用形式：GetAsync&lt;dynamic&gt; / PostAsync&lt;dynamic&gt;（含静态门面 Axios.GetAsync&lt;dynamic&gt;）。
-/// </summary>
+/// <summary>dynamic 类型支持：响应动态展开、dynamic 作为 data / params、GetAsync&lt;dynamic&gt; 调用形式。</summary>
 public sealed class DynamicTests
 {
     private const string UserJson =
@@ -29,8 +24,7 @@ public sealed class DynamicTests
     [Fact]
     public async Task GetAsync_OfDynamic_ExpandoGraph_SupportsMemberAndIndexAndArrayAccess()
     {
-        await using var server = TestHttpServer.Start(_
-            => new TestResponse(Body: Encoding.UTF8.GetBytes(UserJson)));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes(UserJson)));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync<dynamic>(server.Url + "users/1");
@@ -38,29 +32,23 @@ public sealed class DynamicTests
         Assert.Equal(200, response.Status);
         dynamic data = response.Data!;
 
-        // 成员访问（对标 JS 的 response.data.name）
         Assert.Equal("alice", (string)data.name);
         Assert.Equal(18L, (long)data.age);
         Assert.True((bool)data.active);
         Assert.Equal(95.5d, (double)data.score, 2);
 
-        // 嵌套对象
         Assert.Equal("Shanghai", (string)data.address.city);
         Assert.Equal("200000", (string)data.address.zip);
 
-        // 数组：List<object?>，元素为标量或嵌套 ExpandoObject
         Assert.Equal("admin", (string)data.roles[0]);
         Assert.Equal("user", (string)data.roles[1]);
         Assert.Equal(1L, (long)data.tags[0].id);
         Assert.Equal("vip", (string)data.tags[0].label);
 
-        // null 保持 null
         Assert.Null(data.nickname);
 
-        // 字典式访问不需要显式转型：AxiosDynamic 自带字符串索引器
         Assert.Equal("alice", (string)data["name"]);
 
-        // 落成静态类型后仍可当 IDictionary 用（转 params/正文/字典遍历都靠它）
         object? rawData = response.Data;
         var asDictionary = Assert.IsAssignableFrom<IDictionary<string, object?>>(rawData);
         Assert.Equal("alice", asDictionary["name"]);
@@ -72,8 +60,7 @@ public sealed class DynamicTests
     [Fact]
     public async Task GetAsync_OfDynamic_RootArray_WrapsNestedObjectsAsAxiosDynamic()
     {
-        await using var server = TestHttpServer.Start(_
-            => new TestResponse(Body: Encoding.UTF8.GetBytes("""[{"id":1},{"id":2}]""")));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("""[{"id":1},{"id":2}]""")));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync<dynamic>(server.Url);
@@ -88,8 +75,7 @@ public sealed class DynamicTests
     [Fact]
     public async Task Dynamic_PrimitivesAndNull_AreMappedToClrTypes()
     {
-        await using var server = TestHttpServer.Start(_
-            => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"i":42,"f":1.25,"b":false,"s":"x","n":null}""")));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"i":42,"f":1.25,"b":false,"s":"x","n":null}""")));
         using var client = new AxiosClient();
 
         dynamic d = (await client.GetAsync<dynamic>(server.Url)).Data!;
@@ -105,8 +91,7 @@ public sealed class DynamicTests
     [Fact]
     public async Task ResponseType_Dynamic_SetOnConfig_WorksWithNonGenericRequest()
     {
-        await using var server = TestHttpServer.Start(_
-            => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"ok":true}""")));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"ok":true}""")));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Dynamic);
@@ -119,11 +104,10 @@ public sealed class DynamicTests
     [Fact]
     public async Task GetAsync_OfDynamic_ExplicitTextResponseType_IsRespected()
     {
-        await using var server = TestHttpServer.Start(_
-            => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"ok":true}"""), ContentType: "text/plain"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"ok":true}"""), ContentType: "text/plain"));
         using var client = new AxiosClient();
 
-        // <dynamic> 默认走动态展开；但显式 ResponseType.Text 必须优先，返回原始字符串
+        // <dynamic> 默认走动态展开，但显式 ResponseType.Text 优先，返回原始字符串。
         var response = await client.GetAsync<dynamic>(server.Url, c => c.ResponseType = ResponseType.Text);
 
         Assert.IsType<string>(response.Data);
@@ -152,7 +136,6 @@ public sealed class DynamicTests
         Assert.Contains("\"address\":{\"city\":\"Beijing\"}", sentRaw);
         Assert.Contains("\"roles\":[\"dev\",\"lead\"]", sentRaw);
 
-        // 响应也是动态图
         dynamic data = response.Data!;
         Assert.Equal("bob", (string)data.name);
         Assert.Equal("Beijing", (string)data.address.city);
@@ -185,8 +168,7 @@ public sealed class DynamicTests
     [Fact]
     public async Task StaticAxios_GetAsync_OfDynamic_WorksLikeFacade()
     {
-        await using var server = TestHttpServer.Start(_
-            => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"hello":"world"}""")));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"hello":"world"}""")));
 
         dynamic data = (await Axios.GetAsync<dynamic>(server.Url)).Data!;
 

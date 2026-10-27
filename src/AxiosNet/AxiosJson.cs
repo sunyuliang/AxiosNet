@@ -4,14 +4,8 @@ namespace AxiosNet;
 
 /// <summary>
 /// 默认 JSON 序列化器的全局选项（格式注入点见 <see cref="AxiosContent"/>）。
-/// <para>
 /// 优先级：单次请求的 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/> 高于实例 <c>Defaults</c>，
-/// 实例 <c>Defaults</c> 高于这里的全局值。
-/// </para>
-/// <para>
-/// 建议在启动期一次性设置；替换时给一个全新的实例，不要修改已经被序列化使用过的实例
-/// （System.Text.Json 会拒绝修改并抛 <see cref="InvalidOperationException"/>）。
-/// </para>
+/// 实例 <c>Defaults</c> 高于这里；建议启动期一次性设置，替换时给一个全新实例。
 /// </summary>
 public static class AxiosJson
 {

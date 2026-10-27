@@ -1,4 +1,4 @@
-using AxiosNet.WebAPI.DependencyInjection;
+﻿using AxiosNet.WebAPI.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AxiosNet.DependencyInjection.Tests;
@@ -23,7 +23,7 @@ public sealed class ApiClientResolverConcurrencyTests
     [Fact]
     public async Task Get_ConfigureWaitingForAnotherSite_DoesNotDeadlock()
     {
-        // 旧实现：configure 跑在解析器级锁内 —— A 的 configure 同步等 B 创建、B 等同一把锁，死锁。
+        // configure 若跑在解析器级锁内：A 的 configure 同步等 B 创建、B 等同一把锁，会死锁。
         ServiceProvider? provider = null;
         using var ready = new ManualResetEventSlim(false);
 
@@ -46,7 +46,7 @@ public sealed class ApiClientResolverConcurrencyTests
 
         var getA = Task.Run(() => resolver.Get("a"));
 
-        // configure 内的同步等待若死锁，这里超时失败（旧实现必然死锁）
+        // configure 内的同步等待若死锁，这里超时失败。
         var completed = await Task.WhenAny(getA, Task.Delay(TimeSpan.FromSeconds(15)));
         Assert.Same(getA, completed);
 

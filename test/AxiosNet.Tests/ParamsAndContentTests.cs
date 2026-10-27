@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
 
@@ -91,9 +91,7 @@ public sealed class ParamsAndContentTests
             c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
         var sent = server.Received[0];
-        Assert.StartsWith(
-            "application/x-www-form-urlencoded",
-            sent.Headers.GetValueOrDefault("content-type"));
+        Assert.StartsWith("application/x-www-form-urlencoded", sent.Headers.GetValueOrDefault("content-type"));
         Assert.Equal("name=alice&role=admin", Encoding.UTF8.GetString(sent.Body));
     }
 
@@ -167,7 +165,7 @@ public sealed class ParamsAndContentTests
         var sent = server.Received[0];
         // UTF-16LE 下 'k' -> 6B 00、'é' -> E9 00，故转义为 "k%00=%E9%00"（服务端按 charset 反转义可还原）。
         // 关键点：转义结果恒为 ASCII，wire 上应是「每字符 1 字节」；
-        // 修复前会被再按 UTF-16 编成双字节流（22 字节），破坏 form-urlencoded 格式。
+        // 不能被再按 UTF-16 编成双字节流（22 字节），那会破坏 form-urlencoded 格式。
         Assert.Equal("k%00=%E9%00", Encoding.ASCII.GetString(sent.Body));
         Assert.Equal(11, sent.Body.Length);
         Assert.Contains("charset=utf-16", sent.Headers.GetValueOrDefault("content-type"));
@@ -202,9 +200,7 @@ public sealed class ParamsAndContentTests
 
         await client.GetAsync(server.Url + "secure", c => c.Connection.Auth = new AxiosAuth("user", "pass"));
 
-        Assert.Equal(
-            TestJson.BasicAuth("user", "pass"),
-            server.Received[0].Headers.GetValueOrDefault("authorization"));
+        Assert.Equal(TestJson.BasicAuth("user", "pass"), server.Received[0].Headers.GetValueOrDefault("authorization"));
     }
 
     [Fact]

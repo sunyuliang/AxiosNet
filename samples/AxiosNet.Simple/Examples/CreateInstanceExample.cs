@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 2. axios.create：baseURL / 默认头 / 超时 + 强类型响应。
-/// </summary>
+/// <summary>2. axios.create：baseURL / 默认头 / 超时 + 强类型响应。</summary>
 public sealed class CreateInstanceExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>

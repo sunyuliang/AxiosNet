@@ -6,6 +6,7 @@ namespace AxiosNet.Internal;
 /// 响应体不是合法 JSON、但语义上是「裸标量文本」时的兜底解析（<c>42</c>、<c>true</c>、GUID、日期等），
 /// 使泛型请求可以直接返回基础类型。
 /// </summary>
+
 internal static class ScalarParser
 {
     public static bool TryParse(string text, Type type, out object? value)
@@ -23,8 +24,7 @@ internal static class ScalarParser
 
         if (target == typeof(char))
         {
-            // 只接受单字符文本：多字符取首字符是静默截断（"abc" → 'a'），
-            // 调用方以为拿到的是完整值，比直接报错更难排查。
+            // 只接受单字符文本，多字符截断会静默改变值。
             if (raw.Length != 1)
             {
                 return false;
@@ -51,9 +51,7 @@ internal static class ScalarParser
             {
                 var parsed = Enum.Parse(target, raw, ignoreCase: true);
 
-                // Enum.Parse 不校验未定义数值（"999" 会静默产出 (E)999）：不复核的话
-                // GetAsync<MyEnum> 会把服务端的非法枚举值交作 Data，而不是按 ERR_BAD_RESPONSE 失败。
-                // flags 枚举放行组合值（"Read,Write"），但要求组合里没有已定义位之外的位。
+                // Enum.Parse 不校验未定义数值，这里复核；flags 枚举放行只由已定义位构成的组合值。
                 if (!IsAcceptableEnumValue(target, parsed))
                 {
                     return false;
@@ -162,19 +160,7 @@ internal static class ScalarParser
         return false;
     }
 
-    /// <summary>
-    /// 枚举值是否可接受：已定义值，或 flags 枚举「只由已定义位构成」的组合值（<c>"Read,Write"</c>）。
-    /// <para>
-    /// 响应侧第 8 步（框架直解析）与第 9 步（序列化器产物复核）共用同一把尺子：内置 JSON 的
-    /// STJ 不校验未定义值，只在前一半拦它，<c>application/json</c> 响应下的 <c>999</c>
-    /// 仍会静默变成 <c>(E)999</c>。入参接受 <c>Nullable&lt;TEnum&gt;</c>（按枚举类型本身判定）。
-    /// </para>
-    /// <para>
-    /// 目标类型本身不是枚举（<see cref="Enum"/> 基类、接口等：「序列化器给非枚举目标返回了具体枚举」）
-    /// 时没有「已定义集合」可核对，直接放行 —— <see cref="Enum.IsDefined(Type, object)"/> 对非枚举
-    /// 入参抛 <see cref="ArgumentException"/>，不设防会被调用方 catch 收成错误的 <c>ERR_BAD_RESPONSE</c>。
-    /// </para>
-    /// </summary>
+    /// <summary>枚举值是否可接受：已定义值，或 flags 枚举「只由已定义位构成」的组合值（<c>"Read,Write"</c>）；目标类型不是枚举时放行。</summary>
     public static bool IsAcceptableEnumValue(Type enumType, object value)
     {
         var target = Nullable.GetUnderlyingType(enumType) ?? enumType;
@@ -186,11 +172,7 @@ internal static class ScalarParser
         return Enum.IsDefined(target, value) || IsFlagsCombination(target, value);
     }
 
-    /// <summary>
-    /// flags 枚举的组合值是否只由已定义位构成（<c>"Read,Write"</c> 合法、<c>"999"</c> 不合法）。
-    /// <para>非 flags 枚举直接 false；掩码由 <see cref="ReflectionCache.GetFlagMask"/> 按枚举类型缓存
-    /// （<see cref="Enum.GetValues(Type)"/> 每次新建数组并装箱，而组合值是正常路径而非异常路径）。</para>
-    /// </summary>
+    /// <summary>flags 枚举的组合值是否只由已定义位构成（<c>"Read,Write"</c> 合法、<c>"999"</c> 不合法）；非 flags 枚举返回 <c>false</c>。</summary>
     private static bool IsFlagsCombination(Type enumType, object parsed)
     {
         if (ReflectionCache.GetFlagMask(enumType) is not { } mask)

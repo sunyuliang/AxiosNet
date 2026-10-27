@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
@@ -105,11 +105,7 @@ public sealed class AuditRegressionTests
     public async Task ErrorStatus_WithUnparsableBody_KeepsStatusAndResponse()
     {
         const string html = "<html><body>Not Found</body></html>";
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            404,
-            "Not Found",
-            Encoding.UTF8.GetBytes(html),
-            "text/html; charset=utf-8"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(404, "Not Found", Encoding.UTF8.GetBytes(html), "text/html; charset=utf-8"));
 
         using var client = new AxiosClient();
 
@@ -124,11 +120,7 @@ public sealed class AuditRegressionTests
     [Fact]
     public async Task OkStatus_WithUnparsableBody_StillThrowsBadResponse()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            "OK",
-            Encoding.UTF8.GetBytes("<html>not json</html>"),
-            "text/html; charset=utf-8"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, "OK", Encoding.UTF8.GetBytes("<html>not json</html>"), "text/html; charset=utf-8"));
 
         using var client = new AxiosClient();
 

@@ -1,17 +1,12 @@
-using System.Text;
+﻿using System.Text;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 全项目体检后的回归用例：每个用例对应一处已复现的缺陷，修复前后必须能区分。
-/// <para>
-/// 整类放进 <see cref="TimingCollection"/>：这里既有「必须在预算内被打断」的流式超时用例，
-/// 又有同步读（会阻塞线程池线程）的用例。与其它集合并行跑时，线程池注入变慢会让
-/// <b>正确</b>的实现超预算 —— GitHub Actions 上就出现过 500ms 预算在响应头阶段被吃光，
-/// 用例还没读到正文就抛了 <c>timeout of 500ms exceeded</c>。
-/// </para>
+/// 回归用例：每个用例对应一处已复现的缺陷。
+/// 整类放进 <see cref="TimingCollection"/>：流式超时与同步读用例对线程池调度敏感，并行跑会误判。
 /// </summary>
 [Collection(TimingCollection.Name)]
 public sealed class ReviewRegressionTests
@@ -23,10 +18,7 @@ public sealed class ReviewRegressionTests
     [Fact]
     public async Task StreamingErrorResponse_ReleasesConnectionInsteadOfHangingPool()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            StatusCode: 404,
-            Body: Encoding.UTF8.GetBytes(new string('x', 8192)),
-            ContentType: "text/plain"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(StatusCode: 404, Body: Encoding.UTF8.GetBytes(new string('x', 8192)), ContentType: "text/plain"));
 
         using var client = new AxiosClient(
             poolOptions: new ConnectionPoolOptions { MaxConnectionsPerServer = 1 });
@@ -70,9 +62,7 @@ public sealed class ReviewRegressionTests
     [Fact]
     public async Task DynamicResponse_NonJsonBody_IsWrappedAsBadResponse()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: Encoding.UTF8.GetBytes("<html>gateway error</html>"),
-            ContentType: "text/html"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("<html>gateway error</html>"), ContentType: "text/html"));
 
         using var client = new AxiosClient();
 
@@ -153,7 +143,7 @@ public sealed class ReviewRegressionTests
 
         using var client = new AxiosClient(new AxiosConfig { Timeout = TimeSpan.FromMilliseconds(100) });
 
-        // 显式 Timeout=0 必须能覆盖实例默认值（此前被 "> 0" 判断吞掉）
+        // 显式 Timeout=0 必须能覆盖实例默认值。
         var response = await client.GetAsync(server.Url + "slow", c => c.Timeout = TimeSpan.Zero);
 
         Assert.Equal(200, response.Status);
@@ -223,20 +213,8 @@ public sealed class ReviewRegressionTests
     }
 
     /// <summary>
-    /// 同步 Read 上调用方自己传的令牌语义不变：外部取消 → ERR_CANCELED（这里验证外部令牌中途取消）。
-    /// <para>
-    /// 这条用例曾经是「取消与正文到达赛跑」：正文只延迟 800ms，取消用 <c>CancelAfter(150)</c>。
-    /// 两者都靠线程池上的计时器，CI 满载时回调可能晚到数秒（实测记录见 <c>StreamCancellationTests</c>），
-    /// 谁先到全看排队 —— 正文先到，Read 就正常读到数据，用例报「没有抛异常」，
-    /// 看起来像取消处理失效，实际只是调度抖动。
-    /// </para>
-    /// <para>
-    /// 现在两头都拆掉计时器：正文延迟放大到 <see cref="SlowBodyDelay"/>（与
-    /// <c>StreamRead_HonorsExternalCancellation</c> 同一口径），
-    /// 取消改由独立线程触发 —— <see cref="Thread.Sleep(int)"/> + <see cref="CancellationTokenSource.Cancel()"/>
-    /// 不排线程池队列，也不会晚到。读早于取消就阻塞被打断，晚于取消就撞上已取消的令牌，
-    /// 两条路径都是 <c>ERR_CANCELED</c>。
-    /// </para>
+    /// 同步 Read 上调用方自己传的令牌语义不变：外部取消 → <c>ERR_CANCELED</c>。
+    /// 正文延迟取 <see cref="SlowBodyDelay"/>、取消由独立线程触发，避免两个计时器赛跑。
     /// </summary>
     [Fact]
     public async Task StreamExternalCancel_InterruptsBlockedSyncRead()
@@ -319,11 +297,7 @@ public sealed class ReviewRegressionTests
     /// <item>远大于「已预热连接的一次本地往返」——否则预算会先被响应头阶段吃掉，用例根本进不到正文阶段；</item>
     /// <item>远小于正文延迟（<see cref="SlowBodyDelay"/>）——否则读会自己等到正文，区分不出「超时生效」。</item>
     /// </list>
-    /// <para>
-    /// 曾经是 500ms vs 3s：本地测试一直绿，但 GitHub Actions 满载时响应头阶段的调度抖动就能吃掉 500ms，
-    /// 于是 <c>GetAsync</c> 先抛 <c>timeout of 500ms exceeded</c>，看起来像正文超时失效。
-    /// 现在与 <c>StreamCancellationTests</c> 同一口径：预算与自然完成时间差一个数量级。
-    /// </para>
+    /// <para>与 <c>StreamCancellationTests</c> 同一口径：预算与自然完成时间差一个数量级。</para>
     /// </summary>
     private static readonly TimeSpan BodyReadTimeout = TimeSpan.FromSeconds(2);
 

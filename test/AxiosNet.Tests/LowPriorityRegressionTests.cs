@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Authentication;
@@ -17,7 +17,7 @@ namespace AxiosNet.Tests;
 public sealed class LowPriorityRegressionTests
 {
     // ------------------------------------------------------------------
-    // L3：byte[] 查询参数 → base64（此前输出 System.Byte[]）
+    // L3：byte[] 查询参数 → base64。
     // ------------------------------------------------------------------
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class LowPriorityRegressionTests
     [Fact]
     public async Task MemoryByte_InMultipart_BecomesFilePart()
     {
-        // 此前 Memory<byte> 会掉进 JSON 序列化兜底（字段变成 {}）， silently broken
+        // Memory<byte> 不能掉进 JSON 序列化兜底（字段会变成 {}）。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
@@ -174,7 +174,7 @@ public sealed class LowPriorityRegressionTests
     public async Task Multipart_UserPartWithoutName_GetsFieldName()
     {
         // net 的 MultipartFormDataContent.Add 对已有 disposition 完全不碰：
-        // 只带 filename 的部件此前拿不到 name，服务端无法绑定字段
+        // 只带 filename 的部件也要拿到 name，否则服务端无法绑定字段。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
@@ -223,7 +223,7 @@ public sealed class LowPriorityRegressionTests
 
         using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
         {
-            // 只设扩展点：此前 SslOptions 根本不会被构造
+            // 只设扩展点：SslOptions 也要被构造。
             ConfigureSslOptions = options =>
             {
                 options.EnabledSslProtocols = SslProtocols.Tls12;
@@ -381,7 +381,7 @@ public sealed class LowPriorityRegressionTests
     [Fact]
     public async Task Dispose_DoesNotInterruptInFlightRequest_InjectedHandler()
     {
-        // 注入 handler 的实例此前随 HttpClient.Dispose 把在途请求全部取消
+        // 注入 handler 的实例不应随 HttpClient.Dispose 取消在途请求。
         var gate = new TaskCompletionSource();
         using var handler = new GatedHandler(gate);
         using var client = new AxiosClient(handler: handler);

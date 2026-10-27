@@ -1,16 +1,9 @@
 namespace AxiosNet.WebAPI;
 
 /// <summary>
-/// 标记请求模型需要授权：客户端配了 <see cref="ApiClient.AccessTokenProvider"/> 时会调用它取令牌，
-/// 并按 <see cref="Scheme"/> 拼出 <c>Authorization: {scheme} {token}</c>；随后
-/// <see cref="ApiClient.Authorization"/> 仍会执行（可覆盖该头）。
-/// <para>
-/// 没有标注任何授权特性的模型沿用旧行为：只要客户端配了授权钩子就执行。
-/// 本特性真正的差别在 <see cref="Scheme"/>——同一客户端要访问「Bearer 为主、个别端点 Basic」时用它切换。
-/// </para>
-/// <para>
-/// 与 <see cref="AllowAnonymousAttribute"/> 同标一个类属二义性，构建期报错；派生类的声明优先于基类。
-/// </para>
+/// 标记请求模型需要授权：客户端配了 <see cref="ApiClient.AccessTokenProvider"/> 时按 <see cref="Scheme"/> 拼出
+/// <c>Authorization: {scheme} {token}</c>，随后 <see cref="ApiClient.Authorization"/> 仍会执行。
+/// 未标注授权特性的模型只要客户端配了授权钩子也会执行；与 <see cref="AllowAnonymousAttribute"/> 同标一个类属二义性。
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
 public sealed class AuthorizeAttribute : Attribute
@@ -26,16 +19,12 @@ public sealed class AuthorizeAttribute : Attribute
 
         var trimmed = scheme.Trim();
 
-        // scheme 与令牌拼成同一个头值（"Authorization: {scheme} {token}"）：内部空白会让
-        // 头值带上两个空格分隔的三段形态（"Basic x <token>"），服务端按 RFC 7235 解析不出来。
-        // AxiosHeaders 的取值校验只拦控制字符，内部空白管不到这里 —— 特性构造期直接拒。
+        // scheme 与令牌拼进同一个头值，内部空白会让服务端按 RFC 7235 解析失败，构造期直接拒。
         foreach (var c in trimmed)
         {
             if (char.IsWhiteSpace(c))
             {
-                throw new ArgumentException(
-                    $"授权 scheme 不能包含空白字符（当前 \"{trimmed}\"）：它会与令牌拼进同一个 Authorization 头值。",
-                    nameof(scheme));
+                throw new ArgumentException($"授权 scheme 不能包含空白字符（当前 \"{trimmed}\"）：它会与令牌拼进同一个 Authorization 头值。", nameof(scheme));
             }
         }
 
@@ -47,10 +36,8 @@ public sealed class AuthorizeAttribute : Attribute
 }
 
 /// <summary>
-/// 标记请求模型<b>不做授权</b>：跳过 <see cref="ApiClient.AccessTokenProvider"/> 与
-/// <see cref="ApiClient.Authorization"/>（登录、健康检查等公开端点用）。
-/// <para>只跳过授权钩子，模型上显式写的 <c>Authorization</c> 头（<c>[Header]</c> / <c>[Headers]</c>）照常发送。</para>
-/// <para>与 <see cref="AuthorizeAttribute"/> 同标一个类属二义性，构建期报错；派生类的声明优先于基类。</para>
+/// 标记请求模型不做授权：跳过 <see cref="ApiClient.AccessTokenProvider"/> 与 <see cref="ApiClient.Authorization"/>。
+/// 模型上显式写的 <c>Authorization</c> 头照常发送；与 <see cref="AuthorizeAttribute"/> 同标一个类属二义性。
 /// </summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
 public sealed class AllowAnonymousAttribute : Attribute

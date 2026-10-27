@@ -6,9 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AxiosNet.WebAPI.DependencyInjection;
 
 /// <summary>
-/// 多站点解析器：按站点名取用 <see cref="ApiClient"/> 单例。
-/// 站点由 AddApiClient 的命名重载注册，每个站点自带 BaseAddress 与底层 <see cref="AxiosClient"/>，
-/// 客户端首次被取用时创建，之后每次解析同一实例；容器退出时经本解析器统一释放。
+/// 多站点解析器：按站点名取用 <see cref="ApiClient"/> 单例，首次访问时创建、之后复用；容器退出时统一释放。
 /// </summary>
 public interface IApiClientResolver
 {
@@ -45,8 +43,8 @@ internal sealed class ApiClientDefinition
 }
 
 /// <summary>
-/// <see cref="IApiClientResolver"/> 的默认实现：按站点名惰性创建客户端（每站点自建底层
-/// <see cref="AxiosClient"/>），并作为这些客户端的属主在容器退出时释放。
+/// <see cref="IApiClientResolver"/> 的默认实现：按站点名惰性创建客户端（每站点自建底层 <see cref="AxiosClient"/>），
+/// 并作为这些客户端的属主在容器退出时释放。
 /// </summary>
 internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyncDisposable
 {
@@ -59,14 +57,8 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     private readonly object _gate = new();
 
     /// <summary>
-    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），
-    /// 全局 <see cref="_gate"/> 只保护字典读写。这样慢 configure 或「configure 里同步等待
-    /// 另一个站点解析」不会阻塞其他站点的首次解析。
-    /// <para>
-    /// 单向等待（A 的 configure 等 B）不再死锁；<b>A、B 互相等待仍会互锁</b> ——
-    /// 两把站点锁之间没有约定锁序。configure 里做跨站点同步等待本身就是调用方要避免的写法，
-    /// 这里只保证它不会把无关站点一起拖住。
-    /// </para>
+    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），全局 <see cref="_gate"/> 只保护字典读写。
+    /// 慢 configure 不会阻塞其他站点；configure 里做跨站点同步等待仍可能互锁。
     /// </summary>
     private readonly ConcurrentDictionary<string, object> _siteGates = new(StringComparer.Ordinal);
     private int _disposed;
@@ -106,10 +98,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         return TryGetCore(name, out client, throwIfDisposed: false);
     }
 
-    /// <summary>
-    /// 已释放时：<paramref name="throwIfDisposed"/> 为真按 <c>Get</c> 的语义抛
-    /// <see cref="ObjectDisposedException"/>，否则按 <c>TryGet</c> 的语义返回 <c>true</c>（= 已处理，调用方返回 false）。
-    /// </summary>
+    /// <summary>已释放时：按 <c>Get</c> 语义抛 <see cref="ObjectDisposedException"/>，或按 <c>TryGet</c> 语义返回 <c>true</c>。</summary>
     private bool TryHandleDisposed(bool throwIfDisposed, out ApiClient client)
     {
         client = null!;
@@ -154,9 +143,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             siteGate = _siteGates.GetOrAdd(name, static _ => new object());
         }
 
-        // 第二层（站点锁）：创建跑在这里 —— configure 与容器解析都是调用方代码，
-        // 放在全局锁内会让慢 configure 阻塞全部站点，「configure 里同步等待另一站点解析」
-        // 更是直接死锁。站点锁同时保证同一站点只创建一次。
+        // 第二层（站点锁）：创建跑在这里 —— configure 与容器解析都是调用方代码，放全局锁内会阻塞全部站点。
         lock (siteGate)
         {
             lock (_gate)
@@ -172,10 +159,8 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
                 }
             }
 
-            // 每站点自建底层客户端（与容器里的 AxiosClient 注册互不相干），由本解析器持有并在容器退出时释放。
-            // 先创建后登记：configure 抛错或 IAuthorizationProvider 解析失败（如注册成 Scoped，
-            // 单例解析器从根容器取不到）时，holder 不能留在 _owned —— 每次重试都会新建一个
-            // 连接池，直到容器退出才释放；失败路径当场释放。
+            // 每站点自建底层客户端，由本解析器持有并在容器退出时释放。
+            // 先创建后登记：创建失败时 holder 当场释放，不会留在 _owned 里泄漏连接池。
             var holder = new ApiClientOwnedAxiosClient(definition.Defaults);
 
             ApiClient created;
@@ -245,10 +230,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
 }
 
 /// <summary>
-/// 属主释放的失败容错循环：单个 holder 释放失败不能跳过其余站点 ——
-/// 第一个抛异常就中断会让后面的连接池永久泄漏。
-/// <para>收集首个失败（<see cref="ExceptionDispatchInfo"/> 保留原始堆栈），全部释放完后再抛；
-/// 同步 / 异步两条路径共用同一语义，测试可直接用假 <see cref="IDisposable"/> 驱动。</para>
+/// 属主释放的失败容错循环：单个 holder 释放失败不跳过其余站点，收集首个失败后统一抛出（保留原始堆栈）。
 /// </summary>
 internal static class HolderDisposal
 {

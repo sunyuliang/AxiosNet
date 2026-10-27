@@ -1,4 +1,4 @@
-using AxiosNet.Tests.Infrastructure;
+﻿using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 
 namespace AxiosNet.Tests.WebAPI;
@@ -273,9 +273,7 @@ public sealed class ApiClientP0Tests
     public async Task ErrorContext_Body_KeepsRawText_EvenWhenDeclaredTypeParses()
     {
         // 错误体恰好能被声明类型解析：RawText 仍然可用（Data 已是对象，原文不能被消费掉）
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(
-            new Person("error-body", 400),
-            statusCode: 400));
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("error-body", 400), statusCode: 400));
         using var client = new ApiClient(server.Url) { ErrorFactory = new CapturingErrorFactory() };
 
         await Assert.ThrowsAsync<ApiError<Person>>(
@@ -298,11 +296,7 @@ public sealed class ApiClientP0Tests
     [Fact]
     public void ValidateModels_CollectsAllErrors_WithoutThrowing()
     {
-        var errors = ApiClient.ValidateModels(
-            typeof(GetUserRequest),
-            typeof(NoRouteModel),
-            typeof(HeaderCollectionRequest),
-            typeof(object));
+        var errors = ApiClient.ValidateModels(typeof(GetUserRequest), typeof(NoRouteModel), typeof(HeaderCollectionRequest), typeof(object));
 
         Assert.Equal(2, errors.Count);
         Assert.Contains(errors, message => message.Contains("NoRouteModel") && message.Contains("路由特性"));

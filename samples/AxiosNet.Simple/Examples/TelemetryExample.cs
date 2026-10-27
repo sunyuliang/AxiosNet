@@ -6,29 +6,7 @@ using AxiosNet.Telemetry;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 27. 可观测性：ActivitySource（链路）/ Meter（指标）/ DiagnosticListener（事件）。
-/// <para>
-/// 三路观测点默认就开着，但「有人订阅才产出」：本示例现场订阅三路，于是能看到一次请求的完整观测数据；
-/// 最后再演示 <c>Telemetry.Enabled = false</c>（健康检查这类请求不想污染指标）与 <c>CaptureUrl</c>
-/// （查询串里有令牌时不记录完整 URL）。
-/// </para>
-/// <para>
-/// 接 OpenTelemetry 时不用这些手工订阅（示例项目不引 OTel 包，这里只写出来）：两行订阅 + 一个 View。
-/// View 不是可选项 —— 耗时直方图按语义约定用<b>秒</b>，而 OTel .NET 的默认分桶边界是按毫秒设计的
-/// （0, 5, 10, 25 … 10000），不配的话正常请求会全落进 (0, 5] 一个桶，5 ms 和 4 s 分不开。
-/// <code>
-/// builder.Services.AddOpenTelemetry()
-///     .WithTracing(t =&gt; t.AddSource("AxiosNet"))
-///     .WithMetrics(m =&gt; m
-///         .AddMeter("AxiosNet")
-///         .AddView("axiosnet.client.request.duration", new ExplicitBucketHistogramConfiguration
-///         {
-///             Boundaries = new[] { 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10 }
-///         }));
-/// </code>
-/// </para>
-/// </summary>
+/// <summary>27. 可观测性：ActivitySource（链路）/ Meter（指标）/ DiagnosticListener（事件）。</summary>
 public sealed class TelemetryExample : IExample
 {
     /// <summary>带重试策略的客户端：让重试事件与重试计数有东西可看。</summary>
@@ -49,7 +27,7 @@ public sealed class TelemetryExample : IExample
         });
 
         // ── 1) 链路：订阅 ActivitySource「AxiosNet」 ────────────────────────────
-        // 一次逻辑请求 = 一个 span（重试不另开 span，次数记在 http.request.resend_count 上）。
+        // 一次逻辑请求 = 一个 span，重试不另开 span
         var spans = new List<Activity>();
         using var activityListener = new ActivityListener
         {
@@ -125,7 +103,7 @@ public sealed class TelemetryExample : IExample
         Console.WriteLine("  已订阅三路观测点：ActivitySource / Meter / DiagnosticListener");
         Console.WriteLine();
 
-        // 1) 成功请求：503 前两次、第三次成功（演示重试如何出现在观测数据里）
+        // 1) 成功请求：前两次 503、第三次成功，看重试如何出现在观测数据里
         var tag = Guid.NewGuid().ToString("N")[..8];
         var response = await client.GetAsync<object>($"flaky?fail=2&tag={tag}");
         Console.WriteLine($"  [1] GET /flaky（前两次 503，第三次成功）-> status={response.Status}，协议={response.ProtocolVersion}");
@@ -140,7 +118,7 @@ public sealed class TelemetryExample : IExample
             // 预期：演示失败请求的观测数据
         }
 
-        // 3) 关掉遥测：健康检查 / 探针请求不该进业务指标
+        // 3) 关掉遥测：健康检查 / 探针请求不进业务指标
         await client.GetAsync<object>("users/1", configure: config => config.Telemetry.Enabled = false);
         Console.WriteLine("  [2] 同上失败请求 + 一次 Telemetry.Enabled = false 的请求（不产出任何遥测）");
 
@@ -202,7 +180,7 @@ public sealed class TelemetryExample : IExample
         Console.WriteLine("    · Telemetry.Enabled = false：健康检查、探针请求不进业务指标；url.full 默认不含查询串（令牌不会进遥测），确需查询串时显式设 CaptureQuery = true");
         Console.WriteLine("    · 遥测绝不影响请求：订阅方回调抛异常会被兜住（实测 ActivitySource 会把 ActivityStarted 的异常往外抛，库自己接了）");
 
-        // 内层订阅同样要退订：菜单里后续示例还在同一进程跑，留着订阅会让它们白付遥测开销。
+        // 内层订阅同样要退订，否则后续示例会白付遥测开销
         eventSubscription?.Dispose();
     }
 

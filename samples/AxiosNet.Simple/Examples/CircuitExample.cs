@@ -4,9 +4,7 @@ using AxiosNet.Circuit;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 28. 熔断：按 host 计数、连续失败打开、冷却后半开探测、探测失败重新打开、单请求绕过、手工恢复。
-/// </summary>
+/// <summary>28. 熔断：按 host 计数、连续失败打开、冷却后半开探测、单请求绕过、手工恢复。</summary>
 public sealed class CircuitExample : IExample
 {
     public int Number => 28;
@@ -25,7 +23,7 @@ public sealed class CircuitExample : IExample
             HalfOpenAttempts = 1
         };
 
-        // 状态迁移只发生这几次：Closed -> Open（打开）、Open -> HalfOpen（冷却结束）、HalfOpen -> Open（探测失败）
+        // 打印状态迁移：Closed -> Open -> HalfOpen -> Open
         breaker.StateChanged += change =>
             Console.WriteLine($"    [StateChanged] {change.Host}: {change.Previous} -> {change.Current}");
 
@@ -56,7 +54,7 @@ public sealed class CircuitExample : IExample
             }
         }
 
-        // 2) 打开后：请求不再发出（不建连、不占连接池租约），直接以 ERR_CIRCUIT_OPEN 失败
+        // 2) 打开后：请求不再发出，直接以 ERR_CIRCUIT_OPEN 失败
         var stopwatch = Stopwatch.StartNew();
         try
         {
@@ -83,7 +81,7 @@ public sealed class CircuitExample : IExample
 
         Console.WriteLine($"  当前状态: {breaker.GetState(host)}");
 
-        // 4) 单请求绕过熔断：探针 / 健康检查不该被挡住（显式 null 压住实例默认策略）
+        // 4) 单请求绕过熔断：显式把策略置空（探针 / 健康检查用）
         try
         {
             await client.GetAsync(uri, c => c.Circuit.Policy = null);

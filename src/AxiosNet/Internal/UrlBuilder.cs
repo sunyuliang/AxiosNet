@@ -7,12 +7,7 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 负责 baseURL + url 合并（combineURLs）与 params 序列化（buildURL）。
-/// 序列化规则与 axios 默认 paramsSerializer 对齐：数组 <c>a[]=1&amp;a[]=2</c>、嵌套 <c>o[k]=v</c>、
-/// null 跳过、方括号不转义。
-/// <para>
-/// <see cref="System.Uri"/> 会按 RFC 3986 归一化非保留字符（<c>%41</c>→<c>A</c>），与 HttpClient 实际发送的
-/// 请求行一致，因此 <see cref="AxiosClient.GetUri(AxiosConfig)"/> 返回的就是真实发送形态。
-/// </para>
+/// 序列化规则与 axios 默认 paramsSerializer 对齐：数组 <c>a[]=1&amp;a[]=2</c>、嵌套 <c>o[k]=v</c>、null 跳过、方括号不转义。
 /// </summary>
 internal static class UrlBuilder
 {
@@ -28,28 +23,20 @@ internal static class UrlBuilder
             throw AxiosException.InvalidUrl(url ?? string.Empty, config);
         }
 
-        // 空白（非 null）url 是调用方的失误：静默解释成「请求 baseAddress 本身」会让
-        // 一次「变量忘赋值」变成向根路径发出的意外请求（POST / 可能带副作用）。
-        // null 仍然合法（= 请求 baseAddress，与快捷方法显式传 "/" 的语义并存）。
+        // 空白（非 null）url 视为调用失误；null 才表示请求 baseAddress 本身。
         if (url is { Length: > 0 } && string.IsNullOrWhiteSpace(url))
         {
-            throw AxiosException.InvalidUrl(
-                url,
-                config,
-                message: "url 不能为空白字符串：要请求 baseAddress 本身请显式传 \"/\"（或把 Url 置为 null）。");
+            throw AxiosException.InvalidUrl(url, config, message: "url 不能为空白字符串：要请求 baseAddress 本身请显式传 \"/\"（或把 Url 置为 null）。");
         }
 
         var combined = Combine(baseAddress, url);
 
-        // 查询串必须拼在 fragment 之前：url 自带 "#top" 时直接追加会让整个查询串落进 fragment，
-        // 永远发不到服务端（axios 的 buildURL 也是先切 hash、拼完再补回）。
+        // 查询串必须拼在 fragment 之前，否则会落进 fragment 发不到服务端。
         var hashIndex = combined.IndexOf('#');
         var fragment = hashIndex >= 0 ? combined[hashIndex..] : string.Empty;
         var target = hashIndex >= 0 ? combined[..hashIndex] : combined;
 
-        // 自定义序列化器（对应 axios paramsSerializer）返回的串允许带前导 ?/&，这里统一去掉。
-        // 调用方回调抛的异常属于配置错误：统一成 ERR_BAD_OPTION_VALUE，不让裸异常从管线漏出
-        // （与「params 根类型非法」同一个错误码）。
+        // 自定义序列化器返回的串允许带前导 ?/&，这里统一去掉；回调异常统一成 ERR_BAD_OPTION_VALUE。
         string query;
         try
         {
@@ -59,13 +46,11 @@ internal static class UrlBuilder
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            throw AxiosException.InvalidOption(
-                $"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
+            throw AxiosException.InvalidOption($"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
         }
         if (query.Length > 0)
         {
-            // 「url 已以 ? / & 结尾」时不能再补分隔符：`search?` + params 会拼出 `search?&a=1`，
-            // 多出的空参数在严格的服务端/网关眼里是「一个无名的空参数」。
+            // url 已以 ? / & 结尾时不能再补分隔符，否则会多出一个空参数。
             if (target.Length == 0)
             {
                 target = query;
@@ -76,7 +61,6 @@ internal static class UrlBuilder
             }
             else
             {
-                // 一次拼接成型：先拼分隔符再拼目标会多出一个中间串（每请求热路径）。
                 target = string.Concat(target, target.Contains('?') ? "&" : "?", query);
             }
         }
@@ -87,8 +71,7 @@ internal static class UrlBuilder
         {
             var uri = new Uri(combined, UriKind.RelativeOrAbsolute);
 
-            // 连接池必须使用绝对地址；相对 URL 且未提供 baseURL 时统一抛 ERR_INVALID_URL。
-            // IsFile：Unix 下 "/items" 会被 Uri 解析成 file:///items，不拦住会一路走到 Handler 才报错。
+            // 必须使用 http/https 绝对地址；IsFile 拦下 Unix 下被解析成 file:/// 的根相对路径。
             if (!uri.IsAbsoluteUri || uri.IsFile || !IsHttpScheme(uri))
             {
                 throw AxiosException.InvalidUrl(combined, config);
@@ -110,9 +93,7 @@ internal static class UrlBuilder
             return baseAddress!.TrimEnd('/');
         }
 
-        // 协议相对 URL（//host/path）：axios 的 isAbsoluteURL 把它算绝对地址，浏览器按页面协议补全。
-        // 库没有页面协议，但有 baseAddress 时按它的 scheme 补全（两者都缺时原样返回，
-        // 交给 Build 抛 ERR_INVALID_URL —— 没有 scheme 的 //host 在任何 HTTP 栈里都解析不了）。
+        // 协议相对 URL（//host/path）：有 baseAddress 时按它的 scheme 补全，否则原样返回交给 Build 报错。
         if (url.StartsWith("//", StringComparison.Ordinal))
         {
             var separator = baseAddress?.IndexOf("://", StringComparison.Ordinal) ?? -1;
@@ -129,17 +110,7 @@ internal static class UrlBuilder
         return baseAddress.TrimEnd('/') + "/" + url.TrimStart('/');
     }
 
-    /// <summary>
-    /// 是否为绝对地址（形如 <c>scheme://</c>）。
-    /// <para>
-    /// 不用 <see cref="Uri.TryCreate(string, UriKind, out Uri)"/>：Unix 下以 <c>/</c> 开头的路径会被当成
-    /// 绝对文件路径（<c>file:///items</c>），把根相对地址误判为绝对地址（dotnet/runtime#76816，by design）。
-    /// </para>
-    /// <para>
-    /// 要求 <c>scheme</c> 后紧跟 <c>//</c>（与 axios 一致）：只按 <c>scheme ":"</c> 判定会把
-    /// 「主机:端口」形态（<c>localhost:8080/items</c>）当成绝对地址，baseURL 被静默绕过。
-    /// </para>
-    /// </summary>
+    /// <summary>是否为绝对地址（形如 <c>scheme://</c>）：要求 <c>scheme</c> 后紧跟 <c>//</c>，避免把「主机:端口」误判。</summary>
     private static bool IsAbsoluteUrl(string url)
     {
         if (url.Length == 0 || !IsAsciiLetter(url[0]))
@@ -152,7 +123,7 @@ internal static class UrlBuilder
             var c = url[i];
             if (c == ':')
             {
-                // RFC 3986 scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )，且必须是 scheme://
+                // scheme 允许字母、数字与 "+" / "-" / "."，且必须是 scheme://
                 return url.Length > i + 2 && url[i + 1] == '/' && url[i + 2] == '/';
             }
 
@@ -186,8 +157,7 @@ internal static class UrlBuilder
 
 internal static class ParamsSerializer
 {
-    /// <param name="paramsObj">查询参数：对象 / 字典 / 集合 / 已序列化的查询串（string）。</param>
-    /// <param name="config">用于把「params 类型非法」的错误挂上配置。</param>
+    /// <summary>把查询参数序列化成查询串：对象 / 字典 / 集合 / 已序列化的字符串原样透传。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -199,7 +169,7 @@ internal static class ParamsSerializer
             return string.Empty;
         }
 
-        // 已经是查询串（`"a=1&b=2"`）：原样透传，否则落到反射分支会被序列化成 `?Length=7`。
+        // 已经是查询串（`"a=1&b=2"`）：原样透传，不走反射。
         if (paramsObj is string rawQuery)
         {
             return NormalizeRawQuery(rawQuery);
@@ -211,7 +181,7 @@ internal static class ParamsSerializer
             var format = config?.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
             if (paramsObj is JsonElement rootElement)
             {
-                // 直接传 JsonElement 必须按 JSON 树展开；走反射兜底只会把 ValueKind / RawText 序列化出去。
+                // JsonElement 按 JSON 树展开，不走反射。
                 if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
                     or JsonValueKind.True or JsonValueKind.False)
                 {
@@ -230,7 +200,7 @@ internal static class ParamsSerializer
             }
             else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
             {
-                // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
+                // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
                 foreach (var entry in readOnlyDictionary)
                 {
                     Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
@@ -250,7 +220,7 @@ internal static class ParamsSerializer
             }
             else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
             {
-                // 根集合（数组 / List）：与表单展平一致，用下标作键；否则反射分支会输出 Array 的 CLR 属性。
+                // 根集合用下标作键（与表单展平一致）。
                 var index = 0;
                 foreach (var item in items)
                 {
@@ -260,7 +230,7 @@ internal static class ParamsSerializer
             }
             else if (IsScalar(paramsObj))
             {
-                // 标量没有可表达的键名：伪造 key 或静默丢弃都会让调用方以为参数发出去了。
+                // 标量没有可表达的键名，按非法根类型报错。
                 throw InvalidParamsRoot(paramsObj, config);
             }
             else
@@ -271,8 +241,7 @@ internal static class ParamsSerializer
                 }
             }
 
-            // 收尾：单个 StringBuilder 一次成型。Select + 每对中间串 + Join 的二次遍历
-            // 在每请求热路径上纯属浪费（千级 params 时约 3 倍瞬分配）。
+            // 收尾：用单个 StringBuilder 一次拼出查询串。
             if (pairs.Count == 0)
             {
                 return string.Empty;
@@ -299,7 +268,7 @@ internal static class ParamsSerializer
         }
         catch (DataCycleException ex)
         {
-            // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
+            // 环检测：转成带配置的选项错误。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
     }
@@ -308,8 +277,7 @@ internal static class ParamsSerializer
     private static AxiosException InvalidParamsRoot(object paramsObj, AxiosConfig? config)
         => AxiosException.InvalidOption(
             $"params 的类型 '{paramsObj.GetType()}' 无法序列化为查询串：请传对象 / 字典 / 集合，"
-            + "或已经序列化好的查询串（string，如 \"a=1&b=2\"）。",
-            config);
+            + "或已经序列化好的查询串（string，如 \"a=1&b=2\"）。", config);
 
     /// <summary>去掉查询串首尾空白与前导 <c>?</c> / <c>&amp;</c>（与自定义 paramsSerializer 的归一化一致）。</summary>
     private static string NormalizeRawQuery(string query)
@@ -360,7 +328,7 @@ internal static class ParamsSerializer
             return;
         }
 
-        // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
+        // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
         if (value is IReadOnlyDictionary<string, object> readOnlyNested)
         {
             visited = ObjectGraph.Enter(visited, readOnlyNested);
@@ -438,7 +406,7 @@ internal static class ParamsSerializer
         {
             foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
             {
-                // 后缀（含转义）按属性缓存：属性名跨请求不变，热路径只剩一次前缀拼接
+                // 后缀（含转义）按属性缓存，这里只需一次前缀拼接。
                 Append(prefix + ReflectionCache.GetBracketSuffix(property), property.GetValue(value), pairs, visited, format);
             }
         }
@@ -449,8 +417,8 @@ internal static class ParamsSerializer
     }
 
     /// <summary>
-    /// 非默认集合形态：<see cref="AxiosCollectionFormat.Multi"/> 展开成重复键，
-    /// 其余分隔形态把标量元素拼成一个值（元素含对象时回落到方括号形态，避免静默丢字段）。
+    /// 非默认集合形态：<see cref="AxiosCollectionFormat.Multi"/> 展开成重复键，其余分隔形态把标量元素拼成一个值
+    /// （元素含对象时回落到方括号形态）。
     /// </summary>
     private static void AppendCollection(
         string prefix,
@@ -462,8 +430,7 @@ internal static class ParamsSerializer
         visited = ObjectGraph.Enter(visited, enumerable);
         try
         {
-            // Multi 直接流式枚举源：其余分隔形态要两遍（先判全标量，再拼接 / 回落），
-            // 才需要物化一次；能取到 Count 时按容量建表。
+            // Multi 直接流式枚举；其余分隔形态需物化一次（先判全标量，再拼接或回落）。
             if (format == AxiosCollectionFormat.Multi)
             {
                 foreach (var item in enumerable)
@@ -523,10 +490,7 @@ internal static class ParamsSerializer
         _ => ","
     };
 
-    /// <summary>
-    /// 按 JSON 树展开查询参数，规则与表单展平一致：
-    /// 嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、null 跳过。
-    /// </summary>
+    /// <summary>按 JSON 树展开查询参数：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、null 跳过。</summary>
     private static void AppendJsonElement(
         string? prefix,
         JsonElement element,
@@ -538,11 +502,7 @@ internal static class ParamsSerializer
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    AppendJsonElement(
-                        prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]",
-                        property.Value,
-                        pairs,
-                        format);
+                    AppendJsonElement(prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]", property.Value, pairs, format);
                 }
 
                 break;
@@ -585,8 +545,7 @@ internal static class ParamsSerializer
     }
 
     /// <summary>
-    /// JSON 树里的非默认集合形态：与对象形态同规则（Multi 重复键，其余拼成一个值），
-    /// 元素含对象/数组或根数组时回落方括号形态。
+    /// JSON 树的非默认集合形态：Multi 重复键，其余拼成一个值（元素含对象/数组或根数组时回落方括号形态）。
     /// </summary>
     private static void AppendJsonArray(
         string? prefix,
@@ -656,20 +615,15 @@ internal static class ParamsSerializer
         // byte[] 在 query 里走 base64（可逆），不算「标量」参与 Path/Header 校验
         => value is byte[] || ScalarTypes.IsScalarType(value.GetType());
 
-    /// <summary>
-    /// 标量 → 线上文本。查询串、路径段、请求头共用这一份规则：
-    /// bool 是 <c>true</c> / <c>false</c>，日期时间是 UTC 毫秒 ISO 8601 ——
-    /// 三处各写一份时 bool 会退化成 <c>True</c>（Boolean 不实现 IFormattable），
-    /// 同一个值在 <c>[Query]</c> 与 <c>[Path]</c> 上因此发出两种形态。
-    /// </summary>
+    /// <summary>标量 → 线上文本：bool 是 <c>true</c> / <c>false</c>，日期时间是 UTC 毫秒 ISO 8601。</summary>
     internal static string ScalarToString(object value) => value switch
     {
-        // query 里没有 byte[] 的标准形态；base64 至少可逆且能完整还原
+        // query 里没有 byte[] 的标准形态，用 base64（可逆）。
         byte[] bytes => Convert.ToBase64String(bytes),
         _ => BodyFields.ScalarToString(value)
     };
 
-    // axios 默认 encoder 用 encodeURIComponent，并把 %5B / %5D 还原成 [ ]
+    // 同 axios 默认 encoder：encodeURIComponent，并把 %5B / %5D 还原成 [ ]
     internal static string EscapeKey(string key)
         => Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]");
 

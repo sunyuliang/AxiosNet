@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 15. P0 能力：getUri 预览（不发请求）、maxContentLength 拦截超大响应、maxRedirects: 0 不跟随重定向。
-/// </summary>
+/// <summary>15. P0 能力：getUri 预览、maxContentLength 拦截超大响应、maxRedirects: 0 不跟随重定向。</summary>
 public sealed class GetUriAndLimitsExample : IExample
 {
     /// <summary>1 MB 上限的专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
@@ -21,7 +19,7 @@ public sealed class GetUriAndLimitsExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 静态复用：首次运行创建，之后复用（两个客户端配置都是构造期固化的，跨运行语义不变）
+        // 静态复用：两个客户端配置都是构造期固化的，跨运行语义不变
         var http = _limited ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
@@ -61,8 +59,7 @@ public sealed class GetUriAndLimitsExample : IExample
         }
         catch (AxiosException ex)
         {
-            Console.WriteLine(
-                $"  未跟随重定向: status={ex.Status}, location={ex.Response?.GetHeader("Location")}, code={ex.Code}");
+            Console.WriteLine($"  未跟随重定向: status={ex.Status}, location={ex.Response?.GetHeader("Location")}, code={ex.Code}");
         }
 
         // 4) 对照：默认 maxRedirects = 5，会跟到 /users/1

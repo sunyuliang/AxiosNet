@@ -5,14 +5,7 @@ using System.Reflection;
 
 namespace AxiosNet.WebAPI.Internal;
 
-/// <summary>
-/// 字符串键字典的识别与枚举：供「查询参数平铺」（Refit 的动态查询 / QueryMap）与
-/// <see cref="HeaderCollectionAttribute"/> 共用。
-/// <para>
-/// 声明类型只保证到「是个字符串键字典」，实例的实际实现类型可能只实现
-/// <c>IReadOnlyDictionary&lt;string,T&gt;</c>，因此枚举有三条通道 + 一条反射兜底。
-/// </para>
-/// </summary>
+/// <summary>字符串键字典的识别与枚举：供查询参数平铺与 <see cref="HeaderCollectionAttribute"/> 共用。实例的实际实现类型可能只实现 <c>IReadOnlyDictionary&lt;string,T&gt;</c>，因此枚举有三条通道 + 一条反射兜底。</summary>
 internal static class QueryMap
 {
     /// <summary>是否为字符串键字典（<c>IDictionary</c> 或 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>）。</summary>
@@ -69,16 +62,13 @@ internal static class QueryMap
                         var value = type.GetProperty("Value");
                         if (key is null || value is null)
                         {
-                            throw new InvalidOperationException(
-                                $"类型 {type.Name} 既不是 IDictionary，也不是键值对序列：无法作为查询参数映射使用。");
+                            throw new InvalidOperationException($"类型 {type.Name} 既不是 IDictionary，也不是键值对序列：无法作为查询参数映射使用。");
                         }
 
                         return (key, value);
                     });
 
-                    yield return new KeyValuePair<string, object?>(
-                        accessors.Key.GetValue(item)?.ToString() ?? string.Empty,
-                        accessors.Value.GetValue(item));
+                    yield return new KeyValuePair<string, object?>(accessors.Key.GetValue(item)?.ToString() ?? string.Empty, accessors.Value.GetValue(item));
                 }
 
                 break;
@@ -86,8 +76,7 @@ internal static class QueryMap
     }
 
     /// <summary>
-    /// 在类型自身与接口里找 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>；
-    /// <paramref name="valueType"/> 非 null 时还要求值类型相符。
+    /// 在类型自身与接口里找 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>；<paramref name="valueType"/> 非 null 时还要求值类型相符。
     /// </summary>
     private static Type? FindStringKeyedPair(Type type, Type? valueType)
     {

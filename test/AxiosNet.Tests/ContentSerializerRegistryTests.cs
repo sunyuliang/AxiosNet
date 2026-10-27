@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 
@@ -23,10 +23,7 @@ public sealed class ContentSerializerRegistryTests
         try
         {
             await using var server = TestHttpServer.Start(req => req.Path.EndsWith("/orders/1")
-                ? new TestResponse(
-                    200,
-                    Body: Encoding.UTF8.GetBytes("<XmlOrder><Id>7</Id><Name>book</Name></XmlOrder>"),
-                    ContentType: "application/xml; charset=utf-8")
+                ? new TestResponse(200, Body: Encoding.UTF8.GetBytes("<XmlOrder><Id>7</Id><Name>book</Name></XmlOrder>"), ContentType: "application/xml; charset=utf-8")
                 : TestJson.Echo(req, contentType: "application/xml; charset=utf-8"));
 
             // 不注入任何序列化器：请求 ContentType 与响应 Content-Type 都是 application/xml →

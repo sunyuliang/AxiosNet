@@ -2,59 +2,19 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>
-    /// 可观测性（<see cref="AxiosConfig.Telemetry"/>）：链路（<c>ActivitySource</c>）、指标（<c>Meter</c>）
-    /// 与事件（<c>DiagnosticListener</c>）三类观测点的**按请求**开关。
-    /// <para>
-    /// 三者都是「有人订阅才产出」：没有监听者时不建 Activity、不发事件，指标调用退化为几次空检查，
-    /// 因此默认开启不会改变请求行为。要**整体关掉**（例如健康检查、探针请求不想污染指标）请用
-    /// <see cref="Enabled"/>；只想收敛 URL 里的敏感信息用 <see cref="CaptureUrl"/> / <see cref="CaptureQuery"/>。
-    /// </para>
-    /// <para>
-    /// 订阅方式见 <see cref="Telemetry.AxiosTelemetry"/>：OpenTelemetry 用
-    /// <c>AddSource("AxiosNet")</c> + <c>AddMeter("AxiosNet")</c>，日志侧订阅
-    /// <c>DiagnosticListener</c>「AxiosNet.DiagnosticListener」。
-    /// </para>
-    /// </summary>
+    /// <summary>可观测性（<see cref="AxiosConfig.Telemetry"/>）：链路 / 指标 / 事件三类观测点的按请求开关，没人订阅时不产出。</summary>
     public sealed class TelemetrySettings
     {
-        /// <summary>
-        /// 本次请求是否产出遥测；<c>null</c>（默认）= 开启。
-        /// <para>
-        /// 设为 <c>false</c> 时：不建 Activity、不写指标、不发诊断事件 —— 与「没有这个功能」时的
-        /// 执行路径完全一致（连起始时间戳都不取）。用于排除健康检查 / 探针这类「不想算进业务指标」的请求。
-        /// </para>
-        /// <para>用 <c>bool?</c> 而不是 <c>bool</c>：<c>null</c> 表示「本次没表态」，合并时沿用实例默认值。</para>
-        /// </summary>
+        /// <summary>本次请求是否产出遥测；<c>null</c>（默认）= 开启，设为 <c>false</c> 时不建 Activity、不写指标、不发事件。</summary>
         public bool? Enabled { get; set; }
 
-        /// <summary>
-        /// 是否把完整 URL 写进 span 的 <c>url.full</c> 标签；<c>null</c>（默认）= 写（仅到 path，查询串见 <see cref="CaptureQuery"/>）。
-        /// <para>
-        /// 查询串往往含令牌 / 签名 / 个人信息，而 span 会进第三方后端：默认<b>不写查询串</b>，
-        /// 要连查询串一起记录请显式打开 <see cref="CaptureQuery"/>。
-        /// </para>
-        /// <para>只影响链路标签，不影响指标（指标的标签里本来就没有 URL）。</para>
-        /// </summary>
+        /// <summary>是否把 URL 写进 span 的 <c>url.full</c> 标签；<c>null</c>（默认）= 写（仅到 path，查询串见 <see cref="CaptureQuery"/>），只影响链路标签。</summary>
         public bool? CaptureUrl { get; set; }
 
-        /// <summary>
-        /// 是否把查询串并进 <c>url.full</c>；<c>null</c>（默认）= 不写。
-        /// <para>
-        /// 默认关闭是为了避免 <c>?access_token=...</c> 这类凭据随 span 上报到第三方后端；
-        /// 查询串确实需要用于排障时，按请求显式设为 <c>true</c>。
-        /// </para>
-        /// <para>仅在 <see cref="CaptureUrl"/> 生效时有意义（<c>CaptureUrl = false</c> 时不写 <c>url.full</c>）。</para>
-        /// </summary>
+        /// <summary>是否把查询串并进 <c>url.full</c>；<c>null</c>（默认）= 不写，仅在 <see cref="CaptureUrl"/> 生效时有意义。</summary>
         public bool? CaptureQuery { get; set; }
 
-        /// <summary>
-        /// 把 <paramref name="incoming"/> 里显式设置过的项覆盖到本实例（合并层内部使用）。
-        /// <para>
-        /// 三项都是 <c>bool?</c>，<c>null</c> 就是「没表态」，因此不需要额外的 <c>*Set</c> 标记：
-        /// 与 <see cref="RetrySettings.Policy"/> 那种「<c>null</c> 本身有意义」的项不同。
-        /// </para>
-        /// </summary>
+        /// <summary>把 <paramref name="incoming"/> 里显式设置过的项覆盖到本实例（合并层内部使用）；三项都是 <c>bool?</c>，<c>null</c> 即「没表态」。</summary>
         internal void MergeFrom(TelemetrySettings incoming)
         {
             if (incoming.Enabled is bool enabled)

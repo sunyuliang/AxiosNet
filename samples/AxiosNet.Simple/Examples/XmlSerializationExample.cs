@@ -3,10 +3,7 @@ using AxiosNet.Serialization;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 23. XML 序列化：换上<b>系统内置</b>的 <see cref="XmlContentSerializer"/>（零第三方依赖），
-/// 请求体、强类型响应统一走同一个引擎 —— 库本身不认识 XML，也不知道 Data 里装的是什么。
-/// </summary>
+/// <summary>23. XML 序列化：换上系统内置的 <see cref="XmlContentSerializer"/>，请求体与强类型响应走同一个引擎。</summary>
 public sealed class XmlSerializationExample : IExample
 {
     /// <summary>本示例专用客户端（XML 引擎）：配置固定，首次运行创建后跨运行复用。</summary>
@@ -23,8 +20,7 @@ public sealed class XmlSerializationExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 实例级注入：只影响这个 client，不污染全局默认（全局入口是 AxiosContent.Serializer）
-        // 静态复用：首次运行创建，之后所有次运行复用
+        // 实例级注入：只影响这个 client，不污染全局默认（静态复用：首次运行创建，之后复用）
         var xml = _xml ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
@@ -33,13 +29,8 @@ public sealed class XmlSerializationExample : IExample
 
         var user = new XmlUser { Id = 1, Name = "alice", Age = 30 };
 
-        // 1) 请求方向：这里<b>没有</b>设置 ContentType —— 头由序列化器自报（MediaType = application/xml），
-        //    正文由它产出（/echo 原样回显请求体）。等价于 axios 默认 transformRequest 里顺手
-        //    headers.setContentType(...)：换格式只需换序列化器一处，头与正文不会脱节。
-        var echoed = await xml.PostAsync<string>(
-            "echo",
-            user,
-            c => c.ResponseType = ResponseType.Text);
+        // 1) 请求方向：不设 ContentType，头与正文都由序列化器产出（/echo 原样回显请求体）
+        var echoed = await xml.PostAsync<string>("echo", user, c => c.ResponseType = ResponseType.Text);
 
         Console.WriteLine($"  请求体(头自动 application/xml): {echoed.Data}");
 
@@ -47,12 +38,11 @@ public sealed class XmlSerializationExample : IExample
         var typed = await xml.GetAsync<XmlUser>("users/1/xml");
         Console.WriteLine($"  强类型响应: Id={typed.Data!.Id}, Name={typed.Data.Name}, Age={typed.Data.Age}");
 
-        // 3) 非泛型响应：框架按 JSON 文档形态解析（XML 解析不了）→ 原样返回文本，不经过序列化器
+        // 3) 非泛型响应：XML 解析不了，原样返回文本
         var raw = await xml.GetAsync("users/1/xml");
         Console.WriteLine($"  非泛型响应(原文): {raw.Data}");
 
-        // 4) 请求方向的基础数据类型：不经过序列化器（XmlSerializer 对无名的根标量无从下手），
-        //    框架直接取文本发送 —— 媒体类型仍然由 ContentType 决定
+        // 4) 基础数据类型不经过序列化器，直接取文本发送，媒体类型仍由 ContentType 决定
         var scalar = await xml.PostAsync<string>(
             "echo",
             42,
@@ -64,12 +54,11 @@ public sealed class XmlSerializationExample : IExample
 
         Console.WriteLine($"  标量请求体(application/xml, 不经过序列化器): {scalar.Data}");
 
-        // 5) 自动模式：不注入任何序列化器（AxiosContent.Serializer 保持 null），只按媒体类型注册 ——
-        //    同一个 client 因此可以混用格式：Content-Type 是 XML 走 XML，其余回落内置 JSON
+        // 5) 自动模式：只按媒体类型注册，同一个 client 可以混用格式
         AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
         try
         {
-            // 自动模式：注册表挂在全局序列化器注册表上，与用哪个客户端无关（静态复用：首次运行创建，之后所有次运行复用）
+            // 注册表是全局的，与用哪个客户端无关
             var auto = _auto ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
             var byRegistry = await auto.GetAsync<XmlUser>("users/1/xml");

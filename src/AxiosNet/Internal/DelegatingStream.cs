@@ -1,21 +1,9 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 包装流基类：收编超时 / 租约 / 进度读 / 进度写四个包装流重复的透传成员，以及
-/// 「同步成员阻塞等待异步核心」的入口形状。
-/// <para>
-/// 不变量（子类必须遵守）：同步成员不得把同步 I/O 压给内层流 —— 基类的同步入口一律阻塞等待
-/// 对应的 <c>*CoreAsync</c>（链路全程 <c>ConfigureAwait(false)</c>），子类只实现异步核心；
-/// 限速等待因此天然走 <c>Task.Delay</c> 的异步路径。<c>ReadByte</c> / <c>Read(Span)</c> 等
-/// 不覆写：基类实现会换算成 <c>Read(byte[], int, int)</c>，落到同一路径。
-/// </para>
-/// <para>
-/// 读 / 写 / Flush 三组核心默认透传给内层流；能力成员（Can* / Length / Position）与
-/// Seek / SetLength 默认同样透传，方向单一的包装流按需覆写为抛 <see cref="NotSupportedException"/>。
-/// 释放默认连同内层流一起（底层流归 HttpClient 所有的上传侧包装流覆写
-/// <see cref="DisposeInnerStream"/>）；附加资源（CTS / 租约 / 响应消息）在
-/// <see cref="OnReleased"/> 里释放，且不得因前一个释放抛异常而被跳过。
-/// </para>
+/// 包装流基类：收编超时 / 租约 / 进度读 / 进度写四个包装流重复的透传成员，以及「同步成员阻塞等待
+/// 异步核心」的入口形状。子类只实现 <c>*CoreAsync</c>，同步入口由基类阻塞等待对应异步核心。
+/// 读 / 写 / Flush 与能力成员默认透传内层流；释放默认连同内层流一起，附加资源在 <see cref="OnReleased"/> 释放。
 /// </summary>
 internal abstract class DelegatingStream : Stream
 {

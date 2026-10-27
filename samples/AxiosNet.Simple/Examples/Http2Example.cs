@@ -3,15 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 26. HTTP/2：默认就是 2.0（h2 已是公网流量主力），服务端不支持时自动降级；
-/// 需要老协议时一行退回 1.1。
-/// <para>
-/// 演示服务器只实现 HTTP/1.1（相当于现实里那些只认 1.x 的服务），正好用来观察默认值的两个面：
-/// 客户端请求 2.0，服务端看到的请求行仍然是 HTTP/1.1，请求照常成功 —— 降级不需要额外配置，
-/// 也不会多一次往返。真实的 https 目标支持 h2 时，同样的默认配置会直接谈成 h2。
-/// </para>
-/// </summary>
+/// <summary>26. HTTP/2：默认就是 2.0，服务端不支持时自动降级；需要老协议时一行退回 1.1。</summary>
 public sealed class Http2Example : IExample
 {
     /// <summary>默认客户端：配置固定，首次运行创建后跨运行复用。</summary>
@@ -35,12 +27,12 @@ public sealed class Http2Example : IExample
         Console.WriteLine("  [1] 默认配置（不设置 HttpVersion）");
         Console.WriteLine($"      客户端配置 2.0（本示例是明文，没有 ALPN 可协商）-> 服务端收到 {byDefault.Data!.RequestVersion}，响应协商结果 {byDefault.ProtocolVersion}：按契约落 1.1，请求照常成功");
 
-        // 2) 退回 1.1：老网关 / NTLM 这类连接级认证 / 必须用连接级头时
+        // 2) 退回 1.1：老网关 / NTLM 认证 / 必须用连接级头时
         var forced = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version11);
         Console.WriteLine("  [2] 退回 1.1（HttpVersion = Version11，策略仍是默认的 RequestVersionOrLower）");
         Console.WriteLine($"      客户端请求 1.1 -> 服务端收到 {forced.Data!.RequestVersion}，响应协商结果 {forced.ProtocolVersion}：不再尝试协商");
 
-        // 3) 要求必须是 2.0：Exact 不降级，服务端不支持就失败（也用于明文 h2c 先验知识）
+        // 3) 要求必须是 2.0：Exact 不降级，服务端不支持就失败
         Console.WriteLine("  [3] 要求必须是 h2（VersionPolicy = RequestVersionExact）");
         try
         {
@@ -56,14 +48,13 @@ public sealed class Http2Example : IExample
             Console.WriteLine($"      失败（预期）：code={ex.Code} —— Exact 的语义就是「不支持就报错，不降级」");
         }
 
-        // 4) HTTP/3：默认仍是 2.0，h3 要显式要求（Version30）。能不能真的跑 h3 先看本机能力。
-        //    h3 只存在于 QUIC 上，明文目标上 OrLower 会落到 1.1（Exact 则在发请求前就报配置错误）。
+        // 4) HTTP/3：默认仍是 2.0，h3 要显式要求（Version30）
         Console.WriteLine("  [4] 要求 h3（HttpVersion = Version30，策略默认 OrLower）");
         Console.WriteLine($"      本机 HTTP/3 能力：{(Http3Support.IsSupported ? "可用" : "不可用 —— " + Http3Support.UnsupportedReason)}");
         var h3 = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version30);
         Console.WriteLine($"      客户端请求 3.0 -> 服务端收到 {h3.Data!.RequestVersion}，响应协商结果 {h3.ProtocolVersion}：明文上不存在 h3，按 OrLower 落 1.1");
 
-        // 5) 「必须 h3」在明文目标上是不可能成立的配置：库在发请求之前就报错，不会白等一次连接超时
+        // 5) 「必须 h3」在明文目标上发请求前就报错
         Console.WriteLine("  [5] 要求必须 h3（VersionPolicy = RequestVersionExact）");
         try
         {

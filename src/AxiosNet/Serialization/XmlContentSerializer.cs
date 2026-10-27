@@ -23,23 +23,8 @@ namespace AxiosNet.Serialization;
 /// </code>
 /// </para>
 /// <para>
-/// 约束（都来自 XmlSerializer）：
-/// <list type="bullet">
-/// <item>目标类型必须有<b>公开无参构造</b>，只序列化公开可读写属性/字段；
-/// 匿名类型、接口、<c>Dictionary&lt;,&gt;</c> 不支持，请改用 DTO。</item>
-/// <item>基础类型不经过这里，所以 <c>PostAsync("u", 42)</c>、<c>GetAsync&lt;int&gt;</c> 在 XML 下同样可用。</item>
-/// <item><c>dynamic</c> 是 JSON 便利能力，XML 下会抛 <c>ERR_BAD_RESPONSE</c>；
-/// 要原文请用 <see cref="ResponseType.Text"/> 或非泛型 <c>GetAsync()</c>。</item>
-/// </list>
-/// </para>
-/// <para>
-/// 实现说明：<see cref="XmlSerializer"/> 构造开销很大，按类型缓存且线程安全；XML 声明的 <c>encoding</c>
-/// 跟随 <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/>（必须与实际写 socket 的编码一致）；
-/// 默认命名空间为空以免请求体里塞满 <c>xmlns:xsi</c> 噪音；反序列化禁用 DTD（防 XXE / 十亿笑声）。
-/// </para>
-/// <para>
-/// Native AOT / 裁剪：<see cref="XmlSerializer"/> 依赖运行时反射生成序列化器，本类<b>不支持 AOT</b>；
-/// 需要 AOT 请改用 JSON + 源生成上下文。
+/// 约束（都来自 XmlSerializer）：目标类型必须有公开无参构造，只序列化公开可读写成员；基础类型不经过这里；
+/// <c>dynamic</c> 不支持；依赖运行时反射，不支持 Native AOT。
 /// </para>
 /// </summary>
 [UnconditionalSuppressMessage(
@@ -57,10 +42,7 @@ public sealed class XmlContentSerializer : IContentSerializer
     {
     }
 
-    /// <summary>
-    /// <c>application/xml</c>：注入本序列化器后请求头会自动用它
-    /// （调用方未显式设置 <see cref="AxiosConfig.ContentType"/> 时）。
-    /// </summary>
+    /// <summary><c>application/xml</c>：注入本序列化器后请求头会自动用它（调用方未显式设置时）。</summary>
     public string? MediaType => AxiosContentType.Xml;
 
     public string Serialize(object? value, Type type, AxiosConfig config)
@@ -72,10 +54,7 @@ public sealed class XmlContentSerializer : IContentSerializer
 
         var serializer = For(type);
 
-        // XML 声明里的 encoding 必须与实际写 socket 的字节编码一致。正文由 RequestBodyFactory 编码，
-        // 它的优先级是「ContentType 里声明的 charset → RequestEncoding → UTF-8」——
-        // 这里必须用同一套解析：只看 RequestEncoding 会让「ContentType = application/xml; charset=gb2312」
-        // 这种写法产出「声明 utf-8、正文 gb2312」的损坏文档（非 ASCII 字符还会被替换成 '?'）。
+        // XML 声明里的 encoding 必须与实际写 socket 的字节编码一致，解析优先级与 RequestBodyFactory 相同。
         var encoding = RequestContentType.GetCharsetEncoding(config.ContentType)
             ?? config.SerializationOrNull?.RequestEncoding
             ?? Encoding.UTF8;
@@ -105,16 +84,10 @@ public sealed class XmlContentSerializer : IContentSerializer
     /// <summary>按类型缓存：<see cref="XmlSerializer"/> 构造昂贵，实例本身可并发复用。</summary>
     private static XmlSerializer For(Type type) => Cache.GetOrAdd(type, static t => new XmlSerializer(t));
 
-    /// <summary>
-    /// 根元素声明的命名空间（空前缀）。按类型缓存：此前每次 <see cref="Serialize"/> 都要跑两次
-    /// <c>GetCustomAttribute</c>，而声明随类型不变。
-    /// </summary>
+    /// <summary>根元素声明的命名空间缓存（按类型）。</summary>
     private static readonly ConcurrentDictionary<Type, string> RootNamespaces = new();
 
-    /// <summary>
-    /// 根元素使用「空前缀 + 类型声明的命名空间」：无命名空间的 DTO 因此不带
-    /// <c>xmlns:xsi</c>/<c>xmlns:xsd</c>；显式写了 <c>[XmlRoot(Namespace=...)]</c> 的仍按声明输出。
-    /// </summary>
+    /// <summary>根元素使用「空前缀 + 类型声明的命名空间」，无命名空间的 DTO 因此不带 <c>xmlns:xsi</c> / <c>xmlns:xsd</c>。</summary>
     private static XmlSerializerNamespaces NamespacesFor(Type type)
     {
         // 命名空间实例每次新建：XmlSerializer 序列化过程中可能往里补条目，共享一个可变实例有竞态。
@@ -128,10 +101,7 @@ public sealed class XmlContentSerializer : IContentSerializer
         return namespaces;
     }
 
-    /// <summary>
-    /// 让 XML 声明里的 <c>encoding</c> 跟随调用方声明的编码（<c>StringWriter</c> 默认写 utf-16）：
-    /// <see cref="XmlWriter.Create(TextWriter, XmlWriterSettings)"/> 以 <see cref="TextWriter.Encoding"/> 为准。
-    /// </summary>
+    /// <summary>让 XML 声明里的 <c>encoding</c> 跟随调用方声明的编码（<c>StringWriter</c> 默认写 utf-16）。</summary>
     private sealed class DeclaredEncodingStringWriter : StringWriter
     {
         private readonly Encoding _encoding;

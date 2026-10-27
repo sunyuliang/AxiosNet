@@ -2,10 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 19. 自定义 JSON 序列化：实现 IContentSerializer，把默认的 System.Text.Json 换成 Newtonsoft.Json，
-/// 业务对象的请求体与强类型响应走同一个引擎（dynamic 由库自己展开，与引擎无关）。
-/// </summary>
+/// <summary>19. 自定义 JSON 序列化：实现 IContentSerializer，把默认的 System.Text.Json 换成 Newtonsoft.Json。</summary>
 public sealed class NewtonsoftJsonExample : IExample
 {
     /// <summary>本示例专用客户端（Newtonsoft 引擎）：配置固定，首次运行创建后跨运行复用。</summary>
@@ -30,7 +27,7 @@ public sealed class NewtonsoftJsonExample : IExample
             Roles = ["admin", "user"]
         };
 
-        // 实例级替换：只影响这个 client，不污染全局（静态复用：首次运行创建，之后所有次运行复用）
+        // 实例级替换：只影响这个 client，不污染全局（静态复用：首次运行创建，之后复用）
         var newtonsoft = _newtonsoft ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
@@ -41,10 +38,8 @@ public sealed class NewtonsoftJsonExample : IExample
         var systemTextJson = _systemTextJson ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
         // 1) 请求方向：同一份对象，两种引擎写出不同的属性名（/echo 原样回显请求体）
-        var newtonsoftBody = await newtonsoft.PostAsync<string>(
-            "echo", profile, c => c.ResponseType = ResponseType.Text);
-        var systemTextJsonBody = await systemTextJson.PostAsync<string>(
-            "echo", profile, c => c.ResponseType = ResponseType.Text);
+        var newtonsoftBody = await newtonsoft.PostAsync<string>("echo", profile, c => c.ResponseType = ResponseType.Text);
+        var systemTextJsonBody = await systemTextJson.PostAsync<string>("echo", profile, c => c.ResponseType = ResponseType.Text);
 
         Console.WriteLine($"  Newtonsoft 请求体     : {newtonsoftBody.Data}");
         Console.WriteLine($"  System.Text.Json 请求体: {systemTextJsonBody.Data}");

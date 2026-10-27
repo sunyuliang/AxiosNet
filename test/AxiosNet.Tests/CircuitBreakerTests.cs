@@ -1,4 +1,4 @@
-using AxiosNet.Circuit;
+﻿using AxiosNet.Circuit;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 
@@ -14,13 +14,16 @@ public sealed class CircuitBreakerTests
     private static string HostOf(TestHttpServer server) => $"127.0.0.1:{server.Port}";
 
     /// <summary>
-    /// 冷却时长取得足够短，用例不必真的等 30 秒；又远大于计时精度，不会假失败。
-    /// <para>
-    /// 200ms 是「短」与「稳」的折中：断言「冷却期内仍拒绝」之前只隔一次异步调用的开销，
-    /// 断言「冷却后放行」之前固定等 500ms（余量 300ms），CI 满载时也不会周期性假失败。
-    /// </para>
+    /// 「短冷却」：只用于「等它过期」的断言 —— 冷却结束后发探测请求，等够 500ms 即可。
+    /// 「冷却期内仍拒绝」的断言必须配 <see cref="LongBreak"/>，否则就是测试和调度延迟赛跑。
     /// </summary>
     private static readonly TimeSpan ShortBreak = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// 「长冷却」：用于断言「刚打开 → 紧接着的请求一定被拒」。30 秒远大于任何调度抖动，
+    /// 且这些用例从不真的等它过期。
+    /// </summary>
+    private static readonly TimeSpan LongBreak = TimeSpan.FromSeconds(30);
 
     // ------------------------------------------------------------------
     // 打开 / 拒绝
@@ -156,7 +159,8 @@ public sealed class CircuitBreakerTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
-        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak };
+        // 冷却取长值：本用例只断言「记账 + 拒绝」，不需要冷却结束。
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak };
         using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
 
         // validateStatus 放行 5xx：请求本身不抛错，但熔断必须照样记账
@@ -180,7 +184,8 @@ public sealed class CircuitBreakerTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak };
+        // 先用长冷却把「冷却期内拒绝」钉死，再压回短冷却等它过期。
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak };
         using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -191,6 +196,8 @@ public sealed class CircuitBreakerTests
         Assert.Equal(AxiosException.ErrCircuitOpen, rejected.Code);
         Assert.Single(server.Received);
 
+        // 压回短冷却：验证的仍是「时间真的过去了才放行」，只省掉 30 秒等待。
+        breaker.BreakDuration = ShortBreak;
         await Task.Delay(TimeSpan.FromMilliseconds(500));
 
         // 冷却结束：这一次是探测请求，成功即恢复
@@ -226,6 +233,9 @@ public sealed class CircuitBreakerTests
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
         Assert.Equal(6, server.Received.Count);
+
+        // 重开后拉长冷却：断言「不发」不能被冷却过期打断。
+        breaker.BreakDuration = LongBreak;
 
         // 重新打开后又是「不发」
         var rejected = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));

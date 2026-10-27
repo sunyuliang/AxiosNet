@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
@@ -47,7 +47,7 @@ public sealed class Audit20261022GlobalAuditFixTests
             new AxiosConfig { BaseAddress = server.Url },
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
 
-        // 按请求显式写 5：此前 5 == Defaults.MaxRedirects(5) 直接放行，实际只会跟随 3 次
+        // 按请求显式写 5 且与默认值相同：仍必须生效（服务端只会重定向 3 次）。
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.GetAsync("x", c => c.Connection.MaxRedirects = 5));
 
@@ -61,7 +61,7 @@ public sealed class Audit20261022GlobalAuditFixTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
 
-        // AllowAutoRedirect = false 时生效值是 0：按请求写 5 与此前一样被静默放行
+        // AllowAutoRedirect = false 时生效值是 0：按请求写 5 应被静默放行。
         using var client = new AxiosClient(
             new AxiosConfig { BaseAddress = server.Url },
             poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
@@ -97,9 +97,7 @@ public sealed class Audit20261022GlobalAuditFixTests
         var payload = Encoding.UTF8.GetBytes("{\"name\":\"bom\",\"age\":7}");
         var body = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(payload).ToArray();
 
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            ContentType: "application/octet-stream",
-            Body: body));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(ContentType: "application/octet-stream", Body: body));
 
         using var client = new AxiosClient();
 
@@ -135,7 +133,7 @@ public sealed class Audit20261022GlobalAuditFixTests
         using var client = new ApiClient("http://127.0.0.1:1/", c =>
             c.Params = new { api_key = "secret" });
 
-        // 有 [Query] 绑定但值为 null：此前 Params = 空字典，合并层整体替换把 api_key 清掉
+        // 有 [Query] 绑定但值为 null：Params 不应变成空字典把 api_key 清掉。
         var uri = client.GetUri(new AllNullQueryRequest());
 
         Assert.Contains("api_key=secret", uri);
@@ -263,7 +261,7 @@ public sealed class Audit20261022GlobalAuditFixTests
         var received = Assert.Single(server.Received);
 
         // DateOnly 走 IFormattable 的不变文化短日期（10/22/2026，斜杠被百分号编码）；
-        // 本测试的要点是路由去向：查询参数而非请求体（此前被默认 Body 收走）
+        // 要点是路由去向：查询参数而非请求体。
         Assert.Equal("When=10%2F22%2F2026", received.Query);
         Assert.Empty(received.Body);
     }
@@ -287,7 +285,7 @@ public sealed class Audit20261022GlobalAuditFixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        // DateOnly 此前不在 Path/Header 的标量清单里，构建期直接报错
+        // DateOnly 应被当作 Path/Header 的标量处理。
         await client.RequestAsync(new DateOnlyPathRequest { Day = new DateOnly(2026, 10, 22) });
 
         var received = Assert.Single(server.Received);
@@ -366,7 +364,7 @@ public sealed class Audit20261022GlobalAuditFixTests
 
         var stats = pool.GetStatistics();
 
-        // 两者必须来自同一次快照（此前分两次读，并发新建 / 驱逐下计数与数组长度会背离）
+        // 两者必须来自同一次快照：分两次读会让计数与数组长度背离。
         Assert.Equal(stats.Endpoints.Count, stats.EndpointCount);
         Assert.Equal(2, stats.EndpointCount);
     }
@@ -428,7 +426,7 @@ public sealed class Audit20261022GlobalAuditFixTests
     {
         var config = new AxiosConfig();
 
-        // 此前静默重置为 application/json 并置 ContentTypeSet，压掉序列化器自报的媒体类型
+        // 不应静默重置为 application/json 并压掉序列化器自报的媒体类型。
         Assert.Throws<ArgumentException>(() => config.ContentType = "   ");
     }
 
@@ -462,8 +460,7 @@ public sealed class Audit20261022GlobalAuditFixTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // 声明 charset=iso-8859-1 但没设 RequestEncoding：此前正文按 UTF-8 编码、头声明 iso-8859-1，
-        // 服务端按头解出乱码；现在以声明的 charset 编码正文，头与正文一致
+        // 声明 charset=iso-8859-1 但没设 RequestEncoding：正文必须按声明的 charset 编码，与头保持一致。
         await client.PostAsync(
             server.Url + "x",
             "café",

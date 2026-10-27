@@ -3,15 +3,12 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把 <see cref="AxiosConfig.Data"/> 转成 <see cref="HttpContent"/>。
-/// <para>
-/// 唯一约定：<b>请求体格式由 <see cref="AxiosConfig.ContentType"/> 决定，与 data 的运行时类型无关</b>。
-/// 例外是「调用方没表态」：未显式设置时采用生效序列化器自报的 <see cref="IContentSerializer.MediaType"/>。
-/// </para>
+/// 把 <see cref="AxiosConfig.Data"/> 转成 <see cref="HttpContent"/>：正文格式由 <see cref="AxiosConfig.ContentType"/> 决定，
+/// 未显式设置时采用生效序列化器自报的 <see cref="IContentSerializer.MediaType"/>。
 /// <list type="bullet">
 /// <item>string / byte[] / Memory / ArraySegment / Stream / HttpContent：原样发送，只应用 Content-Type。</item>
-/// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，<b>不经过序列化器</b>。</item>
-/// <item>结构化数据：json → 序列化器（有字节形态则发字节，否则发文本）；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
+/// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，不经过序列化器。</item>
+/// <item>结构化数据：json → 序列化器；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
 /// </list>
 /// </summary>
 internal static class RequestBodyFactory
@@ -20,18 +17,14 @@ internal static class RequestBodyFactory
 
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
-        // 请求体文本编码：默认 UTF-8；charset 只在显式设置 RequestEncoding 时写入，
-        // 避免给 json 强加 charset 参数。
+        // 正文编码：默认 UTF-8；charset 只在显式设置 RequestEncoding 时写入。
         var requestEncoding = config.SerializationOrNull?.RequestEncoding;
         var encoding = requestEncoding ?? Encoding.UTF8;
         var appendCharset = requestEncoding is not null;
         var mediaType = config.ContentType;
 
-        // 显式声明的 charset 是比 RequestEncoding 更具体的编码声明（ContentType「显式设置过以本项为准」）：
-        // 声明了就用它编码正文。仅对「本库会编成文本」的正文生效（string / 结构化数据）；
-        // 原始字节与 HttpContent 原样发送，编码不适用。
-        // 两者矛盾时无法同时满足 —— 头声明一个编码、正文是另一个编码，服务端按头解出的就是
-        // 乱码且没有任何报错，明确拦下（与 Content-Length 不一致的拦策一致）。
+        // 显式声明的 charset 优先于 RequestEncoding，且只对文本正文生效；
+        // 两者矛盾时头与正文编码不一致，直接拦下。
         if (data is not null
             && EncodesText(data)
             && RequestContentType.GetCharsetEncoding(mediaType) is { } declared)
@@ -40,17 +33,14 @@ internal static class RequestBodyFactory
             {
                 throw AxiosException.InvalidOption(
                     $"ContentType 声明的 charset（{declared.WebName}）与 RequestEncoding（{requested.WebName}）不一致："
-                    + "两者描述的是同一个请求体的字符编码，请只保留一处（或改成一致）。",
-                    config);
+                    + "两者描述的是同一个请求体的字符编码，请只保留一处（或改成一致）。", config);
             }
 
             encoding = declared;
         }
 
-        // 请求头里显式声明的 Content-Type（ApplyHeaders 最终会用它覆盖正文的 Content-Type）若带 charset，
-        // 同样必须与正文实际编码一致：头声明一个编码、正文是另一个编码时，服务端按头解出的就是乱码
-        // 且没有任何报错。这里只做校验，正文编码仍由 ContentType / RequestEncoding 决定。
-        // multipart 的 Content-Type 由库自己带 boundary 写头（headers 覆盖会被跳过），不参与。
+        // 请求头里的 Content-Type 若带 charset，必须与正文实际编码一致；
+        // multipart 的 Content-Type 由库自己写头，不参与。
         if (data is not null
             && EncodesText(data)
             && !MediaTypes.Is(mediaType, MultipartMediaType)
@@ -62,12 +52,10 @@ internal static class RequestBodyFactory
             throw AxiosException.InvalidOption(
                 $"请求头里的 Content-Type 声明 charset={headerCharset.WebName}，但正文实际按 {encoding.WebName} 编码："
                 + "两者不一致会让服务端按头解出乱码。请改用 AxiosConfig.ContentType 声明编码"
-                + "（它的 charset 会驱动正文编码），或去掉请求头里的 charset。",
-                config);
+                + "（它的 charset 会驱动正文编码），或去掉请求头里的 charset。", config);
         }
 
-        // multipart + 原始内容是矛盾的组合：没有 boundary 服务端无从解析，有条 boundary 也说明不了字段名。
-        // 要发预序列化的 multipart 正文，请用 HttpContent 作为 data。
+        // multipart + 原始内容是矛盾组合：没有 boundary 服务端无从解析。
         if (data is not null and not HttpContent
             && IsRawContent(data)
             && MediaTypes.Is(mediaType, MultipartMediaType)
@@ -76,8 +64,7 @@ internal static class RequestBodyFactory
             throw AxiosException.InvalidOption(
                 "Content-Type 为 multipart/form-data 时，data 不能是原始内容"
                 + "（string / byte[] / Memory / Stream）：请传入对象或字典由库组装 multipart 字段，"
-                + "或用 HttpContent（如 MultipartFormDataContent）承载预序列化的 multipart 正文。",
-                config);
+                + "或用 HttpContent（如 MultipartFormDataContent）承载预序列化的 multipart 正文。", config);
         }
 
         switch (data)
@@ -86,22 +73,20 @@ internal static class RequestBodyFactory
                 return null;
 
             case HttpContent existing:
-                // 已构造好的内容原样透传；仅当内容自身没有 Content-Type 且用户显式配置过时才补头部。
+                // 已构造好的内容原样透传；仅当内容没有 Content-Type 且用户显式配置过时才补头部。
                 if (config.ContentTypeSet && existing.Headers.ContentType is null)
                 {
                     RequestContentType.Set(existing, mediaType, config);
                 }
 
-                // multipart 没有 boundary 服务端必然解析失败（正文靠随机边界切分部件），
-                // 与其发出去换一个看不懂的 400，不如在这里拦。
+                // multipart 没有 boundary 服务端必然解析失败，这里拦下。
                 if (existing.Headers.ContentType?.MediaType is { } existingMediaType
                     && existingMediaType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase)
                     && !RequestContentType.HasMultipartBoundary(existing.Headers.ContentType))
                 {
                     throw AxiosException.InvalidOption(
                         "Content-Type 为 multipart 却没有 boundary：data 传入的 HttpContent 必须自带合法边界"
-                        + "（如 MultipartFormDataContent），或把对象/字典交给库组装字段。",
-                        config);
+                        + "（如 MultipartFormDataContent），或把对象/字典交给库组装字段。", config);
                 }
 
                 return existing;
@@ -145,9 +130,7 @@ internal static class RequestBodyFactory
         return content;
     }
 
-    /// <summary>
-    /// 零拷贝发送 <see cref="ReadOnlyMemory{T}"/>：<see cref="ByteArrayContent"/> 会先 ToArray() 复制整段。
-    /// </summary>
+    /// <summary>零拷贝发送 <see cref="ReadOnlyMemory{T}"/>，避免 <see cref="ByteArrayContent"/> 的整段复制。</summary>
     private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType, AxiosConfig config)
     {
         var content = new ReadOnlyMemoryContent(memory);
@@ -174,20 +157,15 @@ internal static class RequestBodyFactory
 
         var type = data.GetType();
 
-        // 头由正文的产出者自报，与 axios 的 headers.setContentType('application/json', false) 同构：
-        // 调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
-        // 决策必须放在「标量 / 结构化」分派之前：标量不经过序列化器产出正文，但它的头同样该跟着
-        // 生效序列化器走 —— 否则「注入 XML 序列化器 + PostAsync("u", 42)」会得到
-        // application/json 的头配 "42" 的正文（头体不一致，XML 服务端必然解析失败）。
+        // 头由正文产出者自报：调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
+        // 必须在「标量 / 结构化」分派之前，标量的头同样要跟着生效序列化器走。
         var serializer = AxiosContent.Get(config, mediaType);
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
         {
             mediaType = declared.Trim();
         }
 
-        // 基础类型<b>不经过序列化器</b>：请求体语义就是「这个值本身」，直接取文本。
-        // 交给序列化器既多余（JSON 裸标量与本函数结果一致）又不可行（XML / YAML 无法表达无名根标量）。
-        // 字典 / 集合 / 对象 / dynamic 一律不进这个分支，它们和业务对象走同一套逻辑。
+        // 基础类型不经过序列化器，直接取文本（XML / YAML 无法表达无名根标量）。
         if (BodyFields.IsScalar(type))
         {
             var scalar = CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset, config);
@@ -195,7 +173,7 @@ internal static class RequestBodyFactory
             return scalar;
         }
 
-        // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送（不编码文本、不补 charset）。
+        // 二进制格式的请求出口：非 null 表示该格式以字节为正文，原样发送。
         if (serializer.SerializeToBytes(data, type, config) is { } bytes)
         {
             return CreateBinary(bytes, mediaType, config);
@@ -208,14 +186,8 @@ internal static class RequestBodyFactory
     }
 
     /// <summary>
-    /// 正文产出之后的 <b>charset 收口校验</b>：最终会发出的 Content-Type（请求头里的优先，
-    /// 与 <c>ApplyHeaders</c> 的覆盖规则一致）若声明了 charset，必须与正文实际编码一致。
-    /// <para>
-    /// 序列化器可以在 <see cref="IContentSerializer.Serialize"/> 里写请求头、或自报带 charset 的
-    /// <see cref="IContentSerializer.MediaType"/>，这些写入都发生在正文产出过程中，入口处的预校验
-    /// 看不到它们 —— 落空的结果是「头声明 gbk、正文 UTF-8」，服务端按头解出乱码且没有任何报错
-    /// （<see cref="IContentSerializer"/> 上承诺拦下 <c>ERR_BAD_OPTION_VALUE</c>，在这里兑现）。
-    /// </para>
+    /// 正文产出后校验最终 Content-Type 的 charset 与正文编码一致（请求头优先，与 <c>ApplyHeaders</c> 的覆盖规则一致）。
+    /// 序列化器可能在序列化过程中写头，入口处的预校验看不到。
     /// </summary>
     private static void ValidateDeclaredCharset(HttpContent content, AxiosConfig config, Encoding bodyEncoding)
     {
@@ -230,19 +202,15 @@ internal static class RequestBodyFactory
             throw AxiosException.InvalidOption(
                 $"Content-Type 声明 charset={declared.WebName}，但请求体实际按 {bodyEncoding.WebName} 编码："
                 + "两者不一致会让服务端按头解出乱码。请让序列器自报 / 写入与正文一致的 charset，"
-                + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.RequestEncoding。",
-                config);
+                + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.RequestEncoding。", config);
         }
     }
 
-    /// <summary>「内容原样发送」的类型：与结构化数据相对，不经过任何展平/序列化。</summary>
+    /// <summary>「内容原样发送」的类型：不经过任何展平 / 序列化。</summary>
     private static bool IsRawContent(object data)
         => data is string or byte[] or ReadOnlyMemory<byte> or Memory<byte> or ArraySegment<byte> or Stream;
 
-    /// <summary>
-    /// 正文是否会由本库按 <see cref="Encoding"/> 编成文本（<see cref="string"/> 与结构化数据）；
-    /// 原始字节（byte[] / Memory / ArraySegment / Stream）与 <see cref="HttpContent"/> 原样发送，不算。
-    /// </summary>
+    /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string 与结构化数据）。</summary>
     private static bool EncodesText(object data)
         => data is string
             || (data is not HttpContent

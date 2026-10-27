@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http;
 using System.Text;
 using AxiosNet.Pooling;
@@ -244,9 +244,7 @@ public sealed class Audit20261023GlobalFixTests
             .Concat(Encoding.Unicode.GetBytes(json))
             .ToArray();
 
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: body,
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "application/octet-stream"));
 
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 

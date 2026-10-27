@@ -4,9 +4,8 @@ using AxiosNet.Pooling;
 namespace AxiosNet;
 
 /// <summary>
-/// 静态门面，对应 JS 里直接使用的全局 <c>axios</c>：
-/// <c>await Axios.GetAsync(...)</c> 等同于 <c>axios.get(...)</c>，
-/// <c>Axios.Create(...)</c> 等同于 <c>axios.create(...)</c>。
+/// 静态门面，对应 JS 全局 <c>axios</c>：<c>Axios.GetAsync(...)</c> 等同 <c>axios.get(...)</c>，
+/// <c>Axios.Create(...)</c> 等同 <c>axios.create(...)</c>。
 /// </summary>
 public static class Axios
 {
@@ -22,15 +21,8 @@ public static class Axios
     public static AxiosInterceptors Interceptors => DefaultClient.Interceptors;
 
     /// <summary>
-    /// 对应 axios.create(config)。
-    /// <para>
-    /// 注入 <paramref name="handler"/> 时不使用连接池；想保留池化又要自己的 Handler 链，
-    /// 请用 <see cref="ConnectionPoolOptions.HandlerFactory"/>。
-    /// </para>
-    /// <para>
-    /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥
-    /// （同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
-    /// </para>
+    /// 对应 axios.create(config)。注入 <paramref name="handler"/> 时不使用连接池。
+    /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
     /// </summary>
     public static AxiosClient Create(
         AxiosConfig? defaults = null,
@@ -226,7 +218,5 @@ public static class Axios
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PatchFormAsync<T>(url, cancellationToken);
 
-    // 需要 JS 式动态响应时用泛型 <dynamic>：
-    //   dynamic data = (await Axios.GetAsync<dynamic>(url)).Data!;
-    // Post/Put/Patch/Delete 同理。
+    // 需要 JS 式动态响应时用 <dynamic>：dynamic data = (await Axios.GetAsync<dynamic>(url)).Data!;
 }

@@ -1,8 +1,6 @@
 namespace AxiosNet;
 
-/// <summary>
-/// 对应 axios config.auth，发送 HTTP Basic 认证头。
-/// </summary>
+/// <summary>对应 axios config.auth，发送 HTTP Basic 认证头。</summary>
 public sealed class AxiosAuth
 {
     public AxiosAuth()
@@ -17,14 +15,7 @@ public sealed class AxiosAuth
 
     private string _username = string.Empty;
 
-    /// <summary>
-    /// Basic 认证的用户名。
-    /// <para>
-    /// 不允许含冒号：RFC 7617 的 <c>user-id</c> 里冒号是分隔符，服务端会在<b>第一个</b>冒号处切开，
-    /// 含冒号的用户名会让密码整体错位成用户名的一部分 —— 表现为一句无声的 401。
-    /// 密码不受限制（可以含冒号）。
-    /// </para>
-    /// </summary>
+    /// <summary>Basic 认证的用户名，不允许含冒号（RFC 7617 用第一个冒号分隔 user-id 与 password）。</summary>
     /// <exception cref="ArgumentException">用户名含 <c>:</c>。</exception>
     public string Username
     {

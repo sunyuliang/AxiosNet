@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -461,15 +461,10 @@ public sealed class HttpVersionNegotiationTests
             alternativeNames.AddDnsName("localhost");
             request.CertificateExtensions.Add(alternativeNames.Build());
 
-            var certificate = request.CreateSelfSigned(
-                DateTimeOffset.UtcNow.AddDays(-1),
-                DateTimeOffset.UtcNow.AddDays(1));
+            var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
 
             // Windows 的 SslStream 不接受只有内存私钥的证书：导出成 PFX 再导入一次拿到可用的密钥句柄
-            return new X509Certificate2(
-                certificate.Export(X509ContentType.Pfx),
-                (string?)null,
-                X509KeyStorageFlags.Exportable);
+            return new X509Certificate2(certificate.Export(X509ContentType.Pfx), (string?)null, X509KeyStorageFlags.Exportable);
         }
 
         public ValueTask DisposeAsync()

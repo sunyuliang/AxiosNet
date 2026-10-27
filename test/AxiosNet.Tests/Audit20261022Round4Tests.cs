@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -78,7 +78,7 @@ public sealed class Audit20261022Round4Tests
     {
         using var client = new AxiosClient(handler: new FailingBodyWriteHandler(), disposeHandler: false);
 
-        // 只有 MaxRate 没有回调：旧实现仍报「OnUploadProgress 回调抛出异常」，文案完全失真。
+        // 只有 MaxRate 没有回调：不应报「OnUploadProgress 回调抛出异常」。
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Limits.MaxRate = 1_000_000));
 
@@ -87,7 +87,7 @@ public sealed class Audit20261022Round4Tests
     }
 
     // ===============================================================
-    // 3. 307 重发正文：累计进度的终值必须覆盖两轮（旧实现在第二轮第一个事件就锁死）。
+    // 3. 307 重发正文：累计进度的终值必须覆盖两轮。
     // ===============================================================
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class Audit20261022Round4Tests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // 先写 Content-Type：旧实现会先造一个 0 字节正文，随后 Content-Length 被判成「不一致」而抛错。
+        // 先写 Content-Type：不应先造一个 0 字节正文导致 Content-Length 被判成不一致。
         await client.PostAsync(server.Url + "bodyless", (object?)null, c =>
         {
             c.Headers.Set("Content-Type", "application/json");
@@ -148,7 +148,7 @@ public sealed class Audit20261022Round4Tests
 
     // ===============================================================
     // 6. 派生类用 [ApiIgnore] 覆盖基类带 [Query] 的 virtual 属性：
-    //    语义是「完全不绑定」，旧实现误判成「与参数特性同用的二义性」。
+    //    语义是「完全不绑定」，不应误判成「与参数特性同用的二义性」。
     // ===============================================================
 
     [Fact]

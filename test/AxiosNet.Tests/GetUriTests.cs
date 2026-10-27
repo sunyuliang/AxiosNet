@@ -2,9 +2,7 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// 对应 axios.getUri：只组装最终 URL（baseURL + params），不发请求。
-/// </summary>
+/// <summary>对应 axios.getUri：只组装最终 URL（baseURL + params），不发请求。</summary>
 public sealed class GetUriTests
 {
     [Fact]
@@ -71,8 +69,7 @@ public sealed class GetUriTests
     [Fact]
     public void GetUri_FileUri_ThrowsInvalidUrl()
     {
-        // 显式 file:// 不是 HTTP 目标：不能拼到 baseURL 后面，也不能交给连接池。
-        // 这条同时覆盖了 Unix 下 Uri 把 "/items" 解析成 file:///items 的兜底分支。
+        // 显式 file:// 不是 HTTP 目标。
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://api.example.com/v1/" });
 
         var ex = Assert.Throws<AxiosException>(() => client.GetUri(c => c.Url = "file:///etc/passwd"));
@@ -109,7 +106,6 @@ public sealed class GetUriTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        // 不转义时 "a/b c" 会被拆成两段：items/a/b%20c
         await client.GetAsync(server.Url + "items/" + AxiosUrl.EncodePathSegment("a/b c"));
 
         Assert.Equal("/items/a%2Fb%20c", server.Received[0].RawUrl);

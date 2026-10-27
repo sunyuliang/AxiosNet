@@ -5,11 +5,8 @@ using System.Text.Json;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 部件声明（声明式层传入的字段名 / 文件名 / Content-Type）解析后的覆盖项。
-/// <para>
-/// 只描述「声明了什么」，不描述「怎么包装」：真正的 FormFile 合并、文件部件包装与所有权登记
-/// 全部由 <see cref="MultipartBodyBuilder"/> 在装配时完成 —— 因此失败路径的释放点也只有一处。
-/// </para>
+/// 部件声明（声明式层传入的字段名 / 文件名 / Content-Type）解析后的覆盖项；包装与所有权登记由
+/// <see cref="MultipartBodyBuilder"/> 在装配时完成。
 /// </summary>
 /// <param name="FileName">声明的文件名；null 表示沿用值自带 / builder 默认。</param>
 /// <param name="ContentType">声明的部件 Content-Type；null 表示沿用值自带 / builder 默认。</param>
@@ -19,17 +16,13 @@ internal readonly record struct PartOverride(
     string? ContentType,
     bool HasExplicitName)
 {
-    /// <summary>是否声明了任何覆盖项：决定要不要在装配前校验、要不要把它登记到 <see cref="DeclaredForm.Overrides"/>。</summary>
+    /// <summary>是否声明了任何覆盖项。</summary>
     public bool Any => HasExplicitName || FileName is not null || ContentType is not null;
 }
 
 /// <summary>
 /// 声明式 multipart 表单：值保持调用方原样（<see cref="FormFile"/> / 流 / 字节 / 原值），
 /// 声明覆盖按字段名单独登记，装配时由 <see cref="MultipartBodyBuilder"/> 逐项取出应用。
-/// <para>
-/// 用字典子类型而不是包装值：公开的 <c>config.Data</c> 里看到的仍是原始值
-/// （<c>Configure</c> / 拦截器 / <c>transformRequest</c> 都按普通表单字典处理）。
-/// </para>
 /// </summary>
 internal sealed class DeclaredForm : Dictionary<string, object?>
 {
@@ -41,22 +34,8 @@ internal sealed class DeclaredForm : Dictionary<string, object?>
 }
 
 /// <summary>
-/// multipart 部件的所有权回收。
-/// <para>
-/// 装配中途失败时，已经取得所有权的流 / 内容（含字典、集合、迭代器、嵌套对象里的）必须释放，
-/// 否则异常路径会永久泄漏 <see cref="FileStream"/> 句柄。这里是<b>唯一</b>实现：模型装配
-/// （<c>RequestModelMetadata.ResolveBody</c> 的失败回滚）与 <see cref="MultipartBodyBuilder"/>
-/// 的装配回滚共用。
-/// </para>
-/// <para>
-/// 遍历范围与 <see cref="MultipartBodyBuilder"/> 的展平规则对齐：字典（含 <see cref="DeclaredForm"/>）、
-/// 只读字典、集合、嵌套对象都要递归进去。只看 <see cref="IEnumerable{T}"/> 会整本跳过字典 ——
-/// 它的元素是 KeyValuePair 值类型，泛型协变不成立
-/// （<c>Dictionary&lt;string, FormFile&gt;</c> 并不是 <c>IEnumerable&lt;object?&gt;</c>）。
-/// </para>
-/// <para>
-/// 清理自身不允许失败：单项释放异常只放弃该项，既不中断其余部件，也不遮蔽装配的原始异常。
-/// </para>
+/// multipart 部件的所有权回收：装配中途失败时释放已取得所有权的流 / 内容（含嵌套在字典、集合、对象里的）。
+/// 单项释放异常只放弃该项，不中断其余部件，也不遮蔽装配的原始异常。
 /// </summary>
 internal static class MultipartOwnership
 {
@@ -75,10 +54,7 @@ internal static class MultipartOwnership
         Release(owned);
     }
 
-    /// <summary>
-    /// 回收一个根对象（装配入口只拿得到 <c>data</c> 本身，见 <see cref="MultipartBodyBuilder.Create"/>）：
-    /// 装配在中间某个部件失败时，后面还没轮到装配的流同样已经交过所有权。
-    /// </summary>
+    /// <summary>回收一个根对象（装配入口只拿得到 <c>data</c> 本身，见 <see cref="MultipartBodyBuilder.Create"/>）。</summary>
     public static void DisposeOwned(object? value)
     {
         var owned = new List<IDisposable>();
@@ -88,12 +64,8 @@ internal static class MultipartOwnership
     }
 
     /// <summary>
-    /// 把 <paramref name="value"/> 里的部件收进 <paramref name="owned"/>（只读遍历，不释放）。
-    /// <para>
-    /// 遍历与释放必须分两步：「边遍历边释放」时某个部件的 <c>Dispose</c> 抛异常会直接中断 foreach，
-    /// 后面的部件全部漏放 —— 而这里承诺的是「单项释放异常只放弃该项，既不中断其余部件，
-    /// 也不遮蔽装配的原始异常」。
-    /// </para>
+    /// 把 <paramref name="value"/> 里的部件收进 <paramref name="owned"/>（只读遍历，不释放）；
+    /// 遍历与释放分两步，避免某个部件的 <c>Dispose</c> 抛异常中断后续释放。
     /// </summary>
     private static void Collect(object? value, HashSet<object> visited, List<IDisposable> owned)
     {
@@ -124,29 +96,16 @@ internal static class MultipartOwnership
     }
 
     /// <summary>
-    /// 遍历一个根对象里「随正文一起发出去」的流（<see cref="FormFile.Content"/> 与裸 <see cref="Stream"/>），
-    /// 以及调用方自带的 <see cref="HttpContent"/> 部件。
-    /// <para>
-    /// 重试要重发同一份正文，而 multipart 的文件部件在第一次发送后流已在末尾：
-    /// 由调用方据此记录起点、在每次重试前拨回，否则第二次只会发出空文件。
-    /// </para>
-    /// <para>
-    /// <paramref name="visitContent"/> 存在的理由：<see cref="HttpContent"/> 部件不归库装配（它自带序列化逻辑），
-    /// 库里既拨不回它的流也看不到它包着什么 —— 只有调用方（重试前置检查）能对它表态。
-    /// 传 <c>null</c> 表示只关心裸流。
-    /// </para>
+    /// 遍历一个根对象里「随正文一起发出去」的流（<see cref="FormFile.Content"/> 与裸 <see cref="Stream"/>）
+    /// 以及调用方自带的 <see cref="HttpContent"/> 部件；<paramref name="visitContent"/> 传 <c>null</c> 表示只关心裸流。
     /// </summary>
     public static void VisitStreams(object? value, Action<Stream> visit, Action<HttpContent>? visitContent = null)
         => Walk(value, new HashSet<object>(ReferenceEqualityComparer.Instance), visit, visitContent);
 
     /// <summary>
     /// 对象图遍历本体：叶子上分别回调「流」与「<see cref="HttpContent"/>」，容器继续下钻。
-    /// <para>
-    /// 释放与「找流」共用同一套遍历，避免两处对「哪些字段算部件」的判断逐渐分叉。
-    /// 遍历自身不做任何释放，异常语义由调用方决定（清理时吞掉、找流时 fail-fast）。
-    /// </para>
     /// </summary>
-    // 反射读属性：根对象/嵌套对象的运行时类型无法静态标注（理由同 MultipartBodyBuilder.CollectParts）。
+    // 反射读属性：运行时类型无法静态标注。
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -221,8 +180,7 @@ internal static class MultipartOwnership
                 return;
         }
 
-        // 嵌套对象：装配按 public 可读属性展平成部件，回收也得进到属性里，
-        // 否则「根对象是匿名类型/POCO」时属性上的流整片漏掉。
+        // 嵌套对象：装配按 public 可读属性展平成部件，回收也要进到属性里。
         var type = value.GetType();
         if (BodyFields.IsScalar(type) || !visited.Add(value))
         {

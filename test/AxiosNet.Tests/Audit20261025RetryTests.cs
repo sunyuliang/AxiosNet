@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -6,13 +6,8 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 弹性重试的第四轮审查：补齐此前没有覆盖的组合（流式响应 / multipart 部件 / 调用方自带正文 /
-/// 流起点偏移 / 超时预算口径 / 最终错误），并锁定本轮修掉的两个缺陷。
-/// <para>
-/// 放进 <see cref="TimingCollection"/>：<c>TimeoutBudget_IsPerAttempt_NotForWholeRequest</c>
-/// 靠服务端延迟的算术区分「每次尝试一份预算」与「整条请求一份预算」，与其它集合并行跑时
-/// 调度抖动会吃掉余量（GitHub Actions 上曾因此假失败）。
-/// </para>
+/// 弹性重试的组合覆盖：流式响应 / multipart 部件 / 调用方自带正文 / 流起点偏移 / 超时预算口径 / 最终错误。
+/// 放进 <see cref="TimingCollection"/>：超时预算用例靠服务端延迟的算术区分口径，并行调度抖动会吃掉余量。
 /// </summary>
 [Collection(TimingCollection.Name)]
 public sealed class Audit20261025RetryTests
@@ -33,7 +28,7 @@ public sealed class Audit20261025RetryTests
         using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
 
         // 调用方自带的 StreamContent 部件：库既拨不回它包着的流，也无从判断可 seek 与否。
-        // 修复前：第二次发送由 BCL 抛「流已被消费」→ 翻译成 ERR_NETWORK → 还被当成网络错误
+        // 第二次发送不能因「流已被消费」抛错并被翻译成 ERR_NETWORK。
         // 反复重试（3 次全废），最终错误码与真实原因（正文不可重放）毫无关系。
         var part = new StreamContent(new NonSeekableStream(Encoding.UTF8.GetBytes("part-payload")));
 
@@ -56,10 +51,7 @@ public sealed class Audit20261025RetryTests
         // 根级 data 本身是调用方构造的 MultipartFormDataContent：里面还嵌着 StreamContent。
         // 只判根级类型会漏掉这层嵌套，第二次发送就会发出空文件。
         using var multipart = new MultipartFormDataContent();
-        multipart.Add(
-            new StreamContent(new NonSeekableStream(Encoding.UTF8.GetBytes("nested"))),
-            "f",
-            "a.txt");
+        multipart.Add(new StreamContent(new NonSeekableStream(Encoding.UTF8.GetBytes("nested"))), "f", "a.txt");
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "u", multipart));
 
@@ -204,13 +196,8 @@ public sealed class Audit20261025RetryTests
     /// 独立预算时每次 300ms 远小于 2000ms（余量 1700ms）；共享预算时第 7 次尝试起跑
     /// 已经耗掉 1.8s，只剩 200ms 却要等 300ms，必然超时。
     /// </para>
-    /// <para>
-    /// 余量不能再收紧：CI 满载时 <c>Task.Delay</c> 与线程池注入可能晚到数百毫秒
-    /// （实测记录见 <c>StreamCancellationTests</c> 的预算注释）。此前是「4 次 × 300ms + 1000ms 预算」，
-    /// 单次余量只有 700ms，GitHub Actions 上曾把「实现正确但机器忙」判成
-    /// 「超时预算被整条请求共享」。因此这里同时做两件事：把单次余量抬到 1700ms，
-    /// 并把整类放进 <see cref="TimingCollection"/> 独占运行。
-    /// </para>
+    /// <para>余量不能再收紧：CI 满载时 <c>Task.Delay</c> 与线程池注入可能晚到数百毫秒，
+    /// 因此单次余量取 1700ms，并把整类放进 <see cref="TimingCollection"/> 独占运行。</para>
     /// </summary>
     [Fact]
     public async Task TimeoutBudget_IsPerAttempt_NotForWholeRequest()

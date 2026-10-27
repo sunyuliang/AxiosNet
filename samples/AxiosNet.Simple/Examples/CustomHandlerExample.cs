@@ -4,10 +4,7 @@ using AxiosNet.Pooling;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 17. HttpMethod 直用（不再有自研枚举）+ 自定义 Handler 注入：
-/// 单 Handler 模式（不走连接池）与连接池 HandlerFactory（保留按 origin 复用）。
-/// </summary>
+/// <summary>17. HttpMethod 直用 + 自定义 Handler 注入：单 Handler 模式与连接池 HandlerFactory。</summary>
 public sealed class CustomHandlerExample : IExample
 {
     /// <summary>本示例专用客户端（PROPFIND 演示）：配置固定，首次运行创建后跨运行复用。</summary>
@@ -33,20 +30,15 @@ public sealed class CustomHandlerExample : IExample
 
         Console.WriteLine($"  custom method: HttpMethod(\"PROPFIND\") -> status={propfind.Status}, data={propfind.Data.GetRawText()}");
 
-        // 下面两个客户端都带「每轮从零开始」的计数器（拦截次数 / 工厂调用次数），故意每次运行新建——
-        // 静态复用会把上一轮的计数累加进来，演示输出就不再是确定值
         // 2) 直接注入 Handler：整个实例共用这一个 Handler，不创建连接池
         var singleTrace = new TraceHandler("single");
         singleTrace.InnerHandler = new SocketsHttpHandler();
 
-        using (var injected = new AxiosClient(
-            defaults: new AxiosConfig { BaseAddress = context.BaseUrl },
-            handler: singleTrace))
+        using (var injected = new AxiosClient(defaults: new AxiosConfig { BaseAddress = context.BaseUrl }, handler: singleTrace))
         {
             var headers = await injected.GetAsync<JsonElement>("headers");
 
-            Console.WriteLine(
-                $"  注入 Handler（无池）: 拦截 {singleTrace.Count} 次, 服务端看到 x-trace-id={headers.Data.GetProperty("x-trace-id").GetString()}, usesPool={injected.UsesConnectionPool}");
+            Console.WriteLine($"  注入 Handler（无池）: 拦截 {singleTrace.Count} 次, 服务端看到 x-trace-id={headers.Data.GetProperty("x-trace-id").GetString()}, usesPool={injected.UsesConnectionPool}");
         }
 
         // 3) 连接池 + HandlerFactory：既保留"按 origin 一个 Handler + 连接复用"，又能插入自定义 Handler
@@ -62,12 +54,10 @@ public sealed class CustomHandlerExample : IExample
                 Console.WriteLine(
                     $"  [HandlerFactory] origin={ctx.Origin}, base={ctx.BaseAddress}, maxConnections={ctx.Options.MaxConnectionsPerServer}");
 
-                // 每次调用都必须给一个「独立」的 Handler：返回值按 origin 长期持有，
-                // 复用同一个 DelegatingHandler 会在第二个 origin 上把它的 InnerHandler 顶掉，
-                // 前一个 origin 的请求随即挂在一个内层已被替换的实例上。
+                // 每次调用返回独立的 Handler：返回值按 origin 长期持有
                 var trace = new TraceHandler("pool", () => Interlocked.Increment(ref intercepted));
 
-                // CreateDefaultHandler 拿到的是按池选项配好的 SocketsHttpHandler，直接作为内层即可
+                // 用池选项配好的 SocketsHttpHandler 作为内层
                 trace.InnerHandler = ctx.CreateDefaultHandler();
                 return trace;
             }
@@ -79,8 +69,7 @@ public sealed class CustomHandlerExample : IExample
             }
 
             var stats = pooled.Pool!.GetStatistics();
-            Console.WriteLine(
-                $"  HandlerFactory: 工厂调用 {factoryCalls} 次（3 个请求同 origin）, 拦截 {intercepted} 次, 池节点 {stats.EndpointCount}");
+            Console.WriteLine($"  HandlerFactory: 工厂调用 {factoryCalls} 次（3 个请求同 origin）, 拦截 {intercepted} 次, 池节点 {stats.EndpointCount}");
         }
     }
 

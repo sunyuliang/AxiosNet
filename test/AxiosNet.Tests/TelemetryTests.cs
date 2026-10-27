@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Sockets;
@@ -991,7 +991,7 @@ public sealed class TelemetryTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         var path = UniquePath("throwing-listener");
 
-        // 实测 ActivitySource.StartActivity 会把 ActivityStarted 的异常原样抛出（Dispose 则吞掉）：
+        // ActivitySource.StartActivity 会把 ActivityStarted 的异常原样抛出（Dispose 则吞掉）：
         // 库必须自己兜住，否则「监听者写错」= 「请求失败」。
         using var listener = new ActivityListener
         {

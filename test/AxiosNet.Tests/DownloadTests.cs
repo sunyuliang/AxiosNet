@@ -6,36 +6,20 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// 文件下载的两种形态：
-/// - 流式（ResponseType.Stream / GetAsync&lt;Stream&gt;）：内存占用恒定，适合大文件；
-/// - 缓冲（ResponseType.ArrayBuffer）：一次性拿到 byte[]，适合小文件。
-/// 另外验证流读完后连接能回到池里复用（下载场景最容易踩的坑）。
-/// </summary>
+/// <summary>文件下载：流式与缓冲两种形态，以及流读完后连接能回到池里复用。</summary>
 public sealed class DownloadTests
 {
     private static readonly byte[] Payload = Enumerable.Range(0, 4096)
         .Select(i => (byte)(i % 251))
         .ToArray();
 
-    /// <summary>
-    /// 服务端「永不自行回应」的用例预算：断言只需证明超时确实生效（否则请求会一直等下去），
-    /// 不必精确到几百毫秒。
-    /// <para>
-    /// 超时计时器的回调同样要排进线程池，CI 满载时可能晚到数秒（实测 GitHub Actions 上约 2~3s，
-    /// 见 <c>StreamCancellationTests</c> 里同名注释）。因此这里的预算只当「测试自己的兜底」：
-    /// 实现真不超时，用例以 <see cref="TimeoutException"/> 失败，而不是把整条 CI 挂住。
-    /// </para>
-    /// </summary>
+    /// <summary>服务端「永不自行回应」的用例预算：实现真不超时，用例以 <see cref="TimeoutException"/> 失败而不是挂住 CI。</summary>
     private static readonly TimeSpan HungResponseBudget = TimeSpan.FromSeconds(10);
 
     private static TestResponse Binary(TestRequest _)
         => new(Body: Payload, ContentType: "application/octet-stream");
 
-    /// <summary>
-    /// 服务端不声明 Content-Length、以连接关闭 delimiting 正文的响应（TestHttpServer 发不出这种形态）。
-    /// 覆盖缓冲读取的「未知长度」分支：边读边扩容，返回数组长度必须恒等于实际读到的字节。
-    /// </summary>
+    /// <summary>服务端不声明 Content-Length、以连接关闭界定正文时，缓冲读取返回的字节数必须与实际一致。</summary>
     [Fact]
     public async Task BufferedRead_WithoutDeclaredContentLength_ReturnsExactBytes()
     {
@@ -59,8 +43,7 @@ public sealed class DownloadTests
                 }
             }
 
-            await stream.WriteAsync(
-                Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n"));
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n"));
             await stream.WriteAsync(expected);
             await stream.FlushAsync();
         });
@@ -135,7 +118,7 @@ public sealed class DownloadTests
         var response = await client.GetAsync<Stream>(server.Url + "files/report.bin");
         await using var stream = response.Data!;
 
-        // 同步 Read 内部是「带令牌的异步核心 + 阻塞等待」，正文仍然要一个字节不差
+        // 同步 Read 也要读到完整正文。
         using var buffer = new MemoryStream();
         var chunk = new byte[512];
         int read;
@@ -176,7 +159,7 @@ public sealed class DownloadTests
             await stream.CopyToAsync(Stream.Null);
         }
 
-        // 关键：流读完后连接必须能回到池里复用，否则下载会把连接池打满
+        // 关键：流读完后连接必须能回到池里复用。
         Assert.Equal(1, server.TotalConnections);
         Assert.Equal(3, server.RequestsPerConnection.Values.Single());
     }
@@ -207,8 +190,7 @@ public sealed class DownloadTests
     [Fact]
     public async Task Download_WithTimeoutAndCancellation_DoesNotHang()
     {
-        // 服务端必须「自己不回应」：只延迟 500ms 的话，CI 上被推迟的超时回调会输给这条应答，
-        // 请求成功返回 —— 断言看到的就是「没有抛异常」。延迟只要远大于调度抖动幅度即可。
+        // 服务端必须「自己不回应」，延迟远大于调度抖动幅度即可。
         await using var server = TestHttpServer.Start(async _ =>
         {
             await Task.Delay(TimeSpan.FromSeconds(30));

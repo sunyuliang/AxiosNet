@@ -5,13 +5,7 @@ using AxiosNet.Pooling;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 20. DNS 变更与连接过期：连接池如何收敛到新地址，以及如何强制立即刷新。
-/// <para>
-/// 用两个本地服务器模拟「同一个域名的两个 IP」，再用 <see cref="ConnectionPoolOptions.HandlerFactory"/> +
-/// <see cref="SocketsHttpHandler.ConnectCallback"/> 接管解析过程，从而在几秒内复现真机上要等很久的场景。
-/// </para>
-/// </summary>
+/// <summary>20. DNS 变更与连接过期：连接池如何收敛到新地址，以及如何强制立即刷新。</summary>
 public sealed class DnsRefreshExample : IExample
 {
     /// <summary>假域名：ConnectCallback 会把它指到当前「解析出来」的端口，不会真的查 DNS。</summary>
@@ -24,9 +18,6 @@ public sealed class DnsRefreshExample : IExample
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
-
-        // 本示例的服务器、假 DNS 与客户端故意每次运行新建：两个「地址」是每轮新起的本地实例，
-        // 池的收敛过程必须在全新连接上复现，静态复用会把上一轮的连接与解析结果带进来
 
         // 两个本地实例 = 同一个域名的旧 / 新两个地址
         using var oldServer = DemoServer.Start();
@@ -92,20 +83,19 @@ public sealed class DnsRefreshExample : IExample
         PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
         IdleHandlerLifetime = TimeSpan.FromMinutes(5),
 
-        // 保留库默认 Handler（连接数上限、重定向、解压等），只接管「怎么连」这一步。
+        // 保留库默认 Handler，只接管「怎么连」这一步
         HandlerFactory = context =>
         {
             var handler = context.CreateDefaultHandler();
 
-            // ConnectCallback 每次建立新 TCP 连接时都会调用一次 —— 这就是本例的「DNS 解析器」。
+            // 每次建立新 TCP 连接时调用，相当于本例的「DNS 解析器」
             handler.ConnectCallback = async (connection, cancellationToken) =>
             {
                 var port = dns.Port;
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
                 try
                 {
-                    await socket.ConnectAsync(new DnsEndPoint("127.0.0.1", port), cancellationToken)
-                        .ConfigureAwait(false);
+                    await socket.ConnectAsync(new DnsEndPoint("127.0.0.1", port), cancellationToken).ConfigureAwait(false);
                     return new NetworkStream(socket, ownsSocket: true);
                 }
                 catch

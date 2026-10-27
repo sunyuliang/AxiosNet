@@ -3,9 +3,8 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Pooling;
 
 /// <summary>
-/// 单个 origin（scheme://host:port）对应的池化节点：持有一个调优过的 Handler
-/// （默认 <see cref="SocketsHttpHandler"/>，也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）
-/// 与其上的 HttpClient。
+/// 单个 origin（scheme://host:port）对应的池化节点：持有一个 Handler
+/// （默认 <see cref="SocketsHttpHandler"/>，也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）与其上的 HttpClient。
 /// </summary>
 internal sealed class PooledEndpoint : IDisposable
 {
@@ -27,14 +26,8 @@ internal sealed class PooledEndpoint : IDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>
-    /// 池已 Dispose：本节点在最后一条租约归还时自行销毁
-    /// —— 直接 Dispose 会让「关闭时还有请求在途」的调用方拿到 ObjectDisposedException。
-    /// <para>
-    /// 用 <c>volatile</c> 字段而不是自动属性：这个标记<b>一半在 <see cref="SyncRoot"/> 锁内写</b>
-    /// （<c>HttpConnectionPool.Dispose</c>）、<b>一半在锁外写</b>（<c>HttpConnectionPool.Lease</c> 的竞态兜底），
-    /// 读发生在 <see cref="Release"/> 的锁内。混用同步方式时，只有 <c>volatile</c> 能让「写一定可见」
-    /// 不依赖审查者去推程序序。
-    /// </para>
+    /// 池已 Dispose：本节点在最后一条租约归还时自行销毁。
+    /// 用 <c>volatile</c> 字段是因为这个标记在锁内、锁外都会写，读发生在 <see cref="Release"/> 的锁内。
     /// </summary>
     public bool DisposeWhenIdle
     {
@@ -74,15 +67,13 @@ internal sealed class PooledEndpoint : IDisposable
             return DefaultHandlerFactory.Create(options, cookieContainer);
         }
 
-        // 给工厂一份快照：HandlerFactory 拿到的 Options 是「按这个 origin 建 Handler 时的配置」，
-        // 若直接交池的实例本体，工厂里的一次赋值就会改掉整个池的实时行为（且与 Options 属性返回 Clone 的口径不一致）。
+        // 给工厂一份选项快照，避免工厂内的一次赋值改掉整个池的实时行为。
         var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options.Clone(), cookieContainer);
         var handler = options.HandlerFactory(context);
 
         if (handler is null)
         {
-            throw new InvalidOperationException(
-                $"ConnectionPoolOptions.HandlerFactory 对 origin '{origin}' 返回了 null，必须返回一个可用的 HttpMessageHandler。");
+            throw new InvalidOperationException($"ConnectionPoolOptions.HandlerFactory 对 origin '{origin}' 返回了 null，必须返回一个可用的 HttpMessageHandler。");
         }
 
         return handler;
@@ -101,8 +92,7 @@ internal sealed class PooledEndpoint : IDisposable
             ActiveLeases++;
             LastUsedUtc = DateTime.UtcNow;
 
-            // 进程级「活跃租约」水位（ObservableGauge 收集时读）。放在锁内是安全的：
-            // EnterLease 只是一次 Interlocked，不会触发任何监听回调 —— 能被采集器看到的只有计数本身。
+            // 进程级活跃租约水位（ObservableGauge 收集时读）。
             AxiosTelemetry.EnterLease();
             return true;
         }
@@ -129,7 +119,7 @@ internal sealed class PooledEndpoint : IDisposable
             }
         }
 
-        // 只有真的减掉了才减水位：重复 Dispose / 关闭竞态里的多余 Release 不能让计数器漂到负数。
+        // 只有真的减掉了才减水位，避免重复 Release 让计数漂到负数。
         if (released)
         {
             AxiosTelemetry.ExitLease();
@@ -137,7 +127,7 @@ internal sealed class PooledEndpoint : IDisposable
 
         if (retire)
         {
-            // 池已关闭：归还租约的同时把自己从池里摘掉并释放，避免「关闭后永久挂着一个 Handler」。
+            // 池已关闭：归还租约的同时把自己从池里摘掉并释放。
             _owner.Forget(this);
             DisposeClientAndHandler();
         }
@@ -151,13 +141,7 @@ internal sealed class PooledEndpoint : IDisposable
         }
     }
 
-    /// <summary>
-    /// 只置「已释放」标记并返回是否首次置位。
-    /// <para>
-    /// 供池的「锁内判定、锁外释放」驱逐路径使用：关闭 Handler 会断开该 origin 的全部连接、可能耗时，
-    /// 不能占着 <see cref="SyncRoot"/> 让同 origin 的租用 / 统计 / 另一次驱逐排队。
-    /// </para>
-    /// </summary>
+    /// <summary>只置「已释放」标记并返回是否首次置位（供池的锁内判定、锁外释放路径使用）。</summary>
     public bool MarkDisposed()
     {
         lock (SyncRoot)

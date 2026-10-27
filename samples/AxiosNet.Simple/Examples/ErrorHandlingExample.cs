@@ -3,9 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 11. 错误处理 / 超时 / 取消。
-/// </summary>
+/// <summary>11. 错误处理 / 超时 / 取消。</summary>
 public sealed class ErrorHandlingExample : IExample
 {
     /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>

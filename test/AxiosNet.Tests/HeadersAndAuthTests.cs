@@ -3,15 +3,10 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// AxiosHeaders 公共 API 与 AxiosAuth 边角的直接覆盖（原审计中这两块只有「值/名校验」与
-/// 「happy path 上送」有用例，集合语义与 Basic 编造的边界没有）。
-/// </summary>
+/// <summary>AxiosHeaders 的集合语义与 AxiosAuth 的 Basic 编造边界。</summary>
 public sealed class HeadersAndAuthTests
 {
-    // ---------------------------------------------------------------
     // AxiosHeaders：集合语义
-    // ---------------------------------------------------------------
 
     [Fact]
     public void Set_SameNameDifferentCase_Overwrites()
@@ -62,7 +57,7 @@ public sealed class HeadersAndAuthTests
     {
         var headers = new AxiosHeaders();
 
-        // 批量路径与单条 Set 必须同一闸口：第 k 条非法时前 k-1 条已生效。
+        // 批量路径与单条 Set 走同一校验。
         var ex = Assert.Throws<ArgumentException>(() => headers.Set(new[]
         {
             new KeyValuePair<string, string?>("X-Ok", "1"),
@@ -166,15 +161,13 @@ public sealed class HeadersAndAuthTests
         foreach (var pair in headers)
         {
             seen.Add(pair.Key);
-            headers.Set("X-B", "2"); // 迭代中修改：快照语义下不应抛异常
+            headers.Set("X-B", "2");
         }
 
         Assert.Equal(new[] { "X-A" }, seen);
     }
 
-    // ---------------------------------------------------------------
     // AxiosAuth：Basic 编造边界
-    // ---------------------------------------------------------------
 
     [Fact]
     public async Task Auth_PasswordWithColon_IsNotSplit()

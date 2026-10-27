@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using AxiosNet.Tests.Infrastructure;
 using Xunit;
 
@@ -215,8 +215,7 @@ public sealed class HeadersCopyOnWriteTests
         var smallCost = AverageBytes(50_000, () => small.Clone());
         var largeCost = AverageBytes(50_000, () => large.Clone());
 
-        // 对照的是被替换掉的旧实现（引用计数 + 字典 + 分离复制）：克隆 10 头 ≈ 10 × 单条，实测 1 头 388 B、10 头 1312 B。
-        // 现在只分配 AxiosHeaders 对象本身（实测 24 B），与头数无关。
+        // 克隆只分配 AxiosHeaders 对象本身（约 24 B），与头数无关。
         Assert.True(
             largeCost < 300,
             $"10 个头的 AxiosHeaders.Clone() 平均 {largeCost} B/次，超出 300 B 护栏——疑似退回「整份复制」。");
@@ -229,7 +228,7 @@ public sealed class HeadersCopyOnWriteTests
     public void EmptyHeaders_AllocatesInstanceOnly()
     {
         // 空 headers 很常见（懒创建的 Config.Headers、只读一次的默认值）：
-        // 空版本是静态单例数组，构造只分配实例本身（实测 24 B）。
+        // 空版本是静态单例数组，构造只分配实例本身。
         var cost = AverageBytes(50_000, () => GC.KeepAlive(new AxiosHeaders()));
 
         Assert.True(cost < 100, $"new AxiosHeaders() 平均 {cost} B —— 疑似又为空集合预建了容器或缓存对象。");
@@ -239,8 +238,7 @@ public sealed class HeadersCopyOnWriteTests
     public void IdempotentSet_DoesNotPublishNewVersion()
     {
         // 「每请求把 Authorization / trace id 重设成同一个值」是常见形态。
-        // 不可变数组模型的收益就在这里：值没变就不发布新版本，只分配克隆实例本身（24 B）。
-        // 旧模型（字典 + 引用计数）只要写就分离，5 头实测 392 B —— 差 16 倍。
+        // 值没变就不发布新版本，只分配克隆实例本身。
         var source = NewHeaders(5);
         var name = "X-H0";
         var value = source.Get(name)!;
@@ -266,7 +264,7 @@ public sealed class HeadersCopyOnWriteTests
             source[$"X-H{i}"] = $"value-{i}";
         }
 
-        // 逐条 Set 会按 1、2、3… 复制 N 次数组（10 头约 1.6 KB）；构造走「攒进 List 再 ToArray」只成型一次（实测 560 B）。
+        // 构造走「攒进 List 再 ToArray」只成型一次，逐条 Set 会复制 N 次数组。
         var cost = AverageBytes(20_000, () => GC.KeepAlive(new AxiosHeaders(source)));
 
         Assert.True(cost < 700, $"构造 10 头 AxiosHeaders 平均 {cost} B —— 疑似又逐条扩容。");
@@ -289,7 +287,7 @@ public sealed class HeadersCopyOnWriteTests
             GC.KeepAlive(count);
         });
 
-        // 旧实现把数组枚举器装箱（每次 56 B）。注意 KeepAlive(int) 自身会装箱 24 B，故护栏留到 32 B。
+        // 枚举数组不应装箱；KeepAlive(int) 自身会装箱 24 B，故护栏留到 32 B。
         Assert.True(cost < 32, $"枚举 10 头平均 {cost} B —— 结构体枚举器没生效，又在装箱。");
     }
 
@@ -305,7 +303,7 @@ public sealed class HeadersCopyOnWriteTests
             GC.KeepAlive(copy);
         });
 
-        // 实测 312 B = 克隆 24 B + 新数组 288 B；旧实现（字典 + 分离复制）同一形态是 504 B 起。
+        // 约 312 B = 克隆 24 B + 新数组 288 B。
         // 预算留到 620 B 是给 Entry 布局变化留余量，不是精确基准。
         Assert.True(cost < 620, $"克隆 + 写一条平均 {cost} B —— 超出预算，疑似退化成整份深拷贝。");
     }
@@ -313,7 +311,7 @@ public sealed class HeadersCopyOnWriteTests
     [Fact]
     public async Task RequestWithDefaultHeaders_PaysOnlyBclHeaderCost()
     {
-        // 默认头是「每请求拷一份、之后只读」的典型形态：修复前 5 个头让每请求多分配 1200 B
+        // 默认头是「每请求拷一份、之后只读」的典型形态：5 个头不应让每请求多分配约 1.2 KB。
         // （≈240 B/头：整份克隆 + 每请求 List 快照）。写时复制之后我们只剩实例本身（24 B，与头数无关）。
         //
         // 剩下的大头是 BCL 把每个头写进 HttpRequestMessage.Headers —— 它按「字典初始化 + 扩容」计费，
@@ -347,10 +345,7 @@ public sealed class HeadersCopyOnWriteTests
 
     /// <summary>
     /// 对照基线：同一进程里「裸 BCL 把同样这几个头写进 HttpRequestMessage」的每请求成本。
-    /// <para>
-    /// 头名/取值预存在静态数组里：测量循环内用字符串插值会按次分配，把基线抬高几十字节
-    /// （5 个头实测能从 288 B 虚增到 728 B），护栏就此失效。
-    /// </para>
+    /// 头名 / 取值预存在静态数组里，测量循环内不做字符串插值，否则基线自身会被抬高。
     /// </summary>
     private static long MeasureBclHeaderCost()
     {
@@ -401,17 +396,8 @@ public sealed class HeadersCopyOnWriteTests
     private static Task Send(AxiosClient client) => client.GetAsync("http://localhost/x");
 
     /// <summary>
-    /// 一次请求的平均分配字节数。
-    /// <para>
-    /// 计数口径是进程级 <see cref="GC.GetTotalAllocatedBytes(bool)"/>，不是「当前线程」：请求管线是异步的，
-    /// 续体会落到别的线程上，线程级计数在那种情况下记的是半份账（这正是本用例此前偶发虚高的原因）。
-    /// 进程级计数与线程归属无关，前提是「进程里没有别的分配源」—— 由
-    /// <see cref="Infrastructure.AllocationCollection"/>（独占集合）保证。
-    /// </para>
-    /// <para>
-    /// 三轮取最小值：tier-1 JIT、GC 后台线程这类一次性分配会抬高某一轮，最小值把它们剔掉。
-    /// 这也让测量可以放心用 <c>await</c>（每轮多出来的测试自身状态机分配，在 bare / rich 相减时抵消）。
-    /// </para>
+    /// 一次请求的平均分配字节数：进程级 <see cref="GC.GetTotalAllocatedBytes(bool)"/> 计数，
+    /// 三轮取最小值以剔除 tier-1 JIT 等一次性分配；独占集合保证进程里没有别的分配源。
     /// </summary>
     private static async Task<long> MeasureRequestAsync(AxiosClient client)
     {

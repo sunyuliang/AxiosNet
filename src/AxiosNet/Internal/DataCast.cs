@@ -1,12 +1,6 @@
 namespace AxiosNet.Internal;
 
-/// <summary>
-/// 把非泛型响应的 Data 收敛到目标类型。
-/// <para>
-/// 不匹配时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）而不是裸 <see cref="InvalidCastException"/>：
-/// 典型诱因是泛型参数与 responseType 不匹配（如 <c>GetAsync&lt;Stream&gt;</c> 配了 <c>text</c>）。
-/// </para>
-/// </summary>
+/// <summary>把非泛型响应的 Data 收敛到目标类型；不匹配时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）。</summary>
 internal static class DataCast
 {
     public static T? To<T>(object? data, AxiosConfig? config, HttpRequestMessage? request)
@@ -15,10 +9,7 @@ internal static class DataCast
         return data is null ? default : (T)data;
     }
 
-    /// <summary>
-    /// 校验 <paramref name="data"/> 已经是 <typeparamref name="T"/>（或 <c>null</c>），不通过就抛。
-    /// <para>必须在这里报错：不能把检查推迟到 <c>AxiosResponse&lt;T&gt;.Data</c> 的 getter。</para>
-    /// </summary>
+    /// <summary>校验 <paramref name="data"/> 已经是 <typeparamref name="T"/>（或 <c>null</c>），不通过就抛。</summary>
     public static void EnsureCompatible<T>(object? data, AxiosConfig? config, HttpRequestMessage? request)
     {
         // 模式匹配覆盖引用转换与拆箱；T 为 dynamic 时擦除为 object，恒过。

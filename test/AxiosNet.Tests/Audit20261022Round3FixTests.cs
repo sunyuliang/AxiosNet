@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 
@@ -102,7 +102,7 @@ public sealed class Audit20261022Round3FixTests
                 new string('a', 200_000),
                 c => c.Callbacks.OnUploadProgress = _ => throw new InvalidOperationException("boom")));
 
-        // 此前被 HttpClient 包成 HttpRequestException，再翻译成 ERR_NETWORK —— 回调写错被误报成网络故障
+        // 回调抛出的异常不应被包成 HttpRequestException 再翻译成 ERR_NETWORK。
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
         Assert.Contains("OnUploadProgress", ex.Message);
@@ -246,7 +246,7 @@ public sealed class Audit20261022Round3FixTests
     }
 
     // ------------------------------------------------------------------
-    // 7) 标量请求体的头必须跟着生效序列化器（此前恒为 application/json）
+    // 7) 标量请求体的头必须跟着生效序列化器。
     // ------------------------------------------------------------------
 
     [Fact]

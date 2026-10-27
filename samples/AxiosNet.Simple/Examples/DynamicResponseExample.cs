@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 7. dynamic 响应：无需 DTO，直接 data.xxx / data["xxx"]（对标 JS 用法）。
-/// </summary>
+/// <summary>7. dynamic 响应：无需 DTO，直接 data.xxx / data["xxx"]（对标 JS 用法）。</summary>
 public sealed class DynamicResponseExample : IExample
 {
     /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>

@@ -3,41 +3,17 @@ using System.Text.Json.Serialization;
 
 namespace AxiosNet.WebAPI;
 
-/// <summary>
-/// 声明请求模型的请求体是 <c>multipart/form-data</c>：<b>模型自身即表单</b>——
-/// 未标注参数特性的属性默认按部件绑定（字段名 = 属性名），标了 <see cref="PartAttribute"/> 的属性
-/// 可覆盖字段名、文件名与部件 Content-Type；标了 <c>[Query]</c> / <c>[Header]</c> / <c>[Path]</c> 的照常走各自绑定。
-/// <para>与 <c>[Body]</c> 互斥（一个模型两种请求体形态，构建期报错）。</para>
-/// </summary>
-/// <example>
-/// <code>
-/// [Post("upload")]
-/// [Multipart]
-/// public sealed class UploadRequest : IApiRequest&lt;UploadResult&gt;
-/// {
-///     [Part] public string Title { get; set; } = "";
-///     [Part(FileName = "a.bin", ContentType = "application/octet-stream")] public byte[] Data { get; set; } = [];
-/// }
-/// </code>
-/// </example>
+/// <summary>声明请求模型的请求体是 <c>multipart/form-data</c>：模型自身即表单，未标注参数特性的属性默认按部件绑定（字段名 = 属性名）。
+/// 标了 <see cref="PartAttribute"/> 的属性可覆盖字段名、文件名与部件 Content-Type；与 <c>[Body]</c> 互斥。</summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
 public sealed class MultipartAttribute : Attribute
 {
 }
 
 /// <summary>
-/// multipart 模型上的部件声明：覆盖部件字段名，并把 byte[] / Stream 类属性声明成
-/// 带文件名 / Content-Type 的文件部件。
-/// <para>
-/// 名字优先级：<see cref="Name"/> &gt; <see cref="FormFile.FieldName"/> &gt;
-/// 默认名（<see cref="JsonPropertyNameAttribute"/> 或属性名，再经 <c>FormFieldNameSelector</c>）。
-/// </para>
-/// <para>
-/// 值规则：<see cref="FormFile"/> 的 <see cref="FormFile.FileName"/> / <see cref="FormFile.ContentType"/>
-/// 可被特性声明覆盖；byte[] / Stream 未声明文件名时 filename = 字段名、类型 = <c>application/octet-stream</c>（builder 默认）；
-/// <b>字符串 / 标量永远是普通字段</b>——要发文本文件请用 <see cref="FormFile"/> 或 byte[]；
-/// 集合逐项应用（同名重复部件）；嵌套对象 / 字典整体透传（由 builder 展平为 <c>a[b]</c>）。
-/// </para>
+/// multipart 模型上的部件声明：覆盖部件字段名，并把 byte[] / Stream 类属性声明成带文件名 / Content-Type 的文件部件。
+/// 名字优先级：<see cref="Name"/> &gt; <see cref="FormFile.FieldName"/> &gt; 默认名（<see cref="JsonPropertyNameAttribute"/> 或属性名）。
+/// byte[] / Stream 未声明文件名时 filename = 字段名、类型 = <c>application/octet-stream</c>；字符串 / 标量永远是普通字段，集合逐项应用。
 /// </summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class PartAttribute : Attribute

@@ -7,17 +7,14 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 响应阶段：从 <see cref="System.Net.Http.HttpResponseMessage"/> 到 <see cref="AxiosResponse"/> 的
-/// 全部静态逻辑 —— 响应头上下文、正文读取（预分配 / 段式累积）、responseType 与目标类型分派、
-/// 序列化器选型、transformResponse 之前的所有转换。
-/// <para>请求侧（拦截器 / 请求体 / 发送）留在 <see cref="AxiosClient"/>，本类只读配置、不持有实例状态。</para>
+/// 响应阶段：把 <see cref="System.Net.Http.HttpResponseMessage"/> 转成 <see cref="AxiosResponse"/>，
+/// 含响应头上下文、正文读取、responseType 与目标类型分派、序列化器选型。只读配置，不持有实例状态。
 /// </summary>
 internal static class ResponseReader
 {
     /// <summary>
-    /// 下载侧包装：先按 Content-Length 预检 maxContentLength，再按需套进度/限速/长度上限流
-    /// （都不需要时原样返回）。
-    /// <para>长度上限必须在流上生效，否则 chunked / 未声明长度的流式响应完全没有约束。</para>
+    /// 下载侧包装：按 Content-Length 预检 maxContentLength，再按需套进度 / 限速 / 长度上限流；
+    /// 都不需要时原样返回。长度上限在流上生效，chunked 响应同样受约束。
     /// </summary>
     private static Stream WrapDownloadStream(
         Stream stream,
@@ -51,11 +48,8 @@ internal static class ResponseReader
     }
 
     /// <summary>
-    /// 读取整个响应体；服务端未声明长度时按已读字节执行 maxContentLength。
-    /// <para>
-    /// 分派本身不做成 async：每条非流式请求都过这里，多一个异步状态机帧是纯热路径开销；
-    /// 流的释放因此移入两个读取方各自的 finally（每条路径恰好一次）。
-    /// </para>
+    /// 读取整个响应体；未声明长度时按已读字节执行 maxContentLength。
+    /// 本方法不是 async，流的释放由两个读取方各自的 finally 负责（每条路径恰好一次）。
     /// </summary>
     private static Task<byte[]> ReadAllBytesAsync(
         Stream stream,
@@ -64,8 +58,7 @@ internal static class ResponseReader
         CancellationToken cancellationToken,
         long? declaredLength)
     {
-        // 声明了长度且不大时按声明值预分配：恰好写满时直接交底层数组（1× 分配、零拷贝）。
-        // 上限 8MB：Content-Length 不可信，不替大额声明预付；超出视为未知长度走段式累积。
+        // 声明了长度且不超过 8MB 时按声明值预分配，否则视为未知长度走段式累积。
         const long maxPreallocated = 8 * 1024 * 1024;
         return declaredLength is > 0 and <= maxPreallocated
             ? ReadPreallocatedAsync(stream, cancellationToken, (int)declaredLength.Value)
@@ -73,13 +66,8 @@ internal static class ResponseReader
     }
 
     /// <summary>
-    /// 已知长度（≤ 信任上限）的读取：直接分配精确长度的数组并读满，读满即交出（1× 分配、零拷贝）；
-    /// 服务端提前结束时裁剪成实际长度。
-    /// <para>
-    /// 上限安全：<paramref name="capacity"/> 来自声明长度，读取量又被 capacity 封顶；
-    /// 声明长度超过 <see cref="AxiosConfig.LimitSettings.MaxContentLength"/> 的情况已在
-    /// <see cref="WrapDownloadStream"/> 里拦下，所以这里无需重复判定。
-    /// </para>
+    /// 已知长度（≤ 信任上限）的读取：分配精确长度的数组读满后直接交出，提前结束时裁剪成实际长度。
+    /// 超限的声明长度已在 <see cref="WrapDownloadStream"/> 拦下，这里不再判定。
     /// </summary>
     private static async Task<byte[]> ReadPreallocatedAsync(
         Stream stream,
@@ -107,27 +95,20 @@ internal static class ResponseReader
                 return buffer;
             }
 
-            // 声明长度大于实际字节（连接提前关闭）：裁剪掉尾部零填充，不把未写区域交给调用方。
+            // 连接提前关闭：裁剪掉尾部未写区域，不交给调用方。
             var trimmed = new byte[filled];
             buffer.AsSpan(0, filled).CopyTo(trimmed);
             return trimmed;
         }
         finally
         {
-            // 本方法拥有流的释放（分派器不做成 async，见 ReadAllBytesAsync）
+            // 本方法拥有流的释放（见 ReadAllBytesAsync）。
             stream.Dispose();
         }
     }
 
     /// <summary>
-    /// 段式累积（未声明长度 / 声明值超过信任上限）：从 <see cref="ArrayPool{T}"/> 租段、倍增增长，
-    /// 收齐后装配一个精确数组 —— 即 pipeline 的池化分段思想，零依赖。
-    /// <para>
-    /// 取代的两条老路：按 Content-Length 预付（不可信输入，见 <see cref="ReadAllBytesAsync"/>）
-    /// 与 MemoryStream 从 256B 倍增（大响应累计 ≈3× 载荷，且扩容必过冲导致多一次 ToArray）。
-    /// 任何尺寸都只付 1× 最终数组，段本身跨请求复用；单段上限约束装配期峰值
-    /// （全部段 + 成品 ≈ 2× 载荷）。
-    /// </para>
+    /// 段式累积（未声明长度）：从 <see cref="ArrayPool{T}"/> 租段、倍增增长，收齐后装配一个精确数组。
     /// </summary>
     private static async Task<byte[]> ReadSegmentedAsync(
         Stream stream,
@@ -167,15 +148,13 @@ internal static class ResponseReader
                     continue;
                 }
 
-                // 读满一段：入列（段必为读满状态，装配时按整段拷贝），再租下一段（倍增，到上限后等长追加）
+                // 读满一段：入列，再租下一段（倍增，到上限后等长追加）。
                 segments.Add(current);
                 current = ArrayPool<byte>.Shared.Rent(Math.Min(current.Length * 2, maxSegment));
                 filled = 0;
             }
 
-            // 装配：满段整体拷贝 + 末段按实际字节拷贝，得到精确长度的成品（唯一一次全量拷贝）。
-            // 先挡一次数组长度上限：超过 Array.MaxLength 时 new byte[total] 只会抛裸 OutOfMemoryException
-            // （没有任何上下文），这里换成统一错误模型并指向可用的逃生口。
+            // 装配成精确长度的成品；超过 Array.MaxLength 时换成统一错误模型。
             if (total > Array.MaxLength)
             {
                 throw AxiosException.ResponseTooLarge(config, request, total);
@@ -200,16 +179,14 @@ internal static class ResponseReader
                 ArrayPool<byte>.Shared.Return(segment);
             }
 
-            // 本方法拥有流的释放（分派器不做成 async，见 ReadAllBytesAsync）
+            // 本方法拥有流的释放（见 ReadAllBytesAsync）。
             stream.Dispose();
         }
     }
 
     /// <summary>
-    /// 读响应并转成 <see cref="AxiosResponse"/>：状态码与响应头（含给序列化器 /
-    /// transformResponse 的只读上下文）→ 正文（流式交出包装流，其余读全量字节）→ 按 responseType
-    /// 与目标类型分派为 Data。<paramref name="lenient"/> 为 true 时（状态码不合法）解析失败
-    /// 回退原始内容，不抛异常。
+    /// 读响应并转成 <see cref="AxiosResponse"/>：状态码与响应头 → 正文（流式交出包装流，其余读全量字节）
+    /// → 按 responseType 与目标类型分派为 Data。<paramref name="lenient"/> 为 true 时解析失败回退原始内容。
     /// </summary>
     public static async Task<AxiosResponse> ReadAsync(
         HttpResponseMessage message,
@@ -220,29 +197,20 @@ internal static class ResponseReader
         AxiosResponse? target,
         bool lenient)
     {
-        // 响应头不在这里展开：多数请求根本不读 Headers，而展开要枚举两套头集合、逐个把头值装箱，
-        // 还会触发 BCL 的惰性头值解析（每头约 0.2 µs）。改为保留两套头集合的惰性只读视图，
-        // 首次访问 Headers 时才物化成字典。HttpResponseMessage.Dispose() 只释放正文，头集合仍可读。
+        // 保留两套头集合的惰性只读视图，首次访问 Headers 时才物化成字典。
         var headers = new ResponseHeadersView(message.Headers, message.Content.Headers);
 
         var status = (int)message.StatusCode;
         var statusText = StatusTextMap.Get(status);
 
-        // 反序列化 / transformResponse 阶段可读的响应上下文：零拷贝复用刚建好的 headers。
-        // 序列化器可据此选解析规则（X-Schema-Version），transformResponse 可搬元数据（X-Total-Count）。
-        // 响应体的文本/二进制判定不受影响 —— 那由 MediaTypes.IsTextual 决定。
+        // 反序列化 / transformResponse 阶段可读的响应上下文，复用刚建好的 headers。
         var contentType = message.Content.Headers.ContentType;
-        config.Response = new AxiosResponseInfo(
-            status,
-            statusText,
-            headers,
-            contentType?.MediaType,
-            contentType?.CharSet);
+        config.Response = new AxiosResponseInfo(status, statusText, headers, contentType?.MediaType, contentType?.CharSet);
 
         object? data;
-        // 已解码的响应正文：文本类响应都会在这里留下原文，供错误体读取与诊断（二进制/流为 null）。
+        // 已解码的正文，供错误体读取与诊断（二进制 / 流为 null）。
         string? rawText = null;
-        // 实际收到的正文字节数：只有「一次性读完」的路径知道，流式交给调用方后无从统计。
+        // 实际收到的正文字节数；流式路径无法统计，为 null。
         long? bodyBytes = null;
         if (config.ResponseType == ResponseType.Stream)
         {
@@ -251,16 +219,12 @@ internal static class ResponseReader
         }
         else
         {
-            // 原始内容优先：一律先取原始字节，再按需解码为文本，最后按返回类型转换。
             Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             var downloadStream = WrapDownloadStream(responseStream, message, request, config);
             var declared = message.Content.Headers.ContentLength;
-            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared)
-                .ConfigureAwait(false);
+            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared).ConfigureAwait(false);
             bodyBytes = bytes.Length;
 
-            // 解码 → 按类型转换 → transformResponse 三段与短路响应共用（见 ConvertBody）：
-            // 「正文从网络来」与「正文从缓存 / mock 来」必须走同一套解析规则，否则命中会悄悄换一种行为。
             data = ConvertBody(
                 config,
                 request,
@@ -272,17 +236,15 @@ internal static class ResponseReader
                 out rawText);
         }
 
-        // 泛型调用方已把目标类型的响应对象造好交过来：就地填充，
-        // 否则「管线造一个非泛型响应 + AsTyped 再复制一个」是每请求两个响应对象。
+        // 泛型调用方传入的目标响应对象就地填充，避免每请求多造一个响应对象。
         var response = target ?? new AxiosResponse();
         response.Data = data;
 
-        // 只在「状态码不合法」时保留原文：正常响应保留整段文本会让大正文跟着响应对象一直活着
-        // （解析完的 Data 才是调用方要的东西）；错误体的原文是 ApiErrorContext 的唯一可靠来源。
+        // 只在状态码不合法时保留原文，避免大正文跟着响应对象一直存活。
         response.RawText = lenient ? rawText : null;
         response.Status = status;
         response.StatusText = statusText;
-        // 协商结果（1.1 / 2.0 / 3.0）只有这一处拿得到：降级是静默的，调用方靠它判断「有没有真的拿到 h2」。
+        // 实际协商出的协议版本（降级是静默的）。
         response.ProtocolVersion = message.Version;
         response.BodyBytes = bodyBytes;
         response.Headers = headers;
@@ -291,10 +253,7 @@ internal static class ResponseReader
         return response;
     }
 
-    /// <summary>
-    /// 是否真的要把响应字节解码成文本：arraybuffer / stream / byte[] 只要字节；
-    /// 二进制响应走序列化器的字节入口；其余形态（text、dynamic、基础类型、文本对象）都需要文本。
-    /// </summary>
+    /// <summary>是否需要把响应字节解码成文本：arraybuffer / stream / byte[] 只要字节，其余都要文本。</summary>
     private static bool NeedsText(AxiosConfig config, Type? dataType, bool textual) => config.ResponseType switch
     {
         ResponseType.ArrayBuffer => false,
@@ -306,18 +265,7 @@ internal static class ResponseReader
     /// <summary>body 是否只含空白字符（<c>""</c> 与 <c>"  \r\n"</c> 语义等价）。</summary>
     private static bool IsBlank(string text) => text.AsSpan().Trim().IsEmpty;
 
-    /// <summary>
-    /// 文本是否可能是一段 JSON 文档：只看首个非空白字符。
-    /// <para>
-    /// 依据 RFC 8259，JSON 的 <c>value</c> 只能以 <c>{</c> / <c>[</c> / <c>"</c> / <c>-</c> / 数字 /
-    /// <c>t</c> / <c>f</c> / <c>n</c> 开头，因此「首字符不在此列」可以<b>确定</b>解析必然失败，
-    /// 不必真的抛一次异常再去接。HTML 错误页、纯文本端点、XML 都是这一类。
-    /// </para>
-    /// <para>
-    /// <c>\uFEFF</c> 一并按空白跳过：解码层已经剥掉 BOM 前缀，但服务端把 ZWNBSP 写在正文里时
-    /// 它仍会留在字符串开头，当成非 JSON 处理会把合法文档降级成文本。
-    /// </para>
-    /// </summary>
+    /// <summary>文本是否可能是一段 JSON 文档：只看首个非空白字符，<c>\uFEFF</c> 按空白跳过。</summary>
     private static bool LooksLikeJson(string text)
     {
         foreach (var c in text)
@@ -333,10 +281,7 @@ internal static class ResponseReader
         return false;
     }
 
-    /// <summary>
-    /// 未解码时的空白判定：只含 ASCII 空白（SP/HTAB/CR/LF）即可直接判空，
-    /// 非 ASCII 空白（如 NBSP）留给解码后的 <see cref="IsBlank"/>。
-    /// </summary>
+    /// <summary>未解码时的空白判定：只认 ASCII 空白（SP/HTAB/CR/LF）。</summary>
     private static bool IsBlankUtf8(ReadOnlySpan<byte> bytes)
     {
         foreach (var b in bytes)
@@ -351,12 +296,8 @@ internal static class ResponseReader
     }
 
     /// <summary>
-    /// 从「已经读完的原始字节」装配 Data：解码 → 按 responseType / 目标类型转换 → transformResponse。
-    /// <para>
-    /// 网络响应与短路响应（缓存命中 / mock / 离线回放）共用这一段，两条路径的解析规则、错误模型与
-    /// transform 语义因此完全一致 —— 「命中缓存」不会变成另一种解析行为。
-    /// </para>
-    /// <para><paramref name="rawText"/> 回传解码后的正文（只要字节的分支为 <c>null</c>），调用方据此决定是否保留原文。</para>
+    /// 从原始字节装配 Data：解码 → 按 responseType / 目标类型转换 → transformResponse，网络与短路响应共用。
+    /// <paramref name="rawText"/> 回传解码后的正文（只要字节的分支为 <c>null</c>）。
     /// </summary>
     internal static object? ConvertBody(
         AxiosConfig config,
@@ -368,11 +309,10 @@ internal static class ResponseReader
         bool lenient,
         out string? rawText)
     {
-        // 文本还是二进制由 Content-Type 决定（无 Content-Type 视为文本）；二进制连解码都不做。
+        // 文本还是二进制由 Content-Type 决定（缺失视为文本）。
         var textual = MediaTypes.IsTextual(mediaType);
 
-        // 只要字节的调用（arraybuffer / byte[] / 二进制业务对象）不解码；
-        // 其余只解码一次，文本在 ConvertData 里按需使用。
+        // 只要字节的调用不解码，其余只解码一次，文本在 ConvertData 里按需使用。
         var text = NeedsText(config, dataType, textual)
             ? ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding)
             : null;
@@ -402,17 +342,9 @@ internal static class ResponseReader
     }
 
     /// <summary>
-    /// 短路响应的装配：语义与 <see cref="ReadAsync"/> 完全一致，只是正文（如果有）不来自网络。
-    /// <para>
-    /// <see cref="AxiosShortCircuit.Body"/> 按<b>本次调用</b>的 responseType / 目标类型重新解析 —— 这是缓存
-    /// 必须走字节而不是对象图的原因：同一份字节喂给 <c>GetAsync&lt;User&gt;</c> 与 <c>GetAsync&lt;string&gt;</c>
-    /// 应当得到不同形态。<see cref="AxiosShortCircuit.Data"/> 则原样交付，不解析也不跑 transformResponse
-    /// （它是「结果」而不是「正文」，再加工一次等于让 transform 执行次数取决于缓存状态）。
-    /// </para>
-    /// <para>
-    /// <paramref name="lenient"/> 为 true（状态码不合法）时解析失败回退原文，与网络路径同口径；
-    /// 此时响应对象还会保留 <see cref="AxiosResponse.RawText"/>，供错误上下文使用。
-    /// </para>
+    /// 短路响应的装配：语义与 <see cref="ReadAsync"/> 一致，只是正文不来自网络。
+    /// <see cref="AxiosShortCircuit.Body"/> 按本次调用重新解析，<see cref="AxiosShortCircuit.Data"/> 原样交付（不跑 transformResponse）。
+    /// <paramref name="lenient"/> 为 true 时解析失败回退原文，与网络路径同口径。
     /// </summary>
     internal static AxiosResponse ReadShortCircuit(
         AxiosShortCircuit reply,
@@ -430,7 +362,7 @@ internal static class ResponseReader
                 + "不合法会让 validateStatus 与错误模型都无从判断。", config);
         }
 
-        // 两种载荷表达的是「同一件事」的两种形态：同时给等于没说清要不要重新解析，报错而不是猜。
+        // Body 与 Data 是同一件事的两种形态，同时给出视为配置错误。
         if (reply.Body is not null && reply.Data is not null)
         {
             throw AxiosException.InvalidOption(
@@ -441,7 +373,7 @@ internal static class ResponseReader
         var statusText = reply.StatusText ?? StatusTextMap.Get(status);
         var headers = BuildShortCircuitHeaders(reply, config);
 
-        // 与网络路径同一份上下文：transformResponse / 序列化器读到的 Headers 必须与 response.Headers 同实例。
+        // 与网络路径同一份上下文：Headers 与 response.Headers 同实例。
         var (mediaType, charSet) = ReadContentType(headers);
         config.Response = new AxiosResponseInfo(status, statusText, headers, mediaType, charSet);
 
@@ -451,8 +383,7 @@ internal static class ResponseReader
 
         if (reply.Body is { } body)
         {
-            // 体积上限属于「配置自身的校验」，命中短路同样生效（README：范围校验照常）：
-            // 与网络路径同一口径，超限直接失败，而不是把超大正文交给调用方。
+            // 体积上限同样生效：与网络路径同口径，超限直接失败。
             if (config.LimitsOrNull?.MaxContentLength is long maxLength && body.Length > maxLength)
             {
                 throw AxiosException.MaxContentLength(config, null, body.Length, maxLength);
@@ -462,17 +393,14 @@ internal static class ResponseReader
 
             if (config.ResponseType == ResponseType.Stream)
             {
-                // 流式：与网络路径一致，正文以流交出。底层字节数组必须复制 —— 只新建 MemoryStream
-                // 而共享同一个 byte[] 时，调用方通过流读到的仍是缓存条目本身，写入即污染后续命中。
+                // 流式：正文以流交出；底层字节数组必须复制，否则调用方写入会污染缓存条目。
                 data = new MemoryStream((byte[])body.Clone(), writable: false);
             }
             else
             {
                 data = ConvertBody(config, null, dataType, body, mediaType, charSet, lenient, out rawText);
 
-                // arraybuffer / byte[] 形态会把正文数组原样交出。网络路径的数组是「这一次读到的」，
-                // 而这里交的是调用方给的那一个 —— 两个调用共享它，等于让一次写入污染后续命中。
-                // 复制一份，保持「每份响应都是独立对象」这条既有约定（Stream 形态已经各自新建流）。
+                // 字节形态原样交出，这里必须复制，保证每份响应都是独立对象。
                 if (ReferenceEquals(data, body))
                 {
                     data = (byte[])body.Clone();
@@ -483,7 +411,7 @@ internal static class ResponseReader
         {
             data = reply.Data;
 
-            // 已成型结果里只有字符串能充当「错误原文」；对象没有「原文」概念，不硬转成 ToString()。
+            // 已成型结果里只有字符串能充当错误原文。
             rawText = lenient ? data as string : null;
         }
 
@@ -497,19 +425,14 @@ internal static class ResponseReader
         response.Headers = headers;
         response.Config = config;
 
-        // 这次没有发出任何请求：不伪造一个已释放的 HttpRequestMessage 让调用方误以为发过。
+        // 没有发出请求，Request 保持 null。
         response.Request = null;
         return response;
     }
 
     /// <summary>
-    /// 短路响应头：调用方给的字典原样搬进大小写不敏感的只读字典，<see cref="AxiosShortCircuit.ContentType"/>
-    /// 作为 <c>Content-Type</c> 覆盖同名项。
-    /// <para>
-    /// 头名（token）与头值（拒 C0，除 HTAB）各过一道与请求头相同的校验：短路响应最终会进日志、
-    /// 会喂给 transformResponse，脏头一样会把下游解析器带偏；抛出的 <see cref="ArgumentException"/>
-    /// 在这里归一到 <c>ERR_BAD_OPTION_VALUE</c>，与管线其他配置错误同一形态。
-    /// </para>
+    /// 短路响应头：调用方给的字典搬进大小写不敏感的只读字典，<see cref="AxiosShortCircuit.ContentType"/>
+    /// 作为 <c>Content-Type</c> 覆盖同名项。头名与头值走与请求头相同的校验，非法时归一到 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
     private static Dictionary<string, IEnumerable<string>> BuildShortCircuitHeaders(
         AxiosShortCircuit reply,
@@ -523,14 +446,13 @@ internal static class ResponseReader
             {
                 foreach (var header in source)
                 {
-                    // 空头名 / null 值等于「没有这个头」：静默跳过而不是当成空串（空 Content-Type 会变成空媒体类型）
+                    // 空头名 / null 值视为没有这个头，静默跳过。
                     if (string.IsNullOrEmpty(header.Key) || header.Value is null)
                     {
                         continue;
                     }
 
-                    // 名与值各过一道闸：值挡 C0 注入，名挡非 token（`X-A: 1\r\nX-B` 这类名字不会上送，
-                    // 但会原样进日志与 transformResponse 读到的头字典，必须与请求头同一把尺子）。
+                    // 值挡 C0 注入，名挡非 token，与请求头同一把尺子。
                     var name = AxiosHeaders.ValidateHeaderName(header.Key);
                     AxiosHeaders.ValidateHeaderValue(name, header.Value);
                     headers[name] = new[] { header.Value };
@@ -551,10 +473,7 @@ internal static class ResponseReader
         return headers;
     }
 
-    /// <summary>
-    /// 从响应头里取出媒体类型与字符集（等价于 BCL 解析 <c>Content-Type</c> 的结果）。
-    /// <para>短路响应没有 <see cref="System.Net.Http.HttpContent"/> 可借，头是调用方给的字典，只能自己解析。</para>
-    /// </summary>
+    /// <summary>从响应头取出媒体类型与字符集（短路响应的头是字典，只能自己解析）。</summary>
     private static (string? MediaType, string? CharSet) ReadContentType(
         IReadOnlyDictionary<string, IEnumerable<string>> headers)
     {
@@ -569,9 +488,8 @@ internal static class ResponseReader
     }
 
     /// <summary>
-    /// 按 responseType / 目标类型把「原始字节 + 已解码文本」转换为 Data：
-    /// 字节、文本、dynamic 图、基础类型由框架给出，只有<b>业务对象</b>交给 <see cref="IContentSerializer"/>。
-    /// <para><paramref name="lenient"/> 为 true 时（状态码不合法）解析失败返回原始内容，不抛异常。</para>
+    /// 按 responseType / 目标类型把原始字节与已解码文本转换为 Data：字节、文本、dynamic 图、基础类型
+    /// 由框架给出，只有业务对象交给 <see cref="IContentSerializer"/>。<paramref name="lenient"/> 为 true 时解析失败返回原始内容。
     /// </summary>
     private static object? ConvertData(
         AxiosConfig config,
@@ -584,7 +502,7 @@ internal static class ResponseReader
         string? mediaType,
         bool lenient)
     {
-        // 按需解码：只要字节的分支永远不付 bytes → UTF-16 的代价。
+        // 按需解码：只要字节的分支不做 bytes → UTF-16 转换。
         string Text() => text ??= ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding);
 
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
@@ -614,9 +532,7 @@ internal static class ResponseReader
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                // 非 JSON 响应（HTML 错误页、纯文本）同样走统一错误模型。
-                // 这里**有意比 axios 严格**：dynamic 的典型用法是 data.user.name，把 HTML 交回去只会在几十行后炸成
-                // RuntimeBinderException；状态码不合法时（lenient）仍然回退原文。
+                // 非 JSON 响应走统一错误模型：把 HTML 交回去只会在调用方炸成 RuntimeBinderException。
                 if (lenient)
                 {
                     return json;
@@ -637,15 +553,13 @@ internal static class ResponseReader
             return bytes;
         }
 
-        // 5) 空 body 视为 null；只含空白的 body 同样视为空 —— 否则服务端多吐一个换行就会让
-        //    typed 请求报 ERR_BAD_RESPONSE，而空 body 却返回 null。
+        // 5) 空 body 与只含空白的 body 都视为 null。
         if (text is null ? IsBlankUtf8(bytes) : IsBlank(text))
         {
             return null;
         }
 
         // 6) 没有目标类型（非泛型 / JsonElement）：框架按 JSON 文档形态给出，解析失败原样返回文本。
-        //    不用序列化器：它没有「文档形态」的概念，而「无类型」也不需要业务反序列化。
         if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
         {
             // 二进制响应没有文档形态，原样给字节。
@@ -656,11 +570,7 @@ internal static class ResponseReader
 
             var document = Text();
 
-            // 首个非空白字符不是 JSON 值的起始记号时，直接返回文本。
-            // HTML 错误页 / 纯文本端点交给 JsonDocument.Parse 只会抛一个「必被下面 catch 吞掉」的 JsonException：
-            // 实测每次请求多付约 1.5 KB 分配与 3 次 throw（单次成本 42 µs → 2.9 µs），
-            // 而结果完全相同（原样返回文本）。JSON 语法规定值只能以 { [ " - 数字 t f n 开头，
-            // 因此这个闸口不会漏掉任何合法 JSON 文档。
+            // 首字符不是 JSON 值的起始记号时直接返回文本，省掉一次必然失败的 Parse。
             if (!LooksLikeJson(document))
             {
                 return document;
@@ -677,8 +587,7 @@ internal static class ResponseReader
             }
         }
 
-        // 7) 二进制响应（Content-Type 非文本）：不做解码，交给序列化器的字节入口。
-        //    文本格式的序列化器不用实现该入口（接口默认按 UTF-8 解码转调文本入口）。
+        // 7) 二进制响应：不做解码，交给序列化器的字节入口（默认实现按 UTF-8 转调文本入口）。
         if (!textual)
         {
             try
@@ -687,7 +596,7 @@ internal static class ResponseReader
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
-                // lenient（状态码不合法）：解析失败不抛，原样回字节——此时没有「文本」可回退。
+                // lenient：解析失败不抛，原样回字节（此时没有文本可回退）。
                 if (lenient)
                 {
                     return bytes;
@@ -699,37 +608,28 @@ internal static class ResponseReader
 
         var raw = Text();
 
-        // 8) 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，不依赖序列化器
-        //    —— XML 的 <Age>30</Age> 与 JSON 的裸 42 都走这里；JSON 的带引号形态（"42"）交给序列化器兜底。
+        // 8) 基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：框架直接解析文本，带引号形态交给序列化器兜底。
         if (ScalarParser.TryParse(raw, dataType, out var scalar))
         {
             return scalar;
         }
 
-        // 9) 文本响应的业务对象：交给当前序列化器，返回什么对象，Data 就是什么。
+        // 9) 文本响应的业务对象：交给当前序列化器。
         try
         {
             var deserialized = AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
 
-            // 序列化器不复核枚举已定义值：内置 JSON 的 STJ 会把 999 静默转成 (E)999，
-            // 第三方实现更没有这层义务 —— 第 8 步拒掉的未定义值不能在这里被放行，
-            // 否则「枚举只接受已定义值」只对非 JSON 响应成立（2026-10-24 审查缺口）。
-            // 与第 8 步同一把尺子（ScalarParser.IsAcceptableEnumValue）。
+            // 序列化器不复核枚举已定义值（STJ 会把 999 静默转成 (E)999），与第 8 步同一把尺子。
             if (deserialized is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
             {
-                // 状态码不合法（lenient）时不因数据值失败：与解析失败同口径回退原文，
-                // 不让正文问题盖住本该抛出的 HTTP 状态错误（RawText 已另行保留）。
+                // lenient 时不因数据值失败：回退原文，不让正文问题盖住 HTTP 状态错误。
                 if (lenient)
                 {
                     return raw;
                 }
 
-                throw AxiosException.UndefinedEnumValue(
-                    config,
-                    request,
-                    // GetAsync<Color?> 的 dataType 是 Nullable<Color>：消息里报枚举类型本身
-                    (Nullable.GetUnderlyingType(dataType) ?? dataType).Name,
-                    enumValue.ToString());
+                // dataType 可能是 Nullable<Color>，消息里报枚举类型本身。
+                throw AxiosException.UndefinedEnumValue(config, request, (Nullable.GetUnderlyingType(dataType) ?? dataType).Name, enumValue.ToString());
             }
 
             return deserialized;
@@ -748,17 +648,7 @@ internal static class ResponseReader
 
 /// <summary>
 /// 响应头的惰性只读视图：保留 BCL 的两套头集合，首次访问时才展开成大小写不敏感的字典并缓存。
-/// <para>
-/// 存在意义：展开响应头要枚举响应头 + 内容头两套集合、逐个把头值装箱，还会触发 BCL 的惰性头值解析
-/// （<c>Content-Type</c> → <c>MediaTypeHeaderValue</c> 等），实测每头约 0.2 µs；
-/// 而绝大多数调用方从不读 <see cref="AxiosResponse.Headers"/>，这份开销原先每请求都要白付。
-/// </para>
-/// <para>
-/// 约定保持不变：合并顺序仍是「响应头在前、内容头覆盖同名键」；
-/// <see cref="AxiosResponseInfo.Headers"/> 与 <see cref="AxiosResponse.Headers"/> 仍是同一实例。
-/// 头集合在 <c>HttpResponseMessage.Dispose()</c> 之后依然可读（释放的只是正文），
-/// 所以视图可以安全地持有它们。
-/// </para>
+/// 合并顺序是响应头在前、内容头覆盖同名键，头集合在 <c>HttpResponseMessage.Dispose()</c> 之后仍可读。
 /// </summary>
 internal sealed class ResponseHeadersView : IReadOnlyDictionary<string, IEnumerable<string>>
 {
@@ -794,7 +684,7 @@ internal sealed class ResponseHeadersView : IReadOnlyDictionary<string, IEnumera
             }
         }
 
-        // 并发首次访问可能重复构建一次，但只发布一份；不用锁是为了不把锁对象暴露给持有 Headers 的外部代码。
+        // 并发首次访问可能重复构建，但只发布一份。
         return Interlocked.CompareExchange(ref _map, map, null) ?? map;
     }
 

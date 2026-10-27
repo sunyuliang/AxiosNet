@@ -1,4 +1,4 @@
-using BenchmarkDotNet.Configs;
+﻿using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
@@ -12,12 +12,7 @@ namespace AxiosNet.Benchmarks.Harness;
 /// 为什么统一走 <see cref="BenchmarkSwitcher"/> 而不是 <c>BenchmarkRunner.Run(type)</c>：只有前者认
 /// <c>--filter</c> / <c>--exporters</c> 这些命令行参数，菜单通道与脚本通道才能共用同一条路径。
 /// </para>
-/// <para>
-/// <b><c>--job</c> 为什么要自己摘出来</b>：BDN 的 <c>--job</c> 是往配置里<b>追加</b>作业，不会替换
-/// 已有作业；再叠加程序集 / 类上的作业特性，同一组基准就会被跑两遍、两张口径混进一张表
-/// （实测 <c>--job short</c> 让 6 个基准执行了 12 次）。所以这里把 <c>--job</c> 从参数里摘掉、
-/// 换成配置里唯一的一个作业：<c>--job X</c> 变成真正的覆盖，一次运行只有一个作业。
-/// </para>
+/// <para><c>--job</c> 由这里解析并作为唯一作业来源，避免同一组基准被跑两遍。</para>
 /// </summary>
 internal static class BenchmarkLauncher
 {

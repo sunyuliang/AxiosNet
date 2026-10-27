@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Xml;
@@ -98,10 +98,7 @@ public sealed class ContentSerializerTests
     [Fact]
     public async Task ScalarResponse_IsHandledByFramework_WithoutTouchingSerializer()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            Body: Encoding.UTF8.GetBytes("42"),
-            ContentType: "text/plain; charset=utf-8"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: Encoding.UTF8.GetBytes("42"), ContentType: "text/plain; charset=utf-8"));
 
         // 序列化器一旦被调用就炸：基础类型走框架 ScalarParser，不该碰到它
         using var client = new AxiosClient(new AxiosConfig
@@ -198,10 +195,7 @@ public sealed class ContentSerializerTests
         // 非 UTF-8 的尾字节 0xFF：只要中途被解码成 string 再编码回去就会变成替换符，
         // 因此「尾部字节还能原样拿到」即证明字节入口没有经过任何文本中转。
         var payload = new byte[] { 7, 0, 0, 0, 2, (byte)'o', (byte)'k', 0xFF };
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            Body: payload,
-            ContentType: AxiosContentType.OctetStream));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: payload, ContentType: AxiosContentType.OctetStream));
 
         using var client = new AxiosClient(new AxiosConfig
         {
@@ -264,10 +258,7 @@ public sealed class ContentSerializerTests
         // 错标成 octet-stream 且带 charset 的非 UTF-8 文本：DIM 默认实现与文本响应共用同一套解码优先级。
         // Latin1 的 0xE9 在写死 UTF-8 下会变成 U+FFFD，因此断言原文即证明 charset 生效。
         var latin1 = Encoding.Latin1.GetBytes(ToXml(new XmlOrder { Id = 6, Name = "café" }, typeof(XmlOrder)));
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            Body: latin1,
-            ContentType: "application/octet-stream; charset=iso-8859-1"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: latin1, ContentType: "application/octet-stream; charset=iso-8859-1"));
 
         using var client = new AxiosClient(new AxiosConfig
         {
@@ -287,10 +278,7 @@ public sealed class ContentSerializerTests
     {
         // 没有 charset：DIM 按 BOM 探测（UTF-16LE，需手工带上 BOM 前缀），与文本响应同规则
         var utf16 = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(ToXml(new XmlOrder { Id = 7, Name = "bom" }, typeof(XmlOrder)))).ToArray();
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            Body: utf16,
-            ContentType: AxiosContentType.OctetStream));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: utf16, ContentType: AxiosContentType.OctetStream));
 
         using var client = new AxiosClient(new AxiosConfig
         {
@@ -380,10 +368,7 @@ public sealed class ContentSerializerTests
     public async Task NonGenericResponse_ReturnsRawBytesForBinaryContent()
     {
         var payload = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF };
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            Body: payload,
-            ContentType: "image/png"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: payload, ContentType: "image/png"));
 
         using var client = new AxiosClient();
 
@@ -547,10 +532,7 @@ public sealed class ContentSerializerTests
         // 外部实体是典型的 XXE：内置序列化器禁用 DTD，不能因为「只是解析个响应」就打开文件读取面。
         const string payload = """<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]><XmlOrder><Id>1</Id><Name>&xxe;</Name></XmlOrder>""";
 
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            200,
-            Body: Encoding.UTF8.GetBytes(payload),
-            ContentType: "application/xml; charset=utf-8"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: Encoding.UTF8.GetBytes(payload), ContentType: "application/xml; charset=utf-8"));
 
         using var client = new AxiosClient(new AxiosConfig
         {
@@ -652,7 +634,7 @@ public sealed class ContentSerializerTests
         });
 
         // 只注入序列化器、不设 ContentType：头自动变成 application/xml
-        // （修复前这里会发出「头 application/json、正文 XML」的自相矛盾请求）
+        // （不能发出「头 application/json、正文 XML」的自相矛盾请求）
         await client.PostAsync(server.Url + "x", new XmlOrder { Id = 2, Name = "b" });
 
         Assert.Equal("application/xml", server.Received[0].Headers["Content-Type"]);

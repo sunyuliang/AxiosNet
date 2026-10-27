@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
@@ -34,10 +34,7 @@ public sealed class OwnershipAndPoolTests
     public async Task StreamResponse_ReadByte_EnforcesMaxContentLength()
     {
         // chunked：服务端不声明长度，上限只能靠「边读边计数」生效
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[64],
-            ContentType: "application/octet-stream",
-            Chunked: true));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[64], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
@@ -67,9 +64,7 @@ public sealed class OwnershipAndPoolTests
             payload[i] = (byte)i;
         }
 
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload, ContentType: "application/octet-stream"));
 
         var client = new AxiosClient();
         var response = await client.GetAsync<Stream>(server.Url + "file");
@@ -235,7 +230,7 @@ public sealed class OwnershipAndPoolTests
         var evictTask = Task.Run(() => pool.EvictIdleEndpoints());
         Assert.True(disposeEntered.Wait(TimeSpan.FromSeconds(10)), "驱逐没有进入 Handler 释放。");
 
-        // Handler 正在关闭（修复前这段持着 endpoint.SyncRoot）：
+        // Handler 正在关闭（这段持着 endpoint.SyncRoot）：
         // 池上的其它操作必须不被它拖住——统计要遍历各节点的锁，新 origin 租用要走 EnsureCapacity。
         Assert.Equal(0, pool.GetStatistics().EndpointCount);
         using var other = pool.Lease(new Uri("http://127.0.0.1:9001/y"));

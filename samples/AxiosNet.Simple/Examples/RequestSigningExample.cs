@@ -5,10 +5,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 22. 请求签名：对「令牌 + 时间戳 + nonce + 方法 + 路径 + 请求体」计算 HMAC-SHA256，
-/// 服务端验签以识别篡改与重放。常见于开放平台 / 网关侧的接口鉴权。
-/// </summary>
+/// <summary>22. 请求签名：对「令牌 + 时间戳 + nonce + 方法 + 路径 + 请求体」计算 HMAC-SHA256，服务端验签防篡改与重放。</summary>
 public sealed class RequestSigningExample : IExample
 {
     /// <summary>本示例专用客户端：签名拦截器只由本示例挂载，跨运行复用前先清空。</summary>
@@ -22,14 +19,13 @@ public sealed class RequestSigningExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 静态复用：首次运行创建；签名拦截器每次运行重挂（令牌/密钥是每轮登录取回的），先清掉上一轮的
+        // 静态复用：签名拦截器每次运行重挂，先清掉上一轮的
         var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
         http.Interceptors.Request.Clear();
         http.Interceptors.Response.Clear();
 
-        // 登录同时取回 appSecret。真实系统里密钥按 app 预共享、不会随登录下发，这里只是为了演示闭环。
-        var login = await http.PostAsync<JsonElement>(
-            DemoAuthApi.LoginPath, new { username = "alice", password = "wonderland" });
+        // 登录同时取回 appSecret（示例把密钥随登录下发，便于跑通闭环）
+        var login = await http.PostAsync<JsonElement>(DemoAuthApi.LoginPath, new { username = "alice", password = "wonderland" });
         var token = login.Data.GetProperty("accessToken").GetString()!;
         var secret = login.Data.GetProperty("appSecret").GetString()!;
         Console.WriteLine($"  登录成功，拿到 accessToken={token[..8]}… 与 appSecret={secret[..8]}…");
@@ -43,8 +39,7 @@ public sealed class RequestSigningExample : IExample
                 return config;
             }
 
-            // 签名必须覆盖「最终会上送的字节」：string 类型的 Data 会被 AxiosNet 原样透传，
-            // 因此先自己序列化成 JSON 字符串，再对这段文本计算哈希——与服务端收到的字节逐字节一致。
+            // 签名覆盖最终上送的字节：string 类型的 Data 原样透传，所以先自己序列化成 JSON 文本
             var body = config.Data as string ?? string.Empty;
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
             var nonce = Guid.NewGuid().ToString("N");
@@ -150,9 +145,7 @@ internal static class RequestSigner
     public static string BodyHash(string body)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
 
-    /// <summary>
-    /// 计算签名。规范串：<c>token \n timestamp \n nonce \n METHOD \n path?query \n sha256hex(body)</c>。
-    /// </summary>
+    /// <summary>计算签名，规范串：<c>token \n timestamp \n nonce \n METHOD \n path?query \n sha256hex(body)</c>。</summary>
     public static string Sign(
         string secretHex,
         string token,

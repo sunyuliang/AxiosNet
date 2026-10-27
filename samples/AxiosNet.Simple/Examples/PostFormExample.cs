@@ -3,9 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 4. POST 字典 + 显式 <c>application/x-www-form-urlencoded</c>：编码方式由 config.ContentType 决定。
-/// </summary>
+/// <summary>4. POST 字典 + 显式 <c>application/x-www-form-urlencoded</c>。</summary>
 public sealed class PostFormExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
@@ -28,10 +26,7 @@ public sealed class PostFormExample : IExample
         };
 
         // 默认是 AxiosContentType.Json（字典同样按 JSON 发送）；需要表单编码必须显式声明
-        var response = await http.PostAsync<JsonElement>(
-            "/form",
-            form,             
-            c => c.ContentType = AxiosContentType.FormUrlEncoded);
+        var response = await http.PostAsync<JsonElement>("/form", form, c => c.ContentType = AxiosContentType.FormUrlEncoded);
 
         Console.WriteLine($"  {response.Status} -> {SampleConsole.Pretty(response.Data)}");
     }

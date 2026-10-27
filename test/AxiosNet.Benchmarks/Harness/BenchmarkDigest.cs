@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
@@ -18,7 +18,7 @@ namespace AxiosNet.Benchmarks.Harness;
 /// <list type="number">
 /// <item>按参数组合分组、组内按 Mean 升序，基线永远挨着它的变体；</item>
 /// <item><b>比值自己重算</b>（同参数组合 + <c>[Benchmark(Baseline = true)]</c>），不抄 BDN 的 Ratio 列 ——
-/// 实测 BDN 会把「不是声明基线的那一行」当成时间基线，同一份报告里时间比值与分配比值的基线可以不是同一个；</item>
+/// <item><b>比值自己重算</b>（同参数组合 + <c>[Benchmark(Baseline = true)]</c>），不抄 BDN 的 Ratio 列；</item>
 /// <item>时间列统一单位（整张表一个单位才好横向比），分配量按量级选 B/KB/MB。</item>
 /// </list>
 /// <para>

@@ -3,27 +3,14 @@ using Xunit;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// 写时复制的<b>并发契约</b>：<see cref="AxiosHeaders"/> 与 <c>SynchronizedList</c> 共用同一套表示
-/// —— 实例只持有一个不可变数组，写入 = 算出新数组 + CAS 发布，克隆只共享引用、不复制元素。
-/// 这里锁住三条最容易写错的地方：
-/// <list type="bullet">
-/// <item>丢更新：并发克隆与写入交错时，每一次 <c>Set</c> / <c>Add</c> 都必须落在实例的当前版本上
-/// （CAS 失败要基于新版本重算，不能把算好的新数组硬写进去）；</item>
-/// <item>克隆可见性：克隆拿到的是调用时刻那一版，源之后的写入不能倒灌进克隆；</item>
-/// <item>零复制：共享期间「清空一个空容器」「删除一个不存在的键」不该付整份复制的代价。</item>
-/// </list>
-/// </summary>
+/// <summary>写时复制的并发契约：不丢更新、克隆可见性、无操作不复制。</summary>
 public sealed class CopyOnWriteConcurrencyTests
 {
-    // ------------------------------------------------------------------
-    // 丢更新
-    // ------------------------------------------------------------------
+    // 丢更新。
 
     [Fact]
     public void Headers_ConcurrentCloneAndSet_NeverLosesUpdate()
     {
-        // 头数放大到 64：每次写入都要复制整版数组，CAS 环随之变长，并发克隆更容易撞上。
         for (var round = 0; round < 20; round++)
         {
             var source = NewHeaders(64);
@@ -52,7 +39,6 @@ public sealed class CopyOnWriteConcurrencyTests
             Volatile.Write(ref stop, 1);
             cloner.Wait();
 
-            // 所有 Set 都作用在 source 上：source 自己必须看得到每一条，一条都不能少。
             foreach (var key in expected)
             {
                 Assert.NotNull(source.Get(key));
@@ -93,16 +79,14 @@ public sealed class CopyOnWriteConcurrencyTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // Clone 必须看到调用时刻的最新内容
-    // ------------------------------------------------------------------
+    // 克隆必须看到调用时刻的最新内容。
 
     [Fact]
     public void Clone_AlwaysSeesLatestStore()
     {
         var source = new AxiosHeaders();
         source.Set("A", "1");
-        _ = source.Clone(); // 克隆与源共享同一版数组
+        _ = source.Clone();
 
         source.Set("B", "2"); // 写入必须发布新数组，不能改共享的那一版
         var clone = source.Clone();
@@ -111,9 +95,7 @@ public sealed class CopyOnWriteConcurrencyTests
         Assert.Equal(2, clone.Count);
     }
 
-    // ------------------------------------------------------------------
-    // 零复制：无操作不该付整份复制的代价
-    // ------------------------------------------------------------------
+    // 零复制：无操作不该付整份复制的代价。
 
     [Fact]
     public void Headers_ClearOnSharedEmpty_DoesNotCopy()
@@ -123,7 +105,6 @@ public sealed class CopyOnWriteConcurrencyTests
 
         var cost = AverageBytes(20_000, source.Clear);
 
-        // 整份复制的实现每次都要 new 一份存储（≈100 B）；不可变数组模型下空版本是静态单例数组，0 B。
         Assert.True(cost < 32, $"共享空存储上的 Clear() 平均分配 {cost} B —— 疑似仍整份复制。");
         Assert.Equal(0, shared.Count);
     }
@@ -154,16 +135,12 @@ public sealed class CopyOnWriteConcurrencyTests
         Assert.Equal(1, shared.TransformRequest.Count);
     }
 
-    // ------------------------------------------------------------------
-    // 动态节点的形状迁移缓存：字段名高度动态时也必须有界且正确
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Dynamic_ManyDistinctFieldNames_StillCorrect()
     {
         var node = new AxiosDynamic();
 
-        // 2000 个互不重复的字段名：会越过单节点迁移缓存上限，之后派生不再登记。
+        // 2000 个互不重复的字段名，会越过单节点迁移缓存上限。
         for (var i = 0; i < 2000; i++)
         {
             node[$"f{i}"] = i;
@@ -181,8 +158,6 @@ public sealed class CopyOnWriteConcurrencyTests
         Assert.Null(node["f0"]);
         Assert.Equal(1, (int)node["f1"]!);
     }
-
-    // ------------------------------------------------------------------
 
     private static AxiosHeaders NewHeaders(int count)
     {

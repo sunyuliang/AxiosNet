@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using AxiosNet.Tests.Infrastructure;
@@ -14,8 +14,7 @@ namespace AxiosNet.Tests;
 /// <item>流式响应反复用同一个调用方令牌读取时，不得每块新建 linked CTS
 /// （用「交给底层的令牌每次相同」做结构断言，不做分配测量，见该用例注释）。</item>
 /// </list>
-/// 阈值均留一倍以上余量：这些是用例「数量级不退回到修复前」的护栏，不是精确基准，
-/// 换运行时 / 换 GC 模式不应让它们误报。
+/// 阈值均留一倍以上余量：用于拦住数量级退化，不是精确基准，换运行时 / 换 GC 模式不应误报。
 /// </summary>
 public sealed class AllocationRegressionTests
 {
@@ -37,11 +36,8 @@ public sealed class AllocationRegressionTests
         var config = new AxiosConfig { Timeout = TimeSpan.FromSeconds(3) };
         config.Headers.Set("Authorization", "Bearer token");
 
-        // 修复前：new AxiosConfig（含 4 个集合 + _headers 初始化）≈ 704 B，
-        // 加上属性逐个赋值与被立刻覆盖的白分配，实测 1168 B/次；
-        // MemberwiseClone 之后实测 960 B/次（4 个空集合各拷一份）；
-        // 集合改为延迟创建后实测 ≈ 700 B/次（只剩这份有内容的 Headers 副本 + 对象本身）。
-        // 阈值 1050：仍能抓住「退回到 new + 逐属性赋值」的 1168 B 路径，同时给运行时差异留余量。
+        // 带内容 Headers 的配置克隆约 700 B/次；阈值 1050 能抓住「重新 new + 逐属性赋值」的退化路径，
+        // 同时给运行时差异留余量。
         var average = AverageBytes(20_000, () => config.Clone());
         Assert.True(
             average < 1050,
@@ -128,9 +124,7 @@ public sealed class AllocationRegressionTests
         // 因此交给底层的令牌**每次都是同一个**（CancellationToken 按源比较）。
         // 每块新建 linked CTS 会让每块令牌的源各不相同，这里必然失败。
         //
-        // 原先用「带令牌 / 不带令牌两条路径的分配差值 < 2048 B」做护栏，但线程局部分配计数
-        // 在 CI 的并行负载下会被同线程上的无关分配污染（实测差值可达 7 KB，而单次 linked CTS
-        // 只有几百 B），导致误报；令牌身份不受运行时噪声影响。
+        // 用令牌身份断言而不是分配差值：线程局部分配计数会被同线程无关分配污染，令牌身份不受运行时噪声影响。
         var first = tokens[0];
         Assert.True(first.CanBeCanceled, "交给底层的令牌应链接了调用方令牌（可取消）。");
         Assert.True(
@@ -256,9 +250,7 @@ public sealed class AllocationRegressionTests
         // 换令牌必须让缓存失效：新令牌（这里预取消）要立刻生效，
         // 不能继续沿用上一个令牌对应的链接源。
         const int size = 256 * 1024;
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[size],
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[size], ContentType: "application/octet-stream"));
 
         using var client = new AxiosClient();
         var response = await client.GetAsync<Stream>(server.Url + "file");

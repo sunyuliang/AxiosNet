@@ -3,8 +3,7 @@ using System.Net;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 上传侧包装：复用内部 <see cref="HttpContent"/> 的序列化逻辑，同时报告发送进度并按速率限流。
-/// 头部从内部内容复制，因此外层表现与原内容一致。
+/// 上传侧包装：复用内部 <see cref="HttpContent"/> 的序列化逻辑，报告发送进度并按速率限流；头部从内部内容复制。
 /// </summary>
 internal sealed class ProgressHttpContent : HttpContent
 {
@@ -12,9 +11,7 @@ internal sealed class ProgressHttpContent : HttpContent
     private readonly AxiosConfig _config;
 
     /// <summary>
-    /// 计量器挂在内容上而不是每次序列化时新建：307/308 重定向或重试会再次调用
-    /// <see cref="SerializeToStreamAsync(Stream, TransportContext?, CancellationToken)"/> 重发同一份正文，
-    /// 共用计量器才能让进度**单调推进**（重发字节继续累加），而不是跳回 0。
+    /// 计量器挂在内容上复用：307/308 重定向与重试会重发同一份正文，共用计量器进度才单调推进。
     /// </summary>
     private readonly TrafficMeter _meter;
 
@@ -46,10 +43,8 @@ internal sealed class ProgressHttpContent : HttpContent
 
         var wrapper = new ProgressWriteStream(stream, _meter, MapCallbackError);
 
-        // 这里<b>不能</b>把整段 CopyToAsync 的异常都翻译成「进度回调失败」：
-        // 写正文时的 IOException / HttpRequestException 是网络故障，必须原样冒泡到
-        // AxiosClient 的错误模型（ERR_NETWORK）。回调本身抛的异常已由
-        // ProgressWriteStream.TrackAsync / Complete() 就地翻译成 AxiosException。
+        // 不能把整段 CopyToAsync 的异常都翻译成「进度回调失败」：写正文的 IOException /
+        // HttpRequestException 是网络故障，必须原样冒泡到 AxiosClient 的错误模型（ERR_NETWORK）。
         await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
         await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
 
@@ -59,12 +54,7 @@ internal sealed class ProgressHttpContent : HttpContent
 
     /// <summary>把进度回调的任意异常翻译成统一错误模型（<c>ERR_BAD_REQUEST</c>，原始异常进 Cause）。</summary>
     private Exception MapCallbackError(Exception ex)
-        => AxiosException.ProgressCallbackFailed(
-            _config,
-            null,
-            nameof(AxiosConfig.CallbackSettings.OnUploadProgress),
-            ex,
-            upload: true);
+        => AxiosException.ProgressCallbackFailed(_config, null, nameof(AxiosConfig.CallbackSettings.OnUploadProgress), ex, upload: true);
 
     private void Complete()
     {

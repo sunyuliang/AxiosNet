@@ -1,4 +1,4 @@
-using AxiosNet.WebAPI;
+﻿using AxiosNet.WebAPI;
 
 namespace AxiosNet.Simple.WebAPI.Examples;
 
@@ -31,9 +31,7 @@ public sealed class BigFrameExample : IExample
         var strict = _strict ??= new ApiClient(context.BaseUrl);
         try
         {
-            var response = await strict.RequestStreamAsync(
-                new StreamBigFrameRequest(),
-                AxiosStreamFormat.JsonArray);
+            var response = await strict.RequestStreamAsync(new StreamBigFrameRequest(), AxiosStreamFormat.JsonArray);
 
             await foreach (var chunk in response.Data!)
             {
@@ -51,9 +49,7 @@ public sealed class BigFrameExample : IExample
             context.BaseUrl,
             defaults => defaults.Limits.MaxStreamFrameLength = 12 * 1024 * 1024);
 
-        var relaxedResponse = await relaxed.RequestStreamAsync(
-            new StreamBigFrameRequest(),
-            AxiosStreamFormat.JsonArray);
+        var relaxedResponse = await relaxed.RequestStreamAsync(new StreamBigFrameRequest(), AxiosStreamFormat.JsonArray);
 
         await foreach (var chunk in relaxedResponse.Data!)
         {

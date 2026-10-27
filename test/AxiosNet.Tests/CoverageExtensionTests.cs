@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Pooling;
@@ -7,9 +7,8 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 全量代码审查后补充的场景覆盖：HTTP 版本、取消短路、Cookie 开关、上限边界值、
-/// multipart/form 的 JSON 树输入、拦截器网络错误恢复、Dispose 幂等、空正文流式响应。
-/// 每条都对应一处此前没有用例把守的公共契约。
+/// 场景覆盖：HTTP 版本、取消短路、Cookie 开关、上限边界值、multipart / form 的 JSON 树输入、
+/// 拦截器网络错误恢复、Dispose 幂等、空正文流式响应。
 /// </summary>
 public sealed class CoverageExtensionTests
 {
@@ -327,9 +326,7 @@ public sealed class CoverageExtensionTests
     [Fact]
     public async Task StreamResponse_ZeroLengthBody_CompletesImmediately()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: Array.Empty<byte>(),
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Array.Empty<byte>(), ContentType: "application/octet-stream"));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync<Stream>(server.Url);

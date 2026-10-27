@@ -1,4 +1,4 @@
-using BenchmarkDotNet.Jobs;
+﻿using BenchmarkDotNet.Jobs;
 
 namespace AxiosNet.Benchmarks;
 
@@ -14,12 +14,8 @@ namespace AxiosNet.Benchmarks;
 /// 第二依据是同一次运行内的比值（同进程同窗口的比），第三才是 <c>Mean ± Error</c>。
 /// 8 次迭代下每行仍采样几十万次调用，<c>Error</c> 半宽通常在一个百分点量级。
 /// </para>
-/// <para>
-/// <b>为什么是「配置里的作业」而不是程序集上的 <c>[SimpleJob]</c></b>：实测 <c>--job short</c>
-/// <b>不会覆盖</b>特性上的作业，而是<b>追加</b>一个 —— 6 个基准方法会跑成 12 次，同一张表里混进两套
-/// 迭代次数，正好踩中本项目最忌讳的「不同口径混在一个结论里」。改成由 <see cref="Harness.BenchmarkLauncher"/>
-/// 独占作业来源后，<c>--job X</c> 是真正的覆盖：一次运行只有一个作业。
-/// </para>
+/// <para>作业由 <see cref="Harness.BenchmarkLauncher"/> 独占：BDN 的 <c>--job</c> 是追加而非覆盖，</para>
+/// <para>放进程序集特性会让同一组基准跑两遍、两套迭代次数混进一张表。</para>
 /// </summary>
 internal static class BenchmarkConfig
 {

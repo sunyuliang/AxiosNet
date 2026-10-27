@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using AxiosNet.Serialization;
@@ -20,7 +20,7 @@ public sealed class Audit20261024P2FixTests
     [Fact]
     public async Task Ndjson_NonUtf8DeclaredCharset_DecodesFrames()
     {
-        // 响应声明 iso-8859-1：逐行解码用取流时解析的编码（此前每行重跑 charset 表查找）
+        // 响应声明 iso-8859-1：逐行解码用取流时解析的编码。
         var body = Encoding.Latin1.GetBytes("{\"n\":1,\"text\":\"café\"}\n{\"n\":2,\"text\":\"naïve\"}\n");
 
         using var client = CreateStreamingClient(

@@ -4,10 +4,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 13. multipart/form-data：普通字段 + 一堆文件（内存文件与本地文件各一）。
-/// 演示服务器用 MultipartReader 按字节精确解析，回报每个部件的字段名/文件名/字节数/SHA256。
-/// </summary>
+/// <summary>13. multipart/form-data：普通字段 + 一堆文件（内存文件与本地文件各一）。</summary>
 public sealed class MultipartExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>

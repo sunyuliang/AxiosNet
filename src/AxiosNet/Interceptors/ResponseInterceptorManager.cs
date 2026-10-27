@@ -13,8 +13,7 @@ public sealed class ResponseInterceptorManager
     private readonly List<ResponseInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册/弹出/清空才失效，避免每请求重建 List。
-    // 用数组而不是 IReadOnlyList：数组的 foreach 编译成下标循环，不会把枚举器装箱。
+    // 快照缓存：注册 / 弹出 / 清空时失效；用数组是为了让 foreach 编译成下标循环，不装箱。
     private ResponseInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
@@ -38,9 +37,7 @@ public sealed class ResponseInterceptorManager
         Func<Exception, AxiosResponse>? onRejected = null)
     {
         ArgumentNullException.ThrowIfNull(onFulfilled);
-        return Use(
-            response => Task.FromResult(onFulfilled(response)),
-            onRejected is null ? null : ex => Task.FromResult(onRejected(ex)));
+        return Use(response => Task.FromResult(onFulfilled(response)), onRejected is null ? null : ex => Task.FromResult(onRejected(ex)));
     }
 
     /// <summary>移除指定拦截器（对应 axios eject）。</summary>
@@ -81,7 +78,6 @@ public sealed class ResponseInterceptorManager
     internal ResponseInterceptor[] Snapshot()
     {
         // 稳态零锁：快照是不可变数组，写侧只在注册 / 弹出 / 清空时换引用。
-        // 只在快照失效后的第一次读取才进锁重建（每次请求都会走这里，锁是热路径开销）。
         var snapshot = Volatile.Read(ref _snapshot);
         if (snapshot is not null)
         {
@@ -90,8 +86,7 @@ public sealed class ResponseInterceptorManager
 
         lock (_interceptors)
         {
-            // 锁内复查：快照失效后可能有多条请求线程同时在这里排队，
-            // 不复查的话每个都会重建一次（只有最后一个生效，前面几次纯属白分配）。
+            // 锁内复查：多条线程同时排队时只重建一次。
             snapshot = Volatile.Read(ref _snapshot);
             if (snapshot is not null)
             {

@@ -3,24 +3,7 @@ using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
 
-/// <summary>
-/// 声明式 API 客户端：请求模型（<see cref="IApiRequest{TResponse}"/> + 路由/参数特性）描述「怎么访问」，
-/// 授权（<see cref="Authorization"/>）描述「凭什么访问」，调用处只剩一句：
-/// <code>
-/// var client = new ApiClient("https://api.example.com")
-/// {
-///     Authorization = new BearerAuthorizationProvider(token);
-/// };
-///
-/// var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
-/// response.Data.Name; // 返回类型由请求模型自动确定
-/// </code>
-/// <para>
-/// 本类是 <see cref="AxiosClient"/> 的薄门面：请求模型绑定成 AxiosConfig 后走 AxiosNet 的完整管线
-/// （连接池、拦截器、超时、重试语义、错误模型 <see cref="AxiosException"/> 全部保留）。
-/// 深度定制直接取 <see cref="Axios"/>。
-/// </para>
-/// </summary>
+/// <summary>声明式 API 客户端：请求模型描述「怎么访问」，授权描述「凭什么访问」。本类是 <see cref="AxiosClient"/> 的薄门面，请求模型绑定成 AxiosConfig 后走完整管线；深度定制直接取 <see cref="Axios"/>。</summary>
 public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 {
     private readonly bool _ownsAxiosClient;
@@ -28,33 +11,16 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>底层 AxiosNet 客户端（实例默认值、拦截器、连接池都从它进入）。</summary>
     public AxiosClient Axios { get; }
 
-    /// <summary>
-    /// 授权提供方：每次请求发送前调用（在模型绑定与 <see cref="IApiRequestConfigurable.Configure"/> 之后），
-    /// 把凭据写进最终配置。null 表示不授权（匿名访问）。
-    /// <para>标注了 <see cref="AllowAnonymousAttribute"/> 的模型会跳过它。</para>
-    /// </summary>
+    /// <summary>授权提供方：每次请求发送前调用，把凭据写进最终配置；null 表示匿名访问。标注了 <see cref="AllowAnonymousAttribute"/> 的模型会跳过它。</summary>
     public IAuthorizationProvider? Authorization { get; set; }
 
     /// <summary>
-    /// 访问令牌来源：在 <see cref="Authorization"/> <b>之前</b>调用，库按
-    /// <c>Authorization: {scheme} {token}</c> 写头（scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。
-    /// <para>
-    /// 令牌为 <c>null</c> / 空白时不写头；模型已显式写了 <c>Authorization</c> 头时不覆盖。
-    /// 之后 <see cref="Authorization"/> 仍会执行，因此它可以覆盖这里写的值。
-    /// </para>
+    /// 访问令牌来源：在 <see cref="Authorization"/> 之前调用，按 <c>Authorization: {scheme} {token}</c> 写头
+    /// （scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。令牌为 null / 空白时不写头，模型已显式写该头时不覆盖。
     /// </summary>
     public IAccessTokenProvider? AccessTokenProvider { get; set; }
 
-    /// <summary>
-    /// 流式请求（<c>RequestStreamAsync</c>）正文的空闲超时，默认 <see cref="TimeSpan.Zero"/>
-    /// （正文不设超时，只受取消令牌约束）；<see cref="AxiosConfig.Timeout"/> 对流式请求只覆盖到响应头。
-    /// <para>大于零表示「连续这么久没有收到数据」才失败（<c>ECONNABORTED</c>）。</para>
-    /// <para>
-    /// 没显式设置过本属性时，<see cref="Axios.Defaults"/> 上显式配置的
-    /// <see cref="AxiosConfig.LimitSettings.StreamIdleTimeout"/> 会照常生效（本属性只兜底「两边都没表态」的场景）；
-    /// 设置过本属性则本属性优先。
-    /// </para>
-    /// </summary>
+    /// <summary>流式请求正文的空闲超时，默认 <see cref="TimeSpan.Zero"/>（不限时，只受取消令牌约束）；大于零表示连续这么久没有收到数据才失败（<c>ECONNABORTED</c>）。</summary>
     public TimeSpan StreamIdleTimeout
     {
         get => _streamIdleTimeout;
@@ -70,25 +36,10 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>是否显式给 <see cref="StreamIdleTimeout"/> 赋过值（默认值本身代表不了调用方意图）。</summary>
     private bool _streamIdleTimeoutSet;
 
-    /// <summary>
-    /// URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本
-    /// （路径段仍会被 URL 转义）；返回 <c>null</c> 表示「本次不处理」，回落到默认规则。
-    /// <para>
-    /// 只能在发送前设置（绑定发生在请求构造期）：用于枚举自定义写法、日期格式、单位换算等。
-    /// 数组 / 字典值整体传入；返回字符串即整体替换（不再走 <c>a[]=v</c> 规则）。
-    /// </para>
-    /// </summary>
+    /// <summary>URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本（路径段仍会被 URL 转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。</summary>
     public Func<object, string?>? UrlParameterFormatter { get; set; }
 
-    /// <summary>
-    /// HTTP 状态码错误的异常工厂：非 null 时，状态码不合法（<see cref="AxiosException.Response"/> 非 null）
-    /// 的请求会先交给它构造异常；返回 <c>null</c> 表示仍抛原始 <see cref="AxiosException"/>。
-    /// <para>
-    /// 只处理「服务端返回了响应」的错误；网络错误、超时、取消、配置错误不会被接管。
-    /// 工厂自身抛出的异常原样冒泡（与拦截器一致）。
-    /// </para>
-    /// <para>内置实现见 <see cref="ApiErrorFactory{TError}"/>（把错误体反序列化成强类型）。</para>
-    /// </summary>
+    /// <summary>HTTP 状态码错误的异常工厂：非 null 时，状态码不合法的请求先交给它构造异常；返回 <c>null</c> 表示仍抛原始 <see cref="AxiosException"/>。内置实现见 <see cref="ApiErrorFactory{TError}"/>。</summary>
     public IApiErrorFactory? ErrorFactory { get; set; }
 
     /// <summary>以 baseAddress 创建自管的 AxiosClient。</summary>
@@ -147,10 +98,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return await SendAsync<TResponse>(request, config, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// 按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。
-    /// 可用于日志与签名；返回实际发送形态（已转义）。
-    /// </summary>
+    /// <summary>按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。可用于日志与签名；返回实际发送形态（已转义）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -174,8 +122,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             Url = metadata.ResolveUrl(request, UrlParameterFormatter)
         };
 
-        // 只在确实绑到参数时才写：合并层现在把「显式写 null」当成摘掉实例默认值，
-        // 而模型里没有查询参数应当继承默认参数（两种模型形态一致，见 ResolveQuery 的注释）。
+        // 没有查询参数时不写：合并层把显式 null 当成摘掉实例默认值。
         if (metadata.ResolveQuery(request, UrlParameterFormatter) is { } query)
         {
             config.Params = query;
@@ -209,14 +156,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return config;
     }
 
-    /// <summary>
-    /// 取请求体（<c>[Body]</c> 的值 / <c>[Multipart]</c> 装配好的表单字典）。
-    /// <para>
-    /// 属性取值、声明了覆盖项的集合枚举、声明校验都在这里发生，失败归 <c>ERR_BAD_REQUEST</c>——
-    /// 与装配期失败同一分类（此前原始异常会直接冒出请求入口，连 <see cref="AxiosException"/> 都不是）。
-    /// 消息里带请求模型名：走到 <see cref="AxiosClient"/> 的装配失败只剩内部表单字典，那个类型名对调用方没有意义。
-    /// </para>
-    /// </summary>
+    /// <summary>取请求体（<c>[Body]</c> 的值 / <c>[Multipart]</c> 装配好的表单）；取值失败归 <c>ERR_BAD_REQUEST</c>。</summary>
     private static object? ResolveBody(RequestModelMetadata metadata, object request, AxiosConfig config)
     {
         try
@@ -229,10 +169,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// 授权链路：<see cref="AllowAnonymousAttribute"/> 直接跳过；否则 <see cref="AccessTokenProvider"/> 先写头
-    /// （不覆盖模型显式写的 <c>Authorization</c>），<see cref="Authorization"/> 最后执行（可覆盖前者）。
-    /// </summary>
+    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 跳过；<see cref="AccessTokenProvider"/> 先写头，<see cref="Authorization"/> 最后执行（可覆盖前者）。</summary>
     private async ValueTask ApplyAuthorizationAsync(
         RequestModelMetadata metadata,
         object request,
@@ -278,8 +215,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
         catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
         {
-            // 只接管「服务端给了响应」的错误：网络 / 超时 / 取消 / 配置错误保持原样，
-            // 调用方的 catch (AxiosException) 仍然成立（工厂返回 null 时原样再抛）。
+            // 只接管「服务端给了响应」的错误；工厂返回 null 时原样再抛。
             var replacement = await ErrorFactory
                 .CreateAsync(new ApiErrorContext(request, error), cancellationToken)
                 .ConfigureAwait(false);

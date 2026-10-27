@@ -3,8 +3,7 @@ using System.Diagnostics;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 上传/下载共用的流量计量与进度上报：
-/// 累计字节、按 50ms 节流回调、按 <see cref="AxiosConfig.LimitSettings.MaxRate"/> 反算应等待的时间。
+/// 上传/下载共用的流量计量与进度上报：累计字节、按 50ms 节流回调、按 MaxRate 反算应等待的时间。
 /// </summary>
 internal sealed class TrafficMeter
 {
@@ -17,14 +16,10 @@ internal sealed class TrafficMeter
 
     private long _loaded;
 
-    /// <summary>
-    /// 本轮实际传输的起点（累计值的快照）。重发正文时 <see cref="Restart"/> 把它推到当前累计值，
-    /// 「已传满声明长度」的判定按<b>本轮</b>增量算 —— 否则第二轮一开始
-    /// <c>_loaded &gt;= _total</c> 就恒真，第一次上报就把计量器锁死，终值远小于真实发送量。
-    /// </summary>
+    /// <summary>本轮传输的起点（累计值快照）：完成判定按本轮增量算，重发正文时由 <see cref="Restart"/> 推进。</summary>
     private long _roundStart;
 
-    /// <summary>本轮起点的时钟快照：速率与限速都按「本轮增量 / 本轮耗时」算，退避等待不算传输时间。</summary>
+    /// <summary>本轮起点的时钟快照：速率与限速按本轮增量与本轮耗时算。</summary>
     private TimeSpan _roundStartClock;
 
     private long _lastReportMs = -ReportIntervalMs;
@@ -63,9 +58,7 @@ internal sealed class TrafficMeter
             return;
         }
 
-        // 读满本轮声明长度：这一次上报必须发出去，不受 50ms 节流。
-        // 预分配读取在「恰好读满声明长度」时不会再读一次 EOF（没有 read == 0 的 force 上报机会），
-        // 若最后一块恰好落在节流窗口内，100% 就会被吞掉 —— 调用方永远看不到终值。
+        // 读满本轮声明长度时必须立即上报，不受 50ms 节流，否则 100% 可能被吞掉。
         if (_total is long declared && declared > 0 && _loaded - _roundStart >= declared)
         {
             force = true;
@@ -85,25 +78,18 @@ internal sealed class TrafficMeter
         _lastReportMs = elapsedMs;
         _callback(BuildEvent(upload));
 
-        // 已经传满<b>本轮</b>的声明长度：后续 EOF / Complete 不再重复报一次 100%。
-        // 必须要求 total > 0：total 为 0（服务端把 Content-Length 写成 0 却仍有正文，
-        // 或注入的 Handler 不按声明长度截断）时，0 >= 0 恒真 —— 第一次上报就会把计量器锁死，
-        // 之后几百 KB 全部静默，调用方只看到一次「loaded=第一块 / total=0」。
+        // 已传满本轮声明长度：后续 EOF / Complete 不再重复报 100%。
+        // total 必须大于 0，否则 0 >= 0 恒真，第一次上报就会锁死计量器。
         if (_total is long total && total > 0 && _loaded - _roundStart >= total)
         {
             _completed = true;
         }
     }
 
-    /// <summary>完成时强制上报一次（loaded == total）。</summary>
+    /// <summary>完成时强制上报一次。</summary>
     public void Complete(bool upload) => Report(force: true, upload);
 
-    /// <summary>
-    /// 开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，<b>累计值与计时器保留</b> ——
-    /// 307/308 重定向或重试会再次写出同一份正文，共用计量器才能让进度单调推进而不是掉回 0。
-    /// <para>同时把「本轮起点」推到当前累计值、重置本轮计时：完成判定按增量算，第二轮才不会一开始就判成已传满；
-    /// 速率与限速也只算本轮，退避等待不计入传输时长。</para>
-    /// </summary>
+    /// <summary>开始新一次实际传输（重发正文时调用）：只解除「已完成」状态，累计值与计时器保留。</summary>
     public void Restart()
     {
         _completed = false;
@@ -113,13 +99,12 @@ internal sealed class TrafficMeter
 
     private AxiosProgressEvent BuildEvent(bool upload)
     {
-        // 只按本轮增量算：重发正文时第二轮一开始累计值就等于 total，按累计算会一路 >100%。
+        // 只按本轮增量算，否则重发时百分比会超过 100%。
         var roundBytes = _loaded - _roundStart;
         var seconds = (_clock.Elapsed - _roundStartClock).TotalSeconds;
         double? rate = seconds > 0 && roundBytes > 0 ? roundBytes / seconds : null;
 
-        // Loaded 仍是累计真实发送量（两轮重发就是 2×total）——这是刻意的「单调推进」语义；
-        // AxiosProgressEvent.Progress 自己封顶 1，调用方看到的百分比不会超过 100%。
+        // Loaded 是累计发送量，保持单调推进；Progress 自身封顶 1。
         var loaded = _loaded;
 
         TimeSpan? estimated = rate is > 0 && _total is long total && total > roundBytes
@@ -131,9 +116,7 @@ internal sealed class TrafficMeter
 }
 
 /// <summary>
-/// 下载侧流量包装：统计已读字节、按 <see cref="AxiosConfig.CallbackSettings.OnDownloadProgress"/> 回报进度、
-/// 按 <see cref="AxiosConfig.LimitSettings.MaxRate"/> 限速（读满配额后按速率等待），
-/// 并在累计字节超出 <see cref="AxiosConfig.LimitSettings.MaxContentLength"/> 时立刻中断。
+/// 下载侧流量包装：统计已读字节、回报进度、按 MaxRate 限速，并在累计字节超出 MaxContentLength 时中断。
 /// </summary>
 internal sealed class ProgressReadStream : DelegatingStream
 {
@@ -174,10 +157,7 @@ internal sealed class ProgressReadStream : DelegatingStream
         return read;
     }
 
-    /// <summary>
-    /// 累计字节越界即中断：既覆盖 chunked / 未声明长度的流式响应，
-    /// 也让非流式路径在「超限的那一个缓冲区」上就停下，而不是等整个正文读完。
-    /// </summary>
+    /// <summary>累计字节越界即中断，覆盖 chunked / 未声明长度的流式响应。</summary>
     private void ThrowIfOverLimit(int read)
     {
         if (read <= 0 || _contentLimit is not long limit)
@@ -211,10 +191,7 @@ internal sealed class ProgressReadStream : DelegatingStream
         Report(force: false);
     }
 
-    /// <summary>
-    /// 回报进度：回调是请求管线的一部分，抛出的异常不能以裸类型交给调用方 ——
-    /// 统一成 <c>ERR_BAD_RESPONSE</c>（正文已开始接收），原始异常放在 Cause 里。
-    /// </summary>
+    /// <summary>回报进度：回调异常统一成 <c>ERR_BAD_RESPONSE</c>，原始异常放在 Cause 里。</summary>
     private void Report(bool force)
     {
         try
@@ -223,12 +200,7 @@ internal sealed class ProgressReadStream : DelegatingStream
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            throw AxiosException.ProgressCallbackFailed(
-                _config,
-                _request,
-                nameof(AxiosConfig.CallbackSettings.OnDownloadProgress),
-                ex,
-                upload: false);
+            throw AxiosException.ProgressCallbackFailed(_config, _request, nameof(AxiosConfig.CallbackSettings.OnDownloadProgress), ex, upload: false);
         }
     }
 }
@@ -244,10 +216,7 @@ internal sealed class ProgressWriteStream : DelegatingStream
     /// <summary>进度回调抛异常时的错误翻译（由内容层提供带配置上下文的统一异常）。</summary>
     private readonly Func<Exception, Exception> _mapCallbackError;
 
-    /// <summary>
-    /// 由外部提供计量器：同一个 <see cref="HttpContent"/> 可能被序列化多次（重定向 / 重试重发正文），
-    /// 计量器必须挂在内容上共享，不能每次为包装流新建一个。
-    /// </summary>
+    /// <summary>计量器由外部提供：同一个 <see cref="HttpContent"/> 重发正文时共用同一个计量器。</summary>
     public ProgressWriteStream(Stream inner, TrafficMeter meter, Func<Exception, Exception> mapCallbackError)
         : base(inner)
     {
@@ -273,7 +242,6 @@ internal sealed class ProgressWriteStream : DelegatingStream
 
     public override void SetLength(long value) => throw new NotSupportedException();
 
-    /// <summary>底层流由 HttpClient 拥有，不随本包装释放。</summary>
     protected override bool DisposeInnerStream => false;
 
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
@@ -306,8 +274,7 @@ internal sealed class ProgressWriteStream : DelegatingStream
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            // 回调异常必须换成统一错误模型：否则 HttpClient 会把它包成 HttpRequestException，
-            // 上层再翻译成 ERR_NETWORK —— 一次「回调写错」被误报成「网络故障」。
+            // 回调异常必须换成统一错误模型，否则会被包成 HttpRequestException 再误报为 ERR_NETWORK。
             throw _mapCallbackError(ex);
         }
     }

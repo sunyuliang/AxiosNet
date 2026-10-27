@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 3. POST 对象 -> application/json，响应强类型回读。
-/// </summary>
+/// <summary>3. POST 对象 -> application/json，响应强类型回读。</summary>
 public sealed class PostJsonExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>

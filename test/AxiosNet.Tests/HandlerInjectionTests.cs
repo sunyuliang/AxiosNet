@@ -6,9 +6,7 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// HttpMethod 直用 + 自定义 Handler 注入（单 Handler 模式 / 连接池 HandlerFactory）。
-/// </summary>
+/// <summary>HttpMethod 直用 + 自定义 Handler 注入（单 Handler 模式 / 连接池 HandlerFactory）。</summary>
 public sealed class HandlerInjectionTests
 {
     /// <summary>记录经过的请求，内层可接真实 SocketsHttpHandler。</summary>
@@ -76,9 +74,7 @@ public sealed class HandlerInjectionTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // HttpMethod（不再有自研枚举）
-    // ------------------------------------------------------------------
+    // HttpMethod
 
     [Fact]
     public async Task CustomMethod_IsSentVerbatim()
@@ -111,7 +107,6 @@ public sealed class HandlerInjectionTests
         var defaults = new AxiosConfig();
         Assert.Equal(HttpMethod.Get, defaults.Method);
 
-        // 用 RequestAsync 的配置体演示"按请求覆盖方法"
         var config = new AxiosConfig { Url = "https://example.com/" };
         config.Method = HttpMethod.Patch;
 
@@ -121,9 +116,7 @@ public sealed class HandlerInjectionTests
     [Fact]
     public async Task PatchMethod_UsesBclHttpMethod_AndSendsBody()
     {
-        await using var server = TestHttpServer.Start(req => new TestResponse(
-            Body: Encoding.UTF8.GetBytes(req.Method),
-            ContentType: "text/plain; charset=utf-8"));
+        await using var server = TestHttpServer.Start(req => new TestResponse(Body: Encoding.UTF8.GetBytes(req.Method), ContentType: "text/plain; charset=utf-8"));
         using var client = new AxiosClient();
 
         var response = await client.PatchAsync(server.Url + "users/1", new { name = "bob" });
@@ -132,9 +125,7 @@ public sealed class HandlerInjectionTests
         Assert.Equal("PATCH", server.Received[0].Method);
     }
 
-    // ------------------------------------------------------------------
     // 直接注入单个 Handler（无连接池）
-    // ------------------------------------------------------------------
 
     [Fact]
     public async Task InjectedHandler_IsUsedForAllOrigins()
@@ -209,8 +200,7 @@ public sealed class HandlerInjectionTests
     {
         using var stub = new StubHandler("{}");
 
-        var ex = Assert.Throws<AxiosException>(() =>
-            new AxiosClient(poolOptions: new ConnectionPoolOptions(), handler: stub));
+        var ex = Assert.Throws<AxiosException>(() => new AxiosClient(poolOptions: new ConnectionPoolOptions(), handler: stub));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -250,9 +240,7 @@ public sealed class HandlerInjectionTests
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
-    // ------------------------------------------------------------------
     // 连接池 HandlerFactory（保留池化的同时插入自定义 Handler）
-    // ------------------------------------------------------------------
 
     [Fact]
     public async Task HandlerFactory_InvokedOncePerOrigin_AndKeepsConnectionReuse()
@@ -287,7 +275,6 @@ public sealed class HandlerInjectionTests
         var trace = Assert.Single(traces);
         Assert.Equal(3, trace.Requests.Count);
 
-        // 仍是"按 origin 一个 Handler + 连接复用"，不是每个请求新建
         Assert.Equal(1, client.Pool!.GetStatistics().EndpointCount);
         Assert.Equal(1, server.TotalConnections);
     }
@@ -295,9 +282,7 @@ public sealed class HandlerInjectionTests
     [Fact]
     public async Task HandlerFactory_ReturnsIndependentHandlerPerOrigin()
     {
-        // 契约：工厂每次调用都要给一个**独立**实例（见 README「HandlerFactory 约定」）。
-        // 复用同一个 DelegatingHandler 的写法在单 origin 下能跑，多 origin 时后一次调用会把
-        // 它的 InnerHandler 顶掉，前一个 origin 的请求随即挂在内层已被替换的实例上。
+        // 工厂每次调用都要返回独立实例。
         await using var first = TestHttpServer.Start(req => TestJson.Response(new { origin = "first" }));
         await using var second = TestHttpServer.Start(req => TestJson.Response(new { origin = "second" }));
 
@@ -315,7 +300,6 @@ public sealed class HandlerInjectionTests
 
         await client.GetAsync(first.Url + "ping");
         await client.GetAsync(second.Url + "ping");
-        // 回到第一个 origin：它必须仍能正常发出请求（Handler 没被第二个 origin 抢走）
         await client.GetAsync(first.Url + "ping");
 
         Assert.Equal(2, traces.Count);

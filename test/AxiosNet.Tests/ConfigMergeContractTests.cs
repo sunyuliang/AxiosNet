@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +8,7 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 配置合并与请求体契约的高风险区（此前无覆盖）：
+/// 配置合并与请求体契约的高风险区：
 /// <list type="bullet">
 /// <item><c>*Set</c> 语义：按请求显式 <c>null</c> 必须能清掉实例默认上限，
 /// 不能被「null 视为未设置」吞掉；</item>
@@ -32,9 +32,7 @@ public sealed class ConfigMergeContractTests
     public async Task PerRequestMaxContentLengthNull_ClearsInstanceDefault()
     {
         var payload = new byte[4096];
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload, ContentType: "application/octet-stream"));
 
         using var client = new AxiosClient(new AxiosConfig
         {
@@ -83,9 +81,7 @@ public sealed class ConfigMergeContractTests
     public async Task PerRequestMaxRateNull_ClearsInstanceDefault()
     {
         const int size = 4096;
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[size],
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[size], ContentType: "application/octet-stream"));
 
         // 实例默认 32 B/s：4KB 需要 128 秒，3 秒预算下必然超时。
         // 清不掉实例限速时本用例会以 ECONNABORTED 失败，而不是变慢。
@@ -132,10 +128,7 @@ public sealed class ConfigMergeContractTests
         });
 
         Assert.Equal(2, server.Received.Count);
-        Assert.All(server.Received, r => Assert.DoesNotContain(
-            "Authorization",
-            r.Headers.Keys,
-            StringComparer.OrdinalIgnoreCase));
+        Assert.All(server.Received, r => Assert.DoesNotContain("Authorization", r.Headers.Keys, StringComparer.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -259,10 +252,7 @@ public sealed class ConfigMergeContractTests
     public async Task DownloadProgress_WithoutDeclaredLength_ReportsNullTotalAndProgress()
     {
         const int size = 256 * 1024;
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[size],
-            ContentType: "application/octet-stream",
-            Chunked: true));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[size], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
@@ -286,9 +276,7 @@ public sealed class ConfigMergeContractTests
     public async Task ResponseCharset_Utf16WithoutBom_IsDecoded()
     {
         const string text = "hello 你好";
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: Encoding.Unicode.GetBytes(text),
-            ContentType: "text/plain; charset=utf-16"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.Unicode.GetBytes(text), ContentType: "text/plain; charset=utf-16"));
 
         using var client = new AxiosClient();
 
@@ -302,9 +290,7 @@ public sealed class ConfigMergeContractTests
     public async Task ResponseCharset_QuotedValue_IsAccepted()
     {
         const string text = "引号包裹的 charset";
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: Encoding.UTF8.GetBytes(text),
-            ContentType: "text/plain; charset=\"utf-8\""));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes(text), ContentType: "text/plain; charset=\"utf-8\""));
 
         using var client = new AxiosClient();
 
@@ -318,9 +304,7 @@ public sealed class ConfigMergeContractTests
     {
         // 故意用非 UTF-8 的字节序列：任何一次「先解码成 string 再转回来」都会破坏它
         var payload = new byte[] { 0x00, 0xFF, 0xFE, 0x80, 0x41, 0xC3, 0x28 };
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: payload,
-            ContentType: "application/octet-stream"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload, ContentType: "application/octet-stream"));
 
         using var client = new AxiosClient();
 
@@ -433,9 +417,7 @@ public sealed class ConfigMergeContractTests
     public async Task ShortcutConfig_ConcurrentRequests_KeepTheirOwnHeaderValues()
     {
         // 服务端把收到的 X-Req 原样回显：任何一次请求的配置被别的请求覆盖，断言当场就会失败
-        await using var server = TestHttpServer.Start(req => new TestResponse(
-            Body: Encoding.UTF8.GetBytes(req.Headers["X-Req"]),
-            ContentType: "text/plain; charset=utf-8"));
+        await using var server = TestHttpServer.Start(req => new TestResponse(Body: Encoding.UTF8.GetBytes(req.Headers["X-Req"]), ContentType: "text/plain; charset=utf-8"));
 
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
         client.Defaults.Headers.Set("X-Default", "base");
@@ -455,13 +437,8 @@ public sealed class ConfigMergeContractTests
     }
 
     /// <summary>
-    /// 回放 <see cref="AxiosResponse.Config"/>：它本身是「上一次的生效配置」，但交回来时必须
-    /// 被当成<b>按请求项</b>重新合并到本实例默认值上。
-    /// <para>
-    /// 合并标记只在管线内部有效（<see cref="AxiosConfig.Clone"/> 不继承它）。此前它随
-    /// <c>WithUrl</c> 的克隆一起被带出来，回放到另一个实例会跳过该实例的默认值 —— 头部丢失，
-    /// 而且实例级的 <c>PoolOptions</c> 会被误判成「按请求设置」直接报错（调用方什么都没设）。
-    /// </para>
+    /// 回放 <see cref="AxiosResponse.Config"/>：它本身是上一次的生效配置，但交回来时必须被当成
+    /// 按请求项重新合并到本实例默认值上（合并标记只在管线内部有效，不随 <c>Clone</c> 继承）。
     /// </summary>
     [Fact]
     public async Task ReplayedEffectiveConfig_IsMergedIntoTheNewClientDefaults()

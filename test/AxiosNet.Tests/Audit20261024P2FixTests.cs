@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using AxiosNet.Serialization;
@@ -7,9 +7,9 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 2026-10-24 P2 性能轮的回归测试（按审核报告编号）：
+/// 性能轮回归测试（按审核报告编号）：
 /// <list type="bullet">
-/// <item><b>15</b>：multipart 非法 boundary 统一报 <c>ERR_BAD_OPTION_VALUE</c>（此前被收成 <c>ERR_BAD_REQUEST</c>）；</item>
+/// <item><b>15</b>：multipart 非法 boundary 统一报 <c>ERR_BAD_OPTION_VALUE</c>；</item>
 /// <item><b>16</b>：序列化器自报 / 写入的带 charset Content-Type 与正文实际编码矛盾时拦下
 /// （收口点挪到正文产出之后，兑现 <see cref="IContentSerializer"/> 上的文档承诺）；</item>
 /// <item><b>1/2</b>：params 收尾与嵌套键转义缓存的正确性（跨请求稳定、特殊字符只转义一次）；</item>

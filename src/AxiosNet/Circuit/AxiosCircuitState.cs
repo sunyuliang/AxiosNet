@@ -1,27 +1,19 @@
 namespace AxiosNet.Circuit;
 
-/// <summary>
-/// 熔断器在某个计数维度（默认一个 <c>host:port</c>）上的状态。
-/// </summary>
+/// <summary>熔断器在某个计数维度（默认一个 <c>host:port</c>）上的状态。</summary>
 public enum AxiosCircuitState
 {
     /// <summary>闭合：请求正常放行，失败被计数。</summary>
     Closed,
 
-    /// <summary>打开：请求<b>不再发出</b>，直接以 <c>ERR_CIRCUIT_OPEN</c> 失败，直到冷却期结束。</summary>
+    /// <summary>打开：请求不再发出，直接以 <c>ERR_CIRCUIT_OPEN</c> 失败，直到冷却期结束。</summary>
     Open,
 
-    /// <summary>
-    /// 半开：冷却期已过，放行<b>有限个</b>探测请求。探测成功 → <see cref="Closed"/>；
-    /// 探测失败 → 立刻回到 <see cref="Open"/> 并重新计时。
-    /// </summary>
+    /// <summary>半开：冷却期已过，放行有限个探测请求；成功 → <see cref="Closed"/>，失败 → 立刻回到 <see cref="Open"/> 并重新计时。</summary>
     HalfOpen
 }
 
-/// <summary>
-/// 一次状态迁移（<see cref="CircuitBreaker.StateChanged"/> 的载荷）。
-/// <para>只描述「哪个维度从什么状态变成了什么状态」，不含失败计数等内部细节。</para>
-/// </summary>
+/// <summary>一次状态迁移（<see cref="CircuitBreaker.StateChanged"/> 的载荷）。</summary>
 public readonly struct AxiosCircuitTransition
 {
     /// <param name="host">发生迁移的计数维度（默认 <c>host:port</c>）。</param>

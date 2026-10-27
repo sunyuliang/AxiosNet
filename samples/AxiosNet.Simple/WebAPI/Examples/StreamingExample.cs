@@ -1,4 +1,4 @@
-using AxiosNet.WebAPI;
+﻿using AxiosNet.WebAPI;
 
 namespace AxiosNet.Simple.WebAPI.Examples;
 
@@ -31,9 +31,7 @@ public sealed class StreamingExample : IExample
     private static async Task RunSseAsync(ApiClient client)
     {
         // 默认（不传格式）按 NDJSON 解析；这里是 SSE，显式指定
-        var response = await client.RequestStreamAsync(
-            new StreamEventsRequest(),
-            AxiosStreamFormat.ServerSentEvents);
+        var response = await client.RequestStreamAsync(new StreamEventsRequest(), AxiosStreamFormat.ServerSentEvents);
 
         // await 已经完成：状态码与响应头到手，正文还没读（状态码错误会在这一行抛出）
         Console.WriteLine($"  响应头已到达：HTTP {response.Status} / {response.GetHeader("Content-Type")}");
@@ -58,9 +56,7 @@ public sealed class StreamingExample : IExample
         Console.WriteLine();
         Console.WriteLine("  —— 换一个端点，正文是 JSON 数组（[{...},{...}]）——");
 
-        var response = await client.RequestStreamAsync(
-            new StreamPagesRequest(),
-            AxiosStreamFormat.JsonArray);
+        var response = await client.RequestStreamAsync(new StreamPagesRequest(), AxiosStreamFormat.JsonArray);
 
         Console.WriteLine($"  响应头已到达：HTTP {response.Status} / {response.GetHeader("Content-Type")}");
 

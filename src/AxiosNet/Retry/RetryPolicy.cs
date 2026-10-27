@@ -3,14 +3,8 @@ using System.Globalization;
 namespace AxiosNet.Retry;
 
 /// <summary>
-/// <see cref="IAxiosRetryPolicy"/> 的默认实现：按「次数 + 间隔」重试，可选指数退避、抖动与
-/// <c>Retry-After</c> 优先。
-/// <para>
-/// 默认只重试<b>幂等方法</b>（GET / HEAD / OPTIONS / TRACE / PUT / DELETE）上的
-/// <b>网络错误、超时、408、429 与 5xx</b>；POST / PATCH 默认不重试——服务端可能已经执行过，
-/// 重发会产生重复副作用，需要时显式打开 <see cref="RetryNonIdempotentMethods"/>。
-/// </para>
-/// <para>取消（<c>ERR_CANCELED</c>）、4xx（除 408 / 429）、URL / 配置类错误一律不重试。</para>
+/// <see cref="IAxiosRetryPolicy"/> 的默认实现：按「次数 + 间隔」重试，可选指数退避、抖动与 <c>Retry-After</c> 优先。
+/// 默认只重试幂等方法上的网络错误、超时、408、429 与 5xx；POST / PATCH 需显式打开 <see cref="RetryNonIdempotentMethods"/>。
 /// </summary>
 /// <example>
 /// <code>
@@ -41,12 +35,9 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     {
     }
 
-    /// <summary>
-    /// 按次数与固定间隔构造：给了 <paramref name="delay"/> 就<b>不翻倍、不加抖动</b>（等价于 <see cref="Constant"/>），
-    /// 不给则沿用默认的指数退避（200ms 起、每次翻倍、带抖动）。
-    /// </summary>
+    /// <summary>按次数与固定间隔构造：给了 <paramref name="delay"/> 就不翻倍、不加抖动（等价于 <see cref="Constant"/>）。</summary>
     /// <param name="maxRetries">最大重试次数（不含首次请求），0 表示不重试。</param>
-    /// <param name="delay">每次重试前的固定等待时间；<c>null</c> 用默认值 200ms 并按默认退避翻倍。</param>
+    /// <param name="delay">每次重试前的固定等待时间；<c>null</c> 用默认的指数退避。</param>
     public RetryPolicy(int maxRetries, TimeSpan? delay = null)
     {
         MaxRetries = maxRetries;
@@ -65,61 +56,37 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     /// <summary>首次重试前的等待时间，默认 200ms。</summary>
     public TimeSpan Delay { get; set; } = TimeSpan.FromMilliseconds(200);
 
-    /// <summary>
-    /// 退避倍数：第 n 次重试的等待时间是 <c>Delay * BackoffFactor^(n-1)</c>，默认 2（翻倍）。
-    /// <para><c>1</c> 表示固定间隔；小于 1 表示逐次缩短；<c>0</c> 或负值按 1 处理（不缩也不放）。</para>
-    /// </summary>
+    /// <summary>退避倍数：第 n 次重试的等待时间是 <c>Delay * BackoffFactor^(n-1)</c>，默认 2；<c>1</c> 表示固定间隔。</summary>
     public double BackoffFactor { get; set; } = 2d;
 
-    /// <summary>
-    /// 单次等待的上限，默认 30 秒（指数退避跑久了的封顶）。
-    /// <para>
-    /// 必须落在计时器可表示的范围内（约 49.7 天）：等待用 <c>Task.Delay</c> 实现，超出会在请求发出前
-    /// 报 <c>ERR_BAD_OPTION_VALUE</c>，而不是等到真的重试时才抛计时器异常。
-    /// </para>
-    /// </summary>
+    /// <summary>单次等待的上限，默认 30 秒；必须落在计时器可表示的范围内（约 49.7 天）。</summary>
     public TimeSpan MaxDelay { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>
-    /// 是否给等待时间加随机抖动（在 50%–100% 之间取值），默认 <c>true</c>：
-    /// 避免大量客户端在同一时刻一起重试（重试风暴）。
-    /// </summary>
+    /// <summary>是否给等待时间加随机抖动（在 50%–100% 之间取值），默认 <c>true</c>。</summary>
     public bool Jitter { get; set; } = true;
 
-    /// <summary>
-    /// 是否优先采用服务端返回的 <c>Retry-After</c> 头（秒数或 HTTP 日期），默认 <c>true</c>。
-    /// <para>服务端明确说了「多久之后再来」时以它为准（仍受 <see cref="MaxDelay"/> 封顶）；解析失败则回到本地退避。</para>
-    /// </summary>
+    /// <summary>是否优先采用服务端返回的 <c>Retry-After</c> 头（秒数或 HTTP 日期），默认 <c>true</c>。</summary>
     public bool HonorRetryAfter { get; set; } = true;
 
-    /// <summary>
-    /// 是否也重试 POST / PATCH 等非幂等方法，默认 <c>false</c>。
-    /// <para>
-    /// 打开前请确认接口幂等（或有服务端去重）：请求可能已经到达服务端并被执行，
-    /// 重发会产生重复下单 / 重复扣款这类副作用。
-    /// </para>
-    /// </summary>
+    /// <summary>是否也重试 POST / PATCH 等非幂等方法，默认 <c>false</c>（打开前请确认接口幂等）。</summary>
     public bool RetryNonIdempotentMethods { get; set; }
 
     private Func<int, bool> _retryStatusCodes = DefaultRetryStatus;
 
     /// <summary>触发重试的状态码判定，默认 408 / 429 / 5xx。</summary>
-    /// <exception cref="ArgumentNullException">赋值为 <c>null</c>：判定是必需项，赋空只会在重试判定处炸成裸空引用。</exception>
+    /// <exception cref="ArgumentNullException">赋值为 <c>null</c>。</exception>
     public Func<int, bool> RetryStatusCodes
     {
         get => _retryStatusCodes;
         set
         {
-            // 非 null 引用类型：赋 null 是编程错误。等到 ShouldRetry 里再 NRE 更糟 ——
-            // 那是在 catch 块内，会把本次尝试的原始失败一起掩盖掉。
+            // 赋 null 是编程错误，在 setter 处就拦下。
             ArgumentNullException.ThrowIfNull(value);
             _retryStatusCodes = value;
         }
     }
 
-    /// <summary>
-    /// 附加条件：返回 <c>false</c> 时不重试（在内置判定之上再做一层收窄，比如「只在特定错误码上重试」）。
-    /// </summary>
+    /// <summary>附加条件：返回 <c>false</c> 时不重试（在内置判定之上再做一层收窄）。</summary>
     public Func<AxiosRetryContext, bool>? RetryWhen { get; set; }
 
     /// <summary>默认的状态码判定：408（请求超时）、429（限流）与全部 5xx。</summary>
@@ -166,8 +133,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return false;
         }
 
-        // 有响应：按状态码判定（408 / 429 / 5xx）。有响应但状态码不在范围内（4xx）说明是请求本身的问题，
-        // 重发同样的请求只会再错一次。
+        // 有响应：按状态码判定（408 / 429 / 5xx）。
         if (context.StatusCode is int status)
         {
             return RetryStatusCodes(status);
@@ -219,9 +185,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         return value > MaxDelay ? MaxDelay : value;
     }
 
-    /// <summary>
-    /// 服务端 <c>Retry-After</c>：既可能是秒数（<c>120</c>），也可能是 HTTP 日期（<c>Wed, 21 Oct 2015 07:28:00 GMT</c>）。
-    /// </summary>
+    /// <summary>解析服务端 <c>Retry-After</c>：既可能是秒数（<c>120</c>），也可能是 HTTP 日期。</summary>
     private static bool TryGetRetryAfter(AxiosResponse? response, out TimeSpan delay)
     {
         delay = default;
@@ -240,11 +204,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return true;
         }
 
-        if (DateTimeOffset.TryParse(
-                raw,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                out var when))
+        if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var when))
         {
             delay = when - DateTimeOffset.UtcNow;
             if (delay < TimeSpan.Zero)

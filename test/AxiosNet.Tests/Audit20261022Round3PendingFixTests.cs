@@ -1,24 +1,14 @@
-using System.Net;
+﻿using System.Net;
 
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 2026-10-22 第三轮排查「待修两项」的修复回归（先各写一条确定性红灯，再改实现）。
-/// <para>
-/// 两条都不是靠压测撞概率：A 用反射 + 主线程持锁把线程交错钉死，B 用自定义 Handler 精确控制
-/// 声明的 <c>Content-Length</c>。因此它们可以进常规测试集，不会 flaky。
-/// </para>
+/// 不可变头模型的并发契约回归：克隆共享同一版数组，写入各换各的。
 /// </summary>
 public sealed class Audit20261022Round3PendingFixTests
 {
     /// <summary>
-    /// A：<see cref="AxiosHeaders"/> 的「不可变数组 + CAS」模型必须同时满足两条契约 ——
-    /// <b>克隆共享同一版数组（写时复制）</b>、<b>写入各换各的（隔离）</b>。
-    /// <para>
-    /// 旧实现（引用计数 + 字典）靠「判定独占 → 复制字典 → 发布」的临界区保证这一点，代码里有两个窗口
-    /// 曾经丢过更新；换成不可变数组后，这两条契约由「数组发布后永不修改」直接成立，不再有窗口。
-    /// 本用例把两条契约都钉死：任一方写入都不得被对方看到，且源与副本各自保留自己的条目。
-    /// </para>
+    /// 克隆共享同一版数组（写时复制）；双方写入互不可见，且各自保留自己的条目。
     /// </summary>
     [Fact]
     public void Clone_SharesSnapshot_ButWritesStayIsolated()
@@ -42,10 +32,8 @@ public sealed class Audit20261022Round3PendingFixTests
 
     /// <summary>
     /// A2：同一实例被多线程并发写<b>不同的头</b>时不能丢更新。
-    /// <para>
-    /// 这是「实例默认头可在请求进行中修改（如运行期刷新 Token）」的底层保证。CAS 失败即基于新版本重算，
-    /// 因此每个线程写的键都必须留下；旧实现若把「判定独占」与「写入」分成两步，就会在这里丢条目。
-    /// </para>
+    /// <para>这是「实例默认头可在请求进行中修改（如运行期刷新 Token）」的底层保证：
+    /// CAS 失败即基于新版本重算，因此每个线程写的键都必须留下。</para>
     /// </summary>
     [Fact]
     public void ConcurrentWrites_OnSameInstance_DoNotLoseUpdates()
@@ -86,9 +74,7 @@ public sealed class Audit20261022Round3PendingFixTests
         var body = new byte[512 * 1024];
         new Random(7).NextBytes(body);
 
-        using var client = new AxiosClient(
-            defaults: new AxiosConfig(),
-            handler: new FixedLengthHandler(body, declaredLength: 0));
+        using var client = new AxiosClient(defaults: new AxiosConfig(), handler: new FixedLengthHandler(body, declaredLength: 0));
 
         var events = new List<AxiosProgressEvent>();
         var response = await client.GetAsync<byte[]>(

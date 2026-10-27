@@ -1,25 +1,6 @@
 namespace AxiosNet.WebAPI;
 
-/// <summary>
-/// 请求模型的<b>静态请求头</b>：整类请求共用的固定头，一次声明。
-/// <para>
-/// 每个字符串形如 <c>"Name: Value"</c>；<b>只有名字、冒号后为空</b>（如 <c>"X-Internal"</c>）表示
-/// <b>删除</b>该头（摘掉实例默认头），与 Refit 的 <c>[Headers]</c> 语义一致。
-/// </para>
-/// <para>
-/// 优先级：本特性先写入，属性上的 <see cref="HeaderAttribute"/> 覆盖同名项；
-/// <see cref="IApiRequestConfigurable.Configure"/>、按请求 <c>configure</c> 回调与授权提供方再逐层覆盖。
-/// 基类上的声明会被派生类继承，派生类同名声明优先。
-/// 「只有名字」的删除在合并完成后生效，因此它也能摘掉属性头与实例默认头。
-/// </para>
-/// </summary>
-/// <example>
-/// <code>
-/// [Get("users/{id}")]
-/// [Headers("Accept: application/json", "X-Api-Version: 2")]
-/// public sealed class GetUserRequest : IApiRequest&lt;User&gt; { ... }
-/// </code>
-/// </example>
+/// <summary>请求模型的静态请求头：整类请求共用的固定头，一次声明。每个字符串形如 <c>"Name: Value"</c>；只有名字、冒号后为空表示删除该头。</summary>
 [AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
 public sealed class HeadersAttribute : Attribute
 {
@@ -34,15 +15,8 @@ public sealed class HeadersAttribute : Attribute
     public IReadOnlyList<string> Headers { get; }
 }
 
-/// <summary>
-/// 把属性里的<b>字典</b>逐项写进请求头（Refit 的 <c>[HeaderCollection]</c> 等价能力）。
-/// <para>
-/// 属性类型须为 <c>IDictionary&lt;string, string&gt;</c>（<c>Dictionary&lt;string, string&gt;</c> /
-/// <c>SortedDictionary&lt;string, string&gt;</c> 等均可，构建期校验）；字典为 <c>null</c> 或空时不写头，
-/// 值为 <c>null</c> 的项跳过。
-/// </para>
-/// <para>不能与 <see cref="HeaderAttribute"/> 标在同一个属性上（一个是逐项、一个是单值，二义）。</para>
-/// </summary>
+/// <summary>把属性里的字典逐项写进请求头；属性类型须为 <c>IDictionary&lt;string, string&gt;</c>（构建期校验）。
+/// 字典为 <c>null</c> 或空时不写头，值为 <c>null</c> 的项跳过；不能与 <see cref="HeaderAttribute"/> 标在同一个属性上。</summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class HeaderCollectionAttribute : Attribute
 {

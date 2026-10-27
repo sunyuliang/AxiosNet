@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Pooling;
@@ -6,14 +6,10 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// 全局代码审查后的加固用例：每条对应一处已复现的缺陷，修复前必然是红的。
-/// </summary>
+/// <summary>加固用例：头部注入、超时收敛、限流、Cookie 与连接池边界。</summary>
 public sealed class HardeningTests
 {
-    // ---------------------------------------------------------------
-    // P0-1：请求头 CRLF 注入（CWE-113）
-    // ---------------------------------------------------------------
+    // 请求头 CRLF 注入
 
     [Theory]
     [InlineData("ok\r\nX-Injected: pwned")]
@@ -63,9 +59,7 @@ public sealed class HardeningTests
         Assert.Equal("a=b; c, d", server.Received[0].Headers["x-trace"]);
     }
 
-    // ---------------------------------------------------------------
-    // P0-2：poolOptions.MaxAutomaticRedirections 被未显式设置的默认值覆盖
-    // ---------------------------------------------------------------
+    // poolOptions 的重定向上限与显式配置的优先级
 
     [Fact]
     public void PoolOptionsMaxRedirections_IsNotOverriddenByImplicitDefault()
@@ -122,9 +116,7 @@ public sealed class HardeningTests
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
-    // ---------------------------------------------------------------
-    // P0-3：流式正文截断必须与非流式同错误模型（ERR_NETWORK）
-    // ---------------------------------------------------------------
+    // 流式正文截断与非流式同错误模型
 
     [Fact]
     public async Task TruncatedStreamingBody_IsWrappedAsNetworkError()
@@ -146,7 +138,7 @@ public sealed class HardeningTests
         Assert.IsAssignableFrom<IOException>(ex.Cause);
     }
 
-    /// <summary>Timeout=0（没有超时预算）时的链路也必须做异常翻译，不能因为配置不同给出两种异常类型。</summary>
+    /// <summary>验证 Timeout=0 时正文截断同样报 ERR_NETWORK。</summary>
     [Fact]
     public async Task TruncatedStreamingBody_WithoutTimeout_IsStillNetworkError()
     {
@@ -166,9 +158,7 @@ public sealed class HardeningTests
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
     }
 
-    // ---------------------------------------------------------------
-    // P0-4：超大 Timeout 收敛，而不是抛裸 ArgumentOutOfRangeException
-    // ---------------------------------------------------------------
+    // 超大 Timeout 收敛
 
     [Theory]
     [InlineData(60)]
@@ -186,8 +176,7 @@ public sealed class HardeningTests
     [Fact]
     public async Task HugeTimeout_IsClamped_StreamingResponse()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: Encoding.UTF8.GetBytes("{\"ok\":true}")));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("{\"ok\":true}")));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync<Stream>(server.Url + "ping", c => c.Timeout = TimeSpan.MaxValue);
@@ -204,8 +193,7 @@ public sealed class HardeningTests
     {
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.Timeout = TimeSpan.FromSeconds(-1)));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("http://127.0.0.1:1/x", c => c.Timeout = TimeSpan.FromSeconds(-1)));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -231,9 +219,7 @@ public sealed class HardeningTests
                 client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxBodyLength = -1))).Code);
     }
 
-    // ---------------------------------------------------------------
-    // P1：params 不能落到 URL fragment 里
-    // ---------------------------------------------------------------
+    // params 不能落到 URL fragment 里
 
     [Theory]
     [InlineData("http://a.com/p#top", "http://a.com/p?q=1#top")]
@@ -263,9 +249,7 @@ public sealed class HardeningTests
         Assert.Equal("q=1", server.Received[0].Query);
     }
 
-    // ---------------------------------------------------------------
-    // P1：PostAsync(url, null) 不能落到 AxiosConfig 重载上炸掉
-    // ---------------------------------------------------------------
+    // PostAsync(url, null) 落到 AxiosConfig 重载
 
     [Fact]
     public async Task PostAsync_WithNullConfig_FallsBackToEmptyBody()
@@ -273,8 +257,6 @@ public sealed class HardeningTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        // 重载决议：AxiosConfig 比 object 更具体，`PostAsync(url, null)` 会走到这个重载。
-        // null 等价于「没有要传的配置」：按空正文 POST 走，与 PostAsync(url) 一致。
         var response = await client.PostAsync(server.Url + "x", (AxiosConfig)null!);
 
         Assert.Equal(200, response.Status);
@@ -289,7 +271,6 @@ public sealed class HardeningTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(204, "No Content"));
         using var client = new AxiosClient();
 
-        // 与 GET/DELETE/POST 对齐：这四个方法也要能直接传完整配置
         var put = await client.PutAsync(server.Url + "x", new AxiosConfig { Data = new { n = 1 } });
         var patch = await client.PatchAsync(server.Url + "x", new AxiosConfig { Data = new { n = 2 } });
         var options = await client.OptionsAsync(server.Url + "x", new AxiosConfig());
@@ -314,14 +295,13 @@ public sealed class HardeningTests
 
         var clone = defaults.Clone();
 
-        // 只复制容器：拦截器往克隆的 Params / Data 字典里加项，不能污染实例默认值
         ((Dictionary<string, object?>)clone.Params!)["added"] = 2;
         ((Dictionary<string, object?>)clone.Data!)["added"] = 2;
 
         Assert.Single((Dictionary<string, object?>)defaults.Params!);
         Assert.Single((Dictionary<string, object?>)defaults.Data!);
 
-        // 元素仍按引用共享：这里不深拷贝业务对象
+        // 元素仍按引用共享。
         Assert.Same(sentinel, ((Dictionary<string, object?>)clone.Params!)["p"]);
     }
 
@@ -336,15 +316,12 @@ public sealed class HardeningTests
 
         var clone = defaults.Clone();
 
-        // comparer 决定「大小写是否敏感」：复制时丢掉它，调用方在拦截器里换个大小写就查不到自己刚设的键
         var parameters = Assert.IsType<Dictionary<string, object?>>(clone.Params);
         Assert.True(parameters.ContainsKey("api_key"));
 
-        // 非 Dictionary 的字典同样保真：类型不变（SortedDictionary 的有序语义），comparer 也不变
         var body = Assert.IsType<SortedDictionary<string, object?>>(clone.Data);
         Assert.True(body.ContainsKey("a"));
 
-        // 保真的前提仍是「独立容器」：改克隆不能回到实例默认值
         parameters["added"] = 2;
         Assert.Single((Dictionary<string, object?>)defaults.Params!);
     }
@@ -357,7 +334,6 @@ public sealed class HardeningTests
 
         var clone = new AxiosConfig { Params = source }.Clone();
 
-        // 线程安全字典是最容易被当成「可以共享」的那一类：这里既不能共享，也不能退化成 Dictionary
         var parameters = Assert.IsType<ConcurrentDictionary<string, object?>>(clone.Params);
         Assert.NotSame(source, parameters);
         Assert.True(parameters.ContainsKey("key"));
@@ -373,7 +349,7 @@ public sealed class HardeningTests
             Params = new { inherited = 1 }
         });
 
-        // 按请求显式写 null 是「摘掉实例默认值」的唯一表达方式：不写（未赋值）才继承默认值。
+        // 按请求显式写 null 才会摘掉实例默认值。
         var response = await client.RequestAsync(new AxiosConfig
         {
             Url = server.Url + "x",
@@ -399,17 +375,12 @@ public sealed class HardeningTests
         Assert.Equal(200, response.Status);
     }
 
-    // ---------------------------------------------------------------
-    // P1：流式响应也必须执行 maxContentLength（含未声明长度的 chunked）
-    // ---------------------------------------------------------------
+    // 流式响应也执行 maxContentLength（含未声明长度的 chunked）
 
     [Fact]
     public async Task StreamingResponse_WithoutDeclaredLength_EnforcesMaxContentLength()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[64 * 1024],
-            ContentType: "application/octet-stream",
-            Chunked: true));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[64 * 1024], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
@@ -424,22 +395,16 @@ public sealed class HardeningTests
     [Fact]
     public async Task BufferedResponse_WithoutDeclaredLength_EnforcesMaxContentLength()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: new byte[64 * 1024],
-            ContentType: "application/octet-stream",
-            Chunked: true));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[64 * 1024], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<byte[]>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
 
-    // ---------------------------------------------------------------
-    // P2：Cookie 容器按域共享，而不是按 origin（端口）切开
-    // ---------------------------------------------------------------
+    // Cookie 容器按域共享，而不是按 origin 切开
 
     [Fact]
     public async Task Cookies_SetOnOneOrigin_AreSentToAnotherOrigin()
@@ -457,9 +422,7 @@ public sealed class HardeningTests
         Assert.Contains("session=abc", apiServer.Received[0].Headers["cookie"]);
     }
 
-    // ---------------------------------------------------------------
-    // P2：实例级配置按请求写「与生效值相同」的值等价于不写，放行；写不同的值才报错
-    // ---------------------------------------------------------------
+    // 按请求写「与生效值相同」的实例级配置放行
 
     [Fact]
     public async Task PerRequestMaxRedirects_EqualToEffectiveValue_IsAccepted()
@@ -473,16 +436,13 @@ public sealed class HardeningTests
             },
         });
 
-        // 把 defaults 抄一遍到每个请求上是常见写法：值相同就是等价写法，不该炸
         var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 5);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
     }
 
-    // ---------------------------------------------------------------
-    // P2：取消异常保留底层 Cause
-    // ---------------------------------------------------------------
+    // 取消异常保留底层 Cause
 
     [Fact]
     public async Task Cancellation_KeepsUnderlyingCause()
@@ -496,16 +456,13 @@ public sealed class HardeningTests
         using var client = new AxiosClient();
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "slow", _ => { }, cts.Token));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", _ => { }, cts.Token));
 
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
         Assert.IsAssignableFrom<OperationCanceledException>(ex.Cause);
     }
 
-    // ---------------------------------------------------------------
-    // P2：params 传 JsonElement 必须按 JSON 树展开
-    // ---------------------------------------------------------------
+    // params 传 JsonElement 按 JSON 树展开
 
     [Fact]
     public void Params_WithJsonElement_AreFlattened()
@@ -522,9 +479,7 @@ public sealed class HardeningTests
         Assert.Equal("http://a.com/p?a=1&b[]=x&b[]=y&c[d]=true", uri);
     }
 
-    // ---------------------------------------------------------------
-    // P2：池的 origin 节点数上限
-    // ---------------------------------------------------------------
+    // 池的 origin 节点数上限
 
     [Fact]
     public async Task Pool_EvictsIdleOrigin_WhenCapacityIsReached()
@@ -568,13 +523,10 @@ public sealed class HardeningTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(second.Url + "b"));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
 
-        // 在途请求不受容量检查影响
         Assert.Equal(200, (await slow).Status);
     }
 
-    // ---------------------------------------------------------------
-    // P2：Dispose 不能打断在途请求（优雅关闭）
-    // ---------------------------------------------------------------
+    // Dispose 不能打断在途请求
 
     [Fact]
     public async Task Dispose_WithRequestInFlight_LetsItComplete()
@@ -595,16 +547,12 @@ public sealed class HardeningTests
         Assert.Equal(200, response.Status);
     }
 
-    // ---------------------------------------------------------------
-    // P2：泛型响应的 Data getter 不再每次都重跑转换
-    // ---------------------------------------------------------------
+    // 泛型响应的 Data 可重复读取
 
     [Fact]
     public async Task TypedResponse_Data_CanBeReadRepeatedly()
     {
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: Encoding.UTF8.GetBytes("hello"),
-            ContentType: "text/plain; charset=utf-8"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("hello"), ContentType: "text/plain; charset=utf-8"));
 
         using var client = new AxiosClient();
 

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -56,7 +56,6 @@ public sealed class Audit20261024ReviewFixTests
     }
 
     // 回放不携带按请求 Auth 的契约由 Audit20261024P2FixTests 锁定（含「用目标实例默认」），
-    // 与本轮修复前行为一致，这里不重复。
 
     // ------------------------------------------------------------------
     // ScalarParser：Enum 未定义值 / char 多字符
@@ -67,7 +66,7 @@ public sealed class Audit20261024ReviewFixTests
     {
         // 内置 JSON 对「裸数字 → enum」不校验 IsDefined（STJ 既定行为），单靠它测不出分层：
         // 注入一个反序列化即抛的序列化器，让「ScalarParser 拒未定义值」变成可观测的差异 ——
-        // 修复前 ScalarParser 放行 (Perm)999 直接返回，修复后拒断并落到 ERR_BAD_RESPONSE。
+        // (Perm)999 不是合法枚举值：应拒断并落到 ERR_BAD_RESPONSE。
         await using var server = TestHttpServer.Start(_ => BareText("999"));
         using var client = new AxiosClient();
 
@@ -106,9 +105,8 @@ public sealed class Audit20261024ReviewFixTests
     [Fact]
     public async Task GetAsync_Enum_UndefinedNumericValue_WithDefaultSerializer_FailsBadResponse()
     {
-        // 同一条 application/json + "999" 的响应，但不注入序列化器：内置 JSON 的 STJ 会把 999
-        // 静默转成 (E)999（它的既定行为），第 9 步必须用同一把尺子复核产物 —— 修复前这条路径
-        // 直接放行，(Perm)999 / (Level)999 会当 Data 返回（2026-10-24 审查缺口）。
+        // 同一条 application/json + "999" 的响应但不注入序列化器：STJ 会把 999 转成 (E)999，
+        // 产物必须按同一标准复核。
         await using var server = TestHttpServer.Start(_ => BareText("999"));
         using var client = new AxiosClient();
 
@@ -185,16 +183,14 @@ public sealed class Audit20261024ReviewFixTests
     public async Task RequestStreamAsync_SseFrameOverByteLimit_ThrowsFrameTooLarge()
     {
         // 3,000,000 个汉字 = 9,000,000 UTF-8 字节（> 8MB 上限），StringBuilder 侧只有 6,000,000 字符。
-        // 按字符判上限的旧实现要 ~13.3M 字符才触发，按字节则这里必然触发。
+        // 上限按字节判：这里必然触发。
         var payload = new string('中', 3_000_000);
         var body = Encoding.UTF8.GetBytes("data: " + payload + "\n\n");
         await using var server = TestHttpServer.Start(
             _ => new TestResponse(Body: body, ContentType: "text/event-stream"));
         using var client = new ApiClient(server.Url);
 
-        var response = await client.RequestStreamAsync(
-            new SseBigFrameRequest(),
-            AxiosStreamFormat.ServerSentEvents);
+        var response = await client.RequestStreamAsync(new SseBigFrameRequest(), AxiosStreamFormat.ServerSentEvents);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(async () =>
         {
@@ -319,7 +315,7 @@ public sealed class Audit20261024ReviewFixTests
     [Fact]
     public async Task ErrorContext_Body_DecodesByteArrayWithDeclaredCharset()
     {
-        // 0xE9 在 iso-8859-1 下是 é；按 UTF-8 解则是替换字符（修复前的行为）。
+        // 0xE9 在 iso-8859-1 下是 é，不能按 UTF-8 解成替换字符。
         var body = new byte[] { (byte)'{', 0xE9, (byte)'}' };
         await using var server = TestHttpServer.Start(
             _ => new TestResponse(StatusCode: 500, Body: body, ContentType: "application/json; charset=iso-8859-1"));
@@ -342,13 +338,13 @@ public sealed class Audit20261024ReviewFixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new AxiosClient();
 
-        // TimeOnly 走往返格式（与请求体路径同一份 "O"）：秒与小数位都保留，不再截成 "16:30"。
+        // TimeOnly 走往返格式（与请求体路径同一份 "O"）：秒与小数位都保留。
         // 注意走 configure 写 Params：GetAsync(url, data) 重载会把匿名对象当请求体。
         await client.GetAsync(server.Url + "q", c => c.Params = new { t = new TimeOnly(16, 30, 15) });
         Assert.Contains("16%3A30%3A15.0000000", server.Received[0].Query);
 
         // DateTime(Unspecified) 按 UTC 解释：同一份数据在任何时区的机器上发出同样的字节
-        //（按本机时区折的旧实现在东八区会发出 04:00:00.000Z）。
+        //（按本机时区折算会在东八区发出 04:00:00.000Z）。
         await client.GetAsync(server.Url + "q", c => c.Params = new { d = new DateTime(2026, 10, 24, 12, 0, 0) });
         Assert.Contains("2026-10-24T12%3A00%3A00.000Z", server.Received[1].Query);
     }

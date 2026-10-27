@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 16. P1 能力：下载/上传进度回调（onDownloadProgress / onUploadProgress）与 maxRate 限速。
-/// </summary>
+/// <summary>16. P1 能力：下载/上传进度回调与 maxRate 限速。</summary>
 public sealed class ProgressAndRateExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
@@ -34,8 +32,7 @@ public sealed class ProgressAndRateExample : IExample
 
             lastStep = step;
             var rate = e.Rate is double r ? $"{r / 1024:0.#} KB/s" : "?";
-            Console.WriteLine(
-                $"  [{(e.Upload ? "上传" : "下载")}] {e.Loaded}/{e.Total} bytes, {(e.Progress ?? 0) * 100:0}%, {rate}");
+            Console.WriteLine($"  [{(e.Upload ? "上传" : "下载")}] {e.Loaded}/{e.Total} bytes, {(e.Progress ?? 0) * 100:0}%, {rate}");
         }
 
         // 1) 下载 256 KB，限速 256 KB/s（约 1s，能看到多次进度）

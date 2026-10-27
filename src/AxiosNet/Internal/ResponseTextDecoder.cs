@@ -3,8 +3,8 @@ using System.Runtime.CompilerServices;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/> → Content-Type charset
-/// → BOM → UTF-8，与 .NET 内置 HttpContent 一致，但可强制覆盖且未知 charset 不抛异常。
+/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/>
+/// → Content-Type charset → BOM → UTF-8；未知 charset 不抛异常，回落到 BOM / UTF-8。
 /// </summary>
 internal static class ResponseTextDecoder
 {
@@ -27,16 +27,13 @@ internal static class ResponseTextDecoder
             ?? DetectFromBom(bytes)
             ?? Encoding.UTF8;
 
-        // 即便已确定编码，也剥离匹配的 BOM（与 .NET 一致）。
+        // 剥离匹配的 BOM（与 .NET 一致）。
         var bomLength = GetPreambleLength(bytes, encoding);
         return encoding.GetString(bytes[bomLength..]);
     }
 
     /// <summary>
-    /// 已解析编码的解码（流式分帧用：编码对整个响应流固定，调用方在取流时解析一次，
-    /// 之后每行直接复用，不再重复跑 charset 表查找）。其余语义与
-    /// <see cref="Decode(ReadOnlySpan{byte}, string?, Encoding?)"/> 完全一致：
-    /// <paramref name="resolved"/> 为 <c>null</c>（未声明 charset 也未强制）时仍按 BOM → UTF-8 兜底。
+    /// 已解析编码的解码（流式分帧用，编码解析一次后逐行复用）；<paramref name="resolved"/> 为 <c>null</c> 时按 BOM → UTF-8 兜底。
     /// </summary>
     public static string DecodeResolved(ReadOnlySpan<byte> bytes, Encoding? resolved)
     {
@@ -51,16 +48,11 @@ internal static class ResponseTextDecoder
     }
 
     /// <summary>
-    /// charset 能否用于「按字节找 <c>0x0A</c>」的流式分帧：ASCII 文本编码后必须仍是单字节，
-    /// 且换行就是 <c>0x0A</c> 本身。UTF-16 / UTF-32 等宽编码返回 <c>false</c>。
-    /// <para>空 charset（默认 UTF-8）与未知 charset（解码时回落默认编码）都返回 <c>true</c>。</para>
+    /// charset 能否用于按字节找 <c>0x0A</c> 的流式分帧：ASCII 兼容编码为 <c>true</c>，UTF-16 / UTF-32 为 <c>false</c>，空 / 未知 charset 为 <c>true</c>。
     /// </summary>
     public static bool IsAsciiCompatible(string? charSet) => IsAsciiCompatible(ResolveFromCharset(charSet));
 
-    /// <summary>
-    /// 已解析编码的版本，供「强制 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/> 优先于 charset」的调用方判断
-    /// 最终生效的编码；<c>null</c> 表示未指定（按 UTF-8），返回 <c>true</c>。
-    /// </summary>
+    /// <summary>已解析编码的版本：<c>null</c> 表示未指定（按 UTF-8），返回 <c>true</c>。</summary>
     public static bool IsAsciiCompatible(Encoding? encoding)
     {
         if (encoding is null)
@@ -80,10 +72,10 @@ internal static class ResponseTextDecoder
             return null;
         }
 
-        // 允许 charset="utf-8" 这种带引号的写法；切片判等不产生字符串。
+        // 允许 charset="utf-8" 这种带引号的写法。
         var name = charSet.AsSpan().Trim().Trim('"');
 
-        // 最常见的几个 charset 直接用内置实例：GetEncoding 要先在名称表里做一次大小写不敏感查找。
+        // 常见 charset 直接用内置实例，省掉名称表查找。
         if (name.Equals(Utf8Name, StringComparison.OrdinalIgnoreCase))
         {
             return Encoding.UTF8;
@@ -105,14 +97,14 @@ internal static class ResponseTextDecoder
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {
-            // 未知 charset / 未注册的代码页（如未注册 CodePagesEncodingProvider 的 gbk）：交由 BOM/默认编码兜底。
+            // 未知 charset / 未注册的代码页：交由 BOM / 默认编码兜底。
             return null;
         }
     }
 
     internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
-        // 注意先判 4 字节的 UTF-32 BOM，再判 2 字节的 UTF-16 BOM。
+        // 先判 4 字节的 UTF-32 BOM，再判 2 字节的 UTF-16 BOM。
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             return Encoding.UTF8;
@@ -143,8 +135,7 @@ internal static class ResponseTextDecoder
         return null;
     }
 
-    // Encoding.GetPreamble() 每次调用都新建字节数组：流式分帧按行解码时会每行分配一次。
-    // 前导只取决于编码实例（内置实例是单例），按实例缓存，键随编码一起被 GC 回收。
+    // GetPreamble() 每次调用都新建数组，按编码实例缓存（键随编码一起被 GC 回收）。
     private static readonly ConditionalWeakTable<Encoding, byte[]> Preambles = new();
 
     private static ReadOnlySpan<byte> PreambleOf(Encoding encoding)

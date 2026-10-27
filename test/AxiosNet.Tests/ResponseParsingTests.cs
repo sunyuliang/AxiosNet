@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
@@ -13,9 +13,7 @@ namespace AxiosNet.Tests;
 public sealed class ResponseParsingTests
 {
     private static TestHttpServer StartTextServer(string text, string contentType = "text/plain")
-        => TestHttpServer.Start(_ => new TestResponse(
-            Body: Encoding.UTF8.GetBytes(text),
-            ContentType: contentType));
+        => TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes(text), ContentType: contentType));
 
     // ---------------------------------------------------------------
     // ScalarParser：非 JSON 文本按目标类型兜底
@@ -166,9 +164,7 @@ public sealed class ResponseParsingTests
     public async Task Response_UnknownCharset_FallsBackToUtf8()
     {
         var body = Encoding.UTF8.GetBytes("你好");
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: body,
-            ContentType: "text/plain; charset=x-unknown-charset"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "text/plain; charset=x-unknown-charset"));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Text);
@@ -190,9 +186,7 @@ public sealed class ResponseParsingTests
         };
 
         var body = encoding.GetPreamble().Concat(encoding.GetBytes("你好")).ToArray();
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: body,
-            ContentType: "text/plain"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "text/plain"));
         using var client = new AxiosClient();
 
         var response = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Text);
@@ -205,9 +199,7 @@ public sealed class ResponseParsingTests
     {
         // 服务端谎报 charset=utf-8，实际字节是无 BOM 的 UTF-16：强制编码必须压过声明
         var body = Encoding.Unicode.GetBytes("你好");
-        await using var server = TestHttpServer.Start(_ => new TestResponse(
-            Body: body,
-            ContentType: "text/plain; charset=utf-8"));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "text/plain; charset=utf-8"));
         using var client = new AxiosClient();
 
         var auto = await client.GetAsync(server.Url, c => c.ResponseType = ResponseType.Text);
@@ -300,7 +292,7 @@ public sealed class ResponseParsingTests
     [Fact]
     public async Task NonJsonText_DoesNotTakeTheExceptionPath()
     {
-        // 「解析失败再吞掉」这条路每次请求要抛 3 次 JsonException（实测 ~1.5 KB 分配、吞吐掉一个数量级）。
+        // 「解析失败再吞掉」这条路每次请求要抛 3 次 JsonException，代价是分配与吞吐。
         // 闸口生效后一次都不该抛。计数按线程过滤：xunit 并行跑其它测试类，全局计数会被它们污染。
         var threadId = Environment.CurrentManagedThreadId;
         var jsonExceptions = 0;

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -235,9 +235,7 @@ internal sealed class DemoAuthApi
         using var hmac = new HMACSHA256(Convert.FromHexString(session!.SecretHex));
         var expected = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical)));
 
-        if (!CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(expected),
-                Encoding.ASCII.GetBytes(signature.ToUpperInvariant())))
+        if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(signature.ToUpperInvariant())))
         {
             return (401, """{"error":"signature_mismatch"}""");
         }

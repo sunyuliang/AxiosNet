@@ -1,28 +1,9 @@
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// <c>SynchronizedList&lt;T&gt;</c>（写时复制实现）对 <see cref="IList{T}"/> 契约的遵守情况。
-/// <para>
-/// 背景：这类集合是公开 API（<c>AxiosConfig.TransformRequest</c> / <c>TransformResponse</c> /
-/// <c>RemoveHeaders</c>），调用方按 BCL 契约写 <c>catch (ArgumentOutOfRangeException)</c>。
-/// 换成「不可变数组 + CAS 发布」之后，越界检查随 <see cref="List{T}"/> 一起消失了，
-/// 于是越界会漏出三种完全不该出现的异常：
-/// </para>
-/// <list type="bullet">
-/// <item>空表 <c>RemoveAt(0)</c> → <see cref="OverflowException"/>（<c>new T[-1]</c>，看起来像库内部算错了）；</item>
-/// <item>下标器 → <see cref="IndexOutOfRangeException"/>（数组自己的异常，不是集合契约）；</item>
-/// <item><c>Insert(9, x)</c> → <see cref="ArgumentException"/>（"Source array was not long enough"）。</item>
-/// </list>
-/// <para>
-/// 因此这里不写「抛什么就行」，而是<b>与 <see cref="List{T}"/> 逐条对齐</b>：
-/// 同一组非法操作，两者必须抛同一个异常类型。
-/// </para>
-/// </summary>
+/// <summary><c>SynchronizedList&lt;T&gt;</c> 对 <see cref="IList{T}"/> 契约的遵守情况：同一非法操作必须与 <see cref="List{T}"/> 抛同一异常类型。</summary>
 public sealed class CollectionContractTests
 {
-    // ------------------------------------------------------------------
-    // 与 List<T> 逐条对齐（同一个操作，同一个异常类型）
-    // ------------------------------------------------------------------
+    // 与 List<T> 逐条对齐：同一操作抛同一异常类型。
 
     [Fact]
     public void OutOfRangeOperations_ThrowSameTypeAsList()
@@ -56,9 +37,7 @@ public sealed class CollectionContractTests
         }
     }
 
-    // ------------------------------------------------------------------
-    // 参数名与取值（报错要指得出是哪个参数、给了什么）
-    // ------------------------------------------------------------------
+    // 参数名与取值。
 
     [Fact]
     public void RemoveAtOnEmpty_ReportsIndexParameterAndValue()
@@ -97,9 +76,7 @@ public sealed class CollectionContractTests
         Assert.Single(headers);
     }
 
-    // ------------------------------------------------------------------
-    // 合法边界不能被误伤
-    // ------------------------------------------------------------------
+    // 合法边界不能被误伤。
 
     [Fact]
     public void InsertAtCount_Appends()
@@ -135,11 +112,9 @@ public sealed class CollectionContractTests
         Assert.Same(One, list[0]);
     }
 
-    // ------------------------------------------------------------------
-
     private static readonly Func<object?, AxiosConfig, object?> One = static (data, _) => data;
 
-    /// <summary>在一个全新的 transform 链上执行操作（可选先塞一条，用于「有元素但越界」的用例）。</summary>
+    /// <summary>在全新的 transform 链上执行操作（seed 为 true 时先塞一条，用于「有元素但越界」的用例）。</summary>
     private static Action Chain(Action<IList<Func<object?, AxiosConfig, object?>>> action, bool seed = false)
         => () =>
         {

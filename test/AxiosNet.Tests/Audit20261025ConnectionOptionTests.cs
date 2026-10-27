@@ -1,20 +1,11 @@
-using AxiosNet.Pooling;
+﻿using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
 /// <summary>
-/// 按请求校验 <c>WithCredentials</c> 的口径：必须比对<b>连接池的生效值</b>
-/// （<see cref="ConnectionPoolOptions.UseCookies"/>），而不是 <c>Defaults.WithCredentials</c>。
-/// <para>
-/// 连接级选项在构造时固化进池，构造后再改 <c>Defaults</c> 不生效（文档承诺「静默不生效、不报错」）。
-/// 旧实现读 <c>Defaults</c> 当生效值，于是构造后改过 defaults 的实例上：
-/// 按请求<b>复述池的真实值</b>被拒、报错文案声称一个从未生效的值是「实例生效值」。
-/// </para>
-/// <para>
-/// 另一半是 <c>WithCredentialsSet</c> 早退：合并产物清掉了继承来的标记，不早退会让
-/// 「构造后改过 Defaults」的实例在每个普通请求上都被判成写入了不同的值（直接违反上面那条承诺）。
-/// </para>
+/// 按请求校验 <c>WithCredentials</c> 时比对连接池的生效值（<see cref="ConnectionPoolOptions.UseCookies"/>），
+/// 而不是 <c>Defaults.WithCredentials</c>；<c>WithCredentialsSet</c> 早退避免把继承来的标记当成按请求写入。
 /// </summary>
 public sealed class Audit20261025ConnectionOptionTests
 {
@@ -32,7 +23,7 @@ public sealed class Audit20261025ConnectionOptionTests
         client.Defaults.Connection.WithCredentials = true;
         Assert.False(client.Pool!.Options.UseCookies);
 
-        // 按请求复述池的真实值 false —— 必须放行（旧实现拿 Defaults 的 true 比对，误抛）
+        // 按请求复述池的真实值 false —— 必须放行。
         var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false);
 
         Assert.Equal(200, response.Status);

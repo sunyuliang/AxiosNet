@@ -4,23 +4,8 @@ using System.Diagnostics;
 namespace AxiosNet.Circuit;
 
 /// <summary>
-/// <see cref="IAxiosCircuitPolicy"/> 的默认实现：<b>按 host 维度</b>的失败计数 + 半开探测 + 自动恢复。
-/// <para>
-/// 状态机：<see cref="AxiosCircuitState.Closed"/> →（连续失败达到 <see cref="FailureThreshold"/>）→
-/// <see cref="AxiosCircuitState.Open"/> →（冷却 <see cref="BreakDuration"/>）→
-/// <see cref="AxiosCircuitState.HalfOpen"/> →（探测成功）→ 闭合 / （探测失败）→ 重新打开。
-/// </para>
-/// <para>
-/// 失败口径与重试门禁对齐（见 <see cref="AxiosCircuitContext.IsFailure"/>）：
-/// 网络错误 / 超时 / 5xx 计入失败；取消与 4xx（含 408 / 429）既不计数也不清零 ——
-/// 一次 404 既不能证明下游恢复，也不该被当成「它挂了」。
-/// </para>
-/// <para>
-/// 计数维度默认是 <c>uri.Authority</c>（<c>host:port</c>），可用 <see cref="KeySelector"/> 改写。
-/// 每个维度一把锁、互不阻塞；跟踪的维度数有软上限（<see cref="MaxTrackedHosts"/>）：
-/// 满员时只淘汰「丢了不改变判定」的条目，正在熔断 / 半开探测的条目不会被丢，
-/// 因此面向任意 host（多租户 / 动态域名）时不会无限增长，也不会悄悄放行已知不可用的下游。
-/// </para>
+/// <see cref="IAxiosCircuitPolicy"/> 的默认实现：按 host 维度的失败计数 + 半开探测 + 自动恢复。
+/// 状态机 Closed →（失败达 <see cref="FailureThreshold"/>）→ Open →（冷却 <see cref="BreakDuration"/>）→ HalfOpen → 成功闭合 / 失败重开；维度默认 <c>uri.Authority</c>，可用 <see cref="KeySelector"/> 改写。
 /// </summary>
 /// <example>
 /// <code>
@@ -59,87 +44,40 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         BreakDuration = breakDuration;
     }
 
-    /// <summary>
-    /// 连续多少次下游故障后打开熔断，默认 5。
-    /// <para>
-    /// 是<b>连续</b>计数：中间任何一次成功都会归零（见 <see cref="Record"/>）。
-    /// 开着重试时每次尝试各记一笔 —— 3 次重试 + 首次失败就是 4 笔，这是有意的：
-    /// 一个请求连撞 4 次 5xx，本来就该判定下游不可用。
-    /// </para>
-    /// </summary>
+    /// <summary>连续多少次下游故障后打开熔断，默认 5（中间任何一次成功都会归零）。</summary>
     public int FailureThreshold { get; set; } = 5;
 
-    /// <summary>
-    /// 打开后多久转入半开探测，默认 30 秒。
-    /// <para>
-    /// 冷却期内请求<b>不发出</b>（直接失败），这是熔断真正省下的那部分压力：
-    /// 重试是「再试一次」，冷却期是「先别试」。
-    /// </para>
-    /// </summary>
+    /// <summary>打开后多久转入半开探测，默认 30 秒（冷却期内请求直接失败，不发出）。</summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>
-    /// 半开态允许同时进行的探测请求数，默认 1。
-    /// <para>
-    /// 大于 1 会让恢复更快，但也意味着下游刚有起色时要同时承受多个探测；对「刚被打挂」的服务，
-    /// 1 个探测 + 成功即恢复通常已经够快（探测本身就是一个正常请求）。
-    /// </para>
-    /// </summary>
+    /// <summary>半开态允许同时进行的探测请求数，默认 1。</summary>
     public int HalfOpenAttempts { get; set; } = 1;
 
-    /// <summary>
-    /// 最多跟踪多少个维度（host），默认 512。
-    /// <para>
-    /// 达到上限时只淘汰「丢了不改变判定」的条目：闭合态优先（最坏重新攒失败计数），
-    /// 其次是冷却早已过期的打开态。正在熔断 / 半开探测中的条目不会被淘汰 ——
-    /// 宁可短暂超出上限，也不让刚判定为不可用的下游被悄悄放行。
-    /// </para>
-    /// </summary>
+    /// <summary>最多跟踪多少个维度（host），默认 512；满员时只淘汰不影响判定的条目。</summary>
     public int MaxTrackedHosts { get; set; } = 512;
 
     /// <summary>
-    /// 自定义计数维度；<c>null</c>（默认）用 <see cref="AxiosCircuitContext.Host"/>（即 <c>host:port</c>）。
-    /// <para>
-    /// 典型用法：<c>KeySelector = ctx =&gt; ctx.Uri.Host</c>（同一 host 的多个端口算一个下游）、
-    /// <c>ctx =&gt; ctx.Uri.Host + ctx.Uri.AbsolutePath.Split('/')[1]</c>（按租户 / 路由前缀隔离）。
-    /// 返回 <c>null</c> 或空串时回退到 <see cref="AxiosCircuitContext.Host"/>。
-    /// </para>
+    /// 自定义计数维度；<c>null</c>（默认）用 <see cref="AxiosCircuitContext.Host"/>，
+    /// 返回 <c>null</c> 或空串时同样回退到它。
     /// </summary>
     public Func<AxiosCircuitContext, string>? KeySelector { get; set; }
 
-    /// <summary>
-    /// 状态迁移回调（<see cref="AxiosCircuitState.Closed"/> → 打开、打开 → 半开、半开 → 恢复）。
-    /// <para>
-    /// 只在<b>真的发生迁移</b>时触发，且在工作线程上同步执行。订阅方抛出的异常会被忽略 ——
-    /// 观测代码不该把请求变成失败（与库内遥测的处理一致）。
-    /// </para>
-    /// </summary>
+    /// <summary>状态迁移回调（只在真的发生迁移时触发；订阅方抛出的异常会被忽略）。</summary>
     public event Action<AxiosCircuitTransition>? StateChanged;
 
     /// <summary>当前跟踪的维度数（用于观测 / 断言上限生效）。</summary>
     public int TrackedHostCount => _hosts.Count;
 
-    /// <summary>
-    /// 测试专用：淘汰候选选出后、按 Gate 复核前触发（参数为候选 key），
-    /// 用来确定性地复现「无锁快照之后条目被并发推进」的竞态。生产代码不要设置。
-    /// </summary>
+    /// <summary>测试专用：淘汰候选选出后、按 Gate 复核前触发（参数为候选 key）。生产代码不要设置。</summary>
     internal Action<string>? EvictionCandidateChosen { get; set; }
 
-    /// <summary>
-    /// 某个维度当前的状态；未跟踪过（= 从未失败）的维度返回 <see cref="AxiosCircuitState.Closed"/>。
-    /// </summary>
+    /// <summary>某个维度当前的状态；未跟踪过（= 从未失败）的维度返回 <see cref="AxiosCircuitState.Closed"/>。</summary>
     public AxiosCircuitState GetState(string host)
         => host is not null && _hosts.TryGetValue(host, out var state)
             ? state.State
             : AxiosCircuitState.Closed;
 
-    /// <summary>
-    /// 清掉<b>所有</b>维度的状态（等价于「立刻全部恢复」）：运维手工放行、或测试用例之间重置。
-    /// <para>
-    /// 处于打开 / 半开态的维度会触发一次 <see cref="StateChanged"/>（Open|HalfOpen → Closed）：
-    /// 状态确实变了，订阅方（告警、看板）该看到这次恢复。
-    /// </para>
-    /// </summary>
+    /// <summary>清掉所有维度的状态（等价于立刻全部恢复）；打开 / 半开态会触发一次 <see cref="StateChanged"/>。</summary>
     public void Reset()
     {
         foreach (var pair in _hosts)
@@ -151,7 +89,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
     }
 
-    /// <summary>清掉<b>某一个</b>维度的状态；返回该维度此前是否被跟踪过（打开 / 半开态同样会触发 <see cref="StateChanged"/>）。</summary>
+    /// <summary>清掉某一个维度的状态；返回该维度此前是否被跟踪过（打开 / 半开态同样会触发 <see cref="StateChanged"/>）。</summary>
     public bool Reset(string host)
     {
         if (host is null || !_hosts.TryRemove(host, out var state))
@@ -185,12 +123,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                 case AxiosCircuitState.Open:
                     if (!IsCooledDown(host))
                     {
-                        // 冷却期未过：不放行。这一步省掉的是「建连 + 等待超时」的全部代价。
+                        // 冷却期未过：不放行。
                         allowed = false;
                         break;
                     }
 
-                    // 冷却结束：转入半开，只放探测请求。名额在下面统一领取。
+                    // 冷却结束：转入半开，只放探测请求。
                     host.ProbesInFlight = 0;
                     transition = MoveTo(host, AxiosCircuitState.HalfOpen);
                     goto case AxiosCircuitState.HalfOpen;
@@ -199,7 +137,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                     allowed = host.ProbesInFlight < HalfOpenAttempts;
                     if (allowed)
                     {
-                        // 名额在这里领走：随后那次 Record 负责归还（成功/失败会重置整个状态）。
+                        // 名额在这里领走，随后那次 Record 负责归还。
                         host.ProbesInFlight++;
                     }
 
@@ -241,7 +179,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     {
         if (!_hosts.TryGetValue(KeyOf(context), out var host))
         {
-            // 没经过 ShouldAllow（自定义调用顺序），或条目已被淘汰：没有可记的账。
+            // 没经过 ShouldAllow，或条目已被淘汰：没有可记的账。
             return;
         }
 
@@ -253,7 +191,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             {
                 if (host.State == AxiosCircuitState.HalfOpen)
                 {
-                    // 探测成功：整条链路恢复，失败计数清零。
+                    // 探测成功：恢复闭合，失败计数清零。
                     host.ProbesInFlight = 0;
                     host.Failures = 0;
                     transition = MoveTo(host, AxiosCircuitState.Closed);
@@ -270,7 +208,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
                 if (host.State == AxiosCircuitState.HalfOpen)
                 {
-                    // 探测失败：立刻重新打开并重新计时，不必再攒够 FailureThreshold 次。
+                    // 探测失败：立刻重新打开并重新计时。
                     host.Failures = 0;
                     host.OpenedAt = Stopwatch.GetTimestamp();
                     transition = MoveTo(host, AxiosCircuitState.Open);
@@ -287,13 +225,11 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                     }
                 }
 
-                // 打开态：冷却期内还在途的请求报上来的失败不改账 ——
-                // 它描述的是「开闸之前那一刻」，让它续期只会把冷却期无限拉长。
+                // 打开态：冷却期内还在途的请求报上来的失败不改账。
             }
             else if (host.State == AxiosCircuitState.HalfOpen && host.ProbesInFlight > 0)
             {
-                // 取消 / 4xx：既不计数也不清零（既不能证明恢复，也不能证明挂了），
-                // 但半开态的探测名额必须归还 —— 否则一次被取消的探测会把熔断器永久卡在半开。
+                // 取消 / 4xx：既不计数也不清零，但必须归还半开态的探测名额。
                 host.ProbesInFlight--;
             }
         }
@@ -320,7 +256,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             return existing;
         }
 
-        // 上限只在「新建」这条冷路径上检查：命中已有维度不受影响。
+        // 上限只在新建这条冷路径上检查：命中已有维度不受影响。
         if (_hosts.Count >= (MaxTrackedHosts > 0 ? MaxTrackedHosts : 1))
         {
             Evict();
@@ -330,16 +266,8 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <summary>
-    /// 淘汰一个维度，给新维度腾位置。
-    /// <para>
-    /// 只淘汰「丢了不改变判定」的条目：<b>闭合态</b>（最坏是重新攒失败计数），以及
-    /// <b>冷却早已过期的打开态</b>（它下次被访问本来就会转半开探测，丢掉等价）。
-    /// </para>
-    /// <para>
-    /// <b>正在熔断中（冷却未过）与半开探测中的条目一律不淘汰</b> —— 抹掉它等于让刚判定为不可用的
-    /// 下游悄悄恢复放行，这是熔断最不该发生的事。一个可淘汰的都没有时什么都不做：
-    /// 上限退化成软上限，宁可短暂超出也不丢账。
-    /// </para>
+    /// 淘汰一个维度给新维度腾位置：只淘汰闭合态与冷却早已过期的打开态，
+    /// 正在熔断与半开探测中的条目一律不动（没有可淘汰的就不做）。
     /// </summary>
     private void Evict()
     {
@@ -379,13 +307,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
             if (closedIdle is not null)
             {
-                // 最理想的目标已经找到（闭合且无账可记），不必再看其余条目
+                // 最理想的目标已经找到，不必再看其余条目
                 break;
             }
         }
 
-        // 上面的挑选是无锁快照，读与删之间该条目可能已被并发请求推进（Closed → Open、
-        // 冷却到期 → HalfOpen）。逐个候选在自己的 Gate 内复核后再删，避免淘汰掉正在熔断的条目。
+        // 挑选是无锁快照，删除前需在各自 Gate 内复核。
         var candidate = closedIdle ?? closed ?? staleOpen;
         if (candidate is not null)
         {
@@ -416,7 +343,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                 _ => false
             };
 
-            // 按「键 + 实例」移除：期间若已被别人删掉并重建，不能误删新建的那一条。
+            // 按「键 + 实例」移除，避免误删期间重建的条目。
             return evictable && _hosts.TryRemove(new KeyValuePair<string, HostState>(key, state));
         }
     }
@@ -443,7 +370,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
         catch
         {
-            // 观测代码抛异常不该改变请求结果（与库内遥测回调同一约定）。
+            // 观测代码抛异常不该改变请求结果。
         }
     }
 

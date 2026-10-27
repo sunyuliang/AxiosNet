@@ -1,8 +1,6 @@
 namespace AxiosNet;
 
-/// <summary>
-/// 进度事件，对应 axios 的 <c>progressEvent</c>（upload/download 各一套）。
-/// </summary>
+/// <summary>进度事件，对应 axios 的 <c>progressEvent</c>（upload / download 各一套）。</summary>
 public readonly struct AxiosProgressEvent
 {
     public AxiosProgressEvent(long loaded, long? total, double? rate, TimeSpan? estimated, bool upload)
@@ -29,7 +27,7 @@ public readonly struct AxiosProgressEvent
     /// <summary>按当前速率估算的剩余时间。</summary>
     public TimeSpan? Estimated { get; }
 
-    /// <summary>true 表示上传进度，false 表示下载进度。</summary>
+    /// <summary>true = 上传进度，false = 下载进度。</summary>
     public bool Upload { get; }
 
     public override string ToString()

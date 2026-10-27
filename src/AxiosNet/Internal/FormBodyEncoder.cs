@@ -5,14 +5,8 @@ using System.Text.Json;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// <c>application/x-www-form-urlencoded</c> 通道：把结构化数据展平为键值对并编码成正文。
-/// <para>
-/// 展平规则：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组 <c>[i]</c>）、null 跳过、标量取原始文本。
-/// </para>
-/// <para>
-/// 直接读对象结构、<b>不经过序列化器</b>：表单是独立编码通道，命名只看
-/// <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 与 <c>[JsonPropertyName]</c>（见 <see cref="BodyFields"/>）。
-/// </para>
+/// <c>application/x-www-form-urlencoded</c> 通道：把结构化数据展平为键值对并编码成正文
+/// （嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>、根数组 <c>[i]</c>、null 跳过、标量取原始文本，不经过序列化器）。
 /// </summary>
 internal static class FormBodyEncoder
 {
@@ -35,13 +29,11 @@ internal static class FormBodyEncoder
         }
         catch (UnsupportedFormValueException ex)
         {
-            // 「表单装不下文件部件」是调用方的编码选择错误，不是请求体内容有问题：
-            // 与 multipart 侧（InvalidMultipartOptionException → ERR_BAD_OPTION_VALUE）保持同一分类。
+            // 表单装不下文件部件属于编码选择错误，与 multipart 侧同归 ERR_BAD_OPTION_VALUE。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
 
-        // 表单体按已转义的 ASCII 串写入，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
-        // 单个 StringBuilder 一次成型：Select + 每对中间串 + Join 的二次遍历在千字段时约 3 倍瞬分配。
+        // 正文是已转义的 ASCII 串，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
         var body = BuildBody(pairs);
 
         var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
@@ -77,9 +69,7 @@ internal static class FormBodyEncoder
         return builder.ToString();
     }
 
-    /// <summary>
-    /// 把结构化数据展平为表单键值对；传入 <see cref="JsonElement"/> 时按树语义展平（<see cref="Flatten"/>）。
-    /// </summary>
+    /// <summary>把结构化数据展平为表单键值对；<see cref="JsonElement"/> 按树语义展平（<see cref="Flatten"/>）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -126,8 +116,7 @@ internal static class FormBodyEncoder
             case FormFile:
             case Stream:
             case HttpContent:
-                throw new UnsupportedFormValueException(
-                    "application/x-www-form-urlencoded 无法承载文件部件：请改用 multipart/form-data。");
+                throw new UnsupportedFormValueException("application/x-www-form-urlencoded 无法承载文件部件：请改用 multipart/form-data。");
 
             case IDictionary<string, object?> genericDictionary:
             {
@@ -274,11 +263,7 @@ internal static class FormBodyEncoder
         pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, encoding), EncodeValue(value, encoding)));
     }
 
-    /// <summary>
-    /// 把 JSON 树展平为表单键值对：
-    /// 嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组用 <c>[i]</c>）、
-    /// null 跳过、标量取原始文本。
-    /// </summary>
+    /// <summary>把 JSON 树展平为表单键值对：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组 <c>[i]</c>）、null 跳过。</summary>
     private static void Flatten(
         string? prefix,
         JsonElement element,
@@ -291,12 +276,7 @@ internal static class FormBodyEncoder
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    Flatten(
-                        BodyFields.CombineName(nameSelector, prefix, property.Name),
-                        property.Value,
-                        pairs,
-                        encoding,
-                        nameSelector);
+                    Flatten(BodyFields.CombineName(nameSelector, prefix, property.Name), property.Value, pairs, encoding, nameSelector);
                 }
 
                 break;
@@ -306,7 +286,6 @@ internal static class FormBodyEncoder
                 var index = 0;
                 foreach (var item in element.EnumerateArray())
                 {
-                    // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
                     Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, encoding, nameSelector);
                     index++;
                 }
@@ -320,17 +299,14 @@ internal static class FormBodyEncoder
             case JsonValueKind.False:
                 if (prefix is null)
                 {
-                    // 根标量在表单里没有可表达的键名，忽略（不伪造 key）。
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(
-                    EncodeKey(prefix, encoding),
-                    EncodeValue(BodyFields.ScalarText(element), encoding)));
+                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, encoding), EncodeValue(BodyFields.ScalarText(element), encoding)));
                 break;
 
             default:
-                // null / undefined：与 axios 一致，直接跳过。
+                // null / undefined：跳过。
                 break;
         }
     }
@@ -341,13 +317,7 @@ internal static class FormBodyEncoder
 
     private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding);
 
-    /// <summary>
-    /// 按<b>字节流</b>做百分号编码：可保留的 ASCII 字节直出，其余转义。
-    /// <para>
-    /// 直出是字节级可逆的（<c>%A4T</c> 解码回来就是 <c>A4 54</c>），所以多字节序列的尾字节
-    /// 即便落在可打印 ASCII 区间也不会损坏正文 —— 不要"按字符"重写这段去避免"看起来像裸 ASCII"的输出。
-    /// </para>
-    /// </summary>
+    /// <summary>按字节流做百分号编码：可保留的 ASCII 字节直出，其余转义（直出是字节级可逆的）。</summary>
     private static string PercentEncode(string value, Encoding encoding)
     {
         if (encoding.CodePage == Encoding.UTF8.CodePage)
@@ -358,8 +328,7 @@ internal static class FormBodyEncoder
 
         var bytes = encoding.GetBytes(value);
 
-        // 容量一次算准（每字节 1 或 3 字符）：从 bytes.Length 起建会在转义密集的正文上反复扩容，
-        // 按 3 倍预估又对纯 ASCII 正文浪费两倍 —— 先数一遍需要转义的字节，两边都不付。
+        // 容量一次算准（每字节 1 或 3 字符）：先数一遍需要转义的字节，避免反复扩容。
         var escaped = 0;
         foreach (var b in bytes)
         {
@@ -399,8 +368,7 @@ internal static class FormBodyEncoder
 }
 
 /// <summary>
-/// 表单通道装不下某个值（文件部件）。只在本程序集内部流转，由
-/// <see cref="FormBodyEncoder"/> 转成带配置上下文的 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// 表单通道装不下某个值（文件部件），由 <see cref="FormBodyEncoder"/> 转成 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
 /// </summary>
 internal sealed class UnsupportedFormValueException : Exception
 {

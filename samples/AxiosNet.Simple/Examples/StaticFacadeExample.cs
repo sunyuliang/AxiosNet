@@ -3,9 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 1. 全局静态门面（等同 JS 里的 axios.get(...)）。
-/// </summary>
+/// <summary>1. 全局静态门面（等同 JS 里的 axios.get(...)）。</summary>
 public sealed class StaticFacadeExample : IExample
 {
     public int Number => 1;

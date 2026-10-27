@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -217,10 +217,7 @@ public sealed class DemoApiServer : IDisposable
             case "GET" when path == "/api/secure/profile":
                 return headers.TryGetValue("authorization", out var auth)
                     && auth == $"Bearer {DemoToken}"
-                    ? (200, JsonSerializer.Serialize(new SecureProfile(
-                        "alice",
-                        "AxiosNet.Simple.WebAPI.DemoApiServer",
-                        headers.GetValueOrDefault("x-device", "unknown"))), null)
+                    ? (200, JsonSerializer.Serialize(new SecureProfile("alice", "AxiosNet.Simple.WebAPI.DemoApiServer", headers.GetValueOrDefault("x-device", "unknown"))), null)
                     : (401, """{"error":"missing or invalid bearer token"}""", null);
 
             case "POST" when path == "/api/signed/echo":

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using AxiosNet.WebAPI;
@@ -23,9 +23,7 @@ public sealed class Audit20261023Round2Tests
     {
         // UTF-16LE、无 BOM：字节入口只有真正按 charset 解码才可能读对。
         var body = Encoding.Unicode.GetBytes("{\"name\":\"测试\"}");
-        using var client = CreateClient(
-            body,
-            contentType: "application/octet-stream; charset=utf-16");
+        using var client = CreateClient(body, contentType: "application/octet-stream; charset=utf-16");
 
         var response = await client.GetAsync<Payload>("payload");
 
@@ -36,9 +34,7 @@ public sealed class Audit20261023Round2Tests
     public async Task TypedJson_BinaryResponseWithForcedResponseEncoding_UsesForcedEncoding()
     {
         var body = Encoding.Unicode.GetBytes("{\"name\":\"强编码\"}");
-        using var client = CreateClient(
-            body,
-            contentType: "application/octet-stream");
+        using var client = CreateClient(body, contentType: "application/octet-stream");
 
         var response = await client.GetAsync<Payload>(
             "payload",
@@ -124,9 +120,7 @@ public sealed class Audit20261023Round2Tests
 
     private static async Task<List<Frame>> CollectAsync(ApiClient client)
     {
-        var response = await client.RequestStreamAsync(
-            new StreamRequest(),
-            AxiosStreamFormat.ServerSentEvents);
+        var response = await client.RequestStreamAsync(new StreamRequest(), AxiosStreamFormat.ServerSentEvents);
 
         var items = new List<Frame>();
         await foreach (var item in response.Data!)

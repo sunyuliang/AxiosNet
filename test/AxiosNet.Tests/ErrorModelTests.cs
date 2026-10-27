@@ -2,9 +2,7 @@ using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests;
 
-/// <summary>
-/// P0：错误模型补齐（timeoutMessage / Status / ToJson / 常量 / isAxiosError / isCancel）。
-/// </summary>
+/// <summary>错误模型：timeoutMessage / Status / ToJson / 错误码常量 / isAxiosError / isCancel。</summary>
 public sealed class ErrorModelTests
 {
     [Fact]
@@ -39,8 +37,7 @@ public sealed class ErrorModelTests
         });
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "slow", c => c.Timeout = TimeSpan.FromMilliseconds(100)));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c => c.Timeout = TimeSpan.FromMilliseconds(100)));
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
         Assert.Contains("timeout of 100ms exceeded", ex.Message);
@@ -89,8 +86,7 @@ public sealed class ErrorModelTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/never", cancellationToken: cts.Token));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("http://127.0.0.1:1/never", cancellationToken: cts.Token));
 
         Assert.True(Axios.IsAxiosError(ex));
         Assert.True(Axios.IsCancel(ex));
@@ -104,13 +100,11 @@ public sealed class ErrorModelTests
     [Fact]
     public async Task GenericStreamRequest_WithTextResponseType_IsWrappedAsBadResponse()
     {
-        // 泛型参数与显式 responseType 不匹配（GetAsync<Stream> 却配了 'text'）：
-        // 以前会漏出裸 InvalidCastException，现在走统一错误模型。
+        // 泛型参数与显式 responseType 不匹配时，走统一错误模型而不是漏出 InvalidCastException。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<Stream>(server.Url + "x", c => c.ResponseType = ResponseType.Text));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Stream>(server.Url + "x", c => c.ResponseType = ResponseType.Text));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Contains("Stream", ex.Message);
@@ -122,8 +116,7 @@ public sealed class ErrorModelTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<Stream>(server.Url + "x", c => c.ResponseType = ResponseType.ArrayBuffer));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Stream>(server.Url + "x", c => c.ResponseType = ResponseType.ArrayBuffer));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Contains("Stream", ex.Message);
@@ -132,7 +125,7 @@ public sealed class ErrorModelTests
     [Fact]
     public async Task GenericStreamRequest_WithoutExplicitResponseType_StillWorks()
     {
-        // 正向对照：未显式配置 responseType 时 <Stream> 自动切流式，不受强转收敛影响
+        // 未显式配置 responseType 时，<Stream> 自动切流式。
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 

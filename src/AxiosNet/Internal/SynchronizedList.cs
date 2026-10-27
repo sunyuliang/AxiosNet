@@ -3,39 +3,20 @@ using System.Collections;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 线程安全的 <see cref="IList{T}"/> 包装，用于 <see cref="AxiosConfig"/> 里的 transform 链与按请求删头名单。
-/// <para>
-/// transform 是运行期可追加/移除的配置，而请求线程会并发枚举；直接暴露 <see cref="List{T}"/>
-/// 会在「枚举时写入」抛 <see cref="InvalidOperationException"/>。这里写入发布新数组、读取取当前版本，
-/// 枚举拿到的是一版不可变快照，不会抛、也不会看到中途变化。
-/// </para>
-/// <para>
-/// <b>表示与 <see cref="AxiosHeaders"/> 同构</b>：实例只持有一个不可变数组，写入 = 算出新数组 + 原子换上。
-/// 因此 <see cref="ShareIfNotEmpty"/>（每请求克隆时调用）<b>不取锁、不复制元素</b>，只让新实例指向同一版数组；
-/// 任意一方写入都发布自己的新数组，语义与深拷贝一致。
-/// </para>
-/// <para>
-/// 旧实现是「引用计数 + 分离复制」：每请求克隆要进一次 <c>lock</c>，写入要复制整份 <see cref="List{T}"/>，
-/// 枚举还要为快照复制一份列表。改成不可变数组后这三项都不再随元素数增长。
-/// </para>
+/// 线程安全的 <see cref="IList{T}"/>，用于 <see cref="AxiosConfig"/> 的 transform 链与按请求删头名单。
+/// 写入发布新的不可变数组，读取取当前版本，因此并发枚举不会抛异常。
 /// </summary>
 internal sealed class SynchronizedList<T> : IList<T>
 {
     private static readonly T[] Empty = Array.Empty<T>();
 
-    /// <summary>
-    /// 越界消息。与 <see cref="List{T}"/> 的措辞对齐（英文原文是
-    /// "Index was out of range. Must be non-negative and less than the size of the collection."），
-    /// 这样「把 <c>List&lt;T&gt;</c> 换成写时复制的 IList」不会改变调用方看到的错误文案。
-    /// </summary>
+    /// <summary>索引越界消息，措辞与 <see cref="List{T}"/> 保持一致。</summary>
     private const string IndexOutOfRangeMessage = "索引超出范围：必须是非负数且小于集合大小。";
 
     /// <summary><see cref="Insert"/> 专用：允许插入到末尾，因此上界是「不大于」。</summary>
     private const string InsertIndexOutOfRangeMessage = "索引超出范围：必须是非负数且不大于集合大小。";
 
-    /// <summary>
-    /// 当前版本。只通过 <see cref="Volatile"/> 读、<see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/> 写。
-    /// </summary>
+    /// <summary>当前版本数组：<see cref="Volatile"/> 读，<see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/> 写。</summary>
     private T[] _items;
 
     public SynchronizedList() => _items = Empty;
@@ -44,30 +25,20 @@ internal sealed class SynchronizedList<T> : IList<T>
     {
         ArgumentNullException.ThrowIfNull(items);
 
-        // 源是本类型时直接取它当前的不可变版本（0 拷贝、也不会读到写了一半的状态）；
-        // 其余情况复制成数组，与源彻底脱钩。
-        _items = items is SynchronizedList<T> synchronized
-            ? synchronized.Snapshot()
-            : new List<T>(items).ToArray();
+        // 源是同类型时共享它当前的数组，否则复制成独立数组。
+        _items = items is SynchronizedList<T> synchronized ? synchronized.Snapshot() : new List<T>(items).ToArray();
     }
 
     private SynchronizedList(T[] items) => _items = items;
 
-    /// <summary>
-    /// 写时复制的共享：不复制元素，只让新实例指向同一版数组；空列表返回 <c>null</c>
-    /// （调用方只共享有内容的链，空链在克隆侧保持 <c>null</c>，热路径才不会为「空集合」付一次分配）。
-    /// <para>「判空 + 共享」读的是同一个不可变版本，不存在旧实现里「判空之后被清空」的窗口。</para>
-    /// </summary>
+    /// <summary>把当前数组共享给新实例（不复制元素）；空列表返回 <c>null</c>。</summary>
     internal SynchronizedList<T>? ShareIfNotEmpty()
     {
         var items = Volatile.Read(ref _items);
         return items.Length == 0 ? null : new SynchronizedList<T>(items);
     }
 
-    /// <summary>
-    /// 只读快照：直接返回当前版本数组，<b>零拷贝</b>。调用方<b>不得修改</b>返回的数组。
-    /// <para>热路径（transform 链枚举）用它：旧实现要为此复制一份 <see cref="List{T}"/>。</para>
-    /// </summary>
+    /// <summary>当前版本数组的快照（零拷贝），调用方不得修改。</summary>
     internal T[] Snapshot() => Volatile.Read(ref _items);
 
     public T this[int index]
@@ -75,10 +46,6 @@ internal sealed class SynchronizedList<T> : IList<T>
         get
         {
             var items = Volatile.Read(ref _items);
-
-            // 越界必须显式抛 ArgumentOutOfRangeException：本类型是公开的 IList<T>
-            // （AxiosConfig.TransformRequest / RemoveHeaders），调用方按 BCL 契约 catch。
-            // 直接索引数组会漏出 IndexOutOfRangeException，那是「实现细节泄漏成 API 行为」。
             if ((uint)index >= (uint)items.Length)
             {
                 throw new ArgumentOutOfRangeException(nameof(index), index, IndexOutOfRangeMessage);
@@ -130,7 +97,7 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public void Clear()
     {
-        // 空的版本没有内容可清：不发布、不分配。
+        // 空版本没有内容可清，不发布也不分配。
         if (Volatile.Read(ref _items).Length == 0)
         {
             return;
@@ -190,7 +157,7 @@ internal sealed class SynchronizedList<T> : IList<T>
         {
             var current = Volatile.Read(ref _items);
 
-            // 快速路径：不存在就不发布新版本（共享期间移除一个没注册过的 transform 很常见）。
+            // 不存在时不发布新版本。
             var index = -1;
             for (var i = 0; i < current.Length; i++)
             {
@@ -222,10 +189,6 @@ internal sealed class SynchronizedList<T> : IList<T>
         while (true)
         {
             var current = Volatile.Read(ref _items);
-
-            // 没有这道闸口时 `new T[current.Length - 1]` 在空表上会变成 `new T[-1]`，
-            // 抛出的是 OverflowException（"Arithmetic operation resulted in an overflow"）——
-            // 信息完全指不出「索引越界」，看起来像库内部算错了。
             if ((uint)index >= (uint)current.Length)
             {
                 throw new ArgumentOutOfRangeException(nameof(index), index, IndexOutOfRangeMessage);
@@ -242,13 +205,7 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
     }
 
-    /// <summary>
-    /// 枚举快照：不会因为并发 Add/Remove 而抛异常。
-    /// <para>
-    /// 具体类型上还有 <see cref="Snapshot"/>（数组，<c>foreach</c> 零分配）；走接口时（如
-    /// <c>ICollection&lt;string&gt;</c>）只能返回装箱的数组枚举器，库内热路径因此一律用 <see cref="Snapshot"/>。
-    /// </para>
-    /// </summary>
+    /// <summary>枚举当前快照，不会因为并发 Add/Remove 而抛异常。</summary>
     public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)Volatile.Read(ref _items)).GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

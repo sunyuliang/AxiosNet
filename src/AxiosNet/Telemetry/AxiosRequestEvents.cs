@@ -1,13 +1,8 @@
 namespace AxiosNet.Telemetry;
 
 /// <summary>
-/// <c>AxiosNet.RequestStart</c> 事件的载荷：请求已成型（拦截器与 transformRequest 跑完、URL 已拼好），
-/// 即将进入发送阶段。
-/// <para>
-/// 与 <c>HttpClient</c> 的 <c>RequestStart</c> 同一时机，但带的是**库的配置**：订阅方可以直接读
-/// <see cref="Config"/> 里的头 / 超时 / 重试策略，不必再去猜哪一层改过它。
-/// </para>
-/// <para>载荷是快照：<see cref="Config"/> 是本次请求独占的生效配置，事件结束后仍可安全读取。</para>
+/// <c>AxiosNet.RequestStart</c> 事件的载荷：请求已成型（拦截器与 transformRequest 跑完、URL 已拼好），即将进入发送阶段。
+/// <see cref="Config"/> 是本次请求独占的生效配置，事件结束后仍可安全读取。
 /// </summary>
 public sealed class AxiosRequestStartEvent
 {

@@ -3,9 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 8. dynamic 请求：AxiosDynamic / ExpandoObject 作为 body 与 params。
-/// </summary>
+/// <summary>8. dynamic 请求：AxiosDynamic / ExpandoObject 作为 body 与 params。</summary>
 public sealed class DynamicRequestExample : IExample
 {
     /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>
@@ -29,7 +27,7 @@ public sealed class DynamicRequestExample : IExample
         payload.address = new AxiosDynamic();
         payload.address.city = "Shenzhen";
 
-        // (object) 是必要的：直接把 dynamic 传进泛型方法会让整条调用变成动态调用
+        // (object) 转换：避免整条调用变成动态调用
         var response = await http.PostAsync<object>(context.BaseUrl + "echo", (object)payload);
         dynamic echoed = response.Data!;
         Console.WriteLine($"  回显: name={echoed.name}, age={echoed.age}, address.city={echoed.address.city}");

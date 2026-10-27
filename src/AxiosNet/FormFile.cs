@@ -3,26 +3,9 @@ using AxiosNet.Internal;
 namespace AxiosNet;
 
 /// <summary>
-/// multipart/form-data 中的一个文件部件。
-/// <para>
-/// 用法：把 <see cref="FormFile"/>（或其集合）放进 data 的对象/字典字段里，
-/// 并把 <see cref="AxiosConfig.ContentType"/> 设为 <c>multipart/form-data</c>：
-/// <code>
-/// await http.PostAsync("upload", new
-/// {
-///     title = "年报",
-///     files = new[]
-///     {
-///         new FormFile("a.pdf", File.OpenRead("a.pdf"), "application/pdf"),
-///         FormFile.FromPath("b.pdf")
-///     }
-/// }, c => c.ContentType = "multipart/form-data");
-/// </code>
-/// </para>
-/// <para>
-/// 生命周期：部件内容随请求释放（结束、异常或取消时都会 Dispose），
-/// 因此传入的流不要在请求之外复用；需要复用请自己读成 byte[]。
-/// </para>
+/// multipart/form-data 中的一个文件部件：把 <see cref="FormFile"/>（或其集合）放进 data 的对象/字典字段里，
+/// 并把 <see cref="AxiosConfig.ContentType"/> 设为 <c>multipart/form-data</c>。
+/// 部件内容随请求释放（结束、异常或取消时都会 Dispose），传入的流不要在请求之外复用。
 /// </summary>
 public sealed class FormFile
 {
@@ -39,8 +22,7 @@ public sealed class FormFile
 
         ArgumentNullException.ThrowIfNull(content);
 
-        // 文件名写进 Content-Disposition 的 filename="..."（quoted-string）：引号与换行会让
-        // MultipartFormDataContent 抛异常（且错误信息里看不出是文件名），反斜杠与控制字符则静默错乱。
+        // 文件名写进 Content-Disposition 的 quoted-string：引号、反斜杠与 CR/LF 会破坏头部语法。
         if (DispositionTokens.FindInvalidCharacter(fileName) is { } invalid)
         {
             throw new ArgumentException(
@@ -84,16 +66,7 @@ public sealed class FormFile
 
     private readonly string? _fieldName;
 
-    /// <summary>
-    /// 覆盖部件字段名（Content-Disposition 的 name）。
-    /// 默认取所在字段/键名；同一集合里需要不同字段名时使用。
-    /// </summary>
-    /// <remarks>
-    /// 与 <see cref="FileName"/> 一样在赋值处校验：字段名同样落在 quoted-string 里，
-    /// 带引号 / 反斜杠 / 控制字符的名字会让服务端解析错位。放在这里而不是等到组装 multipart 时，
-    /// 是因为那时部件内容（可能是一个已打开的 <see cref="FileStream"/>）已经取得所有权，
-    /// 迟到报错会把「名字写错」变成「文件句柄不释放」。
-    /// </remarks>
+    /// <summary>覆盖部件字段名（Content-Disposition 的 name）；默认取所在字段/键名。</summary>
     /// <exception cref="ArgumentException">字段名含不能出现在 Content-Disposition 里的字符。</exception>
     public string? FieldName
     {
@@ -113,14 +86,7 @@ public sealed class FormFile
         }
     }
 
-    /// <summary>
-    /// 打开本地文件；发送给服务端的文件名取 <see cref="Path.GetFileName(string)"/>，
-    /// 第二个参数是 <b>Content-Type</b>。
-    /// <para>
-    /// 注意：与 <see cref="FromPath(string, string, string?)"/> 在「传两个字符串」时无法区分，
-    /// 重载决议固定落到这里 —— <c>FromPath(path, "report.txt")</c> 会把 <c>report.txt</c> 当成 Content-Type。
-    /// </para>
-    /// </summary>
+    /// <summary>打开本地文件，文件名取 <see cref="Path.GetFileName(string)"/>，第二个参数是 Content-Type。</summary>
     public static FormFile FromPath(string path, string? contentType = null)
         => FromPath(path, Path.GetFileName(path), contentType);
 
@@ -142,8 +108,7 @@ public sealed class FormFile
 
         try
         {
-            // 文件名校验在构造函数里；失败时异常从这里抛出，已打开的流必须在这里关掉，
-            // 否则文件句柄永久泄漏（Windows 上连删除都会被拒）。
+            // 文件名校验在构造函数里；失败时已打开的流必须在这里关掉，否则句柄永久泄漏。
             return new FormFile(fileName, stream, contentType);
         }
         catch

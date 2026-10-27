@@ -4,9 +4,7 @@ using AxiosNet.Retry;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 25. 弹性重试：默认不重试、内置策略（次数 + 间隔 + 退避）、只对幂等方法生效、OnRetry 观察、自定义策略。
-/// </summary>
+/// <summary>25. 弹性重试：默认不重试、内置策略、只对幂等方法生效、OnRetry 观察、自定义策略。</summary>
 public sealed class RetryExample : IExample
 {
     /// <summary>演示服务器：首次运行创建后跨运行复用（服务端的 /flaky 计数会随运行累计）。</summary>
@@ -36,7 +34,7 @@ public sealed class RetryExample : IExample
             }
         });
 
-        // 每次运行用一个新的 tag：服务端按 tag 计「前 N 次失败」，演示结果稳定可复现
+        // 每次运行用新 tag：服务端按 tag 计「前 N 次失败」，结果稳定可复现
         var tag = Guid.NewGuid().ToString("N")[..8];
 
         // 1) 默认不重试：503 直接抛给调用方，一次请求就结束

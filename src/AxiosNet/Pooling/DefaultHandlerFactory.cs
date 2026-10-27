@@ -4,17 +4,11 @@ using System.Security.Authentication;
 
 namespace AxiosNet.Pooling;
 
-/// <summary>
-/// 按 <see cref="ConnectionPoolOptions"/> 构建库默认的 <see cref="SocketsHttpHandler"/>。
-/// 连接池与 <see cref="PooledHandlerContext.CreateDefaultHandler"/> 共用这套逻辑，避免配置漂移。
-/// </summary>
+/// <summary>按 <see cref="ConnectionPoolOptions"/> 构建库默认的 <see cref="SocketsHttpHandler"/>。</summary>
 internal static class DefaultHandlerFactory
 {
     /// <param name="o">池选项。</param>
-    /// <param name="cookieContainer">
-    /// 池共享的 Cookie 容器（<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空）：
-    /// 每个 origin 各持一个会按端口切割 Cookie，跨子域/换端口的会话就丢了。
-    /// </param>
+    /// <param name="cookieContainer">池共享的 Cookie 容器（<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空）。</param>
     public static SocketsHttpHandler Create(ConnectionPoolOptions o, CookieContainer? cookieContainer = null)
     {
         var handler = new SocketsHttpHandler
@@ -29,8 +23,7 @@ internal static class DefaultHandlerFactory
                 ? DecompressionMethods.All
                 : DecompressionMethods.None,
 
-            // h2 的并发度受服务端 MAX_CONCURRENT_STREAMS 限制：默认（false）超出的请求只能在单条连接上排队，
-            // 高峰期被单连接卡住。打开后按 MaxConnectionsPerServer 继续加连接，与 1.1 的连接上限同口径。
+            // h2 的并发度受服务端 MAX_CONCURRENT_STREAMS 限制，打开后按 MaxConnectionsPerServer 继续加连接。
             EnableMultipleHttp2Connections = o.EnableMultipleHttp2Connections,
             UseCookies = o.UseCookies,
             UseProxy = o.Proxy is not null,
@@ -53,7 +46,7 @@ internal static class DefaultHandlerFactory
                 EnabledSslProtocols = o.EnabledSslProtocols ?? SslProtocols.None
             };
 
-            // 扩展入口放最后：回调内的赋值是最终值，库不会二次覆盖
+            // 扩展入口放最后：回调内的赋值是最终值
             o.ConfigureSslOptions?.Invoke(handler.SslOptions);
         }
 

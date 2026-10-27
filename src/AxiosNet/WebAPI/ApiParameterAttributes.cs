@@ -1,21 +1,12 @@
 namespace AxiosNet.WebAPI;
 
-/// <summary>
-/// 把属性从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体，
-/// 亦不参与「默认 Body」的唯一未标注属性判定（内部状态 / 敏感数据属性用它摘出去）。
-/// <para>仅 [ApiIgnore] 一个属性标注时生效；与 Path / Query / Header / Body 同用直接报错（二义性）。</para>
-/// <para>属性值若要进请求体内部序列化，是请求体类型自己的事（那是 STJ 的 [JsonIgnore]），与本特性无关。</para>
-/// </summary>
+/// <summary>把属性从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / Body 同用直接报错。</summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class ApiIgnoreAttribute : Attribute
 {
 }
 
-/// <summary>
-/// 把属性值填进路径模板的 <c>{name}</c> 占位符（值做 URL 转义）。
-/// <para>占位符名称与绑定的匹配大小写不敏感（属性名回退 <c>Id</c> ↔ 模板 <c>{"{id}"}</c> 可直接对上）。</para>
-/// <para>不传名称时使用属性名；值为 <c>null</c> 时抛 <see cref="InvalidOperationException"/>（路径缺段无法成行）。</para>
-/// </summary>
+/// <summary>把属性值填进路径模板的 <c>{name}</c> 占位符（值做 URL 转义）。名称匹配大小写不敏感；不传名称时使用属性名；值为 <c>null</c> 时抛 <see cref="InvalidOperationException"/>。</summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class PathAttribute : Attribute
 {
@@ -31,15 +22,9 @@ public sealed class PathAttribute : Attribute
 }
 
 /// <summary>
-/// 把属性值序列化为 query string 参数（走 AxiosNet 的 params 规则：数组 <c>a[]=v</c>、嵌套对象 <c>a[b]=v</c>、null 跳过）。
-/// <para>
-/// 不传名称时使用属性名；<b>未标注任何参数特性的属性默认也是本语义</b>——
-/// 唯一例外：POST/PUT/PATCH 且模型恰好有一个未标注的<b>非标量</b>属性时，该属性默认按 <see cref="BodyAttribute"/> 绑定。
-/// </para>
-/// <para>
-/// <b>字典平铺</b>：属性值是字符串键字典且<b>没有显式命名</b>时，键直接进查询串（<c>?a=1&amp;b=2</c>，
-/// 与 Refit 的动态查询一致）；显式命名（<c>[Query("filters")]</c>）保留嵌套形态 <c>?filters[a]=1</c>。
-/// </para>
+/// 把属性值序列化为 query string 参数（数组 <c>a[]=v</c>、嵌套对象 <c>a[b]=v</c>、null 跳过）。
+/// 不传名称时使用属性名；未标注参数特性的属性默认也是本语义，例外是 POST/PUT/PATCH 且模型只有一个未标注的非标量属性时按 <see cref="BodyAttribute"/> 绑定。
+/// 字符串键字典且没有显式命名时键直接进查询串（<c>?a=1&amp;b=2</c>），显式命名则保留嵌套形态。
 /// </summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class QueryAttribute : Attribute
@@ -55,9 +40,7 @@ public sealed class QueryAttribute : Attribute
     }
 }
 
-/// <summary>
-/// 把属性值写进请求头。不传名称时使用属性名；值为 <c>null</c> 时跳过。
-/// </summary>
+/// <summary>把属性值写进请求头。不传名称时使用属性名；值为 <c>null</c> 时跳过。</summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class HeaderAttribute : Attribute
 {
@@ -73,22 +56,9 @@ public sealed class HeaderAttribute : Attribute
 }
 
 /// <summary>
-/// 把属性值作为请求体发送（序列化规则与 AxiosNet 的 <c>data</c> 完全一致：对象按 Content-Type 编码，
-/// string / byte[] / Stream / HttpContent 原样发送）。
-/// <para>
-/// 编码格式<b>只由 <see cref="AxiosConfig.ContentType"/> 决定</b>，库不按 data 的运行时类型猜格式：
-/// 请求体里含 <see cref="FormFile"/> 时必须显式把 ContentType 设为 <c>multipart/form-data</c>
-/// （或改用 <c>PostFormAsync</c>），否则默认的 JSON 编码无法承载文件流。
-/// </para>
-/// <para>
-/// 每个请求模型最多一个 <see cref="BodyAttribute"/> 属性；值为 <c>null</c> 时不发送请求体。
-/// </para>
-/// <para>
-/// 本特性在<b>单负载模型</b>上可以省略：POST/PUT/PATCH 且模型恰好有一个未标注的<b>非标量</b>属性
-/// （基元类型、枚举、string、decimal、DateTime/DateTimeOffset、TimeSpan、Guid 及其可空形态除外）时，
-/// 该属性默认按 Body 绑定。其余一切场景（标量属性、多个未标注属性、GET/DELETE 等方法）
-/// 未标注属性一律按 <see cref="QueryAttribute"/> 绑定，需要 Body 时显式标注本特性。
-/// </para>
+/// 把属性值作为请求体发送（序列化规则与 <c>data</c> 一致）。
+/// 编码格式只由 <see cref="AxiosConfig.ContentType"/> 决定，含 <see cref="FormFile"/> 时须显式设为 <c>multipart/form-data</c>；每个模型最多一个，值为 <c>null</c> 时不发送。
+/// 单负载模型可省略本特性：POST/PUT/PATCH 且模型只有一个未标注的非标量属性时，该属性默认按 Body 绑定。
 /// </summary>
 [AttributeUsage(AttributeTargets.Property, Inherited = true, AllowMultiple = false)]
 public sealed class BodyAttribute : Attribute

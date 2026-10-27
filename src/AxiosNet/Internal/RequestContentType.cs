@@ -6,19 +6,11 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 请求侧 <c>Content-Type</c> 的组装与解析：写头、按需补 charset、读取 boundary。
-/// <para>
-/// <see cref="Set"/> 是库内写 Content-Type 的<b>唯一入口</b>，统一在这里再拦一次控制字符
-/// （第三方 <c>IContentSerializer.MediaType</c> 是不可信输入，同样直接落到这个头上）。
-/// </para>
+/// <see cref="Set"/> 是库内写 Content-Type 的唯一入口，统一在这里拦控制字符。
 /// </summary>
 internal static class RequestContentType
 {
-    /// <summary>
-    /// 写 Content-Type（库内唯一入口，统一再拦一次控制字符）。
-    /// <para>第三方 <see cref="IContentSerializer.MediaType"/> 是不可信输入：含 CR/LF 时按库自己的
-    /// 分类口径是「声明写错了」（<c>ERR_BAD_OPTION_VALUE</c>）—— 裸抛 <see cref="ArgumentException"/>
-    /// 会被 <see cref="AxiosClient"/> 收成 <c>ERR_BAD_REQUEST</c>「请求体序列化失败」，分类错位。</para>
-    /// </summary>
+    /// <summary>写 Content-Type（库内唯一入口）；非法值按配置错误抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     public static void Set(HttpContent content, string mediaType, AxiosConfig? config = null)
     {
         try
@@ -35,8 +27,7 @@ internal static class RequestContentType
     }
 
     /// <summary>
-    /// 组合实际写入的 Content-Type：已自带 charset 时尊重用户；
-    /// 文本类型在显式设置 RequestEncoding 时补 charset，二进制类型不补。
+    /// 组合实际写入的 Content-Type：已自带 charset 时保留用户设置，文本类型在显式设置 RequestEncoding 时补 charset。
     /// </summary>
     public static string Compose(string mediaType, Encoding encoding, bool appendCharset)
     {
@@ -50,14 +41,10 @@ internal static class RequestContentType
         return mediaType + "; charset=" + encoding.WebName;
     }
 
-    /// <summary>
-    /// 媒体类型是否已声明 charset。按标准解析（容忍 <c>charset = utf-8</c> / 带引号等写法），
-    /// 与 <see cref="GetCharsetEncoding"/> 同一口径 —— 否则「解析得到 charset」与「判重看不出 charset」
-    /// 会把同一个编码写两遍。
-    /// </summary>
+    /// <summary>媒体类型是否已声明 charset（按标准解析，容忍 <c>charset = utf-8</c> / 带引号等写法）。</summary>
     private static bool HasCharsetParameter(string mediaType)
     {
-        // 快速排除：连 "charset" 字样都没有（补 charset 的常见情形）时不必建解析对象。
+        // 快速排除：连 "charset" 字样都没有时不必建解析对象。
         if (!mediaType.Contains("charset", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -74,13 +61,12 @@ internal static class RequestContentType
             }
         }
 
-        // 解析不出来（例如参数写法非标准）时退回朴素查找：宁可少补一次，也不要写出重复 charset
+        // 解析不出来时退回朴素查找：宁可少补一次，也不要写出重复 charset。
         return mediaType.Contains("charset=", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
-    /// 解析媒体类型参数里显式声明的 charset 对应的 <see cref="Encoding"/>；
-    /// 未声明、平台无法识别该 charset 名时为 <c>null</c>（无法判定的不拦截、不替换）。
+    /// 解析媒体类型参数里显式声明的 charset 对应的 <see cref="Encoding"/>；未声明或平台无法识别时为 <c>null</c>。
     /// </summary>
     public static Encoding? GetCharsetEncoding(string mediaType)
     {
@@ -109,7 +95,7 @@ internal static class RequestContentType
             }
             catch (ArgumentException)
             {
-                // 平台不识别的 charset 名（如自定义私有编码）：不在此判定
+                // 平台不识别的 charset 名不在此判定。
                 return null;
             }
         }
@@ -144,10 +130,7 @@ internal static class RequestContentType
         return value.Length == 0 ? null : value;
     }
 
-    /// <summary>
-    /// 内容自身是否已带 multipart boundary。请求体工厂（校验）与 header 应用（不允许覆盖 Content-Type）
-    /// 共用这条判定，因此挂在这里。
-    /// </summary>
+    /// <summary>内容自身是否已带 multipart boundary。</summary>
     public static bool HasMultipartBoundary(MediaTypeHeaderValue? contentType)
     {
         if (contentType?.MediaType is not { } mediaType

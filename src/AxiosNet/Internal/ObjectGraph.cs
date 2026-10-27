@@ -2,20 +2,13 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 对象图展平（表单 / multipart / params）的路径式环检测：只有节点重复出现在<b>自己的祖先链</b>里才算环。
-/// <para>
-/// 同一个子对象被多个分支共享（DAG）是正常的对象图，必须照常展开，所以不能只用「已访问集合」——
-/// 必须进入时登记、退出时注销。<c>JsonElement</c> 是树、不会有环，不需要经过这里。
-/// </para>
-/// <para>
-/// 没有环检测时自引用图会无限递归，最终 <see cref="StackOverflowException"/> 直接终止进程（不可捕获）；
-/// JSON 路径有 STJ 的环检测兜底，这条自研展平路径需要同样的保护。
-/// </para>
+/// 进入时登记、退出时注销，共享子对象（DAG）照常展开；<c>JsonElement</c> 是树，不经过这里。
 /// </summary>
 internal static class ObjectGraph
 {
     /// <summary>
-    /// 进入容器节点：登记到当前路径；命中祖先（环）抛 <see cref="DataCycleException"/>。
-    /// 返回值是路径集合（首次调用时创建），递归调用原样传入；离开时必须调用 <see cref="Exit"/>。
+    /// 进入容器节点：登记到当前路径，命中祖先（环）抛 <see cref="DataCycleException"/>。
+    /// 返回值是路径集合（首次调用时创建）；离开时必须调用 <see cref="Exit"/>。
     /// </summary>
     public static HashSet<object>? Enter(HashSet<object>? path, object value)
     {
@@ -57,9 +50,8 @@ internal static class ObjectGraph
 }
 
 /// <summary>
-/// 展平时发现对象图有环。只在本程序集内部流转，由 <see cref="FormBodyEncoder"/> /
-/// <see cref="MultipartBodyBuilder"/> / <see cref="UrlBuilder"/> 转成带配置上下文的
-/// <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// 展平时发现对象图有环，由 <see cref="FormBodyEncoder"/> / <see cref="MultipartBodyBuilder"/> /
+/// <see cref="UrlBuilder"/> 转成 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
 /// </summary>
 internal sealed class DataCycleException : Exception
 {

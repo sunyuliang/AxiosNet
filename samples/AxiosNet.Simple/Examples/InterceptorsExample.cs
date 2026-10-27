@@ -2,9 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 10. 请求/响应拦截器（含错误恢复）。
-/// </summary>
+/// <summary>10. 请求/响应拦截器（含错误恢复）。</summary>
 public sealed class InterceptorsExample : IExample
 {
     /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空。</summary>

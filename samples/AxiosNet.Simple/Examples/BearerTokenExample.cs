@@ -3,10 +3,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 21. API 令牌（Bearer Token）验证：登录签发、请求拦截器自动携带、服务端验证，
-/// 以及 401 后「刷新令牌 → 重试一次」的完整闭环。
-/// </summary>
+/// <summary>21. API 令牌（Bearer Token）验证：登录签发、自动携带、服务端验证，以及 401 后刷新重试。</summary>
 public sealed class BearerTokenExample : IExample
 {
     /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空。</summary>
@@ -20,7 +17,7 @@ public sealed class BearerTokenExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 静态复用：首次运行创建；拦截器每次运行重挂（会话是每轮新建的），先清掉上一轮的
+        // 静态复用：拦截器每次运行重挂，先清掉上一轮的
         var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
         http.Interceptors.Request.Clear();
         http.Interceptors.Response.Clear();
@@ -34,8 +31,7 @@ public sealed class BearerTokenExample : IExample
 
         // ---- 2) 密码错误：服务端校验凭据，401 ----
         Console.WriteLine("  [2] 错误密码登录（凭据校验失败）");
-        await ShowErrorAsync(http.PostAsync(
-            DemoAuthApi.LoginPath, new { username = "alice", password = "wrong-password" }));
+        await ShowErrorAsync(http.PostAsync(DemoAuthApi.LoginPath, new { username = "alice", password = "wrong-password" }));
 
         // ---- 3) 正确登录：签发 access / refresh 令牌 ----
         Console.WriteLine("  [3] 正确登录，签发令牌");
@@ -71,10 +67,7 @@ public sealed class BearerTokenExample : IExample
         Console.WriteLine("    · 并发 401 时刷新用 SemaphoreSlim 单闸串行化，真实项目里还应做「双重检查 + 失败让排队请求快速失败」");
     }
 
-    /// <summary>
-    /// 请求拦截器：自动附加 AccessToken（登录 / 刷新端点除外——它们一个不带令牌、一个用 body 里的 refreshToken）。
-    /// 响应拦截器：401 → 刷新令牌 → 带 X-Token-Retried 标记重试一次。
-    /// </summary>
+    /// <summary>挂载两个拦截器：请求侧附加 AccessToken，响应侧 401 刷新令牌并重试一次。</summary>
     private static void InstallInterceptors(AxiosClient http, TokenSession session)
     {
         http.Interceptors.Request.Use(config =>
@@ -99,7 +92,7 @@ public sealed class BearerTokenExample : IExample
                     throw ex;
                 }
 
-                // 属性不参与可空流分析，先落到局部变量再判断
+                // 属性不参与可空流分析，先取到局部变量
                 var config = error.Config;
                 if (config is null
                     || config.Url?.Contains("/api/token/login", StringComparison.OrdinalIgnoreCase) == true
@@ -107,8 +100,7 @@ public sealed class BearerTokenExample : IExample
                     || config.Headers.Has("X-Token-Retried")
                     || session.RefreshToken is null)
                 {
-                    // 登录 / 刷新端点自身的 401、已重试过、或从未登录（没有刷新令牌）：
-                    // 这不是「过期」，是认证失败，直接抛给调用方
+                    // 登录 / 刷新端点自身的 401、已重试过、或从未登录：这不是过期，直接抛给调用方
                     throw ex;
                 }
 
@@ -138,9 +130,7 @@ public sealed class BearerTokenExample : IExample
         }
     }
 
-    /// <summary>
-    /// 客户端令牌会话：保存 access / refresh 令牌；刷新用单闸串行化，避免并发 401 时多次刷新互相轮换作废。
-    /// </summary>
+    /// <summary>客户端令牌会话：保存 access / refresh 令牌，刷新时单闸串行化。</summary>
     private sealed class TokenSession
     {
         private readonly AxiosClient _http;
@@ -154,9 +144,7 @@ public sealed class BearerTokenExample : IExample
 
         public async Task LoginAsync(int ttlSeconds = 300)
         {
-            var response = await _http.PostAsync<JsonElement>(
-                $"{DemoAuthApi.LoginPath}?ttl={ttlSeconds}",
-                new { username = "alice", password = "wonderland" });
+            var response = await _http.PostAsync<JsonElement>($"{DemoAuthApi.LoginPath}?ttl={ttlSeconds}", new { username = "alice", password = "wonderland" });
 
             Apply(response.Data);
             Console.WriteLine(
@@ -176,8 +164,7 @@ public sealed class BearerTokenExample : IExample
                 }
 
                 Console.WriteLine("      [刷新] 用 refresh token 轮换新的 access token …");
-                var response = await _http.PostAsync<JsonElement>(
-                    DemoAuthApi.RefreshPath, new { refreshToken });
+                var response = await _http.PostAsync<JsonElement>(DemoAuthApi.RefreshPath, new { refreshToken });
 
                 Apply(response.Data);
                 Console.WriteLine($"      [刷新] 完成，新 access={Shorten(AccessToken)}");

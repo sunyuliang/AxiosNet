@@ -4,10 +4,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>
-/// 18. 单文件上传的两种形态：裸流直传（请求体就是文件字节）与 multipart 单文件。
-/// 演示服务器用 MultipartReader 按字节精确解析，回报文件名/字段名/字节数/SHA256。
-/// </summary>
+/// <summary>18. 单文件上传的两种形态：裸流直传（请求体就是文件字节）与 multipart 单文件。</summary>
 public sealed class SingleFileUploadExample : IExample
 {
     /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
@@ -23,7 +20,7 @@ public sealed class SingleFileUploadExample : IExample
 
         var path = Path.Combine(Path.GetTempPath(), "axios-net-single-file.bin");
         var bytes = new byte[256 * 1024];
-        Random.Shared.NextBytes(bytes);   // 含 0x00 / CRLF，用于验证服务端按字节截取不会截断或污染
+        Random.Shared.NextBytes(bytes);   // 含 0x00 / CRLF，验证服务端按字节截取不会污染内容
         await File.WriteAllBytesAsync(path, bytes);
 
         var localHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();

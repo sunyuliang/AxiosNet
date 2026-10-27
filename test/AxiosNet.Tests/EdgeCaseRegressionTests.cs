@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Pooling;
@@ -256,9 +256,7 @@ public sealed class EdgeCaseRegressionTests
             (object?)null,
             c => c.Headers.Set("Content-Disposition", "attachment; filename=a.txt"));
 
-        Assert.Equal(
-            "attachment; filename=a.txt",
-            server.Received[0].Headers.GetValueOrDefault("content-disposition"));
+        Assert.Equal("attachment; filename=a.txt", server.Received[0].Headers.GetValueOrDefault("content-disposition"));
     }
 
     [Fact]
@@ -459,9 +457,7 @@ public sealed class EdgeCaseRegressionTests
 
         var sent = server.Received[0];
         Assert.Equal(payload, sent.Body);
-        Assert.Equal(
-            payload.Length.ToString(CultureInfo.InvariantCulture),
-            sent.Headers.GetValueOrDefault("Content-Length"));
+        Assert.Equal(payload.Length.ToString(CultureInfo.InvariantCulture), sent.Headers.GetValueOrDefault("Content-Length"));
     }
 
     // ------------------------------------------------------------------

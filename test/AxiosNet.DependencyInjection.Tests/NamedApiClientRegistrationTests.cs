@@ -1,4 +1,4 @@
-using AxiosNet;
+﻿using AxiosNet;
 using AxiosNet.DependencyInjection;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -48,8 +48,7 @@ public sealed class NamedApiClientRegistrationTests
 
         var resolver = provider.GetRequiredService<IApiClientResolver>();
 
-        // 站点 configure 抛错原样透出（此前 holder 先登记后创建，失败时每次重试
-        // 都新建一个连接池留在 _owned 里直到容器退出才释放）
+        // 站点 configure 抛错原样透出，且失败不留下已登记的连接池。
         var ex = Assert.Throws<InvalidOperationException>(() => resolver.Get("bad"));
         Assert.Equal("boom", ex.Message);
 
@@ -311,7 +310,7 @@ public sealed class NamedApiClientRegistrationTests
         ((IDisposable)resolver).Dispose();
 
         // 释放后 Get 已解析站点：直接抛 ObjectDisposedException，不返回已销毁的客户端
-        // （此前返回死客户端，错误要到发送请求时才以 ObjectDisposedException 形式漏出）
+        // 错误应在取出时暴露，而不是等到发送请求时才以 ObjectDisposedException 漏出。
         Assert.Throws<ObjectDisposedException>(() => resolver.Get("a"));
 
         // 释放后 Get 从未解析过的站点同样抛错：否则会新建一个没有属主的客户端，连接池直接泄漏
