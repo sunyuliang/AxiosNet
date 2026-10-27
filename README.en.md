@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1194%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1202%20passed-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -366,6 +366,7 @@ await http.PostAsync("upload", payload, c =>
 - Callbacks run **synchronously**; offload expensive work yourself. Reports are throttled to one per 50 ms.
 - A throwing callback aborts the request: upload phase → `ERR_BAD_REQUEST`, download phase → `ERR_BAD_RESPONSE`, original exception in `Cause`.
 - `MaxContentLength`: plain responses are counted while reading and aborted on overflow; `ResponseType.Stream` pre-checks the declared length and keeps counting while reading.
+- `Content-Length` is a hint, never a cut-off: when the declared value is shorter than the real body (rewritten by a proxy, a custom `HttpContent`, or a handler that does not truncate), the body is still read to the end — no tail loss and no bypass of `MaxContentLength`.
 - `MaxBodyLength` only applies when the body length is computable (JSON / form / `byte[]` / seekable stream); multipart is not intercepted.
 - Negative values throw `ERR_BAD_OPTION_VALUE`; `MaxRate = 0` means unlimited.
 - `MaxRate` timing starts at the **first transferred byte**: the gap between receiving the response and starting to read (thread pool queueing, doing other work first) is not treated as spent budget, so reading later never loosens the cap.
@@ -1095,9 +1096,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1137 | `net8.0` / `net6.0` | 2274 |
+| `AxiosNet.Tests` (core + declarative) | 1145 | `net8.0` / `net6.0` | 2290 |
 | `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **Total** | **1194** | | **2388** |
+| **Total** | **1202** | | **2404** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

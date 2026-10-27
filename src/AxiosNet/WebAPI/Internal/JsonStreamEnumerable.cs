@@ -16,6 +16,12 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     private const string DoneSentinel = "[DONE]";
     private const string ArrayFormatName = "JSON array";
 
+    /// <summary>元素收尾后允许继续留用的溢写缓冲上限（8 块）：超过说明历史上出现过超大元素，还掉比长驻划算。</summary>
+    private const int MaxRetainedSpill = 8 * ReadChunk;
+
+    /// <summary>一帧收尾后允许继续留用的帧缓冲容量（字符）：超过说明刚放过一个超大帧，重新开始比长驻划算。</summary>
+    private const int MaxRetainedFrameChars = 8 * ReadChunk;
+
     /// <summary>单帧 / 单元素上限（字节），构造时从配置解析一次（未设置时用 8 MB）。只在比较与扩容封顶时使用，从不按它预分配。</summary>
     private readonly int _maxFrameBytes;
 
@@ -30,7 +36,8 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     /// <summary>整个响应流固定的序列化器（媒体类型与配置都不变）：避免每帧重复查注册表 / 归一化媒体类型。</summary>
     private readonly IContentSerializer _serializer;
 
-    private readonly StringBuilder _frameData = new();
+    /// <summary>SSE 帧正文的累积缓冲；按帧峰值扩容，收尾时超过基础容量就换新实例（见 <see cref="TakeFrame"/>）。</summary>
+    private StringBuilder _frameData = new();
 
     // —— JSON 数组模式的分帧状态（其余格式不用） ——
 
@@ -219,10 +226,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 // EOF：SSE 可能没写最后的空行，残留的 data 也要交付一次
                 if (_format == AxiosStreamFormat.ServerSentEvents && _frameData.Length > 0)
                 {
-                    var tail = _frameData.ToString();
-                    _frameData.Clear();
-                    _frameBytes = 0;
-                    return IsDone(tail) ? null : tail;
+                    return TakeFrame();
                 }
 
                 return null;
@@ -247,10 +251,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                     continue;
                 }
 
-                var frame = _frameData.ToString();
-                _frameData.Clear();
-                _frameBytes = 0;
-                return IsDone(frame) ? null : frame;
+                return TakeFrame();
             }
 
             var text = line.Text;
@@ -292,6 +293,19 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
     private static bool IsDone(string frame)
         => string.Equals(frame, DoneSentinel, StringComparison.Ordinal);
+
+    /// <summary>
+    /// 取走当前累积的 SSE 帧并重置帧状态；<c>[DONE]</c> 返回 <c>null</c>（流结束）。
+    /// <see cref="StringBuilder.Clear"/> 只清长度、容量留着：超大帧之后整条流会一直拖着那块 char 数组（UTF-16 双倍字节），
+    /// 因此超过基础容量就换一个新实例，代价是一帧的零头分配。
+    /// </summary>
+    private string? TakeFrame()
+    {
+        var frame = _frameData.ToString();
+        _frameData = _frameData.Capacity > MaxRetainedFrameChars ? new StringBuilder() : _frameData.Clear();
+        _frameBytes = 0;
+        return IsDone(frame) ? null : frame;
+    }
 
     // JSON 数组：Utf8JsonReader 增量定位顶层元素
 
@@ -453,9 +467,18 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
         var length = _elementSpilled;
         _elementSpilled = 0;
-        return length == 0
+
+        // 溢写缓冲按高水位长驻：一个超大元素之后，整条流都会拖着那块内存（上限 8 MB）。
+        // 元素收尾后超过基础容量的就还掉，下一个大元素再按需长回来；小元素（绝大多数）保持零分配复用。
+        var buffer = _elementSpill;
+        if (buffer is not null && buffer.Length > MaxRetainedSpill)
+        {
+            _elementSpill = null;
+        }
+
+        return length == 0 || buffer is null
             ? string.Empty
-            : ResponseTextDecoder.DecodeResolved(_elementSpill!.AsSpan(0, length), _encoding);
+            : ResponseTextDecoder.DecodeResolved(buffer.AsSpan(0, length), _encoding);
     }
 
     /// <summary>缓冲区 [start, end) 区间是否只有 JSON 空白（空格 / 制表 / CR / LF）。</summary>

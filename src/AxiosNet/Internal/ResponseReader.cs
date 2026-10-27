@@ -47,9 +47,18 @@ internal static class ResponseReader
             request);
     }
 
+    /// <summary>段式累积的段大小：起步 80 KB，读满一段就倍增，到 8 MB 后等长追加。</summary>
+    private const int InitialSegment = 81920;
+
+    private const int MaxSegment = 8 * 1024 * 1024;
+
+    /// <summary>声明长度的预分配信任上限：不超过它就按声明值一次分配到位，超过就走段式累积。</summary>
+    private const long MaxPreallocated = 8 * 1024 * 1024;
+
     /// <summary>
-    /// 读取整个响应体；未声明长度时按已读字节执行 maxContentLength。
-    /// 本方法不是 async，流的释放由两个读取方各自的 finally 负责（每条路径恰好一次）。
+    /// 读取整个响应体：声明长度在信任上限内时按声明值预分配，否则段式累积；两条路径都按真实字节数执行 maxContentLength。
+    /// 本方法只管读，<b>不释放流</b> —— 流的释放由取得它的那一层负责（<see cref="ReadAsync"/>），
+    /// 这样「预分配 → 溢出转段式」的交接不必和释放点纠缠，也不会出现重复释放。
     /// </summary>
     private static Task<byte[]> ReadAllBytesAsync(
         Stream stream,
@@ -57,79 +66,117 @@ internal static class ResponseReader
         HttpRequestMessage request,
         CancellationToken cancellationToken,
         long? declaredLength)
-    {
-        // 声明了长度且不超过 8MB 时按声明值预分配，否则视为未知长度走段式累积。
-        const long maxPreallocated = 8 * 1024 * 1024;
-        return declaredLength is > 0 and <= maxPreallocated
-            ? ReadPreallocatedAsync(stream, cancellationToken, (int)declaredLength.Value)
-            : ReadSegmentedAsync(stream, config, request, cancellationToken);
-    }
+        => declaredLength is > 0 and <= MaxPreallocated
+            ? ReadDeclaredLengthAsync(stream, config, request, cancellationToken, (int)declaredLength.Value)
+            : ReadSegmentedAsync(stream, config, request, cancellationToken, prefix: null);
 
     /// <summary>
-    /// 已知长度（≤ 信任上限）的读取：分配精确长度的数组读满后直接交出，提前结束时裁剪成实际长度。
-    /// 超限的声明长度已在 <see cref="WrapDownloadStream"/> 拦下，这里不再判定。
+    /// 已知长度（≤ 信任上限）的读取：按声明值预分配。<b>声明长度只是提示</b> —— 读满之后还要再探一次，
+    /// 确认没有尾部数据才算结束：代理改头、自制 <see cref="System.Net.Http.HttpContent"/>、
+    /// Handler 不按声明截断时，声明值都比真实正文短，直接 return 会静默丢掉尾部（同时绕过 maxContentLength）。
+    /// 恰好命中时零拷贝交出预分配数组；多出数据时把它当作段式累积的第一段。
     /// </summary>
-    private static async Task<byte[]> ReadPreallocatedAsync(
+    private static async Task<byte[]> ReadDeclaredLengthAsync(
         Stream stream,
+        AxiosConfig config,
+        HttpRequestMessage request,
         CancellationToken cancellationToken,
         int capacity)
     {
+        var buffer = new byte[capacity];
+        var filled = 0;
+
+        while (filled < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(filled), cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                // 连接提前关闭：裁剪掉尾部未写区域，不交给调用方。
+                return Trim(buffer, filled);
+            }
+
+            filled += read;
+        }
+
+        // 声明值已读满：再读一块确认正文真的结束（此时不能直接交出 buffer）。
+        var probe = ArrayPool<byte>.Shared.Rent(InitialSegment);
+        int more;
         try
         {
-            var buffer = new byte[capacity];
-            var filled = 0;
-
-            while (filled < buffer.Length)
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(filled), cancellationToken).ConfigureAwait(false);
-                if (read == 0)
-                {
-                    break;
-                }
-
-                filled += read;
-            }
-
-            if (filled == buffer.Length)
-            {
-                return buffer;
-            }
-
-            // 连接提前关闭：裁剪掉尾部未写区域，不交给调用方。
-            var trimmed = new byte[filled];
-            buffer.AsSpan(0, filled).CopyTo(trimmed);
-            return trimmed;
+            more = await stream.ReadAsync(probe, cancellationToken).ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex) when (ex is not AxiosException)
         {
-            // 本方法拥有流的释放（见 ReadAllBytesAsync）。
-            stream.Dispose();
+            // 探测只是「确认有没有尾部数据」的启发式，它失败不该让已经按声明读满的正文变成失败
+            //（本改动之前这里根本不读，所以这条路径必须保持「正文完整就成功」）。
+            // AxiosException 不在此列：那可能是正文上限在读取时被触发（ProgressReadStream），吞掉等于绕过 MaxContentLength。
+            ArrayPool<byte>.Shared.Return(probe);
+            return buffer;
         }
+
+        if (more == 0)
+        {
+            // 声明值与正文一致：零拷贝交出，不为「探测尾部」付第二份载荷的分配。
+            ArrayPool<byte>.Shared.Return(probe);
+            return buffer;
+        }
+
+        return await ReadSegmentedAsync(stream, config, request, cancellationToken, prefix: buffer, current: probe, filled: more)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
-    /// 段式累积（未声明长度）：从 <see cref="ArrayPool{T}"/> 租段、倍增增长，收齐后装配一个精确数组。
+    /// 段式累积：从 <see cref="ArrayPool{T}"/> 租段、倍增增长，收齐后装配一个精确数组。
+    /// <paramref name="prefix"/> 是「已读满、所有权已交出」的预分配数组（不是租来的，不归还池）；
+    /// <paramref name="current"/> / <paramref name="filled"/> 允许调用方交进一段已读过若干字节的池化段。
+    /// 池化数组只有一个归还点：交进 <c>segments</c> 的同时把 <c>current</c> 换成新段，
+    /// 因此任何失败路径都不会出现「既在列表里又被 finally 归还」的重复归还。
     /// </summary>
     private static async Task<byte[]> ReadSegmentedAsync(
         Stream stream,
         AxiosConfig config,
         HttpRequestMessage request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        byte[]? prefix,
+        byte[]? current = null,
+        int filled = 0)
     {
-        const int initialSegment = 81920;
-        const int maxSegment = 8 * 1024 * 1024;
-
         var segments = new List<byte[]>(4);
-        var current = ArrayPool<byte>.Shared.Rent(initialSegment);
-        var filled = 0;
-        long total = 0;
+
+        // segments 的前 ownedCount 段归调用方（预分配前缀），不归还池。
+        var ownedCount = 0;
+        var total = 0L;
+
+        if (prefix is not null)
+        {
+            segments.Add(prefix);
+            ownedCount = 1;
+            total = prefix.Length;
+        }
+
+        current ??= ArrayPool<byte>.Shared.Rent(InitialSegment);
+        total += filled;
 
         try
         {
             while (true)
             {
-                var read = await stream.ReadAsync(current.AsMemory(filled), cancellationToken)
-                    .ConfigureAwait(false);
+                // 上限按真实字节数判（含预分配前缀与探测块），声明长度不参与。
+                if (config.LimitsOrNull?.MaxContentLength is long limit && total > limit)
+                {
+                    throw AxiosException.MaxContentLength(config, request, total, limit);
+                }
+
+                if (filled == current.Length)
+                {
+                    // 读满一段：先租到下一段再交出当前段，中途失败不会让同一数组被归还两次。
+                    var next = ArrayPool<byte>.Shared.Rent(Math.Min(current.Length * 2, MaxSegment));
+                    segments.Add(current);
+                    current = next;
+                    filled = 0;
+                }
+
+                var read = await stream.ReadAsync(current.AsMemory(filled), cancellationToken).ConfigureAwait(false);
                 if (read <= 0)
                 {
                     break;
@@ -137,21 +184,6 @@ internal static class ResponseReader
 
                 filled += read;
                 total += read;
-
-                if (config.LimitsOrNull?.MaxContentLength is long limit && total > limit)
-                {
-                    throw AxiosException.MaxContentLength(config, request, total, limit);
-                }
-
-                if (filled < current.Length)
-                {
-                    continue;
-                }
-
-                // 读满一段：入列，再租下一段（倍增，到上限后等长追加）。
-                segments.Add(current);
-                current = ArrayPool<byte>.Shared.Rent(Math.Min(current.Length * 2, maxSegment));
-                filled = 0;
             }
 
             // 装配成精确长度的成品；超过 Array.MaxLength 时换成统一错误模型。
@@ -160,28 +192,46 @@ internal static class ResponseReader
                 throw AxiosException.ResponseTooLarge(config, request, total);
             }
 
-            var result = new byte[total];
-            var offset = 0;
-            foreach (var segment in segments)
-            {
-                Array.Copy(segment, 0, result, offset, segment.Length);
-                offset += segment.Length;
-            }
-
-            Array.Copy(current, 0, result, offset, filled);
-            return result;
+            return Assemble(segments, current, filled, total);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(current);
-            foreach (var segment in segments)
-            {
-                ArrayPool<byte>.Shared.Return(segment);
-            }
 
-            // 本方法拥有流的释放（见 ReadAllBytesAsync）。
-            stream.Dispose();
+            for (var i = ownedCount; i < segments.Count; i++)
+            {
+                ArrayPool<byte>.Shared.Return(segments[i]);
+            }
         }
+    }
+
+    /// <summary>把「若干已读满的段 + 尾段的有效字节」装配成一个精确长度数组。</summary>
+    private static byte[] Assemble(List<byte[]> segments, byte[] current, int filled, long total)
+    {
+        var result = new byte[total];
+        var offset = 0;
+
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            Array.Copy(segment, 0, result, offset, segment.Length);
+            offset += segment.Length;
+        }
+
+        if (filled > 0)
+        {
+            Array.Copy(current, 0, result, offset, filled);
+        }
+
+        return result;
+    }
+
+    /// <summary>把预分配缓冲裁剪成实际长度（读到一半连接关闭时用）。</summary>
+    private static byte[] Trim(byte[] buffer, int filled)
+    {
+        var trimmed = new byte[filled];
+        buffer.AsSpan(0, filled).CopyTo(trimmed);
+        return trimmed;
     }
 
     /// <summary>
@@ -222,7 +272,17 @@ internal static class ResponseReader
             Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             var downloadStream = WrapDownloadStream(responseStream, message, request, config);
             var declared = message.Content.Headers.ContentLength;
-            var bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared).ConfigureAwait(false);
+            byte[] bytes;
+            try
+            {
+                bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared).ConfigureAwait(false);
+            }
+            finally
+            {
+                // 取得正文流的是这一层，释放也在这一层：读取方法不持有释放责任（读失败同样要还连接）。
+                downloadStream.Dispose();
+            }
+
             bodyBytes = bytes.Length;
 
             data = ConvertBody(
