@@ -95,6 +95,14 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
     }
 
+    /// <summary>清空：无条件发布空版本。</summary>
+    /// <remarks>
+    /// 这里刻意是「盲写常量」而不是 CAS 循环，别当成缺陷改：目标值是单例 <see cref="Empty"/>，整条路径没有「读-改-写」，
+    /// 因此不存在可丢的更新 —— 与并发 <see cref="Add"/> / <see cref="Remove"/> 的任意交错都能线性化为「Add 在 Clear 之前」（元素被清掉，
+    /// 合法）或「之后」（元素留下，合法）。改成 CAS 循环语义完全等价（CAS 失败后重读，照样写空，反而会清掉更多），
+    /// 却会给人「Clear 只清它读到的那个版本」这种并不成立的印象。
+    /// 前提是数组永不就地修改，<see cref="Empty"/> 与快照数组都只读；破坏这个前提才需要真正的提交换。
+    /// </remarks>
     public void Clear()
     {
         // 空版本没有内容可清，不发布也不分配。

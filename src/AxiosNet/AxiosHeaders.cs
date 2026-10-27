@@ -197,6 +197,11 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
+    /// <summary>清空：无条件发布空版本。</summary>
+    /// <remarks>
+    /// 同 <see cref="Internal.SynchronizedList{T}.Clear"/>：盲写单例 <see cref="Empty"/>，没有「读-改-写」就没有丢更新，
+    /// 与并发 <see cref="Set(string, string?)"/> / <see cref="Delete"/> 的任意交错都可线性化。改成 CAS 循环是等价改写，不要为了「统一」而动。
+    /// </remarks>
     public void Clear()
     {
         // 空版本没有内容可清，不发布也不分配。
