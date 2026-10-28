@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using AxiosNet.Internal;
 
 namespace AxiosNet.Pipeline;
@@ -17,8 +18,11 @@ public static partial class Attempt
     /// 端点序号都跟着新端点走（熔断按端点独立成账）。
     /// </para>
     /// <para>
-    /// 未配置（端点表为 <c>null</c> / 空）时是纯直通。4xx、<c>ERR_QUEUE_TIMEOUT</c>、配置 / 编程错误与取消
-    /// 都不换端点 —— 换镜像改变不了它们；<c>ERR_CIRCUIT_OPEN</c> 换（熔断按端点独立成账）。
+    /// 未配置（端点表为 <c>null</c> / 空）时是纯直通。4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、
+    /// 配置 / 编程错误与取消都不换端点 —— 闸门是客户端级的，换镜像改变不了它们；
+    /// <c>ERR_CIRCUIT_OPEN</c> 换（熔断按端点独立成账）。
+    /// 换端点途中撞上闸门拒绝时，若前面已经记下真实失败，抛出的仍是那条真实失败（与对冲同一口径），
+    /// 不会用「没排上队」盖掉能定位问题的故障。
     /// 换端点要求正文能按顺序重放，与重试同一份要求；跑不了当前 HTTP 版本的端点（如明文镜像 + 严格 h3）、
     /// 以及拼出来就是当前地址的端点（同 origin 且不带路径前缀）都直接跳过并继续下一个，
     /// 全部端点都不可用时才把第一条错误抛出。
@@ -90,6 +94,15 @@ public static partial class Attempt
             {
                 return await next(request, attemptCtx).ConfigureAwait(false);
             }
+            catch (Exception ex) when (IsGateRejection(ex) && firstFailure is { } realFailure)
+            {
+                // 备用端点连槽位都没拿到（排队超时 / 队列满）：闸门是客户端级的，换下一个端点也过不去；
+                // 它说明不了下游健康与否，抛已记下的真实失败，别让它盖掉能定位问题的那一条（与对冲同一口径）。
+                ExceptionDispatchInfo.Capture(realFailure).Throw();
+
+                // 不可达：Throw() 不返回，编译器不知道。
+                throw;
+            }
             catch (Exception ex) when (CanFailover(ex, ctx.ExternalToken))
             {
                 // 这个端点用不了：记下第一条失败（决定最终错误），继续下一个端点。
@@ -111,8 +124,8 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 换端点判据：只换「换一个下游就能解决」的故障。取消、配置 / 编程错误、闸门排队超时、总预算耗尽与 4xx
-    /// 换镜像都改变不了，原样抛给上层；熔断拒绝要换 —— 熔断按 <c>host:port</c> 独立成账，
+    /// 换端点判据：只换「换一个下游就能解决」的故障。取消、配置 / 编程错误、闸门拒绝（排队超时 / 队列满）、
+    /// 总预算耗尽与 4xx 换镜像都改变不了，原样抛给上层；熔断拒绝要换 —— 熔断按 <c>host:port</c> 独立成账，
     /// 主端点开着的那一个挡不住备用端点。
     /// </summary>
     private static bool CanFailover(Exception exception, CancellationToken externalToken)

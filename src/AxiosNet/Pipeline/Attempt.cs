@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using AxiosNet.Circuit;
 using AxiosNet.Internal;
 using AxiosNet.Retry;
@@ -79,6 +80,9 @@ public static partial class Attempt
         // 放在这里而不是建上下文时：管线里没有重试中间件就不该做这项检查。
         var bodyRewind = RetryBody.Prepare(ctx.Config);
 
+        // 第一条真实失败（非闸门拒绝）：后面某轮若在闸门被拒，抛的是它而不是「没排上队」（与对冲同一口径）。
+        Exception? firstRealFailure = null;
+
         for (var attempt = 1; ; attempt++)
         {
             if (attempt > 1)
@@ -106,8 +110,25 @@ public static partial class Attempt
                     throw;
                 }
 
-                // 策略说「不重试」的一律原样冒给调用方：取消 / 熔断拒绝 / 排队超时本来就是终止原因，
-                // 不能因为「这一刻预算恰好也空了」就把错误码改写成 ECONNABORTED（调用方会据此误判该重试）。
+                // 本次尝试连槽位都没拿到（排队超时 / 队列满）：它说明不了下游健康与否，库级也不重试它。
+                // 前面已经有真实失败时抛那一条，别让「没排上队」盖掉能定位问题的故障（与对冲同一口径）；
+                // 没有更早的失败，入口拥塞本身就是本次请求的结论，照旧抛它。
+                if (IsGateRejection(ex))
+                {
+                    if (firstRealFailure is not null)
+                    {
+                        ExceptionDispatchInfo.Capture(firstRealFailure).Throw();
+                    }
+                }
+                else
+                {
+                    // 只记第一条：后续失败多半是同一个原因的延续，首条最接近「请求为什么没成」。
+                    firstRealFailure ??= ex;
+                }
+
+                // 策略说「不重试」的一律原样冒给调用方：取消 / 熔断拒绝 / 排队超时（前面没有真实失败时）
+                // 本来就是终止原因，不能因为「这一刻预算恰好也空了」就把错误码改写成 ECONNABORTED
+                // （调用方会据此误判该重试）。
                 if (!CanRetry(failed, externalToken, policy))
                 {
                     throw;
@@ -363,9 +384,9 @@ public static partial class Attempt
             return false;
         }
 
-        if (context.Exception is AxiosException { Code: AxiosException.ErrQueueTimeout })
+        if (context.Exception is AxiosException { Code: AxiosException.ErrQueueTimeout or AxiosException.ErrQueueFull })
         {
-            // 并发闸门排队超时说明本实例在途已经顶到上限 —— 立刻重发只会再撞同一个满载的闸门，
+            // 排队超时 / 队列满说明本实例的在途 + 排队都已顶到上限 —— 立刻重发只会再撞同一个满载的闸门，
             // 把「等并发降下来」这件该由调用方（降速 / 扩容 / 换实例）决定的事，变成库内的无效循环。
             return false;
         }

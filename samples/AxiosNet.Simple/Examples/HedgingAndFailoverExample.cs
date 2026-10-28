@@ -51,7 +51,7 @@ public sealed class HedgingAndFailoverExample : IExample
         Console.WriteLine(
             $"  备用端点: status={mirrored.Status}, data={mirrored.Data}, 实际发出={mirrored.Request?.RequestUri}");
 
-        Console.WriteLine("  说明: 只有网络错误 / 发出后的超时 / 连接池耗尽 / 熔断拒绝 / 5xx 才换端点；4xx、排队超时、取消、预算耗尽都没发出，都不换");
+        Console.WriteLine("  说明: 只有网络错误 / 发出后的超时 / 连接池耗尽 / 熔断拒绝 / 5xx 才换端点；4xx、排队超时、队列满、取消、预算耗尽都没发出，都不换");
         Console.WriteLine("  说明: 每个端点各有自己的超时预算与熔断账；换端点后租约、熔断维度与遥测标签都跟着新端点走");
     }
 }

@@ -30,6 +30,13 @@ public sealed class AxiosException : Exception
     /// </summary>
     public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
 
+    /// <summary>
+    /// 并发闸门的排队队列已满（<see cref="AxiosConfig.LimitSettings.MaxQueueLength"/>）：请求<b>没有发出</b>。
+    /// 与 <see cref="ErrQueueTimeout"/> 同族但含义不同：不是「等太久了」，而是「连排队的名额都没了」——
+    /// 说明调用方的并发压力已经超过本实例的承受能力，应降速 / 换实例，而不是加大排队时间。
+    /// </summary>
+    public const string ErrQueueFull = "ERR_QUEUE_FULL";
+
     /// <summary>熔断打开：请求<b>没有发出</b>（<see cref="AxiosConfig.Circuit"/>）。</summary>
     public const string ErrCircuitOpen = "ERR_CIRCUIT_OPEN";
 
@@ -230,6 +237,20 @@ public sealed class AxiosException : Exception
             request,
             null,
             inner);
+    }
+
+    /// <summary>并发闸门的排队队列已满：超过 <c>Limits.MaxQueueLength</c>，请求没有发出。</summary>
+    internal static AxiosException QueueFull(AxiosConfig config, HttpRequestMessage? request, int maxQueueLength, int maxConcurrency)
+    {
+        return new AxiosException(
+            $"concurrency queue is full (MaxQueueLength = {maxQueueLength}, MaxConcurrentRequests = {maxConcurrency}): "
+            + "reduce parallel callers, raise Limits.MaxQueueLength / Limits.MaxConcurrentRequests, "
+            + "or back off and retry on ERR_QUEUE_FULL",
+            ErrQueueFull,
+            config,
+            request,
+            null,
+            null);
     }
 
     internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, Exception? inner = null)

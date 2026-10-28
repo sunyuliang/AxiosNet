@@ -35,6 +35,7 @@ internal sealed class TelemetryProbe : IDisposable
         AxiosTelemetry.PoolEndpointsCreatedInstrumentName,
         AxiosTelemetry.PoolEndpointsEvictedInstrumentName,
         AxiosTelemetry.GateQueueDepthInstrumentName,
+        AxiosTelemetry.GateRejectionsInstrumentName,
         AxiosTelemetry.CircuitStateInstrumentName
     };
 

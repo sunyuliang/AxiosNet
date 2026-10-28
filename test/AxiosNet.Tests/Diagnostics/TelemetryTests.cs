@@ -262,6 +262,70 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task Metrics_GateRejections_ReportsQueueFull()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        var path = UniquePath("gate-full");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Limits = { MaxConcurrentRequests = 1, MaxQueueLength = 1, QueueTimeout = TimeSpan.FromSeconds(5) }
+        });
+
+        var first = client.GetAsync(server.Url + path);
+        await WaitUntilAsync(() => server.Received.Count >= 1);
+
+        var second = client.GetAsync(server.Url + path);
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth >= 1);
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
+
+        var rejection = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.GateRejectionsInstrumentName));
+        Assert.Equal(1d, rejection.Value);
+        Assert.Equal("queue_full", rejection.Tag("axiosnet.gate.reason"));
+
+        release.SetResult();
+        await first;
+        await second;
+    }
+
+    [Fact]
+    public async Task Metrics_GateRejections_ReportsQueueTimeout()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        var path = UniquePath("gate-timeout");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Limits = { MaxConcurrentRequests = 1, QueueTimeout = TimeSpan.Zero }
+        });
+
+        var first = client.GetAsync(server.Url + path);
+        await WaitUntilAsync(() => server.Received.Count >= 1);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
+        Assert.Equal(AxiosException.ErrQueueTimeout, ex.Code);
+
+        var rejection = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.GateRejectionsInstrumentName));
+        Assert.Equal("queue_timeout", rejection.Tag("axiosnet.gate.reason"));
+
+        release.SetResult();
+        await first;
+    }
+
+    [Fact]
     public async Task Metrics_CircuitState_ReportsOpenDimension()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
@@ -681,7 +745,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(11, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(12, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -730,6 +794,11 @@ public sealed class TelemetryTests
         var queueDepth = Assert.IsType<ObservableGauge<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.GateQueueDepthInstrumentName));
         Assert.Equal("{request}", queueDepth.Unit);
+
+        // 闸门拒绝：水位看「现在排了多长」，这条看「刚才漏掉了多少」
+        var gateRejections = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.GateRejectionsInstrumentName));
+        Assert.Equal("{request}", gateRejections.Unit);
 
         // 熔断状态：按 state 分组的维度数（不带 host，避免高基数）
         var circuitState = Assert.IsType<ObservableGauge<long>>(

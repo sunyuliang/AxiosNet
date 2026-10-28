@@ -425,6 +425,7 @@ public sealed class ErrorModelTests
 
         // 库里自定义的错误码（axios 没有对应项，命名沿用同一风格）
         Assert.Equal("ERR_QUEUE_TIMEOUT", AxiosException.ErrQueueTimeout);
+        Assert.Equal("ERR_QUEUE_FULL", AxiosException.ErrQueueFull);
     }
 
     [Fact]

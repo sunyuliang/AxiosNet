@@ -12,7 +12,7 @@ public sealed partial class AxiosConfig
     /// 换端点要求请求体能按顺序重放（与重试同一份要求：流必须可 seek）。
     /// 换端点会丢掉调用方显式设过的 <c>Host</c> 头，由目标地址重算 —— 否则镜像会按原端点的虚拟主机路由。
     /// 端点拼出来就是当前地址时（同 origin 且端点不带路径前缀）跳过：换过去等于原地重发。
-    /// 4xx、<c>ERR_QUEUE_TIMEOUT</c>、配置 / 编程错误与取消不换端点；<c>ERR_CIRCUIT_OPEN</c> 换 ——
+    /// 4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置 / 编程错误与取消不换端点；<c>ERR_CIRCUIT_OPEN</c> 换 ——
     /// 熔断按 <c>host:port</c> 独立成账，主端点开着的那一个挡不住备用端点。
     /// 流式响应只在响应头阶段能换端点：正文由调用方消费，中途断流不会再换端点。
     /// </remarks>

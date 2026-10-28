@@ -1,4 +1,5 @@
 ﻿
+using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;
@@ -123,6 +124,33 @@ public sealed class ConcurrencyGateTests
     }
 
     [Fact]
+    public async Task WaitingForSlot_WithQueueTimeout_IsCancelable()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        // 有排队上限时走的是「链接令牌 + CancelAfter」那条路：取消仍须报 ERR_CANCELED，不能被误报成排队超时
+        using var client = LimitedClient(maxConcurrency: 1, queueTimeout: TimeSpan.FromSeconds(30));
+        var occupying = client.GetAsync(server.Url + "hold");
+        await WaitUntilAsync(() => server.Received.Count >= 1, "第一条请求占住槽位");
+
+        using var cts = new CancellationTokenSource();
+        var queued = client.GetAsync(server.Url + "queued", cancellationToken: cts.Token);
+        await Task.Delay(80);
+        cts.Cancel();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => queued);
+        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+
+        release.SetResult(true);
+        await occupying;
+    }
+
+    [Fact]
     public async Task QueueWait_IsNotCountedAgainstTimeout()
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -175,6 +203,151 @@ public sealed class ConcurrencyGateTests
         // 释放正文流即归还槽位
         var after = await client.GetAsync(server.Url + "after", c => c.Limits.QueueTimeout = TimeSpan.FromSeconds(5));
         Assert.Equal(200, after.Status);
+    }
+
+    [Fact]
+    public async Task MaxQueueLength_WhenQueueFull_ThrowsQueueFullWithoutWaiting()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var client = LimitedClient(maxConcurrency: 1, maxQueueLength: 1, queueTimeout: TimeSpan.FromSeconds(5));
+
+        var occupying = client.GetAsync(server.Url + "hold");
+        await WaitUntilAsync(() => server.Received.Count >= 1, "第一条请求占住槽位");
+
+        var queued = client.GetAsync(server.Url + "queued");
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth >= 1, "第二条请求进入排队");
+
+        var stopwatch = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "rejected"));
+        stopwatch.Stop();
+
+        // 队列满是「连排队资格都没有」：必须立刻失败，而不是先等 QueueTimeout 再报排队超时
+        Assert.Equal(AxiosException.ErrQueueFull, ex.Code);
+        Assert.Contains("MaxQueueLength = 1", ex.Message);
+        Assert.Contains("MaxConcurrentRequests = 1", ex.Message);
+        Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"耗时 {stopwatch.ElapsedMilliseconds}ms");
+
+        // 被拒的请求没发出去，也不该占住排队水位
+        Assert.Equal(server.Url + "rejected", ex.Request?.RequestUri?.ToString());
+        Assert.Single(server.Received);
+        Assert.Equal(1, ConcurrencyGate.QueueDepth);
+
+        release.SetResult(true);
+        await occupying;
+        await queued;
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth == 0, "排队结束水位归零");
+    }
+
+    [Fact]
+    public async Task QueueFull_IsNotRetriedByDefaultPolicy()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var client = LimitedClient(maxConcurrency: 1, maxQueueLength: 1, queueTimeout: TimeSpan.FromSeconds(5));
+        var retries = 0;
+
+        var occupying = client.GetAsync(server.Url + "hold");
+        await WaitUntilAsync(() => server.Received.Count >= 1, "第一条请求占住槽位");
+
+        var queued = client.GetAsync(server.Url + "queued");
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth >= 1, "第二条请求进入排队");
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync(server.Url + "rejected", c =>
+            {
+                c.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.Zero);
+                c.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
+            }));
+
+        // 与排队超时同一性质：本实例在途 + 排队都满，立刻重发只会再撞一次
+        Assert.Equal(AxiosException.ErrQueueFull, ex.Code);
+        Assert.Equal(0, retries);
+
+        release.SetResult(true);
+        await occupying;
+        await queued;
+    }
+
+    [Fact]
+    public async Task QueueFull_DoesNotSwitchToFailoverEndpoint()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { primary = true });
+        });
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        var config = new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Limits = { MaxConcurrentRequests = 1, MaxQueueLength = 1, QueueTimeout = TimeSpan.FromSeconds(5) },
+            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+        };
+        using var client = new AxiosClient(config);
+
+        var occupying = client.GetAsync("hold");
+        await WaitUntilAsync(() => primary.Received.Count >= 1, "第一条请求占住槽位");
+
+        var queued = client.GetAsync("queued");
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth >= 1, "第二条请求进入排队");
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("rejected"));
+
+        // 闸门是客户端级的：换镜像改变不了本机的排队容量，不该把同一个瓶颈带到备用端点上
+        Assert.Equal(AxiosException.ErrQueueFull, ex.Code);
+        Assert.Empty(mirror.Received);
+
+        release.SetResult(true);
+        await occupying;
+        await queued;
+    }
+
+    [Fact]
+    public async Task PerRequestDifferentMaxQueueLength_ThrowsBadOptionValue()
+    {
+        await using var server = SlowServer(delayMs: 0);
+        using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 2);
+
+        // 先跑一条，确保闸门已按 (2, 2) 建出来
+        await client.GetAsync(server.Url + "warmup");
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = 3));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("MaxQueueLength", ex.Message);
+
+        // 复述实例的值放行
+        var ok = await client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = 2);
+        Assert.Equal(200, ok.Status);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task InvalidMaxQueueLength_ThrowsBadOptionValue(int value)
+    {
+        await using var server = SlowServer(delayMs: 0);
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = value));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -333,11 +506,20 @@ public sealed class ConcurrencyGateTests
         }
     }
 
-    private static AxiosClient LimitedClient(int maxConcurrency, TimeSpan? queueTimeout = null, TimeSpan? timeout = null)
+    private static AxiosClient LimitedClient(
+        int maxConcurrency,
+        int? maxQueueLength = null,
+        TimeSpan? queueTimeout = null,
+        TimeSpan? timeout = null)
     {
         var config = new AxiosConfig
         {
-            Limits = new() { MaxConcurrentRequests = maxConcurrency, QueueTimeout = queueTimeout }
+            Limits = new()
+            {
+                MaxConcurrentRequests = maxConcurrency,
+                MaxQueueLength = maxQueueLength,
+                QueueTimeout = queueTimeout
+            }
         };
 
         if (timeout is { } value)

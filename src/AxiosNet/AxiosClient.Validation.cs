@@ -129,6 +129,14 @@ public sealed partial class AxiosClient
                 + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
         }
 
+        // 排队深度上限：0 与负数都没有语义（「不排队」由 QueueTimeout = Zero 表达）。
+        if (limits?.MaxQueueLength is int maxQueueLength && maxQueueLength < 1)
+        {
+            throw AxiosException.InvalidOption(
+                $"MaxQueueLength 必须是正整数（当前 {maxQueueLength}）：不限制排队深度请设为 null，"
+                + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
+        }
+
         if (limits?.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption($"QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
@@ -336,13 +344,22 @@ public sealed partial class AxiosClient
     private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
     {
         var requested = config.LimitsOrNull?.MaxConcurrentRequests;
+        var requestedQueueLength = config.LimitsOrNull?.MaxQueueLength;
         var existing = Volatile.Read(ref _gate);
 
         if (existing is not null)
         {
-            if (requested is int value && value != existing.MaxConcurrency)
+            if (requested is int value)
             {
-                throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
+                if (value != existing.MaxConcurrency)
+                {
+                    throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
+                }
+
+                if (requestedQueueLength != existing.MaxQueueLength)
+                {
+                    throw QueueLengthMismatch(config, requestedQueueLength, existing.MaxQueueLength);
+                }
             }
 
             return existing;
@@ -353,7 +370,7 @@ public sealed partial class AxiosClient
             return null;
         }
 
-        var created = new ConcurrencyGate(limit);
+        var created = new ConcurrencyGate(limit, requestedQueueLength);
 
         // 并发首请求：输的一方用赢家的闸门，容量不同则报错（两个线程带着不同上限同时首次请求）
         var winner = Interlocked.CompareExchange(ref _gate, created, null);
@@ -367,6 +384,11 @@ public sealed partial class AxiosClient
             throw ConcurrencyMismatch(config, limit, winner.MaxConcurrency);
         }
 
+        if (winner.MaxQueueLength != requestedQueueLength)
+        {
+            throw QueueLengthMismatch(config, requestedQueueLength, winner.MaxQueueLength);
+        }
+
         return winner;
     }
 
@@ -376,6 +398,17 @@ public sealed partial class AxiosClient
             $"MaxConcurrentRequests 是实例级配置（并发闸门在首个受限请求时创建并固定为 {effective}），"
             + $"本次生效配置要求 {requested}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
             + "要改变上限请新建 AxiosClient 并在 defaults 上设置。",
+            config);
+    }
+
+    private static AxiosException QueueLengthMismatch(AxiosConfig config, int? requested, int? effective)
+    {
+        static string Text(int? value) => value is int v ? v.ToString() : "null（不限）";
+
+        return AxiosException.InvalidOption(
+            $"MaxQueueLength 是实例级配置（排队上限与并发闸门一起在首个受限请求时创建并固定为 {Text(effective)}），"
+            + $"本次生效配置要求 {Text(requested)}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
+            + "要改变排队上限请新建 AxiosClient 并在 defaults 上设置。",
             config);
     }
 

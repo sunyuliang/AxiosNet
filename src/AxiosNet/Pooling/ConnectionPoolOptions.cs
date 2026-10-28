@@ -13,7 +13,10 @@ public sealed class ConnectionPoolOptions
     /// <summary>每个 origin 允许的最大并发 TCP 连接数（默认 100）。</summary>
     public int MaxConnectionsPerServer { get; set; } = 100;
 
-    /// <summary>池化连接的最大存活时间（默认 10 分钟，到期优雅轮换）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。</summary>
+    /// <summary>
+    /// 池化连接的最大存活时间（默认 10 分钟，到期优雅轮换）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。
+    /// 实际落到 Handler 的值有 ±10% 抖动（避免同一波连接在同一刻集体到期重连），本属性保持你设置的原值。
+    /// </summary>
     public TimeSpan PooledConnectionLifetime { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>连接在池中空闲多久后关闭（默认 2 分钟）；<see cref="Timeout.InfiniteTimeSpan"/> 表示一直保留。</summary>

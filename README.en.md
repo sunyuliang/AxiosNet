@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1523%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1538%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -119,7 +119,7 @@ Four groups of capabilities; details in the linked sections.
 | Capability | What you get | How |
 | --- | --- | --- |
 | Progress and throttling | Upload/download progress, byte rate cap, size caps | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
-| In-flight gate | Cap concurrent requests and queue the rest | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
+| In-flight gate | Cap concurrent requests; queue depth can be capped | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
 | Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | Circuit breaker | Per-host Closed/Open/HalfOpen state machine: rolling-window failure rate plus a consecutive-failure rule, with slow-start recovery | `c.Circuit.Policy = new CircuitBreaker()` |
 | Concurrent hedging | Fire several copies of one request, first success wins | `c.Hedging.MaxHedges = 1` |
@@ -166,7 +166,7 @@ await http.GetAsync("slow", c => c.Timeout = TimeSpan.FromSeconds(30));   // thi
 await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // default header removed
 ```
 
-- **Instance-level only**: `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` (fixed when the pool is built) and `Limits.MaxConcurrentRequests` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
+- **Instance-level only**: `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` (fixed when the pool is built) and `Limits.MaxConcurrentRequests` / `Limits.MaxQueueLength` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
 - **`Params` / `Data` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Data = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Data`; write `Data = null` to send an empty body.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
 - Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
@@ -387,6 +387,7 @@ await http.PostAsync("upload", payload, c =>
 - Callbacks run **synchronously**; offload expensive work yourself. Reports are throttled to one per 50 ms.
 - A throwing callback aborts the request: upload phase → `ERR_BAD_REQUEST`, download phase → `ERR_BAD_RESPONSE`, original exception in `Cause`.
 - `MaxContentLength`: plain responses are counted while reading and aborted on overflow; `ResponseType.Stream` pre-checks the declared length and keeps counting while reading.
+- `MaxContentLength` defaults to `null` (unlimited, matching axios's `maxContentLength = -1`) and the library emits no warning or log about it: a buffered response (anything other than `ResponseType.Stream`) holds the whole body in memory, so set an explicit cap in production for untrusted or unknown-size downstreams.
 - `Content-Length` is a hint, never a cut-off: when the declared value is shorter than the real body (rewritten by a proxy, a custom `HttpContent`, or a handler that does not truncate), the body is still read to the end — no tail loss and no bypass of `MaxContentLength`.
 - `MaxBodyLength` only applies when the body length is computable (JSON / form / `byte[]` / seekable stream); multipart is not intercepted.
 - Negative values throw `ERR_BAD_OPTION_VALUE`; `MaxRate = 0` means unlimited.
@@ -399,8 +400,9 @@ await http.PostAsync("upload", payload, c =>
 ```csharp
 var client = Axios.Create(c =>
 {
-    c.Limits.MaxConcurrentRequests = 4;                 // at most 4 in flight, the rest queue
-    c.Limits.QueueTimeout = TimeSpan.FromSeconds(2);    // wait at most 2s for a slot
+    c.Limits.MaxConcurrentRequests = 4;                 // at most 4 in flight
+    c.Limits.MaxQueueLength = 16;                       // at most 16 queued; beyond that reject with ERR_QUEUE_FULL
+    c.Limits.QueueTimeout = TimeSpan.FromSeconds(2);    // once queued, wait at most 2s
 });
 
 await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // fail immediately when full
@@ -409,14 +411,18 @@ await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // 
 | Item | Default | Meaning |
 | --- | --- | --- |
 | `MaxConcurrentRequests` | `null` (unlimited) | Max in-flight requests for this instance; positive integer |
+| `MaxQueueLength` | `null` (unlimited) | Queue depth cap: beyond it the request fails with `ERR_QUEUE_FULL`; positive integer, only meaningful with `MaxConcurrentRequests` |
 | `QueueTimeout` | `null` (wait forever) | Slot wait limit: `null` wait / `Zero` don't queue / `>0` fail on timeout; the wait is also capped by the remaining `Deadline` |
 
-- Queue timeout throws **`ERR_QUEUE_TIMEOUT`** (not `ECONNABORTED`): nothing was sent, so react by slowing down / scaling out / backing off.
+- Queue timeout throws **`ERR_QUEUE_TIMEOUT`**, a full queue throws **`ERR_QUEUE_FULL`** (neither is `ECONNABORTED`): nothing was sent, so react by slowing down / scaling out / backing off.
+- Both are "the entrance is crowded", not "the downstream failed": the default policy does not retry and does not fail over — another endpoint cannot fix local slot contention, so the caller should back off and try again.
+- When a later attempt is rejected at the gate after an earlier real failure, the real failure is the one surfaced (same rule as hedging): "no queue slot" never hides the fault that explains the request.
+- Rejections are counted by `axiosnet.client.gate.rejections` (`axiosnet.gate.reason` = `queue_timeout` / `queue_full`); watch it together with `gate.queue_depth` for backpressure level.
+- `MaxQueueLength` is fixed together with `MaxConcurrentRequests` on the first gated request: a different per-request value, or mutating `Defaults` after construction, throws `ERR_BAD_OPTION_VALUE`. For "never queue" use `QueueTimeout = TimeSpan.Zero`.
 - Queueing **does not** count against `Timeout` (each retry attempt gets its own) but **does** count against `Deadline`; it can be cancelled with a `CancellationToken`.
 - A slot covers the whole in-flight span: each retry attempt takes one (backoff does not hold it), and **a streaming response holds it until the body stream is disposed**.
-- The gate is shared per instance and is instance-level: different per-request values, or mutating `Defaults` after construction, throw `ERR_BAD_OPTION_VALUE`.
 - **Self-deadlock risk**: sending a child request on the same instance from inside an interceptor or progress callback competes for the same slots. Set a `QueueTimeout` or use a separate instance.
-- **With retries enabled**: `ERR_QUEUE_TIMEOUT` itself is never retried — a saturated gate means this instance is already at its in-flight cap, and an immediate resend just hits the same gate. Waiting for concurrency to drop is the caller's job (slow down / raise the cap / use another instance).
+- **With retries enabled**: `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` are never retried — a saturated gate means this instance is already at its in-flight cap, and an immediate resend just hits the same gate. Waiting for concurrency to drop is the caller's job (slow down / raise the cap / use another instance).
 - Different from `MaxConnectionsPerServer`: that one bounds **connections** (HTTP/2 multiplexes many requests over one), this one bounds **requests**.
 
 ## Errors
@@ -447,6 +453,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
 | `ERR_QUEUE_TIMEOUT` | Concurrency slots stayed full past `QueueTimeout` (request never sent) |
+| `ERR_QUEUE_FULL` | Queue depth already at `MaxQueueLength` (request never sent, not queued) |
 | `ERR_CIRCUIT_OPEN` | Circuit is open, request **not sent** (`RetryAfter` suggests how long to wait) |
 | `ERR_POOL_EXHAUSTED` | Pool origin cardinality saturated (all in flight, no evictable idle node); request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry |
 | `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme |
@@ -592,7 +599,7 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 | `ERR_CANCELED` | No retry |
 | POST / PATCH and other non-idempotent verbs | No retry (`RetryNonIdempotentMethods = true` opts in) |
 
-Library-level no-retry (a custom policy cannot override it): `ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_BAD_OPTION_VALUE` / an exhausted `Deadline` (`IsDeadlineExceeded`) — in these cases the request either never left, an immediate resend would hit the same gate, or the pipeline hit a configuration / programming error.
+Library-level no-retry (a custom policy cannot override it): `ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` / `ERR_BAD_OPTION_VALUE` / an exhausted `Deadline` (`IsDeadlineExceeded`) — in these cases the request either never left, an immediate resend would hit the same gate, or the pipeline hit a configuration / programming error.
 
 Other members: `Delay` / `BackoffFactor` / `MaxDelay` / `Jitter` (`true` by default, waits land in 50%–100%) / `HonorRetryAfter` (`true` by default, follows server `Retry-After` but still capped by `MaxDelay`) / `RetryWhen`.
 
@@ -703,7 +710,7 @@ An endpoint supplies the **origin and path prefix**; the request's own path and 
 | 5xx (`ERR_BAD_RESPONSE` with status ≥ 500) | Yes |
 | `ERR_CIRCUIT_OPEN` | Yes — the breaker is per `host:port`, so the primary being open cannot block a backup |
 | 4xx, other `ERR_BAD_RESPONSE` (e.g. malformed body on a 2xx) | No (a mirror changes nothing) |
-| `ERR_QUEUE_TIMEOUT` | No (local slot starvation, nothing to do with the downstream) |
+| `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` | No (local slot starvation / no queue slot, nothing to do with the downstream) |
 | Config / programming errors, cancellation | No |
 
 - **An exhausted budget does not fail over**: it is the same boundary as [the circuit breaker's failure rules](#circuit-breaker) — when `Deadline` runs out before the send, another endpoint cannot extend it and would only walk the whole pipeline once more (burning a breaker decision and a gate entry, then failing again at the exact same place). Timeouts **after** the request was sent still fail over: that is a downstream that might be replaced by a working one.
@@ -853,7 +860,7 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | Option | Default | Notes |
 | --- | --- | --- |
 | `MaxConnectionsPerServer` | 100 | Max TCP connections per site; excess requests queue at the connection layer |
-| `PooledConnectionLifetime` | 10 min | Max reuse age; replaced on next use (in-flight not interrupted) |
+| `PooledConnectionLifetime` | 10 min | Max reuse age; replaced on next use (in-flight not interrupted); the value applied to the handler is jittered by ±10% so connections do not all drop and reconnect at the same instant |
 | `PooledConnectionIdleTimeout` | 2 min | Idle connections close |
 | `ConnectTimeout` | 15 s | Connect timeout |
 | `IdleHandlerLifetime` | 5 min | How long an idle origin node is kept |
@@ -976,6 +983,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.active_requests` | `ObservableGauge<long>` | `{request}` | none |
 | `axiosnet.client.request.retries` | `Counter<long>` | `{retry}` | method / server.address / server.port / error.type / `axiosnet.retry.reason` |
 | `axiosnet.client.gate.queue_depth` | `ObservableGauge<long>` | `{request}` | none |
+| `axiosnet.client.gate.rejections` | `Counter<long>` | `{request}` | `axiosnet.gate.reason` (`queue_timeout` / `queue_full`) |
 | `axiosnet.client.circuit.state` | `ObservableGauge<long>` | `{circuit}` | `axiosnet.circuit.state` (`closed` / `open` / `half_open`) |
 | `axiosnet.client.pool.leases` | `Counter<long>` | `{lease}` | `axiosnet.pool.endpoint.reused` |
 | `axiosnet.client.pool.endpoints.created` | `Counter<long>` | `{endpoint}` | none |
@@ -986,7 +994,7 @@ builder.Services.AddOpenTelemetry()
 
 - Metrics only carry low-cardinality tags; URL paths live in spans only. **Pool metrics carry no host / port**: for gateways, crawlers and multi-tenant SaaS one series per host blows up the backend; use the span (`server.address` / `server.port` / `axiosnet.pool.endpoint.reused`) to find the origin.
 - `axiosnet.retry.reason` has a bounded value set: `status` whenever there is a status code (the exact code is in `error.type`), otherwise the library error code (`ECONNABORTED` / `ERR_NETWORK` …) — so "tune the policy (429)" and "fix the downstream (5xx)" are separable on a dashboard.
-- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide); `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key). Neither carries a host.
+- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), and `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key) — none carries a host.
 - `request.duration` is the logical request duration (including retries and backoff); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
 - Pool metrics describe the pool as a resource and are unaffected by `Telemetry.Enabled`.
 - `pool.active_pools` counts live pools (+1 on creation, -1 on `Dispose`) and `pool.shared_pools` counts entries in the named registry: a rising `active_pools` means some code keeps building pools — typically a client per request.
@@ -1178,7 +1186,7 @@ Nine sub-objects (created lazily on first access):
 
 **`Connection`** — `Auth` (`new AxiosAuth(user, pass)`) / `MaxRedirects` (5, `0` disables, instance-level) / `WithCredentials` (instance-level) / `Proxy` / `Credentials` / `PoolOptions` (instance-level) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`)
 
-**`Limits`** — `MaxContentLength` / `MaxBodyLength` / `MaxRate` (all `null` = unlimited) / `MaxConcurrentRequests` (`null`, instance-level) / `QueueTimeout` (`null` = wait) / `MaxStreamFrameLength` (`null` = 8 MB, 1–64 MB)
+**`Limits`** — `MaxContentLength` / `MaxBodyLength` / `MaxRate` (all `null` = unlimited) / `MaxConcurrentRequests` / `MaxQueueLength` (`null`, instance-level) / `QueueTimeout` (`null` = wait) / `MaxStreamFrameLength` (`null` = 8 MB, 1–64 MB)
 
 **`Callbacks`** — `ValidateStatus` (`Func<int,bool>`, 2xx by default) / `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress`
 
@@ -1221,7 +1229,7 @@ Nine sub-objects (created lazily on first access):
 | — (needs cockatiel or similar) | `c.Hedging.MaxHedges` (concurrent hedging), `c.Failover.Endpoints` (backup endpoints) |
 | — (needs the OTel JS SDK) | Built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
 | — (axios-cache-interceptor and friends) | `c.ShortCircuit` (cache hit / mock / offline replay) |
-| — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `QueueTimeout` |
+| — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` |
 
 Intentional differences from axios:
 
@@ -1237,7 +1245,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 46 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 47 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1245,7 +1253,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **32 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline, concurrent hedging and backup endpoints.
+- **33 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
 - **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
@@ -1293,9 +1301,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1464 | `net8.0` / `net6.0` | 2928 |
+| `AxiosNet.Tests` (core + declarative) | 1479 | `net8.0` / `net6.0` | 2958 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1523** | | **3046** |
+| **Total** | **1538** | | **3076** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
@@ -1379,7 +1387,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (46 items) / DI / Aot
+├─ samples/                           # Simple (47 items) / DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/

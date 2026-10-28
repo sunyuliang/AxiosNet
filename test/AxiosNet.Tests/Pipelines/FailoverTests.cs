@@ -397,6 +397,43 @@ public sealed class FailoverTests
     }
 
     [Fact]
+    public async Task Failover_GateRejection_DoesNotMaskThePrimaryFailure()
+    {
+        await using var primary = TestHttpServer.Start(_ =>
+            new TestResponse(503, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        // 换到备用端点时在闸门前被拒（排队超时 / 队列满）：闸门是客户端级的，换端点也过不去，
+        // 抛给调用方的必须是主端点那条真实失败，而不是「没排上队」。
+        AxiosAttemptMiddleware rejectMirror = next => async (request, ctx) =>
+        {
+            if (ctx.EndpointIndex > 0)
+            {
+                throw AxiosException.QueueFull(ctx.Config, request, maxQueueLength: 1, maxConcurrency: 1);
+            }
+
+            return await next(request, ctx);
+        };
+
+        using var client = new AxiosClient(
+            new AxiosConfig
+            {
+                BaseAddress = primary.Url,
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            },
+            pipeline: AxiosAttemptPipeline.Default.Append(rejectMirror));
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
+        Assert.Equal(503, exception.Status);
+
+        // 备用端点连请求都没拿出来。
+        Assert.Single(primary.Received);
+        Assert.Empty(mirror.Received);
+    }
+
+    [Fact]
     public async Task Failover_WithHedging_EachEndpointGetsItsOwnBranches()
     {
         // 两个端点都压一点延迟：两条分支必须真的都发出去，否则先成功的那条会在对手还在路上时就把它取消，

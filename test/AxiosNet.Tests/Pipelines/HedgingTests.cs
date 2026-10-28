@@ -352,6 +352,44 @@ public sealed class HedgingTests
     }
 
     [Fact]
+    public async Task Hedging_PrefersTheRealFailureOverQueueFull()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var server = TestHttpServer.Start(async request =>
+        {
+            if (request.Path == "/hold")
+            {
+                await release.Task;
+                return TestJson.Response(new { ok = true });
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(200));
+            return new TestResponse(503, Body: Array.Empty<byte>());
+        });
+
+        // 占位 1 个槽位后只剩 1 个在途名额 + 1 个排队位：三条分支里必有一条撞上队列上限。
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Limits = { MaxConcurrentRequests = 2, MaxQueueLength = 1, QueueTimeout = TimeSpan.FromSeconds(5) },
+            Hedging = new() { MaxHedges = 2, Delay = TimeSpan.Zero }
+        });
+
+        var occupying = client.GetAsync("hold", c => c.Hedging.MaxHedges = 0);
+        await WaitUntilAsync(() => server.Received.Count >= 1);
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        // 先失败的可能是「队列满」，但它说明不了下游；抛给调用方的必须是那个 503。
+        Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
+        Assert.Equal(503, exception.Status);
+
+        release.SetResult(true);
+        await occupying;
+    }
+
+    [Fact]
     public async Task Hedging_DiscardedBranches_ReleaseTheirLeaseAndSlot()
     {
         var arrivals = 0;

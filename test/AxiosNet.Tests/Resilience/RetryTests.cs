@@ -1,4 +1,5 @@
 ﻿
+using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;
@@ -163,6 +164,35 @@ public sealed class RetryTests
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, handler.Calls);
+    }
+
+    [Fact]
+    public async Task GateRejection_OnRetry_DoesNotMaskTheRealFailure()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
+
+        // 重试的那一轮在闸门前被拒（排队超时 / 队列满）：它说明不了下游，不能盖掉首发的 503。
+        AxiosAttemptMiddleware rejectOnRetry = next => async (request, ctx) =>
+        {
+            if (ctx.AttemptNumber > 1)
+            {
+                throw AxiosException.QueueFull(ctx.Config, request, maxQueueLength: 1, maxConcurrency: 1);
+            }
+
+            return await next(request, ctx);
+        };
+
+        using var client = new AxiosClient(
+            new AxiosConfig { Retry = { Policy = Immediate(1) } },
+            pipeline: AxiosAttemptPipeline.Default.Append(rejectOnRetry));
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
+
+        Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
+        Assert.Equal(503, exception.Status);
+
+        // 那一轮连请求都没拿出来：服务端只看到首发。
+        Assert.Single(server.Received);
     }
 
     // ------------------------------------------------------------------

@@ -7,7 +7,11 @@ public sealed partial class AxiosConfig
     {
         private long? _maxContentLength;
 
-        /// <summary>对应 axios maxContentLength：响应体最大字节数，null 不限；超出抛 <see cref="AxiosException"/>，按请求显式设为 null 可清除实例默认上限。</summary>
+        /// <summary>
+        /// 对应 axios maxContentLength：响应体最大字节数，<c>null</c>（默认）不限 —— 与 axios 的 <c>-1</c> 同口径，
+        /// 库不会为「没设上限」发出任何告警或日志；超出抛 <see cref="AxiosException"/>，按请求显式设为 null 可清除实例默认上限。
+        /// </summary>
+        /// <remarks>缓冲型响应（非 <see cref="ResponseType.Stream"/>）会把整个正文读进内存：对不可信或体量未知的下游，生产环境请显式设上限。</remarks>
         public long? MaxContentLength
         {
             get => _maxContentLength;
@@ -73,6 +77,30 @@ public sealed partial class AxiosConfig
 
         /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
         internal bool MaxConcurrentRequestsSet { get; set; }
+
+        private int? _maxQueueLength;
+
+        /// <summary>
+        /// 排队等待槽位的请求条数上限（只在设置了 <see cref="MaxConcurrentRequests"/> 时有意义）：<c>null</c>（默认）不限；
+        /// 正整数；队列已满时新来的请求立刻失败（<c>ERR_QUEUE_FULL</c>），不进入等待。
+        /// </summary>
+        /// <remarks>
+        /// 计数对象是「正在等槽位的尝试」而不是逻辑请求：重试 / 备用端点 / 对冲的每次尝试各排一次队。
+        /// 与 <see cref="MaxConcurrentRequests"/> 一样是实例级配置：在首个受限请求时固定，按请求写不同的值抛
+        /// <c>ERR_BAD_OPTION_VALUE</c>。被拒的请求不进排队水位（它没有真的等过），但要计入闸门拒绝指标。
+        /// </remarks>
+        public int? MaxQueueLength
+        {
+            get => _maxQueueLength;
+            set
+            {
+                _maxQueueLength = value;
+                MaxQueueLengthSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool MaxQueueLengthSet { get; set; }
 
         private TimeSpan? _queueTimeout;
 
@@ -150,6 +178,11 @@ public sealed partial class AxiosConfig
             if (incoming.MaxConcurrentRequestsSet)
             {
                 MaxConcurrentRequests = incoming.MaxConcurrentRequests;
+            }
+
+            if (incoming.MaxQueueLengthSet)
+            {
+                MaxQueueLength = incoming.MaxQueueLength;
             }
 
             if (incoming.QueueTimeoutSet)

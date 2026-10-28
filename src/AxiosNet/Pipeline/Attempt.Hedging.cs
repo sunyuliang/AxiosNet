@@ -143,9 +143,9 @@ public static partial class Attempt
                 }
                 catch (Exception ex)
                 {
-                    // 排队超时只说明「没抢到槽位」，还会盖掉真正的下游故障（而且库级不重试它）：
+                    // 闸门拒绝（排队超时 / 队列满）只说明「没抢到槽位」，还会盖掉真正的下游故障（而且库级不重试它）：
                     // 已经记下它时用后到的真实失败替换，让调用方看到能定位问题的那一条。
-                    if (firstFailure is null || IsQueueTimeout(firstFailure))
+                    if (firstFailure is null || IsGateRejection(firstFailure))
                     {
                         firstFailure = ex;
                     }
@@ -173,9 +173,9 @@ public static partial class Attempt
         }
     }
 
-    /// <summary>这条失败是不是「并发闸门排队超时」：它说明不了下游健康与否。</summary>
-    private static bool IsQueueTimeout(Exception exception)
-        => exception is AxiosException { Code: AxiosException.ErrQueueTimeout };
+    /// <summary>这条失败是不是「并发闸门拒绝」（排队超时 / 队列满）：它说明不了下游健康与否。</summary>
+    private static bool IsGateRejection(Exception exception)
+        => exception is AxiosException { Code: AxiosException.ErrQueueTimeout or AxiosException.ErrQueueFull };
 
     /// <summary>
     /// 收尾一条没被采用的分支：等它真正结束，再释放它可能持有的响应资源。

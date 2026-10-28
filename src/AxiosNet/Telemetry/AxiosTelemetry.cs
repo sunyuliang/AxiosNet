@@ -60,6 +60,9 @@ public static class AxiosTelemetry
     /// <summary>指标名：正在排队等并发槽位的请求数（ObservableGauge）。</summary>
     public const string GateQueueDepthInstrumentName = "axiosnet.client.gate.queue_depth";
 
+    /// <summary>指标名：被并发闸门拒绝的请求数（Counter，请求未发出），带 <c>axiosnet.gate.reason</c> 标签。</summary>
+    public const string GateRejectionsInstrumentName = "axiosnet.client.gate.rejections";
+
     /// <summary>指标名：熔断器各状态的维度数（ObservableGauge），带 <c>axiosnet.circuit.state</c> 标签。</summary>
     public const string CircuitStateInstrumentName = "axiosnet.client.circuit.state";
 
@@ -108,10 +111,15 @@ public static class AxiosTelemetry
     private const string TagEvictionReason = "axiosnet.pool.eviction.reason";
     private const string TagRetryReason = "axiosnet.retry.reason";
     private const string TagCircuitState = "axiosnet.circuit.state";
+    private const string TagGateReason = "axiosnet.gate.reason";
 
     // 重试原因：低基数取值。有状态码就统一报 "status"（具体状态码在 error.type 里），否则用库错误码。
     internal const string RetryReasonStatus = "status";
     internal const string RetryReasonException = "exception";
+
+    // 闸门拒绝原因：低基数取值，属对外契约。
+    internal const string GateRejectQueueFull = "queue_full";
+    internal const string GateRejectTimeout = "queue_timeout";
 
     // 熔断状态：指标标签的取值，属对外契约（后端按它分面板）。
     internal const string CircuitStateClosed = "closed";
@@ -125,6 +133,8 @@ public static class AxiosTelemetry
     private static readonly Histogram<double> RequestDuration;
 
     private static readonly Counter<long> Retries;
+
+    private static readonly Counter<long> GateRejections;
 
     private static readonly Counter<long> PoolLeases;
 
@@ -160,6 +170,9 @@ public static class AxiosTelemetry
         // 排队深度：容量规划最直接的信号（「现在排了多长」而不是「排队超时了多少次」）。
         // 与在途数同一手法：静态计数 + 收集时读取；闸门实例可以有很多个，这里看的是进程总量。
         meter.CreateObservableGauge(GateQueueDepthInstrumentName, () => ConcurrencyGate.QueueDepth, unit: "{request}", description: "当前正在等并发槽位的请求数（进程级，跨所有客户端）。");
+
+        // 拒绝是「已经发生的损失」：水位看「现在排了多长」，这条看「刚才漏掉了多少」。
+        GateRejections = meter.CreateCounter<long>(GateRejectionsInstrumentName, unit: "{request}", description: "被并发闸门拒绝的请求数（请求未发出），按 axiosnet.gate.reason（queue_full / queue_timeout）区分。");
 
         // 熔断状态：按 state 报「多少个维度处于该状态」，不带 host —— 与池指标同一套低基数规则。
         meter.CreateObservableGauge(CircuitStateInstrumentName, ObserveCircuitStates, unit: "{circuit}", description: "熔断器跟踪的维度数，按 axiosnet.circuit.state（closed / open / half_open）分组；每个维度 = 一个熔断器实例上的一个 key（默认 host:port）。");
@@ -499,6 +512,28 @@ public static class AxiosTelemetry
             {
                 Emit(RequestFailedEventName, new AxiosRequestFailedEvent(config.Method, uri, exception, axiosException?.Code, statusCode, TimeSpan.FromSeconds(elapsed)));
             }
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
+    /// 闸门拒绝了这次尝试（队列满 / 排队超时）：只记一条低基数计数，不写 span、不发事件 ——
+    /// 拒绝原因已经会随 <c>RequestFailed</c> 的错误码出现在链路与日志里。
+    /// </summary>
+    internal static void GateRejected(AxiosConfig config, string reason)
+    {
+        try
+        {
+            // 拒绝不在主路径的开关分支内，必须自己判一次。
+            if (!IsEnabled(config) || !GateRejections.Enabled)
+            {
+                return;
+            }
+
+            var tags = new TagList { { TagGateReason, reason } };
+            GateRejections.Add(1, tags);
         }
         catch
         {

@@ -254,6 +254,46 @@ public sealed class ConnectionPoolTests
     }
 
     [Fact]
+    public void PooledConnectionLifetime_IsJitteredWithinTenPercent()
+    {
+        var configured = TimeSpan.FromMinutes(10);
+        var distinct = new HashSet<long>();
+
+        for (var i = 0; i < 200; i++)
+        {
+            var jittered = DefaultHandlerFactory.JitterLifetime(configured);
+            var ratio = jittered.Ticks / (double)configured.Ticks;
+
+            Assert.InRange(ratio, 0.9d, 1.1d);
+            distinct.Add(jittered.Ticks);
+        }
+
+        // ±10% 是随机区间：两百次都取到同一个值说明抖动根本没接上
+        Assert.True(distinct.Count > 1, "PooledConnectionLifetime 没有被抖动");
+    }
+
+    [Fact]
+    public void PooledConnectionLifetime_ZeroAndInfinite_AreNotJittered()
+    {
+        Assert.Equal(TimeSpan.Zero, DefaultHandlerFactory.JitterLifetime(TimeSpan.Zero));
+        Assert.Equal(Timeout.InfiniteTimeSpan, DefaultHandlerFactory.JitterLifetime(Timeout.InfiniteTimeSpan));
+    }
+
+    [Fact]
+    public void DefaultHandler_AppliesJitteredLifetime_ButOptionsKeepConfiguredValue()
+    {
+        var configured = TimeSpan.FromMinutes(10);
+        var options = new ConnectionPoolOptions { PooledConnectionLifetime = configured };
+
+        using var handler = DefaultHandlerFactory.Create(options);
+
+        Assert.InRange(handler.PooledConnectionLifetime, TimeSpan.FromMinutes(9), TimeSpan.FromMinutes(11));
+
+        // 抖动只落在 Handler 上：选项保持原值，命名池的 SameOptions 比较不受影响
+        Assert.Equal(configured, options.PooledConnectionLifetime);
+    }
+
+    [Fact]
     public async Task SequentialRequests_ReuseSingleTcpConnection()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
