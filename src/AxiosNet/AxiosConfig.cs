@@ -234,7 +234,7 @@ public sealed partial class AxiosConfig
 
     /// <summary>
     /// 对应 axios timeout，零表示不超时；语义是<b>一次尝试</b>的预算（建连 + 等待响应头 + 读取正文），
-    /// 重试 / 备用端点 / 对冲各自复制一份 —— 要限制「整条逻辑请求」请用 <see cref="Deadline"/>。
+    /// 重试 / 备用端点 / 对冲各自复制一份 —— 要限制「整条逻辑请求」请用 <see cref="TotalTimeout"/>。
     /// 流式响应的正文也计入本预算（预算在正文读完前方才失效）；零值下正文不限时。负值抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
     /// </summary>
     public TimeSpan Timeout
@@ -250,11 +250,11 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool TimeoutSet { get; private set; }
 
-    private TimeSpan? _deadline;
+    private TimeSpan? _totalTimeout;
 
     /// <summary>
     /// 整条逻辑请求的总预算（<c>null</c> = 不设，默认）：从调用开始计时，<b>跨重试、备用端点与对冲分支共享</b>。
-    /// 每次尝试实际拿到的上限是 <c>min(Timeout, Deadline 剩余)</c>，剩余为负时该次尝试根本不发出，直接抛
+    /// 每次尝试实际拿到的上限是 <c>min(Timeout, TotalTimeout 剩余)</c>，剩余为负时该次尝试根本不发出，直接抛
     /// <c>ECONNABORTED</c>（消息指明第几次尝试未发出）。
     /// </summary>
     /// <remarks>
@@ -264,21 +264,21 @@ public sealed partial class AxiosConfig
     /// 负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// <para>
     /// 流式响应的正文也在预算之内：正文读取沿用被本预算压小后的剩余额度，读到一半到点即 <c>ECONNABORTED</c>。
-    /// 长连接场景（SSE / 大文件下载）不要设 <c>Timeout</c> / <c>Deadline</c>，改用调用方令牌退出。
+    /// 长连接场景（SSE / 大文件下载）不要设 <c>Timeout</c> / <c>TotalTimeout</c>，改用调用方令牌退出。
     /// </para>
     /// </remarks>
-    public TimeSpan? Deadline
+    public TimeSpan? TotalTimeout
     {
-        get => _deadline;
+        get => _totalTimeout;
         set
         {
-            _deadline = value;
-            DeadlineSet = true;
+            _totalTimeout = value;
+            TotalTimeoutSet = true;
         }
     }
 
     /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「清掉实例默认值」。</summary>
-    internal bool DeadlineSet { get; private set; }
+    internal bool TotalTimeoutSet { get; private set; }
 
     /// <summary>这份配置是否已是合并后的生效配置，管线据此跳过二次合并；<see cref="Clone"/> 不继承它。</summary>
     internal bool EffectiveMerged { get; set; }

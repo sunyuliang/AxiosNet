@@ -96,10 +96,10 @@ public sealed partial class AxiosClient
         }
 
         // 总预算与 Timeout 同一取值口径：负值没有语义，0 与 null 都是「不设」。
-        if (config.Deadline is { } deadline && deadline < TimeSpan.Zero)
+        if (config.TotalTimeout is { } totalTimeout && totalTimeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption(
-                $"Deadline 不能为负（当前 {deadline}）：不设总预算请设为 null（或 TimeSpan.Zero），"
+                $"TotalTimeout 不能为负（当前 {totalTimeout}）：不设总预算请设为 null（或 TimeSpan.Zero），"
                 + "要限制整条请求（含重试 / 端点 / 对冲）请给一个正值。",
                 config);
         }

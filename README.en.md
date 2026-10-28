@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1543%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1550%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -112,7 +112,7 @@ Four groups of capabilities; details in the linked sections.
 | Forms and uploads | Multipart fields + files, or a raw stream | `PostFormAsync(...)` / `FormFile` / `Stream` |
 | Five response types | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
 | Streaming | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
-| Timeouts and cancellation | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.Deadline = ...` / `cancellationToken:` |
+| Timeouts and cancellation | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
 
 **Traffic control**
 
@@ -120,7 +120,7 @@ Four groups of capabilities; details in the linked sections.
 | --- | --- | --- |
 | Progress and throttling | Upload/download progress, byte rate cap, size caps | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
 | In-flight gate | Cap concurrent requests; queue depth can be capped | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
-| Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
+| Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate / global retry budget | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | Circuit breaker | Per-host Closed/Open/HalfOpen state machine: rolling-window failure rate plus a consecutive-failure rule, with slow-start recovery | `c.Circuit.Policy = new CircuitBreaker()` |
 | Concurrent hedging | Fire several copies of one request, first success wins | `c.Hedging.MaxHedges = 1` |
 | Backup endpoints | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
@@ -333,7 +333,7 @@ await foreach (var order in pages.Data!)
 }
 ```
 
-- **Timeout**: headers and body share one budget — streaming body reads count against `Timeout` too (or against the remaining `Deadline` when set), so a body that runs past it fails with `ECONNABORTED`. With no timeout configured the body is unbounded; exit via a cancellation token.
+- **Timeout**: headers and body share one budget — streaming body reads count against `Timeout` too (or against the remaining `TotalTimeout` when set), so a body that runs past it fails with `ECONNABORTED`. With no timeout configured the body is unbounded; exit via a cancellation token.
 - **Frame cap**: 8 MB default, valid range 1–64 MB (`Limits.MaxStreamFrameLength`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap.
 - **Encoding**: NDJSON / SSE require an ASCII-compatible charset, wide-char encodings throw `ERR_BAD_RESPONSE` when taking the stream; `JsonArray` must be UTF-8. A UTF-8 BOM is skipped.
 - **Ownership**: the stream can be enumerated once; `await foreach` (including `break`) disposes it, manual `MoveNextAsync` callers must `DisposeAsync` themselves.
@@ -351,7 +351,7 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
 - `Timeout` is the budget of a **single attempt** (connect + headers + body), default `Zero` meaning no timeout; capped at ~49.7 days, larger values clamp instead of throwing.
-- `Deadline` is the budget of the **whole logical request** (from the call, including interceptors, queueing, backoff and hedge branches). `Timeout` is copied per retry / endpoint / hedge; `Deadline` is a single shared deadline, and each attempt gets `min(Timeout, remaining)`.
+- `TotalTimeout` is the budget of the **whole logical request** (from the call, including interceptors, queueing, backoff and hedge branches). `Timeout` is copied per retry / endpoint / hedge; `TotalTimeout` is a single shared deadline, and each attempt gets `min(Timeout, remaining)`.
 - Timeouts throw `ECONNABORTED` (message overridable via `Callbacks.TimeoutMessage`), cancellation throws `ERR_CANCELED`; the original `OperationCanceledException` is kept in `Cause`.
 
 ```csharp
@@ -359,15 +359,15 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 await client.GetAsync("orders/scan", c =>
 {
     c.Timeout  = TimeSpan.FromSeconds(10);   // one attempt
-    c.Deadline = TimeSpan.FromSeconds(15);   // the whole request
+    c.TotalTimeout = TimeSpan.FromSeconds(15);   // the whole request
     c.Retry.Policy = new RetryPolicy(5, TimeSpan.FromMilliseconds(200));
 });
 ```
 
-- When the budget is exhausted the next attempt is **never sent**: `ECONNABORTED` with a message naming the attempt (`... before attempt #7 could be sent`). A timeout that was clamped by the budget says `(remaining Deadline budget; Timeout = 10000ms)` so you cannot mistake it for a broken `Timeout`. These "never sent" failures do not count toward the circuit breaker, are never retried and never fail over (see the failure table under [Circuit breaker](#circuit-breaker)). Both cases share the same error code, so use `AxiosException.IsDeadlineExceeded` to tell them apart: `true` = the budget ran out before the send (do not retry, the budget is gone), `false` = a timeout after the send (the downstream is not answering, another endpoint is worth trying).
-- Queueing **counts** against `Deadline` (it does not count against `Timeout`): the budget measures what the caller actually waits. So when the remaining budget is tighter than `Limits.QueueTimeout`, the **queue wait itself is cut at the budget** and fails with `ECONNABORTED` rather than `ERR_QUEUE_TIMEOUT` (the error names the real constraint). This also holds when `QueueTimeout` is unset (wait forever).
-- **Streaming bodies count too**: body reads use the remaining budget (already clamped by `Deadline`), so a body that runs past it fails with `ECONNABORTED`. For long-lived streams (SSE, large downloads) leave `Timeout` / `Deadline` unset and exit via a cancellation token.
-- `Deadline = null` means no whole-request budget (default); `Zero` is synonymous with `null`; negative throws `ERR_BAD_OPTION_VALUE`; setting `null` per request clears an instance-level default.
+- When the budget is exhausted the next attempt is **never sent**: `ECONNABORTED` with a message naming the attempt (`... before attempt #7 could be sent`). A timeout that was clamped by the budget says `(remaining TotalTimeout budget; Timeout = 10000ms)` so you cannot mistake it for a broken `Timeout`. These "never sent" failures do not count toward the circuit breaker, are never retried and never fail over (see the failure table under [Circuit breaker](#circuit-breaker)). Both cases share the same error code, so use `AxiosException.IsTotalTimeoutExceeded` to tell them apart: `true` = the budget ran out before the send (do not retry, the budget is gone), `false` = a timeout after the send (the downstream is not answering, another endpoint is worth trying).
+- Queueing **counts** against `TotalTimeout` (it does not count against `Timeout`): the budget measures what the caller actually waits. So when the remaining budget is tighter than `Limits.QueueTimeout`, the **queue wait itself is cut at the budget** and fails with `ECONNABORTED` rather than `ERR_QUEUE_TIMEOUT` (the error names the real constraint). This also holds when `QueueTimeout` is unset (wait forever).
+- **Streaming bodies count too**: body reads use the remaining budget (already clamped by `TotalTimeout`), so a body that runs past it fails with `ECONNABORTED`. For long-lived streams (SSE, large downloads) leave `Timeout` / `TotalTimeout` unset and exit via a cancellation token.
+- `TotalTimeout = null` means no whole-request budget (default); `Zero` is synonymous with `null`; negative throws `ERR_BAD_OPTION_VALUE`; setting `null` per request clears an instance-level default.
 
 ### Progress, rate and size limits
 
@@ -412,14 +412,14 @@ await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // 
 | --- | --- | --- |
 | `MaxConcurrentRequests` | `null` (unlimited) | Max in-flight requests for this instance; positive integer |
 | `MaxQueueLength` | `null` (unlimited) | Queue depth cap: beyond it the request fails with `ERR_QUEUE_FULL`; positive integer, only meaningful with `MaxConcurrentRequests` |
-| `QueueTimeout` | `null` (wait forever) | Slot wait limit: `null` wait / `Zero` don't queue / `>0` fail on timeout; the wait is also capped by the remaining `Deadline` |
+| `QueueTimeout` | `null` (wait forever) | Slot wait limit: `null` wait / `Zero` don't queue / `>0` fail on timeout; the wait is also capped by the remaining `TotalTimeout` |
 
 - Queue timeout throws **`ERR_QUEUE_TIMEOUT`**, a full queue throws **`ERR_QUEUE_FULL`** (neither is `ECONNABORTED`): nothing was sent, so react by slowing down / scaling out / backing off.
 - Both are "the entrance is crowded", not "the downstream failed": the default policy does not retry and does not fail over — another endpoint cannot fix local slot contention, so the caller should back off and try again.
 - When a later attempt is rejected at the gate after an earlier real failure, the real failure is the one surfaced (same rule as hedging): "no queue slot" never hides the fault that explains the request.
 - Rejections are counted by `axiosnet.client.gate.rejections` (`axiosnet.gate.reason` = `queue_timeout` / `queue_full`); watch it together with `gate.queue_depth` for backpressure level.
 - `MaxQueueLength` is fixed together with `MaxConcurrentRequests` on the first gated request: a different per-request value, or mutating `Defaults` after construction, throws `ERR_BAD_OPTION_VALUE` (a request that never mentions this option is not a statement, so the gate's value stands). For "never queue" use `QueueTimeout = TimeSpan.Zero`.
-- Queueing **does not** count against `Timeout` (each retry attempt gets its own) but **does** count against `Deadline`; it can be cancelled with a `CancellationToken`.
+- Queueing **does not** count against `Timeout` (each retry attempt gets its own) but **does** count against `TotalTimeout`; it can be cancelled with a `CancellationToken`.
 - A slot covers the whole in-flight span: each retry attempt takes one (backoff does not hold it), and **a streaming response holds it until the body stream is disposed**.
 - **Self-deadlock risk**: sending a child request on the same instance from inside an interceptor or progress callback competes for the same slots. Set a `QueueTimeout` or use a separate instance.
 - **With retries enabled**: `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` are never retried — a saturated gate means this instance is already at its in-flight cap, and an immediate resend just hits the same gate. Waiting for concurrency to drop is the caller's job (slow down / raise the cap / use another instance).
@@ -449,7 +449,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx; request body larger than `MaxBodyLength`; request body serialization failure; upload progress callback threw |
 | `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `MaxContentLength`; generic argument vs `ResponseType` mismatch; download progress callback or `transformResponse` threw |
-| `ECONNABORTED` | `Timeout` exceeded (including the streaming body phase), or the `Deadline` budget is exhausted |
+| `ECONNABORTED` | `Timeout` exceeded (including the streaming body phase), or the `TotalTimeout` budget is exhausted |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
 | `ERR_QUEUE_TIMEOUT` | Concurrency slots stayed full past `QueueTimeout` (request never sent) |
@@ -593,20 +593,44 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 | Situation | Default |
 | --- | --- |
 | `ERR_NETWORK` / `ECONNABORTED` (timeout **after** the send) | Retry |
-| `ECONNABORTED` (`Deadline` exhausted before the send, `IsDeadlineExceeded`) | No retry (the budget covers the whole request; a resend fails at the same place immediately) |
+| `ECONNABORTED` (`TotalTimeout` exhausted before the send, `IsTotalTimeoutExceeded`) | No retry (the budget covers the whole request; a resend fails at the same place immediately) |
 | 408 / 429 / 5xx | Retry (`RetryStatusCodes` overrides) |
 | Other 4xx, config / URL errors | No retry |
 | `ERR_CANCELED` | No retry |
 | POST / PATCH and other non-idempotent verbs | No retry (`RetryNonIdempotentMethods = true` opts in) |
 
-Library-level no-retry (a custom policy cannot override it): `ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` / `ERR_BAD_OPTION_VALUE` / an exhausted `Deadline` (`IsDeadlineExceeded`) — in these cases the request either never left, an immediate resend would hit the same gate, or the pipeline hit a configuration / programming error.
+Library-level no-retry (a custom policy cannot override it): `ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` / `ERR_BAD_OPTION_VALUE` / an exhausted `TotalTimeout` (`IsTotalTimeoutExceeded`) — in these cases the request either never left, an immediate resend would hit the same gate, or the pipeline hit a configuration / programming error.
 
 Other members: `Delay` / `BackoffFactor` / `MaxDelay` / `Jitter` (`true` by default, waits land in 50%–100%) / `HonorRetryAfter` (`true` by default, follows server `Retry-After` but still capped by `MaxDelay`) / `RetryWhen`.
 
-- `Timeout` is **per attempt** (3 retries × 10s = 40s worst case); use `Deadline` for a whole-request upper bound (or a `CancellationToken` from the caller).
+- `Timeout` is **per attempt** (3 retries × 10s = 40s worst case); use `TotalTimeout` for a whole-request upper bound (or a `CancellationToken` from the caller).
 - Interceptors, `transformRequest` and body serialization run once; response interceptors see the final result.
 - The body must be replayable: seekable streams are rewound before each attempt; non-seekable streams and `StreamContent` (including multipart parts) throw `ERR_BAD_OPTION_VALUE` as soon as retries are enabled.
-- Custom policies: implement `IAxiosRetryPolicy` (`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`); `ctx` exposes `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`. Policies are shared concurrently, so keep them stateless.
+- Custom policies: implement `IAxiosRetryPolicy` (`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`); `ctx` exposes `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`. Policies are shared by concurrent requests on the same instance, so they must be thread-safe (stateless is easiest; implementations with shared state, like the built-in `RetryBudgetPolicy`, synchronize themselves).
+
+### Global retry budget (`RetryBudgetPolicy`)
+
+Per-request retries multiply with concurrency when a downstream is down: 100 in-flight requests × 3 retries = 300 extra sends, enough to turn a blip into an outage. `RetryBudgetPolicy` wraps any policy in an **instance-wide shared** token bucket that throttles retries only, never first attempts:
+
+```csharp
+// capacity 20, refills 5/s: 20 retries can burst through, steady state is 5/s
+client.Defaults.Retry.Policy = new RetryBudgetPolicy(capacity: 20, refillPerSecond: 5);
+
+// the inner policy decides "retry at all / how long to wait"; the bucket only decides "is there budget"
+client.Defaults.Retry.Policy = new RetryBudgetPolicy(
+    RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200)), capacity: 50, refillPerSecond: 10);
+
+var budget = (RetryBudgetPolicy)client.Defaults.Retry.Policy;
+budget.OnBudgetExhausted = ctx => logger.LogWarning("retry budget exhausted, surfacing {Code}", ctx.ErrorCode);
+budget.RefusedRetries;   // total retries denied by the budget, readable at any time
+```
+
+- **Retries only, never first attempts**: an empty bucket just means "stop retrying"; the caller sees the inner policy's **real failure**, not a budget-specific error.
+- **Only failures judged retryable consume tokens**: anything the pipeline or the inner policy would not retry (4xx, cancellation, gate rejections, the attempt cap…) never touches the bucket. One conservative edge: if the policy approved a retry that then never went out because the total budget had run out, the token is still spent (slightly tightens the budget; correctness is unaffected).
+- **The bucket is shared through the policy object**: `Retry.Policy` is the same reference across config clones, so every request on a client instance shares one bucket; give a single call its own bucket by assigning `new RetryBudgetPolicy(...)` on that call.
+- The bucket starts full; `refillPerSecond = 0` means "initial capacity only, no recovery over time" (handy for batches / tests).
+- Thread-safe, allocation-free on the check path; `OnBudgetExhausted` fires outside the lock, so logging / IO in the callback is fine.
+- No built-in metrics: feed `RefusedRetries` into your own telemetry (same idea as `Retry.OnRetry`).
 
 ## Circuit breaker
 
@@ -648,9 +672,9 @@ Failure accounting matches the retry gate (**cancels and 4xx never count**):
 | 4xx (including 408 / 429) | No (and doesn't reset) |
 | `ERR_CANCELED` | No |
 | Config / URL / serialization / deserialization errors | No |
-| `ECONNABORTED` (`Deadline` expired **before** the request was sent) | No (a local constraint expired first; the downstream never saw a byte) |
+| `ECONNABORTED` (`TotalTimeout` expired **before** the request was sent) | No (a local constraint expired first; the downstream never saw a byte) |
 
-- **"Never sent" is not a downstream failure**: an `ECONNABORTED` thrown because `Deadline` ran out while queueing or before the first byte left the client (`AxiosCircuitContext.DeadlineExpiredBeforeSend`) is not counted. Under overload, queue growth alone is enough for every request to hit it — counting it would mean "the more congested things get, the more likely a healthy downstream gets tripped", turning local queueing into a link-wide outage. Timeouts **after** the request was sent still count; that is a downstream that does not answer.
+- **"Never sent" is not a downstream failure**: an `ECONNABORTED` thrown because `TotalTimeout` ran out while queueing or before the first byte left the client (`AxiosCircuitContext.TotalTimeoutExpiredBeforeSend`) is not counted. Under overload, queue growth alone is enough for every request to hit it — counting it would mean "the more congested things get, the more likely a healthy downstream gets tripped", turning local queueing into a link-wide outage. Timeouts **after** the request was sent still count; that is a downstream that does not answer.
 - **Counted per host**: the default key is `host:port` (`uri.Authority`); `KeySelector` can switch to `ctx => ctx.Uri.Host` or isolate tenants by route prefix.
 - **Opening is an OR**: consecutive failures reach `FailureThreshold`, or the window (`WindowSize`) holds at least `ceil(samples × FailureRateThreshold)` failures with at least `MinimumSamples` samples. `WindowSize = 0` disables the rate rule; a `MinimumSamples` larger than `WindowSize` fails with `ERR_BAD_OPTION_VALUE` before anything is sent (that configuration can never trip).
 - **Slow-start recovery**: while half-open, the in-flight probe allowance is `HalfOpenAttempts + consecutive successes`, and only `RecoverySuccesses` successes close the circuit. The default ramps 1 → 2 → 3 so a just-recovered downstream is not hit with full load. `RecoverySuccesses = 0` (or 1) degrades to "a single successful probe closes it". A failed probe resets the progress and reopens immediately; ignored results (4xx / cancellation / a budget that ran out before the send) only return the probe slot without touching the progress, and only a probe that actually held a slot advances it.
@@ -658,7 +682,7 @@ Failure accounting matches the retry gate (**cancels and 4xx never count**):
 - With retries enabled: the gate sits **before each attempt**, so once open the next attempt in the retry loop is cut immediately; `ERR_CIRCUIT_OPEN` itself is never retried.
 - Each attempt is recorded: 3 retries + the first failure = 4 entries — hitting four 5xx in a row really is a down downstream.
 - The state table has a soft cap (`MaxTrackedHosts`, 512 by default): when full it only evicts entries whose loss changes no decision (closed, or open with an expired cooldown); **open / half-open entries are never dropped**, and among closed entries it prefers one whose window holds no failure samples (the consecutive-failure count may have been reset by a success, but the failure-rate ledger is still valid — dropping it would reset that dimension to a brand-new one).
-- Custom policies: implement `IAxiosCircuitPolicy` (`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`); `ctx` exposes `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `DeadlineExpiredBeforeSend`. Policies **are stateful** and shared concurrently, so you own thread safety.
+- Custom policies: implement `IAxiosCircuitPolicy` (`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`); `ctx` exposes `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`. Policies **are stateful** and shared concurrently, so you own thread safety.
 
 ## Concurrent hedging
 
@@ -706,19 +730,19 @@ An endpoint supplies the **origin and path prefix**; the request's own path and 
 | Situation | Fail over? |
 | --- | --- |
 | `ERR_NETWORK` / `ECONNABORTED` (timeout **after** the attempt was sent) / `ERR_POOL_EXHAUSTED` | Yes |
-| `ECONNABORTED` (`Deadline` exhausted **before** the request was sent) | No — the budget is wall-clock time for the whole logical request, and another endpoint cannot make it longer (see below) |
+| `ECONNABORTED` (`TotalTimeout` exhausted **before** the request was sent) | No — the budget is wall-clock time for the whole logical request, and another endpoint cannot make it longer (see below) |
 | 5xx (`ERR_BAD_RESPONSE` with status ≥ 500) | Yes |
 | `ERR_CIRCUIT_OPEN` | Yes — the breaker is per `host:port`, so the primary being open cannot block a backup |
 | 4xx, other `ERR_BAD_RESPONSE` (e.g. malformed body on a 2xx) | No (a mirror changes nothing) |
 | `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` | No (local slot starvation / no queue slot, nothing to do with the downstream) |
 | Config / programming errors, cancellation | No |
 
-- **An exhausted budget does not fail over**: it is the same boundary as [the circuit breaker's failure rules](#circuit-breaker) — when `Deadline` runs out before the send, another endpoint cannot extend it and would only walk the whole pipeline once more (burning a breaker decision and a gate entry, then failing again at the exact same place). Timeouts **after** the request was sent still fail over: that is a downstream that might be replaced by a working one.
+- **An exhausted budget does not fail over**: it is the same boundary as [the circuit breaker's failure rules](#circuit-breaker) — when `TotalTimeout` runs out before the send, another endpoint cannot extend it and would only walk the whole pipeline once more (burning a breaker decision and a gate entry, then failing again at the exact same place). Timeouts **after** the request was sent still fail over: that is a downstream that might be replaced by a working one.
 - **Every retry restarts from the first endpoint**: the endpoint list lives inside retries, so one round must exhaust all endpoints before the first failure reaches the retry layer.
 - **Failing over recomputes `Host`**: a `Host` header the caller set explicitly is dropped on retarget and recomputed from the destination — keeping it would make the mirror route by the primary's virtual host (`HttpClient` honours `Headers.Host`, which wins over the URI authority). For a per-endpoint `Host`, write an attempt middleware that sets it from `ctx.Uri` (`config.Headers` is only applied to the template).
 - **Endpoints must be unique**: two endpoints that resolve to the same base URL (a trailing slash makes no difference) throw `ERR_BAD_OPTION_VALUE` before anything is sent — it would only hit one address twice with the same request.
 - **An endpoint that resolves to the current URL is skipped**: when it shares the request's origin and carries **no path prefix** (typically a bare `https://backup.example.com`), failing over would just resend in place, so it is skipped and the next endpoint is tried.
-- **`Timeout` is a per-endpoint, per-send budget**: same rule as retries, so 3 endpoints with 10s can take up to 30s; set `Deadline` for a whole-request bound (shared across endpoints, see [Timeouts and cancellation](#timeouts-and-cancellation)). Upload progress also accumulates across endpoints (like a retried body — it never jumps back).
+- **`Timeout` is a per-endpoint, per-send budget**: same rule as retries, so 3 endpoints with 10s can take up to 30s; set `TotalTimeout` for a whole-request bound (shared across endpoints, see [Timeouts and cancellation](#timeouts-and-cancellation)). Upload progress also accumulates across endpoints (like a retried body — it never jumps back).
 - **The body must replay in order**: the same requirement as retries (streams must be seekable); non-seekable streams and `StreamContent` throw `ERR_BAD_OPTION_VALUE` as soon as failover is enabled.
 - **Streaming responses can only fail over at the response-head stage**: once the body is handed to the caller, a mid-stream disconnect is neither retried nor failed over (same rule as "the breaker only accounts at the response head").
 - **Endpoints must be absolute `http` / `https` URLs without query or fragment**: an endpoint is a base URL, and how an endpoint query would combine with the request query is undefined, so it is rejected with `ERR_BAD_OPTION_VALUE` (to add a parameter only on a backup endpoint, build the URL in a request interceptor).
@@ -1068,7 +1092,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 - Invalid models (missing route, unbound placeholder, multiple bodies…) throw `InvalidOperationException` on first call; validate at startup with `ApiClient.ValidateModels(typeof(A), ...)` or `ValidateModels(assembly)` (returns all messages, never throws).
 - Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; `IAuthorizationProvider` is the extension point, with `BearerAuthorizationProvider` built in.
 - Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory).
-- Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `Deadline` — there is no separate idle-timeout knob.
+- Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
 
 ## Interface declarations
 
@@ -1173,7 +1197,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `ContentType` | `application/json` | Decides how `Data` is encoded |
 | `Data` | `null` | Request body |
 | `Timeout` | `Zero` (no timeout) | Per-attempt budget (connect + headers + body) |
-| `Deadline` | `null` (none) | Whole-request budget: shared across retries / endpoints / hedges, `min` with `Timeout` |
+| `TotalTimeout` | `null` (none) | Whole-request budget: shared across retries / endpoints / hedges, `min` with `Timeout` |
 | `ResponseType` | `Json` | `Json` / `Text` / `ArrayBuffer` / `Stream` / `Dynamic` |
 | `CancellationToken` | `default` | External cancellation |
 | `TransformRequest` / `TransformResponse` | empty | Transform chains |
@@ -1245,7 +1269,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 47 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 48 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1253,7 +1277,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **33 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
+- **34 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, global retry budget, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
 - **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
@@ -1301,9 +1325,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1484 | `net8.0` / `net6.0` | 2968 |
+| `AxiosNet.Tests` (core + declarative) | 1491 | `net8.0` / `net6.0` | 2982 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1543** | | **3086** |
+| **Total** | **1550** | | **3100** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
@@ -1326,7 +1350,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the nine sub-objects |
 | `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
 | `Governance/` | Concurrency gate, progress callbacks and rate limiting |
-| `Resilience/` | Retry policies and timing, whole-request budget (`Deadline`), circuit-breaker state machine, short circuits |
+| `Resilience/` | Retry policies and timing, whole-request budget (`TotalTimeout`), circuit-breaker state machine, short circuits |
 | `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
 | `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation), concurrent hedging, backup endpoints |
 | `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
@@ -1379,7 +1403,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / failover / breaker / hedging / gate + optional audit
-│  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy
+│  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy
 │  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML implementations
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
@@ -1387,7 +1411,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (47 items) / DI / Aot
+├─ samples/                           # Simple (48 items) / DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/

@@ -1,24 +1,24 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests.Resilience;
 
 /// <summary>
-/// 总预算（<see cref="AxiosConfig.Deadline"/>）：整条逻辑请求的上限，跨重试 / 端点 / 对冲共享。
+/// 总预算（<see cref="AxiosConfig.TotalTimeout"/>）：整条逻辑请求的上限，跨重试 / 端点 / 对冲共享。
 /// <para>
 /// 断言的是「N 毫秒内必须被打断」，与其它集合并行跑会被抢走 CPU，故进 <see cref="TimingCollection"/>。
 /// </para>
 /// </summary>
 [Collection(TimingCollection.Name)]
-public sealed class DeadlineTests
+public sealed class TotalTimeoutTests
 {
     // ------------------------------------------------------------------
     // 单次尝试：总预算比 Timeout 小的时候，实际上限是「剩余总预算」
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Deadline_ClampsAttemptTimeout_AndSaysSoInMessage()
+    public async Task TotalTimeout_ClampsAttemptTimeout_AndSaysSoInMessage()
     {
         await using var server = TestHttpServer.Start(async _ =>
         {
@@ -32,7 +32,7 @@ public sealed class DeadlineTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c =>
         {
             c.Timeout = TimeSpan.FromSeconds(30);              // 单次尝试给得很宽
-            c.Deadline = TimeSpan.FromMilliseconds(150);       // 但整条请求只允许 150ms
+            c.TotalTimeout = TimeSpan.FromMilliseconds(150);       // 但整条请求只允许 150ms
         }));
 
         watch.Stop();
@@ -40,7 +40,7 @@ public sealed class DeadlineTests
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
 
         // 真实上限是 150ms 而不是 30s：消息必须说清是总预算压小的，否则调用方会以为 Timeout 没生效。
-        Assert.Contains("remaining Deadline budget", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("remaining TotalTimeout budget", ex.Message, StringComparison.Ordinal);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.5), $"实际耗时 {watch.Elapsed}：总预算没有生效");
     }
 
@@ -49,7 +49,7 @@ public sealed class DeadlineTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Deadline_CutsRetryLoopShort()
+    public async Task TotalTimeout_CutsRetryLoopShort()
     {
         var calls = 0;
         await using var server = TestHttpServer.Start(_ =>
@@ -67,14 +67,14 @@ public sealed class DeadlineTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "boom", c =>
         {
             c.Timeout = TimeSpan.FromSeconds(10);
-            c.Deadline = TimeSpan.FromMilliseconds(200);
+            c.TotalTimeout = TimeSpan.FromMilliseconds(200);
         }));
         watch.Stop();
 
         // 总预算用尽后由「下一次尝试开始」报出：错误码与超时一致，消息指明第几次没发出。
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.True(ex.IsDeadlineExceeded);   // 公开口径：与「发出后超时」共用 ECONNABORTED，靠这一位区分
-        Assert.Contains("deadline of", ex.Message, StringComparison.Ordinal);
+        Assert.True(ex.IsTotalTimeoutExceeded);   // 公开口径：与「发出后超时」共用 ECONNABORTED，靠这一位区分
+        Assert.Contains("TotalTimeout of", ex.Message, StringComparison.Ordinal);
         Assert.Contains("could be sent", ex.Message, StringComparison.Ordinal);
 
         // 20 次重试一次都不该发出：实际发送次数必须远小于 MaxRetries + 1。
@@ -83,11 +83,11 @@ public sealed class DeadlineTests
     }
 
     // ------------------------------------------------------------------
-    // 排队：Deadline 计入排队时间（与 QueueTimeout 的口径不同）
+    // 排队：TotalTimeout 计入排队时间（与 QueueTimeout 的口径不同）
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Deadline_CountsTimeSpentWaitingForConcurrencySlot()
+    public async Task TotalTimeout_CountsTimeSpentWaitingForConcurrencySlot()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = TestHttpServer.Start(async _ =>
@@ -110,9 +110,9 @@ public sealed class DeadlineTests
         Assert.Single(server.Received);
 
         // ② 第二条请求排队期间总预算就到点了：它连发送阶段都不该进
-        var queued = client.GetAsync(server.Url + "queued", c => c.Deadline = TimeSpan.FromMilliseconds(120));
+        var queued = client.GetAsync(server.Url + "queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(120));
 
-        // 让总预算在「排队中」过掉（排队时间计入 Deadline，与 QueueTimeout 的口径不同）
+        // 让总预算在「排队中」过掉（排队时间计入 TotalTimeout，与 QueueTimeout 的口径不同）
         await Task.Delay(300);
 
         gate.SetResult();
@@ -121,15 +121,15 @@ public sealed class DeadlineTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => queued);
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.Contains("deadline of", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("TotalTimeout of", ex.Message, StringComparison.Ordinal);
         Assert.Equal(1, server.Received.Count(request => request.Path == "/holder"));
         Assert.Equal(0, server.Received.Count(request => request.Path == "/queued"));
     }
 
     // 预算必须在**排队时**就把等待截断：否则 QueueTimeout 不设（默认一直等）时，
-    // Deadline=150ms 的请求会一直排到槽位空出来，预算成了「只记账、不执行」。
+    // TotalTimeout=150ms 的请求会一直排到槽位空出来，预算成了「只记账、不执行」。
     [Fact]
-    public async Task Deadline_CutsQueueWaitShort_WithoutWaitingForTheSlot()
+    public async Task TotalTimeout_CutsQueueWaitShort_WithoutWaitingForTheSlot()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = TestHttpServer.Start(async _ =>
@@ -152,12 +152,12 @@ public sealed class DeadlineTests
         // 槽位一直不放：只有「预算封顶排队」才能让这条请求在 150ms 左右失败。
         var watch = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync(server.Url + "queued", c => c.Deadline = TimeSpan.FromMilliseconds(150))
+            () => client.GetAsync(server.Url + "queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(150))
                 .WaitAsync(TimeSpan.FromSeconds(3)));
         watch.Stop();
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.Contains("deadline of", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("TotalTimeout of", ex.Message, StringComparison.Ordinal);
         // 上限放到 1 秒：真正的判据是「槽位一直不放也没等到」——回归时会撞下面的 3 秒兜底而失败，
         // 这里只是把「被预算截断」和「等到槽位才失败」区分开，不该被 CI 抖动打成假失败。
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"排队没有被总预算截断，实际等了 {watch.Elapsed}");
@@ -173,7 +173,7 @@ public sealed class DeadlineTests
     // 与 Timeout 的关系 / 合并 / 校验
     // ------------------------------------------------------------------
     [Fact]
-    public async Task Deadline_InheritedFromDefaults_ButPerCallValueWins()
+    public async Task TotalTimeout_InheritedFromDefaults_ButPerCallValueWins()
     {
         await using var server = TestHttpServer.Start(async request =>
         {
@@ -182,22 +182,22 @@ public sealed class DeadlineTests
         });
 
         // 实例默认 100ms：任何请求都撑不过 300ms 的下游
-        using var client = new AxiosClient(new AxiosConfig { Deadline = TimeSpan.FromMilliseconds(100) });
+        using var client = new AxiosClient(new AxiosConfig { TotalTimeout = TimeSpan.FromMilliseconds(100) });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "default"));
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
 
         // 按请求覆盖成更宽的值：实例默认必须让位
-        var response = await client.GetAsync(server.Url + "override", c => c.Deadline = TimeSpan.FromSeconds(10));
+        var response = await client.GetAsync(server.Url + "override", c => c.TotalTimeout = TimeSpan.FromSeconds(10));
         Assert.Equal(200, response.Status);
 
         // 显式 null = 这一次不要总预算（与「没设置」是两种语义）
-        var withoutDeadline = await client.GetAsync(server.Url + "none", c => c.Deadline = null);
-        Assert.Equal(200, withoutDeadline.Status);
+        var withoutTotalTimeout = await client.GetAsync(server.Url + "none", c => c.TotalTimeout = null);
+        Assert.Equal(200, withoutTotalTimeout.Status);
     }
 
     [Fact]
-    public async Task ZeroDeadline_MeansNoBudget()
+    public async Task ZeroTotalTimeout_MeansNoBudget()
     {
         await using var server = TestHttpServer.Start(async _ =>
         {
@@ -208,12 +208,12 @@ public sealed class DeadlineTests
         using var client = new AxiosClient();
 
         // 0 与 null 同义（与 Timeout = 0 的取值口径一致）：不该被当成「立刻超时」
-        var response = await client.GetAsync(server.Url + "zero", c => c.Deadline = TimeSpan.Zero);
+        var response = await client.GetAsync(server.Url + "zero", c => c.TotalTimeout = TimeSpan.Zero);
         Assert.Equal(200, response.Status);
     }
 
     [Fact]
-    public async Task Deadline_ClampsRetryBackoffToRemainingBudget()
+    public async Task TotalTimeout_ClampsRetryBackoffToRemainingBudget()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
         using var client = new AxiosClient();
@@ -221,9 +221,9 @@ public sealed class DeadlineTests
         var watch = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "boom", c =>
         {
-            // 退避 5 秒，总预算只有 200ms：睡过截止点等于把 Deadline 变成摆设。
+            // 退避 5 秒，总预算只有 200ms：睡过截止点等于把 TotalTimeout 变成摆设。
             c.Retry.Policy = new RetryPolicy(5, TimeSpan.FromSeconds(5));
-            c.Deadline = TimeSpan.FromMilliseconds(200);
+            c.TotalTimeout = TimeSpan.FromMilliseconds(200);
         }));
         watch.Stop();
 
@@ -232,7 +232,7 @@ public sealed class DeadlineTests
     }
 
     [Fact]
-    public async Task Deadline_HonoursCustomTimeoutMessage()
+    public async Task TotalTimeout_HonoursCustomTimeoutMessage()
     {
         await using var server = TestHttpServer.Start(async _ =>
         {
@@ -244,7 +244,7 @@ public sealed class DeadlineTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c =>
         {
-            c.Deadline = TimeSpan.FromMilliseconds(100);
+            c.TotalTimeout = TimeSpan.FromMilliseconds(100);
             c.Callbacks.TimeoutMessage = "调用方约定的超时文案";
         }));
 
@@ -254,39 +254,39 @@ public sealed class DeadlineTests
     }
 
     [Fact]
-    public async Task HugeDeadline_IsClampedAndDoesNotOverflow()
+    public async Task HugeTotalTimeout_IsClampedAndDoesNotOverflow()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
         // 超长预算等价于「不设」：换算成时间戳时按计时器上限收敛，不能溢出成负数（那会变成「立刻过期」）。
-        var response = await client.GetAsync(server.Url + "huge", c => c.Deadline = TimeSpan.MaxValue);
+        var response = await client.GetAsync(server.Url + "huge", c => c.TotalTimeout = TimeSpan.MaxValue);
         Assert.Equal(200, response.Status);
     }
 
     [Fact]
-    public async Task NegativeDeadline_ThrowsBadOptionValue()
+    public async Task NegativeTotalTimeout_ThrowsBadOptionValue()
     {
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.Deadline = TimeSpan.FromSeconds(-1)));
+            client.GetAsync("http://127.0.0.1:1/x", c => c.TotalTimeout = TimeSpan.FromSeconds(-1)));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
     [Fact]
-    public async Task Deadline_DoesNotLeakIntoNextRequest()
+    public async Task TotalTimeout_DoesNotLeakIntoNextRequest()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
         // 一次带总预算的请求不能把截止点留在实例默认里：下一条请求应当是「没有总预算」的。
-        var first = await client.GetAsync(server.Url + "one", c => c.Deadline = TimeSpan.FromSeconds(5));
+        var first = await client.GetAsync(server.Url + "one", c => c.TotalTimeout = TimeSpan.FromSeconds(5));
         Assert.Equal(200, first.Status);
 
         var second = await client.GetAsync(server.Url + "two");
         Assert.Equal(200, second.Status);
-        Assert.Null(client.Defaults.Deadline);
+        Assert.Null(client.Defaults.TotalTimeout);
     }
 }

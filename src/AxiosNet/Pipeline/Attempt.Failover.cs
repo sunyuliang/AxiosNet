@@ -146,10 +146,10 @@ public static partial class Attempt
             AxiosException.ErrNetwork or AxiosException.ErrPoolExhausted => true,
 
             // 发出之后的超时：这个下游不响应，换一个可能响应。
-            // 预算耗尽（IsDeadlineExceeded）不在其列：Deadline 管的是整条逻辑请求的墙钟时间，
+            // 预算耗尽（IsTotalTimeoutExceeded）不在其列：TotalTimeout 管的是整条逻辑请求的墙钟时间，
             // 换端点不会让它变长 —— 只会在备用端点再走一遍管线、占一次熔断名额与闸门入口，
             // 然后必然在同一处立刻失败。
-            AxiosException.ErrConnAborted when !axios.IsDeadlineExceeded => true,
+            AxiosException.ErrConnAborted when !axios.IsTotalTimeoutExceeded => true,
 
             // 熔断按端点独立成账：这个端点被自己的熔断器拦下，不代表下一个端点也被拦下。
             AxiosException.ErrCircuitOpen => true,

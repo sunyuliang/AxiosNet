@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1543%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1550%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -112,7 +112,7 @@ string url = http.GetUri(c =>
 | 表单与上传 | multipart 字段 + 文件，或裸流直传 | `PostFormAsync(...)` / `FormFile` / `Stream` |
 | 响应类型 | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
 | 流式响应 | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
-| 超时与取消 | 单次尝试预算 + 整条请求总预算 + `CancellationToken` | `c.Timeout = ...` / `c.Deadline = ...` / `cancellationToken:` |
+| 超时与取消 | 单次尝试预算 + 整条请求总预算 + `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
 
 **流量治理**
 
@@ -120,7 +120,7 @@ string url = http.GetUri(c =>
 | --- | --- | --- |
 | 进度与限速 | 上传下载进度、字节限速、体积上限 | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
 | 在途并发闸门 | 限制同时发出的请求条数，排队深度可设上限 | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
-| 弹性重试 | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
+| 弹性重试 | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 / 全局重试预算 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | 熔断 | 按 host 计数的 Closed/Open/HalfOpen 状态机：滚动窗口失败率 + 连续失败两条打开规则，恢复期慢启动 | `c.Circuit.Policy = new CircuitBreaker()` |
 | 并发对冲 | 同一份请求并发多条分支，先成功的胜出 | `c.Hedging.MaxHedges = 1` |
 | 备用端点 | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
@@ -333,7 +333,7 @@ await foreach (var order in pages.Data!)
 }
 ```
 
-- **超时**：正文与响应头共用同一份预算——流式响应的正文读取也计入 `Timeout`（`Deadline` 生效时是它的剩余额度），读到一半到点即 `ECONNABORTED`；不设超时时正文不限时，靠取消令牌退出。
+- **超时**：正文与响应头共用同一份预算——流式响应的正文读取也计入 `Timeout`（`TotalTimeout` 生效时是它的剩余额度），读到一半到点即 `ECONNABORTED`；不设超时时正文不限时，靠取消令牌退出。
 - **单帧上限**：默认 8 MB，合法 1–64 MB（`Limits.MaxStreamFrameLength`），越界发送前抛 `ERR_BAD_OPTION_VALUE`。没有「不限制」语义，峰值内存约为上限的 2–4 倍。
 - **编码**：NDJSON / SSE 要求 ASCII 兼容 charset，宽字符编码取流时报 `ERR_BAD_RESPONSE`；`JsonArray` 必须 UTF-8。UTF-8 BOM 会跳过。
 - **所有权**：流只能枚举一次；`await foreach` 结束或 `break` 自动释放，手动 `MoveNextAsync` 需自己 `DisposeAsync`。
@@ -351,7 +351,7 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
 - `Timeout` 是**单次尝试**的预算（建连 + 等响应头 + 读正文），默认 `Zero` 表示不超时；上限约 49.7 天，超出收敛到上限。
-- `Deadline` 是**整条逻辑请求**的预算（从调用开始，含拦截器、排队、重试等待、对冲分支）：`Timeout` 会被重试 / 备用端点 / 对冲各自复制一份，`Deadline` 只有一份，每次尝试实际拿到 `min(Timeout, 剩余)`。
+- `TotalTimeout` 是**整条逻辑请求**的预算（从调用开始，含拦截器、排队、重试等待、对冲分支）：`Timeout` 会被重试 / 备用端点 / 对冲各自复制一份，`TotalTimeout` 只有一份，每次尝试实际拿到 `min(Timeout, 剩余)`。
 - 超时抛 `ECONNABORTED`（消息可用 `Callbacks.TimeoutMessage` 覆盖），取消抛 `ERR_CANCELED`，原始 `OperationCanceledException` 留在 `Cause`。
 
 ```csharp
@@ -359,15 +359,15 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 await client.GetAsync("orders/scan", c =>
 {
     c.Timeout  = TimeSpan.FromSeconds(10);   // 单次尝试
-    c.Deadline = TimeSpan.FromSeconds(15);   // 整条请求
+    c.TotalTimeout = TimeSpan.FromSeconds(15);   // 整条请求
     c.Retry.Policy = new RetryPolicy(5, TimeSpan.FromMilliseconds(200));
 });
 ```
 
-- 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）；被总预算压小的那次超时，消息会写 `(remaining Deadline budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。「根本没发出」这一类不参与熔断失败计数、不重试、也不换端点（见[熔断](#熔断)的失败口径）。两者错误码相同，要区分就用 `AxiosException.IsDeadlineExceeded`：`true` = 发出前就耗尽（别重试，预算已经空了），`false` = 发出后超时（下游不响应，换端点有意义）。
-- 排队时间**计入** `Deadline`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长；因此剩余预算比 `Limits.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）。`QueueTimeout` 为空（一直等）时同样受这条约束。
-- **流式正文也在预算之内**：正文读取沿用被预算压小后的剩余额度，读到一半到点即 `ECONNABORTED`；长连接（SSE / 大文件下载）不要设 `Timeout` / `Deadline`，改用取消令牌退出。
-- `Deadline = null` 不设总预算（默认），`Zero` 与 `null` 同义，负值 `ERR_BAD_OPTION_VALUE`；按请求显式写 `null` 可以关掉实例默认的总预算。
+- 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）；被总预算压小的那次超时，消息会写 `(remaining TotalTimeout budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。「根本没发出」这一类不参与熔断失败计数、不重试、也不换端点（见[熔断](#熔断)的失败口径）。两者错误码相同，要区分就用 `AxiosException.IsTotalTimeoutExceeded`：`true` = 发出前就耗尽（别重试，预算已经空了），`false` = 发出后超时（下游不响应，换端点有意义）。
+- 排队时间**计入** `TotalTimeout`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长；因此剩余预算比 `Limits.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）。`QueueTimeout` 为空（一直等）时同样受这条约束。
+- **流式正文也在预算之内**：正文读取沿用被预算压小后的剩余额度，读到一半到点即 `ECONNABORTED`；长连接（SSE / 大文件下载）不要设 `Timeout` / `TotalTimeout`，改用取消令牌退出。
+- `TotalTimeout = null` 不设总预算（默认），`Zero` 与 `null` 同义，负值 `ERR_BAD_OPTION_VALUE`；按请求显式写 `null` 可以关掉实例默认的总预算。
 
 ### 进度、限速与大小上限
 
@@ -412,7 +412,7 @@ await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // 
 | --- | --- | --- |
 | `MaxConcurrentRequests` | `null`（不限） | 本实例同时在途条数；正整数 |
 | `MaxQueueLength` | `null`（不限） | 排队深度上限：超出立刻 `ERR_QUEUE_FULL`；正整数，只在设了 `MaxConcurrentRequests` 时起作用 |
-| `QueueTimeout` | `null`（一直等） | 等槽位上限：`null` 一直等 / `Zero` 不排队 / `>0` 超时失败；实际等待还被 `Deadline` 剩余预算封顶 |
+| `QueueTimeout` | `null`（一直等） | 等槽位上限：`null` 一直等 / `Zero` 不排队 / `>0` 超时失败；实际等待还被 `TotalTimeout` 剩余预算封顶 |
 
 - 排队超时抛 **`ERR_QUEUE_TIMEOUT`**，队列满抛 **`ERR_QUEUE_FULL`**（都不是 `ECONNABORTED`）：请求根本没发出去，该降速 / 扩容 / 退避。
 - 两者都是「入口太挤」而不是「下游失败」：默认策略不重试、也不换备用端点——换端点解决不了本实例的槽位竞争，调用方退避后再试。
@@ -449,7 +449,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx；请求体超 `MaxBodyLength`；请求体序列化失败；上传进度回调抛异常 |
 | `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `MaxContentLength`；泛型与 `ResponseType` 不匹配；下载进度回调 / `transformResponse` 抛异常 |
-| `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `Deadline` 总预算已耗尽 |
+| `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `TotalTimeout` 总预算已耗尽 |
 | `ERR_NETWORK` | 连接被拒 / DNS 失败 / 连接中断 / 正文截断 |
 | `ERR_CANCELED` | `CancellationToken` 取消，或客户端已释放 |
 | `ERR_QUEUE_TIMEOUT` | 并发槽位一直占满，超过 `QueueTimeout`（请求未发出） |
@@ -593,20 +593,44 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 | 情况 | 默认 |
 | --- | --- |
 | `ERR_NETWORK` / `ECONNABORTED`（**已发出**后超时） | 重试 |
-| `ECONNABORTED`（`Deadline` 在发出前耗尽，`IsDeadlineExceeded`） | 不重试（预算是整条请求的，重发必然在同一处立刻失败） |
+| `ECONNABORTED`（`TotalTimeout` 在发出前耗尽，`IsTotalTimeoutExceeded`） | 不重试（预算是整条请求的，重发必然在同一处立刻失败） |
 | 408 / 429 / 5xx | 重试（`RetryStatusCodes` 可换） |
 | 其它 4xx、配置 / URL 错误 | 不重试 |
 | `ERR_CANCELED` | 不重试 |
 | POST / PATCH 等非幂等方法 | 不重试（`RetryNonIdempotentMethods = true` 打开） |
 
-库级强制不重试（自定义策略也改不掉）：`ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` / `ERR_BAD_OPTION_VALUE` / `Deadline` 已耗尽（`IsDeadlineExceeded`） —— 这些情况下请求要么没发出，要么立刻重发只会撞同一个闸门，要么是管线里的配置 / 编程错误。
+库级强制不重试（自定义策略也改不掉）：`ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` / `ERR_BAD_OPTION_VALUE` / `TotalTimeout` 已耗尽（`IsTotalTimeoutExceeded`） —— 这些情况下请求要么没发出，要么立刻重发只会撞同一个闸门，要么是管线里的配置 / 编程错误。
 
 其它成员：`Delay` / `BackoffFactor` / `MaxDelay` / `Jitter`（默认 `true`，等待落在 50%–100%）/ `HonorRetryAfter`（默认 `true`，服务端给了 `Retry-After` 就按它等，仍受 `MaxDelay` 封顶）/ `RetryWhen`。
 
-- `Timeout` 是**每次尝试**的预算（3 次重试 × 10s 最坏 40s）；要「整条请求」的上界用 `Deadline`，也可以在调用方用 `CancellationToken`。
+- `Timeout` 是**每次尝试**的预算（3 次重试 × 10s 最坏 40s）；要「整条请求」的上界用 `TotalTimeout`，也可以在调用方用 `CancellationToken`。
 - 拦截器、`transformRequest`、正文序列化只跑一次；响应拦截器看到最终结果。
 - 正文必须可重放：可 seek 的流每次重试前自动拨回起点；不可 seek 的流与 `StreamContent`（含 multipart 部件）在开启重试时直接抛 `ERR_BAD_OPTION_VALUE`。
-- 自定义策略：实现 `IAxiosRetryPolicy`（`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`），`ctx` 提供 `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`。策略被并发共享，需无状态。
+- 自定义策略：实现 `IAxiosRetryPolicy`（`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`），`ctx` 提供 `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`。策略被同一实例的并发请求共享，必须线程安全（推荐无状态；需要跨请求共享状态时自行同步，内置的 `RetryBudgetPolicy` 就是这样）。
+
+### 全局重试预算（`RetryBudgetPolicy`）
+
+逐请求的重试在下游整体故障时会跟着请求数放大：100 个并发请求各重试 3 次就是 300 次多余发送，足够把一次抖动压成一次雪崩。`RetryBudgetPolicy` 给任意策略套一层**实例级共享**的令牌桶，只限速重试、不动首发：
+
+```csharp
+// 容量 20、每秒回补 5：允许一次连发 20 次重试，长期稳态 5 次/秒
+client.Defaults.Retry.Policy = new RetryBudgetPolicy(capacity: 20, refillPerSecond: 5);
+
+// 内层策略决定「该不该重试 / 等多久」，桶只决定「还有没有预算」
+client.Defaults.Retry.Policy = new RetryBudgetPolicy(
+    RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200)), capacity: 50, refillPerSecond: 10);
+
+var budget = (RetryBudgetPolicy)client.Defaults.Retry.Policy;
+budget.OnBudgetExhausted = ctx => logger.LogWarning("重试预算耗尽，{Code} 直接上抛", ctx.ErrorCode);
+budget.RefusedRetries;   // 累计被预算拦下的重试次数，随时可读
+```
+
+- **只拦重试，不拦首发**：桶空了只是「不再重试」，调用方拿到的是内层策略判定为可重试的那次**真实失败**，不会被预算改写成新错误。
+- **只被判定为可重试的失败消耗**：内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌。唯一的保守偏差：内层放行、但总预算恰好耗尽使这次重试没发出时，令牌已经扣掉（只略微收紧预算，不影响正确性）。
+- **桶按策略对象共享**：`Retry.Policy` 在配置克隆间是同一个引用，所以同一个客户端实例的所有请求共用一个桶；某次请求想单独用一个桶，就在那次请求里 `new RetryBudgetPolicy(...)`。
+- 桶初始是满的；`refillPerSecond = 0` 表示「只靠初始容量、不随时间恢复」（适合批处理 / 测试）。
+- 线程安全，检查路径不产生分配；`OnBudgetExhausted` 在锁外触发，回调里可以放心做日志 / IO。
+- 库内不发指标：要观测就用 `RefusedRetries` 接自己的指标系统（与 `Retry.OnRetry` 同一种做法）。
 
 ## 熔断
 
@@ -648,9 +672,9 @@ breaker.Reset();                                                 // 运维手工
 | 4xx（含 408 / 429） | 不计入（也不清零） |
 | `ERR_CANCELED` | 不计入 |
 | 配置 / URL / 序列化 / 反序列化错误 | 不计入 |
-| `ECONNABORTED`（`Deadline` 在请求**发出前**耗尽） | 不计入（本地约束先到期，下游一个字节都没收到） |
+| `ECONNABORTED`（`TotalTimeout` 在请求**发出前**耗尽） | 不计入（本地约束先到期，下游一个字节都没收到） |
 
-- **「没发出」不算下游故障**：排队 / 入口处就耗尽 `Deadline` 而抛的 `ECONNABORTED`（`AxiosCircuitContext.DeadlineExpiredBeforeSend`）不进失败计数。过载时排队变长足以让每条请求都撞上它——记成故障就等于「越拥堵越容易熔断健康的下游」，把局部排队放大成整条链路不可用。已经发出去之后的超时仍照常计入，那才是下游不响应。
+- **「没发出」不算下游故障**：排队 / 入口处就耗尽 `TotalTimeout` 而抛的 `ECONNABORTED`（`AxiosCircuitContext.TotalTimeoutExpiredBeforeSend`）不进失败计数。过载时排队变长足以让每条请求都撞上它——记成故障就等于「越拥堵越容易熔断健康的下游」，把局部排队放大成整条链路不可用。已经发出去之后的超时仍照常计入，那才是下游不响应。
 - **按 host 计数**：默认维度 `host:port`（`uri.Authority`）；`KeySelector` 可改成 `ctx => ctx.Uri.Host` 或按路由前缀隔离租户。
 - **打开条件取「或」**：连续失败达 `FailureThreshold`，或窗口（`WindowSize`）内失败数 ≥ `ceil(样本数 × FailureRateThreshold)` 且样本数达 `MinimumSamples`。`WindowSize = 0` 表示只看连续失败；`MinimumSamples` 大于 `WindowSize` 会在发请求前报 `ERR_BAD_OPTION_VALUE`（那种配法永远触发不了）。
 - **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷。`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。
@@ -659,7 +683,7 @@ breaker.Reset();                                                 // 运维手工
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
 - **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
 - 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度——正在熔断 / 半开的条目不会被丢，闭合态里优先丢窗口中没有失败样本的那条（连续失败数可能已被一次成功清零，但失败率台账仍然有效，丢掉等于把这条维度重置成全新维度）。
-- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `DeadlineExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。
+- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。
 
 ## 并发对冲
 
@@ -707,19 +731,19 @@ await client.GetAsync("health", c => c.Failover.Endpoints = null);
 | 情况 | 换端点？ |
 | --- | --- |
 | `ERR_NETWORK` / `ECONNABORTED`（**已发出**后超时） / `ERR_POOL_EXHAUSTED` | 换 |
-| `ECONNABORTED`（`Deadline` 在请求**发出前**耗尽） | 不换 —— 预算是整条请求的墙钟时间，换端点不会让它变长（见下） |
+| `ECONNABORTED`（`TotalTimeout` 在请求**发出前**耗尽） | 不换 —— 预算是整条请求的墙钟时间，换端点不会让它变长（见下） |
 | 5xx（`ERR_BAD_RESPONSE` 且状态码 ≥ 500） | 换 |
 | `ERR_CIRCUIT_OPEN` | 换 —— 熔断按 `host:port` 独立成账，主端点开着挡不住备用端点 |
 | 4xx、其它 `ERR_BAD_RESPONSE`（如 2xx 的畸形正文） | 不换（换镜像改变不了） |
 | `ERR_QUEUE_TIMEOUT` / `ERR_QUEUE_FULL` | 不换（本机没抢到槽位 / 没排上队，与下游无关） |
 | 配置 / 编程错误、取消 | 不换 |
 
-- **预算耗尽不换端点**：与[熔断的失败口径](#熔断)同一条边界 —— `Deadline` 在发出前就耗尽时，换端点既不能让预算变长，又要在备用端点白走一遍管线（占一次熔断判定与闸门入口，然后必然在同一处立刻失败）。已经发出去之后的超时照常换端点，那才是「换个下游可能就好」。
+- **预算耗尽不换端点**：与[熔断的失败口径](#熔断)同一条边界 —— `TotalTimeout` 在发出前就耗尽时，换端点既不能让预算变长，又要在备用端点白走一遍管线（占一次熔断判定与闸门入口，然后必然在同一处立刻失败）。已经发出去之后的超时照常换端点，那才是「换个下游可能就好」。
 - **每次重试都从第一个端点重新开始**：端点表在重试之内，一轮换完所有端点才把第一条失败交给重试。
 - **换端点会重算 `Host`**：调用方显式设过的 `Host` 头在换端点时丢掉，由目标地址重新算 —— 留着会让镜像按原端点的虚拟主机路由（`HttpClient` 只认 `Headers.Host`，它优先于 URI authority）。要按端点用不同的 `Host`，请写尝试中间件按 `ctx.Uri` 设置（`config.Headers` 只应用在模板上）。
 - **端点表不能重复**：两个端点拼出同一个 base URL（尾斜杠不算区别）会在发请求前抛 `ERR_BAD_OPTION_VALUE` —— 那只是把同一份请求对同一个地址多打一遍。
 - **端点拼出来就是当前地址时跳过**：端点与请求同 origin 且**不带路径前缀**（典型是只写 `https://backup.example.com`）时，换过去等于原地重发，直接跳过继续下一个端点。
-- **`Timeout` 是「每个端点每次发送」的预算**：与重试同口径，3 个端点 + 10s 最坏 30s；要整条请求的上界请设 `Deadline`（跨端点共享，见[超时与取消](#超时与取消)）。上传进度同样跨端点累计（与重试重发正文一致，不回跳）。
+- **`Timeout` 是「每个端点每次发送」的预算**：与重试同口径，3 个端点 + 10s 最坏 30s；要整条请求的上界请设 `TotalTimeout`（跨端点共享，见[超时与取消](#超时与取消)）。上传进度同样跨端点累计（与重试重发正文一致，不回跳）。
 - **正文要能按顺序重放**：与重试同一份要求（流必须可 seek），不可 seek 的流与 `StreamContent` 在开启备用端点时直接抛 `ERR_BAD_OPTION_VALUE`。
 - **流式响应只在响应头阶段能换端点**：正文交给调用方之后，中途断流既不换端点也不重试（与熔断「只按响应头记账」同口径）。
 - **端点必须是绝对的 `http` / `https` 地址，且不能带 query / fragment**：端点只当 base URL 用，端点里的 query 与请求自己的 query 怎么拼没有明确规则，因此直接报 `ERR_BAD_OPTION_VALUE`（要让某个参数只出现在备用端点上，请用请求拦截器按 `ctx` 拼 URL）。
@@ -1066,7 +1090,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 - 模型定义非法（缺路由、占位符未绑定、多个 Body…）首次调用抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateModels(typeof(A), ...)` 或 `ValidateModels(assembly)`（返回全部错误消息，不抛）。
 - 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；`IAuthorizationProvider` 是扩展点，内置 `BearerAuthorizationProvider`。
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。
-- 其它：`client.UrlParameterFormatter` 接管 `[Path]` / `[Query]` 文本形态；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `Deadline`，没有独立的空闲超时旋钮。
+- 其它：`client.UrlParameterFormatter` 接管 `[Path]` / `[Query]` 文本形态；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
 
 ## 接口级声明
 
@@ -1171,7 +1195,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `ContentType` | `application/json` | 决定 `Data` 的编码方式 |
 | `Data` | `null` | 请求体 |
 | `Timeout` | `Zero`（不超时） | 单次尝试的预算（建连 + 响应头 + 正文） |
-| `Deadline` | `null`（不设） | 整条请求的总预算：跨重试 / 端点 / 对冲共享，并与 `Timeout` 取小 |
+| `TotalTimeout` | `null`（不设） | 整条请求的总预算：跨重试 / 端点 / 对冲共享，并与 `Timeout` 取小 |
 | `ResponseType` | `Json` | `Json` / `Text` / `ArrayBuffer` / `Stream` / `Dynamic` |
 | `CancellationToken` | `default` | 外部取消 |
 | `TransformRequest` / `TransformResponse` | 空 | 转换链 |
@@ -1243,7 +1267,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 47 项：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 48 项：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1251,7 +1275,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
-- **核心 33 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压。
+- **核心 34 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、全局重试预算、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压。
 - **声明式 14 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式。
 
 另有两个示例：
@@ -1299,9 +1323,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1484 | `net8.0` / `net6.0` | 2968 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1491 | `net8.0` / `net6.0` | 2982 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1543** | | **3086** |
+| **合计** | **1550** | | **3100** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
@@ -1324,7 +1348,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 | `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与九个子对象 |
 | `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
 | `Governance/` | 并发闸门、进度回调与限速 |
-| `Resilience/` | 重试策略与计时、总预算（`Deadline`）、熔断状态机、短路响应 |
+| `Resilience/` | 重试策略与计时、总预算（`TotalTimeout`）、熔断状态机、短路响应 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
 | `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse`、尝试管线（内置顺序、插入位置、重排校验）、并发对冲、备用端点 |
 | `Connectivity/` | 连接池（含命名共享池）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
@@ -1377,7 +1401,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
 │  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 备用端点 / 熔断 / 对冲 / 闸门 + 可选审计
-│  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy
+│  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy
 │  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML 实现
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
@@ -1385,7 +1409,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ WebAPI/                      # 声明式 API 客户端（模型 / 接口）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（47 项）/ DI / Aot
+├─ samples/                           # Simple（48 项）/ DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/

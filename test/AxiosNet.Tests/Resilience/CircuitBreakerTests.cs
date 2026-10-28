@@ -86,7 +86,7 @@ public sealed class CircuitBreakerTests
     }
 
     [Fact]
-    public async Task DeadlineExpiredBeforeSend_DoesNotTripCircuit()
+    public async Task TotalTimeoutExpiredBeforeSend_DoesNotTripCircuit()
     {
         // 「一次都没发出」与「发出后超时」是两件事：前者是本地约束（排队 / 预算）先到期，
         // 下游连一个字节都没收到。记成故障的后果是过载时排队越久越容易把健康 host 熔断，
@@ -117,10 +117,10 @@ public sealed class CircuitBreakerTests
         for (var i = 0; i < 2; i++)
         {
             var expired = await Assert.ThrowsAsync<AxiosException>(
-                () => client.GetAsync(server.Url + "queued", c => c.Deadline = TimeSpan.FromMilliseconds(80)));
+                () => client.GetAsync(server.Url + "queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(80)));
 
             Assert.Equal(AxiosException.ErrConnAborted, expired.Code);
-            Assert.Contains("deadline of", expired.Message, StringComparison.Ordinal);
+            Assert.Contains("TotalTimeout of", expired.Message, StringComparison.Ordinal);
         }
 
         Assert.Single(server.Received);

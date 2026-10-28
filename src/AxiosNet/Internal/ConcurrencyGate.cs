@@ -44,7 +44,7 @@ internal sealed class ConcurrencyGate
     /// <param name="request">触发本次排队的请求（错误消息带出去）。</param>
     /// <param name="cancellationToken">本次尝试的令牌，排队期间取消立刻收手。</param>
     /// <param name="queueTimeout">调用方给的排队上限（<c>QueueTimeout</c>）。</param>
-    /// <param name="budgetRemaining">总预算剩余（<c>null</c> = 没设 <see cref="AxiosConfig.Deadline"/>）；比排队上限更紧时由它封顶。</param>
+    /// <param name="budgetRemaining">总预算剩余（<c>null</c> = 没设 <see cref="AxiosConfig.TotalTimeout"/>）；比排队上限更紧时由它封顶。</param>
     /// <param name="attempt">当前是第几次尝试，只用于「预算耗尽」的错误消息。</param>
     /// <remarks>
     /// 本方法刻意<b>不是</b> <c>async</c>：稳态下槽位总是立刻可得，这条快路径每请求都要走一次，
@@ -90,16 +90,16 @@ internal sealed class ConcurrencyGate
             throw AxiosException.QueueTimeout(config, request, TimeSpan.Zero, MaxConcurrency);
         }
 
-        // 总预算封顶排队等待：Deadline 管的是「整条逻辑请求」的墙钟时间，
+        // 总预算封顶排队等待：TotalTimeout 管的是「整条逻辑请求」的墙钟时间，
         // 不约束排队的话，最需要它的过载场景（排队最长）反而成了预算之外的黑洞 ——
-        // 一个 Deadline=200ms 的请求可以在闸门里排到 QueueTimeout 甚至无限等。
+        // 一个 TotalTimeout=200ms 的请求可以在闸门里排到 QueueTimeout 甚至无限等。
         // 放在排队深度计数之前：这里抛出的错误没有真的等过，不该进水位。
         var cutByBudget = false;
         if (budgetRemaining is { } budget)
         {
             if (budget <= TimeSpan.Zero)
             {
-                throw AxiosException.DeadlineExceeded(config, request, attempt, config.Deadline);
+                throw AxiosException.TotalTimeoutExceeded(config, request, attempt, config.TotalTimeout);
             }
 
             if (queueTimeout is not { } queued || budget < queued)
@@ -156,7 +156,7 @@ internal sealed class ConcurrencyGate
             catch (OperationCanceledException ex) when (cutByBudget)
             {
                 // 真的是总预算到点了：报「预算耗尽」而不是「排队上限太小」——后者会把调用方引到错的旋钮上。
-                throw AxiosException.DeadlineExceeded(config, request, attempt, config.Deadline, ex);
+                throw AxiosException.TotalTimeoutExceeded(config, request, attempt, config.TotalTimeout, ex);
             }
             catch (OperationCanceledException ex)
             {

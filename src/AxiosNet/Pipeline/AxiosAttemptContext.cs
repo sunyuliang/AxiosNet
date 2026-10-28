@@ -52,7 +52,7 @@ public readonly struct AxiosAttemptContext
 
     private readonly ConcurrencyGate? _gate;
 
-    /// <summary>总预算的绝对时间戳（<see cref="DeadlineBudget.None"/> = 没设），一次请求只算一次。</summary>
+    /// <summary>总预算的绝对时间戳（<see cref="TotalTimeoutBudget.None"/> = 没设），一次请求只算一次。</summary>
     private readonly long _deadlineTimestamp;
 
     /// <summary>
@@ -112,7 +112,7 @@ public readonly struct AxiosAttemptContext
     /// 本次尝试的令牌：默认就是调用方的 <see cref="ExternalToken"/>，对冲给每条分支各换一份。
     /// 并发闸门的排队与终端的超时计时都用它，因此被放弃的尝试（对冲的败者）能被立刻收掉；
     /// 中间件自身耗时<b>不计入</b> <c>AxiosConfig.Timeout</c>（它是单次尝试的预算），但计入
-    /// <see cref="AxiosConfig.Deadline"/>（整条逻辑请求的预算，从调用入口起算）。
+    /// <see cref="AxiosConfig.TotalTimeout"/>（整条逻辑请求的预算，从调用入口起算）。
     /// </summary>
     public CancellationToken AttemptToken { get; }
 
@@ -151,7 +151,7 @@ public readonly struct AxiosAttemptContext
     public IDisposable? Slot { get; }
 
     /// <summary>距总预算耗尽还剩多久；<c>null</c> = 没设总预算，<see cref="TimeSpan.Zero"/> = 已耗尽。</summary>
-    internal TimeSpan? RemainingDeadline => DeadlineBudget.Remaining(_deadlineTimestamp);
+    internal TimeSpan? RemainingTotalTimeout => TotalTimeoutBudget.Remaining(_deadlineTimestamp);
 
     /// <summary>派生：换一个尝试序号（重试中间件推进尝试时用）。</summary>
     public AxiosAttemptContext WithAttemptNumber(int attemptNumber)

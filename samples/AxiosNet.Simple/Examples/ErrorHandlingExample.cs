@@ -53,15 +53,15 @@ public sealed class ErrorHandlingExample : IExample
             Console.WriteLine($"  取消: code={ex.Code}");
         }
 
-        // 总预算（Deadline）：Timeout 只管「一次尝试」，重试 / 换端点 / 对冲会各自复制一份；
-        // Deadline 管「整条逻辑请求」，用尽后下一次尝试根本不发出。
+        // 总预算（TotalTimeout）：Timeout 只管「一次尝试」，重试 / 换端点 / 对冲会各自复制一份；
+        // TotalTimeout 管「整条逻辑请求」，用尽后下一次尝试根本不发出。
         stopwatch.Restart();
         try
         {
             await http.GetAsync(context.BaseUrl + "slow?ms=300", c =>
             {
                 c.Timeout = TimeSpan.FromMilliseconds(200);   // 单次尝试的上限
-                c.Deadline = TimeSpan.FromMilliseconds(250);  // 含重试等待的总预算
+                c.TotalTimeout = TimeSpan.FromMilliseconds(250);  // 含重试等待的总预算
                 c.Retry.Policy = new AxiosNet.Retry.RetryPolicy(5, TimeSpan.Zero);
             });
         }

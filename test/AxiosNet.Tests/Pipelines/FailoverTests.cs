@@ -281,7 +281,7 @@ public sealed class FailoverTests
     public async Task Failover_DoesNotSwitchWhenBudgetExpiredBeforeSend()
     {
         // 预算在「发出之前」就耗尽（本例被并发闸门挡住，排到预算用完）：
-        // 这类 ECONNABORTED 换端点解决不了 —— Deadline 管的是整条逻辑请求的墙钟时间，
+        // 这类 ECONNABORTED 换端点解决不了 —— TotalTimeout 管的是整条逻辑请求的墙钟时间，
         // 换个下游不会让它变长，只会在备用端点再走一遍管线、占一次熔断名额与闸门入口，然后原地再失败一次。
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -309,7 +309,7 @@ public sealed class FailoverTests
         try
         {
             var expired = await Assert.ThrowsAsync<AxiosException>(
-                () => client.GetAsync("queued", c => c.Deadline = TimeSpan.FromMilliseconds(80)));
+                () => client.GetAsync("queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(80)));
 
             Assert.Equal(AxiosException.ErrConnAborted, expired.Code);
 
@@ -634,7 +634,7 @@ public sealed class FailoverTests
         };
 
         var handler = Attempt.Failover(next);
-        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null, deadlineTimestamp: DeadlineBudget.None);
+        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null, deadlineTimestamp: TotalTimeoutBudget.None);
 
         var exception = await Assert.ThrowsAsync<AxiosException>(async () => await handler(template, ctx));
 

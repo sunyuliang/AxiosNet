@@ -73,15 +73,15 @@ public sealed class AxiosException : Exception
     public Exception? Cause => InnerException;
 
     /// <summary>
-    /// 是否属于「<see cref="AxiosConfig.Deadline"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
+    /// 是否属于「<see cref="AxiosConfig.TotalTimeout"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
     /// 与「发出之后超时」区分开。
     /// </summary>
     /// <remarks>
     /// 「发出之后超时」说明下游不响应，换端点或重试有意义；这条只说明本地预算先到期，下游一个字节都没收到。
     /// 调用方据此应当缩短后续工作 / 降扇出，而不是立刻重试 —— 预算已经空了，重试必然在同一处立刻失败。
-    /// 库内部按同一口径分流：不计入熔断失败、不重试、不换端点（见 <see cref="Circuit.AxiosCircuitContext.DeadlineExpiredBeforeSend"/>）。
+    /// 库内部按同一口径分流：不计入熔断失败、不重试、不换端点（见 <see cref="Circuit.AxiosCircuitContext.TotalTimeoutExpiredBeforeSend"/>）。
     /// </remarks>
-    public bool IsDeadlineExceeded { get; private init; }
+    public bool IsTotalTimeoutExceeded { get; private init; }
 
     private AxiosException(
         string message,
@@ -141,7 +141,7 @@ public sealed class AxiosException : Exception
                 : "unset";
 
             message = $"timeout of {effective.TotalMilliseconds:0}ms exceeded "
-                      + $"(remaining Deadline budget; Timeout = {configured})";
+                      + $"(remaining TotalTimeout budget; Timeout = {configured})";
         }
         else
         {
@@ -152,20 +152,20 @@ public sealed class AxiosException : Exception
     }
 
     /// <summary>
-    /// 总预算（<see cref="AxiosConfig.Deadline"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
+    /// 总预算（<see cref="AxiosConfig.TotalTimeout"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
     /// 消息指明是第几次尝试、总预算多少。
     /// </summary>
     /// <param name="config">本次请求的生效配置（错误码、回调文案与超时消息都取自它）。</param>
     /// <param name="request">触发本次失败的请求（挂在异常上供调用方定位）。</param>
     /// <param name="attempt">第几次尝试未能发出，写进消息里便于排查。</param>
     /// <param name="budget">
-    /// 总预算的配置值，只用于消息。取 <see cref="AxiosConfig.Deadline"/> 原样（可空）而不是强制解包：
-    /// 截止点由入口处的时间戳唯一决定（<c>DeadlineBudget</c>），但配置对象是同一个实例，管线跑起来之后
+    /// 总预算的配置值，只用于消息。取 <see cref="AxiosConfig.TotalTimeout"/> 原样（可空）而不是强制解包：
+    /// 截止点由入口处的时间戳唯一决定（<c>TotalTimeoutBudget</c>），但配置对象是同一个实例，管线跑起来之后
     /// 仍可能被自定义中间件 / 回调改写成 <c>null</c>。那种情况下这里只该少写一个金额，
     /// 不该把「预算耗尽」变成 <c>InvalidOperationException</c>。
     /// </param>
     /// <param name="inner">把预算耗尽归因到的那次失败（通常是上一次尝试抛出的异常），保留 <c>Cause</c> 链。</param>
-    internal static AxiosException DeadlineExceeded(
+    internal static AxiosException TotalTimeoutExceeded(
         AxiosConfig config,
         HttpRequestMessage? request,
         int attempt,
@@ -173,18 +173,18 @@ public sealed class AxiosException : Exception
         Exception? inner = null)
     {
         var headline = budget is { } known && known > TimeSpan.Zero
-            ? $"deadline of {known.TotalMilliseconds:0}ms exceeded"
-            : "deadline exceeded";
+            ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
+            : "TotalTimeout exceeded";
 
         var message = string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage)
             ? $"{headline} before attempt #{attempt} could be sent: "
               + "the total budget covers all retries, failover endpoints and hedges — "
-              + "raise Deadline, cut MaxRetries / MaxHedges, or shorten Timeout"
+              + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
             : config.CallbacksOrNull!.TimeoutMessage!;
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner)
         {
-            IsDeadlineExceeded = true
+            IsTotalTimeoutExceeded = true
         };
     }
 

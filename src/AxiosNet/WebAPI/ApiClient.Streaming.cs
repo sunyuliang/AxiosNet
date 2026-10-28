@@ -17,7 +17,7 @@ public sealed partial class ApiClient
 
     /// <summary>
     /// 以指定帧格式读取流式响应（NDJSON / SSE / JSON 数组）；三种格式共用同一套字节级分帧与单帧上限（默认 8 MB）。
-    /// 正文超时与响应头同一份预算（本次尝试的 <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.Deadline"/> 压过）；
+    /// 正文超时与响应头同一份预算（本次尝试的 <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.TotalTimeout"/> 压过）；
     /// 不设超时时正文不限时，靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求响应是 UTF-8。
     /// 响应流只能枚举一次；帧解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。
     /// </summary>
@@ -54,7 +54,7 @@ public sealed partial class ApiClient
         AxiosStreamFormat format)
     {
         // 正文按帧消费：responseType 固定 Stream。正文超时与响应头同一份预算
-        // （本次尝试的 Timeout，已被 Deadline 压过），不设超时时正文不限时、靠取消令牌退出。
+        // （本次尝试的 Timeout，已被 TotalTimeout 压过），不设超时时正文不限时、靠取消令牌退出。
         config.SetResponseTypeAuto(ResponseType.Stream);
 
         await ApplyAuthorizationAsync(authorization, request, config, cancellationToken).ConfigureAwait(false);

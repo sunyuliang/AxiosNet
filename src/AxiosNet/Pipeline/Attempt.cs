@@ -50,7 +50,7 @@ public static partial class Attempt
 
     /// <summary>
     /// 并发闸门：本次尝试的槽位。排队时间不计入 <see cref="AxiosConfig.Timeout"/>（队列有自己的
-    /// <c>QueueTimeout</c>），所以计时在闸门之后才开始；但它计入 <see cref="AxiosConfig.Deadline"/>，
+    /// <c>QueueTimeout</c>），所以计时在闸门之后才开始；但它计入 <see cref="AxiosConfig.TotalTimeout"/>，
     /// 因此总预算比排队上限更紧时，闸门按剩余预算截断等待。没设并发上限时直接把请求交给下一环。
     /// </summary>
     public static AxiosAttemptMiddleware Gate { get; } = next =>
@@ -105,7 +105,7 @@ public static partial class Attempt
 
                 // 已经是「总预算耗尽」（上一次尝试的终端在预算已空时抛的）：消息里已经写明第几次没发出，
                 // 再包一层只会把序号 +1、让 Cause 链自相矛盾。
-                if (ex is AxiosException { IsDeadlineExceeded: true })
+                if (ex is AxiosException { IsTotalTimeoutExceeded: true })
                 {
                     throw;
                 }
@@ -136,9 +136,9 @@ public static partial class Attempt
 
                 // 策略决定重试，但预算已经不允许：别再睡、别再发，直接报总预算耗尽（本次失败留在 Cause 里）。
                 // 放在 CanRetry 之后而不是之前：位置提前会把上面那几类终止原因一起吞掉。
-                if (ctx.RemainingDeadline is { } remaining && remaining <= TimeSpan.Zero)
+                if (ctx.RemainingTotalTimeout is { } remaining && remaining <= TimeSpan.Zero)
                 {
-                    throw AxiosException.DeadlineExceeded(ctx.Config, request, attempt + 1, ctx.Config.Deadline, ex);
+                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
                 }
 
                 var delay = policy.GetDelay(failed);
@@ -154,8 +154,8 @@ public static partial class Attempt
                 }
 
                 // 退避不能睡过总预算：剩下的时间不够就只等到截止点，下一次尝试会以「总预算耗尽」失败，
-                // 而不是先睡完一个早已到期的预算再失败（调用方感知的耗时不会超过 Deadline）。
-                if (ctx.RemainingDeadline is { } remainingBudget && delay > remainingBudget)
+                // 而不是先睡完一个早已到期的预算再失败（调用方感知的耗时不会超过 TotalTimeout）。
+                if (ctx.RemainingTotalTimeout is { } remainingBudget && delay > remainingBudget)
                 {
                     delay = remainingBudget > TimeSpan.Zero ? remainingBudget : TimeSpan.Zero;
                 }
@@ -280,8 +280,8 @@ public static partial class Attempt
             ctx.AttemptToken,
             ctx.Config.LimitsOrNull?.QueueTimeout,
 
-            // 总预算比排队上限更紧时由它封顶：Deadline 不约束排队就等于没约束「整条请求」。
-            ctx.RemainingDeadline,
+            // 总预算比排队上限更紧时由它封顶：TotalTimeout 不约束排队就等于没约束「整条请求」。
+            ctx.RemainingTotalTimeout,
             ctx.AttemptNumber).ConfigureAwait(false);
 
         AxiosAttemptResult result;

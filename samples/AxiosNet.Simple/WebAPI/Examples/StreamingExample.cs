@@ -35,7 +35,7 @@ public sealed class StreamingExample : IExample
 
         // await 已经完成：状态码与响应头到手，正文还没读（状态码错误会在这一行抛出）
         Console.WriteLine($"  响应头已到达：HTTP {response.Status} / {response.GetHeader("Content-Type")}");
-        Console.WriteLine("  超时口径：正文与响应头共用同一份预算（Timeout / Deadline），不设超时时正文不限时，靠取消令牌退出");
+        Console.WriteLine("  超时口径：正文与响应头共用同一份预算（Timeout / TotalTimeout），不设超时时正文不限时，靠取消令牌退出");
 
         var started = DateTime.UtcNow;
         await foreach (var chunk in response.Data!)

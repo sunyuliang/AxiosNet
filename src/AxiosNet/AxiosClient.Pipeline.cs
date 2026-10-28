@@ -70,7 +70,7 @@ public sealed partial class AxiosClient
             var template = CreateRequestMessage(config, plan, telemetryActivity);
 
             // 总预算换成一次绝对时间戳：重试 / 换端点 / 对冲分支共享同一个截止点，晚起跑的分支拿到更少的剩余。
-            var deadlineTimestamp = DeadlineBudget.Start(config, entryTimestamp);
+            var deadlineTimestamp = TotalTimeoutBudget.Start(config, entryTimestamp);
 
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try

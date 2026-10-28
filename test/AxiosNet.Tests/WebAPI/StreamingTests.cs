@@ -263,19 +263,19 @@ public sealed class StreamingTests
     }
 
     [Fact]
-    public async Task Stream_BodyIsBoundedByDeadline_NotJustTimeout()
+    public async Task Stream_BodyIsBoundedByTotalTimeout_NotJustTimeout()
     {
-        // 只设 Deadline、不设 Timeout：正文阶段同样在截止点被打断，
+        // 只设 TotalTimeout、不设 Timeout：正文阶段同样在截止点被打断，
         // 而且消息要指明是「预算压的」，不能写成「timeout of 0ms exceeded」（统一口径后的关键点）。
         using var client = CreateClient(
             new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n") }, stallAfterChunks: true),
-            configure: config => config.Deadline = TimeSpan.FromMilliseconds(200));
+            configure: config => config.TotalTimeout = TimeSpan.FromMilliseconds(200));
 
         var response = await client.RequestStreamAsync(new StreamFrameRequest());
 
         var error = await Assert.ThrowsAsync<AxiosException>(() => CollectAsync(response.Data!));
         Assert.Equal(AxiosException.ErrConnAborted, error.Code);
-        Assert.Contains("remaining Deadline budget", error.Message, StringComparison.Ordinal);
+        Assert.Contains("remaining TotalTimeout budget", error.Message, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------
@@ -920,7 +920,7 @@ public sealed class StreamingTests
         Assert.True(await enumerator.MoveNextAsync());
         Assert.Equal(1, enumerator.Current.N);
 
-        // 消费者处理第一帧耗时 400ms：没设 Timeout / Deadline 时正文没有任何计时器，
+        // 消费者处理第一帧耗时 400ms：没设 Timeout / TotalTimeout 时正文没有任何计时器，
         // 停顿多久都不该失败（要中途退出只能靠取消令牌）。
         await Task.Delay(400);
 

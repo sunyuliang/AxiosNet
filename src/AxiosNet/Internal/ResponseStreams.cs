@@ -25,7 +25,7 @@ internal sealed class TimeoutStream : DelegatingStream
     private CancellationTokenSource? _cachedCallerCts;
 
     /// <summary>
-    /// 包装流式正文。<paramref name="remaining"/> 为本次尝试的剩余超时预算（已被 <c>Deadline</c> 压过），
+    /// 包装流式正文。<paramref name="remaining"/> 为本次尝试的剩余超时预算（已被 <c>TotalTimeout</c> 压过），
     /// <c>null</c> 表示不超时；构造时已耗尽则核心方法入口直接失败。
     /// <paramref name="effectiveTimeout"/> 只在「被总预算压小」时传入，用于让超时消息说清真实上限。
     /// </summary>

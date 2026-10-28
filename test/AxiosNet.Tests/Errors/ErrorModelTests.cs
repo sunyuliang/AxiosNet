@@ -387,7 +387,7 @@ public sealed class ErrorModelTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c => c.Timeout = TimeSpan.FromMilliseconds(100)));
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
-        Assert.False(ex.IsDeadlineExceeded);   // 发出之后才超时：不算「预算耗尽没发出」
+        Assert.False(ex.IsTotalTimeoutExceeded);   // 发出之后才超时：不算「预算耗尽没发出」
         Assert.Contains("timeout of 100ms exceeded", ex.Message);
     }
 

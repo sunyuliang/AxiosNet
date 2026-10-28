@@ -57,7 +57,7 @@ public sealed class QueueBackpressureExample : IExample
         Console.WriteLine($"  对照（MaxQueueLength = null）: 4 条全部成功，status = {string.Join(",", relaxed)}");
         Console.WriteLine("  说明: 被拒的请求没有发出去，也不回退到备用端点 —— 它是「入口太挤」，换端点解决不了；调用方应退避后重试");
         Console.WriteLine("  说明: MaxQueueLength 与 MaxConcurrentRequests 一起在首个受限请求时固化，构造之后改 Defaults 不会重建闸门");
-        Console.WriteLine("  说明: 想让请求「不排队」用 QueueTimeout = TimeSpan.Zero（报 ERR_QUEUE_TIMEOUT）；排队等待计入 Deadline，不计入 Timeout");
+        Console.WriteLine("  说明: 想让请求「不排队」用 QueueTimeout = TimeSpan.Zero（报 ERR_QUEUE_TIMEOUT）；排队等待计入 TotalTimeout，不计入 Timeout");
 
         async Task<string> RunOneAsync(int i)
         {

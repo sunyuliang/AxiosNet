@@ -63,19 +63,19 @@ public readonly struct AxiosCircuitContext
     public bool IsSuccess => Exception is null && (StatusCode is null || StatusCode < 400);
 
     /// <summary>
-    /// 本次尝试是否「一次都没发出」：<see cref="AxiosConfig.Deadline"/> 在排队或入口处就耗尽了
+    /// 本次尝试是否「一次都没发出」：<see cref="AxiosConfig.TotalTimeout"/> 在排队或入口处就耗尽了
     /// （<c>ECONNABORTED</c>，但下游连一个字节都没收到）。
     /// </summary>
     /// <remarks>
     /// 与「发出后超时」区分开：那个说明下游不响应，是真的故障；这个只说明本地预算先到期
     /// —— 过载时排队变长就足以让每条请求都撞上它。自定义策略若要自己记账，用它排除。
     /// </remarks>
-    public bool DeadlineExpiredBeforeSend => Exception is AxiosException { IsDeadlineExceeded: true };
+    public bool TotalTimeoutExpiredBeforeSend => Exception is AxiosException { IsTotalTimeoutExceeded: true };
 
     /// <summary>
     /// 本次尝试是否算下游故障（熔断计数的唯一口径）：网络错误 / 超时 / <see cref="HttpRequestException"/> /
     /// <see cref="IOException"/> / 5xx 计入；取消、全部 4xx（含 408 / 429）与
-    /// <see cref="DeadlineExpiredBeforeSend"/>（请求从未发出）不计入。
+    /// <see cref="TotalTimeoutExpiredBeforeSend"/>（请求从未发出）不计入。
     /// </summary>
     public bool IsFailure
     {
@@ -99,8 +99,8 @@ public readonly struct AxiosCircuitContext
 
             // 总预算在请求发出之前就耗尽：本地约束先到期，不是下游不响应。
             // 记成故障的后果是「过载 → 排队 → 预算耗尽」把一个健康的 host 熔断，
-            // 把局部排队放大成整条链路不可用 —— 而排队恰恰是 Deadline 最该待命的场景。
-            if (DeadlineExpiredBeforeSend)
+            // 把局部排队放大成整条链路不可用 —— 而排队恰恰是 TotalTimeout 最该待命的场景。
+            if (TotalTimeoutExpiredBeforeSend)
             {
                 return false;
             }
