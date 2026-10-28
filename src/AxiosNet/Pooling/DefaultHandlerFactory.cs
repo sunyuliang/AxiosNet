@@ -74,6 +74,13 @@ internal static class DefaultHandlerFactory
 
         var ticks = lifetime.Ticks * (0.9d + (Random.Shared.NextDouble() * 0.2d));
 
+        // 极小正值（< 10 tick）乘 0.9 后截断会变成 0，而 0 在 SocketsHttpHandler 里表示「连接不复用」——
+        // 语义从「短寿命」翻转成「永不复用」。至少保留 1 tick。
+        if (ticks < 1d)
+        {
+            ticks = 1d;
+        }
+
         // 超大寿命乘 1.1 会越过 long：夹到 TimeSpan 上限，别让抖动制造溢出。
         return ticks >= TimeSpan.MaxValue.Ticks ? TimeSpan.MaxValue : TimeSpan.FromTicks((long)ticks);
     }

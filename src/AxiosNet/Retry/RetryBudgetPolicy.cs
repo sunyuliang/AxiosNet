@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AxiosNet.Telemetry;
 
 namespace AxiosNet.Retry;
 
@@ -20,7 +21,8 @@ namespace AxiosNet.Retry;
 /// </para>
 /// <para>
 /// 线程安全，每次判定只在锁内做一次时间戳换算、不分配；<see cref="RefusedRetries"/> 与
-/// <see cref="OnBudgetExhausted"/> 用于观测（库内不另发指标）。
+/// <see cref="OnBudgetExhausted"/> 用于本地观测，进程级指标见
+/// <c>axiosnet.client.retry.budget_exhausted</c>（无标签，受 <c>Telemetry.Enabled</c> 控制）。
 /// </para>
 /// </remarks>
 /// <example>
@@ -97,7 +99,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
     /// <summary>令牌补充速度（次/秒）：<c>0</c> 表示桶用完后不再补充。</summary>
     public double RefillPerSecond => _refillPerSecond;
 
-    /// <summary>因预算不足被拒掉的重试次数（累计，线程安全）——用来接指标或告警；库内不另发指标。</summary>
+    /// <summary>因预算不足被拒掉的重试次数（累计，线程安全）——用来接指标或告警；同时计入 <c>axiosnet.client.retry.budget_exhausted</c>。</summary>
     public long RefusedRetries => Interlocked.Read(ref _refusedRetries);
 
     /// <summary>当前可用令牌数（读取时按经过时间补足；只用于诊断与测试，不要据此做业务判断）。</summary>
@@ -137,6 +139,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
         }
 
         Interlocked.Increment(ref _refusedRetries);
+        AxiosTelemetry.RetryBudgetRefused(context.Config);
 
         // 锁外回调：调用方的代码不该在内部锁里跑。
         OnBudgetExhausted?.Invoke(context);
@@ -145,6 +148,24 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
 
     /// <inheritdoc />
     public TimeSpan GetDelay(AxiosRetryContext context) => _inner.GetDelay(context);
+
+    /// <summary>
+    /// 退回一个已扣的令牌：重试决定已做出、但这次尝试在发出前就被总预算拦下（典型是退避等待把剩余预算睡完）。
+    /// 装饰器包住本策略时调用方识别不到，属已知的保守偏差。
+    /// </summary>
+    internal void Refund()
+    {
+        lock (_sync)
+        {
+            Refill(Stopwatch.GetTimestamp());
+
+            // 补完再封顶：Refill 可能已经把桶补到只差一点，直接 +1 会越过容量。
+            _tokens = Math.Min(_capacity, _tokens + 1d);
+
+            // 预算包预算时内层同样被扣过一次，一起退（外层只会在内层放行后才扣自己的）。
+            (_inner as RetryBudgetPolicy)?.Refund();
+        }
+    }
 
     private bool TryTake()
     {

@@ -280,6 +280,17 @@ public sealed class ConnectionPoolTests
     }
 
     [Fact]
+    public void PooledConnectionLifetime_TinyPositive_StaysPositive()
+    {
+        // 极小正值乘 0.9 截断后会变成 0，而 0 表示「连接不复用」——语义不能从「短寿命」翻转过来
+        for (var ticks = 1; ticks < 10; ticks++)
+        {
+            var jittered = DefaultHandlerFactory.JitterLifetime(TimeSpan.FromTicks(ticks));
+            Assert.True(jittered > TimeSpan.Zero, $"{ticks} tick 抖动后变成 {jittered}");
+        }
+    }
+
+    [Fact]
     public void DefaultHandler_AppliesJitteredLifetime_ButOptionsKeepConfiguredValue()
     {
         var configured = TimeSpan.FromMinutes(10);

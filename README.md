@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1550%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1555%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -626,11 +626,12 @@ budget.RefusedRetries;   // 累计被预算拦下的重试次数，随时可读
 ```
 
 - **只拦重试，不拦首发**：桶空了只是「不再重试」，调用方拿到的是内层策略判定为可重试的那次**真实失败**，不会被预算改写成新错误。
-- **只被判定为可重试的失败消耗**：内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌。唯一的保守偏差：内层放行、但总预算恰好耗尽使这次重试没发出时，令牌已经扣掉（只略微收紧预算，不影响正确性）。
+- **只被「会发出」的重试消耗**：内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌；总预算已耗尽、这次重试注定发不出去时，刚扣的令牌会立刻退回（只认内建 `RetryBudgetPolicy`，自定义装饰器包住它时识别不到）；已经放行、但退避等待恰好把剩余总预算睡完的那一个令牌同样会**退回** —— 共享桶不会被空扣，也就不会连累同实例的其它请求。放行之后才发生的意外（进管线后被闸门拦下、等待期间被取消）仍计一次：决定那一刻不可预知，多计只让预算更紧，不会放大流量。
+- **令牌管的是「重试轮次」，不是「发送次数」**：一轮重试若开了备用端点 / 对冲，实际发送量最多放大到 `(1 + 端点数) × (1 + MaxHedges)` 倍（失败会提前结束一轮、跳过的端点不发送，实际通常更小）；要按发送量估算容量，记得除以这个系数。首发不取令牌。
 - **桶按策略对象共享**：`Retry.Policy` 在配置克隆间是同一个引用，所以同一个客户端实例的所有请求共用一个桶；某次请求想单独用一个桶，就在那次请求里 `new RetryBudgetPolicy(...)`。
 - 桶初始是满的；`refillPerSecond = 0` 表示「只靠初始容量、不随时间恢复」（适合批处理 / 测试）。
 - 线程安全，检查路径不产生分配；`OnBudgetExhausted` 在锁外触发，回调里可以放心做日志 / IO。
-- 库内不发指标：要观测就用 `RefusedRetries` 接自己的指标系统（与 `Retry.OnRetry` 同一种做法）。
+- 被拒次数计入 `axiosnet.client.retry.budget_exhausted`（无标签，受 `Telemetry.Enabled` 控制）；要按请求上下文处理就用 `OnBudgetExhausted` 回调。
 
 ## 熔断
 
@@ -1004,6 +1005,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.request.duration` | `Histogram<double>` | `s` | method / server.address / server.port / status_code / error.type |
 | `axiosnet.client.active_requests` | `ObservableGauge<long>` | `{request}` | 无 |
 | `axiosnet.client.request.retries` | `Counter<long>` | `{retry}` | method / server.address / server.port / error.type / `axiosnet.retry.reason` |
+| `axiosnet.client.retry.budget_exhausted` | `Counter<long>` | `{retry}` | 无 |
 | `axiosnet.client.gate.queue_depth` | `ObservableGauge<long>` | `{request}` | 无 |
 | `axiosnet.client.gate.rejections` | `Counter<long>` | `{request}` | `axiosnet.gate.reason`（`queue_timeout` / `queue_full`） |
 | `axiosnet.client.circuit.state` | `ObservableGauge<long>` | `{circuit}` | `axiosnet.circuit.state`（`closed` / `open` / `half_open`） |
@@ -1016,7 +1018,7 @@ builder.Services.AddOpenTelemetry()
 
 - 指标只用低基数标签；URL 路径只进 span。**池指标不带 host / port**：网关 / 爬虫 / 多租户场景下一个 host 一条时间序列会把后端打爆；要定位到具体 origin 看 span 的 `server.address` / `server.port` 与 `axiosnet.pool.endpoint.reused`。
 - `axiosnet.retry.reason` 取值有界：有状态码统一报 `status`（具体码在 `error.type`），否则是库错误码（`ECONNABORTED` / `ERR_NETWORK` …）——「该调策略（429）」和「该修下游（5xx）」在面板上直接分得开。
-- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key）——都不带 host。
+- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key），`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数——都不带 host。
 - `request.duration` 是逻辑请求耗时（含重试与退避）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Telemetry.Enabled` 影响。
 - `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
@@ -1323,9 +1325,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1491 | `net8.0` / `net6.0` | 2982 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1496 | `net8.0` / `net6.0` | 2992 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1550** | | **3100** |
+| **合计** | **1555** | | **3110** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
@@ -1366,7 +1368,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 
 [`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) 是独立 BenchmarkDotNet 项目（单目标 `net8.0`、`IsPackable=false`、不被 `src/` 引用），把「这次优化有没有效果」变成可读数字。它不参与 `dotnet test`，CI 也不跑（基准对机器状态敏感）。
 
-两者分工：`AxiosNet.Tests/ConcurrencyPerformanceTests` 是**并发正确性**测试（5 轮取最好一轮判 85% 能力线，中位 ≥ 75% 当地板防整体退化），负责拦住塌方；量化改动看基准。判定不用中位：这类噪声只把单轮往下压，取最好一轮才是能力的估计，否则测的是机器而不是代码。
+两者分工：`AxiosNet.Tests/ConcurrencyPerformanceTests` 是**并发正确性**测试（5 轮取最好一轮判 85% 能力线，中位 ≥ 75% 当地板防整体退化），负责拦住塌方；量化改动看基准。判定不用中位：这类噪声只把单轮往下压，取最好一轮才是能力的估计，否则测的是机器而不是代码。该用例在 CI 里**独占进程、排在整套用例之前**跑（整套用例按功能过滤掉它，再单独一步逐 TFM 串行）：它判的是配对比值，两侧的编译状态就必须可比——`HttpClient` 在共享框架里是 ReadyToRun，进程一起来就是优化代码，本库是普通 IL，要先跑 Tier0 再等分层编译换成 Tier1 + PGO，而这层爬坡按时钟推进，runner 越慢越忙、固定预热里换掉的比例越少，测到的就是编译进度而不是代码。所以预热不拍固定秒数，而是**按配对比值自适应收敛**：1 秒一窗，至少 4 窗、最多 10 窗，最近 3 窗的比值极差 ≤ 3 个百分点才开始判定轮（实测前 4 窗可以一直平在 82%~87%，第 5~6 窗才跳到 95%）；收敛后判定轮稳定在 93.5%~96.2%，而固定 2 秒预热的对照组第 1 轮只有 84.1%。分层编译保持默认开启（真机稳态靠 PGO，不做特殊配置）。
 
 ```bash
 dotnet run -c Release --project test/AxiosNet.Benchmarks                       # 交互菜单

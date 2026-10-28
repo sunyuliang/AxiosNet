@@ -9,7 +9,13 @@ namespace AxiosNet.Tests.Resilience;
 
 /// <summary>
 /// 短路响应：不发请求直接交付、按本次类型重解析、与重试/熔断/遥测的边界。
+/// <para>
+/// 归入 <see cref="TelemetryCollection"/>：本类用 <see cref="TelemetryProbe"/> 断言「短路不产出 span」，
+/// 探针会打开进程级监听器 —— 与并行的分配护栏用例互相干扰（监听器本身给每条请求加分配，
+/// 而本类的客户端活动又会被别人的无标签指标探针收进去）。
+/// </para>
 /// </summary>
+[Collection(TelemetryCollection.Name)]
 public sealed class ShortCircuitTests
 {
     // ------------------------------------------------------------------

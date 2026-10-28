@@ -126,18 +126,26 @@ public static partial class Attempt
                     firstRealFailure ??= ex;
                 }
 
-                // 策略说「不重试」的一律原样冒给调用方：取消 / 熔断拒绝 / 排队超时（前面没有真实失败时）
-                // 本来就是终止原因，不能因为「这一刻预算恰好也空了」就把错误码改写成 ECONNABORTED
-                // （调用方会据此误判该重试）。
-                if (!CanRetry(failed, externalToken, policy))
+                // 库级终止原因（次数到顶 / 取消 / 熔断 / 闸门 / 配置错误）先判：它们与预算无关，
+                // 不能因为「这一刻预算恰好也空了」就把错误码改写成 ECONNABORTED（调用方会误判该重试）。
+                if (!IsRetryableFailure(failed, externalToken, policy))
                 {
                     throw;
                 }
 
-                // 策略决定重试，但预算已经不允许：别再睡、别再发，直接报总预算耗尽（本次失败留在 Cause 里）。
-                // 放在 CanRetry 之后而不是之前：位置提前会把上面那几类终止原因一起吞掉。
+                // 再问策略：它决定「这类失败值不值得重试」（4xx / 非幂等方法等），「不」时原样抛给调用方。
+                // 顺序不能和下面的预算检查对调：反过来会把「策略本来就不会重试」的失败（4xx）也改写成
+                // ECONNABORTED —— 同一个「调用方误判该重试」的坑。
+                if (!policy.ShouldRetry(failed))
+                {
+                    throw;
+                }
+
+                // 策略放行、但预算已经不允许下一次尝试：这次重试注定发不出去，把刚扣的令牌退回再报预算耗尽
+                // （共享桶不该为一次没发生的发送记账，否则同一只桶里的其它请求会被白白饿死）。
                 if (ctx.RemainingTotalTimeout is { } remaining && remaining <= TimeSpan.Zero)
                 {
+                    RefundRetryBudget(policy);
                     throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
                 }
 
@@ -155,9 +163,18 @@ public static partial class Attempt
 
                 // 退避不能睡过总预算：剩下的时间不够就只等到截止点，下一次尝试会以「总预算耗尽」失败，
                 // 而不是先睡完一个早已到期的预算再失败（调用方感知的耗时不会超过 TotalTimeout）。
-                if (ctx.RemainingTotalTimeout is { } remainingBudget && delay > remainingBudget)
+                if (ctx.RemainingTotalTimeout is { } remainingBudget)
                 {
-                    delay = remainingBudget > TimeSpan.Zero ? remainingBudget : TimeSpan.Zero;
+                    // 等待本身就会吃掉全部剩余预算：下一次尝试注定在发出前失败，把为它预留的令牌退回去。
+                    if (delay >= remainingBudget)
+                    {
+                        RefundRetryBudget(policy);
+                    }
+
+                    if (delay > remainingBudget)
+                    {
+                        delay = remainingBudget > TimeSpan.Zero ? remainingBudget : TimeSpan.Zero;
+                    }
                 }
 
                 // 回调与遥测共用同一个上下文
@@ -355,8 +372,12 @@ public static partial class Attempt
            && (exception is OperationCanceledException
                || exception is AxiosException { Code: AxiosException.ErrCanceled });
 
-    /// <summary>库层面的「不该重试」：次数到顶、调用方已取消、错误即取消、被熔断拦下；其余交给策略判断。</summary>
-    private static bool CanRetry(AxiosRetryContext context, CancellationToken externalToken, IAxiosRetryPolicy policy)
+    /// <summary>库级别的「不该重试」：次数到顶、调用方已取消、错误即取消、被熔断 / 闸门拦下、配置错误。</summary>
+    /// <remarks>
+    /// 只做库内判定，<b>不调用</b> <see cref="IAxiosRetryPolicy.ShouldRetry"/>：策略可能带副作用
+    /// （例如 <see cref="RetryBudgetPolicy"/> 会扣共享令牌），策略的调用点与「发不出去就退费」放在一起。
+    /// </remarks>
+    private static bool IsRetryableFailure(AxiosRetryContext context, CancellationToken externalToken, IAxiosRetryPolicy policy)
     {
         if (context.Attempt > policy.MaxRetries)
         {
@@ -397,10 +418,16 @@ public static partial class Attempt
             return false;
         }
 
-        return policy.ShouldRetry(context);
+        return true;
     }
 
     /// <summary>熔断的计数维度：<c>host:port</c>（同一 host 的不同端口是两个独立下游），非分层 URI 退化为 host。</summary>
     private static string CircuitHost(Uri uri)
         => uri.Authority is { Length: > 0 } authority ? authority : uri.Host;
+
+    /// <summary>
+    /// 退回一次「已放行、但注定发不出去」的重试所扣的令牌（总预算已耗尽、或退避必然睡完预算）。
+    /// 只认内建预算策略（含嵌套）；自定义装饰器包住它时识别不到，属已知的保守偏差。
+    /// </summary>
+    private static void RefundRetryBudget(IAxiosRetryPolicy policy) => (policy as RetryBudgetPolicy)?.Refund();
 }

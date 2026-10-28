@@ -326,6 +326,25 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task Metrics_RetryBudgetExhausted_ReportsRefusedRetry()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
+
+        var path = UniquePath("budget-exhausted");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        var policy = new RetryBudgetPolicy(RetryPolicy.Constant(5, TimeSpan.Zero), capacity: 1, refillPerSecond: 0);
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
+
+        // 首发 + 1 次重试用掉唯一令牌，下一次重试被预算拒绝：这是「想重试但没预算」，与「没到重试条件」分开计
+        var refused = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.RetryBudgetExhaustedInstrumentName));
+        Assert.Equal(1d, refused.Value);
+        Assert.Empty(refused.Tags);
+    }
+
+    [Fact]
     public async Task Metrics_CircuitState_ReportsOpenDimension()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
@@ -745,7 +764,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(12, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(13, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -763,6 +782,11 @@ public sealed class TelemetryTests
         var retries = Assert.IsType<Counter<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.RetriesInstrumentName));
         Assert.Equal("{retry}", retries.Unit);
+
+        // 重试预算耗尽：与 request.retries 分开，才能区分「没到重试条件」与「重试被预算拦下」
+        var budgetExhausted = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.RetryBudgetExhaustedInstrumentName));
+        Assert.Equal("{retry}", budgetExhausted.Unit);
 
         // 池域：语义约定里没有对应项（内置指标只覆盖 socket 层），单位用 {lease} / {endpoint}
         var leases = Assert.IsType<Counter<long>>(

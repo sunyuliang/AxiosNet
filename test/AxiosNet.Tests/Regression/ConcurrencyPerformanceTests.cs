@@ -15,6 +15,14 @@ namespace AxiosNet.Tests.Regression;
 /// 两者一条判能力、一条判趋势，都不拿单轮抖动当回归（HEAD 基线实测中位 79.8%~83.9%，5 跑 3 失败，
 /// 而同期最好一轮稳定在 88% 以上 —— 原口径测的是机器，不是代码）。
 /// </para>
+/// <para>
+/// <b>自适应预热、独占进程、排在整套用例之前</b>：判的是配对比值，两侧的编译状态就必须可比 ——
+/// <c>HttpClient</c> 在共享框架里是 ReadyToRun，进程一起来就是优化代码；本库是普通 IL，要先跑 Tier0、
+/// 再等分层编译换成 Tier1 + PGO。这层爬坡按时钟推进：机器越慢越忙，固定时长的预热里换掉的比例越少，
+/// 测到的就是编译进度而不是代码（同机同构建实测前两轮 84.1% / 83.2%，第 3 轮才到 92.4%）。
+/// 所以预热不拍固定秒数，而是按「配对比值进入稳定带」自适应收敛；另外它独占进程、排在整套用例之前
+/// 逐 TFM 串行（见 build-nuget.yml）。
+/// </para>
 /// </summary>
 [Collection(PerformanceCollection.Name)]
 public sealed class ConcurrencyPerformanceTests
@@ -32,8 +40,8 @@ public sealed class ConcurrencyPerformanceTests
         var axiosSend = SendAxiosAsync(axios);
         var httpSend = SendHttpAsync(http);
 
-        // 预热：两侧同时跑一遍，把连接建齐，不计入窗口。
-        await MeasurePairAsync(axiosSend, httpSend, url, WarmupWindow, Concurrency);
+        // 预热：两侧同时跑，直到配对比值进入稳定带（建连 + 分层编译落地），不计入判定轮。
+        var warmup = await WarmUpAsync(axiosSend, httpSend, url);
 
         var log = new List<string>();
         var ratios = new List<double>();
@@ -67,7 +75,8 @@ public sealed class ConcurrencyPerformanceTests
         var build = IsOptimizedBuild ? "Release" : "Debug";
         _output.WriteLine(
             $"AxiosNet 并发吞吐 vs HttpClient [{build}]（每侧 {Concurrency} 并发 × {Window.TotalSeconds:0.#}s × {Rounds} 轮，"
-            + $"预热 {WarmupWindow.TotalSeconds:0.#}s，服务器侧共回复 {server.Requests:N0} 个请求）：");
+            + $"服务器侧共回复 {server.Requests:N0} 个请求）：");
+        _output.WriteLine($"  {warmup.Describe()}");
         _output.WriteLine(report);
         _output.WriteLine(
             $"  配对比值 最好 {bestRatio:P1} / 中位 {medianRatio:P1} / 最差 {ratios.Min():P1}"
@@ -85,7 +94,7 @@ public sealed class ConcurrencyPerformanceTests
             $"并发吞吐未达到 HttpClient 的 {AbilityRatio:P0}（{Rounds} 轮最好一轮 {bestRatio:P1}，"
             + $"中位 {medianRatio:P1} / 最差 {ratios.Min():P1}）。"
             + $"配置 [{build}]：每侧 {Concurrency} 并发 × {Window.TotalSeconds:0.#}s × {Rounds} 轮，"
-            + $"预热 {WarmupWindow.TotalSeconds:0.#}s，两侧 handler 功能逐项对齐、服务器回环直连、无请求体。"
+            + $"预热 {warmup.Windows} 个窗口，两侧 handler 功能逐项对齐、服务器回环直连、无请求体。"
             + Environment.NewLine + report
             + Environment.NewLine
             + "排查方向：热路径新增了反射 / 每请求白分配 / 同步等待 / 重复配置合并。"
@@ -109,11 +118,31 @@ public sealed class ConcurrencyPerformanceTests
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// 预热时长：只为建连与「让两层分层编译落地」，不计入窗口。
-    /// 1 秒不够：实测同进程内第 1 轮只有第 5 轮的 6 成（Tier0 → Tier1 还没替换完），
-    /// 那几轮的比值测的是编译进度而不是代码。2 秒把这段吃掉，判定才落在稳态上。
+    /// 预热窗口：与测量窗口同长，逐窗判断比值是否已稳定。1 秒是判定轮的口径；换更长的窗口只会更钝，
+    /// 看不出分层编译的进度。
     /// </summary>
-    private static readonly TimeSpan WarmupWindow = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan WarmupWindow = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// 最少预热窗数：Tier0 平台期与稳态在单窗上分不出来 —— 实测前两轮比值可以一直平在 84.1% / 83.2%，
+    /// 第 3 轮才跳到 92.4%。只跑 2~3 个窗口会把平台期误判成「已稳态」，4 秒足够跨过去。
+    /// </summary>
+    private const int MinWarmupWindows = 4;
+
+    /// <summary>稳态度量取最近 3 个窗口的极差（见 <see cref="WarmupStableBand"/>）。</summary>
+    private const int StableWarmupWindows = 3;
+
+    /// <summary>
+    /// 稳定带宽度：最近 3 窗的配对比值极差 ≤ 3 个百分点。稳态下相邻窗实测差值 ≤ 2.6 个点，
+    /// 而爬坡段每个窗口涨 7~15 个点，这条线把两者分得开。
+    /// </summary>
+    private const double WarmupStableBand = 0.03;
+
+    /// <summary>
+    /// 预热上限：10 个窗口。超过它仍在爬坡说明 runner 被压得太狠，再等只是把测试拖长；
+    /// 后面 5 轮的「取最好一轮」还能兜住。
+    /// </summary>
+    private const int MaxWarmupWindows = 10;
 
     /// <summary>
     /// 轮数：5 轮。原为 3 轮 —— 多跑两轮是为了让「至少一轮没被调度打偏」的概率足够高
@@ -197,6 +226,50 @@ public sealed class ConcurrencyPerformanceTests
                 throw new InvalidOperationException("HttpClient 响应正文为空。");
             }
         };
+
+    /// <summary>
+    /// 自适应预热：逐窗测量，直到最近 <see cref="StableWarmupWindows"/> 个窗口的配对比值都落在
+    /// <see cref="WarmupStableBand"/> 带内（且至少跑满 <see cref="MinWarmupWindows"/> 个窗口），
+    /// 才交给判定轮。固定秒数的问题在于分层编译按时钟推进：慢机器上同样几秒只换掉一部分 Tier1。
+    /// </summary>
+    private static async Task<WarmupReport> WarmUpAsync(
+        Func<string, CancellationToken, Task> axiosSend,
+        Func<string, CancellationToken, Task> httpSend,
+        string url)
+    {
+        var recent = new Queue<double>(StableWarmupWindows);
+        var trajectory = new List<double>(MaxWarmupWindows);
+
+        for (var window = 1; window <= MaxWarmupWindows; window++)
+        {
+            var result = await MeasurePairAsync(axiosSend, httpSend, url, WarmupWindow, Concurrency)
+                .ConfigureAwait(false);
+
+            // 有失败请求或一侧没跑起来时比值不可信，清空判据重新累积。
+            if (result.Errors > 0 || result.HttpCompleted == 0)
+            {
+                recent.Clear();
+                continue;
+            }
+
+            var ratio = result.AxiosRps / result.HttpRps;
+            trajectory.Add(ratio);
+            recent.Enqueue(ratio);
+            if (recent.Count > StableWarmupWindows)
+            {
+                recent.Dequeue();
+            }
+
+            if (window >= MinWarmupWindows
+                && recent.Count == StableWarmupWindows
+                && recent.Max() - recent.Min() <= WarmupStableBand)
+            {
+                return new WarmupReport(window, trajectory, Truncated: false);
+            }
+        }
+
+        return new WarmupReport(MaxWarmupWindows, trajectory, Truncated: true);
+    }
 
     /// <summary>
     /// 两侧各 <paramref name="perSide"/> 个常驻 worker，在<b>同一窗口内同时</b>跑请求，返回两侧吞吐。
@@ -295,4 +368,16 @@ public sealed class ConcurrencyPerformanceTests
         long HttpCompleted,
         int Errors,
         Exception? FirstError);
+
+    /// <summary>预热结果：跑了几个窗口、每窗比值、是否撞到上限。</summary>
+    private readonly record struct WarmupReport(int Windows, IReadOnlyList<double> Ratios, bool Truncated)
+    {
+        public string Describe()
+        {
+            var trajectory = string.Join(" → ", Ratios.Select(r => r.ToString("P1")));
+            return Truncated
+                ? $"预热 {Windows} 个窗口仍在爬坡（机器负载不稳），按当前状态开测：{trajectory}"
+                : $"预热 {Windows} 个窗口后比值进入 ±{WarmupStableBand * 100:0} 点带：{trajectory}";
+        }
+    }
 }

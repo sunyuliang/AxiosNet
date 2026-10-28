@@ -78,10 +78,31 @@ jobs:
             dotnet build "$project" --configuration Release --no-restore
           done
 
-      - name: 运行单元测试
+      - name: 运行并发性能用例（独占进程，排在整套用例之前）
+        # 这条用例判的是「与 HttpClient 的配对比值」，两侧的编译状态必须可比：HttpClient 在共享框架里是
+        # ReadyToRun，进程一起来就是优化代码；AxiosNet 是普通 IL，要先跑 Tier0、再等分层编译换成 Tier1 + PGO。
+        # 这层爬坡按时钟推进 —— runner 越慢越忙，固定秒数的预热里换掉的比例越少，测到的就是编译进度而不是
+        # 代码能力。用例内部因此按「比值进入稳定带」自适应预热（ConcurrencyPerformanceTests.WarmUpAsync），
+        # 分层编译保持默认开启（真机上的稳态性能靠 PGO）。这里只负责给它独占进程、排在整套用例之前并逐 TFM
+        # 串行：两个测试进程同时压同一台 runner 会互相抢核，整套用例跑完的机器状态也不对称。
+        run: |
+          for tfm in net8.0 net6.0; do
+            dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj \
+              --configuration Release \
+              --no-build \
+              --no-restore \
+              -f "$tfm" \
+              --filter "FullyQualifiedName~ConcurrencyPerformanceTests" \
+              --logger "console;verbosity=normal"
+          done
+
+      - name: 运行单元测试（不含并发性能用例）
+        # 并发性能用例在上面单独跑过了：它放在整套用例里既会拿机器过载状态当代码退化，也会被整套用例的负载拖慢。
         run: |
           for project in $TEST_PROJECTS; do
-            dotnet test "$project" --configuration Release --no-build --no-restore --logger "console;verbosity=normal"
+            dotnet test "$project" --configuration Release --no-build --no-restore \
+              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests" \
+              --logger "console;verbosity=normal"
           done
 
   publish:
@@ -160,13 +181,28 @@ jobs:
               -p:ContinuousIntegrationBuild=true
           done
 
-      - name: 运行单元测试
+      - name: 运行并发性能用例（独占进程，排在整套用例之前）
+        # 与 build-test 同口径：单独一步、排在整套用例之前、逐 TFM 串行；自适应预热在用例内部，
+        # 理由见 build-test 同名步骤。
+        run: |
+          for tfm in net8.0 net6.0; do
+            dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj \
+              --configuration Release \
+              --no-build \
+              --no-restore \
+              -f "$tfm" \
+              --filter "FullyQualifiedName~ConcurrencyPerformanceTests" \
+              --logger "console;verbosity=normal"
+          done
+
+      - name: 运行单元测试（不含并发性能用例）
         run: |
           for project in $TEST_PROJECTS; do
             dotnet test "$project" \
               --configuration Release \
               --no-build \
               --no-restore \
+              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests" \
               --logger "console;verbosity=normal"
           done
 

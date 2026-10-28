@@ -26,7 +26,7 @@ internal sealed record TelemetryEvent(string Name, object Payload);
 internal sealed class TelemetryProbe : IDisposable
 {
     /// <summary>
-    /// 不带 <c>server.port</c> 的指标：池 / 闸门 / 熔断这几组刻意低基数（不按 host 打标签），
+    /// 不带 <c>server.port</c> 的指标：池 / 闸门 / 熔断 / 重试预算这几组刻意低基数（不按 host 打标签），
     /// 没法按端口筛。它们只在独占的 <c>telemetry</c> 集合里断言，靠集合禁并行隔离。
     /// </summary>
     private static readonly HashSet<string> UntaggedInstruments = new(StringComparer.Ordinal)
@@ -36,7 +36,8 @@ internal sealed class TelemetryProbe : IDisposable
         AxiosTelemetry.PoolEndpointsEvictedInstrumentName,
         AxiosTelemetry.GateQueueDepthInstrumentName,
         AxiosTelemetry.GateRejectionsInstrumentName,
-        AxiosTelemetry.CircuitStateInstrumentName
+        AxiosTelemetry.CircuitStateInstrumentName,
+        AxiosTelemetry.RetryBudgetExhaustedInstrumentName
     };
 
     private readonly string _marker;

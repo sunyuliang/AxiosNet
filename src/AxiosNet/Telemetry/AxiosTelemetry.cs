@@ -57,6 +57,9 @@ public static class AxiosTelemetry
     /// <summary>指标名：重试次数（Counter，每次「决定重试」计 1），带 <c>axiosnet.retry.reason</c> 标签。</summary>
     public const string RetriesInstrumentName = "axiosnet.client.request.retries";
 
+    /// <summary>指标名：因共享重试预算不足而被放弃的重试次数（Counter，无标签）。</summary>
+    public const string RetryBudgetExhaustedInstrumentName = "axiosnet.client.retry.budget_exhausted";
+
     /// <summary>指标名：正在排队等并发槽位的请求数（ObservableGauge）。</summary>
     public const string GateQueueDepthInstrumentName = "axiosnet.client.gate.queue_depth";
 
@@ -134,6 +137,8 @@ public static class AxiosTelemetry
 
     private static readonly Counter<long> Retries;
 
+    private static readonly Counter<long> RetryBudgetExhausted;
+
     private static readonly Counter<long> GateRejections;
 
     private static readonly Counter<long> PoolLeases;
@@ -166,6 +171,9 @@ public static class AxiosTelemetry
         meter.CreateObservableGauge(ActiveRequestsInstrumentName, () => Volatile.Read(ref _activeRequests), unit: "{request}", description: "已成型（URL 已拼好）并进入发送阶段、尚未结束的请求数。");
 
         Retries = meter.CreateCounter<long>(RetriesInstrumentName, unit: "{retry}", description: "按策略决定重试的次数（不含首次请求）；axiosnet.retry.reason 区分状态码 / 网络 / 超时等原因。");
+
+        // 预算耗尽 = 想重试但被共享令牌桶拒掉：和 retries 分开计，才能区分「没到重试条件」与「重试被预算拦下」。
+        RetryBudgetExhausted = meter.CreateCounter<long>(RetryBudgetExhaustedInstrumentName, unit: "{retry}", description: "因共享重试预算不足而放弃的重试次数（请求未重发，错误原样返回给调用方）。");
 
         // 排队深度：容量规划最直接的信号（「现在排了多长」而不是「排队超时了多少次」）。
         // 与在途数同一手法：静态计数 + 收集时读取；闸门实例可以有很多个，这里看的是进程总量。
@@ -607,6 +615,27 @@ public static class AxiosTelemetry
                 // 结构体装箱只在「确实有人订阅」时发生
                 Emit(RetryEventName, context);
             }
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
+    /// 共享重试预算拒绝了这次重试：<c>retry.budget_exhausted</c> +1。无标签（低基数），
+    /// 也不写 span / 发事件 —— 这次失败本身仍会按原错误码出现在链路与日志里。
+    /// </summary>
+    internal static void RetryBudgetRefused(AxiosConfig? config)
+    {
+        try
+        {
+            // 与重试计数同一口径：本次请求关了遥测就不记。
+            if (!IsEnabled(config) || !RetryBudgetExhausted.Enabled)
+            {
+                return;
+            }
+
+            RetryBudgetExhausted.Add(1);
         }
         catch
         {

@@ -82,6 +82,76 @@ public sealed class TotalTimeoutTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"实际耗时 {watch.Elapsed}：总预算没有切断重试");
     }
 
+    [Fact]
+    public async Task TotalTimeout_Exhausted_DoesNotConsumeRetryBudget()
+    {
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await Task.Delay(2000);
+            return TestJson.Response(new { ok = true });
+        });
+
+        var policy = new RetryBudgetPolicy(RetryPolicy.Constant(3, TimeSpan.Zero), capacity: 1, refillPerSecond: 0);
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "budget", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(30);
+            c.TotalTimeout = TimeSpan.FromMilliseconds(150);
+        }));
+
+        // 第一次尝试被总预算打断，重试决定还没发出预算就耗尽了
+        Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
+        Assert.True(ex.IsTotalTimeoutExceeded);
+
+        // 这次重试注定发不出去：共享令牌桶不该被白扣，否则同实例的其它请求会被连累
+        Assert.Equal(0, policy.RefusedRetries);
+        Assert.Equal(1d, policy.AvailableTokens);
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
+    public async Task TotalTimeout_ExhaustedDuringBackoff_RefundsRetryBudget()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            return TestJson.Response(new { error = "boom" }, statusCode: 503);
+        });
+
+        // 退避 2s 远大于总预算：策略已放行，但等待本身就会把预算睡完，重试发不出去
+        var policy = new RetryBudgetPolicy(RetryPolicy.Constant(3, TimeSpan.FromSeconds(2)), capacity: 1, refillPerSecond: 0);
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "backoff", c =>
+            c.TotalTimeout = TimeSpan.FromSeconds(1)));
+
+        Assert.True(ex.IsTotalTimeoutExceeded);
+        Assert.Equal(1, calls);
+
+        // 这次重试没发出：令牌要退回，否则同实例的其它请求会被连累
+        Assert.Equal(1d, policy.AvailableTokens);
+    }
+
+    [Fact]
+    public async Task TotalTimeout_ExhaustedDuringBackoff_RefundsEveryNestedRetryBudget()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
+
+        // 预算包预算：一次决定从两层各扣一个令牌，退的时候两层都得退，否则内层（可能是共享的那只）会被慢慢饿死
+        var inner = new RetryBudgetPolicy(RetryPolicy.Constant(3, TimeSpan.FromSeconds(2)), capacity: 1, refillPerSecond: 0);
+        var outer = new RetryBudgetPolicy(inner, capacity: 1, refillPerSecond: 0);
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = outer } });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "nested-backoff", c =>
+            c.TotalTimeout = TimeSpan.FromSeconds(1)));
+
+        Assert.True(ex.IsTotalTimeoutExceeded);
+        Assert.Equal(1d, inner.AvailableTokens);
+        Assert.Equal(1d, outer.AvailableTokens);
+    }
+
     // ------------------------------------------------------------------
     // 排队：TotalTimeout 计入排队时间（与 QueueTimeout 的口径不同）
     // ------------------------------------------------------------------

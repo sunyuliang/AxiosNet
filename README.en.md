@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1550%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1555%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -626,11 +626,12 @@ budget.RefusedRetries;   // total retries denied by the budget, readable at any 
 ```
 
 - **Retries only, never first attempts**: an empty bucket just means "stop retrying"; the caller sees the inner policy's **real failure**, not a budget-specific error.
-- **Only failures judged retryable consume tokens**: anything the pipeline or the inner policy would not retry (4xx, cancellation, gate rejections, the attempt cap…) never touches the bucket. One conservative edge: if the policy approved a retry that then never went out because the total budget had run out, the token is still spent (slightly tightens the budget; correctness is unaffected).
+- **Only retries that can go out consume tokens**: anything the pipeline or the inner policy would not retry (4xx, cancellation, gate rejections, the attempt cap…) never touches the bucket; a retry that cannot be sent because the total budget is already gone is refunded immediately (built-in `RetryBudgetPolicy` only — a custom decorator wrapped around it is not recognized), and so is a token whose backoff wait consumed the rest of the total budget — a shared bucket is never charged for a send that never happens. A retry that is stopped later (rejected by the gate, or cancelled during the wait) still counts: at decision time that was unknowable, and over-counting only tightens the budget — it never amplifies traffic.
+- **Tokens meter retry rounds, not sends**: with backup endpoints / hedging enabled, one retry round can fan out to at most `(1 + endpoints) × (1 + MaxHedges)` sends (a failure ends the round early and skipped endpoints never send, so the real number is usually lower); divide a send-rate estimate by that factor when sizing `capacity`. First attempts never take a token.
 - **The bucket is shared through the policy object**: `Retry.Policy` is the same reference across config clones, so every request on a client instance shares one bucket; give a single call its own bucket by assigning `new RetryBudgetPolicy(...)` on that call.
 - The bucket starts full; `refillPerSecond = 0` means "initial capacity only, no recovery over time" (handy for batches / tests).
 - Thread-safe, allocation-free on the check path; `OnBudgetExhausted` fires outside the lock, so logging / IO in the callback is fine.
-- No built-in metrics: feed `RefusedRetries` into your own telemetry (same idea as `Retry.OnRetry`).
+- Refusals are counted by `axiosnet.client.retry.budget_exhausted` (no tags, gated by `Telemetry.Enabled`); use the `OnBudgetExhausted` callback when you need per-request context.
 
 ## Circuit breaker
 
@@ -1006,6 +1007,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.request.duration` | `Histogram<double>` | `s` | method / server.address / server.port / status_code / error.type |
 | `axiosnet.client.active_requests` | `ObservableGauge<long>` | `{request}` | none |
 | `axiosnet.client.request.retries` | `Counter<long>` | `{retry}` | method / server.address / server.port / error.type / `axiosnet.retry.reason` |
+| `axiosnet.client.retry.budget_exhausted` | `Counter<long>` | `{retry}` | none |
 | `axiosnet.client.gate.queue_depth` | `ObservableGauge<long>` | `{request}` | none |
 | `axiosnet.client.gate.rejections` | `Counter<long>` | `{request}` | `axiosnet.gate.reason` (`queue_timeout` / `queue_full`) |
 | `axiosnet.client.circuit.state` | `ObservableGauge<long>` | `{circuit}` | `axiosnet.circuit.state` (`closed` / `open` / `half_open`) |
@@ -1018,7 +1020,7 @@ builder.Services.AddOpenTelemetry()
 
 - Metrics only carry low-cardinality tags; URL paths live in spans only. **Pool metrics carry no host / port**: for gateways, crawlers and multi-tenant SaaS one series per host blows up the backend; use the span (`server.address` / `server.port` / `axiosnet.pool.endpoint.reused`) to find the origin.
 - `axiosnet.retry.reason` has a bounded value set: `status` whenever there is a status code (the exact code is in `error.type`), otherwise the library error code (`ECONNABORTED` / `ERR_NETWORK` …) — so "tune the policy (429)" and "fix the downstream (5xx)" are separable on a dashboard.
-- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), and `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key) — none carries a host.
+- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key), and `retry.budget_exhausted` counts retries denied by the shared budget — none carries a host.
 - `request.duration` is the logical request duration (including retries and backoff); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
 - Pool metrics describe the pool as a resource and are unaffected by `Telemetry.Enabled`.
 - `pool.active_pools` counts live pools (+1 on creation, -1 on `Dispose`) and `pool.shared_pools` counts entries in the named registry: a rising `active_pools` means some code keeps building pools — typically a client per request.
@@ -1325,9 +1327,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1491 | `net8.0` / `net6.0` | 2982 |
+| `AxiosNet.Tests` (core + declarative) | 1496 | `net8.0` / `net6.0` | 2992 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1550** | | **3100** |
+| **Total** | **1555** | | **3110** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
@@ -1368,7 +1370,7 @@ Timing-sensitive cases (upper-bound duration assertions, telling "placeholder vs
 
 [`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) is a standalone BenchmarkDotNet project (single target `net8.0`, `IsPackable=false`, not referenced by `src/`) that turns "did this change help?" into numbers. It is not part of `dotnet test` and CI does not run it (benchmarks are machine-sensitive).
 
-Division of labour: `AxiosNet.Tests/ConcurrencyPerformanceTests` is a **concurrency correctness** test (5 rounds, the best round must reach the 85% capability line, median must stay above the 75% floor) that stops collapses; use the benchmarks to quantify changes. It deliberately does not judge on the median: this kind of noise only pushes single rounds down, so the best round is the estimate of capability — judging on the median measures the machine, not the code.
+Division of labour: `AxiosNet.Tests/ConcurrencyPerformanceTests` is a **concurrency correctness** test (5 rounds, the best round must reach the 85% capability line, median must stay above the 75% floor) that stops collapses; use the benchmarks to quantify changes. It deliberately does not judge on the median: this kind of noise only pushes single rounds down, so the best round is the estimate of capability — judging on the median measures the machine, not the code. In CI this test runs in a **dedicated process placed before the heavy suite** (the suite filters it out, then a separate step runs it per TFM, one after the other): it judges a paired ratio, so both sides' compilation state has to be comparable — `HttpClient` ships ReadyToRun in the shared framework and is optimized from the first call, while this library is plain IL that starts in Tier0 and waits for tiering to promote it to Tier1 + PGO. That ramp advances by wall clock, so a slower or busier runner gets less of it done inside a fixed warmup, and the rounds end up measuring compilation progress rather than code. The warmup is therefore **adaptive rather than a fixed number of seconds**: one-second windows, at least 4 and at most 10 of them, and judging starts only once the last 3 windows' ratios span 3 percentage points or less (measured: the first 4 windows can sit flat at 82–87% and only jump to ~95% at window 5–6). After convergence the judged rounds sit at 93.5–96.2%, whereas the fixed 2-second warmup control run started at 84.1% in round 1. Tiered compilation itself stays on by default — real-world steady state relies on PGO, so CI does not special-case it.
 
 ```bash
 dotnet run -c Release --project test/AxiosNet.Benchmarks                        # interactive menu
