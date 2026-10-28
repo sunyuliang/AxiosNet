@@ -224,14 +224,14 @@ public sealed partial class AxiosClient
                 {
                     throw AxiosException.InvalidOption(
                         $"备用端点 Failover.Endpoints[{i}] 必须是绝对的 http / https 地址（当前 {endpoints[i]?.ToString() ?? "null"}）："
-                        + "它只替换 origin 与路径前缀，请求的 path / query 会原样接上去。", config);
+                        + "它提供 origin 与路径前缀，请求的 path / query 会原样接在后面。", config);
                 }
 
                 if (!string.IsNullOrEmpty(endpoint.Query) || !string.IsNullOrEmpty(endpoint.Fragment))
                 {
                     throw AxiosException.InvalidOption(
                         $"备用端点 Failover.Endpoints[{i}] 不能带 query 或 fragment（当前 {endpoint}）："
-                        + "端点只替换 origin 与路径前缀，请求自己的 path / query 会原样接上去；"
+                        + "端点提供 origin 与路径前缀，请求自己的 path / query 会原样接在后面；"
                         + "要让某个参数只出现在备用端点上，请改用请求拦截器按 ctx 拼 URL。", config);
                 }
 

@@ -501,6 +501,26 @@ public sealed class FailoverTests
     }
 
     [Fact]
+    public async Task Failover_DoesNotSkipEndpointThatAddsAPathPrefix()
+    {
+        await using var primary = TestHttpServer.Start(_ =>
+            new TestResponse(503, Body: Array.Empty<byte>()));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url + "api/",
+
+            // 端点带路径前缀：请求 path 会整体接在后面（拼出 /api/api/x），与请求地址不同 —— 照打，不跳过。
+            Failover = new() { Endpoints = new[] { new Uri(primary.Url + "api") } }
+        });
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
+        Assert.Equal(new[] { "/api/x", "/api/api/x" }, primary.Received.Select(request => request.Path).ToArray());
+    }
+
+    [Fact]
     public async Task Failover_SkipsPlaintextEndpoint_UnderStrictHttp3()
     {
         // 严格 h3 + 明文端点是不可能成立的组合，护栏在发请求前就拒 —— 与 QUIC 能力无关，所以这条在任何机器上都真跑。

@@ -667,7 +667,7 @@ var client = Axios.Create(c => c.Failover.Endpoints = new[]
 await client.GetAsync("health", c => c.Failover.Endpoints = null);
 ```
 
-An endpoint is a **base URL** only: it replaces the origin and path prefix, while the request's own path and query are kept. Requesting `https://primary/v1/users?page=2` with endpoint `https://mirror/api` gives `https://mirror/api/v1/users?page=2`.
+An endpoint supplies the **origin and path prefix**; the request's own path and query are appended as-is. Requesting `https://primary/v1/users?page=2` with endpoint `https://mirror/api` gives `https://mirror/api/v1/users?page=2` (the prefix is **prepended** to the request path, not substituted — do not repeat a prefix the request already carries).
 
 | Situation | Fail over? |
 | --- | --- |
@@ -681,7 +681,7 @@ An endpoint is a **base URL** only: it replaces the origin and path prefix, whil
 - **Every retry restarts from the first endpoint**: the endpoint list lives inside retries, so one round must exhaust all endpoints before the first failure reaches the retry layer.
 - **Failing over recomputes `Host`**: a `Host` header the caller set explicitly is dropped on retarget and recomputed from the destination — keeping it would make the mirror route by the primary's virtual host (`HttpClient` honours `Headers.Host`, which wins over the URI authority). For a per-endpoint `Host`, write an attempt middleware that sets it from `ctx.Uri` (`config.Headers` is only applied to the template).
 - **Endpoints must be unique**: two endpoints that resolve to the same base URL (a trailing slash makes no difference) throw `ERR_BAD_OPTION_VALUE` before anything is sent — it would only hit one address twice with the same request.
-- **An endpoint that resolves to the current URL is skipped**: when it shares the request's origin and path prefix (typically a copy of `BaseAddress`), failing over would just resend in place, so it is skipped and the next endpoint is tried.
+- **An endpoint that resolves to the current URL is skipped**: when it shares the request's origin and carries **no path prefix** (typically a bare `https://backup.example.com`), failing over would just resend in place, so it is skipped and the next endpoint is tried.
 - **`Timeout` is a per-endpoint, per-send budget**: same rule as retries, so 3 endpoints with 10s can take up to 30s; use a `CancellationToken` for a total budget. Upload progress also accumulates across endpoints (like a retried body — it never jumps back).
 - **The body must replay in order**: the same requirement as retries (streams must be seekable); non-seekable streams and `StreamContent` throw `ERR_BAD_OPTION_VALUE` as soon as failover is enabled.
 - **Streaming responses can only fail over at the response-head stage**: once the body is handed to the caller, a mid-stream disconnect is neither retried nor failed over (same rule as "the breaker only accounts at the response head").
@@ -1253,9 +1253,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1431 | `net8.0` / `net6.0` | 2862 |
+| `AxiosNet.Tests` (core + declarative) | 1432 | `net8.0` / `net6.0` | 2864 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1490** | | **2980** |
+| **Total** | **1491** | | **2982** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

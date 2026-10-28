@@ -8,10 +8,10 @@ public sealed partial class AxiosConfig
     /// <see cref="Endpoints"/> 为空（默认）时不换端点。
     /// </summary>
     /// <remarks>
-    /// 端点只替换 origin 与路径前缀，请求本身的 path / query 原样保留；顺序即优先级，每次重试都从第一个端点重新开始。
+    /// 端点提供 origin 与路径前缀，请求本身的 path / query 原样接在后面；顺序即优先级，每次重试都从第一个端点重新开始。
     /// 换端点要求请求体能按顺序重放（与重试同一份要求：流必须可 seek）。
     /// 换端点会丢掉调用方显式设过的 <c>Host</c> 头，由目标地址重算 —— 否则镜像会按原端点的虚拟主机路由。
-    /// 端点拼出来就是当前地址时（与请求同 origin、同路径前缀）跳过：换过去等于原地重发。
+    /// 端点拼出来就是当前地址时（同 origin 且端点不带路径前缀）跳过：换过去等于原地重发。
     /// 4xx、<c>ERR_QUEUE_TIMEOUT</c>、配置 / 编程错误与取消不换端点；<c>ERR_CIRCUIT_OPEN</c> 换 ——
     /// 熔断按 <c>host:port</c> 独立成账，主端点开着的那一个挡不住备用端点。
     /// 流式响应只在响应头阶段能换端点：正文由调用方消费，中途断流不会再换端点。
@@ -23,7 +23,7 @@ public sealed partial class AxiosConfig
         /// <summary>
         /// 备用端点（有序，可带路径前缀），例如 <c>["https://backup1.example.com", "https://backup2.example.com/api"]</c>；
         /// <c>null</c> / 空集合（默认）= 不换端点。必须是绝对的 <c>http</c> / <c>https</c> 地址，且不能带 query / fragment
-        /// （端点只当 base URL 用：替换 origin 与路径前缀，请求自己的 path / query 原样接上去）。
+        /// （端点提供 origin 与路径前缀，请求自己的 path / query 原样接在后面）。
         /// </summary>
         /// <remarks>
         /// 赋值时快照成数组：之后改调用方自己的列表不会影响已生效的配置，克隆也能安全共享这一版。
