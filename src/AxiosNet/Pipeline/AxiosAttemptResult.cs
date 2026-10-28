@@ -23,6 +23,8 @@ public readonly struct AxiosAttemptResult
     /// 租约与槽位一直挂到进程退出（闸门的兜底只能还并发槽位，还不了连接租约）。
     /// 只有库自己发出的流式凭证（<see cref="AxiosResponse"/> 的流式正文）能让并发槽位继续随正文走；
     /// 中间件自建的凭证只是在响应侧被交给调用方，闸门照常归还槽位 —— 自建凭证不占并发额度。
+    /// 释放幂等，所以「中间件先 Dispose 旧凭证、再把同一份带进新结果」也是安全的：外层的补释放条件是
+    /// 「新响应的 Data 不是这份凭证」，而重复释放由凭证本身兜住。
     /// </param>
     public AxiosAttemptResult(AxiosResponse response, IDisposable? streamOwner)
         : this(response, streamOwner, slotTransferred: streamOwner is ResponseStreamOwner)

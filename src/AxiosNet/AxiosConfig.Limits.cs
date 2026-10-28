@@ -53,30 +53,12 @@ public sealed partial class AxiosConfig
         /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
         internal bool MaxRateSet { get; set; }
 
-        private TimeSpan? _streamIdleTimeout;
-
-        /// <summary>
-        /// 流式响应（<see cref="ResponseType.Stream"/>）正文的超时口径：<c>null</c>（默认）沿用 <see cref="AxiosConfig.Timeout"/> 的全程总预算；
-        /// <see cref="TimeSpan.Zero"/> 表示正文不限时（Timeout 只覆盖到响应头）；大于零按空闲超时计。只影响流式响应，负值非法。
-        /// </summary>
-        public TimeSpan? StreamIdleTimeout
-        {
-            get => _streamIdleTimeout;
-            set
-            {
-                _streamIdleTimeout = value;
-                StreamIdleTimeoutSet = true;
-            }
-        }
-
-        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-        internal bool StreamIdleTimeoutSet { get; set; }
-
         private int? _maxConcurrentRequests;
 
         /// <summary>
         /// 在途请求并发上限（本 <see cref="AxiosClient"/> 实例范围内），<c>null</c>（默认）不限；正整数，<c>0</c> 与负数抛 <c>ERR_BAD_OPTION_VALUE</c>。
-        /// 实例级配置：闸门在首个受限请求时创建并固定，按请求写不同的值抛错；排队等待不计入 <see cref="AxiosConfig.Timeout"/>（见 <see cref="QueueTimeout"/>）。
+        /// 实例级配置：闸门在首个受限请求时创建并固定，按请求写不同的值抛错；排队等待不计入
+        /// <see cref="AxiosConfig.Timeout"/>，但计入 <see cref="AxiosConfig.Deadline"/>（见 <see cref="QueueTimeout"/>）。
         /// </summary>
         /// <remarks>闸门是实例级的：在拦截器 / 回调里用同一实例发子请求会抢同一批槽位，请给 <see cref="QueueTimeout"/> 设上限或换实例。</remarks>
         public int? MaxConcurrentRequests
@@ -98,6 +80,12 @@ public sealed partial class AxiosConfig
         /// 等待并发槽位的上限（只在设置了 <see cref="MaxConcurrentRequests"/> 时有意义）：<c>null</c>（默认）一直等；
         /// <see cref="TimeSpan.Zero"/> 不排队，槽位占满时立刻失败；大于零超时抛 <c>ERR_QUEUE_TIMEOUT</c>。负值非法。
         /// </summary>
+        /// <remarks>
+        /// 本项只管「排队能等多久」，不改变排队时间记在哪个预算上：排队计入
+        /// <see cref="AxiosConfig.Deadline"/>（不计入 <see cref="AxiosConfig.Timeout"/>）。因此设了总预算时
+        /// 实际等待 = <c>min(本项, Deadline 剩余)</c> —— 被总预算截断时报 <c>ECONNABORTED</c> 而不是
+        /// <c>ERR_QUEUE_TIMEOUT</c>，两者指向不同的旋钮。<c>null</c>（一直等）同样受这条约束。
+        /// </remarks>
         public TimeSpan? QueueTimeout
         {
             get => _queueTimeout;
@@ -156,11 +144,6 @@ public sealed partial class AxiosConfig
             if (incoming.MaxRateSet)
             {
                 MaxRate = incoming.MaxRate;
-            }
-
-            if (incoming.StreamIdleTimeoutSet)
-            {
-                StreamIdleTimeout = incoming.StreamIdleTimeout;
             }
 
             // 并发上限虽属实例级，仍要合并进来，否则「按请求写了别的值」到不了校验层。

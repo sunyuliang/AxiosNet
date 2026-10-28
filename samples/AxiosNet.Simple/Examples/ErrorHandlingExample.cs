@@ -53,6 +53,24 @@ public sealed class ErrorHandlingExample : IExample
             Console.WriteLine($"  取消: code={ex.Code}");
         }
 
+        // 总预算（Deadline）：Timeout 只管「一次尝试」，重试 / 换端点 / 对冲会各自复制一份；
+        // Deadline 管「整条逻辑请求」，用尽后下一次尝试根本不发出。
+        stopwatch.Restart();
+        try
+        {
+            await http.GetAsync(context.BaseUrl + "slow?ms=300", c =>
+            {
+                c.Timeout = TimeSpan.FromMilliseconds(200);   // 单次尝试的上限
+                c.Deadline = TimeSpan.FromMilliseconds(250);  // 含重试等待的总预算
+                c.Retry.Policy = new AxiosNet.Retry.RetryPolicy(5, TimeSpan.Zero);
+            });
+        }
+        catch (AxiosException ex)
+        {
+            stopwatch.Stop();
+            Console.WriteLine($"  总预算: code={ex.Code}，{stopwatch.ElapsedMilliseconds}ms 即返回（{ex.Message}）");
+        }
+
         // validateStatus：自己定义合法状态码，404 也可以正常返回
         var accepted = await http.GetAsync(context.BaseUrl + "not-found", c => c.Callbacks.ValidateStatus = s => s is >= 200 and < 500);
         Console.WriteLine($"  validateStatus 放行 404: status={accepted.Status}");

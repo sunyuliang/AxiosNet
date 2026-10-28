@@ -95,12 +95,16 @@ public sealed partial class AxiosClient
             throw AxiosException.InvalidOption($"Timeout 不能为负（当前 {config.Timeout}）：要关闭超时请显式设为 TimeSpan.Zero。", config);
         }
 
-        var limits = config.LimitsOrNull;
-
-        if (limits?.StreamIdleTimeout is { } idleTimeout && idleTimeout < TimeSpan.Zero)
+        // 总预算与 Timeout 同一取值口径：负值没有语义，0 与 null 都是「不设」。
+        if (config.Deadline is { } deadline && deadline < TimeSpan.Zero)
         {
-            throw AxiosException.InvalidOption($"StreamIdleTimeout 不能为负（当前 {idleTimeout}）：要不设空闲超时请显式设为 TimeSpan.Zero。", config);
+            throw AxiosException.InvalidOption(
+                $"Deadline 不能为负（当前 {deadline}）：不设总预算请设为 null（或 TimeSpan.Zero），"
+                + "要限制整条请求（含重试 / 端点 / 对冲）请给一个正值。",
+                config);
         }
+
+        var limits = config.LimitsOrNull;
 
         if (limits?.MaxRate is < 0)
         {

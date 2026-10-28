@@ -15,7 +15,13 @@ namespace AxiosNet.Tests.Pipelines;
 /// 并发对冲：首发之后按延迟放出副本，第一个成功结果胜出，其余分支取消并收尾；
 /// 所有分支都失败时交给重试。不满足对冲条件的请求（流式、非幂等、正文不可并发重放、响应侧带共享状态）
 /// 按单次发送处理。
+/// <para>
+/// 整个类进 <see cref="TimingCollection"/>：错峰用例断言的是「分支按 200ms 间隔起跑」，
+/// 并行集合抢 CPU 时到达时刻会被挤到 60ms 量级（假失败）。这个类本来就只有 3 秒，
+/// 串行化的代价小于一条永远在抖的护栏。
+/// </para>
 /// </summary>
+[Collection(TimingCollection.Name)]
 public sealed class HedgingTests
 {
     private static AxiosConfig.HedgingSettings Hedge(int maxHedges, TimeSpan? delay = null)

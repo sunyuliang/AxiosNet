@@ -94,6 +94,12 @@ public sealed partial class AxiosClient
             merged.Timeout = perCall.Timeout;
         }
 
+        // 总预算同属按请求项；显式 null 是「这一次不要实例默认的总预算」。
+        if (perCall.DeadlineSet)
+        {
+            merged.Deadline = perCall.Deadline;
+        }
+
         // 只在显式设置时覆盖；必须用 if 而不是三元赋值：setter 会把 ResponseTypeSet 置 true。
         if (perCall.ResponseTypeSet)
         {

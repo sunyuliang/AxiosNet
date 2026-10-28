@@ -18,6 +18,9 @@ public sealed partial class AxiosClient
         // 阶段 0：守卫。放在 try 之外：它抛时名额还没占上，finally 不该归还。
         EnterInFlight(perCallConfig);
 
+        // 总预算的计时起点：调用入口。合并与拦截器耗时都算在调用方感知的时长里。
+        var entryTimestamp = Stopwatch.GetTimestamp();
+
         // 遥测状态全是局部量：关闭遥测时零分配；后三项在 URL 拼好后才定。
         AxiosConfig? config = null;
         Uri? telemetryUri = null;
@@ -66,6 +69,9 @@ public sealed partial class AxiosClient
 
             var template = CreateRequestMessage(config, plan, telemetryActivity);
 
+            // 总预算换成一次绝对时间戳：重试 / 换端点 / 对冲分支共享同一个截止点，晚起跑的分支拿到更少的剩余。
+            var deadlineTimestamp = DeadlineBudget.Start(config, entryTimestamp);
+
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try
             {
@@ -73,7 +79,7 @@ public sealed partial class AxiosClient
                 var attempt = AxiosAttemptResult.Ensure(
                     await RunResponseInterceptorsAsync(
                         template,
-                        AxiosAttemptContext.From(config, plan.Uri, dataType, target, gate)).ConfigureAwait(false),
+                        AxiosAttemptContext.From(config, plan.Uri, dataType, target, gate, deadlineTimestamp)).ConfigureAwait(false),
                     config);
 
                 var result = attempt.Response;

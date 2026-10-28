@@ -98,7 +98,7 @@ public sealed class AllocationSweepTests
         // 用 GetAwaiter().GetResult() 走同步等待（ValueTask 已成功，不会阻塞）。
         void AcquireOnce()
         {
-            gate.AcquireAsync(config, request, CancellationToken.None, TimeSpan.Zero)
+            gate.AcquireAsync(config, request, CancellationToken.None, TimeSpan.Zero, budgetRemaining: null, attempt: 1)
                 .GetAwaiter()
                 .GetResult()
                 .Dispose();

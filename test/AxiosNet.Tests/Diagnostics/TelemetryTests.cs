@@ -1,4 +1,6 @@
 ﻿
+using AxiosNet.Circuit;
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Retry;
 using AxiosNet.Telemetry;
@@ -199,6 +201,117 @@ public sealed class TelemetryTests
     }
 
     // ------------------------------------------------------------------
+    // 指标：重试原因 / 闸门排队深度 / 熔断状态
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Metrics_RetryReason_UsesLibraryCodeWhenThereIsNoStatus()
+    {
+        // 端口先拿到再关掉：请求必然 ERR_NETWORK，重试原因应当带库错误码而不是 "status"。
+        var probeServer = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var port = probeServer.Port;
+        var url = probeServer.Url;
+        await probeServer.DisposeAsync();
+
+        var path = UniquePath("retry-reason-network");
+        using var probe = new TelemetryProbe(port, path);
+
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) } });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(url + path));
+        Assert.Equal(AxiosException.ErrNetwork, ex.Code);
+
+        var retries = probe.MeasurementsOf(AxiosTelemetry.RetriesInstrumentName);
+        Assert.NotEmpty(retries);
+        Assert.All(retries, measurement => Assert.Equal(AxiosException.ErrNetwork, measurement.Tag("axiosnet.retry.reason")));
+    }
+
+    [Fact]
+    public async Task Metrics_GateQueueDepth_ReportsWaitingRequests()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        var path = UniquePath("gate-depth");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient(new AxiosConfig { Limits = { MaxConcurrentRequests = 1 } });
+
+        // 第一条占住唯一槽位（等它真的到达服务端，否则第二条可能先抢到槽位）
+        var first = client.GetAsync(server.Url + path);
+        await WaitUntilAsync(() => server.Received.Count >= 1);
+
+        var second = client.GetAsync(server.Url + path);
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth >= 1);
+
+        probe.CollectObservable();
+        var depth = probe.MeasurementsOf(AxiosTelemetry.GateQueueDepthInstrumentName);
+        Assert.NotEmpty(depth);
+        Assert.Contains(depth, measurement => measurement.Value >= 1d);
+
+        release.SetResult();
+        await first;
+        await second;
+
+        // 排队结束就归零：这条水位不能只涨不落
+        await WaitUntilAsync(() => ConcurrencyGate.QueueDepth == 0);
+    }
+
+    [Fact]
+    public async Task Metrics_CircuitState_ReportsOpenDimension()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
+        var path = UniquePath("circuit-state");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
+        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+
+        try
+        {
+            await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
+
+            Assert.Equal(1, breaker.TrackedHostCount);
+            Assert.Equal(AxiosCircuitState.Open, breaker.GetState($"127.0.0.1:{server.Port}"));
+
+            probe.CollectObservable();
+            var states = probe.MeasurementsOf(AxiosTelemetry.CircuitStateInstrumentName);
+            Assert.NotEmpty(states);
+
+            // 仪表按 state 分组报「多少个维度处于该状态」，不带 host（与池指标同一套低基数规则）。
+            var open = Assert.Single(states, measurement => Equals(measurement.Tag("axiosnet.circuit.state"), "open"));
+            Assert.True(open.Value >= 1d, $"open 维度的计数应当 >= 1，实际 {open.Value}");
+            Assert.All(states, measurement => Assert.Null(measurement.Tag(TagServerAddress)));
+        }
+        finally
+        {
+            // 状态计数是进程级的：这条用例必须把自己的账清掉，否则后续用例读到脏数据。
+            breaker.Reset();
+        }
+    }
+
+    /// <summary>轮询等待条件成立（最多 5 秒）：用于「等某个并发状态真的发生」，不用固定 sleep。</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var watch = Stopwatch.StartNew();
+        while (watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(5);
+        }
+
+        Assert.Fail("等待条件超时（5 秒）");
+    }
+
+    // ------------------------------------------------------------------
     // 连接池：租约 / 节点 / 驱逐
     // ------------------------------------------------------------------
 
@@ -240,13 +353,16 @@ public sealed class TelemetryTests
         // 复用率由后端用这两个序列算，库这里只给事实（每租一次 1，带 reused 标签）
         Assert.Equal("false", leases[0].Tag(TagEndpointReused));
         Assert.Equal("true", leases[1].Tag(TagEndpointReused));
-        Assert.Equal("127.0.0.1", leases[0].Tag(TagServerAddress));
-        Assert.Equal(server.Port, leases[0].Tag(TagServerPort));
+
+        // 池指标刻意不带 host / port：网关 / 爬虫场景下按 host 分序列会把指标后端打爆。
+        // 要定位到具体 origin 就看 span（server.address / server.port 本来就在上面）。
+        Assert.Null(leases[0].Tag(TagServerAddress));
+        Assert.Null(leases[0].Tag(TagServerPort));
 
         // 两次租约只建了一个节点：与 leases 一除就是节点命中率
         var created = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsCreatedInstrumentName));
         Assert.Equal(1d, created.Value);
-        Assert.Equal(server.Port, created.Tag(TagServerPort));
+        Assert.Null(created.Tag(TagServerPort));
     }
 
     [Fact]
@@ -270,7 +386,7 @@ public sealed class TelemetryTests
         var evicted = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
         Assert.Equal(1d, evicted.Value);
         Assert.Equal("manual", evicted.Tag(TagEvictionReason));
-        Assert.Equal(server.Port, evicted.Tag(TagServerPort));
+        Assert.Null(evicted.Tag(TagServerPort));
     }
 
     [Fact]
@@ -294,7 +410,7 @@ public sealed class TelemetryTests
 
         var evicted = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
         Assert.Equal("capacity", evicted.Tag(TagEvictionReason));
-        Assert.Equal(first.Port, evicted.Tag(TagServerPort));
+        Assert.Null(evicted.Tag(TagServerPort));
     }
 
     [Fact]
@@ -322,7 +438,7 @@ public sealed class TelemetryTests
 
         var evicted = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.PoolEndpointsEvictedInstrumentName));
         Assert.Equal("dispose", evicted.Tag(TagEvictionReason));
-        Assert.Equal(server.Port, evicted.Tag(TagServerPort));
+        Assert.Null(evicted.Tag(TagServerPort));
 
         // 重复 Dispose 不能重复上报（TryRemove 失败即不上报）
         pool.Dispose();
@@ -489,6 +605,9 @@ public sealed class TelemetryTests
         Assert.Equal(server.Port, retries[0].Tag(TagServerPort));
         Assert.Equal("500", retries[0].Tag(TagErrorType));
 
+        // 重试原因：有状态码时归一到 "status"（具体码在 error.type），后端据此区分「调策略」与「修下游」
+        Assert.Equal("status", retries[0].Tag("axiosnet.retry.reason"));
+
         // 事件：两条 Retry，载荷就是 OnRetry 拿到的那个上下文
         var retryEvents = probe.Events.Where(e => e.Name == AxiosTelemetry.RetryEventName).ToArray();
         Assert.Equal(2, retryEvents.Length);
@@ -562,7 +681,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(9, instruments.Count);   // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(11, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -606,6 +725,16 @@ public sealed class TelemetryTests
         var sharedPools = Assert.IsType<ObservableGauge<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.SharedPoolsInstrumentName));
         Assert.Equal("{pool}", sharedPools.Unit);
+
+        // 排队深度：容量规划看的就是这条水位
+        var queueDepth = Assert.IsType<ObservableGauge<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.GateQueueDepthInstrumentName));
+        Assert.Equal("{request}", queueDepth.Unit);
+
+        // 熔断状态：按 state 分组的维度数（不带 host，避免高基数）
+        var circuitState = Assert.IsType<ObservableGauge<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CircuitStateInstrumentName));
+        Assert.Equal("{circuit}", circuitState.Unit);
     }
 
     // 存活池数是进程级水位（无标签）：只钉方向——自己这批池被算进去、释放后掉下来；

@@ -6,7 +6,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 并发吞吐：把 <c>ConcurrencyPerformanceTests</c> 的「85% 门槛」换成可读的比值。
+/// 并发吞吐：把 <c>ConcurrencyPerformanceTests</c> 的「85% 能力线」换成可读的比值。
 /// <para>
 /// <b>为什么单独一个类</b>：<see cref="RequestPipelineBenchmarks"/> 测的是单请求延迟（一次一个），
 /// 这里测的是「8 条在飞请求时每请求摊到多少」——两者不是一回事，前者看 CPU 增量，后者看吞吐上限。

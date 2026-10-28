@@ -23,7 +23,14 @@ public sealed class ConnectionPoolExample : IExample
         {
             MaxConnectionsPerServer = 2,
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
-            IdleHandlerLifetime = TimeSpan.FromMinutes(30)
+            IdleHandlerLifetime = TimeSpan.FromMinutes(30),
+
+            // h2 keep-alive：中间设备（ALB / NAT / 防火墙）静默回收连接后，客户端能提前发现，
+            // 而不是等下一个请求撞上死连接再重连（多一次 RTT，或者表现为偶发 ERR_NETWORK）。
+            // 默认关闭（与 SocketsHttpHandler 一致），这里显式打开演示。
+            KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(20),
+            KeepAlivePingPolicy = HttpKeepAlivePingPolicy.WithActiveRequests
         };
 
         // 12.1 顺序请求：独立新池，5 个请求只建立 1 条 TCP 连接
@@ -39,6 +46,10 @@ public sealed class ConnectionPoolExample : IExample
             var stats = pool.GetStatistics();
             Console.WriteLine($"  顺序 5 请求: 服务器接受 TCP 连接数 = {server.TotalConnections}（期望 1，连接被复用）");
             Console.WriteLine($"  池统计: origin 节点={stats.EndpointCount}, 累计租约={stats.TotalLeases}");
+            Console.WriteLine(
+                $"  h2 keep-alive: delay={pool.Options.KeepAlivePingDelay.TotalSeconds:0}s,"
+                + $" timeout={pool.Options.KeepAlivePingTimeout.TotalSeconds:0}s,"
+                + $" policy={pool.Options.KeepAlivePingPolicy}");
         }
 
         // 12.2 并发上限：独立新池，6 个慢请求 + MaxConnectionsPerServer=2 -> 总连接 2、峰值并发 2

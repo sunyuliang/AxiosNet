@@ -15,95 +15,11 @@ using System.Text;
 namespace AxiosNet.Tests.WebAPI;
 
 /// <summary>
-/// 声明式流式响应：NDJSON / SSE / JSON 数组分帧、帧上限、空闲超时、单次枚举，
+/// 声明式流式响应：NDJSON / SSE / JSON 数组分帧、帧上限、正文预算、单次枚举，
 /// 以及分帧缓冲的存留口径（超大元素 / 超大帧收尾后不得按历史峰值长驻）。
 /// </summary>
 public sealed class StreamingTests
 {
-    // ===============================================================
-    // M2：ApiClient 默认值不能静默覆盖底层 AxiosClient 已配置的 StreamIdleTimeout
-    // ===============================================================
-
-    [Fact]
-    public async Task M2_ApiClient_KeepsAxiosClientStreamIdleTimeoutDefault()
-    {
-        var defaults = new AxiosConfig
-        {
-            BaseAddress = "http://stream.test/",
-            Limits = new()
-            {
-                StreamIdleTimeout = TimeSpan.FromSeconds(20),
-            },
-        };
-
-        using var api = CreateStreamApiClient(defaults);
-
-        var response = await api.RequestStreamAsync(new IdleStreamRequest());
-
-        // 底层客户端显式配了 20s，ApiClient 没显式设置时不得把它压成「不限时」
-        Assert.Equal(TimeSpan.FromSeconds(20), response.Config!.Limits.StreamIdleTimeout);
-        await DrainAsync(response.Data);
-    }
-
-    [Fact]
-    public async Task M2_ApiClient_ExplicitValueStillWins()
-    {
-        var defaults = new AxiosConfig
-        {
-            BaseAddress = "http://stream.test/",
-            Limits = new()
-            {
-                StreamIdleTimeout = TimeSpan.FromSeconds(20),
-            },
-        };
-
-        using var api = CreateStreamApiClient(defaults);
-        api.StreamIdleTimeout = TimeSpan.FromSeconds(3);
-
-        var response = await api.RequestStreamAsync(new IdleStreamRequest());
-
-        Assert.Equal(TimeSpan.FromSeconds(3), response.Config!.Limits.StreamIdleTimeout);
-        await DrainAsync(response.Data);
-    }
-
-    [Fact]
-    public async Task M2_ApiClient_DefaultStaysUnlimited_WhenClientHasNoIdleDefault()
-    {
-        // 底层没配 StreamIdleTimeout：ApiClient 的文档默认（Zero = 正文不限时）必须保持
-        using var api = CreateStreamApiClient(new AxiosConfig
-        {
-            BaseAddress = "http://stream.test/",
-            Timeout = TimeSpan.FromMilliseconds(120)
-        });
-
-        var response = await api.RequestStreamAsync(new IdleStreamRequest());
-
-        Assert.Equal(TimeSpan.Zero, response.Config!.Limits.StreamIdleTimeout);
-        await DrainAsync(response.Data);
-    }
-
-    [Fact]
-    public async Task M2_ApiClient_KeepsExplicitNullDefault_SharingTimeoutBudget()
-    {
-        // 显式设成 null 是有效意图「正文与响应头共享 Timeout 预算」，不能因为「值等于未设置」
-        // 就被 ApiClient 的默认 Zero（正文不限时）顶掉。
-        var defaults = new AxiosConfig
-        {
-            BaseAddress = "http://stream.test/",
-            Limits = new()
-            {
-                StreamIdleTimeout = null,
-            },
-        };
-
-        using var api = CreateStreamApiClient(defaults);
-
-        var response = await api.RequestStreamAsync(new IdleStreamRequest());
-
-        Assert.Null(response.Config!.Limits.StreamIdleTimeout);
-        await DrainAsync(response.Data);
-    }
-
     // ------------------------------------------------------------------
     // Bug 2：SSE 裸 CR 行尾
     // ------------------------------------------------------------------
@@ -310,11 +226,11 @@ public sealed class StreamingTests
     }
 
     // ------------------------------------------------------------------
-    // 流式：超时口径（D1-A）
+    // 流式：正文与响应头共用同一份预算（不设超时时正文不限时）
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task Stream_TimeoutOnlyCoversHeaders_BodyCanOutliveIt()
+    public async Task Stream_NoTimeoutConfigured_BodyIsNotBounded()
     {
         var chunks = new[]
         {
@@ -322,9 +238,8 @@ public sealed class StreamingTests
             Encoding.UTF8.GetBytes("{\"n\":2}\n")
         };
 
-        using var client = CreateClient(
-            new ScriptedStreamHandler(chunks, initialDelay: TimeSpan.FromMilliseconds(400)),
-            configure: config => config.Timeout = TimeSpan.FromMilliseconds(150));
+        // 正文首块延迟 400ms，但没设 Timeout：正文阶段不该有任何计时器。
+        using var client = CreateClient(new ScriptedStreamHandler(chunks, initialDelay: TimeSpan.FromMilliseconds(400)));
 
         var response = await client.RequestStreamAsync(new StreamFrameRequest());
 
@@ -333,18 +248,34 @@ public sealed class StreamingTests
     }
 
     [Fact]
-    public async Task StreamIdleTimeout_FiresWhenServerStalls()
+    public async Task Stream_BodySharesTheAttemptBudget()
     {
+        // 预算 150ms，服务端吐完一帧就挂起：正文阶段到点必须被打断，错误码与超时一致。
         using var client = CreateClient(
             new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n") }, stallAfterChunks: true),
-            timeout: TimeSpan.FromSeconds(10),
-            idle: TimeSpan.FromMilliseconds(150));
+            timeout: TimeSpan.FromMilliseconds(150));
 
         var response = await client.RequestStreamAsync(new StreamFrameRequest());
 
         var error = await Assert.ThrowsAsync<AxiosException>(() => CollectAsync(response.Data!));
         Assert.Equal(AxiosException.ErrConnAborted, error.Code);
-        Assert.Contains("idle", error.Message);
+        Assert.Contains("timeout of", error.Message);
+    }
+
+    [Fact]
+    public async Task Stream_BodyIsBoundedByDeadline_NotJustTimeout()
+    {
+        // 只设 Deadline、不设 Timeout：正文阶段同样在截止点被打断，
+        // 而且消息要指明是「预算压的」，不能写成「timeout of 0ms exceeded」（统一口径后的关键点）。
+        using var client = CreateClient(
+            new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n") }, stallAfterChunks: true),
+            configure: config => config.Deadline = TimeSpan.FromMilliseconds(200));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest());
+
+        var error = await Assert.ThrowsAsync<AxiosException>(() => CollectAsync(response.Data!));
+        Assert.Equal(AxiosException.ErrConnAborted, error.Code);
+        Assert.Contains("remaining Deadline budget", error.Message, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------
@@ -803,21 +734,21 @@ public sealed class StreamingTests
     }
 
     // ------------------------------------------------------------------
-    // 与既有契约的一致性：空闲超时、单次枚举、方言跟随序列化选项
+    // 与既有契约的一致性：正文预算、单次枚举、方言跟随序列化选项
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task JsonArray_StreamIdleTimeout_FiresWhenServerStalls()
+    public async Task JsonArray_BodySharesTheAttemptBudget()
     {
         using var client = CreateClient(
             JsonArrayHandler(new[] { Encoding.UTF8.GetBytes("[{\"n\":1},") }, stallAfterChunks: true),
-            idle: TimeSpan.FromMilliseconds(150));
+            timeout: TimeSpan.FromMilliseconds(150));
 
         var response = await client.RequestStreamAsync(new ItemRequest(), AxiosStreamFormat.JsonArray);
 
         var error = await Assert.ThrowsAsync<AxiosException>(() => CollectAsync(response.Data!));
         Assert.Equal(AxiosException.ErrConnAborted, error.Code);
-        Assert.Contains("idle", error.Message);
+        Assert.Contains("timeout of", error.Message);
     }
 
     [Fact]
@@ -972,7 +903,7 @@ public sealed class StreamingTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task B8_ConsumerPauseBetweenFrames_DoesNotTripIdleTimeout()
+    public async Task B8_ConsumerPauseBetweenFrames_IsHarmlessWithoutBudget()
     {
         using var client = CreateClient(
             new ScriptedStreamHandler(
@@ -981,11 +912,7 @@ public sealed class StreamingTests
                     Encoding.UTF8.GetBytes("{\"n\":1}\n"),
                     Encoding.UTF8.GetBytes("{\"n\":2}\n")
                 },
-                // 不注入分块间的网络延迟：CI 满载时 40ms 的 Task.Delay 可能被拖到 150ms 以上，
-                // 那已经不是「消费者停顿」的场景，只会让用例随机撞上空闲超时。本用例要验证的只是
-                // 「两次 MoveNext 之间的停顿不进入空闲计时」。
-                stallAfterChunks: true),
-            idle: TimeSpan.FromMilliseconds(150));
+                stallAfterChunks: true));
 
         var response = await client.RequestStreamAsync(new StreamFrameRequest());
 
@@ -993,7 +920,8 @@ public sealed class StreamingTests
         Assert.True(await enumerator.MoveNextAsync());
         Assert.Equal(1, enumerator.Current.N);
 
-        // 消费者处理第一帧耗时 400ms（> idle 150ms）：计时器若在读取之外也走，这里就会误判空闲
+        // 消费者处理第一帧耗时 400ms：没设 Timeout / Deadline 时正文没有任何计时器，
+        // 停顿多久都不该失败（要中途退出只能靠取消令牌）。
         await Task.Delay(400);
 
         Assert.True(await enumerator.MoveNextAsync());

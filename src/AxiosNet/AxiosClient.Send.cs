@@ -12,24 +12,31 @@ namespace AxiosNet;
 // 它是中间件链的最内层（一切编排都在它外面），并发槽位由闸门中间件占好后经上下文交进来。
 public sealed partial class AxiosClient
 {
-    /// <summary>一次尝试的时间预算：超时令牌源 + 流式响应的剩余预算计时器。粒度是一次尝试，因此每次重试各有独立预算。无超时时 <see cref="Token"/> 直接是调用方令牌，不建 linked CTS。</summary>
+    /// <summary>
+    /// 一次尝试的时间预算：超时令牌源 + 流式响应的剩余预算计时器。粒度是一次尝试，因此每次重试各有独立预算；
+    /// 设了总预算时它取 <c>min(Timeout, 剩余总预算)</c>。只有「<see cref="AxiosConfig.Timeout"/> 与
+    /// <see cref="AxiosConfig.Deadline"/> 都没设」时 <see cref="Token"/> 才直接是调用方令牌、不建 linked CTS。
+    /// </summary>
     private readonly struct AttemptBudget : IDisposable
     {
         private readonly CancellationTokenSource? _timeoutCts;
         private readonly CancellationToken _externalToken;
         private readonly Stopwatch? _clock;
         private readonly TimeSpan _timeout;
+        private readonly bool _clampedByDeadline;
 
         private AttemptBudget(
             CancellationTokenSource? timeoutCts,
             CancellationToken externalToken,
             Stopwatch? clock,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            bool clampedByDeadline)
         {
             _timeoutCts = timeoutCts;
             _externalToken = externalToken;
             _clock = clock;
             _timeout = timeout;
+            _clampedByDeadline = clampedByDeadline;
             Token = timeoutCts?.Token ?? externalToken;
         }
 
@@ -39,31 +46,56 @@ public sealed partial class AxiosClient
         /// <summary>流式响应的剩余预算：只有「流式 + 有超时」才有值；timeout 要延续到正文读完，故记录起点算剩余。</summary>
         public TimeSpan? StreamRemaining => _clock is null ? null : _timeout - _clock.Elapsed;
 
-        /// <summary>取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>，否则本次尝试超时 → <c>ERR_TIMEOUT</c>。</summary>
+        /// <summary>
+        /// 被总预算压小后的真实上限（未压小为 <c>null</c>）：流式正文阶段报超时时要用它，
+        /// 否则 <c>Timeout = 0</c> + <c>Deadline</c> 的请求会报「timeout of 0ms exceeded」。
+        /// </summary>
+        public TimeSpan? EffectiveTimeout => _clampedByDeadline ? _timeout : null;
+
+        /// <summary>取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>，否则本次尝试超时 → <c>ECONNABORTED</c>。</summary>
         public AxiosException Translate(
             OperationCanceledException exception,
             AxiosConfig config,
             HttpRequestMessage request)
         {
             return !_externalToken.IsCancellationRequested && _timeoutCts is { IsCancellationRequested: true }
-                ? AxiosException.Timeout(config, request, exception)
+                ? AxiosException.Timeout(config, request, exception, EffectiveTimeout)
                 : AxiosException.Canceled(config, request, exception);
         }
 
         public void Dispose() => _timeoutCts?.Dispose();
 
-        /// <summary>按生效配置建预算：超时上限收敛到计时器可表示的范围（见 <see cref="Timeouts.Clamp"/>）。</summary>
-        public static AttemptBudget Start(
-            AxiosConfig config,
-            CancellationToken externalToken,
-            bool streamResponse)
+        /// <summary>
+        /// 按生效配置建预算：超时上限收敛到计时器可表示的范围（见 <see cref="Timeouts.Clamp"/>）。
+        /// 设了总预算时先看剩余：已耗尽就<b>根本不发这次尝试</b>（错误消息指明第几次），否则取
+        /// <c>min(Timeout, 剩余)</c> —— 否则每次尝试都拿满 <c>Timeout</c>，重试一叠加就把总预算撑穿。
+        /// </summary>
+        /// <exception cref="AxiosException">总预算已耗尽（<c>ECONNABORTED</c>）。</exception>
+        public static AttemptBudget Start(in AxiosAttemptContext ctx, HttpRequestMessage request)
         {
+            var config = ctx.Config;
             var timeout = config.Timeout;
+            var clampedByDeadline = false;
+
+            if (ctx.RemainingDeadline is { } remaining)
+            {
+                if (remaining <= TimeSpan.Zero)
+                {
+                    throw AxiosException.DeadlineExceeded(config, request, ctx.AttemptNumber, config.Deadline!.Value);
+                }
+
+                if (timeout <= TimeSpan.Zero || remaining < timeout)
+                {
+                    timeout = remaining;
+                    clampedByDeadline = true;
+                }
+            }
+
             var hasTimeout = timeout > TimeSpan.Zero;
 
             var timeoutCts = hasTimeout
-                ? (externalToken.CanBeCanceled
-                    ? CancellationTokenSource.CreateLinkedTokenSource(externalToken)
+                ? (ctx.AttemptToken.CanBeCanceled
+                    ? CancellationTokenSource.CreateLinkedTokenSource(ctx.AttemptToken)
                     : new CancellationTokenSource())
                 : null;
 
@@ -74,9 +106,9 @@ public sealed partial class AxiosClient
             }
 
             // 流式 + 有超时才用得上计时器（口径见 StreamRemaining）。
-            var clock = streamResponse && hasTimeout ? Stopwatch.StartNew() : null;
+            var clock = ctx.StreamResponse && hasTimeout ? Stopwatch.StartNew() : null;
 
-            return new AttemptBudget(timeoutCts, externalToken, clock, timeout);
+            return new AttemptBudget(timeoutCts, ctx.AttemptToken, clock, timeout, clampedByDeadline);
         }
     }
 
@@ -102,8 +134,9 @@ public sealed partial class AxiosClient
 
         try
         {
-            // 阶段 2：时间预算 —— 一次尝试一份超时令牌源；闸门排队在它之前，不计入本预算。
-            using var budget = AttemptBudget.Start(config, ctx.AttemptToken, ctx.StreamResponse);
+            // 阶段 2：时间预算 —— 一次尝试一份超时令牌源；闸门排队在它之前，不计入 Timeout（但计入 Deadline）。
+            // 总预算已耗尽时这里直接抛出，本次尝试连连接都不会去租。
+            using var budget = AttemptBudget.Start(ctx, request);
 
             // 阶段 3：取连接 —— 注入 Handler 时固定用它，默认实例按 origin 租（连接复用 + 并发上限）。
             var (httpClient, leased) = await LeaseClientAsync(request, ctx, budget).ConfigureAwait(false);
@@ -139,16 +172,11 @@ public sealed partial class AxiosClient
 
             if (ctx.StreamResponse && response.Data is Stream body)
             {
-                // 流式正文超时口径：设了 StreamIdleTimeout 时正文按空闲超时，否则共享剩余预算。
-                Stream wrapped = config.LimitsOrNull?.StreamIdleTimeout is { } idleTimeout
-                    ? new TimeoutStream(
-                        body,
-                        remaining: null,
-                        ctx.ExternalToken,
-                        config,
-                        request,
-                        idleTimeout > TimeSpan.Zero ? idleTimeout : null)
-                    : new TimeoutStream(body, budget.StreamRemaining, ctx.ExternalToken, config, request);
+                // 流式正文与响应头共用同一份预算：remaining 为本次尝试的剩余额度（已被 Deadline 压过），
+                // 不设 Timeout / Deadline 时为 null = 不限时，长连接场景靠调用方令牌退出。
+                // effectiveTimeout 只在被预算压小时带上：消息里要能看出「不是 Timeout 没生效」。
+                Stream wrapped = new TimeoutStream(
+                    body, budget.StreamRemaining, ctx.ExternalToken, config, request, budget.EffectiveTimeout);
 
                 // 租约、消息与并发槽位一并转移给流：下载期间该 origin 仍算活跃，流 Dispose 时统一释放。
                 wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease, slot);

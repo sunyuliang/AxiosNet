@@ -47,6 +47,31 @@ public sealed class ConnectionPoolOptions
     public bool EnableMultipleHttp2Connections { get; set; } = true;
 
     /// <summary>
+    /// HTTP/2 keep-alive ping 的间隔（默认 <see cref="Timeout.InfiniteTimeSpan"/>，即不发 ping，与 <c>SocketsHttpHandler</c> 一致）。
+    /// 只影响 HTTP/2 连接：h1 没有 ping 帧。
+    /// </summary>
+    /// <remarks>
+    /// 打开它是对付「静默掐断」的手段：AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，
+    /// 下次请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 <c>GOAWAY</c> / 流重置。
+    /// 发送 ping 的代价是一个 17 字节的帧，比一次重连便宜得多。默认关闭是因为它会改变线上行为：
+    /// 链路上有不回应 <c>PING</c> 的代理 / 中间盒时，连接会被判死重连（<c>ERR_NETWORK</c> 变多）——
+    /// 确认链路健康后再打开（常见取值 30 秒）。
+    /// </remarks>
+    public TimeSpan KeepAlivePingDelay { get; set; } = Timeout.InfiniteTimeSpan;
+
+    /// <summary>
+    /// 发出 ping 后多久没收到 <c>PING ACK</c> 就判定连接已死并关闭（默认 20 秒）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不因此断连。
+    /// 只影响 HTTP/2 连接；必须小于 <see cref="KeepAlivePingDelay"/> 才谈得上「发现半死连接」。
+    /// </summary>
+    public TimeSpan KeepAlivePingTimeout { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// 何时发送 keep-alive ping（默认 <see cref="HttpKeepAlivePingPolicy.WithActiveRequests"/>，只在有在途请求时发）；
+    /// 改成 <see cref="HttpKeepAlivePingPolicy.Always"/> 会在完全空闲时也维持连接（长轮询 / 低频高价值调用场景）。
+    /// </summary>
+    public HttpKeepAlivePingPolicy KeepAlivePingPolicy { get; set; } = HttpKeepAlivePingPolicy.WithActiveRequests;
+
+    /// <summary>
     /// 池内 origin 节点数上限，默认 1024；0 或负数不限制（软上限：容量检查与插入非原子）。
     /// 全部在途且没有可驱逐的空闲节点时，新建节点抛 <see cref="AxiosException.ErrPoolExhausted"/>（请求没有发出，默认不自动重发）。
     /// </summary>
@@ -83,6 +108,9 @@ public sealed class ConnectionPoolOptions
         UseCookies = UseCookies,
         AutomaticDecompression = AutomaticDecompression,
         EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,
+        KeepAlivePingDelay = KeepAlivePingDelay,
+        KeepAlivePingTimeout = KeepAlivePingTimeout,
+        KeepAlivePingPolicy = KeepAlivePingPolicy,
         MaxEndpointCount = MaxEndpointCount,
         Proxy = Proxy,
         Credentials = Credentials,

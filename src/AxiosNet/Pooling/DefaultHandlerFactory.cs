@@ -25,6 +25,12 @@ internal static class DefaultHandlerFactory
 
             // h2 的并发度受服务端 MAX_CONCURRENT_STREAMS 限制，打开后按 MaxConnectionsPerServer 继续加连接。
             EnableMultipleHttp2Connections = o.EnableMultipleHttp2Connections,
+
+            // h2 keep-alive：让中间设备（ALB / NAT / 防火墙）静默回收连接这件事在客户端可见，
+            // 而不是等下一个请求撞上去才发现。h1 没有 ping 帧，这三项对它无影响。
+            KeepAlivePingDelay = o.KeepAlivePingDelay,
+            KeepAlivePingTimeout = o.KeepAlivePingTimeout,
+            KeepAlivePingPolicy = o.KeepAlivePingPolicy,
             UseCookies = o.UseCookies,
             UseProxy = o.Proxy is not null,
             Proxy = o.Proxy,

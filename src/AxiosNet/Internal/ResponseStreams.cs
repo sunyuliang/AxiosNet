@@ -25,8 +25,9 @@ internal sealed class TimeoutStream : DelegatingStream
     private CancellationTokenSource? _cachedCallerCts;
 
     /// <summary>
-    /// 包装流式正文。<paramref name="remaining"/> 为剩余超时预算，<c>null</c> 表示不超时；
-    /// <paramref name="idleTimeout"/> 大于零时改为空闲超时（只在实际读写期间计时）。
+    /// 包装流式正文。<paramref name="remaining"/> 为本次尝试的剩余超时预算（已被 <c>Deadline</c> 压过），
+    /// <c>null</c> 表示不超时；构造时已耗尽则核心方法入口直接失败。
+    /// <paramref name="effectiveTimeout"/> 只在「被总预算压小」时传入，用于让超时消息说清真实上限。
     /// </summary>
     public TimeoutStream(
         Stream inner,
@@ -34,21 +35,18 @@ internal sealed class TimeoutStream : DelegatingStream
         CancellationToken externalToken,
         AxiosConfig config,
         HttpRequestMessage request,
-        TimeSpan? idleTimeout = null)
+        TimeSpan? effectiveTimeout = null)
         : base(inner)
     {
         _config = config;
         _request = request;
         _externalToken = externalToken;
+        _effectiveTimeout = effectiveTimeout;
 
         _timeoutCts = new CancellationTokenSource();
 
-        // 空闲超时优先；计时器不在构造时启动，只在真实读写期间进行。
-        if (idleTimeout is { } idle && idle > TimeSpan.Zero)
-        {
-            _idleTimeout = idle;
-        }
-        else if (remaining is TimeSpan budget)
+        // 预算是一次性的：从拿到响应头开始算到正文读完，中途不重置（没有独立的空闲计时）。
+        if (remaining is TimeSpan budget)
         {
             if (budget > TimeSpan.Zero)
             {
@@ -63,19 +61,18 @@ internal sealed class TimeoutStream : DelegatingStream
         _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken, _timeoutCts.Token);
     }
 
-    /// <summary>每次成功读到数据后重置的空闲计时；<see cref="TimeSpan.Zero"/> 表示未启用。</summary>
-    private readonly TimeSpan _idleTimeout;
+    /// <summary>被总预算压小后的真实上限（未压小为 <c>null</c>），只用于错误消息。</summary>
+    private readonly TimeSpan? _effectiveTimeout;
 
     /// <summary>
     /// 读一块。内层同步完成（缓冲命中的常见情形）时整条链路零分配：不建状态机、结果原样透传；
-    /// 真异步或故障才落到异步路径。同步抛出的异常同样要翻译（否则空闲计时不会撤销）。
+    /// 真异步或故障才落到异步路径。同步抛出的异常同样要翻译。
     /// </summary>
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
         ThrowIfBudgetExhausted();
 
         var token = Link(callerToken);
-        ArmIdleTimer();
 
         ValueTask<int> pending;
         try
@@ -84,26 +81,23 @@ internal sealed class TimeoutStream : DelegatingStream
 
             if (pending.IsCompletedSuccessfully)
             {
-                DisarmIdleTimer();
                 return pending;
             }
         }
         catch (OperationCanceledException ex)
         {
-            DisarmIdleTimer();
             ThrowIfTimedOutOrCanceled(callerToken, ex);
             throw;
         }
         catch (Exception ex) when (ex is IOException or HttpRequestException)
         {
-            DisarmIdleTimer();
             throw AxiosException.Network(_config, _request, ex);
         }
 
         return FinishReadAsync(pending, callerToken);
     }
 
-    /// <summary>内层未同步完成时的读路径：翻译取消 / 超时 / IO 失败，并撤销空闲计时。</summary>
+    /// <summary>内层未同步完成时的读路径：翻译取消 / 超时 / IO 失败。</summary>
     private async ValueTask<int> FinishReadAsync(ValueTask<int> pending, CancellationToken callerToken)
     {
         try
@@ -120,27 +114,6 @@ internal sealed class TimeoutStream : DelegatingStream
             // 正文读到一半连接断了：与非流式路径同一错误模型。
             throw AxiosException.Network(_config, _request, ex);
         }
-        finally
-        {
-            DisarmIdleTimer();
-        }
-    }
-
-    /// <summary>空闲计时只在一次真实 I/O 期间进行：开始读写时启动，完成（含异常）时撤销。</summary>
-    private void ArmIdleTimer()
-    {
-        if (_idleTimeout > TimeSpan.Zero && !_timeoutCts.IsCancellationRequested)
-        {
-            _timeoutCts.CancelAfter(Timeouts.Clamp(_idleTimeout));
-        }
-    }
-
-    private void DisarmIdleTimer()
-    {
-        if (_idleTimeout > TimeSpan.Zero && !_timeoutCts.IsCancellationRequested)
-        {
-            _timeoutCts.CancelAfter(Timeout.InfiniteTimeSpan);
-        }
     }
 
     protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken callerToken)
@@ -148,7 +121,6 @@ internal sealed class TimeoutStream : DelegatingStream
         ThrowIfBudgetExhausted();
 
         var token = Link(callerToken);
-        ArmIdleTimer();
         try
         {
             await Inner.WriteAsync(buffer, token).ConfigureAwait(false);
@@ -162,10 +134,6 @@ internal sealed class TimeoutStream : DelegatingStream
         {
             throw AxiosException.Network(_config, _request, ex);
         }
-        finally
-        {
-            DisarmIdleTimer();
-        }
     }
 
     protected override async ValueTask FlushCoreAsync(CancellationToken callerToken)
@@ -173,7 +141,6 @@ internal sealed class TimeoutStream : DelegatingStream
         ThrowIfBudgetExhausted();
 
         var token = Link(callerToken);
-        ArmIdleTimer();
         try
         {
             await Inner.FlushAsync(token).ConfigureAwait(false);
@@ -186,10 +153,6 @@ internal sealed class TimeoutStream : DelegatingStream
         catch (Exception ex) when (ex is IOException or HttpRequestException)
         {
             throw AxiosException.Network(_config, _request, ex);
-        }
-        finally
-        {
-            DisarmIdleTimer();
         }
     }
 
@@ -226,7 +189,7 @@ internal sealed class TimeoutStream : DelegatingStream
     {
         if (_budgetExhausted)
         {
-            throw AxiosException.Timeout(_config, _request);
+            throw AxiosException.Timeout(_config, _request, null, _effectiveTimeout);
         }
     }
 
@@ -248,13 +211,7 @@ internal sealed class TimeoutStream : DelegatingStream
 
         if (_timeoutCts.IsCancellationRequested)
         {
-            // 空闲超时与整体预算超时分开报。
-            if (_idleTimeout > TimeSpan.Zero)
-            {
-                throw AxiosException.StreamIdleTimeout(_config, _request, _idleTimeout, inner);
-            }
-
-            throw AxiosException.Timeout(_config, _request, inner);
+            throw AxiosException.Timeout(_config, _request, inner, _effectiveTimeout);
         }
     }
 

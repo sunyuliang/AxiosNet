@@ -167,6 +167,72 @@ public sealed class ConnectionPoolTests
     }
 
     [Fact]
+    public void KeepAlivePing_InvalidValues_FailAtConstruction()
+    {
+        // 0 不是「不 ping」而是「立刻 ping」：底层会照做并把连接打爆，必须在构造期拦住。
+        var zeroDelay = Assert.Throws<AxiosException>(() =>
+            new HttpConnectionPool(new ConnectionPoolOptions { KeepAlivePingDelay = TimeSpan.Zero }));
+        Assert.Equal(AxiosException.ErrBadOptionValue, zeroDelay.Code);
+
+        var zeroTimeout = Assert.Throws<AxiosException>(() =>
+            new HttpConnectionPool(new ConnectionPoolOptions { KeepAlivePingTimeout = TimeSpan.Zero }));
+        Assert.Equal(AxiosException.ErrBadOptionValue, zeroTimeout.Code);
+
+        // 关掉 keep-alive ping 的合法写法只有 InfiniteTimeSpan 一种
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            KeepAlivePingDelay = Timeout.InfiniteTimeSpan,
+            EvictionInterval = TimeSpan.Zero
+        });
+        Assert.Equal(Timeout.InfiniteTimeSpan, pool.Options.KeepAlivePingDelay);
+    }
+
+    [Fact]
+    public void KeepAlivePing_InvalidPolicy_FailsAtConstruction()
+    {
+        // 未定义的枚举值底层会当成「不 ping」：静默忽略等于让调用方以为配上了。
+        var ex = Assert.Throws<AxiosException>(() =>
+            new HttpConnectionPool(new ConnectionPoolOptions { KeepAlivePingPolicy = (HttpKeepAlivePingPolicy)99 }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
+    public async Task KeepAlivePing_IsAppliedToDefaultHandler()
+    {
+        SocketsHttpHandler? captured = null;
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            KeepAlivePingDelay = TimeSpan.FromSeconds(45),
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(15),
+            KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
+            HandlerFactory = ctx => captured = ctx.CreateDefaultHandler()
+        });
+
+        await client.GetAsync(server.Url + "keepalive");
+
+        // 池选项最终要落到真正发请求的 Handler 上：漏一个赋值，h2 长连接就还是会被中间设备静默回收。
+        Assert.NotNull(captured);
+        Assert.Equal(TimeSpan.FromSeconds(45), captured!.KeepAlivePingDelay);
+        Assert.Equal(TimeSpan.FromSeconds(15), captured.KeepAlivePingTimeout);
+        Assert.Equal(HttpKeepAlivePingPolicy.Always, captured.KeepAlivePingPolicy);
+    }
+
+    [Fact]
+    public void KeepAlivePing_Defaults_MatchSocketsHttpHandler()
+    {
+        // 默认值本身是契约：ping 默认关闭（与 SocketsHttpHandler 一致，不悄悄改线上行为），
+        // 打开后用 20s 等 ACK、只在有在途请求时 ping。
+        var options = new ConnectionPoolOptions();
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, options.KeepAlivePingDelay);
+        Assert.Equal(TimeSpan.FromSeconds(20), options.KeepAlivePingTimeout);
+        Assert.Equal(HttpKeepAlivePingPolicy.WithActiveRequests, options.KeepAlivePingPolicy);
+    }
+
+    [Fact]
     public async Task ZeroPooledConnectionLifetime_IsAllowedAndWorks()
     {
         // 0 是合法语义（连接不复用），不能被构造期校验拦掉。
@@ -1350,6 +1416,29 @@ public sealed class ConnectionPoolTests
         {
             Assert.Throws<AxiosException>(() =>
                 HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { HandlerFactory = _ => new HttpClientHandler() }));
+        }
+        finally
+        {
+            HttpConnectionPool.Release(key);
+        }
+    }
+
+    // 新增的标量选项同样参与「同名池配置必须一致」的判定：漏一个字段会让两份不同配置静默共用一条池。
+    [Fact]
+    public void NamedPool_GetOrCreate_ConflictingKeepAlivePing_Conflict()
+    {
+        var key = UniquePoolKey();
+        HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { EvictionInterval = TimeSpan.Zero });
+
+        try
+        {
+            var ex = Assert.Throws<AxiosException>(() => HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions
+            {
+                EvictionInterval = TimeSpan.Zero,
+                KeepAlivePingDelay = TimeSpan.FromSeconds(45)
+            }));
+
+            Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         }
         finally
         {

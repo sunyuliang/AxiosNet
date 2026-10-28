@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Circuit;
+using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 using AxiosNet.Retry;
@@ -547,7 +548,7 @@ public sealed class FailoverTests
         };
 
         var handler = Attempt.Failover(next);
-        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null);
+        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null, deadlineTimestamp: DeadlineBudget.None);
 
         var exception = await Assert.ThrowsAsync<AxiosException>(async () => await handler(template, ctx));
 

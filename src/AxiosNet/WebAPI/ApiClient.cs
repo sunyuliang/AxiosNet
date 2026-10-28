@@ -20,22 +20,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// </summary>
     public IAccessTokenProvider? AccessTokenProvider { get; set; }
 
-    /// <summary>流式请求正文的空闲超时，默认 <see cref="TimeSpan.Zero"/>（不限时，只受取消令牌约束）；大于零表示连续这么久没有收到数据才失败（<c>ECONNABORTED</c>）。</summary>
-    public TimeSpan StreamIdleTimeout
-    {
-        get => _streamIdleTimeout;
-        set
-        {
-            _streamIdleTimeout = value;
-            _streamIdleTimeoutSet = true;
-        }
-    }
-
-    private TimeSpan _streamIdleTimeout = TimeSpan.Zero;
-
-    /// <summary>是否显式给 <see cref="StreamIdleTimeout"/> 赋过值（默认值本身代表不了调用方意图）。</summary>
-    private bool _streamIdleTimeoutSet;
-
     /// <summary>URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本（路径段仍会被 URL 转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。</summary>
     public Func<object, string?>? UrlParameterFormatter { get; set; }
 

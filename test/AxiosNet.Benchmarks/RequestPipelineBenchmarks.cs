@@ -9,8 +9,8 @@ namespace AxiosNet.Benchmarks;
 /// 热点一：请求全链路（真实回环 socket）。
 /// <para>
 /// <b>这一组回答的问题</b>：AxiosNet 在一条完整请求上比裸 <see cref="HttpClient"/> 贵多少？
-/// 与 <c>ConcurrencyPerformanceTests</c> 的 85% 门槛是同一条问题，但这里给的是带误差条的
-/// 单请求延迟与分配，而不是一个「多轮取中位是否过线」的布尔值。
+/// 与 <c>ConcurrencyPerformanceTests</c> 的 85% 能力线是同一条问题，但这里给的是带误差条的
+/// 单请求延迟与分配，而不是一个「多轮最好一轮是否过线」的布尔值。
 /// </para>
 /// <para>
 /// <b>读数方式</b>：BDN 的 <c>Ratio</c> 是<b>时间</b>比（相对 <c>HttpClient_GetString</c>），

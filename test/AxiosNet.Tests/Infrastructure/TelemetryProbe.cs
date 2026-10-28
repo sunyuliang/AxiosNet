@@ -25,6 +25,19 @@ internal sealed record TelemetryEvent(string Name, object Payload);
 /// </summary>
 internal sealed class TelemetryProbe : IDisposable
 {
+    /// <summary>
+    /// 不带 <c>server.port</c> 的指标：池 / 闸门 / 熔断这几组刻意低基数（不按 host 打标签），
+    /// 没法按端口筛。它们只在独占的 <c>telemetry</c> 集合里断言，靠集合禁并行隔离。
+    /// </summary>
+    private static readonly HashSet<string> UntaggedInstruments = new(StringComparer.Ordinal)
+    {
+        AxiosTelemetry.PoolLeasesInstrumentName,
+        AxiosTelemetry.PoolEndpointsCreatedInstrumentName,
+        AxiosTelemetry.PoolEndpointsEvictedInstrumentName,
+        AxiosTelemetry.GateQueueDepthInstrumentName,
+        AxiosTelemetry.CircuitStateInstrumentName
+    };
+
     private readonly string _marker;
     private readonly int _port;
     private readonly object _sync = new();
@@ -190,8 +203,9 @@ internal sealed class TelemetryProbe : IDisposable
             }
         }
 
-        // 没有 server.port 的测量（如全局在途数）不属于任何用例，直接丢掉
-        if (!matched)
+        // 没有 server.port 的测量：只有池 / 闸门 / 熔断这几组低基数指标收（见 UntaggedInstruments），
+        // 全局水位（在途数等）不属于任何用例，直接丢掉。
+        if (!matched && !UntaggedInstruments.Contains(instrument.Name))
         {
             return;
         }

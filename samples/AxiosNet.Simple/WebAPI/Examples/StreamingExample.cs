@@ -5,7 +5,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// <summary>
 /// 8. 流式响应：SSE 与 JSON 数组都逐帧解析成 <see cref="IAsyncEnumerable{T}"/>——
 /// 状态码与响应头在 <c>await</c> 时就有，帧在枚举时才读，连接在枚举结束时归还。
-/// 两种格式共用同一套字节级分帧与空闲超时，差别只在「帧边界怎么找」。
+/// 两种格式共用同一套字节级分帧与正文预算，差别只在「帧边界怎么找」。
 /// </summary>
 public sealed class StreamingExample : IExample
 {
@@ -35,7 +35,7 @@ public sealed class StreamingExample : IExample
 
         // await 已经完成：状态码与响应头到手，正文还没读（状态码错误会在这一行抛出）
         Console.WriteLine($"  响应头已到达：HTTP {response.Status} / {response.GetHeader("Content-Type")}");
-        Console.WriteLine($"  超时口径：Timeout 只覆盖到响应头，正文按 StreamIdleTimeout={client.StreamIdleTimeout}（Zero = 不限）");
+        Console.WriteLine("  超时口径：正文与响应头共用同一份预算（Timeout / Deadline），不设超时时正文不限时，靠取消令牌退出");
 
         var started = DateTime.UtcNow;
         await foreach (var chunk in response.Data!)

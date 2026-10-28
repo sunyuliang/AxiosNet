@@ -189,8 +189,7 @@ internal static class StreamingTestKit
     internal static ApiClient CreateClient(
         HttpMessageHandler handler,
         Action<AxiosConfig>? configure = null,
-        TimeSpan? timeout = null,
-        TimeSpan? idle = null)
+        TimeSpan? timeout = null)
     {
         var config = new AxiosConfig { BaseAddress = BaseAddress };
         configure?.Invoke(config);
@@ -199,16 +198,9 @@ internal static class StreamingTestKit
             config.Timeout = timeoutValue;
         }
 
-        var client = new ApiClient(
+        return new ApiClient(
             new AxiosClient(config, handler: handler, disposeHandler: true),
             ownsAxiosClient: true);
-
-        if (idle is { } idleValue)
-        {
-            client.StreamIdleTimeout = idleValue;
-        }
-
-        return client;
     }
 
     /// <summary>把一次性的帧序列抽干成列表（流只能枚举一次）。</summary>

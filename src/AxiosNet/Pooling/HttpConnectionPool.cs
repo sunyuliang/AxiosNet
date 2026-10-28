@@ -96,6 +96,36 @@ public sealed class HttpConnectionPool : IDisposable
         {
             throw AxiosException.InvalidOption($"EvictionInterval（{options.EvictionInterval}）超出后台计时器上限（约 49.7 天）：请调小，或设为 0 改用手动驱逐。", config);
         }
+
+        // h2 keep-alive：0 不是「不 ping」而是「立刻 ping」（会把连接打爆），不 ping 只有 InfiniteTimeSpan 一种写法。
+        if (options.KeepAlivePingDelay <= TimeSpan.Zero && options.KeepAlivePingDelay != Timeout.InfiniteTimeSpan)
+        {
+            throw AxiosException.InvalidOption("KeepAlivePingDelay 必须大于 0；不发 keep-alive ping 请设为 Timeout.InfiniteTimeSpan。", config);
+        }
+
+        if (options.KeepAlivePingTimeout <= TimeSpan.Zero && options.KeepAlivePingTimeout != Timeout.InfiniteTimeSpan)
+        {
+            throw AxiosException.InvalidOption("KeepAlivePingTimeout 必须大于 0；不因 ping 超时断连请设为 Timeout.InfiniteTimeSpan。", config);
+        }
+
+        // 两者都由底层计时器表达，上限同样是 uint.MaxValue-1 毫秒。
+        var pingLimit = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+        if (options.KeepAlivePingDelay > pingLimit || options.KeepAlivePingTimeout > pingLimit)
+        {
+            throw AxiosException.InvalidOption(
+                $"KeepAlivePingDelay / KeepAlivePingTimeout 超出计时器上限（约 49.7 天）：请调小，"
+                + "或不发 ping 请设为 Timeout.InfiniteTimeSpan。",
+                config);
+        }
+
+        // 枚举只认两个值；别的值底层会当成「不 ping」，与调用方意图不符。
+        if (options.KeepAlivePingPolicy is not (HttpKeepAlivePingPolicy.WithActiveRequests or HttpKeepAlivePingPolicy.Always))
+        {
+            throw AxiosException.InvalidOption(
+                $"KeepAlivePingPolicy 取值非法（当前 {(int)options.KeepAlivePingPolicy}）："
+                + "只支持 WithActiveRequests（只在有在途请求时 ping）与 Always。",
+                config);
+        }
     }
 
     /// <summary>是否为非法的负时长（<see cref="Timeout.InfiniteTimeSpan"/> 表示「不限」，放行）。</summary>
@@ -221,6 +251,9 @@ public sealed class HttpConnectionPool : IDisposable
            && a.UseCookies == b.UseCookies
            && a.AutomaticDecompression == b.AutomaticDecompression
            && a.EnableMultipleHttp2Connections == b.EnableMultipleHttp2Connections
+           && a.KeepAlivePingDelay == b.KeepAlivePingDelay
+           && a.KeepAlivePingTimeout == b.KeepAlivePingTimeout
+           && a.KeepAlivePingPolicy == b.KeepAlivePingPolicy
            && a.MaxEndpointCount == b.MaxEndpointCount
            && a.EnabledSslProtocols == b.EnabledSslProtocols
            && ReferenceEquals(a.Proxy, b.Proxy)
@@ -275,7 +308,7 @@ public sealed class HttpConnectionPool : IDisposable
                     createdNode = true;
 
                     // 节点创建是每个 origin 一次的事件，此刻没有持锁，可安全同步回调。
-                    AxiosTelemetry.RecordEndpointCreated(origin.Host, origin.Port);
+                    AxiosTelemetry.RecordEndpointCreated();
                 }
             }
 
@@ -292,7 +325,7 @@ public sealed class HttpConnectionPool : IDisposable
                 Interlocked.Increment(ref _totalLeases);
 
                 // 只有成功拿到租约才计入指标。
-                AxiosTelemetry.RecordLease(origin.Host, origin.Port, reused: !createdNode);
+                AxiosTelemetry.RecordLease(reused: !createdNode);
                 return new PoolLease(this, endpoint, endpointReused: !createdNode);
             }
 
@@ -322,7 +355,7 @@ public sealed class HttpConnectionPool : IDisposable
     {
         if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(endpoint.Key, endpoint)))
         {
-            AxiosTelemetry.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose, endpoint.Key.Host, endpoint.Key.Port);
+            AxiosTelemetry.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose);
         }
     }
 
@@ -418,7 +451,7 @@ public sealed class HttpConnectionPool : IDisposable
                 endpoint.ReleaseResources();
 
                 // 先释放再上报：监听者回调抛异常不该让节点漏掉 Handler。
-                AxiosTelemetry.RecordEndpointEvicted(reason, endpoint.Key.Host, endpoint.Key.Port);
+                AxiosTelemetry.RecordEndpointEvicted(reason);
             }
         }
 
@@ -490,7 +523,7 @@ public sealed class HttpConnectionPool : IDisposable
             if (_endpoints.TryRemove(pair))
             {
                 pair.Value.Dispose();
-                AxiosTelemetry.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonClear, pair.Key.Host, pair.Key.Port);
+                AxiosTelemetry.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonClear);
             }
         }
     }
@@ -556,7 +589,7 @@ public sealed class HttpConnectionPool : IDisposable
             foreach (var endpoint in pending)
             {
                 endpoint.ReleaseResources();
-                AxiosTelemetry.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose, endpoint.Key.Host, endpoint.Key.Port);
+                AxiosTelemetry.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose);
             }
         }
     }

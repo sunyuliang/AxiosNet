@@ -2,6 +2,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using AxiosNet.Circuit;
+using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 
@@ -52,16 +54,22 @@ public static class AxiosTelemetry
     /// <summary>指标名：当前在途请求数（ObservableGauge，收集时读取）。</summary>
     public const string ActiveRequestsInstrumentName = "axiosnet.client.active_requests";
 
-    /// <summary>指标名：重试次数（Counter，每次「决定重试」计 1）。</summary>
+    /// <summary>指标名：重试次数（Counter，每次「决定重试」计 1），带 <c>axiosnet.retry.reason</c> 标签。</summary>
     public const string RetriesInstrumentName = "axiosnet.client.request.retries";
 
-    /// <summary>指标名：租约次数（Counter），带 <c>axiosnet.pool.endpoint.reused</c> 标签（<c>true</c> / <c>false</c>）。</summary>
+    /// <summary>指标名：正在排队等并发槽位的请求数（ObservableGauge）。</summary>
+    public const string GateQueueDepthInstrumentName = "axiosnet.client.gate.queue_depth";
+
+    /// <summary>指标名：熔断器各状态的维度数（ObservableGauge），带 <c>axiosnet.circuit.state</c> 标签。</summary>
+    public const string CircuitStateInstrumentName = "axiosnet.client.circuit.state";
+
+    /// <summary>指标名：租约次数（Counter），带 <c>axiosnet.pool.endpoint.reused</c> 标签（<c>true</c> / <c>false</c>）；<b>不带 host</b>，见 <see cref="RecordLease"/>。</summary>
     public const string PoolLeasesInstrumentName = "axiosnet.client.pool.leases";
 
-    /// <summary>指标名：新建 origin 节点数（Counter）。</summary>
+    /// <summary>指标名：新建 origin 节点数（Counter），不带 host（低基数）。</summary>
     public const string PoolEndpointsCreatedInstrumentName = "axiosnet.client.pool.endpoints.created";
 
-    /// <summary>指标名：驱逐 origin 节点数（Counter），带 <c>axiosnet.pool.eviction.reason</c> 标签。</summary>
+    /// <summary>指标名：驱逐 origin 节点数（Counter），带 <c>axiosnet.pool.eviction.reason</c> 标签，不带 host。</summary>
     public const string PoolEndpointsEvictedInstrumentName = "axiosnet.client.pool.endpoints.evicted";
 
     /// <summary>指标名：当前活跃租约数（ObservableGauge），正文下载期间仍然计入。</summary>
@@ -98,6 +106,17 @@ public static class AxiosTelemetry
     private const string TagErrorCode = "axiosnet.error.code";
     private const string TagEndpointReused = "axiosnet.pool.endpoint.reused";
     private const string TagEvictionReason = "axiosnet.pool.eviction.reason";
+    private const string TagRetryReason = "axiosnet.retry.reason";
+    private const string TagCircuitState = "axiosnet.circuit.state";
+
+    // 重试原因：低基数取值。有状态码就统一报 "status"（具体状态码在 error.type 里），否则用库错误码。
+    internal const string RetryReasonStatus = "status";
+    internal const string RetryReasonException = "exception";
+
+    // 熔断状态：指标标签的取值，属对外契约（后端按它分面板）。
+    internal const string CircuitStateClosed = "closed";
+    internal const string CircuitStateOpen = "open";
+    internal const string CircuitStateHalfOpen = "half_open";
 
     internal static readonly ActivitySource Source;
 
@@ -136,7 +155,14 @@ public static class AxiosTelemetry
         // net6.0 没有 UpDownCounter，改用 ObservableGauge：进 / 出各一次 Interlocked，收集时读取。
         meter.CreateObservableGauge(ActiveRequestsInstrumentName, () => Volatile.Read(ref _activeRequests), unit: "{request}", description: "已成型（URL 已拼好）并进入发送阶段、尚未结束的请求数。");
 
-        Retries = meter.CreateCounter<long>(RetriesInstrumentName, unit: "{retry}", description: "按策略决定重试的次数（不含首次请求）。");
+        Retries = meter.CreateCounter<long>(RetriesInstrumentName, unit: "{retry}", description: "按策略决定重试的次数（不含首次请求）；axiosnet.retry.reason 区分状态码 / 网络 / 超时等原因。");
+
+        // 排队深度：容量规划最直接的信号（「现在排了多长」而不是「排队超时了多少次」）。
+        // 与在途数同一手法：静态计数 + 收集时读取；闸门实例可以有很多个，这里看的是进程总量。
+        meter.CreateObservableGauge(GateQueueDepthInstrumentName, () => ConcurrencyGate.QueueDepth, unit: "{request}", description: "当前正在等并发槽位的请求数（进程级，跨所有客户端）。");
+
+        // 熔断状态：按 state 报「多少个维度处于该状态」，不带 host —— 与池指标同一套低基数规则。
+        meter.CreateObservableGauge(CircuitStateInstrumentName, ObserveCircuitStates, unit: "{circuit}", description: "熔断器跟踪的维度数，按 axiosnet.circuit.state（closed / open / half_open）分组；每个维度 = 一个熔断器实例上的一个 key（默认 host:port）。");
 
         PoolLeases = meter.CreateCounter<long>(PoolLeasesInstrumentName, unit: "{lease}", description: "成功租用 origin 节点的次数；axiosnet.pool.endpoint.reused=false 表示本次新建了节点。");
 
@@ -186,7 +212,12 @@ public static class AxiosTelemetry
     /// 一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），节点是新建时再记一条
     /// <c>pool.endpoints.created</c>。池域指标不受 <see cref="AxiosConfig.TelemetrySettings.Enabled"/> 约束。
     /// </summary>
-    internal static void RecordLease(string host, int port, bool reused)
+    /// <remarks>
+    /// <b>刻意不带 host / port</b>：网关、爬虫、多租户 SaaS 会访问成千上万个 origin，一个 host 一条时间序列
+    /// 会把指标后端打爆（OpenTelemetry 点名的 cardinality 反模式）。要定位到具体 origin 就看 span ——
+    /// 它本来就有 <c>server.address</c> / <c>server.port</c> 与 <c>axiosnet.pool.endpoint.reused</c>。
+    /// </remarks>
+    internal static void RecordLease(bool reused)
     {
         if (!PoolLeases.Enabled)
         {
@@ -195,7 +226,7 @@ public static class AxiosTelemetry
 
         try
         {
-            PoolLeases.Add(1, LeaseTags(host, port, reused));
+            PoolLeases.Add(1, LeaseTags(reused));
         }
         catch
         {
@@ -203,8 +234,8 @@ public static class AxiosTelemetry
         }
     }
 
-    /// <summary>新建了一个 origin 节点：<c>pool.endpoints.created</c> +1。</summary>
-    internal static void RecordEndpointCreated(string host, int port)
+    /// <summary>新建了一个 origin 节点：<c>pool.endpoints.created</c> +1（不带 host，理由见 <see cref="RecordLease"/>）。</summary>
+    internal static void RecordEndpointCreated()
     {
         if (!PoolEndpointsCreated.Enabled)
         {
@@ -213,20 +244,16 @@ public static class AxiosTelemetry
 
         try
         {
-            var tags = new TagList
-            {
-                { TagServerAddress, host },
-                { TagServerPort, port }
-            };
-            PoolEndpointsCreated.Add(1, tags);
+            // 无标签计数：单参数重载不构造 TagList，也不分配标签数组。
+            PoolEndpointsCreated.Add(1);
         }
         catch
         {
         }
     }
 
-    /// <summary>驱逐了一个 origin 节点：<c>pool.endpoints.evicted</c> +1，带原因与目标。</summary>
-    internal static void RecordEndpointEvicted(string reason, string host, int port)
+    /// <summary>驱逐了一个 origin 节点：<c>pool.endpoints.evicted</c> +1，带原因（不带 host）。</summary>
+    internal static void RecordEndpointEvicted(string reason)
     {
         if (!PoolEndpointsEvicted.Enabled)
         {
@@ -235,13 +262,7 @@ public static class AxiosTelemetry
 
         try
         {
-            var tags = new TagList
-            {
-                { TagEvictionReason, reason },
-                { TagServerAddress, host },
-                { TagServerPort, port }
-            };
-            PoolEndpointsEvicted.Add(1, tags);
+            PoolEndpointsEvicted.Add(1, new KeyValuePair<string, object?>(TagEvictionReason, reason));
         }
         catch
         {
@@ -273,12 +294,31 @@ public static class AxiosTelemetry
         }
     }
 
-    private static TagList LeaseTags(string host, int port, bool reused) => new()
+    private static TagList LeaseTags(bool reused) => new()
     {
-        { TagServerAddress, host },
-        { TagServerPort, port },
         { TagEndpointReused, reused ? "true" : "false" }
     };
+
+    /// <summary>
+    /// 熔断状态的分组计数：<c>closed</c> 由「已跟踪维度 - 打开 - 半开」推出，不必单独维护一个计数器
+    /// （三条计数各自在状态迁移时改一次，合计永远等于跟踪表大小）。
+    /// </summary>
+    private static IEnumerable<Measurement<long>> ObserveCircuitStates()
+    {
+        var open = CircuitBreaker.OpenCount;
+        var halfOpen = CircuitBreaker.HalfOpenCount;
+        var closed = CircuitBreaker.TrackedCount - open - halfOpen;
+
+        if (closed < 0)
+        {
+            // 并发采样下可能读到瞬时不一致：宁可报 0，也不给后端一个负数。
+            closed = 0;
+        }
+
+        yield return new Measurement<long>(closed, new KeyValuePair<string, object?>(TagCircuitState, CircuitStateClosed));
+        yield return new Measurement<long>(open, new KeyValuePair<string, object?>(TagCircuitState, CircuitStateOpen));
+        yield return new Measurement<long>(halfOpen, new KeyValuePair<string, object?>(TagCircuitState, CircuitStateHalfOpen));
+    }
 
     /// <summary>请求已成型（拦截器与 transformRequest 跑完）：开 span 并发出 <see cref="RequestStartEventName"/>；无监听者时返回 <c>null</c>。</summary>
     internal static Activity? StartRequest(AxiosConfig config, Uri uri)
@@ -495,6 +535,10 @@ public static class AxiosTelemetry
             // 与耗时直方图同一口径：有状态码就用状态码（语义约定），没有才用库错误码
             var errorType = ErrorTypeOf(context.Exception, context.StatusCode);
 
+            // 重试原因：状态码归一到 "status"（具体码在 error.type），其余用库错误码 ——
+            // 这样「该调策略（429）还是该修下游（5xx）」在指标上直接分得开，基数仍然有界。
+            var retryReason = RetryReasonOf(context.Exception, context.StatusCode);
+
             if (hasMetric)
             {
                 var tags = new TagList
@@ -502,7 +546,8 @@ public static class AxiosTelemetry
                     { TagMethod, method },
                     { TagServerAddress, HostOf(uri) },
                     { TagServerPort, uri.Port },
-                    { TagErrorType, errorType }
+                    { TagErrorType, errorType },
+                    { TagRetryReason, retryReason }
                 };
                 Retries.Add(1, tags);
             }
@@ -516,6 +561,7 @@ public static class AxiosTelemetry
                     {
                         { "http.request.resend_count", context.Attempt },
                         { "axiosnet.retry.delay_ms", context.Delay.TotalMilliseconds },
+                        { "axiosnet.retry.reason", retryReason },
                         { TagStatusCode, context.StatusCode },
                         { TagErrorType, errorType }
                     }));
@@ -684,6 +730,21 @@ public static class AxiosTelemetry
         }
 
         return (exception as AxiosException)?.Code ?? exception.GetType().Name;
+    }
+
+    /// <summary>
+    /// <c>axiosnet.retry.reason</c> 的取值：有状态码统一报 <c>status</c>（具体码在 <c>error.type</c> 里），
+    /// 否则用库错误码（<c>ECONNABORTED</c> / <c>ERR_NETWORK</c> …），最后退到 <c>exception</c>。
+    /// 取值集合有界，后端可以安全地按它分面板。
+    /// </summary>
+    internal static string RetryReasonOf(Exception exception, int? statusCode)
+    {
+        if (statusCode is not null)
+        {
+            return RetryReasonStatus;
+        }
+
+        return (exception as AxiosException)?.Code ?? RetryReasonException;
     }
 
     /// <summary><c>network.protocol.version</c> 的取值：语义约定只认 <c>1.0</c> / <c>1.1</c> / <c>2</c> / <c>3</c>。</summary>

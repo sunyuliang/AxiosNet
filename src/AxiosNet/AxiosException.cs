@@ -61,6 +61,12 @@ public sealed class AxiosException : Exception
     /// <summary>底层异常（例如网络错误的 <see cref="System.Net.Http.HttpRequestException"/>、JSON 解析异常）。</summary>
     public Exception? Cause => InnerException;
 
+    /// <summary>
+    /// 是否由「总预算耗尽」（<see cref="AxiosConfig.Deadline"/>）产生。
+    /// 重试中间件据此避免重复包装：那条消息里已经写明是第几次尝试没发出，再包一层会把序号写成下一次。
+    /// </summary>
+    internal bool IsDeadlineExceeded { get; private init; }
+
     private AxiosException(
         string message,
         string? code,
@@ -95,25 +101,61 @@ public sealed class AxiosException : Exception
         };
     }
 
-    internal static AxiosException Timeout(AxiosConfig config, HttpRequestMessage request, Exception? inner = null)
+    /// <summary>
+    /// 单次尝试超时。<paramref name="effectiveTimeout"/> 只在「被总预算压小」时传入：
+    /// 那时真实上限已经不是 <see cref="AxiosConfig.Timeout"/>，消息里必须说清差额，否则调用方会以为配置没生效。
+    /// </summary>
+    internal static AxiosException Timeout(
+        AxiosConfig config,
+        HttpRequestMessage request,
+        Exception? inner = null,
+        TimeSpan? effectiveTimeout = null)
     {
-        var message = string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage)
-            ? $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded"
-            : config.CallbacksOrNull!.TimeoutMessage!;
+        string message;
+
+        if (!string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage))
+        {
+            message = config.CallbacksOrNull!.TimeoutMessage!;
+        }
+        else if (effectiveTimeout is { } effective)
+        {
+            // 「没设 Timeout」不能写成 0ms：0 在库里的含义是「不限时」，写成 0ms 会被读成「给了一个极小的上限」。
+            var configured = config.Timeout > TimeSpan.Zero
+                ? $"{config.Timeout.TotalMilliseconds:0}ms"
+                : "unset";
+
+            message = $"timeout of {effective.TotalMilliseconds:0}ms exceeded "
+                      + $"(remaining Deadline budget; Timeout = {configured})";
+        }
+        else
+        {
+            message = $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded";
+        }
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner);
     }
 
-    /// <summary>流式正文的空闲超时（<see cref="AxiosConfig.LimitSettings.StreamIdleTimeout"/>），与整体超时分开报。</summary>
-    internal static AxiosException StreamIdleTimeout(AxiosConfig config, HttpRequestMessage? request, TimeSpan idle, Exception? inner = null)
+    /// <summary>
+    /// 总预算（<see cref="AxiosConfig.Deadline"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
+    /// 消息指明是第几次尝试、总预算多少。
+    /// </summary>
+    internal static AxiosException DeadlineExceeded(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        int attempt,
+        TimeSpan budget,
+        Exception? inner = null)
     {
-        return new AxiosException(
-            $"stream idle timeout of {idle.TotalMilliseconds:0}ms exceeded: no data received",
-            ErrConnAborted,
-            config,
-            request,
-            null,
-            inner);
+        var message = string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage)
+            ? $"deadline of {budget.TotalMilliseconds:0}ms exceeded before attempt #{attempt} could be sent: "
+              + "the total budget covers all retries, failover endpoints and hedges — "
+              + "raise Deadline, cut MaxRetries / MaxHedges, or shorten Timeout"
+            : config.CallbacksOrNull!.TimeoutMessage!;
+
+        return new AxiosException(message, ErrConnAborted, config, request, null, inner)
+        {
+            IsDeadlineExceeded = true
+        };
     }
 
     /// <summary>流式响应的单帧超过内部上限（没有分帧符的畸形流会把缓冲区撑到不可控）。</summary>

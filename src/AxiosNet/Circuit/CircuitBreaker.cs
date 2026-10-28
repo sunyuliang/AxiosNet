@@ -30,6 +30,23 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 {
     private readonly ConcurrentDictionary<string, HostState> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
+    // 状态计数（进程级，跨所有熔断器实例）：只在「登记 / 移除 / 状态迁移」这些低频路径上改一次，
+    // 请求热路径上不碰它们。供 axiosnet.client.circuit.state 仪表读取（见 AxiosTelemetry）。
+    // 口径：实例被丢弃且没有 Reset() 的维度不会自动回收 —— Evict 只在该实例下一次 ShouldAllow 时跑，
+    // 所以「长期只建不弃」的代码看这条指标是安全的，「反复 new 客户端再丢」才会看到缓慢上涨。
+    private static long _trackedHosts;
+    private static long _openHosts;
+    private static long _halfOpenHosts;
+
+    /// <summary>所有熔断器实例当前跟踪的维度总数（进程级）。</summary>
+    internal static long TrackedCount => Interlocked.Read(ref _trackedHosts);
+
+    /// <summary>所有熔断器实例中处于打开态的维度数（进程级）。</summary>
+    internal static long OpenCount => Interlocked.Read(ref _openHosts);
+
+    /// <summary>所有熔断器实例中处于半开态的维度数（进程级）。</summary>
+    internal static long HalfOpenCount => Interlocked.Read(ref _halfOpenHosts);
+
     /// <summary>默认配置：连续 5 次失败后熔断 30 秒，半开态允许 1 个探测请求。</summary>
     public CircuitBreaker()
     {
@@ -82,9 +99,15 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     {
         foreach (var pair in _hosts)
         {
-            if (_hosts.TryRemove(pair.Key, out var state) && state.State != AxiosCircuitState.Closed)
+            // 按「键 + 实例」移除：期间重建的条目不属于本次重置。
+            if (_hosts.TryRemove(new KeyValuePair<string, HostState>(pair.Key, pair.Value)))
             {
-                Notify(new AxiosCircuitTransition(state.Key, state.State, AxiosCircuitState.Closed));
+                var removed = Unregister(pair.Value);
+
+                if (removed != AxiosCircuitState.Closed)
+                {
+                    Notify(new AxiosCircuitTransition(pair.Value.Key, removed, AxiosCircuitState.Closed));
+                }
             }
         }
     }
@@ -97,9 +120,11 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             return false;
         }
 
-        if (state.State != AxiosCircuitState.Closed)
+        var removed = Unregister(state);
+
+        if (removed != AxiosCircuitState.Closed)
         {
-            Notify(new AxiosCircuitTransition(state.Key, state.State, AxiosCircuitState.Closed));
+            Notify(new AxiosCircuitTransition(state.Key, removed, AxiosCircuitState.Closed));
         }
 
         return true;
@@ -262,7 +287,25 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             Evict();
         }
 
-        return _hosts.GetOrAdd(key, static name => new HostState(name));
+        // TryAdd 而不是 GetOrAdd：要在「真的登记成功」时才 +1，竞态落选不能重复计数。
+        var candidate = new HostState(key);
+        while (true)
+        {
+            if (_hosts.TryAdd(key, candidate))
+            {
+                Interlocked.Increment(ref _trackedHosts);
+                return candidate;
+            }
+
+            // 竞态落选：必须返回表里那一个。把从未登记的 candidate 交出去，它后续的状态迁移会照常
+            // 调整全局计数（跟踪表里却没有它），计数就永久歪掉且再也减不回来。
+            if (_hosts.TryGetValue(key, out var raced))
+            {
+                return raced;
+            }
+
+            // 落选的那一条在这两步之间被驱逐了：重来一轮（每轮都以「别人刚完成一次驱逐」为前提，实际不空转）。
+        }
     }
 
     /// <summary>
@@ -344,7 +387,49 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             };
 
             // 按「键 + 实例」移除，避免误删期间重建的条目。
-            return evictable && _hosts.TryRemove(new KeyValuePair<string, HostState>(key, state));
+            if (evictable && _hosts.TryRemove(new KeyValuePair<string, HostState>(key, state)))
+            {
+                Unregister(state);
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 条目离开跟踪表：维度计数 -1，并把它<b>被移除那一刻</b>所处状态的计数也减回去；返回该状态供调用方发迁移通知。
+    /// </summary>
+    /// <remarks>
+    /// 必须在 <c>host.Gate</c> 内做：<see cref="MoveTo"/> 的状态迁移同样在锁内成对调整计数。
+    /// 不加锁的话，「移除」与「Open → HalfOpen」可以交错 —— 两边都按「移除前的状态」减一次，
+    /// <c>open</c> 被多减一次（乃至变负），而 <c>half_open</c> 加了没人减，计数永久漂移且合计不再等于跟踪表大小。
+    /// </remarks>
+    private static AxiosCircuitState Unregister(HostState state)
+    {
+        lock (state.Gate)
+        {
+            state.Tracked = false;
+            Interlocked.Decrement(ref _trackedHosts);
+
+            var removed = state.State;
+            AdjustStateCount(removed, -1);
+            return removed;
+        }
+    }
+
+    /// <summary>状态计数增减：只有打开 / 半开需要单独记（闭合态由「总数 - 两者」推出）。</summary>
+    private static void AdjustStateCount(AxiosCircuitState state, int delta)
+    {
+        switch (state)
+        {
+            case AxiosCircuitState.Open:
+                Interlocked.Add(ref _openHosts, delta);
+                break;
+
+            case AxiosCircuitState.HalfOpen:
+                Interlocked.Add(ref _halfOpenHosts, delta);
+                break;
         }
     }
 
@@ -354,6 +439,17 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     {
         var previous = host.State;
         host.StateValue = (int)next;
+
+        // 计数跟着迁移走：调用方都在 host.Gate 内，所以这两步对同一维度是原子的。
+        // 已经离开跟踪表的维度不再动计数：驱逐与迁移可能交错（Evict 拿到表项之后、本次 Report 才进锁），
+        // 照常计数的话 open / half_open 会永久多算一个、由「总数 - 两者」推出的 closed 又少算，
+        // 且再也回不来。
+        if (host.Tracked)
+        {
+            AdjustStateCount(previous, -1);
+            AdjustStateCount(next, +1);
+        }
+
         return new AxiosCircuitTransition(host.Key, previous, next);
     }
 
@@ -403,5 +499,11 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         /// <summary>本次打开的时刻（<see cref="Stopwatch.GetTimestamp"/>）。</summary>
         public long OpenedAt;
+
+        /// <summary>
+        /// 是否仍在跟踪表里（<see cref="CircuitBreaker.Unregister"/> 之后为 <c>false</c>）。
+        /// 只用来决定「这次状态迁移要不要动全局计数」，故只在 <see cref="Gate"/> 内读写。
+        /// </summary>
+        public bool Tracked = true;
     }
 }
