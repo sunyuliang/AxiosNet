@@ -17,7 +17,10 @@ public readonly struct AxiosAttemptResult
     /// <param name="response">本次尝试得到的响应。</param>
     /// <param name="streamOwner">
     /// 流式正文的所有权凭证（<c>null</c> = 非流式，或流式但无需外部释放）。
-    /// 它同时持有连接租约与并发槽位：<b>丢弃即泄漏</b> —— 中间件若换掉响应，必须自己释放原来那份。
+    /// 它同时持有连接租约与并发槽位：<b>丢弃即泄漏</b>，没有终结器兜底。
+    /// 中间件换掉响应时把旧凭证带进新结果 —— <c>new AxiosAttemptResult(newResponse, old.StreamOwner)</c>：
+    /// 外层发现新响应的 <see cref="AxiosResponse.Data"/> 不是这份凭证就会释放它；传 <c>null</c> 则旧凭证再无人引用，
+    /// 租约与槽位一直挂到进程退出（闸门的兜底只能还并发槽位，还不了连接租约）。
     /// 只有库自己发出的流式凭证（<see cref="AxiosResponse"/> 的流式正文）能让并发槽位继续随正文走；
     /// 中间件自建的凭证只是在响应侧被交给调用方，闸门照常归还槽位 —— 自建凭证不占并发额度。
     /// </param>
