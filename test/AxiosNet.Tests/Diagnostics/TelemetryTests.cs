@@ -940,7 +940,7 @@ public sealed class TelemetryTests
         Assert.Equal(200, response.Status);
         Assert.Equal(2, calls); // 重试确实发生了：关掉的只是遥测
 
-        // 重试是**独立于主路径**的一段观测（在 SendWithRetryAsync 里），漏判开关的话
+        // 重试是**独立于主路径**的一段观测（在 Attempt.RetryLoopAsync 里），漏判开关的话
         // span 与耗时指标都没了、偏偏重试计数和 Retry 事件还在 —— 指标会被这种请求悄悄污染。
         Assert.Empty(probe.Spans);
         Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.RequestDurationInstrumentName));

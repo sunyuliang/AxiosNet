@@ -1,31 +1,32 @@
 ﻿using AxiosNet.Interceptors;
 using AxiosNet.Internal;
+using AxiosNet.Pipeline;
 
 namespace AxiosNet;
 
 // AxiosClient 的响应拦截器责任链与短路响应的交付。
 public sealed partial class AxiosClient
 {
-    /// <summary>阶段 6 —— 发送：重试 / 熔断的发送循环，外面按注册顺序套上响应拦截器责任链。重试在链内，拦截器只看到最终结果；返回的 <c>StreamOwner</c> 是流式正文的所有权凭证。</summary>
-    private Task<(AxiosResponse Response, IDisposable? StreamOwner)> RunResponseInterceptorsAsync(
+    /// <summary>阶段 6 —— 发送：尝试管线（重试 / 熔断 / 闸门 / 终端），外面按注册顺序套上响应拦截器责任链。管线在链内，拦截器只看到最终结果；返回的 <c>StreamOwner</c> 是流式正文的所有权凭证。</summary>
+    private ValueTask<AxiosAttemptResult> RunResponseInterceptorsAsync(
         HttpRequestMessage template,
-        SendContext ctx)
+        AxiosAttemptContext ctx)
     {
         var responseInterceptors = Interceptors.Response.Snapshot();
 
         if (responseInterceptors.Length == 0)
         {
-            // 空链：直接交回发送的 Task，无需兜底释放。
-            return SendWithRetryAsync(template, ctx);
+            // 空链：直接交回管线的 ValueTask，无需兜底释放。
+            return _attemptPipeline(template, ctx);
         }
 
         return RunResponseChainAsync(template, ctx, responseInterceptors);
     }
 
-    /// <summary>响应拦截器责任链（只在有拦截器时走到）：按注册顺序包装，最内层是真正的发送；任何一层抛异常都要归还流式正文的租约。</summary>
-    private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> RunResponseChainAsync(
+    /// <summary>响应拦截器责任链（只在有拦截器时走到）：按注册顺序包装，最内层是尝试管线；任何一层抛异常都要归还流式正文的租约。</summary>
+    private async ValueTask<AxiosAttemptResult> RunResponseChainAsync(
         HttpRequestMessage template,
-        SendContext ctx,
+        AxiosAttemptContext ctx,
         ResponseInterceptor[] responseInterceptors)
     {
         // 流式正文的所有权：拦截器抛异常或丢弃响应时由这里兜底释放。
@@ -33,17 +34,19 @@ public sealed partial class AxiosClient
 
         try
         {
-            // 责任链的末端：真正发送（重试 / 熔断在这一层里面）
+            // 责任链的末端：真正发送（重试 / 熔断 / 闸门都在这一层里面）
             Func<Task<AxiosResponse>> invoker = async () =>
             {
-                var (invoked, owner) = await SendWithRetryAsync(template, ctx).ConfigureAwait(false);
+                var attempt = AxiosAttemptResult.Ensure(
+                    await _attemptPipeline(template, ctx).ConfigureAwait(false),
+                    ctx.Config);
 
-                streamOwner = owner;
-                return invoked;
+                streamOwner = attempt.StreamOwner;
+                return attempt.Response;
             };
 
             var chain = WrapWithInterceptors(invoker, responseInterceptors, ctx.Config);
-            return (await chain().ConfigureAwait(false), streamOwner);
+            return new AxiosAttemptResult(await chain().ConfigureAwait(false), streamOwner);
         }
         catch
         {

@@ -1,4 +1,5 @@
 ﻿using AxiosNet.DependencyInjection;
+using AxiosNet.Pipeline;
 using AxiosNet.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -115,5 +116,25 @@ public sealed class AxiosClientRegistrationTests
     public void AddAxiosClient_NullServices_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddAxiosClient());
+    }
+
+    // ---- 尝试管线 ----
+
+    [Fact]
+    public void AddAxiosClient_NoPipeline_UsesDefaultPipeline()
+    {
+        using var provider = BuildProvider(services => services.AddAxiosClient());
+
+        Assert.Same(AxiosAttemptPipeline.Default, provider.GetRequiredService<AxiosClient>().AttemptPipeline);
+    }
+
+    [Fact]
+    public void AddAxiosClient_Pipeline_IsAppliedToResolvedClient()
+    {
+        var pipeline = AxiosAttemptPipeline.Default.Remove(Attempt.Gate);
+
+        using var provider = BuildProvider(services => services.AddAxiosClient(pipeline: pipeline));
+
+        Assert.Same(pipeline, provider.GetRequiredService<AxiosClient>().AttemptPipeline);
     }
 }

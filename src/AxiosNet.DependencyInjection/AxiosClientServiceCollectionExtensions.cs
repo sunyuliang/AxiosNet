@@ -1,4 +1,5 @@
 using System.Linq;
+using AxiosNet.Pipeline;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -15,12 +16,19 @@ public static class AxiosClientServiceCollectionExtensions
     /// </summary>
     /// <param name="services">服务集合。</param>
     /// <param name="configure">对实例默认值（<see cref="AxiosClient.Defaults"/>）的配置（BaseAddress、超时、头、序列化器、连接池选项等），null 表示全默认。</param>
+    /// <param name="pipeline">
+    /// 尝试管线，null 表示用 <see cref="AxiosAttemptPipeline.Default"/>。它在客户端构造时编译一次并固化，
+    /// 此后不可变；按请求定制请用请求 / 响应拦截器。
+    /// </param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
     /// TryAdd 语义：容器中已有 <see cref="AxiosClient"/> 注册时本次调用不生效（保留首次注册），
     /// 避免重复创建连接池；要替换请先移除原注册。
     /// </remarks>
-    public static IServiceCollection AddAxiosClient(this IServiceCollection services, Action<AxiosConfig>? configure = null)
+    public static IServiceCollection AddAxiosClient(
+        this IServiceCollection services,
+        Action<AxiosConfig>? configure = null,
+        AxiosAttemptPipeline? pipeline = null)
     {
         ArgumentNullException.ThrowIfNull(services);
 
@@ -32,7 +40,7 @@ public static class AxiosClientServiceCollectionExtensions
 
         var defaults = new AxiosConfig();
         configure?.Invoke(defaults);
-        services.TryAdd(ServiceDescriptor.Singleton(typeof(AxiosClient), _ => new AxiosClient(defaults)));
+        services.TryAdd(ServiceDescriptor.Singleton(typeof(AxiosClient), _ => new AxiosClient(defaults, pipeline: pipeline)));
         return services;
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
+using AxiosNet.Pipeline;
 using AxiosNet.Telemetry;
 
 namespace AxiosNet;
@@ -68,8 +69,15 @@ public sealed partial class AxiosClient
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try
             {
-                // 阶段 6：发送 —— 响应拦截器链 + 重试 / 熔断（重试在链内，见 SendWithRetryAsync）。
-                var (result, streamOwner) = await RunResponseInterceptorsAsync(template, SendContext.From(config, plan.Uri, dataType, target, gate)).ConfigureAwait(false);
+                // 阶段 6：发送 —— 响应拦截器链 + 尝试管线（重试 / 熔断 / 闸门 / 终端，见 AxiosAttemptPipeline）。
+                var attempt = AxiosAttemptResult.Ensure(
+                    await RunResponseInterceptorsAsync(
+                        template,
+                        AxiosAttemptContext.From(config, plan.Uri, dataType, target, gate)).ConfigureAwait(false),
+                    config);
+
+                var result = attempt.Response;
+                var streamOwner = attempt.StreamOwner;
 
                 // 拦截器返回了新实例：原流式正文已无引用，需要在这里释放。
                 if (streamOwner is not null && !ReferenceEquals(result.Data, streamOwner))
@@ -87,7 +95,7 @@ public sealed partial class AxiosClient
             }
             finally
             {
-                // 正文随模板一起释放；重试换出来的请求只摘不释放（见 SendRetryLoopAsync 的 finally）。
+                // 正文随模板一起释放；重试换出来的请求只摘不释放（见 Attempt.RetryLoopAsync 的 finally）。
                 template.Dispose();
             }
         }

@@ -1,4 +1,5 @@
 using AxiosNet.Interceptors;
+using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 
 namespace AxiosNet;
@@ -23,27 +24,30 @@ public static class Axios
     /// <summary>
     /// 对应 axios.create(config)。注入 <paramref name="handler"/> 时不使用连接池。
     /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// <paramref name="pipeline"/> 为 <c>null</c> 时用 <see cref="AxiosAttemptPipeline.Default"/>。
     /// </summary>
     public static AxiosClient Create(
         AxiosConfig? defaults = null,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
-        bool disposeHandler = true)
-        => new(defaults, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
+        bool disposeHandler = true,
+        AxiosAttemptPipeline? pipeline = null)
+        => new(defaults, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
 
-    /// <summary>对应 axios.create(config)，用 Action 配置默认项。</summary>
+    /// <summary>对应 axios.create(config)，用 Action 配置默认项；<paramref name="pipeline"/> 为 <c>null</c> 时用 <see cref="AxiosAttemptPipeline.Default"/>。</summary>
     public static AxiosClient Create(
         Action<AxiosConfig> configureDefaults,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
-        bool disposeHandler = true)
+        bool disposeHandler = true,
+        AxiosAttemptPipeline? pipeline = null)
     {
         ArgumentNullException.ThrowIfNull(configureDefaults);
         var config = new AxiosConfig();
         configureDefaults(config);
-        return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler);
+        return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
     }
 
     public static Task<AxiosResponse> RequestAsync(AxiosConfig config)

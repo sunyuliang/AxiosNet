@@ -44,6 +44,35 @@ public class AxiosResponse
     public string? GetHeader(string name)
         => Headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
 
+    /// <summary>
+    /// 便捷获取<b>请求</b>头第一个值（对应 axios 里从 <c>response.request</c> 读请求头）。
+    /// 短路响应没有底层请求消息（<see cref="Request"/> 为 <c>null</c>），此时返回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// 请求方向没有合并视图：<c>HttpRequestMessage</c> 的头分成「请求头」与「内容头」两组，
+    /// 这里先查请求头、查不到再查内容头（Content-Type / Content-Length 等在内容头里）。
+    /// 请求消息被 <c>Dispose</c> 后 <c>Content</c> 引用还在（释放的是它内部持有的流），内容头那时仍读得到；
+    /// 但重试过的请求会被显式摘掉正文（<see cref="HttpRequestMessage.Content"/> 置 <c>null</c>，好让同一份正文再发一次），
+    /// 内容头那时就读不到了 —— 想每次尝试都读到，请用尝试中间件而不是响应拦截器。
+    /// </remarks>
+    public string? GetRequestHeader(string name)
+    {
+        if (Request is not { } request)
+        {
+            return null;
+        }
+
+        if (request.Headers.TryGetValues(name, out var values))
+        {
+            return values.FirstOrDefault();
+        }
+
+        // 内容头：请求消息 Dispose 后 Content 引用仍在，头集合照样可读；重试过的消息 Content 被置 null，这里自然返回 null。
+        return request.Content?.Headers.TryGetValues(name, out var contentValues) is true
+            ? contentValues.FirstOrDefault()
+            : null;
+    }
+
     /// <summary>响应正文字节数（只有非流式响应有值），供遥测写进 span。</summary>
     internal long? BodyBytes { get; set; }
 

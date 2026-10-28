@@ -1,5 +1,6 @@
 ﻿using AxiosNet.Interceptors;
 using AxiosNet.Internal;
+using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 
 namespace AxiosNet;
@@ -19,6 +20,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private int _inFlight;
     private int _resourcesDisposed;
 
+    /// <summary>
+    /// 本实例的尝试管线：构造期编译成单个委托并固化，此后不可变。
+    /// 每次请求重建链会多出 N 个闭包和一个委托数组，那是本库明确要避免的开销。
+    /// </summary>
+    private readonly AxiosAttemptHandler _attemptPipeline;
+
     /// <summary>在途并发闸门（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>）：首个受限请求时按当时上限创建并固定，之后改上限会抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     private ConcurrencyGate? _gate;
 
@@ -30,6 +37,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>对应 axios instance.interceptors。</summary>
     public AxiosInterceptors Interceptors { get; } = new();
+
+    /// <summary>
+    /// 本实例的尝试管线（构造期固化，之后不可变）；未显式传入时是 <see cref="AxiosAttemptPipeline.Default"/>。
+    /// </summary>
+    public AxiosAttemptPipeline AttemptPipeline { get; }
 
     /// <summary>本实例的连接池；注入自定义 <see cref="HttpMessageHandler"/> 时为 <c>null</c>。</summary>
     public HttpConnectionPool? Pool => _pool;
@@ -46,14 +58,23 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 直接注入的 Handler；注入后不创建连接池，连接级选项由它自己决定。
     /// </param>
     /// <param name="disposeHandler">释放本实例时是否一并释放注入的 <paramref name="handler"/>。</param>
+    /// <param name="pipeline">
+    /// 尝试管线：<c>null</c> 用 <see cref="AxiosAttemptPipeline.Default"/>（重试 → 熔断 → 闸门 → 发送）。
+    /// 它在构造时编译一次并固化，此后不可变；按请求定制请用请求 / 响应拦截器。
+    /// </param>
     public AxiosClient(
         AxiosConfig? defaults = null,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
-        bool disposeHandler = true)
+        bool disposeHandler = true,
+        AxiosAttemptPipeline? pipeline = null)
     {
         Defaults = defaults ?? new AxiosConfig();
+
+        // 管线必须先定下来：下面的分支里有提前 return，落到那里会漏掉初始化（readonly 属性直接编译不过）。
+        AttemptPipeline = pipeline ?? AxiosAttemptPipeline.Default;
+        _attemptPipeline = AttemptPipeline.Compile(SendTerminalAsync, Defaults);
 
         if (handler is not null)
         {

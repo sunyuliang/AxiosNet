@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1404%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.4%25_(branch_89.7%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1434%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-93.6%25_(branch_90.9%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -29,7 +29,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) |
 | 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [表单与文件上传](#表单与文件上传) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
-| 弹性 | [重试](#重试) · [熔断](#熔断) · [短路响应](#短路响应) |
+| 弹性 | [重试](#重试) · [熔断](#熔断) · [尝试管线](#尝试管线) · [短路响应](#短路响应) |
 | 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
 | 工程化 | [声明式 API 客户端](#声明式-api-客户端) · [接口级声明](#接口级声明) · [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
 
@@ -122,6 +122,7 @@ string url = http.GetUri(c =>
 | 在途并发闸门 | 限制同时发出的请求条数并排队 | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
 | 弹性重试 | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | 熔断 | 按 host 计数的 Closed/Open/HalfOpen 状态机 | `c.Circuit.Policy = new CircuitBreaker()` |
+| 尝试管线 | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | 短路响应 | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
 
 **数据与错误**
@@ -178,7 +179,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 | `PostFormAsync` / `PutFormAsync` / `PatchFormAsync` | 默认按 `multipart/form-data` 发送 |
 | `RequestAsync(config)` / `RequestAsync<T>(config)` | 传完整 `AxiosConfig` |
 | `GetUri(config)` / `GetUri(c => ...)` | 只拼 URL，不发请求 |
-| `Interceptors` / `Defaults` / `Pool` / `UsesConnectionPool` | 实例成员 |
+| `Interceptors` / `Defaults` / `Pool` / `UsesConnectionPool` / `AttemptPipeline` | 实例成员 |
 
 以上七个方法还各有一套直接收完整 `AxiosConfig` 的重载（`GetAsync(url, config)` / `PostAsync(url, config)` …）：`config.Url` / `config.Method` 会被 `url` / 方法名覆盖，其余项按常规合并到实例默认值。`PostAsync(url, null)` 因此按「没有要传的配置」处理，等价于 `PostAsync(url)`（发空正文），不再抛 `ArgumentNullException`。
 
@@ -397,6 +398,7 @@ await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // 
 - 槽位覆盖「真正在途」全程：重试每次尝试各自取槽（退避不占位），**流式响应一直占到正文流释放**。
 - 闸门按实例共享，属实例级：按请求写不同值、或构造后改 `Defaults` 都抛 `ERR_BAD_OPTION_VALUE`。
 - **自锁风险**：在拦截器 / 进度回调里用同一实例发子请求会互抢槽位，请给 `QueueTimeout` 设上限或换实例。
+- **与重试同时开**：`ERR_QUEUE_TIMEOUT` 本身不重试 —— 闸门满载说明本实例在途已顶格，立刻重发只会再撞同一个闸门。要「等并发降下来再试」，请在调用方外层自己做（降速 / 扩容 / 换实例）。
 - 与 `MaxConnectionsPerServer` 分工不同：那个管**连接**（h2 下一条连接可跑很多请求），这里管**请求**。
 
 ## 错误处理
@@ -571,6 +573,8 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 | `ERR_CANCELED` | 不重试 |
 | POST / PATCH 等非幂等方法 | 不重试（`RetryNonIdempotentMethods = true` 打开） |
 
+库级强制不重试（自定义策略也改不掉）：`ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_BAD_OPTION_VALUE` —— 这些情况下请求要么没发出，要么立刻重发只会撞同一个闸门，要么是管线里的配置 / 编程错误。
+
 其它成员：`Delay` / `BackoffFactor` / `MaxDelay` / `Jitter`（默认 `true`，等待落在 50%–100%）/ `HonorRetryAfter`（默认 `true`，服务端给了 `Retry-After` 就按它等，仍受 `MaxDelay` 封顶）/ `RetryWhen`。
 
 - `Timeout` 是**每次尝试**的预算（3 次重试 × 10s 最坏 40s）；要总预算用 `CancellationToken`。
@@ -620,6 +624,51 @@ breaker.Reset();                                                 // 运维手工
 - **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
 - 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度，正在熔断 / 半开的条目不会被丢。
 - 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure`。策略**有状态**且被并发共享，需自己保证线程安全。
+
+## 尝试管线
+
+「一次尝试」（单次发送）被抽象成可组合的中间件链，默认链是 **重试 → 熔断 → 闸门 → 发送**。新增每次尝试的能力（观测、审计、对冲、备用端点）插一个中间件即可，不必再往客户端里加分支。
+
+```csharp
+using AxiosNet.Pipeline;
+
+// 插一个「每次尝试」的探针：Append 落在最内层（闸门之后、发送之前），重试 N 次就调用 N+1 次
+var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
+{
+    var clock = Stopwatch.StartNew();
+    try
+    {
+        return await next(request, ctx);
+    }
+    finally
+    {
+        logger.LogDebug("第 {Attempt} 次尝试耗时 {Ms}ms", ctx.AttemptNumber, clock.ElapsedMilliseconds);
+    }
+});
+
+using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeline: pipeline);
+```
+
+- **上下文 `AxiosAttemptContext` 是只读结构体**：`Config` / `Uri` / `AttemptNumber` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Slot`，只能用 `WithXxx` 派生副本。它是结构体而不是类，因为中间件链构造期编译一次、每次尝试零分配，且并发类中间件需要按分支拷贝上下文。
+- **中间件恒在链上，是否干活由它自己看 `ctx.Config` 决定**：没配重试策略时重试中间件就是纯直通。链因此可以在构造时固化，不必每次请求重建。
+- **顺序是契约**：重试在最外层，于是每次尝试都会重过一遍熔断与闸门；熔断排在闸门之前，被拒的请求不占槽位。
+- **重排与摘除**：`AxiosAttemptPipeline.Create(...)` 显式列出全部中间件（第一个最外层），`Remove(Attempt.Gate)` 摘掉某项；不可变，每次编辑返回新实例。内置项重复出现会报错。
+- **不提供「放到最外层」的入口**：那个位置每次请求只调用一次，与响应拦截器完全同构。`InsertBefore(Attempt.Retry, ...)` 会明确拒绝并指向 `client.Interceptors.Response`——它还有 `OnRejected`、运行时增删、覆盖短路三个额外好处。
+- **并发槽位不用你管**：闸门自己兜底归还 —— 中间件不调 `next`（自己给一份响应）或自己抛异常，槽位也不会漏。唯一不让闸门归还的情况是**库内**的流式响应：槽位随正文交给 `StreamOwner`，由流的 `Dispose` 释放，正文下载期间该请求一直占着额度。中间件自建 `StreamOwner` 不算这一例外：闸门照常归还自己的槽位，自建凭证不占并发额度。
+- **谁创建谁释放**：中间件自己 clone 的 `HttpRequestMessage` 由自己释放（模板仍归管线）。替换响应时必须处置旧的 `AxiosAttemptResult.StreamOwner`，或把它带进新结果（`new AxiosAttemptResult(newResponse, old.StreamOwner)`）—— 它持有连接租约与并发槽位，丢弃即泄漏。
+- **中间件自身的耗时不计入 `Timeout`**：超时预算在终端内部起算，闸门排队与中间件前置逻辑都在它之外。
+- 响应侧读请求头用 `response.GetRequestHeader(name)`（先查请求头、再查内容头）；短路响应没有底层请求消息，返回 `null`。
+
+与另外四个扩展点的分工：
+
+| 想做的事 | 用哪个 |
+| --- | --- |
+| 改 URL / 头 / 请求体、注入短路（一次请求一次） | 请求拦截器 |
+| 在序列化前加工要发的 `Data` | `transformRequest` |
+| 在反序列化后加工回来的 `Data`（每次尝试） | `transformResponse` |
+| 加工最终响应、把异常兜成响应 | 响应拦截器 |
+| 观察或干预**每一次尝试**、并发对冲、换端点重发 | 尝试中间件 |
+| 改「重试几次 / 退避多久 / 什么时候熔断」 | 对应的 `Policy`，不换中间件 |
 
 ## 短路响应
 
@@ -953,6 +1002,10 @@ builder.Services.AddAxiosClient(config =>                    // 只要核心客�
     config.Timeout = TimeSpan.FromSeconds(10);
 });
 
+builder.Services.AddAxiosClient(                             // 顺带换掉尝试管线
+    configure: config => config.Timeout = TimeSpan.FromSeconds(10),
+    pipeline: AxiosAttemptPipeline.Default.Append(auditAttempt));
+
 builder.Services.AddApiClient("https://api.example.com",     // 声明式，自建底层客户端
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
     configure: client => client.Authorization = new BearerAuthorizationProvider(token));
@@ -966,7 +1019,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 | 扩展方法 | 注册内容 |
 | --- | --- |
-| `AddAxiosClient(configure)` | 单例 `AxiosClient` |
+| `AddAxiosClient(configure, pipeline)` | 单例 `AxiosClient`（可选尝试管线） |
 | `AddApiClient(baseAddress, configureDefaults, configure)` | 单例 `ApiClient`（自建底层客户端） |
 | `AddApiClient(configure)` | 单例 `ApiClient`（复用容器里的 `AxiosClient`） |
 | `AddApiClient(name, baseAddress, ...)` | 单例 `IApiClientResolver` + 命名站点 |
@@ -1059,7 +1112,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 44 项：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 45 项：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1067,7 +1120,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
-- **核心 30 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、命名共享池。
+- **核心 31 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、命名共享池、尝试管线。
 - **声明式 14 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式。
 
 另有两个示例：
@@ -1115,13 +1168,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1347 | `net8.0` / `net6.0` | 2694 |
-| `AxiosNet.DependencyInjection.Tests` | 57 | `net8.0` / `net6.0` | 114 |
-| **合计** | **1404** | | **2808** |
+| `AxiosNet.Tests`（核心 + 声明式） | 1375 | `net8.0` / `net6.0` | 2750 |
+| `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
+| **合计** | **1434** | | **2868** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.4%**、分支覆盖率 **89.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`）。
+行覆盖率 **93.6%**、分支覆盖率 **90.9%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1142,7 +1195,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 | `Governance/` | 并发闸门、进度回调与限速 |
 | `Resilience/` | 重试策略与计时、熔断状态机、短路响应 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
-| `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse` |
+| `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse`、尝试管线（内置顺序、插入位置、重排校验） |
 | `Connectivity/` | 连接池（含命名共享池）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener 三路遥测 |
 | `Errors/` | 错误模型、错误码、`ToJson` 快照 |
@@ -1192,6 +1245,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ AxiosHeaders.cs              # 请求头
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
+│  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 熔断 / 闸门
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy
 │  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML 实现
@@ -1200,7 +1254,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ WebAPI/                      # 声明式 API 客户端（模型 / 接口）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（44 项）/ DI / Aot
+├─ samples/                           # Simple（45 项）/ DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/

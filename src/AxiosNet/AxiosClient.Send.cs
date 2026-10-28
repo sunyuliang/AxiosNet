@@ -2,12 +2,14 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using AxiosNet.Internal;
+using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 using AxiosNet.Telemetry;
 
 namespace AxiosNet;
 
-// AxiosClient 的单次尝试：并发槽位、超时预算、连接租约、发送与响应读取。
+// AxiosClient 的尝试终端：超时预算、连接租约、发送与响应读取。
+// 它是中间件链的最内层（一切编排都在它外面），并发槽位由闸门中间件占好后经上下文交进来。
 public sealed partial class AxiosClient
 {
     /// <summary>一次尝试的时间预算：超时令牌源 + 流式响应的剩余预算计时器。粒度是一次尝试，因此每次重试各有独立预算。无超时时 <see cref="Token"/> 直接是调用方令牌，不建 linked CTS。</summary>
@@ -78,10 +80,15 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>一次尝试的完整生命周期：占并发槽位 → 建超时预算 → 取连接 → 发送 → 读取 → 转换。并发槽位与连接租约都在 finally 归还；流式响应的租约、消息与槽位随正文流转交调用方。</summary>
-    private async Task<(AxiosResponse Response, IDisposable? StreamOwner)> SendCoreAsync(
+    /// <summary>
+    /// 一次尝试的终端：建超时预算 → 取连接 → 发送 → 读取 → 转换。
+    /// 并发槽位由闸门中间件占好并写进上下文（排队时间不计入 <see cref="AxiosConfig.Timeout"/>），
+    /// 这里只负责在所有失败路径归还它；流式成功路径把它随正文转交给调用方。
+    /// 连接租约同理：非流式在这里归还，流式随正文走。
+    /// </summary>
+    private async ValueTask<AxiosAttemptResult> SendTerminalAsync(
         HttpRequestMessage request,
-        SendContext ctx)
+        AxiosAttemptContext ctx)
     {
         var config = ctx.Config;
 
@@ -90,16 +97,13 @@ public sealed partial class AxiosClient
         // 流式正文的所有权随后随返回值交给调用方（拦截器抛异常时由调用方兜底释放）。
         IDisposable? streamOwner = null;
 
-        // 并发槽位：与 lease 同一释放点；声明在 try 之外，取值在 try 之内（占位后任何失败都要归还）。
-        IDisposable? slot = null;
+        // 槽位由闸门中间件交给本终端：此后任何失败路径都由这里归还（占位后不能漏）。
+        IDisposable? slot = ctx.Slot;
 
         try
         {
-            // 阶段 1：并发槽位 —— 先占在途名额，再建超时预算（排队时间不计入 Timeout）。
-            slot = await EnterSlotAsync(request, ctx).ConfigureAwait(false);
-
-            // 阶段 2：时间预算 —— 一次尝试一份超时令牌源。
-            using var budget = AttemptBudget.Start(config, ctx.ExternalToken, ctx.StreamResponse);
+            // 阶段 2：时间预算 —— 一次尝试一份超时令牌源；闸门排队在它之前，不计入本预算。
+            using var budget = AttemptBudget.Start(config, ctx.AttemptToken, ctx.StreamResponse);
 
             // 阶段 3：取连接 —— 注入 Handler 时固定用它，默认实例按 origin 租（连接复用 + 并发上限）。
             var (httpClient, leased) = await LeaseClientAsync(request, ctx, budget).ConfigureAwait(false);
@@ -155,7 +159,9 @@ public sealed partial class AxiosClient
                 streamOwner = wrapped;
             }
 
-            return (response, streamOwner);
+            // 流式成功：槽位已随正文交给 StreamOwner，告知闸门不要再归还（流还活着，该请求仍占并发额度）。
+            // 其余情况槽位都在下面的 finally 里归还，闸门的兜底归还对它只是幂等的重复释放。
+            return new AxiosAttemptResult(response, streamOwner, slotTransferred: streamOwner is not null);
         }
         catch (ObjectDisposedException ex)
         {
@@ -171,21 +177,10 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>阶段 1 —— 并发槽位：排队时间不计入 <see cref="AxiosConfig.Timeout"/>（队列有自己的 <see cref="AxiosConfig.LimitSettings.QueueTimeout"/>）；返回值由调用方在 finally 归还。</summary>
-    private static async ValueTask<IDisposable?> EnterSlotAsync(HttpRequestMessage request, SendContext ctx)
-    {
-        if (ctx.Gate is not { } gate)
-        {
-            return null;
-        }
-
-        return await gate.AcquireAsync(ctx.Config, request, ctx.ExternalToken, ctx.Config.LimitsOrNull?.QueueTimeout).ConfigureAwait(false);
-    }
-
     /// <summary>阶段 3 —— 取连接：注入 Handler 时固定用它的 <see cref="HttpClient"/>，否则按 origin 租一条；是否新建 origin 节点写进 span。</summary>
     private async ValueTask<(HttpClient Client, PoolLease? Lease)> LeaseClientAsync(
         HttpRequestMessage request,
-        SendContext ctx,
+        AxiosAttemptContext ctx,
         AttemptBudget budget)
     {
         // 注入 Handler：固定 HttpClient，没有租约要归还。
@@ -212,7 +207,7 @@ public sealed partial class AxiosClient
     private static async Task<HttpResponseMessage> SendRequestAsync(
         HttpClient client,
         HttpRequestMessage request,
-        SendContext ctx,
+        AxiosAttemptContext ctx,
         AttemptBudget budget)
     {
         try
@@ -248,7 +243,7 @@ public sealed partial class AxiosClient
     private static async Task<(AxiosResponse Response, bool StatusAccepted)> ReadResponseAsync(
         HttpResponseMessage responseMessage,
         HttpRequestMessage request,
-        SendContext ctx,
+        AxiosAttemptContext ctx,
         AttemptBudget budget)
     {
         try
