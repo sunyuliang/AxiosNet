@@ -278,6 +278,55 @@ public sealed class FailoverTests
     }
 
     [Fact]
+    public async Task Failover_DoesNotSwitchWhenBudgetExpiredBeforeSend()
+    {
+        // 预算在「发出之前」就耗尽（本例被并发闸门挡住，排到预算用完）：
+        // 这类 ECONNABORTED 换端点解决不了 —— Deadline 管的是整条逻辑请求的墙钟时间，
+        // 换个下游不会让它变长，只会在备用端点再走一遍管线、占一次熔断名额与闸门入口，然后原地再失败一次。
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var primary = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { primary = true });
+        });
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        var policy = new HostCountingPolicy();
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Limits = { MaxConcurrentRequests = 1 },
+            Circuit = { Policy = policy },
+            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+        });
+
+        // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽
+        var holder = client.GetAsync("hold");
+        await WaitUntilAsync(() => primary.Received.Count >= 1);
+
+        try
+        {
+            var expired = await Assert.ThrowsAsync<AxiosException>(
+                () => client.GetAsync("queued", c => c.Deadline = TimeSpan.FromMilliseconds(80)));
+
+            Assert.Equal(AxiosException.ErrConnAborted, expired.Code);
+
+            // 只碰过主端点（holder 一条 + 排队那条各判一次）：备用端点连一次熔断判定都没做过
+            Assert.All(policy.Allowed, host => Assert.Equal($"127.0.0.1:{primary.Port}", host));
+            Assert.Empty(mirror.Received);
+        }
+        finally
+        {
+            // 断言失败也要放开占位请求：否则它挂在服务器的 await 上，用例失败会连带把测试进程拖住。
+            release.SetResult(true);
+        }
+
+        await holder;
+    }
+
+    [Fact]
     public async Task Failover_SwitchesWhenThePoolCannotTakeTheOrigin()
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -604,6 +653,40 @@ public sealed class FailoverTests
                 RequestMessage = request,
                 Content = new StringContent("{\"ok\":true}", Encoding.UTF8, "application/json")
             });
+        }
+    }
+
+    /// <summary>记录每次 <see cref="IAxiosCircuitPolicy.ShouldAllow"/> 的维度：证明某条端点根本没进过管线。</summary>
+    private sealed class HostCountingPolicy : IAxiosCircuitPolicy
+    {
+        private readonly List<string> _allowed = new();
+
+        public IReadOnlyList<string> Allowed
+        {
+            get
+            {
+                lock (_allowed)
+                {
+                    return _allowed.ToArray();
+                }
+            }
+        }
+
+        public bool ShouldAllow(AxiosCircuitContext context)
+        {
+            lock (_allowed)
+            {
+                _allowed.Add(context.Host);
+            }
+
+            return true;
+        }
+
+        public TimeSpan GetRetryAfter(AxiosCircuitContext context) => TimeSpan.Zero;
+
+        public void Record(AxiosCircuitContext context)
+        {
+            // 本策略只统计放行次数，不判故障。
         }
     }
 

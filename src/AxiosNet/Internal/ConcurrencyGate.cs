@@ -88,7 +88,7 @@ internal sealed class ConcurrencyGate
         {
             if (budget <= TimeSpan.Zero)
             {
-                throw AxiosException.DeadlineExceeded(config, request, attempt, config.Deadline!.Value);
+                throw AxiosException.DeadlineExceeded(config, request, attempt, config.Deadline);
             }
 
             if (queueTimeout is not { } queued || budget < queued)
@@ -135,7 +135,7 @@ internal sealed class ConcurrencyGate
             catch (OperationCanceledException ex) when (cutByBudget)
             {
                 // 真的是总预算到点了：报「预算耗尽」而不是「排队上限太小」——后者会把调用方引到错的旋钮上。
-                throw AxiosException.DeadlineExceeded(config, request, attempt, config.Deadline!.Value, ex);
+                throw AxiosException.DeadlineExceeded(config, request, attempt, config.Deadline, ex);
             }
             catch (OperationCanceledException ex)
             {

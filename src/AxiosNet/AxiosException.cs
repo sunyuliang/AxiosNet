@@ -41,15 +41,19 @@ public sealed class AxiosException : Exception
     /// </summary>
     public const string ErrPoolExhausted = "ERR_POOL_EXHAUSTED";
 
+    /// <summary>对应 axios 的 <c>isAxiosError</c>：这个类型本身就是「axios 错误」，恒为 <c>true</c>，供跨语言对照与统一判型。</summary>
     public bool IsAxiosError => true;
 
+    /// <summary>错误码，取值见 <see cref="ErrBadRequest"/> 等常量（与 axios 对齐）；分支判断用它，别解析消息文本。</summary>
     public string? Code { get; }
 
+    /// <summary>触发本次错误的请求配置（该请求的生效值）。想在错误里复盘「当时用了什么参数」看这里。</summary>
     public AxiosConfig? Config { get; }
 
     /// <summary>触发本次错误的请求。请求结束后 <c>Content</c> 已释放，需要结构化快照请用 <see cref="ToJson"/>。</summary>
     public HttpRequestMessage? Request { get; }
 
+    /// <summary>有响应时可用（5xx、状态码非法、反序列化失败等）；结构性错误（URL 非法、网络失败、取消）为 <c>null</c>。</summary>
     public AxiosResponse? Response { get; }
 
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
@@ -62,10 +66,15 @@ public sealed class AxiosException : Exception
     public Exception? Cause => InnerException;
 
     /// <summary>
-    /// 是否由「总预算耗尽」（<see cref="AxiosConfig.Deadline"/>）产生。
-    /// 重试中间件据此避免重复包装：那条消息里已经写明是第几次尝试没发出，再包一层会把序号写成下一次。
+    /// 是否属于「<see cref="AxiosConfig.Deadline"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
+    /// 与「发出之后超时」区分开。
     /// </summary>
-    internal bool IsDeadlineExceeded { get; private init; }
+    /// <remarks>
+    /// 「发出之后超时」说明下游不响应，换端点或重试有意义；这条只说明本地预算先到期，下游一个字节都没收到。
+    /// 调用方据此应当缩短后续工作 / 降扇出，而不是立刻重试 —— 预算已经空了，重试必然在同一处立刻失败。
+    /// 库内部按同一口径分流：不计入熔断失败、不重试、不换端点（见 <see cref="Circuit.AxiosCircuitContext.DeadlineExpiredBeforeSend"/>）。
+    /// </remarks>
+    public bool IsDeadlineExceeded { get; private init; }
 
     private AxiosException(
         string message,
@@ -139,15 +148,29 @@ public sealed class AxiosException : Exception
     /// 总预算（<see cref="AxiosConfig.Deadline"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
     /// 消息指明是第几次尝试、总预算多少。
     /// </summary>
+    /// <param name="config">本次请求的生效配置（错误码、回调文案与超时消息都取自它）。</param>
+    /// <param name="request">触发本次失败的请求（挂在异常上供调用方定位）。</param>
+    /// <param name="attempt">第几次尝试未能发出，写进消息里便于排查。</param>
+    /// <param name="budget">
+    /// 总预算的配置值，只用于消息。取 <see cref="AxiosConfig.Deadline"/> 原样（可空）而不是强制解包：
+    /// 截止点由入口处的时间戳唯一决定（<c>DeadlineBudget</c>），但配置对象是同一个实例，管线跑起来之后
+    /// 仍可能被自定义中间件 / 回调改写成 <c>null</c>。那种情况下这里只该少写一个金额，
+    /// 不该把「预算耗尽」变成 <c>InvalidOperationException</c>。
+    /// </param>
+    /// <param name="inner">把预算耗尽归因到的那次失败（通常是上一次尝试抛出的异常），保留 <c>Cause</c> 链。</param>
     internal static AxiosException DeadlineExceeded(
         AxiosConfig config,
         HttpRequestMessage? request,
         int attempt,
-        TimeSpan budget,
+        TimeSpan? budget,
         Exception? inner = null)
     {
+        var headline = budget is { } known && known > TimeSpan.Zero
+            ? $"deadline of {known.TotalMilliseconds:0}ms exceeded"
+            : "deadline exceeded";
+
         var message = string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage)
-            ? $"deadline of {budget.TotalMilliseconds:0}ms exceeded before attempt #{attempt} could be sent: "
+            ? $"{headline} before attempt #{attempt} could be sent: "
               + "the total budget covers all retries, failover endpoints and hedges — "
               + "raise Deadline, cut MaxRetries / MaxHedges, or shorten Timeout"
             : config.CallbacksOrNull!.TimeoutMessage!;

@@ -9,7 +9,10 @@ public enum AxiosCircuitState
     /// <summary>打开：请求不再发出，直接以 <c>ERR_CIRCUIT_OPEN</c> 失败，直到冷却期结束。</summary>
     Open,
 
-    /// <summary>半开：冷却期已过，放行有限个探测请求；成功 → <see cref="Closed"/>，失败 → 立刻回到 <see cref="Open"/> 并重新计时。</summary>
+    /// <summary>
+    /// 半开：冷却期已过，按慢启动放行有限个探测请求；连续成功达 <see cref="CircuitBreaker.RecoverySuccesses"/> 次才回到 <see cref="Closed"/>，
+    /// 期间任何一次失败都立刻回到 <see cref="Open"/> 并重新计时。
+    /// </summary>
     HalfOpen
 }
 

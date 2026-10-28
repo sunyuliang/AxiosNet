@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1507%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1523%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -121,7 +121,7 @@ string url = http.GetUri(c =>
 | 进度与限速 | 上传下载进度、字节限速、体积上限 | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
 | 在途并发闸门 | 限制同时发出的请求条数并排队 | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
 | 弹性重试 | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
-| 熔断 | 按 host 计数的 Closed/Open/HalfOpen 状态机 | `c.Circuit.Policy = new CircuitBreaker()` |
+| 熔断 | 按 host 计数的 Closed/Open/HalfOpen 状态机：滚动窗口失败率 + 连续失败两条打开规则，恢复期慢启动 | `c.Circuit.Policy = new CircuitBreaker()` |
 | 并发对冲 | 同一份请求并发多条分支，先成功的胜出 | `c.Hedging.MaxHedges = 1` |
 | 备用端点 | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | 尝试管线 | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
@@ -364,7 +364,7 @@ await client.GetAsync("orders/scan", c =>
 });
 ```
 
-- 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）；被总预算压小的那次超时，消息会写 `(remaining Deadline budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。
+- 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）；被总预算压小的那次超时，消息会写 `(remaining Deadline budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。「根本没发出」这一类不参与熔断失败计数、不重试、也不换端点（见[熔断](#熔断)的失败口径）。两者错误码相同，要区分就用 `AxiosException.IsDeadlineExceeded`：`true` = 发出前就耗尽（别重试，预算已经空了），`false` = 发出后超时（下游不响应，换端点有意义）。
 - 排队时间**计入** `Deadline`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长；因此剩余预算比 `Limits.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）。`QueueTimeout` 为空（一直等）时同样受这条约束。
 - **流式正文也在预算之内**：正文读取沿用被预算压小后的剩余额度，读到一半到点即 `ECONNABORTED`；长连接（SSE / 大文件下载）不要设 `Timeout` / `Deadline`，改用取消令牌退出。
 - `Deadline = null` 不设总预算（默认），`Zero` 与 `null` 同义，负值 `ERR_BAD_OPTION_VALUE`；按请求显式写 `null` 可以关掉实例默认的总预算。
@@ -585,13 +585,14 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 
 | 情况 | 默认 |
 | --- | --- |
-| `ERR_NETWORK` / `ECONNABORTED` | 重试 |
+| `ERR_NETWORK` / `ECONNABORTED`（**已发出**后超时） | 重试 |
+| `ECONNABORTED`（`Deadline` 在发出前耗尽，`IsDeadlineExceeded`） | 不重试（预算是整条请求的，重发必然在同一处立刻失败） |
 | 408 / 429 / 5xx | 重试（`RetryStatusCodes` 可换） |
 | 其它 4xx、配置 / URL 错误 | 不重试 |
 | `ERR_CANCELED` | 不重试 |
 | POST / PATCH 等非幂等方法 | 不重试（`RetryNonIdempotentMethods = true` 打开） |
 
-库级强制不重试（自定义策略也改不掉）：`ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_BAD_OPTION_VALUE` —— 这些情况下请求要么没发出，要么立刻重发只会撞同一个闸门，要么是管线里的配置 / 编程错误。
+库级强制不重试（自定义策略也改不掉）：`ERR_CANCELED` / `ERR_CIRCUIT_OPEN` / `ERR_QUEUE_TIMEOUT` / `ERR_BAD_OPTION_VALUE` / `Deadline` 已耗尽（`IsDeadlineExceeded`） —— 这些情况下请求要么没发出，要么立刻重发只会撞同一个闸门，要么是管线里的配置 / 编程错误。
 
 其它成员：`Delay` / `BackoffFactor` / `MaxDelay` / `Jitter`（默认 `true`，等待落在 50%–100%）/ `HonorRetryAfter`（默认 `true`，服务端给了 `Retry-After` 就按它等，仍受 `MaxDelay` 封顶）/ `RetryWhen`。
 
@@ -609,9 +610,13 @@ using AxiosNet.Circuit;
 
 var breaker = new CircuitBreaker
 {
-    FailureThreshold = 5,                       // 连续 5 次下游故障后打开
+    FailureThreshold = 5,                       // 连续 5 次下游故障 → 打开
+    WindowSize = 20,                            // 另看最近 20 次的失败率
+    MinimumSamples = 10,                        // 样本不足 10 个时不判率
+    FailureRateThreshold = 0.5,                 // 窗口内一半失败就打开
     BreakDuration = TimeSpan.FromSeconds(30),   // 冷却 30 秒后放探测请求
-    HalfOpenAttempts = 1                        // 半开态同时只放 1 个探测
+    HalfOpenAttempts = 1,                       // 慢启动起点：半开态先放 1 个在途
+    RecoverySuccesses = 3                       // 连续 3 次探测成功才全量放开
 };
 
 breaker.StateChanged += change => logger.LogWarning(
@@ -623,25 +628,31 @@ await client.GetAsync("health", c => c.Circuit.Policy = null);   // 探针不该
 breaker.Reset();                                                 // 运维手工恢复
 ```
 
-状态机：`Closed` →（连续失败达 `FailureThreshold`）→ `Open` →（冷却 `BreakDuration`）→ `HalfOpen` →（探测成功）→ `Closed`；探测失败**立刻**回 `Open` 并重新计时。
+状态机：`Closed` →（连续失败达 `FailureThreshold`，**或**窗口内失败率达 `FailureRateThreshold`）→ `Open` →（冷却 `BreakDuration`）→ `HalfOpen` →（连续 `RecoverySuccesses` 次探测成功）→ `Closed`；期间任何探测失败**立刻**回 `Open` 并重新计时。
+
+**两条打开规则为什么并存**：只看连续失败，低流量的「半死不活」下游永远熔不断——每夹一次成功就把计数清零，而它恰恰最该被熔断；只看窗口失败率，小流量又填不满样本。所以各管一段：样本攒够看比率，攒不够时连续失败兜底。窗口是**按最近 N 次结果**算的，与时间无关（不记时间戳，也不需要定期清理），旧账靠覆盖自然衰减。
 
 失败口径与重试门禁对齐（**取消 / 4xx 不计失败**）：
 
 | 情况 | 计入失败？ |
 | --- | --- |
-| `ERR_NETWORK` / `ECONNABORTED`（超时） | 计入 |
+| `ERR_NETWORK` / `ECONNABORTED`（尝试已发出后超时） | 计入 |
 | 5xx | 计入 |
 | 4xx（含 408 / 429） | 不计入（也不清零） |
 | `ERR_CANCELED` | 不计入 |
 | 配置 / URL / 序列化 / 反序列化错误 | 不计入 |
+| `ECONNABORTED`（`Deadline` 在请求**发出前**耗尽） | 不计入（本地约束先到期，下游一个字节都没收到） |
 
+- **「没发出」不算下游故障**：排队 / 入口处就耗尽 `Deadline` 而抛的 `ECONNABORTED`（`AxiosCircuitContext.DeadlineExpiredBeforeSend`）不进失败计数。过载时排队变长足以让每条请求都撞上它——记成故障就等于「越拥堵越容易熔断健康的下游」，把局部排队放大成整条链路不可用。已经发出去之后的超时仍照常计入，那才是下游不响应。
 - **按 host 计数**：默认维度 `host:port`（`uri.Authority`）；`KeySelector` 可改成 `ctx => ctx.Uri.Host` 或按路由前缀隔离租户。
+- **打开条件取「或」**：连续失败达 `FailureThreshold`，或窗口（`WindowSize`）内失败数 ≥ `ceil(样本数 × FailureRateThreshold)` 且样本数达 `MinimumSamples`。`WindowSize = 0` 表示只看连续失败；`MinimumSamples` 大于 `WindowSize` 会在发请求前报 `ERR_BAD_OPTION_VALUE`（那种配法永远触发不了）。
+- **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷。`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。
 - 被拒请求**不发出**：不建连、不占租约，直接抛 `ERR_CIRCUIT_OPEN`，`AxiosException.RetryAfter` 给建议等待。
 - 与重试同时开：闸门在**每次尝试之前**，熔断打开后重试的下一轮会被立刻拦下；`ERR_CIRCUIT_OPEN` 本身不重试。
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
 - **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
-- 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度，正在熔断 / 半开的条目不会被丢。
-- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure`。策略**有状态**且被并发共享，需自己保证线程安全。
+- 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度——正在熔断 / 半开的条目不会被丢，闭合态里优先丢窗口中没有失败样本的那条（连续失败数可能已被一次成功清零，但失败率台账仍然有效，丢掉等于把这条维度重置成全新维度）。
+- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `DeadlineExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。
 
 ## 并发对冲
 
@@ -688,13 +699,15 @@ await client.GetAsync("health", c => c.Failover.Endpoints = null);
 
 | 情况 | 换端点？ |
 | --- | --- |
-| `ERR_NETWORK` / `ECONNABORTED`（超时） / `ERR_POOL_EXHAUSTED` | 换 |
+| `ERR_NETWORK` / `ECONNABORTED`（**已发出**后超时） / `ERR_POOL_EXHAUSTED` | 换 |
+| `ECONNABORTED`（`Deadline` 在请求**发出前**耗尽） | 不换 —— 预算是整条请求的墙钟时间，换端点不会让它变长（见下） |
 | 5xx（`ERR_BAD_RESPONSE` 且状态码 ≥ 500） | 换 |
 | `ERR_CIRCUIT_OPEN` | 换 —— 熔断按 `host:port` 独立成账，主端点开着挡不住备用端点 |
 | 4xx、其它 `ERR_BAD_RESPONSE`（如 2xx 的畸形正文） | 不换（换镜像改变不了） |
 | `ERR_QUEUE_TIMEOUT` | 不换（本机没抢到槽位，与下游无关） |
 | 配置 / 编程错误、取消 | 不换 |
 
+- **预算耗尽不换端点**：与[熔断的失败口径](#熔断)同一条边界 —— `Deadline` 在发出前就耗尽时，换端点既不能让预算变长，又要在备用端点白走一遍管线（占一次熔断判定与闸门入口，然后必然在同一处立刻失败）。已经发出去之后的超时照常换端点，那才是「换个下游可能就好」。
 - **每次重试都从第一个端点重新开始**：端点表在重试之内，一轮换完所有端点才把第一条失败交给重试。
 - **换端点会重算 `Host`**：调用方显式设过的 `Host` 头在换端点时丢掉，由目标地址重新算 —— 留着会让镜像按原端点的虚拟主机路由（`HttpClient` 只认 `Headers.Host`，它优先于 URI authority）。要按端点用不同的 `Host`，请写尝试中间件按 `ctx.Uri` 设置（`config.Headers` 只应用在模板上）。
 - **端点表不能重复**：两个端点拼出同一个 base URL（尾斜杠不算区别）会在发请求前抛 `ERR_BAD_OPTION_VALUE` —— 那只是把同一份请求对同一个地址多打一遍。
@@ -1278,13 +1291,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1448 | `net8.0` / `net6.0` | 2896 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1464 | `net8.0` / `net6.0` | 2928 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1507** | | **3014** |
+| **合计** | **1523** | | **3046** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.7%**、分支覆盖率 **89.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动）。
+行覆盖率 **92.7%**、分支覆盖率 **89.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash

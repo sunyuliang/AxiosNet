@@ -276,6 +276,44 @@ public sealed partial class AxiosClient
                     config);
             }
 
+            if (breaker.WindowSize < 0)
+            {
+                throw AxiosException.InvalidOption(
+                    $"熔断窗口容量 WindowSize 不能为负（当前 {breaker.WindowSize}）："
+                    + "关掉失败率判定、只按连续失败熔断请设为 0。",
+                    config);
+            }
+
+            if (breaker.WindowSize > 0)
+            {
+                // 下限比窗口还大时这条规则永远触发不了 —— 配了等于没配，必须报出来。
+                if (breaker.MinimumSamples < 1 || breaker.MinimumSamples > breaker.WindowSize)
+                {
+                    throw AxiosException.InvalidOption(
+                        $"熔断窗口样本下限 MinimumSamples 必须落在 1..WindowSize 之间"
+                        + $"（当前 MinimumSamples = {breaker.MinimumSamples}，WindowSize = {breaker.WindowSize}）："
+                        + "样本永远攒不够的话，失败率这条规则等于没开。",
+                        config);
+                }
+
+                // NaN 用一个区间判断一起挡掉：它既不 > 0 也不 <= 1。
+                if (!(breaker.FailureRateThreshold > 0 && breaker.FailureRateThreshold <= 1))
+                {
+                    throw AxiosException.InvalidOption(
+                        $"熔断失败率阈值 FailureRateThreshold 必须落在 (0, 1]（当前 {breaker.FailureRateThreshold}）："
+                        + "0.5 表示窗口内一半失败即打开；不想要这条规则请把 WindowSize 设为 0。",
+                        config);
+                }
+            }
+
+            if (breaker.RecoverySuccesses < 0)
+            {
+                throw AxiosException.InvalidOption(
+                    $"慢启动恢复次数 RecoverySuccesses 不能为负（当前 {breaker.RecoverySuccesses}）："
+                    + "不要慢启动（探测一次成功即闭合）请设为 0 或 1。",
+                    config);
+            }
+
             if (breaker.MaxTrackedHosts < 1)
             {
                 throw AxiosException.InvalidOption(

@@ -1,4 +1,5 @@
 ﻿
+using System.Diagnostics;
 using AxiosNet.Circuit;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -82,6 +83,51 @@ public sealed class CircuitBreakerTests
 
         var rejected = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosException.ErrCircuitOpen, rejected.Code);
+    }
+
+    [Fact]
+    public async Task DeadlineExpiredBeforeSend_DoesNotTripCircuit()
+    {
+        // 「一次都没发出」与「发出后超时」是两件事：前者是本地约束（排队 / 预算）先到期，
+        // 下游连一个字节都没收到。记成故障的后果是过载时排队越久越容易把健康 host 熔断，
+        // 于是过载 → 预算耗尽 → 熔断 → 更多失败，局部排队被放大成整条链路不可用。
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await gate.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        var breaker = new CircuitBreaker { FailureThreshold = 2, BreakDuration = TimeSpan.FromSeconds(30) };
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Circuit = { Policy = breaker },
+            Limits = { MaxConcurrentRequests = 1 }
+        });
+
+        // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽
+        var holder = client.GetAsync(server.Url + "holder");
+        var waitForHolder = Stopwatch.StartNew();
+        while (waitForHolder.Elapsed < TimeSpan.FromSeconds(5) && server.Received.Count == 0)
+        {
+            await Task.Delay(5);
+        }
+
+        // 阈值是 2：撞满两次也不该打开 —— 两次都没发出
+        for (var i = 0; i < 2; i++)
+        {
+            var expired = await Assert.ThrowsAsync<AxiosException>(
+                () => client.GetAsync(server.Url + "queued", c => c.Deadline = TimeSpan.FromMilliseconds(80)));
+
+            Assert.Equal(AxiosException.ErrConnAborted, expired.Code);
+            Assert.Contains("deadline of", expired.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Single(server.Received);
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(HostOf(server)));
+
+        gate.SetResult();
+        await holder;
     }
 
     [Fact]
@@ -170,7 +216,8 @@ public sealed class CircuitBreakerTests
             : TestJson.Response(new { ok = true }));
 
         // 先用长冷却把「冷却期内拒绝」钉死，再压回短冷却等它过期。
-        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak };
+        // RecoverySuccesses = 1：本用例只锁定「探测成功 → 闭合」，慢启动另由 Recovery_* 覆盖。
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak, RecoverySuccesses = 1 };
         using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -241,7 +288,8 @@ public sealed class CircuitBreakerTests
             _ => TestJson.Response(new { ok = true })
         });
 
-        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak };
+        // RecoverySuccesses = 1：本用例只看「名额归还」，不等慢启动走完。
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak, RecoverySuccesses = 1 };
         using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -265,7 +313,8 @@ public sealed class CircuitBreakerTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak };
+        // RecoverySuccesses = 1：本用例只断言三条迁移各发生一次，慢启动的多次成功由 Recovery_* 覆盖。
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak, RecoverySuccesses = 1 };
         var transitions = new List<AxiosCircuitTransition>();
         breaker.StateChanged += transitions.Add;
 
@@ -278,6 +327,265 @@ public sealed class CircuitBreakerTests
         Assert.Contains(transitions, t => t.Previous == AxiosCircuitState.Closed && t.Current == AxiosCircuitState.Open);
         Assert.Contains(transitions, t => t.Previous == AxiosCircuitState.Open && t.Current == AxiosCircuitState.HalfOpen);
         Assert.Contains(transitions, t => t.Previous == AxiosCircuitState.HalfOpen && t.Current == AxiosCircuitState.Closed);
+    }
+
+    // ------------------------------------------------------------------
+    // 滚动窗口失败率：低流量下「连续失败」永远攒不够时的兜底
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void FailureRate_InLowFrequencyTraffic_TripsCircuit()
+    {
+        // 失败 / 成功交替：连续失败数永远只有 1，够不到 FailureThreshold = 5。
+        // 但窗口里一半是失败 —— 这种「半死不活」的下游恰恰最该熔断。
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 5,
+            WindowSize = 10,
+            MinimumSamples = 10,
+            FailureRateThreshold = 0.5,
+            BreakDuration = LongBreak
+        };
+
+        var host = "flapping.example.com";
+
+        for (var i = 0; i < 6 && breaker.GetState(host) != AxiosCircuitState.Open; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(FailedContext(host));
+
+            if (breaker.GetState(host) == AxiosCircuitState.Open)
+            {
+                break;
+            }
+
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(ContextFor(host));
+        }
+
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+    }
+
+    [Fact]
+    public void FailureRate_BelowThreshold_DoesNotTrip()
+    {
+        // 10 个样本里 3 次失败（30%）< 50%：不开。
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 5,
+            WindowSize = 10,
+            MinimumSamples = 10,
+            FailureRateThreshold = 0.5,
+            BreakDuration = LongBreak
+        };
+
+        var host = "mostly-healthy.example.com";
+        bool[] outcomes = new[] { true, false, false, false, true, false, false, false, true, false };   // true = 失败
+
+        foreach (var failure in outcomes)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(failure ? FailedContext(host) : ContextFor(host));
+        }
+
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+    }
+
+    [Fact]
+    public void FailureRate_InsufficientSamples_DoesNotTrip()
+    {
+        // 8 个样本（4 败 4 成）没到 MinimumSamples = 10：比率再不健康也不判，
+        // 否则一次抖动就能把刚启动的服务熔掉。
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 5,
+            WindowSize = 10,
+            MinimumSamples = 10,
+            FailureRateThreshold = 0.5,
+            BreakDuration = LongBreak
+        };
+
+        var host = "warming-up.example.com";
+
+        for (var i = 0; i < 4; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(FailedContext(host));
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(ContextFor(host));
+        }
+
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+    }
+
+    [Fact]
+    public void WindowSize_Zero_DisablesRateDetection()
+    {
+        // WindowSize = 0：只按连续失败熔断，交替失败永远不开（连续阈值取 100）。
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 100,
+            WindowSize = 0,
+            BreakDuration = LongBreak
+        };
+
+        var host = "toggle.example.com";
+
+        for (var i = 0; i < 30; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(FailedContext(host));
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(ContextFor(host));
+        }
+
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+    }
+
+    // ------------------------------------------------------------------
+    // 慢启动：恢复期随连续成功逐步放宽探测并发
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Recovery_GrowsProbeAllowance_ThenCloses()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 3
+        };
+
+        var host = "recovering.example.com";
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 进入半开：初始只放 1 个在途探测（旧行为在这里一次成功就全量放开）
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+
+        // 第 1 次探测成功：名额归还，允许的在途数涨到 2
+        breaker.Record(ContextFor(host));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+
+        // 第 2、3 次成功：凑满 RecoverySuccesses，转闭合
+        breaker.Record(ContextFor(host));
+        breaker.Record(ContextFor(host));
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+
+        // 闭合后不再限流
+        for (var i = 0; i < 5; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        }
+    }
+
+    [Fact]
+    public void Recovery_ProbeFailure_ResetsProgressAndReopens()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 3
+        };
+
+        var host = "flaky-recovery.example.com";
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host));
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 恢复了一半（1 次成功）就失败：立刻重开，慢启动进度作废
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(ContextFor(host));
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 重新进半开：名额从 1 重新数起，不会沿用上次已经涨到的 2
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+    }
+
+    [Fact]
+    public void Recovery_SuccessWithoutProbeSlot_DoesNotAdvance()
+    {
+        // 冷却期之前就在途的请求，其成功与本轮慢启动无关：它没领过探测名额，
+        // 算成「一次探测成功」会把「连续 N 次成功」白送凑满、刚恢复就一次性放开。
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 3
+        };
+
+        var host = "late-success.example.com";
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 进半开并成功一次：名额归还、允许的在途数涨到 2
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(ContextFor(host));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 两次「没领名额」的成功：不推进度，也不闭合
+        breaker.Record(ContextFor(host));
+        breaker.Record(ContextFor(host));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 名额仍是 1 + 1 = 2，没有因为那两次成功涨到 3 / 4
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+    }
+
+    [Theory]
+    [InlineData(-1, 10, 0.5, 3)]     // WindowSize 为负
+    [InlineData(20, 0, 0.5, 3)]      // MinimumSamples < 1
+    [InlineData(20, 21, 0.5, 3)]     // MinimumSamples > WindowSize（永远攒不够）
+    [InlineData(20, 10, 0.0, 3)]     // 失败率阈值 0
+    [InlineData(20, 10, 1.5, 3)]     // 失败率阈值 > 1
+    [InlineData(20, 10, 0.5, -1)]    // RecoverySuccesses 为负
+    public async Task InvalidWindowSettings_AreRejectedBeforeSending(
+        int windowSize,
+        int minimumSamples,
+        double failureRate,
+        int recoverySuccesses)
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var breaker = new CircuitBreaker
+        {
+            WindowSize = windowSize,
+            MinimumSamples = minimumSamples,
+            FailureRateThreshold = failureRate,
+            RecoverySuccesses = recoverySuccesses
+        };
+
+        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+
+        var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
+        Assert.Equal(AxiosException.ErrBadOptionValue, failed.Code);
+        Assert.Empty(server.Received);
     }
 
     // ------------------------------------------------------------------
@@ -374,6 +682,42 @@ public sealed class CircuitBreakerTests
         var rejected = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(broken.Url + "x"));
         Assert.Equal(AxiosException.ErrCircuitOpen, rejected.Code);
         Assert.Single(broken.Received);
+    }
+
+    [Fact]
+    public void Eviction_PrefersEntryWithoutFailureHistory()
+    {
+        // 上限 2、三个维度：先丢「窗口里一笔失败都没有」的那条，别丢窗口里还躺着失败样本的 ——
+        // 连续失败数会被一次成功清零，但它的失败率台账仍然有效，丢掉等于把这条维度重置成全新维度。
+        var breaker = new CircuitBreaker
+        {
+            MaxTrackedHosts = 2,
+            FailureThreshold = 100,
+            WindowSize = 10,
+            MinimumSamples = 10,
+            FailureRateThreshold = 0.5
+        };
+
+        string? chosen = null;
+        breaker.EvictionCandidateChosen = key => chosen = key;
+
+        // flapping：4 败 4 成交替 —— 连续失败数被最后一次成功清零，窗口里留着 4 笔失败。
+        for (var i = 0; i < 4; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor("flapping.example.com")));
+            breaker.Record(FailedContext("flapping.example.com"));
+            Assert.True(breaker.ShouldAllow(ContextFor("flapping.example.com")));
+            breaker.Record(ContextFor("flapping.example.com"));
+        }
+
+        // spotless：只有成功，窗口里没有任何失败样本。
+        Assert.True(breaker.ShouldAllow(ContextFor("spotless.example.com")));
+        breaker.Record(ContextFor("spotless.example.com"));
+
+        // 第三个维度触发一次淘汰：候选应是有害无益的那条。
+        Assert.True(breaker.ShouldAllow(ContextFor("third.example.com")));
+
+        Assert.Equal("spotless.example.com", chosen);
     }
 
     [Fact]

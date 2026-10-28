@@ -61,8 +61,12 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 发出 ping 后多久没收到 <c>PING ACK</c> 就判定连接已死并关闭（默认 20 秒）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不因此断连。
-    /// 只影响 HTTP/2 连接；必须小于 <see cref="KeepAlivePingDelay"/> 才谈得上「发现半死连接」。
+    /// 只影响 HTTP/2 连接，且只有 <see cref="KeepAlivePingDelay"/> 为有限值（真的会发 ping）时才有意义。
     /// </summary>
+    /// <remarks>
+    /// 一般取值<b>小于</b> <see cref="KeepAlivePingDelay"/>：等 ACK 的窗口要短于两次 ping 的间隔，否则还没判死就该发下一个 ping 了。
+    /// 本项不做「必须小于」的校验 —— 反过来配置不会报错，也不改变「隔多久发一次 ping」的语义。
+    /// </remarks>
     public TimeSpan KeepAlivePingTimeout { get; set; } = TimeSpan.FromSeconds(20);
 
     /// <summary>
@@ -95,6 +99,10 @@ public sealed class ConnectionPoolOptions
     /// <summary>自定义 Handler 工厂：每个 origin 调用一次，必须返回非 null 的独立实例，由池负责释放。</summary>
     public Func<PooledHandlerContext, HttpMessageHandler>? HandlerFactory { get; set; }
 
+    /// <summary>
+    /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本），
+    /// 之后改原对象不会影响已建好的池。引用型字段（代理、委托）按引用共享，不做深拷贝。
+    /// </summary>
     public ConnectionPoolOptions Clone() => new()
     {
         MaxConnectionsPerServer = MaxConnectionsPerServer,

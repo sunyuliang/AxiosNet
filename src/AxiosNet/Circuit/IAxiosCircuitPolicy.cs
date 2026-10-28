@@ -6,11 +6,16 @@ namespace AxiosNet.Circuit;
 /// </summary>
 /// <example>
 /// <code>
-/// // 内置实现：5 次连续失败后熔断 30 秒，冷却结束放 1 个探测请求
+/// // 内置实现：5 次连续失败、或最近 20 次里失败率过半（至少 10 个样本）就熔断；
+/// // 冷却 30 秒后进入半开，连续 3 次探测成功才全量放开
 /// config.Circuit.Policy = new CircuitBreaker
 /// {
 ///     FailureThreshold = 5,
-///     BreakDuration = TimeSpan.FromSeconds(30)
+///     WindowSize = 20,
+///     MinimumSamples = 10,
+///     FailureRateThreshold = 0.5,
+///     BreakDuration = TimeSpan.FromSeconds(30),
+///     RecoverySuccesses = 3
 /// };
 ///
 /// // 自定义策略：只熔断「连续 3 次 5xx」，且冷却期固定 10 秒
@@ -46,7 +51,7 @@ public interface IAxiosCircuitPolicy
 
     /// <summary>
     /// 记录一次尝试的结论：<paramref name="context"/>.<see cref="AxiosCircuitContext.Exception"/> 为 <c>null</c> 表示成功，否则按 <see cref="AxiosCircuitContext.IsFailure"/> 判断算不算下游故障。
-    /// 放行之后必然调用一次（成功、失败、取消 / 4xx 都会走到），半开态的探测名额靠它归还。
+    /// 放行之后必然调用一次（成功、失败、取消 / 4xx、以及「预算耗尽、请求从未发出」都会走到），半开态的探测名额靠它归还。
     /// </summary>
     void Record(AxiosCircuitContext context);
 }

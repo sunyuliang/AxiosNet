@@ -111,7 +111,7 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 换端点判据：只换「换一个下游就能解决」的故障。取消、配置 / 编程错误、闸门排队超时与 4xx
+    /// 换端点判据：只换「换一个下游就能解决」的故障。取消、配置 / 编程错误、闸门排队超时、总预算耗尽与 4xx
     /// 换镜像都改变不了，原样抛给上层；熔断拒绝要换 —— 熔断按 <c>host:port</c> 独立成账，
     /// 主端点开着的那一个挡不住备用端点。
     /// </summary>
@@ -129,8 +129,14 @@ public static partial class Attempt
 
         return axios.Code switch
         {
-            // 建连 / DNS / TLS / 读响应失败、超时、本机连接池耗尽：换个下游都可能好。
-            AxiosException.ErrNetwork or AxiosException.ErrConnAborted or AxiosException.ErrPoolExhausted => true,
+            // 建连 / DNS / TLS / 读响应失败、本机连接池耗尽：换个下游都可能好。
+            AxiosException.ErrNetwork or AxiosException.ErrPoolExhausted => true,
+
+            // 发出之后的超时：这个下游不响应，换一个可能响应。
+            // 预算耗尽（IsDeadlineExceeded）不在其列：Deadline 管的是整条逻辑请求的墙钟时间，
+            // 换端点不会让它变长 —— 只会在备用端点再走一遍管线、占一次熔断名额与闸门入口，
+            // 然后必然在同一处立刻失败。
+            AxiosException.ErrConnAborted when !axios.IsDeadlineExceeded => true,
 
             // 熔断按端点独立成账：这个端点被自己的熔断器拦下，不代表下一个端点也被拦下。
             AxiosException.ErrCircuitOpen => true,

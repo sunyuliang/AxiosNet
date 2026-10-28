@@ -117,7 +117,7 @@ public static partial class Attempt
                 // 放在 CanRetry 之后而不是之前：位置提前会把上面那几类终止原因一起吞掉。
                 if (ctx.RemainingDeadline is { } remaining && remaining <= TimeSpan.Zero)
                 {
-                    throw AxiosException.DeadlineExceeded(ctx.Config, request, attempt + 1, ctx.Config.Deadline!.Value, ex);
+                    throw AxiosException.DeadlineExceeded(ctx.Config, request, attempt + 1, ctx.Config.Deadline, ex);
                 }
 
                 var delay = policy.GetDelay(failed);

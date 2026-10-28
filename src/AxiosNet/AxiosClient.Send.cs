@@ -81,7 +81,7 @@ public sealed partial class AxiosClient
             {
                 if (remaining <= TimeSpan.Zero)
                 {
-                    throw AxiosException.DeadlineExceeded(config, request, ctx.AttemptNumber, config.Deadline!.Value);
+                    throw AxiosException.DeadlineExceeded(config, request, ctx.AttemptNumber, config.Deadline);
                 }
 
                 if (timeout <= TimeSpan.Zero || remaining < timeout)

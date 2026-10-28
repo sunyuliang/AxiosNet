@@ -73,6 +73,7 @@ public sealed class DeadlineTests
 
         // 总预算用尽后由「下一次尝试开始」报出：错误码与超时一致，消息指明第几次没发出。
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
+        Assert.True(ex.IsDeadlineExceeded);   // 公开口径：与「发出后超时」共用 ECONNABORTED，靠这一位区分
         Assert.Contains("deadline of", ex.Message, StringComparison.Ordinal);
         Assert.Contains("could be sent", ex.Message, StringComparison.Ordinal);
 

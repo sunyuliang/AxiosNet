@@ -4,12 +4,12 @@ using AxiosNet.Circuit;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>28. 熔断：按 host 计数、连续失败打开、冷却后半开探测、单请求绕过、手工恢复。</summary>
+/// <summary>28. 熔断：按 host 计数、连续失败与窗口失败率两条打开规则、冷却后半开慢启动探测、单请求绕过、手工恢复。</summary>
 public sealed class CircuitExample : IExample
 {
     public int Number => 28;
 
-    public string Title => "熔断：连续失败打开 / 半开探测 / 探测失败重开 / 单请求绕过 / 手工 Reset";
+    public string Title => "熔断：连续失败 / 窗口失败率打开 / 半开慢启动 / 探测失败重开 / 单请求绕过 / 手工 Reset";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -18,9 +18,13 @@ public sealed class CircuitExample : IExample
         // 阈值 / 冷却都取得很小，示例不必真的等 30 秒
         var breaker = new CircuitBreaker
         {
-            FailureThreshold = 2,
+            FailureThreshold = 2,                       // 连续 2 次下游故障
+            WindowSize = 4,                             // 另看最近 4 次的失败率
+            MinimumSamples = 2,
+            FailureRateThreshold = 0.5,                 // 其中一半失败也开
             BreakDuration = TimeSpan.FromMilliseconds(500),
-            HalfOpenAttempts = 1
+            HalfOpenAttempts = 1,                       // 慢启动起点：先放 1 个在途探测
+            RecoverySuccesses = 2                       // 连续 2 次探测成功才全量放开
         };
 
         // 打印状态迁移：Closed -> Open -> HalfOpen -> Open
@@ -95,6 +99,31 @@ public sealed class CircuitExample : IExample
         breaker.Reset();
         Console.WriteLine($"  Reset 后状态: {breaker.GetState(host)}（失败计数已清零）");
 
-        Console.WriteLine("  说明: 只对「下游故障」计数（网络错误 / 超时 / 5xx）；取消与 4xx 既不清零也不累加");
+        // 6) 慢启动恢复：换一个 tag，让服务端只失败 2 次（?fail=N = 同一个 tag 的前 N 次 503，之后成功）。
+        //    2 次失败 → 打开 → 冷却 → 第 1 次探测成功只把在途名额放宽，第 2 次成功才转闭合。
+        var recovering = $"{context.BaseUrl}flaky?fail=2&tag={tag}-recover";
+
+        for (var i = 1; i <= 2; i++)
+        {
+            try
+            {
+                await client.GetAsync(recovering);
+            }
+            catch (AxiosException ex)
+            {
+                Console.WriteLine($"  恢复演练第 {i} 次: code={ex.Code}, status={ex.Status}（真的发出去了）");
+            }
+        }
+
+        await Task.Delay(600);
+
+        for (var i = 1; i <= 2; i++)
+        {
+            await client.GetAsync(recovering);
+            Console.WriteLine($"  第 {i} 次探测成功: 状态 {breaker.GetState(host)}");
+        }
+
+        Console.WriteLine("  说明: 只对「下游故障」计数（网络错误 / 发出后超时 / 5xx）；取消、4xx 与「预算耗尽没发出」既不清零也不累加");
+        Console.WriteLine("  说明: 慢启动 —— 半开期第 1 次探测成功只放宽在途名额，凑满 RecoverySuccesses 次才退回全量");
     }
 }

@@ -4,17 +4,29 @@ using System.Diagnostics;
 namespace AxiosNet.Circuit;
 
 /// <summary>
-/// <see cref="IAxiosCircuitPolicy"/> 的默认实现：按 host 维度的失败计数 + 半开探测 + 自动恢复。
-/// 状态机 Closed →（失败达 <see cref="FailureThreshold"/>）→ Open →（冷却 <see cref="BreakDuration"/>）→ HalfOpen → 成功闭合 / 失败重开；维度默认 <c>uri.Authority</c>，可用 <see cref="KeySelector"/> 改写。
+/// <see cref="IAxiosCircuitPolicy"/> 的默认实现：按 host 维度的滚动窗口失败率 + 连续失败快速路径 + 半开慢启动恢复。
+/// 状态机 Closed →（连续失败达 <see cref="FailureThreshold"/>，或窗口内失败率达 <see cref="FailureRateThreshold"/>）→ Open
+/// →（冷却 <see cref="BreakDuration"/>）→ HalfOpen →（连续 <see cref="RecoverySuccesses"/> 次探测成功）→ Closed；
+/// 期间任何探测失败立刻回 Open。维度默认 <c>uri.Authority</c>，可用 <see cref="KeySelector"/> 改写。
 /// </summary>
+/// <remarks>
+/// <b>为什么两条规则并存</b>：只看连续失败，低流量下永远熔不断（半死不活的下游每夹一次成功就把计数清零，
+/// 而 50% 失败率恰恰最该熔断）；只看窗口失败率，小流量又填不满样本。所以两条各管一段：样本攒够看比率，
+/// 攒不够时连续失败兜底。
+/// </remarks>
 /// <example>
 /// <code>
-/// // 5 次连续失败后熔断 30 秒；冷却结束只放 1 个探测请求
+/// // 5 次连续失败、或最近 20 次里失败率过半（至少 10 个样本）就熔断；
+/// // 冷却 30 秒后进入半开，连续 3 次探测成功才全量放开
 /// var breaker = new CircuitBreaker
 /// {
 ///     FailureThreshold = 5,
+///     WindowSize = 20,
+///     MinimumSamples = 10,
+///     FailureRateThreshold = 0.5,
 ///     BreakDuration = TimeSpan.FromSeconds(30),
-///     HalfOpenAttempts = 1
+///     HalfOpenAttempts = 1,
+///     RecoverySuccesses = 3
 /// };
 ///
 /// breaker.StateChanged += change =&gt; logger.LogWarning(
@@ -47,7 +59,10 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// <summary>所有熔断器实例中处于半开态的维度数（进程级）。</summary>
     internal static long HalfOpenCount => Interlocked.Read(ref _halfOpenHosts);
 
-    /// <summary>默认配置：连续 5 次失败后熔断 30 秒，半开态允许 1 个探测请求。</summary>
+    /// <summary>
+    /// 默认配置：连续 5 次失败、或最近 20 次里失败率过半（至少 10 个样本）就熔断；
+    /// 冷却 30 秒后进入半开，连续 3 次探测成功才放开。
+    /// </summary>
     public CircuitBreaker()
     {
     }
@@ -62,12 +77,42 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <summary>连续多少次下游故障后打开熔断，默认 5（中间任何一次成功都会归零）。</summary>
+    /// <remarks>低流量下的快速路径：样本还不够填满 <see cref="WindowSize"/> 时，只有这条规则管用。</remarks>
     public int FailureThreshold { get; set; } = 5;
+
+    /// <summary>
+    /// 滚动窗口的样本数，默认 20：按「最近 N 次结果」算失败率，与时间无关。
+    /// <c>0</c> 表示关闭失败率判定，只按 <see cref="FailureThreshold"/> 的连续失败熔断。
+    /// </summary>
+    /// <remarks>
+    /// 窗口只记结果、不记时间戳：这样热路径上是两次数组写入，不需要定时清理，也不会因为「某段时间没流量」
+    /// 而让旧账自然过期（那种语义要用 <see cref="BreakDuration"/> 之外的定期衰减，成本高得多）。
+    /// </remarks>
+    public int WindowSize { get; set; } = 20;
+
+    /// <summary>窗口里至少要有这么多个样本才判失败率，默认 10；样本不足时只走连续失败那条规则。</summary>
+    public int MinimumSamples { get; set; } = 10;
+
+    /// <summary>
+    /// 窗口内失败率达到多少就打开熔断，默认 <c>0.5</c>（必须落在 <c>(0, 1]</c>）。
+    /// 实际阈值是 <c>ceil(样本数 × 本值)</c>：20 个样本、0.5 → 10 次失败即打开。
+    /// </summary>
+    public double FailureRateThreshold { get; set; } = 0.5;
+
+    /// <summary>
+    /// 慢启动：半开态需要连续成功多少次才全量恢复，默认 3；<c>0</c>/<c>1</c> 表示探测一次成功就闭合（旧行为）。
+    /// </summary>
+    /// <remarks>
+    /// 恢复期不允许的探测并发上限是 <c>HalfOpenAttempts + 已连续成功次数</c>：默认从 1 个在途起步，
+    /// 每成功一次多放一个，凑满 <see cref="RecoverySuccesses"/> 次才转闭合。这样下游刚缓过来时不会被
+    /// 一次性打回满负荷 —— 那正是「恢复即二次雪崩」的常见来源。
+    /// </remarks>
+    public int RecoverySuccesses { get; set; } = 3;
 
     /// <summary>打开后多久转入半开探测，默认 30 秒（冷却期内请求直接失败，不发出）。</summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>半开态允许同时进行的探测请求数，默认 1。</summary>
+    /// <summary>半开态初始允许同时进行的探测请求数（也是慢启动的起点），默认 1。</summary>
     public int HalfOpenAttempts { get; set; } = 1;
 
     /// <summary>最多跟踪多少个维度（host），默认 512；满员时只淘汰不影响判定的条目。</summary>
@@ -153,13 +198,17 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                         break;
                     }
 
-                    // 冷却结束：转入半开，只放探测请求。
+                    // 冷却结束：转入半开，慢启动从头开始（连续成功数清零）。
                     host.ProbesInFlight = 0;
+                    host.ProbeSuccesses = 0;
                     transition = MoveTo(host, AxiosCircuitState.HalfOpen);
                     goto case AxiosCircuitState.HalfOpen;
 
                 case AxiosCircuitState.HalfOpen:
-                    allowed = host.ProbesInFlight < HalfOpenAttempts;
+                    // 慢启动：允许的在途探测数随连续成功递增（HalfOpenAttempts → +1 → +2 …），
+                    // 凑满 RecoverySuccesses 次成功就转闭合。起步比旧行为慢，但不会在下游刚缓过来时
+                    // 一次性把满负荷压回去。
+                    allowed = host.ProbesInFlight < HalfOpenAttempts + host.ProbeSuccesses;
                     if (allowed)
                     {
                         // 名额在这里领走，随后那次 Record 负责归还。
@@ -208,58 +257,118 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             return;
         }
 
-        var transition = default(AxiosCircuitTransition);
+        AxiosCircuitTransition transition;
 
         lock (host.Gate)
         {
-            if (context.IsSuccess)
-            {
-                if (host.State == AxiosCircuitState.HalfOpen)
-                {
-                    // 探测成功：恢复闭合，失败计数清零。
-                    host.ProbesInFlight = 0;
-                    host.Failures = 0;
-                    transition = MoveTo(host, AxiosCircuitState.Closed);
-                }
-                else
-                {
-                    // 「连续失败」在成功处归零。
-                    host.Failures = 0;
-                }
-            }
-            else if (context.IsFailure)
-            {
-                host.ProbesInFlight = 0;
-
-                if (host.State == AxiosCircuitState.HalfOpen)
-                {
-                    // 探测失败：立刻重新打开并重新计时。
-                    host.Failures = 0;
-                    host.OpenedAt = Stopwatch.GetTimestamp();
-                    transition = MoveTo(host, AxiosCircuitState.Open);
-                }
-                else if (host.State == AxiosCircuitState.Closed)
-                {
-                    host.Failures++;
-
-                    if (host.Failures >= FailureThreshold)
-                    {
-                        host.Failures = 0;
-                        host.OpenedAt = Stopwatch.GetTimestamp();
-                        transition = MoveTo(host, AxiosCircuitState.Open);
-                    }
-                }
-
-                // 打开态：冷却期内还在途的请求报上来的失败不改账。
-            }
-            else if (host.State == AxiosCircuitState.HalfOpen && host.ProbesInFlight > 0)
-            {
-                // 取消 / 4xx：既不计数也不清零，但必须归还半开态的探测名额。
-                host.ProbesInFlight--;
-            }
+            // 三条路径对探测名额的处理各不相同（推进 / 作废 / 只归还），分开命名比挤在一串
+            // else-if 里更好核对 —— 名额漏还一次，半开态就永久少一个探测位。
+            transition = context.IsSuccess ? RecordSuccess(host)
+                : context.IsFailure ? RecordFailure(host)
+                : RecordIgnored(host);
         }
 
         Notify(transition);
+    }
+
+    /// <summary>成功：连续失败归零；闭合态记进窗口，半开态推进慢启动进度。</summary>
+    private AxiosCircuitTransition RecordSuccess(HostState host)
+    {
+        // 「连续失败」在成功处归零（窗口不清零：滚动窗口靠覆盖自然衰减）。
+        host.Failures = 0;
+
+        switch (host.State)
+        {
+            case AxiosCircuitState.HalfOpen:
+                return AdvanceRecovery(host);
+
+            case AxiosCircuitState.Closed:
+                host.PushWindow(success: true, WindowSize);
+                return default;
+
+            default:
+                // 打开态：冷却期尾巴上那条在途请求的结果不改账（那一轮台账打开时就结清了）。
+                return default;
+        }
+    }
+
+    /// <summary>下游故障：半开态立刻重开，闭合态按两条规则累计，打开态不动账。</summary>
+    private AxiosCircuitTransition RecordFailure(HostState host)
+    {
+        // 故障一出，慢启动进度与在途名额一起作废（名额随状态迁移失效，不必逐个归还）。
+        host.ProbesInFlight = 0;
+        host.ProbeSuccesses = 0;
+
+        switch (host.State)
+        {
+            case AxiosCircuitState.HalfOpen:
+                // 探测失败：立刻重新打开并重新计时。
+                host.Failures = 0;
+                return Reopen(host);
+
+            case AxiosCircuitState.Closed:
+                host.Failures++;
+                host.PushWindow(success: false, WindowSize);
+
+                // 两条规则取或：样本够了看失败率（治「半死不活」），样本不够靠连续失败（治低流量）。
+                if (host.Failures >= FailureThreshold
+                    || host.WindowTrips(MinimumSamples, FailureRateThreshold))
+                {
+                    host.Failures = 0;
+                    return Reopen(host);
+                }
+
+                return default;
+
+            default:
+                // 打开态：冷却期内还在途的请求报上来的失败不改账。
+                return default;
+        }
+    }
+
+    /// <summary>既不成功也非故障（取消 / 4xx / 请求从未发出）：不计数，只归还半开态的探测名额。</summary>
+    private static AxiosCircuitTransition RecordIgnored(HostState host)
+    {
+        if (host.State == AxiosCircuitState.HalfOpen && host.ProbesInFlight > 0)
+        {
+            host.ProbesInFlight--;
+        }
+
+        return default;
+    }
+
+    /// <summary>半开态的一次探测成功：归还名额、推进慢启动进度，凑够 <see cref="RecoverySuccesses"/> 才闭合。</summary>
+    private AxiosCircuitTransition AdvanceRecovery(HostState host)
+    {
+        // 只有真的领到名额的探测才推进度：冷却期之前就在途的请求不属于这一轮慢启动，
+        // 让它算一次成功会把「连续 N 次探测成功」提前凑满。
+        if (host.ProbesInFlight == 0)
+        {
+            return default;
+        }
+
+        host.ProbesInFlight--;
+
+        // 0 与 1 都表示「不要慢启动」：探测一次成功就闭合（与旧行为一致）。
+        var target = RecoverySuccesses > 1 ? RecoverySuccesses : 1;
+        if (++host.ProbeSuccesses < target)
+        {
+            return default;
+        }
+
+        // 慢启动走完：全量恢复，窗口与探测计数一起清掉，恢复后从干净台账起算。
+        host.ProbesInFlight = 0;
+        host.ProbeSuccesses = 0;
+        host.ResetWindow();
+        return MoveTo(host, AxiosCircuitState.Closed);
+    }
+
+    /// <summary>打开并重新计时：窗口清空，恢复后从干净台账重新判，避免旧失败把刚恢复的维度立刻打回去。</summary>
+    private static AxiosCircuitTransition Reopen(HostState host)
+    {
+        host.OpenedAt = Stopwatch.GetTimestamp();
+        host.ResetWindow();
+        return MoveTo(host, AxiosCircuitState.Open);
     }
 
     /// <summary>计数维度：<see cref="KeySelector"/> 优先，回退到 <see cref="AxiosCircuitContext.Host"/>。</summary>
@@ -326,13 +435,15 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
             switch (state.State)
             {
                 case AxiosCircuitState.Closed:
-                    if (Volatile.Read(ref state.Failures) == 0)
+                    // 窗口里还留着一笔失败就不算「空闲」：连续失败数可能刚被一次成功清零，
+                    // 但它的失败率台账仍然有效，丢掉等于把这条维度的判定重置成全新维度。
+                    if (state.HasRecentFailures)
                     {
-                        closedIdle = pair.Key;
+                        closed ??= pair.Key;
                     }
                     else
                     {
-                        closed ??= pair.Key;
+                        closedIdle = pair.Key;
                     }
 
                     break;
@@ -499,6 +610,90 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         /// <summary>本次打开的时刻（<see cref="Stopwatch.GetTimestamp"/>）。</summary>
         public long OpenedAt;
+
+        /// <summary>
+        /// 半开态已连续成功多少次（慢启动的进度）。清零时机只有两处：探测失败，以及下次从
+        /// <see cref="AxiosCircuitState.Open"/> 转入半开（进度不跨轮沿用）；被忽略的结果不动它。
+        /// </summary>
+        public int ProbeSuccesses;
+
+        /// <summary>滚动窗口：<c>0</c> = 成功，<c>1</c> = 失败。惰性分配，<c>WindowSize</c> 改了就重建。</summary>
+        private byte[]? _window;
+
+        private int _windowIndex;
+
+        private int _windowCount;
+
+        private int _windowFailures;
+
+        /// <summary>是否还有「近期失败」的账：连续失败数，或窗口里的失败样本，任一非零。</summary>
+        /// <remarks>
+        /// 淘汰优先级用。无锁读（允许看到旧值）：最坏是把一条「刚记上失败」的维度当成空闲丢掉，
+        /// 而那只发生在满 <see cref="MaxTrackedHosts"/> 需要腾位的时候 —— 与「优先丢真正空闲的那条」相比，
+        /// 这点误差换掉一把锁是划算的（命中该维度时它会重新建账）。
+        /// </remarks>
+        public bool HasRecentFailures => Volatile.Read(ref Failures) > 0 || Volatile.Read(ref _windowFailures) > 0;
+
+        /// <summary>把一次结果记进滚动窗口；<paramref name="windowSize"/> <c>&lt;= 0</c> 表示关掉失败率判定。</summary>
+        public void PushWindow(bool success, int windowSize)
+        {
+            if (windowSize <= 0)
+            {
+                return;
+            }
+
+            if (_window is null || _window.Length != windowSize)
+            {
+                // 运行中改了 WindowSize：按新容量重建，旧样本作废（冷路径，且在 Gate 内）。
+                _window = new byte[windowSize];
+                _windowIndex = 0;
+                _windowCount = 0;
+                _windowFailures = 0;
+            }
+
+            if (_windowCount == _window.Length)
+            {
+                // 覆盖最老的一条：它若是一笔失败，先从计数里扣掉。
+                if (_window[_windowIndex] != 0)
+                {
+                    _windowFailures--;
+                }
+            }
+            else
+            {
+                _windowCount++;
+            }
+
+            _window[_windowIndex] = success ? (byte)0 : (byte)1;
+
+            if (!success)
+            {
+                _windowFailures++;
+            }
+
+            _windowIndex = (_windowIndex + 1) % _window.Length;
+        }
+
+        /// <summary>窗口内失败率是否达到阈值；样本不足 <paramref name="minimumSamples"/> 时返回 <c>false</c>。</summary>
+        public bool WindowTrips(int minimumSamples, double threshold)
+        {
+            if (minimumSamples < 1 || _windowCount < minimumSamples)
+            {
+                return false;
+            }
+
+            // 阈值口径：ceil(样本数 × 比例)。20 个样本、0.5 → 10 次失败即打开。
+            var needed = (int)Math.Ceiling(_windowCount * threshold);
+            return _windowFailures >= needed;
+        }
+
+        /// <summary>清空窗口（打开 / 恢复时重新记账）；数组保留复用，不在热路径上放内存。</summary>
+        public void ResetWindow()
+        {
+            _windowCount = 0;
+            _windowFailures = 0;
+            _windowIndex = 0;
+        }
 
         /// <summary>
         /// 是否仍在跟踪表里（<see cref="CircuitBreaker.Unregister"/> 之后为 <c>false</c>）。
