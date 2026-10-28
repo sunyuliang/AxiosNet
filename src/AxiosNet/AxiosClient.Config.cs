@@ -157,10 +157,15 @@ public sealed partial class AxiosClient
         {
             merged.Limits.MergeFrom(incomingLimits);
 
-            // 并发上限属实例级：库产出的配置里它是来源实例的生效值，不搬过来；其余限制项照常合并。
+            // 并发与排队上限同属实例级：库产出的配置里它们是来源实例的生效值，不搬过来；其余限制项照常合并。
+            // 值之外还要还原 *Set 标记：闸门校验按它区分「本次没表态」与「显式要求 null」。
             if (instanceSourced)
             {
-                merged.Limits.MaxConcurrentRequests = Defaults.LimitsOrNull?.MaxConcurrentRequests;
+                var ownLimits = Defaults.LimitsOrNull;
+                merged.Limits.MaxConcurrentRequests = ownLimits?.MaxConcurrentRequests;
+                merged.Limits.MaxConcurrentRequestsSet = ownLimits?.MaxConcurrentRequestsSet ?? false;
+                merged.Limits.MaxQueueLength = ownLimits?.MaxQueueLength;
+                merged.Limits.MaxQueueLengthSet = ownLimits?.MaxQueueLengthSet ?? false;
             }
         }
 

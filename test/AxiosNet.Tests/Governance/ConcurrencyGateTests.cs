@@ -437,6 +437,82 @@ public sealed class ConcurrencyGateTests
     }
 
     [Fact]
+    public async Task ReplayingConfigWithQueueLengthFromAnotherInstance_KeepsTargetQueueCap()
+    {
+        await using var server = SlowServer(delayMs: 0);
+
+        // 来源实例：并发 2、排队上限 1；目标实例：并发 2、排队上限 3
+        using var source = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
+        using var target = LimitedClient(maxConcurrency: 2, maxQueueLength: 3);
+
+        var first = await source.GetAsync(server.Url + "x");
+
+        // 排队上限与并发上限同属实例级：回放不该把来源实例的 1 搬过来（否则撞上「上限不同」）
+        var replayed = await target.RequestAsync(first.Config!);
+        Assert.Equal(200, replayed.Status);
+
+        // 目标闸门仍是 (2, 3)
+        await target.GetAsync(server.Url + "restate", c => c.Limits.MaxQueueLength = 3);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            target.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = 1));
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
+    public async Task ReplayedQueueLength_DoesNotPinSourceCapOnTargetGate()
+    {
+        await using var server = SlowServer(delayMs: 0);
+
+        // 来源实例带排队上限，目标实例没设：回放不该把 1 悄悄钉在目标的闸门上
+        using var source = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
+        using var target = LimitedClient(maxConcurrency: 2);
+
+        var first = await source.GetAsync(server.Url + "x");
+        Assert.Equal(200, (await target.RequestAsync(first.Config!)).Status);
+
+        // 目标闸门是 (2, 不限)：显式要「不限」放行，显式写 1 报错
+        await target.GetAsync(server.Url + "y", c => c.Limits.MaxQueueLength = null);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            target.GetAsync(server.Url + "z", c => c.Limits.MaxQueueLength = 1));
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
+    public async Task PerRequestQueueLength_DoesNotPoisonLaterRequests()
+    {
+        await using var server = SlowServer(delayMs: 0);
+
+        // 实例默认只设并发上限：闸门由「这一次带排队上限的请求」建出来
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Limits = new() { MaxConcurrentRequests = 2 }
+        });
+
+        await client.GetAsync(server.Url + "first", c => c.Limits.MaxQueueLength = 1);
+
+        // 后续请求没提排队上限不等于「要求不限」：闸门照用
+        await client.GetAsync(server.Url + "plain");
+        await client.GetAsync(server.Url + "concurrency-only", c => c.Limits.MaxConcurrentRequests = 2);
+        await client.GetAsync(server.Url + "restate", c => c.Limits.MaxQueueLength = 1);
+    }
+
+    [Fact]
+    public async Task PerRequestNullQueueLength_AgainstGateWithCap_Throws()
+    {
+        await using var server = SlowServer(delayMs: 0);
+        using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
+
+        await client.GetAsync(server.Url + "warmup");
+
+        // 显式 null 是「要求不限排队」：与实例级的 1 不一致，照样报错，不能当成「没表态」静默放行
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = null));
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
     public async Task QueueTimeout_IsNotRetriedByDefaultPolicy()
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -478,6 +554,21 @@ public sealed class ConcurrencyGateTests
         await client.GetAsync(server.Url + "warmup");
 
         client.Defaults.Limits.MaxConcurrentRequests = 4;
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
+    public async Task RaisedQueueLengthAfterGateCreated_ThrowsInsteadOfSilentlyIgnoring()
+    {
+        await using var server = SlowServer(delayMs: 0);
+        using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
+
+        await client.GetAsync(server.Url + "warmup");
+
+        // 实例默认表过态（1），构造后改成 3 同样撞上已固化的闸门：不能因为「本次没按请求写」就静默放过
+        client.Defaults.Limits.MaxQueueLength = 3;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);

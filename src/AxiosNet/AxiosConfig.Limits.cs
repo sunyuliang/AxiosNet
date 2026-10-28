@@ -87,7 +87,9 @@ public sealed partial class AxiosConfig
         /// <remarks>
         /// 计数对象是「正在等槽位的尝试」而不是逻辑请求：重试 / 备用端点 / 对冲的每次尝试各排一次队。
         /// 与 <see cref="MaxConcurrentRequests"/> 一样是实例级配置：在首个受限请求时固定，按请求写不同的值抛
-        /// <c>ERR_BAD_OPTION_VALUE</c>。被拒的请求不进排队水位（它没有真的等过），但要计入闸门拒绝指标。
+        /// <c>ERR_BAD_OPTION_VALUE</c>。按请求没提这一项视为「本次没表态」，沿用闸门的排队上限；
+        /// 显式写 <c>null</c> 是「要求不限」，与闸门的值不同照样报错。
+        /// 被拒的请求不进排队水位（它没有真的等过），但要计入闸门拒绝指标。
         /// </remarks>
         public int? MaxQueueLength
         {

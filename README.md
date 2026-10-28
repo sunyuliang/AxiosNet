@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1538%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1543%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -418,7 +418,7 @@ await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // 
 - 两者都是「入口太挤」而不是「下游失败」：默认策略不重试、也不换备用端点——换端点解决不了本实例的槽位竞争，调用方退避后再试。
 - 中途某次尝试撞上闸门拒绝时，如果前面已经有真实失败，抛出的仍是那条真实失败（与对冲同一口径）：「没排上队」不会盖掉能定位问题的故障。
 - 拒绝计数在 `axiosnet.client.gate.rejections`（`axiosnet.gate.reason` = `queue_timeout` / `queue_full`），可与 `gate.queue_depth` 一起看背压水位。
-- `MaxQueueLength` 与 `MaxConcurrentRequests` 一起在首个受限请求时固化：按请求写不同值、或构造后改 `Defaults` 都抛 `ERR_BAD_OPTION_VALUE`；要「不排队」用 `QueueTimeout = TimeSpan.Zero`。
+- `MaxQueueLength` 与 `MaxConcurrentRequests` 一起在首个受限请求时固化：按请求写不同值、或构造后改 `Defaults` 都抛 `ERR_BAD_OPTION_VALUE`（按请求没提这一项不算表态，沿用闸门的值）；要「不排队」用 `QueueTimeout = TimeSpan.Zero`。
 - 排队**不计入** `Timeout`（重试每次尝试各自计一次），排队期间可用 `CancellationToken` 取消。
 - 槽位覆盖「真正在途」全程：重试每次尝试各自取槽（退避不占位），**流式响应一直占到正文流释放**。
 - **自锁风险**：在拦截器 / 进度回调里用同一实例发子请求会互抢槽位，请给 `QueueTimeout` 设上限或换实例。
@@ -1299,9 +1299,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1479 | `net8.0` / `net6.0` | 2958 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1484 | `net8.0` / `net6.0` | 2968 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1538** | | **3076** |
+| **合计** | **1543** | | **3086** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

@@ -340,26 +340,27 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>解析（必要时懒创建）本实例的并发闸门。信号量容量创建时固定、无法重建，所以「本次生效上限 ≠ 闸门容量」一律报错。未设置时不建闸门；实例已有闸门时按闸门走（<c>null</c> 视为「本次没表态」）。</summary>
+    /// <summary>解析（必要时懒创建）本实例的并发闸门。信号量容量创建时固定、无法重建，所以「本次生效上限 ≠ 闸门容量」一律报错。未设置时不建闸门；实例已有闸门时按闸门走（并发为 <c>null</c>、排队上限未表态均视为「本次没表态」）。</summary>
     private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
     {
         var requested = config.LimitsOrNull?.MaxConcurrentRequests;
         var requestedQueueLength = config.LimitsOrNull?.MaxQueueLength;
+
+        // 排队上限按 *Set 判断，不看值：实例默认没设排队上限时，闸门里的值来自某一次按请求的设置，
+        // 拿合并结果里的 null 去比，会把后续每条没提排队上限的请求都判成「不一致」。
+        var queueLengthStated = config.LimitsOrNull?.MaxQueueLengthSet ?? false;
         var existing = Volatile.Read(ref _gate);
 
         if (existing is not null)
         {
-            if (requested is int value)
+            if (requested is int value && value != existing.MaxConcurrency)
             {
-                if (value != existing.MaxConcurrency)
-                {
-                    throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
-                }
+                throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
+            }
 
-                if (requestedQueueLength != existing.MaxQueueLength)
-                {
-                    throw QueueLengthMismatch(config, requestedQueueLength, existing.MaxQueueLength);
-                }
+            if (queueLengthStated && requestedQueueLength != existing.MaxQueueLength)
+            {
+                throw QueueLengthMismatch(config, requestedQueueLength, existing.MaxQueueLength);
             }
 
             return existing;
@@ -384,7 +385,7 @@ public sealed partial class AxiosClient
             throw ConcurrencyMismatch(config, limit, winner.MaxConcurrency);
         }
 
-        if (winner.MaxQueueLength != requestedQueueLength)
+        if (queueLengthStated && winner.MaxQueueLength != requestedQueueLength)
         {
             throw QueueLengthMismatch(config, requestedQueueLength, winner.MaxQueueLength);
         }

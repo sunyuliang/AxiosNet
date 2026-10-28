@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1538%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1543%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -418,7 +418,7 @@ await client.GetAsync("fast", c => c.Limits.QueueTimeout = TimeSpan.Zero);   // 
 - Both are "the entrance is crowded", not "the downstream failed": the default policy does not retry and does not fail over — another endpoint cannot fix local slot contention, so the caller should back off and try again.
 - When a later attempt is rejected at the gate after an earlier real failure, the real failure is the one surfaced (same rule as hedging): "no queue slot" never hides the fault that explains the request.
 - Rejections are counted by `axiosnet.client.gate.rejections` (`axiosnet.gate.reason` = `queue_timeout` / `queue_full`); watch it together with `gate.queue_depth` for backpressure level.
-- `MaxQueueLength` is fixed together with `MaxConcurrentRequests` on the first gated request: a different per-request value, or mutating `Defaults` after construction, throws `ERR_BAD_OPTION_VALUE`. For "never queue" use `QueueTimeout = TimeSpan.Zero`.
+- `MaxQueueLength` is fixed together with `MaxConcurrentRequests` on the first gated request: a different per-request value, or mutating `Defaults` after construction, throws `ERR_BAD_OPTION_VALUE` (a request that never mentions this option is not a statement, so the gate's value stands). For "never queue" use `QueueTimeout = TimeSpan.Zero`.
 - Queueing **does not** count against `Timeout` (each retry attempt gets its own) but **does** count against `Deadline`; it can be cancelled with a `CancellationToken`.
 - A slot covers the whole in-flight span: each retry attempt takes one (backoff does not hold it), and **a streaming response holds it until the body stream is disposed**.
 - **Self-deadlock risk**: sending a child request on the same instance from inside an interceptor or progress callback competes for the same slots. Set a `QueueTimeout` or use a separate instance.
@@ -1301,9 +1301,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1479 | `net8.0` / `net6.0` | 2958 |
+| `AxiosNet.Tests` (core + declarative) | 1484 | `net8.0` / `net6.0` | 2968 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1538** | | **3076** |
+| **Total** | **1543** | | **3086** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
