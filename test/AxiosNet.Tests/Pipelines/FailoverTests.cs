@@ -381,7 +381,9 @@ public sealed class FailoverTests
     [Fact]
     public async Task Failover_SkipsEndpointThatCannotRunTheRequestedHttpVersion()
     {
-        // 严格 h3 的护栏依赖本机 QUIC：环境不支持时连主端点都发不出去，这个用例无从构造。
+        // 「跳过明文端点之后 https 镜像仍拿到请求」必须本机有 QUIC 才构造得出来：严格 h3 下所有 https 端点
+        // 都要过 Http3Support 这道判据，无 QUIC 的机器上它们会被全部跳过，只剩「全被跳过」一种结果。
+        // 所以本机空跑；跳过逻辑本身由 Failover_SkipsPlaintextEndpoint_UnderStrictHttp3 覆盖（不依赖 QUIC）。
         if (!Http3Support.IsSupported)
         {
             return;
@@ -476,6 +478,87 @@ public sealed class FailoverTests
         using var retargeted = Attempt.CloneRequest(template, new Uri("https://mirror.example.com/v1/users"));
         Assert.Null(retargeted.Headers.Host);
         Assert.True(retargeted.Options.TryGetValue(new HttpRequestOptionsKey<bool>("probe"), out var copied) && copied);
+    }
+
+    [Fact]
+    public async Task Failover_SkipsEndpointThatResolvesToTheSameUrl()
+    {
+        await using var primary = TestHttpServer.Start(_ =>
+            new TestResponse(503, Body: Array.Empty<byte>()));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+
+            // 照抄 BaseAddress 当备用端点：拼出来的就是当前地址，换过去等于原地重发。
+            Failover = new() { Endpoints = new[] { new Uri(primary.Url) } }
+        });
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
+        Assert.Single(primary.Received);
+    }
+
+    [Fact]
+    public async Task Failover_SkipsPlaintextEndpoint_UnderStrictHttp3()
+    {
+        // 严格 h3 + 明文端点是不可能成立的组合，护栏在发请求前就拒 —— 与 QUIC 能力无关，所以这条在任何机器上都真跑。
+        // 直接测中间件：走整个客户端的话，无 QUIC 的机器上「主端点 https + 严格 h3」会先被同一套护栏拦掉，只能空跑。
+        var config = new AxiosConfig
+        {
+            Failover = new()
+            {
+                Endpoints = new[] { new Uri("http://plain-a.test/"), new Uri("http://plain-b.test/") }
+            }
+        };
+
+        var sent = new List<Uri>();
+        AxiosAttemptHandler next = (request, _) =>
+        {
+            sent.Add(request.RequestUri!);
+            throw AxiosException.Network(config, request, new HttpRequestException("主端点建连失败"));
+        };
+
+        using var template = new HttpRequestMessage(HttpMethod.Get, "https://primary.test/x")
+        {
+            Version = HttpVersion.Version30,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact
+        };
+
+        var handler = Attempt.Failover(next);
+        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null);
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(async () => await handler(template, ctx));
+
+        // 两个端点都被跳过（一个字节都没发），最终抛的是主端点那条真实失败，而不是配置错误。
+        Assert.Equal(AxiosException.ErrNetwork, exception.Code);
+        Assert.Equal(new[] { "https://primary.test/x" }, sent.Select(uri => uri.AbsoluteUri));
+    }
+
+    [Fact]
+    public async Task Failover_WithRetryAndHedging_SendsAttemptsTimesEndpointsTimesBranches()
+    {
+        await using var primary = TestHttpServer.Start(_ =>
+            new TestResponse(503, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ =>
+            new TestResponse(503, Body: Array.Empty<byte>()));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
+            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },
+            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+        });
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        // 顺序契约：重试最外 × 备用端点居中 × 对冲最内，次数就是三者相乘。
+        // 全失败没有胜者，所以每条分支都会真的跑完，计数确定（不会因取消少几条）。
+        Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
+        Assert.Equal(4, primary.Received.Count);
+        Assert.Equal(4, mirror.Received.Count);
     }
 
     /// <summary>主端点回 5xx、其余端点回 200，并记下每条真正发出去的地址（用来证明被跳过的端点一个字节都没发）。</summary>

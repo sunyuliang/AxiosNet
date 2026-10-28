@@ -19,8 +19,9 @@ public static partial class Attempt
     /// <para>
     /// 未配置（端点表为 <c>null</c> / 空）时是纯直通。4xx、<c>ERR_QUEUE_TIMEOUT</c>、配置 / 编程错误与取消
     /// 都不换端点 —— 换镜像改变不了它们；<c>ERR_CIRCUIT_OPEN</c> 换（熔断按端点独立成账）。
-    /// 换端点要求正文能按顺序重放，与重试同一份要求；跑不了当前 HTTP 版本的端点（如明文镜像 + 严格 h3）
-    /// 直接跳过并继续下一个，全部端点都不可用时才把第一条错误抛出。
+    /// 换端点要求正文能按顺序重放，与重试同一份要求；跑不了当前 HTTP 版本的端点（如明文镜像 + 严格 h3）、
+    /// 以及拼出来就是当前地址的端点（与请求同 origin、同路径前缀）都直接跳过并继续下一个，
+    /// 全部端点都不可用时才把第一条错误抛出。
     /// 流式响应只在响应头阶段能换端点：正文交给调用方之后，中途断流不会再换端点。
     /// </para>
     /// </remarks>
@@ -58,6 +59,12 @@ public static partial class Attempt
             }
 
             var uri = round == 0 ? null : MirrorUri(template.RequestUri!, endpoints[round - 1]);
+
+            // 端点拼出来就是当前地址（端点与请求同 origin、同路径前缀）：换过去等于原地重发，跳过。
+            if (uri is not null && uri.Equals(template.RequestUri))
+            {
+                continue;
+            }
 
             // 换端点会换掉 scheme（https → http 很常见）：h3 的可行性只对原目标判过，这里按同一套护栏重判，
             // 否则严格策略会退化成发送时的 ERR_NETWORK，调用方看不出是配置问题。
