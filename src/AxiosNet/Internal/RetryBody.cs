@@ -1,8 +1,8 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 重试时的请求体重放：记住正文里各个流的起点，每次重试前拨回去。
-/// 重试复用同一份 <see cref="HttpContent"/>，来自流的正文第二次发送时流已在末尾，
+/// 重发时的请求体重放：记住正文里各个流的起点，每次重发前拨回去。
+/// 重试与备用端点复用同一份 <see cref="HttpContent"/>，来自流的正文第二次发送时流已在末尾，
 /// 因此不可 seek 的流在请求发出之前就被拒绝（<c>ERR_BAD_OPTION_VALUE</c>）。
 /// </summary>
 internal sealed class RetryBody
@@ -68,7 +68,7 @@ internal sealed class RetryBody
         return streams.Count == 0 ? null : new RetryBody(streams);
     }
 
-    /// <summary>把所有流拨回记录下来的起点（第二次及以后的重试前调用）。</summary>
+    /// <summary>把所有流拨回记录下来的起点（第二次及以后的发送前调用）。</summary>
     /// <exception cref="AxiosException">流已关闭或不支持定位（<c>ERR_BAD_OPTION_VALUE</c>）。</exception>
     public void Rewind(AxiosConfig config)
     {
@@ -82,9 +82,9 @@ internal sealed class RetryBody
             {
                 // 不把裸异常漏给调用方：库内所有失败都落在统一错误模型里。
                 throw AxiosException.InvalidOption(
-                    "重试前无法把请求正文的流拨回起点：流可能已被关闭，或不支持定位（CanSeek）。"
-                    + "开启重试要求正文可重放，请改用 byte[] / string / 业务对象，"
-                    + "或确保流在整个请求（含重试）期间保持打开且可 seek。", config, ex);
+                    "重试 / 换端点前无法把请求正文的流拨回起点：流可能已被关闭，或不支持定位（CanSeek）。"
+                    + "开启重试或备用端点要求正文可重放，请改用 byte[] / string / 业务对象，"
+                    + "或确保流在整个请求（含重试 / 换端点）期间保持打开且可 seek。", config, ex);
             }
         }
     }
@@ -111,8 +111,8 @@ internal sealed class RetryBody
 
     private static AxiosException NotReplayable(AxiosConfig config, string what)
         => AxiosException.InvalidOption(
-            $"开启重试要求请求体能重发，但当前 data 是{what}："
-            + "重试时第二次发送发不出完整正文（只会发出空内容，或直接报「流已被消费」）。"
+            $"开启重试或备用端点要求请求体能重发，但当前 data 是{what}："
+            + "重发时第二次发送发不出完整正文（只会发出空内容，或直接报「流已被消费」）。"
             + "请改用 byte[] / string / 业务对象 / FormFile，或先把内容读进可 seek 的 MemoryStream / FileStream；"
             + "HttpContent 形态（尤其 StreamContent）库无法回拨，请换成上述可重放形态。", config);
 }

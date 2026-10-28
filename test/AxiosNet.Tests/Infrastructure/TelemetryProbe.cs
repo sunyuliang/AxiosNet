@@ -216,6 +216,7 @@ internal sealed class TelemetryProbe : IDisposable
         AxiosRequestStartEvent start => Matches(start.Uri.AbsolutePath),
         AxiosRequestStopEvent stop => Matches(stop.Uri.AbsolutePath),
         AxiosRequestFailedEvent failed => Matches(failed.Uri.AbsolutePath),
+        AxiosAttemptEvent attempt => Matches(attempt.Uri.AbsolutePath),
         // 重试事件没有 Uri：按配置里的请求地址匹配（测试都用 server.Url + path 的绝对地址）
         AxiosRetryContext retry => Matches(retry.Config?.Url),
         _ => false

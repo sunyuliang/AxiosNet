@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 
 namespace AxiosNet.Telemetry;
@@ -32,6 +33,18 @@ public static class AxiosTelemetry
 
     /// <summary>事件名：一次失败尝试后决定重试（载荷 <see cref="AxiosRetryContext"/>）。</summary>
     public const string RetryEventName = "AxiosNet.Retry";
+
+    /// <summary>
+    /// 事件名：一次尝试成功结束（载荷 <see cref="AxiosAttemptEvent"/>）。
+    /// 只有链上装了 <see cref="Attempt.Audit"/> 时才产生。
+    /// </summary>
+    public const string AttemptStopEventName = "AxiosNet.AttemptStop";
+
+    /// <summary>
+    /// 事件名：一次尝试失败结束（载荷 <see cref="AxiosAttemptEvent"/>）。
+    /// 只有链上装了 <see cref="Attempt.Audit"/> 时才产生。
+    /// </summary>
+    public const string AttemptFailedEventName = "AxiosNet.AttemptFailed";
 
     /// <summary>指标名：逻辑请求耗时直方图（单位秒，含重试与等待）。</summary>
     public const string RequestDurationInstrumentName = "axiosnet.client.request.duration";
@@ -520,13 +533,72 @@ public static class AxiosTelemetry
     }
 
     /// <summary>
+    /// 尝试审计是否值得运行：本次请求没关遥测，且至少有一个尝试事件订阅者。
+    /// 返回 <c>false</c> 时 <see cref="Attempt.Audit"/> 直接走下一环，不建状态机、不取时间戳。
+    /// </summary>
+    internal static bool IsAttemptAuditEnabled(AxiosConfig? config)
+        => IsEnabled(config)
+           && (Listener.IsEnabled(AttemptStopEventName) || Listener.IsEnabled(AttemptFailedEventName));
+
+    /// <summary>一次尝试成功：发出 <see cref="AttemptStopEventName"/>（带状态码与本次尝试耗时）。</summary>
+    internal static void AttemptSucceeded(in AxiosAttemptContext context, int? status, long startTimestamp)
+    {
+        if (!Listener.IsEnabled(AttemptStopEventName))
+        {
+            return;
+        }
+
+        try
+        {
+            Emit(AttemptStopEventName, new AxiosAttemptEvent(
+                context.AttemptNumber,
+                context.EndpointIndex,
+                context.Config.Method,
+                context.Uri,
+                TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
+                status,
+                errorCode: null,
+                exception: null));
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>一次尝试失败：发出 <see cref="AttemptFailedEventName"/>（带错误码 / 状态码与本次尝试耗时）。</summary>
+    internal static void AttemptFailed(in AxiosAttemptContext context, Exception exception, long startTimestamp)
+    {
+        if (!Listener.IsEnabled(AttemptFailedEventName))
+        {
+            return;
+        }
+
+        try
+        {
+            var axiosException = exception as AxiosException;
+            Emit(AttemptFailedEventName, new AxiosAttemptEvent(
+                context.AttemptNumber,
+                context.EndpointIndex,
+                context.Config.Method,
+                context.Uri,
+                TimeSpan.FromSeconds(ElapsedSeconds(startTimestamp)),
+                axiosException?.Status,
+                axiosException?.Code,
+                exception));
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
     /// 发一条诊断事件；调用前必须先用 <see cref="DiagnosticListener.IsEnabled(string)"/> 判定，因为载荷对象有分配。
     /// </summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
         Justification = "载荷是本库的公开事件类型（AxiosRequestStartEvent / AxiosRequestStopEvent / "
-            + "AxiosRequestFailedEvent / AxiosRetryContext），订阅方直接按类型读属性、不做反射；"
+            + "AxiosRequestFailedEvent / AxiosAttemptEvent / AxiosRetryContext），订阅方直接按类型读属性、不做反射；"
             + "DiagnosticSource.Write 要求「载荷类型静态可发现」是针对反射式订阅方的约束，此处不适用。")]
     private static void Emit(string name, object payload)
     {

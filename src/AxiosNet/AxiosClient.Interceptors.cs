@@ -7,7 +7,7 @@ namespace AxiosNet;
 // AxiosClient 的响应拦截器责任链与短路响应的交付。
 public sealed partial class AxiosClient
 {
-    /// <summary>阶段 6 —— 发送：尝试管线（重试 / 熔断 / 闸门 / 终端），外面按注册顺序套上响应拦截器责任链。管线在链内，拦截器只看到最终结果；返回的 <c>StreamOwner</c> 是流式正文的所有权凭证。</summary>
+    /// <summary>阶段 6 —— 发送：尝试管线（重试 / 备用端点 / 熔断 / 对冲 / 闸门 / 终端），外面按注册顺序套上响应拦截器责任链。管线在链内，拦截器只看到最终结果；返回的 <c>StreamOwner</c> 是流式正文的所有权凭证。</summary>
     private ValueTask<AxiosAttemptResult> RunResponseInterceptorsAsync(
         HttpRequestMessage template,
         AxiosAttemptContext ctx)
@@ -34,7 +34,7 @@ public sealed partial class AxiosClient
 
         try
         {
-            // 责任链的末端：真正发送（重试 / 熔断 / 闸门都在这一层里面）
+            // 责任链的末端：真正发送（重试 / 备用端点 / 熔断 / 对冲 / 闸门都在这一层里面）
             Func<Task<AxiosResponse>> invoker = async () =>
             {
                 var attempt = AxiosAttemptResult.Ensure(

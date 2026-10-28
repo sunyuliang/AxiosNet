@@ -4,7 +4,7 @@ namespace AxiosNet.Pipeline;
 
 /// <summary>
 /// 「一次尝试」的中间件链：<b>不可变</b>，每个编辑方法都返回新实例。
-/// 默认链是 <c>[Retry, Circuit, Gate]</c>，索引 0 最外层、末位最内层；
+/// 默认链是 <c>[Retry, Failover, Circuit, Hedging, Gate]</c>，索引 0 最外层、末位最内层；
 /// 真正的发送（终端）恒在最内层，不在列表里，也换不掉。
 /// </summary>
 /// <remarks>
@@ -32,11 +32,14 @@ public sealed class AxiosAttemptPipeline
     }
 
     /// <summary>
-    /// 默认链：<c>[Retry, Circuit, Gate]</c>。顺序是契约 —— 重试在最外层，于是每次尝试都会重过一遍
-    /// 熔断与闸门；熔断又排在闸门之前，被拒的请求不占槽位。
-    /// 换成别的顺序会换掉这些语义（熔断只记一次、槽位被整个重试序列占住），重排前先想清楚要哪个。
+    /// 默认链：<c>[Retry, Failover, Circuit, Hedging, Gate]</c>。顺序是契约 ——
+    /// 重试在最外层，于是每次尝试都会重过一遍备用端点、熔断、对冲与闸门；
+    /// 备用端点与熔断都在对冲之外（每个端点各得一组对冲分支，熔断对整组分支只记一笔）；
+    /// 闸门在对冲之内，被熔断拒绝的请求不占槽位，而每条对冲分支各占一个。
+    /// 换成别的顺序会换掉这些语义（熔断按分支记账、槽位被整个重试序列占住），重排前先想清楚要哪个。
     /// </summary>
-    public static AxiosAttemptPipeline Default { get; } = new(new[] { Attempt.Retry, Attempt.Circuit, Attempt.Gate });
+    public static AxiosAttemptPipeline Default { get; } =
+        new(new[] { Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate });
 
     /// <summary>链上的中间件，索引 0 最外层（只读视图，改不了）。</summary>
     public IReadOnlyList<AxiosAttemptMiddleware> Middleware => _view;
@@ -44,7 +47,7 @@ public sealed class AxiosAttemptPipeline
     /// <summary>
     /// 整体重排：按给出的顺序建链（第一个 = 最外层）。
     /// 把自定义中间件放在 <see cref="Attempt.Retry"/> 之前会让它变成「每次请求一次」，
-    /// 与响应拦截器同构 —— 除非你确实需要（例如对冲必须包住重试），否则请改用响应拦截器。
+    /// 与响应拦截器同构 —— 除非你确实需要在每次请求上做一次整体编排，否则请改用响应拦截器。
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="middleware"/> 或其元素为 <c>null</c>。</exception>
     /// <exception cref="ArgumentException">同一个内置中间件出现了多次（嵌套重试 / 双闸门几乎都是写错）。</exception>
@@ -151,7 +154,7 @@ public sealed class AxiosAttemptPipeline
         {
             throw new ArgumentException(
                 "锚点中间件不在当前链上：请先确认它没被 Replace / Remove 掉；"
-                + "内置项请用 Attempt.Retry / Attempt.Circuit / Attempt.Gate 引用。",
+                + "内置项请用 Attempt.Retry / Attempt.Failover / Attempt.Hedging / Attempt.Circuit / Attempt.Gate 引用。",
                 paramName);
         }
 
@@ -189,7 +192,7 @@ public sealed class AxiosAttemptPipeline
         return copy;
     }
 
-    /// <summary>内置项重复出现基本都是写错（嵌套重试 / 双闸门）；自定义中间件重复不做限制。</summary>
+    /// <summary>内置项重复出现基本都是写错（嵌套重试 / 双闸门 / 双审计 / 双对冲）；自定义中间件重复不做限制。</summary>
     private static void RejectDuplicateBuiltIns(AxiosAttemptMiddleware[] middleware)
     {
         for (var i = 0; i < middleware.Length; i++)
@@ -205,7 +208,7 @@ public sealed class AxiosAttemptPipeline
                 {
                     throw new ArgumentException(
                         $"同一个内置中间件在链上出现了多次（位置 {i} 与 {j}）："
-                        + "嵌套重试 / 双闸门几乎一定不是你想要的，请检查编排。",
+                        + "嵌套重试 / 双闸门 / 双审计 / 双对冲几乎一定不是你想要的，请检查编排。",
                         nameof(middleware));
                 }
             }
@@ -214,6 +217,9 @@ public sealed class AxiosAttemptPipeline
 
     private static bool IsBuiltIn(AxiosAttemptMiddleware middleware)
         => ReferenceEquals(middleware, Attempt.Retry)
+           || ReferenceEquals(middleware, Attempt.Failover)
+           || ReferenceEquals(middleware, Attempt.Hedging)
            || ReferenceEquals(middleware, Attempt.Circuit)
-           || ReferenceEquals(middleware, Attempt.Gate);
+           || ReferenceEquals(middleware, Attempt.Gate)
+           || ReferenceEquals(middleware, Attempt.Audit);
 }

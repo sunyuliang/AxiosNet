@@ -2,13 +2,13 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1434%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-93.6%25_(branch_90.9%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1483%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.5%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
 
-An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, streaming responses, an in-flight concurrency gate, a declarative API client (models or interfaces), and OpenTelemetry instrumentation.
+An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming responses, an in-flight concurrency gate, a declarative API client (models or interfaces), and OpenTelemetry instrumentation.
 
 | Item | Value |
 | --- | --- |
@@ -29,7 +29,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) |
 | Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
-| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
+| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
 | Engineering | [Declarative API client](#declarative-api-client) · [Interface declarations](#interface-declarations) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
@@ -122,6 +122,8 @@ Four groups of capabilities; details in the linked sections.
 | In-flight gate | Cap concurrent requests and queue the rest | `c.Limits.MaxConcurrentRequests` + `QueueTimeout` |
 | Retries | Exponential backoff / jitter / `Retry-After` / idempotency gate | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | Circuit breaker | Per-host Closed/Open/HalfOpen state machine | `c.Circuit.Policy = new CircuitBreaker()` |
+| Concurrent hedging | Fire several copies of one request, first success wins | `c.Hedging.MaxHedges = 1` |
+| Backup endpoints | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | Attempt pipeline | One attempt = a composable middleware chain, pluggable and reorderable | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | Short circuit | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
 
@@ -624,9 +626,70 @@ Failure accounting matches the retry gate (**cancels and 4xx never count**):
 - The state table has a soft cap (`MaxTrackedHosts`, 512 by default): when full it only evicts entries whose loss changes no decision (closed, or open with an expired cooldown); **open / half-open entries are never dropped**.
 - Custom policies: implement `IAxiosCircuitPolicy` (`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`); `ctx` exposes `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure`. Policies **are stateful** and shared concurrently, so you own thread safety.
 
+## Concurrent hedging
+
+Retries and breakers answer "what if it fails"; hedging answers "what if it is merely slow". Off by default; `MaxHedges` is the number of **extra** branches:
+
+```csharp
+var client = Axios.Create(c =>
+{
+    c.Hedging.MaxHedges = 1;                          // first send + 1 hedge
+    c.Hedging.Delay = TimeSpan.FromMilliseconds(80);  // branch n starts at n × Delay (80ms default)
+});
+
+// per request
+await client.GetAsync("search", c => c.Hedging.MaxHedges = 2);
+await client.GetAsync("orders", c => c.Hedging.MaxHedges = 0);
+```
+
+The first send goes out immediately; every `Delay` another branch follows. **The first success wins** (elapsed time is never compared — whoever returns first), the rest are cancelled and cleaned up. If every branch fails, the failure goes to the outer retry.
+
+- **The breaker sits outside the whole group and records once**: one logical attempt = one entry, matching the retry accounting. So "one fails, one succeeds" counts as a success and "all fail" counts as a single failure — extra branches never inflate the failure count.
+- **Concurrency budget is `1 + MaxHedges` times**: each branch passes the gate and holds its own slot. Size `Limits.MaxConcurrentRequests` accordingly — too small with `QueueTimeout = Zero` makes branches fail with `ERR_QUEUE_TIMEOUT` at the gate, silently defeating the hedge (it is a latency optimisation, never a failure).
+- **Waiting for losers has no upper bound**: after a winner appears the call still waits for the losers to finish (returning earlier would keep leases and slots occupied). Built-in middleware honours `ctx.AttemptToken`; custom middleware that ignores it holds the caller hostage.
+- **`transformResponse` and response-side callbacks run once per branch** (losers included): make side-effecting transforms idempotent, or turn hedging off.
+- **These requests are sent once**, with no downgrade and no error: streaming responses (a loser's body would have no reader), non-idempotent methods (unless `HedgeNonIdempotentMethods`), bodies that cannot be replayed concurrently (`Stream` / multipart / upload progress wrappers), and requests with shared response-side state (`OnDownloadProgress` or `MaxRate > 0` — progress would be reported twice and the rate cap doubled).
+- Typed calls hedge too: each branch fills its own response object and the winner's is handed to the caller — including the status code and headers read from `config.Response`.
+- `MaxHedges` is capped at 16: more branches stop buying latency and only saturate the downstream.
+
+## Backup endpoints
+
+When the current endpoint is unusable, resend the same request against the next one; order is priority:
+
+```csharp
+var client = Axios.Create(c => c.Failover.Endpoints = new[]
+{
+    new Uri("https://backup1.example.com"),        // tried first
+    new Uri("https://backup2.example.com/api")     // then this one (path prefix allowed)
+});
+
+// disable for one request (explicit null / empty = no failover)
+await client.GetAsync("health", c => c.Failover.Endpoints = null);
+```
+
+An endpoint is a **base URL** only: it replaces the origin and path prefix, while the request's own path and query are kept. Requesting `https://primary/v1/users?page=2` with endpoint `https://mirror/api` gives `https://mirror/api/v1/users?page=2`.
+
+| Situation | Fail over? |
+| --- | --- |
+| `ERR_NETWORK` / `ECONNABORTED` (timeout) / `ERR_POOL_EXHAUSTED` | Yes |
+| 5xx (`ERR_BAD_RESPONSE` with status ≥ 500) | Yes |
+| `ERR_CIRCUIT_OPEN` | Yes — the breaker is per `host:port`, so the primary being open cannot block a backup |
+| 4xx, other `ERR_BAD_RESPONSE` (e.g. malformed body on a 2xx) | No (a mirror changes nothing) |
+| `ERR_QUEUE_TIMEOUT` | No (local slot starvation, nothing to do with the downstream) |
+| Config / programming errors, cancellation | No |
+
+- **Every retry restarts from the first endpoint**: the endpoint list lives inside retries, so one round must exhaust all endpoints before the first failure reaches the retry layer.
+- **`Timeout` is a per-endpoint, per-send budget**: same rule as retries, so 3 endpoints with 10s can take up to 30s; use a `CancellationToken` for a total budget. Upload progress also accumulates across endpoints (like a retried body — it never jumps back).
+- **The body must replay in order**: the same requirement as retries (streams must be seekable); non-seekable streams and `StreamContent` throw `ERR_BAD_OPTION_VALUE` as soon as failover is enabled.
+- **Streaming responses can only fail over at the response-head stage**: once the body is handed to the caller, a mid-stream disconnect is neither retried nor failed over (same rule as "the breaker only accounts at the response head").
+- **Endpoints must be absolute `http` / `https` URLs without query or fragment**: an endpoint is a base URL, and how an endpoint query would combine with the request query is undefined, so it is rejected with `ERR_BAD_OPTION_VALUE` (to add a parameter only on a backup endpoint, build the URL in a request interceptor).
+- **Assigning the list snapshots it**: mutating your own list afterwards does not affect the effective config; what you read back is that internal snapshot and must not be modified.
+- **Failing over re-checks the HTTP/3 guard**: an endpoint that cannot run the requested version (e.g. a plaintext mirror with a strict h3 policy) is skipped and the next one is tried; only when none is usable does it throw `ERR_BAD_OPTION_VALUE`.
+- Each failover produces one attempt event with the same `AttemptNumber` and an incremented `EndpointIndex` (see [Observability](#observability)).
+
 ## Attempt pipeline
 
-One attempt (a single send) is modelled as a composable middleware chain. The default chain is **retry → circuit breaker → gate → send**, so a per-attempt capability (observation, auditing, hedging, fallback endpoint) is one middleware away instead of another branch inside the client.
+One attempt (a single send) is modelled as a composable middleware chain. The default chain is **retry → failover → circuit breaker → hedging → gate → send**, so a per-attempt capability (observation, auditing) is one middleware away instead of another branch inside the client.
 
 ```csharp
 using AxiosNet.Pipeline;
@@ -649,9 +712,10 @@ var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) 
 using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeline: pipeline);
 ```
 
-- **`AxiosAttemptContext` is a read-only struct**: `Config` / `Uri` / `AttemptNumber` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Slot`, derivable only through `WithXxx`. It is a struct, not a class, because the chain is compiled once at construction (zero allocation per attempt) and concurrent middleware need to copy the context per branch.
+- **`AxiosAttemptContext` is a read-only struct**: `Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`, derivable only through `WithXxx`. It is a struct, not a class, because the chain is compiled once at construction (zero allocation per attempt) and concurrent middleware need to copy the context per branch.
+- **Two independent counters**: retries advance `AttemptNumber`, failover advances `EndpointIndex` (`0` = the request's own URL). Failover does not advance the attempt number, so one attempt number can carry several attempt events.
 - **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through. That is what lets the chain be frozen at construction instead of rebuilt per request.
-- **Order is the contract**: retry sits outermost, so circuit breaker and gate run again on every attempt; the breaker sits before the gate, so a rejected request never occupies a slot.
+- **Order is the contract**: retry sits outermost, so failover, the breaker, hedging and the gate run again on every attempt; failover sits outside the breaker, so each endpoint gets its own breaker accounting; the breaker sits outside hedging, so a whole branch group records once; the breaker sits before the gate, so a rejected request never occupies a slot.
 - **Reorder and remove**: `AxiosAttemptPipeline.Create(...)` lists the whole chain explicitly (first = outermost); `Remove(Attempt.Gate)` drops one. The pipeline is immutable — every edit returns a new instance. Duplicating a built-in throws.
 - **There is no "put it outermost" API**: that position runs once per request and is exactly what response interceptors already do. `InsertBefore(Attempt.Retry, ...)` refuses explicitly and points at `client.Interceptors.Response`, which additionally offers `OnRejected`, runtime add/remove, and short-circuit coverage.
 - **You do not manage the concurrency slot**: the gate releases it itself — a middleware that skips `next` (returning its own response) or throws cannot leak it. The only case where the gate does not release it is a **library-produced** streamed response: the slot travels with the body into `StreamOwner` and is released when the stream is disposed, so the request keeps occupying its quota while the body downloads. A `StreamOwner` built by a middleware is not that case: the gate still releases its own slot, and a self-built owner gets no concurrency quota.
@@ -667,8 +731,8 @@ How it divides the work with the other four extension points:
 | Shape outgoing `Data` before serialization | `transformRequest` |
 | Shape incoming `Data` after deserialization (per attempt) | `transformResponse` |
 | Shape the final response, turn an exception into a response | Response interceptor |
-| Observe or steer **each attempt**, hedge, resend elsewhere | Attempt middleware |
-| Change "how many retries / how long to back off / when to break" | The matching `Policy`, not a middleware swap |
+| Observe or steer **each attempt** (auditing included) | Attempt middleware |
+| Change "how many retries / how long to back off / when to break / whether to hedge / which endpoints" | The matching `Policy` or sub-config, not a middleware swap |
 
 ## Short circuit
 
@@ -887,6 +951,17 @@ builder.Services.AddOpenTelemetry()
 
 **Events** (`DiagnosticListener` named `AxiosNet.DiagnosticListener`): `AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`, with public payload types (`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`).
 
+**Attempt auditing** (`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`, payload `AxiosAttemptEvent`) only exists when `Attempt.Audit` is on the chain:
+
+```csharp
+var pipeline = AxiosAttemptPipeline.Default.Append(Attempt.Audit);   // after the gate, before the send
+using var client = Axios.Create(pipeline: pipeline);
+```
+
+- Covers attempts that **actually reach the send**: breaker rejections, gate queue timeouts and short circuits produce no attempt event (the audit sits inside them).
+- Event count is **endpoints × branches**: one per failover (`AttemptNumber` unchanged, `EndpointIndex` distinguishes them) and one per hedge branch; hedge losers emit no failure event (they are cleaned up, not failed).
+- Zero cost when nobody subscribes: no state machine, no timestamps.
+
 **Per-request opt-out**:
 
 ```csharp
@@ -1054,7 +1129,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |
 | `ShortCircuit` | `null` | Deliver a response without sending (this request only) |
 
-Seven sub-objects (created lazily on first access):
+Nine sub-objects (created lazily on first access):
 
 **`Serialization`** — `JsonSerializerOptions` (web style) / `ContentSerializer` (`null` = built-in JSON) / `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat` (`Brackets`)
 
@@ -1068,9 +1143,13 @@ Seven sub-objects (created lazily on first access):
 
 **`Circuit`** — `Policy` (`null` = no breaker) / `OnRejected`
 
+**`Hedging`** — `MaxHedges` (`0` = off, max 16) / `Delay` (80ms; branch n starts at `n × Delay`) / `HedgeNonIdempotentMethods` (`false`)
+
+**`Failover`** — `Endpoints` (`null` = no failover; ordered absolute `http`/`https` URLs, path prefix allowed, no query or fragment)
+
 **`Telemetry`** — `Enabled` (`null` = on) / `CaptureUrl` (`null` = capture, without the query string) / `CaptureQuery` (`null` = omit the query string)
 
-> Assigning `null` per request disables the instance's `Retry.Policy` / `Circuit.Policy` — that is a different state from "not set".
+> Assigning `null` per request disables the instance's `Retry.Policy` / `Circuit.Policy` / `Failover.Endpoints` — that is a different state from "not set".
 
 ## axios comparison
 
@@ -1096,6 +1175,7 @@ Seven sub-objects (created lazily on first access):
 | `AxiosError.code` / `isAxiosError` / `isCancel` | `AxiosException.Code` / `Axios.IsAxiosError` / `Axios.IsCancel` |
 | `axios-retry` plugin | `c.Retry.Policy` / `c.Retry.OnRetry` |
 | — (needs opossum or similar) | `c.Circuit.Policy` / `c.Circuit.OnRejected` |
+| — (needs cockatiel or similar) | `c.Hedging.MaxHedges` (concurrent hedging), `c.Failover.Endpoints` (backup endpoints) |
 | — (needs the OTel JS SDK) | Built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
 | — (axios-cache-interceptor and friends) | `c.ShortCircuit` (cache hit / mock / offline replay) |
 | — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `QueueTimeout` |
@@ -1114,7 +1194,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 45 items:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — 46 items:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1122,7 +1202,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **31 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline.
+- **32 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline, concurrent hedging and backup endpoints.
 - **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
@@ -1170,13 +1250,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1375 | `net8.0` / `net6.0` | 2750 |
+| `AxiosNet.Tests` (core + declarative) | 1424 | `net8.0` / `net6.0` | 2848 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1434** | | **2868** |
+| **Total** | **1483** | | **2966** |
 
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, short circuits, telemetry, declarative binding, interface proxies and DI registration.
+Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **93.6%**, branch coverage **90.9%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`).
+Line coverage **92.5%**, branch coverage **89.5%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`).
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1192,14 +1272,14 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 
 | Folder | What it covers |
 | --- | --- |
-| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the seven sub-objects |
+| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the nine sub-objects |
 | `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
 | `Governance/` | Concurrency gate, progress callbacks and rate limiting |
 | `Resilience/` | Retry policies and timing, circuit-breaker state machine, short circuits |
 | `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
-| `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation) |
+| `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation), concurrent hedging, backup endpoints |
 | `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
-| `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry |
+| `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry, attempt audit events |
 | `Errors/` | Error model, error codes, `ToJson` snapshot |
 | `Regression/` | Allocation guards (isolated collection + precise counting, process- or thread-wide), concurrent throughput |
 | `WebAPI/` | Declarative model binding and validation, authorization, streaming, interface proxies and startup validation |
@@ -1243,11 +1323,11 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  ├─ AxiosNet/                       # library (single target net6.0)
 │  │  ├─ Axios.cs                     # static facade
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
-│  │  ├─ AxiosConfig*.cs              # configuration (top level + seven sub-objects)
+│  │  ├─ AxiosConfig*.cs              # configuration (top level + nine sub-objects)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # request / response interceptors
-│  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / breaker / gate
+│  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / failover / breaker / hedging / gate + optional audit
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy
 │  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML implementations
@@ -1256,7 +1336,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (45 items) / DI / Aot
+├─ samples/                           # Simple (46 items) / DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/

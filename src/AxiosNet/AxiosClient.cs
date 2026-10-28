@@ -59,7 +59,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// </param>
     /// <param name="disposeHandler">释放本实例时是否一并释放注入的 <paramref name="handler"/>。</param>
     /// <param name="pipeline">
-    /// 尝试管线：<c>null</c> 用 <see cref="AxiosAttemptPipeline.Default"/>（重试 → 熔断 → 闸门 → 发送）。
+    /// 尝试管线：<c>null</c> 用 <see cref="AxiosAttemptPipeline.Default"/>（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送）。
     /// 它在构造时编译一次并固化，此后不可变；按请求定制请用请求 / 响应拦截器。
     /// </param>
     public AxiosClient(

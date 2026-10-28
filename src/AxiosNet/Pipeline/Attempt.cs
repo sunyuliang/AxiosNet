@@ -6,15 +6,17 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Pipeline;
 
 /// <summary>
-/// 内置尝试中间件的具名入口：<see cref="Retry"/> / <see cref="Circuit"/> / <see cref="Gate"/>。
-/// 它们永远在默认链上，是否真的干活由中间件自己看本次请求的生效配置决定
-/// （没配策略就直接把请求交给下一环）—— 这样链才能在客户端构造时编译一次，不必每次请求重建。
+/// 内置尝试中间件的具名入口：<see cref="Retry"/> / <see cref="Failover"/> / <see cref="Hedging"/> /
+/// <see cref="Circuit"/> / <see cref="Gate"/> 永远在默认链上，<see cref="Audit"/> 是可选内置项（要显式 `Append` 才生效）。
+/// 它们是否真的干活由中间件自己看本次请求的生效配置决定（没配策略 / 端点 / 分支数就直接把请求交给下一环）——
+/// 这样链才能在客户端构造时编译一次，不必每次请求重建。
 /// </summary>
 /// <remarks>
-/// 这里的三个中间件只是<b>调度器</b>：重试判据在 <see cref="IAxiosRetryPolicy"/>、
-/// 熔断判据在 <see cref="IAxiosCircuitPolicy"/>。要改行为请换策略，不要换中间件。
+/// 这里的默认中间件只是<b>调度器</b>：重试判据在 <see cref="IAxiosRetryPolicy"/>、
+/// 熔断判据在 <see cref="IAxiosCircuitPolicy"/>，对冲与换端点的开关在
+/// <see cref="AxiosConfig.Hedging"/> / <see cref="AxiosConfig.Failover"/>。要改行为请换策略或配置，不要换中间件。
 /// </remarks>
-public static class Attempt
+public static partial class Attempt
 {
     /// <summary>
     /// 重试：最外层的循环型中间件。每次尝试换一条新请求（正文与请求头沿用模板），
@@ -210,6 +212,7 @@ public static class Attempt
 
     /// <summary>
     /// 并发槽位：占到的槽位写进上下文交给终端，由终端统一归还（失败路径）或接管（流式成功路径）。
+    /// 排队用本次尝试的令牌，所以被放弃的尝试（例如对冲的败者）在闸门里排队时也能立刻收掉。
     /// </summary>
     /// <remarks>
     /// <b>闸门自己也要兜底归还</b>：终端只在「真的被调用」时才归还，而插在闸门之后的自定义中间件
@@ -227,7 +230,7 @@ public static class Attempt
         ConcurrencyGate gate)
     {
         var slot = await gate.AcquireAsync(
-            ctx.Config, request, ctx.ExternalToken, ctx.Config.LimitsOrNull?.QueueTimeout).ConfigureAwait(false);
+            ctx.Config, request, ctx.AttemptToken, ctx.Config.LimitsOrNull?.QueueTimeout).ConfigureAwait(false);
 
         AxiosAttemptResult result;
         try
@@ -252,9 +255,11 @@ public static class Attempt
     }
 
     /// <summary>按模板复制一条可发送的请求（请求头逐个搬运，正文沿用同一份）；用 <c>TryAddWithoutValidation</c> 避免对已校验过的头再校验一遍。</summary>
-    internal static HttpRequestMessage CloneRequest(HttpRequestMessage template)
+    /// <param name="template">请求模板（模板本身不能再发）。</param>
+    /// <param name="uri">替换后的目标地址；<c>null</c> 表示沿用模板的地址（备用端点换镜像时用）。</param>
+    internal static HttpRequestMessage CloneRequest(HttpRequestMessage template, Uri? uri = null)
     {
-        var request = new HttpRequestMessage(template.Method, template.RequestUri)
+        var request = new HttpRequestMessage(template.Method, uri ?? template.RequestUri)
         {
             Version = template.Version,
 
@@ -270,6 +275,17 @@ public static class Attempt
         request.Content = template.Content;
         return request;
     }
+
+    /// <summary>
+    /// 这次失败是不是「本次尝试被内部收掉」而不是真失败：调用方没取消，但本次尝试的令牌已被链接令牌取消。
+    /// 库内只有对冲会这么干（胜出后取消其余分支），所以这是「败者被清理」，不是下游故障 ——
+    /// 对冲据此不记失败，审计据此不发 <c>AttemptFailed</c>（否则健康请求在监控里恒有一半失败）。
+    /// 取消在库里的两种形态都要认（<see cref="OperationCanceledException"/> 与 <c>ERR_CANCELED</c>）。
+    /// </summary>
+    internal static bool IsCleanupCancellation(Exception exception, in AxiosAttemptContext ctx)
+        => !ctx.ExternalToken.IsCancellationRequested
+           && (exception is OperationCanceledException
+               || exception is AxiosException { Code: AxiosException.ErrCanceled });
 
     /// <summary>库层面的「不该重试」：次数到顶、调用方已取消、错误即取消、被熔断拦下；其余交给策略判断。</summary>
     private static bool CanRetry(AxiosRetryContext context, CancellationToken externalToken, IAxiosRetryPolicy policy)

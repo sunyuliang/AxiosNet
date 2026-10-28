@@ -125,6 +125,17 @@ public sealed partial class AxiosClient
             merged.Circuit.MergeFrom(incomingCircuit);
         }
 
+        // 对冲与备用端点同属按请求项：个别慢接口可以单独开对冲 / 换端点，不影响实例默认。
+        if (perCall.HedgingOrNull is { } incomingHedging)
+        {
+            merged.Hedging.MergeFrom(incomingHedging);
+        }
+
+        if (perCall.FailoverOrNull is { } incomingFailover)
+        {
+            merged.Failover.MergeFrom(incomingFailover);
+        }
+
         // 遥测开关同属按请求项：健康检查这类请求可以单独关掉，不影响实例默认。
         if (perCall.TelemetryOrNull is { } incomingTelemetry)
         {

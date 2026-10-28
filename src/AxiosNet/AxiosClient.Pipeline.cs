@@ -69,7 +69,7 @@ public sealed partial class AxiosClient
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try
             {
-                // 阶段 6：发送 —— 响应拦截器链 + 尝试管线（重试 / 熔断 / 闸门 / 终端，见 AxiosAttemptPipeline）。
+                // 阶段 6：发送 —— 响应拦截器链 + 尝试管线（重试 / 备用端点 / 熔断 / 对冲 / 闸门 / 终端，见 AxiosAttemptPipeline）。
                 var attempt = AxiosAttemptResult.Ensure(
                     await RunResponseInterceptorsAsync(
                         template,

@@ -9,7 +9,7 @@ using AxiosNet.Tests.Requests;
 namespace AxiosNet.Tests.Pipelines;
 
 /// <summary>
-/// 尝试管线：内置顺序（重试 → 熔断 → 闸门 → 终端）、自定义中间件的调用次数与位置、
+/// 尝试管线：内置顺序（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 终端）、自定义中间件的调用次数与位置、
 /// 编排校验（不提供「放最外层」的入口）、并发槽位的交接，以及请求头的读取。
 /// </summary>
 /// <remarks>槽位归还那几条要用队列超时来证明「额度确实回来了」，属时序敏感，故整类进 <see cref="TimingCollection"/>。</remarks>
@@ -31,12 +31,17 @@ public sealed class AttemptPipelineTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Default_IsRetryThenCircuitThenGate()
+    public void Default_IsRetryThenFailoverThenCircuitThenHedgingThenGate()
     {
-        Assert.Equal(3, AxiosAttemptPipeline.Default.Middleware.Count);
+        // 顺序是契约：重试在最外层（每次尝试重过一遍备用端点 / 熔断 / 对冲 / 闸门），
+        // 备用端点与熔断都在对冲之外（每个端点各得一组对冲分支、整组分支只记一笔熔断），
+        // 闸门在对冲之内（被拒的请求不占槽位，每条分支各占一个）。
+        Assert.Equal(5, AxiosAttemptPipeline.Default.Middleware.Count);
         Assert.Same(Attempt.Retry, AxiosAttemptPipeline.Default.Middleware[0]);
-        Assert.Same(Attempt.Circuit, AxiosAttemptPipeline.Default.Middleware[1]);
-        Assert.Same(Attempt.Gate, AxiosAttemptPipeline.Default.Middleware[2]);
+        Assert.Same(Attempt.Failover, AxiosAttemptPipeline.Default.Middleware[1]);
+        Assert.Same(Attempt.Circuit, AxiosAttemptPipeline.Default.Middleware[2]);
+        Assert.Same(Attempt.Hedging, AxiosAttemptPipeline.Default.Middleware[3]);
+        Assert.Same(Attempt.Gate, AxiosAttemptPipeline.Default.Middleware[4]);
     }
 
     [Fact]
@@ -367,9 +372,9 @@ public sealed class AttemptPipelineTests
     {
         var pipeline = AxiosAttemptPipeline.Default.InsertAfter(Attempt.Retry, Probe(new ConcurrentQueue<string>(), "x"));
 
-        Assert.Equal(4, pipeline.Middleware.Count);
+        Assert.Equal(6, pipeline.Middleware.Count);
         Assert.Same(Attempt.Retry, pipeline.Middleware[0]);
-        Assert.Same(Attempt.Circuit, pipeline.Middleware[2]);
+        Assert.Same(Attempt.Failover, pipeline.Middleware[2]);
     }
 
     [Fact]
@@ -400,11 +405,11 @@ public sealed class AttemptPipelineTests
     {
         var pipeline = AxiosAttemptPipeline.Default.Remove(Attempt.Gate);
 
-        Assert.Equal(2, pipeline.Middleware.Count);
+        Assert.Equal(4, pipeline.Middleware.Count);
         Assert.DoesNotContain(Attempt.Gate, pipeline.Middleware);
 
         // 原链不受影响：不可变，每次编辑都返回新实例
-        Assert.Equal(3, AxiosAttemptPipeline.Default.Middleware.Count);
+        Assert.Equal(5, AxiosAttemptPipeline.Default.Middleware.Count);
     }
 
     [Fact]

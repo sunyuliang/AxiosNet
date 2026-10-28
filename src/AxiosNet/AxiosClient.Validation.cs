@@ -57,10 +57,11 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 「明确要求 HTTP/3」时的前置校验：只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>，
+    /// 「明确要求 HTTP/3」时的前置护栏：只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>，
     /// <c>RequestVersionOrLower</c> 的降级是正常路径；判据是本机能力 <see cref="Http3Support"/>，做不到就报配置错误。
+    /// 换端点换掉 scheme 后按同一套护栏重判，不静默降级。
     /// </summary>
-    private static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
+    internal static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
     {
         if (version.Major < 3 || policy == HttpVersionPolicy.RequestVersionOrLower)
         {
@@ -174,7 +175,60 @@ public sealed partial class AxiosClient
             }
         }
 
-        // 熔断策略的取值范围：这些值都没有可执行语义，静默取默认值会让人以为配置生效了。
+        // 对冲：分支数与起跑延迟的取值范围。上限存在的理由是不让一次请求把下游打满。
+        if (config.HedgingOrNull is { } hedging)
+        {
+            if (hedging.MaxHedges < 0)
+            {
+                throw AxiosException.InvalidOption(
+                    $"对冲分支数 MaxHedges 不能为负（当前 {hedging.MaxHedges}）：不对冲请设为 0。", config);
+            }
+
+            if (hedging.MaxHedges > AxiosConfig.HedgingSettings.MaxHedgesLimit)
+            {
+                throw AxiosException.InvalidOption(
+                    $"对冲分支数 MaxHedges 超出上限（当前 {hedging.MaxHedges}，上限 {AxiosConfig.HedgingSettings.MaxHedgesLimit}）："
+                    + "再多分支追不回延迟，只会把下游打满。", config);
+            }
+
+            if (hedging.Delay < TimeSpan.Zero)
+            {
+                throw AxiosException.InvalidOption(
+                    $"对冲起跑延迟 Delay 不能为负（当前 {hedging.Delay}）：要同时起跑请设为 TimeSpan.Zero。", config);
+            }
+
+            if (hedging.Delay > Timeouts.Max)
+            {
+                throw AxiosException.InvalidOption(
+                    $"对冲起跑延迟 Delay 超出计时器可表示的范围（当前 {hedging.Delay}，上限约 49.7 天）："
+                    + "它按 Task.Delay 实现，更长的延迟无法表达。", config);
+            }
+        }
+
+        // 备用端点：必须是绝对 http(s) 地址，且不带 query / fragment —— 否则端点里的这部分会被静默丢掉。
+        if (config.FailoverOrNull?.Endpoints is { } endpoints)
+        {
+            for (var i = 0; i < endpoints.Count; i++)
+            {
+                if (endpoints[i] is not { IsAbsoluteUri: true } endpoint
+                    || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+                {
+                    throw AxiosException.InvalidOption(
+                        $"备用端点 Failover.Endpoints[{i}] 必须是绝对的 http / https 地址（当前 {endpoints[i]?.ToString() ?? "null"}）："
+                        + "它只替换 origin 与路径前缀，请求的 path / query 会原样接上去。", config);
+                }
+
+                if (!string.IsNullOrEmpty(endpoint.Query) || !string.IsNullOrEmpty(endpoint.Fragment))
+                {
+                    throw AxiosException.InvalidOption(
+                        $"备用端点 Failover.Endpoints[{i}] 不能带 query 或 fragment（当前 {endpoint}）："
+                        + "端点只替换 origin 与路径前缀，请求自己的 path / query 会原样接上去；"
+                        + "要让某个参数只出现在备用端点上，请改用请求拦截器按 ctx 拼 URL。", config);
+                }
+            }
+        }
+
+        // 熔断策略的取值范围：这些值都没有可执行含义，静默取默认值会让人以为配置生效了。
         if (config.CircuitOrNull?.Policy is CircuitBreaker breaker)
         {
             if (breaker.FailureThreshold < 1)

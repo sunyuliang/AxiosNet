@@ -89,3 +89,68 @@ public sealed class AxiosRequestFailedEvent
     /// <summary>本次逻辑请求的总耗时（含重试与退避等待）。</summary>
     public TimeSpan Elapsed { get; }
 }
+
+/// <summary>
+/// <c>AxiosNet.AttemptStop</c> / <c>AxiosNet.AttemptFailed</c> 事件的载荷：一次尝试（单次发送）的结果。
+/// 只有链上装了 <see cref="Pipeline.Attempt.Audit"/> 时才会产生。
+/// <para>
+/// 覆盖面取决于审计中间件的位置：<c>Default.Append(Attempt.Audit)</c> 落在闸门之后、终端之前，
+/// 因此只覆盖<b>真正到达终端的尝试</b> —— 熔断拒绝、闸门排队超时、短路响应都不会产生尝试事件。
+/// </para>
+/// <para>
+/// 事件条数：并发对冲的每条分支各一条；备用端点每换一个端点各一条（<see cref="AttemptNumber"/> 不变，
+/// 靠 <see cref="EndpointIndex"/> 区分）。对冲的败者不发失败事件 —— 胜者返回时它们是被清理掉的，不算失败。
+/// </para>
+/// </summary>
+public sealed class AxiosAttemptEvent
+{
+    internal AxiosAttemptEvent(
+        int attemptNumber,
+        int endpointIndex,
+        HttpMethod method,
+        Uri uri,
+        TimeSpan elapsed,
+        int? status,
+        string? errorCode,
+        Exception? exception)
+    {
+        AttemptNumber = attemptNumber;
+        EndpointIndex = endpointIndex;
+        Method = method;
+        Uri = uri;
+        Elapsed = elapsed;
+        Status = status;
+        ErrorCode = errorCode;
+        Exception = exception;
+    }
+
+    /// <summary>第几次尝试（从 1 开始；重试 N 次时最多 N+1 条）。</summary>
+    public int AttemptNumber { get; }
+
+    /// <summary>
+    /// 第几个端点（从 <c>0</c> 开始）：<c>0</c> = 请求自己的地址，<c>n</c> = 端点表里第 n 个备用端点。
+    /// 换端点不推进 <see cref="AttemptNumber"/>，所以同一个尝试号下可能有多条事件，靠这一项区分。
+    /// </summary>
+    public int EndpointIndex { get; }
+
+    /// <summary>请求方法。</summary>
+    public HttpMethod Method { get; }
+
+    /// <summary>本次尝试的请求地址。</summary>
+    public Uri Uri { get; }
+
+    /// <summary>
+    /// 本次尝试的耗时：从进入终端前到终端返回（流式响应只到响应头）。
+    /// 不含闸门排队与退避等待，但包含取连接租约与缓冲响应读完正文的时间。
+    /// </summary>
+    public TimeSpan Elapsed { get; }
+
+    /// <summary>HTTP 状态码（拿到响应时可用）；无响应时为 <c>null</c>。</summary>
+    public int? Status { get; }
+
+    /// <summary>库错误码；成功或非 <see cref="AxiosException"/> 时为 <c>null</c>。</summary>
+    public string? ErrorCode { get; }
+
+    /// <summary>本次尝试抛出的异常；成功时为 <c>null</c>。</summary>
+    public Exception? Exception { get; }
+}

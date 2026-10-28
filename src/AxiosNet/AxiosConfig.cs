@@ -14,6 +14,8 @@ public sealed partial class AxiosConfig
     private CallbackSettings? _callbacks;
     private RetrySettings? _retry;
     private CircuitSettings? _circuit;
+    private HedgingSettings? _hedging;
+    private FailoverSettings? _failover;
     private TelemetrySettings? _telemetry;
 
     /// <summary>序列化相关设置：JSON 选项、内容序列化器、文本编码、查询串与表单字段命名；首次读取时懒创建。</summary>
@@ -58,6 +60,20 @@ public sealed partial class AxiosConfig
         set => _circuit = value;
     }
 
+    /// <summary>并发对冲：首发的延迟副本与分支数；<see cref="HedgingSettings.MaxHedges"/> 为 0 即不对冲。</summary>
+    public HedgingSettings Hedging
+    {
+        get => _hedging ??= new HedgingSettings();
+        set => _hedging = value;
+    }
+
+    /// <summary>备用端点：当前端点用不了时按顺序换端点重发；<see cref="FailoverSettings.Endpoints"/> 为空即不换。</summary>
+    public FailoverSettings Failover
+    {
+        get => _failover ??= new FailoverSettings();
+        set => _failover = value;
+    }
+
     /// <summary>可观测性：链路 / 指标 / 事件三路观测点的按请求开关（<see cref="TelemetrySettings.Enabled"/>）与 URL 采集策略（<see cref="TelemetrySettings.CaptureUrl"/>）。</summary>
     public TelemetrySettings Telemetry
     {
@@ -77,6 +93,10 @@ public sealed partial class AxiosConfig
     internal RetrySettings? RetryOrNull => _retry;
 
     internal CircuitSettings? CircuitOrNull => _circuit;
+
+    internal HedgingSettings? HedgingOrNull => _hedging;
+
+    internal FailoverSettings? FailoverOrNull => _failover;
 
     internal TelemetrySettings? TelemetryOrNull => _telemetry;
 
@@ -379,6 +399,8 @@ public sealed partial class AxiosConfig
         clone._callbacks = _callbacks?.Clone();
         clone._retry = _retry?.Clone();
         clone._circuit = _circuit?.Clone();
+        clone._hedging = _hedging?.Clone();
+        clone._failover = _failover?.Clone();
         clone._telemetry = _telemetry?.Clone();
 
         // Params / Data 装的是调用方持有的可变容器，没有不可变版本可共享，只能隔离。
@@ -406,6 +428,17 @@ public sealed partial class AxiosConfig
             clone.InstanceOptionsInherited = true;
         }
 
+        return clone;
+    }
+
+    /// <summary>
+    /// 派生一份按尝试隔离的浅拷贝：子设置与集合全部按引用共享，只把 <see cref="Response"/> 清空。
+    /// 对冲的每条分支各持一份 —— 终端会把本次响应的上下文写进它，共享同一份会互相覆盖。
+    /// </summary>
+    internal AxiosConfig CloneForAttempt()
+    {
+        var clone = (AxiosConfig)MemberwiseClone();
+        clone.Response = null;
         return clone;
     }
 

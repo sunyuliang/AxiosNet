@@ -218,8 +218,8 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         return false;
     }
 
-    /// <summary>幂等方法：重发不会改变服务端状态（或结果与发一次相同）。</summary>
-    private static bool IsIdempotent(HttpMethod method)
+    /// <summary>幂等方法：重发不会改变服务端状态（或结果与发一次相同）；对冲复用同一判定。</summary>
+    internal static bool IsIdempotent(HttpMethod method)
         => method == HttpMethod.Get
             || method == HttpMethod.Head
             || method == HttpMethod.Options

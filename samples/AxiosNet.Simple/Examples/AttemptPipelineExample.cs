@@ -5,7 +5,7 @@ using AxiosNet.Retry;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>31. 尝试管线：一次尝试抽象成可组合中间件（重试 → 熔断 → 闸门 → 发送），可插、可重排。</summary>
+/// <summary>31. 尝试管线：一次尝试抽象成可组合中间件（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送），可插、可重排。</summary>
 public sealed class AttemptPipelineExample : IExample
 {
     public int Number => 31;
@@ -18,8 +18,8 @@ public sealed class AttemptPipelineExample : IExample
 
         var tag = Guid.NewGuid().ToString("N")[..8];
 
-        // 1) 默认链：Retry → Circuit → Gate → 发送。三个内置项永远在链上，
-        //    是否真的干活由它们自己看本次请求的生效配置决定（没配策略就是纯直通）。
+        // 1) 默认链：重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送。五个内置项永远在链上，
+        //    是否真的干活由它们自己看本次请求的生效配置决定（没配策略 / 端点 / 分支数就是纯直通）。
         Console.WriteLine($"  默认链: {string.Join(" → ", AxiosAttemptPipeline.Default.Middleware.Select(Describe))} + 发送");
 
         // 2) 插一个「每次尝试」的探针：Append 落在最内层（闸门之后、发送之前），
@@ -78,7 +78,10 @@ public sealed class AttemptPipelineExample : IExample
 
     private static string Describe(AxiosAttemptMiddleware middleware)
         => ReferenceEquals(middleware, Attempt.Retry) ? "重试"
+            : ReferenceEquals(middleware, Attempt.Failover) ? "备用端点"
             : ReferenceEquals(middleware, Attempt.Circuit) ? "熔断"
+            : ReferenceEquals(middleware, Attempt.Hedging) ? "对冲"
             : ReferenceEquals(middleware, Attempt.Gate) ? "闸门"
+            : ReferenceEquals(middleware, Attempt.Audit) ? "审计"
             : "自定义";
 }

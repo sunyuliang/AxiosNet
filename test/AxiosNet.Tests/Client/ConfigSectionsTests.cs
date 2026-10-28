@@ -30,7 +30,9 @@ public sealed class ConfigSectionsTests
             Connection = new() { MaxRedirects = 2 },
             Limits = new() { MaxContentLength = 4096, MaxBodyLength = 2048 },
             Retry = new() { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5)) },
-            Circuit = new() { Policy = new CircuitBreaker(3, TimeSpan.FromSeconds(1)) }
+            Circuit = new() { Policy = new CircuitBreaker(3, TimeSpan.FromSeconds(1)) },
+            Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(7), HedgeNonIdempotentMethods = true },
+            Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api") } }
         };
 
         var clone = config.Clone();
@@ -47,10 +49,17 @@ public sealed class ConfigSectionsTests
         Assert.Equal(2048, clone.Limits.MaxBodyLength);
         Assert.NotNull(clone.Retry.Policy);
         Assert.NotNull(clone.Circuit.Policy);
+        Assert.Equal(2, clone.Hedging.MaxHedges);
+        Assert.Equal(TimeSpan.FromMilliseconds(7), clone.Hedging.Delay);
+        Assert.True(clone.Hedging.HedgeNonIdempotentMethods);
+        Assert.Equal("https://backup.example.com/api", clone.Failover.Endpoints![0].AbsoluteUri);
 
         // 子对象必须是新实例：改克隆不能回写源配置
         clone.Telemetry.Enabled = true;
         Assert.False(config.Telemetry.Enabled);
+
+        clone.Hedging.MaxHedges = 0;
+        Assert.Equal(2, config.Hedging.MaxHedges);
     }
 
     [Fact]
@@ -195,6 +204,84 @@ public sealed class ConfigSectionsTests
 
         Assert.Same(incomingPolicy, settings.Policy);
         Assert.Same(incomingCallback, settings.OnRejected);
+    }
+
+    // ------------------------------------------------------------------
+    // HedgingSettings
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void HedgingMerge_UntouchedIncoming_KeepsInstanceValues()
+    {
+        var settings = new AxiosConfig.HedgingSettings
+        {
+            MaxHedges = 2,
+            Delay = TimeSpan.FromMilliseconds(7),
+            HedgeNonIdempotentMethods = true
+        };
+
+        settings.MergeFrom(new AxiosConfig.HedgingSettings());
+
+        Assert.Equal(2, settings.MaxHedges);
+        Assert.Equal(TimeSpan.FromMilliseconds(7), settings.Delay);
+        Assert.True(settings.HedgeNonIdempotentMethods);
+    }
+
+    [Fact]
+    public void HedgingMerge_ExplicitValues_OverrideOneByOne()
+    {
+        var settings = new AxiosConfig.HedgingSettings
+        {
+            MaxHedges = 2,
+            Delay = TimeSpan.FromMilliseconds(7),
+            HedgeNonIdempotentMethods = true
+        };
+
+        // 显式 0 是「本次请求关掉对冲」，不能按「没表态」处理
+        settings.MergeFrom(new AxiosConfig.HedgingSettings { MaxHedges = 0 });
+
+        Assert.Equal(0, settings.MaxHedges);
+        Assert.Equal(TimeSpan.FromMilliseconds(7), settings.Delay);
+        Assert.True(settings.HedgeNonIdempotentMethods);
+
+        settings.MergeFrom(new AxiosConfig.HedgingSettings
+        {
+            Delay = TimeSpan.Zero,
+            HedgeNonIdempotentMethods = false
+        });
+
+        Assert.Equal(TimeSpan.Zero, settings.Delay);
+        Assert.False(settings.HedgeNonIdempotentMethods);
+    }
+
+    // ------------------------------------------------------------------
+    // FailoverSettings
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void FailoverMerge_UntouchedIncoming_KeepsInstanceEndpoints()
+    {
+        var endpoints = new[] { new Uri("https://backup.example.com/") };
+        var settings = new AxiosConfig.FailoverSettings { Endpoints = endpoints };
+
+        settings.MergeFrom(new AxiosConfig.FailoverSettings());
+
+        // 赋值时快照成数组，所以比内容而不是引用：没被 incoming 覆盖才是这条用例要的。
+        Assert.Equal(endpoints, settings.Endpoints);
+    }
+
+    [Fact]
+    public void FailoverMerge_ExplicitNull_ClearsEndpoints()
+    {
+        var settings = new AxiosConfig.FailoverSettings
+        {
+            Endpoints = new[] { new Uri("https://backup.example.com/") }
+        };
+
+        settings.MergeFrom(new AxiosConfig.FailoverSettings { Endpoints = null });
+
+        Assert.Null(settings.Endpoints);
+        Assert.True(settings.EndpointsSet);
     }
 
     // ------------------------------------------------------------------
