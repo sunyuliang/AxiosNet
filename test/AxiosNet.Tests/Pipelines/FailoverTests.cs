@@ -419,6 +419,65 @@ public sealed class FailoverTests
         Assert.Same(config.Failover.Endpoints, config.Clone().Failover.Endpoints);
     }
 
+    [Fact]
+    public async Task Failover_RejectsDuplicateEndpoints()
+    {
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = "http://127.0.0.1:1/",
+            Failover = new()
+            {
+                // 写法不同但规范化后是同一个地址：同一份请求对同一个地址打两遍只会放大下游压力。
+                Endpoints = new[] { new Uri("https://backup.example.com/api"), new Uri("https://BACKUP.example.com/api/") }
+            }
+        });
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, exception.Code);
+    }
+
+    [Fact]
+    public async Task Failover_DoesNotCarryTheOriginalHostHeader()
+    {
+        await using var primary = TestHttpServer.Start(_ =>
+            new TestResponse(503, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+        });
+
+        // 调用方显式指定虚拟主机（反代 / 多站点同 IP 的常见做法）。
+        var response = await client.GetAsync("x", c => c.Headers.Set("Host", "primary.example.com"));
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal("primary.example.com", Assert.Single(primary.Received).Headers["Host"]);
+
+        // HttpClient 只认 Headers.Host（它优先于 URI authority）：搬过去会让镜像按原端点的虚拟主机路由。
+        Assert.Equal($"127.0.0.1:{mirror.Port}", Assert.Single(mirror.Received).Headers["Host"]);
+    }
+
+    [Fact]
+    public void Failover_CloneRequest_CarriesOptionsAndKeepsHostOnlyWhenNotRetargeted()
+    {
+        using var template = new HttpRequestMessage(HttpMethod.Get, "https://primary.example.com/v1/users");
+        template.Headers.Host = "virtual.example.com";
+        template.Options.Set(new HttpRequestOptionsKey<bool>("probe"), true);
+
+        // 同地址重发（重试）：请求头原样搬走，包括调用方指定的 Host。
+        using var same = Attempt.CloneRequest(template);
+        Assert.Equal("virtual.example.com", same.Headers.Host);
+        Assert.True(same.Options.TryGetValue(new HttpRequestOptionsKey<bool>("probe"), out var kept) && kept);
+
+        // 换目标地址（备用端点）：Host 交给 HttpClient 按新地址重算，其余选项照搬。
+        using var retargeted = Attempt.CloneRequest(template, new Uri("https://mirror.example.com/v1/users"));
+        Assert.Null(retargeted.Headers.Host);
+        Assert.True(retargeted.Options.TryGetValue(new HttpRequestOptionsKey<bool>("probe"), out var copied) && copied);
+    }
+
     /// <summary>主端点回 5xx、其余端点回 200，并记下每条真正发出去的地址（用来证明被跳过的端点一个字节都没发）。</summary>
     private sealed class PrimaryFailingHandler : HttpMessageHandler
     {

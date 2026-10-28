@@ -256,6 +256,23 @@ public sealed class HedgingTests
     }
 
     [Fact]
+    public async Task Hedging_RejectsDelayTimesMaxHedgesBeyondTimerRange()
+    {
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = "http://127.0.0.1:1/",
+
+            // 每条分支都单独在范围之内，乘上分支序号就越界：第 16 条分支的起跑时刻是 160 天，
+            // 会被计时器上限收敛成同一个时刻 —— 那等于这条分支永不发出，必须提前报错而不是静默不发。
+            Hedging = new() { MaxHedges = 16, Delay = TimeSpan.FromDays(10) }
+        });
+
+        var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, exception.Code);
+    }
+
+    [Fact]
     public async Task Hedging_SaturatedGate_ReturnsAsSoonAsAWinnerAppears()
     {
         var arrivals = 0;

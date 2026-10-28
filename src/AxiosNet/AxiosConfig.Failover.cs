@@ -10,6 +10,7 @@ public sealed partial class AxiosConfig
     /// <remarks>
     /// 端点只替换 origin 与路径前缀，请求本身的 path / query 原样保留；顺序即优先级，每次重试都从第一个端点重新开始。
     /// 换端点要求请求体能按顺序重放（与重试同一份要求：流必须可 seek）。
+    /// 换端点会丢掉调用方显式设过的 <c>Host</c> 头，由目标地址重算 —— 否则镜像会按原端点的虚拟主机路由。
     /// 4xx、<c>ERR_QUEUE_TIMEOUT</c>、配置 / 编程错误与取消不换端点；<c>ERR_CIRCUIT_OPEN</c> 换 ——
     /// 熔断按 <c>host:port</c> 独立成账，主端点开着的那一个挡不住备用端点。
     /// 流式响应只在响应头阶段能换端点：正文由调用方消费，中途断流不会再换端点。
@@ -26,6 +27,8 @@ public sealed partial class AxiosConfig
         /// <remarks>
         /// 赋值时快照成数组：之后改调用方自己的列表不会影响已生效的配置，克隆也能安全共享这一版。
         /// 读回来的就是这一版内部数组，<b>调用方不得修改</b>（要改请重新赋值）。
+        /// 重复端点（拼出同一个 base URL，尾斜杠不算区别）在发请求前抛 <c>ERR_BAD_OPTION_VALUE</c>：
+        /// 同一份请求对同一个地址重打一遍只会放大下游压力。
         /// </remarks>
         public IReadOnlyList<Uri>? Endpoints
         {

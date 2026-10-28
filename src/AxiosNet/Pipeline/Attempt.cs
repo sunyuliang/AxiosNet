@@ -267,9 +267,25 @@ public static partial class Attempt
             VersionPolicy = template.VersionPolicy
         };
 
+        // 换了目标地址就不搬 Host：HttpClient 只认 Headers.Host，搬过去会让镜像按原端点的虚拟主机路由。
+        var retargeted = uri is not null;
+
         foreach (var header in template.Headers)
         {
+            if (retargeted && string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        // 自定义中间件写进 Options 的内容（如 HttpRequestOptions 上的开关）要跟着走，否则重发一次就丢。
+        // HttpRequestOptions 的索引器是显式实现，Set 只认带类型的 HttpRequestOptionsKey，这里走字典接口。
+        var options = (IDictionary<string, object?>)request.Options;
+        foreach (var option in template.Options)
+        {
+            options[option.Key] = option.Value;
         }
 
         request.Content = template.Content;

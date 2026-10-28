@@ -70,6 +70,7 @@ public static partial class Attempt
                 }
                 catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadOptionValue)
                 {
+                    // 跳过不算一次失败，不覆盖已记下的那条；只在一个失败都没记下时兜住，免得最后抛空引用。
                     firstFailure ??= ex;
                     continue;
                 }

@@ -99,7 +99,8 @@ public sealed class AxiosRequestFailedEvent
 /// </para>
 /// <para>
 /// 事件条数：并发对冲的每条分支各一条；备用端点每换一个端点各一条（<see cref="AttemptNumber"/> 不变，
-/// 靠 <see cref="EndpointIndex"/> 区分）。对冲的败者不发失败事件 —— 胜者返回时它们是被清理掉的，不算失败。
+/// 靠 <see cref="EndpointIndex"/> 区分）。被胜出者取消的败者不发失败事件 —— 那是清理，不是下游故障；
+/// 在胜者出现之前就已经真实失败的败者照常发。
 /// </para>
 /// </summary>
 public sealed class AxiosAttemptEvent

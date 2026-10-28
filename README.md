@@ -680,6 +680,8 @@ await client.GetAsync("health", c => c.Failover.Endpoints = null);
 | 配置 / 编程错误、取消 | 不换 |
 
 - **每次重试都从第一个端点重新开始**：端点表在重试之内，一轮换完所有端点才把第一条失败交给重试。
+- **换端点会重算 `Host`**：调用方显式设过的 `Host` 头在换端点时丢掉，由目标地址重新算 —— 留着会让镜像按原端点的虚拟主机路由（`HttpClient` 只认 `Headers.Host`，它优先于 URI authority）。要按端点用不同的 `Host`，请写尝试中间件按 `ctx.Uri` 设置（`config.Headers` 只应用在模板上）。
+- **端点表不能重复**：两个端点拼出同一个 base URL（尾斜杠不算区别）会在发请求前抛 `ERR_BAD_OPTION_VALUE` —— 那只是把同一份请求对同一个地址多打一遍。
 - **`Timeout` 是「每个端点每次发送」的预算**：与重试同口径，3 个端点 + 10s 最坏 30s；要总预算请用 `CancellationToken`。上传进度同样跨端点累计（与重试重发正文一致，不回跳）。
 - **正文要能按顺序重放**：与重试同一份要求（流必须可 seek），不可 seek 的流与 `StreamContent` 在开启备用端点时直接抛 `ERR_BAD_OPTION_VALUE`。
 - **流式响应只在响应头阶段能换端点**：正文交给调用方之后，中途断流既不换端点也不重试（与熔断「只按响应头记账」同口径）。
@@ -957,7 +959,7 @@ using var client = Axios.Create(pipeline: pipeline);
 ```
 
 - 覆盖**真正到达发送的尝试**：熔断拒绝、闸门排队超时、短路响应都不产生尝试事件（审计在它们之内）。
-- 事件条数是「**端点 × 分支**」：换端点每换一个一条（`AttemptNumber` 不变，靠 `EndpointIndex` 区分），对冲每条分支一条；对冲的败者不发失败事件（它们是被清理的，不算失败）。
+- 事件条数是「**端点 × 分支**」：换端点每换一个一条（`AttemptNumber` 不变，靠 `EndpointIndex` 区分），对冲每条分支一条；被胜出者取消的败者不发失败事件（那是清理，不是下游故障），在胜者出现之前就真实失败的败者照常发。
 - 没人订阅时零成本直通：不建状态机、不取时间戳。
 
 **按请求关闭或裁剪**：
@@ -1141,9 +1143,9 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 **`Circuit`** — `Policy`（`null` = 不熔断）/ `OnRejected`
 
-**`Hedging`** — `MaxHedges`（`0` = 不对冲，上限 16）/ `Delay`（80ms，第 n 条分支起跑于 `n × Delay`）/ `HedgeNonIdempotentMethods`（`false`）
+**`Hedging`** — `MaxHedges`（`0` = 不对冲，上限 16）/ `Delay`（80ms，第 n 条分支起跑于 `n × Delay`，`Delay × MaxHedges` 不得超过计时器范围）/ `HedgeNonIdempotentMethods`（`false`）
 
-**`Failover`** — `Endpoints`（`null` = 不换端点；有序的绝对 `http`/`https` 地址，可带路径前缀，不能带 query / fragment）
+**`Failover`** — `Endpoints`（`null` = 不换端点；有序的绝对 `http`/`https` 地址，可带路径前缀，不能带 query / fragment，不能重复）
 
 **`Telemetry`** — `Enabled`（`null` = 开启）/ `CaptureUrl`（`null` = 记录，不含查询串）/ `CaptureQuery`（`null` = 不记查询串）
 
@@ -1248,13 +1250,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1424 | `net8.0` / `net6.0` | 2848 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1428 | `net8.0` / `net6.0` | 2856 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1483** | | **2966** |
+| **合计** | **1487** | | **2974** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.5%**、分支覆盖率 **89.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`）。
+行覆盖率 **92.5%**、分支覆盖率 **89.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash

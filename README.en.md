@@ -679,6 +679,8 @@ An endpoint is a **base URL** only: it replaces the origin and path prefix, whil
 | Config / programming errors, cancellation | No |
 
 - **Every retry restarts from the first endpoint**: the endpoint list lives inside retries, so one round must exhaust all endpoints before the first failure reaches the retry layer.
+- **Failing over recomputes `Host`**: a `Host` header the caller set explicitly is dropped on retarget and recomputed from the destination — keeping it would make the mirror route by the primary's virtual host (`HttpClient` honours `Headers.Host`, which wins over the URI authority). For a per-endpoint `Host`, write an attempt middleware that sets it from `ctx.Uri` (`config.Headers` is only applied to the template).
+- **Endpoints must be unique**: two endpoints that resolve to the same base URL (a trailing slash makes no difference) throw `ERR_BAD_OPTION_VALUE` before anything is sent — it would only hit one address twice with the same request.
 - **`Timeout` is a per-endpoint, per-send budget**: same rule as retries, so 3 endpoints with 10s can take up to 30s; use a `CancellationToken` for a total budget. Upload progress also accumulates across endpoints (like a retried body — it never jumps back).
 - **The body must replay in order**: the same requirement as retries (streams must be seekable); non-seekable streams and `StreamContent` throw `ERR_BAD_OPTION_VALUE` as soon as failover is enabled.
 - **Streaming responses can only fail over at the response-head stage**: once the body is handed to the caller, a mid-stream disconnect is neither retried nor failed over (same rule as "the breaker only accounts at the response head").
@@ -959,7 +961,7 @@ using var client = Axios.Create(pipeline: pipeline);
 ```
 
 - Covers attempts that **actually reach the send**: breaker rejections, gate queue timeouts and short circuits produce no attempt event (the audit sits inside them).
-- Event count is **endpoints × branches**: one per failover (`AttemptNumber` unchanged, `EndpointIndex` distinguishes them) and one per hedge branch; hedge losers emit no failure event (they are cleaned up, not failed).
+- Event count is **endpoints × branches**: one per failover (`AttemptNumber` unchanged, `EndpointIndex` distinguishes them) and one per hedge branch; losers cancelled by the winner emit no failure event (that is cleanup, not a downstream fault), while losers that genuinely failed before a winner appeared do emit one.
 - Zero cost when nobody subscribes: no state machine, no timestamps.
 
 **Per-request opt-out**:
@@ -1143,9 +1145,9 @@ Nine sub-objects (created lazily on first access):
 
 **`Circuit`** — `Policy` (`null` = no breaker) / `OnRejected`
 
-**`Hedging`** — `MaxHedges` (`0` = off, max 16) / `Delay` (80ms; branch n starts at `n × Delay`) / `HedgeNonIdempotentMethods` (`false`)
+**`Hedging`** — `MaxHedges` (`0` = off, max 16) / `Delay` (80ms; branch n starts at `n × Delay`, and `Delay × MaxHedges` must stay within the timer range) / `HedgeNonIdempotentMethods` (`false`)
 
-**`Failover`** — `Endpoints` (`null` = no failover; ordered absolute `http`/`https` URLs, path prefix allowed, no query or fragment)
+**`Failover`** — `Endpoints` (`null` = no failover; ordered absolute `http`/`https` URLs, path prefix allowed, no query or fragment, no duplicates)
 
 **`Telemetry`** — `Enabled` (`null` = on) / `CaptureUrl` (`null` = capture, without the query string) / `CaptureQuery` (`null` = omit the query string)
 
@@ -1250,13 +1252,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1424 | `net8.0` / `net6.0` | 2848 |
+| `AxiosNet.Tests` (core + declarative) | 1428 | `net8.0` / `net6.0` | 2856 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1483** | | **2966** |
+| **Total** | **1487** | | **2974** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **92.5%**, branch coverage **89.5%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`).
+Line coverage **92.5%**, branch coverage **89.5%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1).
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash

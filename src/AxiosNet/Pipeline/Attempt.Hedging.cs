@@ -228,7 +228,7 @@ public static partial class Attempt
     {
         if (index > 0 && delay > TimeSpan.Zero)
         {
-            // 起跑时刻是 n × delay，按计时器可表示的上限收敛（delay 本身可以配到上限，乘上去会溢出）。
+            // 起跑时刻是 n × delay，按计时器上限收敛。
             var wait = TimeSpan.FromTicks(Math.Min(delay.Ticks * index, Timeouts.Max.Ticks));
 
             try

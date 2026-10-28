@@ -203,6 +203,15 @@ public sealed partial class AxiosClient
                     $"对冲起跑延迟 Delay 超出计时器可表示的范围（当前 {hedging.Delay}，上限约 49.7 天）："
                     + "它按 Task.Delay 实现，更长的延迟无法表达。", config);
             }
+
+            // 第 n 条分支起跑于 n × Delay：最晚那条一旦越过计时器上限就会被收敛到上限，等于永不发出，必须提前报错。
+            if (hedging.MaxHedges > 0 && hedging.Delay.Ticks > Timeouts.Max.Ticks / hedging.MaxHedges)
+            {
+                throw AxiosException.InvalidOption(
+                    $"对冲起跑延迟 Delay × MaxHedges 超出计时器上限（当前 {hedging.Delay} × {hedging.MaxHedges}，上限约 49.7 天）："
+                    + "第 n 条分支起跑于 n × Delay，超出的部分会被收敛到上限，等于这条分支永不发出。"
+                    + "请减小 Delay 或 MaxHedges。", config);
+            }
         }
 
         // 备用端点：必须是绝对 http(s) 地址，且不带 query / fragment —— 否则端点里的这部分会被静默丢掉。
@@ -224,6 +233,22 @@ public sealed partial class AxiosClient
                         $"备用端点 Failover.Endpoints[{i}] 不能带 query 或 fragment（当前 {endpoint}）："
                         + "端点只替换 origin 与路径前缀，请求自己的 path / query 会原样接上去；"
                         + "要让某个参数只出现在备用端点上，请改用请求拦截器按 ctx 拼 URL。", config);
+                }
+
+                // 重复端点等于把同一份请求对同一个地址多打一遍，只会放大下游压力。
+                // 比拼接时真正用到的那一段（origin + 路径前缀，去掉尾斜杠）：/api 与 /api/ 会拼出同一个地址。
+                // scheme / host 已被 Uri 规范化成小写，路径仍按大小写敏感比较。
+                // 只有第一个端点不必算（没有可比对象），避免每请求为单端点白分配字符串。
+                var baseUrl = i == 0 ? null : endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/');
+                for (var j = 0; j < i; j++)
+                {
+                    var otherBase = endpoints[j].GetLeftPart(UriPartial.Path).TrimEnd('/');
+                    if (string.Equals(otherBase, baseUrl, StringComparison.Ordinal))
+                    {
+                        throw AxiosException.InvalidOption(
+                            $"备用端点 Failover.Endpoints[{i}] 与 Endpoints[{j}] 重复（当前 {endpoint}）："
+                            + "同一个地址会被重发两次，只会放大下游压力。", config);
+                    }
                 }
             }
         }
