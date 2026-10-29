@@ -4,10 +4,10 @@ using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
 
-// 请求模型的启动期校验：把「首次调用才抛」的模型定义错误提前到进程启动。
+// 请求模型的启动期校验：在进程启动时报告模型定义错误。
 public sealed partial class ApiClient
 {
-    /// <summary>校验一组请求模型，返回全部错误消息（空列表 = 全部合法），不抛异常。与首次调用走同一份元数据构建逻辑，因此不会出现校验通过、调用仍报错。</summary>
+    /// <summary>校验一组请求模型，返回全部错误消息（空列表 = 全部合法），不抛异常；与运行时共用同一份元数据构建逻辑。</summary>
     /// <param name="requestTypes">待校验的请求模型类型。</param>
     /// <exception cref="ArgumentNullException"><paramref name="requestTypes"/> 为 <c>null</c>。</exception>
     public static IReadOnlyList<string> ValidateModels(params Type[] requestTypes)
@@ -33,7 +33,7 @@ public sealed partial class ApiClient
         }
         catch (ReflectionTypeLoadException ex)
         {
-            // 依赖缺失的加载器不会给出完整类型表：能取到的照样校验，剩下的交给运行时。
+            // 依赖缺失时取到的类型照样校验，其余交给运行时。
             types = [.. ex.Types.OfType<Type>()];
         }
 

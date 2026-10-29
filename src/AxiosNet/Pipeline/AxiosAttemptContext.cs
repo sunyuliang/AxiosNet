@@ -4,13 +4,11 @@ namespace AxiosNet.Pipeline;
 
 /// <summary>
 /// 一次尝试的上下文：<b>不可变结构体，按值传递</b>，逐次尝试零分配。
-/// 中间件只能用 <c>WithXxx</c> 派生副本，改不了上游看到的那一份 —— 这是刻意的：
-/// 生效配置在阶段 4b 已校验完毕，尝试阶段再让中间件改配置就是绕过护栏。
+/// 中间件只能用 <c>WithXxx</c> 派生副本，改不了上游看到的那一份。
 /// </summary>
 /// <remarks>
-/// 用结构体而不是类的两个硬理由：①并发类中间件（对冲、备用端点）需要按分支拷贝上下文，
-/// 结构体拷贝免费，类要么深拷贝要么共享可变状态；②<see cref="AxiosAttemptHandler"/> 用
-/// <c>in</c> 参数接不住 async 状态机（<c>in</c> 不能被异步方法捕获），只能按值传。
+/// 用结构体而不是类：并发类中间件（对冲、备用端点）需要按分支拷贝上下文，且 <see cref="AxiosAttemptHandler"/>
+/// 的 async 状态机无法捕获 <c>in</c> 参数。
 /// </remarks>
 public readonly struct AxiosAttemptContext
 {
@@ -56,9 +54,8 @@ public readonly struct AxiosAttemptContext
     private readonly long _deadlineTimestamp;
 
     /// <summary>
-    /// 唯一创建入口：派生项（流式标记 / 重试与熔断配置）在这里一次算清，
-    /// 尝试过程中不再重算 —— 它们是「一次请求」的属性，不是「一次尝试」的。
-    /// 正文可重放性不在这里检查：只有管线里真有重试中间件时才需要（见 <see cref="Attempt.Retry"/>）。
+    /// 唯一创建入口：流式标记与重试 / 熔断 / 对冲 / 端点配置在这里一次算清，尝试过程中不再重算。
+    /// 正文可重放性不在这里检查（见 <see cref="Attempt.Retry"/>）。
     /// </summary>
     internal static AxiosAttemptContext From(
         AxiosConfig config,
@@ -97,22 +94,20 @@ public readonly struct AxiosAttemptContext
     public Uri Uri { get; }
 
     /// <summary>
-    /// 第几次尝试，从 <c>1</c> 开始。只有重试中间件会推进它 ——
-    /// 放在重试之外的中间件恒为 <c>1</c>，放在重试之内的中间件每次尝试各见一个值。
+    /// 第几次尝试，从 <c>1</c> 开始。只有重试中间件会推进它。
     /// </summary>
     public int AttemptNumber { get; }
 
     /// <summary>
     /// 第几个端点，从 <c>0</c> 开始：<c>0</c> = 请求自己的地址，<c>n</c> = 端点表里第 n 个备用端点。
-    /// 只有备用端点中间件会推进它，所以「一次尝试」可能出现多条编号相同、端点序号不同的事件。
+    /// 只有备用端点中间件会推进它。
     /// </summary>
     public int EndpointIndex { get; }
 
     /// <summary>
-    /// 本次尝试的令牌：默认就是调用方的 <see cref="ExternalToken"/>，对冲给每条分支各换一份。
-    /// 并发闸门的排队与终端的超时计时都用它，因此被放弃的尝试（对冲的败者）能被立刻收掉；
-    /// 中间件自身耗时<b>不计入</b> <c>AxiosConfig.Timeout</c>（它是单次尝试的预算），但计入
-    /// <see cref="AxiosConfig.TotalTimeout"/>（整条逻辑请求的预算，从调用入口起算）。
+    /// 本次尝试的令牌：默认同 <see cref="ExternalToken"/>，对冲给每条分支各换一份。
+    /// 并发闸门排队与终端超时计时都用它；中间件自身耗时不计入 <c>AxiosConfig.Timeout</c>，但计入
+    /// <see cref="AxiosConfig.TotalTimeout"/>。
     /// </summary>
     public CancellationToken AttemptToken { get; }
 
@@ -164,17 +159,16 @@ public readonly struct AxiosAttemptContext
             Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp);
 
     /// <summary>
-    /// 派生：换本次尝试的生效配置（对冲给每条分支一份隔离副本时用）。
-    /// 子设置也从新配置重新取，不与旧上下文混用 —— 否则配置换了、生效的策略还是上一份。
-    /// 内部入口：配置在阶段 4b 已校验完毕，对外不开放「尝试阶段换配置」这条路。
+    /// 派生：换本次尝试的生效配置（对冲给每条分支一份隔离副本时用），子设置一并从新配置取。
+    /// 内部入口：对外不开放「尝试阶段换配置」这条路。
     /// </summary>
     internal AxiosAttemptContext WithConfig(AxiosConfig config)
         => new(config, Uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,
             config.RetryOrNull, config.CircuitOrNull, config.HedgingOrNull, config.FailoverOrNull, _gate, Slot, _deadlineTimestamp);
 
     /// <summary>
-    /// 派生：摘掉调用方预造的响应对象（对冲给每条分支一份自己的响应时用）。
-    /// 预造对象只有一个实例，多条分支并发就地填充会互相覆盖。
+    /// 派生：摘掉调用方预造的响应对象（对冲给每条分支一份自己的响应时用）—— 预造对象只有一个实例，
+    /// 多条分支并发就地填充会互相覆盖。
     /// </summary>
     internal AxiosAttemptContext WithoutTarget()
         => new(Config, Uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, null, StreamResponse,
@@ -182,7 +176,7 @@ public readonly struct AxiosAttemptContext
 
     /// <summary>
     /// 派生：换目标 URL（备用端点中间件切镜像时用）。
-    /// <see cref="Uri"/> 同时参与连接租约、熔断计数维度与遥测标签，换端点必须连它一起换，只改请求消息不够。
+    /// <see cref="Uri"/> 同时参与连接租约、熔断计数维度与遥测标签，换端点必须连它一起换。
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="uri"/> 为 <c>null</c>。</exception>
     public AxiosAttemptContext WithUri(Uri uri)
@@ -207,7 +201,7 @@ public readonly struct AxiosAttemptContext
 
     /// <summary>
     /// 派生：填入本次尝试占到的并发槽位（闸门中间件用）。
-    /// 填进去之后所有权就归终端 —— 失败路径它归还，流式成功它随正文转交给调用方。
+    /// 填进去之后所有权归终端：失败路径它归还，流式成功它随正文转交给调用方。
     /// </summary>
     public AxiosAttemptContext WithSlot(IDisposable? slot)
         => new(Config, Uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,

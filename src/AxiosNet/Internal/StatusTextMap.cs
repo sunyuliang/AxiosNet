@@ -2,7 +2,7 @@ using System.Net;
 
 namespace AxiosNet.Internal;
 
-/// <summary>HttpClient 在 .NET Core 上不暴露 reason phrase，这里维护与 axios 一致的常见状态码文本。</summary>
+/// <summary>常见状态码的 reason phrase（与 axios 一致）。</summary>
 internal static class StatusTextMap
 {
     public static string Get(int statusCode) => statusCode switch

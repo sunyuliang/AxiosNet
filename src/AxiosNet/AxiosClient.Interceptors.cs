@@ -7,7 +7,7 @@ namespace AxiosNet;
 // AxiosClient 的响应拦截器责任链与短路响应的交付。
 public sealed partial class AxiosClient
 {
-    /// <summary>阶段 6 —— 发送：尝试管线（重试 / 备用端点 / 熔断 / 对冲 / 闸门 / 终端），外面按注册顺序套上响应拦截器责任链。管线在链内，拦截器只看到最终结果；返回的 <c>StreamOwner</c> 是流式正文的所有权凭证。</summary>
+    /// <summary>阶段 6 —— 发送：尝试管线（重试 / 备用端点 / 熔断 / 对冲 / 闸门 / 终端），外面按注册顺序套上响应拦截器责任链；返回的 <c>StreamOwner</c> 是流式正文的所有权凭证。</summary>
     private ValueTask<AxiosAttemptResult> RunResponseInterceptorsAsync(
         HttpRequestMessage template,
         AxiosAttemptContext ctx)
@@ -56,7 +56,7 @@ public sealed partial class AxiosClient
             }
             catch
             {
-                // 兜底释放失败不能掩盖拦截器的原始异常
+                // 兜底释放失败不掩盖原始异常。
             }
 
             throw;
@@ -90,7 +90,7 @@ public sealed partial class AxiosClient
                         throw;
                     }
 
-                    // 返回 null 会让调用方随后炸 NRE，明确报错。
+                    // 返回 null 就地报错。
                     return (await rejected(ex).ConfigureAwait(false))
                         ?? throw NullInterceptorResult(config);
                 }
@@ -119,10 +119,10 @@ public sealed partial class AxiosClient
         var validateStatus = config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
         var statusAccepted = validateStatus(reply.Status);
 
-        // 状态码不合法时按宽松口径解析，让 404 + HTML 也能带着 Status/Response 抛错。
+        // 状态码不合法时按宽松口径解析。
         var response = ResponseReader.ReadShortCircuit(reply, config, dataType, target, lenient: !statusAccepted);
 
-        // 末端：不合法状态码在这里抛，放在链内才能被 OnRejected 接住。
+        // 末端：不合法状态码在此抛出，OnRejected 可接住。
         Task<AxiosResponse> Terminal()
         {
             if (!statusAccepted)

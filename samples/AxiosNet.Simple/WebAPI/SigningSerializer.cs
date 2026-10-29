@@ -5,17 +5,11 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Simple.WebAPI;
 
 /// <summary>
-/// 签名/验签序列化器：装饰任意 IContentSerializer（示例里是内置 JSON），
+/// 签名/验签序列化器：装饰任意 <see cref="IContentSerializer"/>（示例里是内置 JSON），
 /// 请求出口对「将要上线的正文文本」算 HMAC-SHA256 写进 X-Signature 头，
-/// 响应入口先验签、再交给内层解析——内容被篡改时在反序列化之前就失败。
-/// <para>
-/// 这是唯一能拿到「精确请求体文本/字节」的拦截层：IAuthorizationProvider 与拦截器
-/// 看到的 Data 还是业务对象，序列化发生在它们之后的管线里。
-/// </para>
-/// <para>
+/// 响应入口先验签、再交给内层解析，内容被篡改时在反序列化之前就失败。
 /// 约定：挂了这个序列化器的客户端，对端必须对所有响应签名（严格模式，
 /// 缺 X-Signature 视为验签失败）；二进制格式请改用字节通道做同构装饰。
-/// </para>
 /// </summary>
 public sealed class SigningSerializer : IContentSerializer
 {
@@ -32,8 +26,7 @@ public sealed class SigningSerializer : IContentSerializer
     {
         var body = _inner.Serialize(value, type, config);
 
-        // 对「将要上线的字节」签名；序列化器写请求头是库支持的能力：
-        // config 是本次请求独占副本，写的头在正文构造完成后统一应用
+        // 对「将要上线的字节」签名；序列化器可写请求头，写入的头在正文构造完成后统一应用
         config.Headers.Set("X-Signature", Sign(body));
 
         return body;

@@ -67,8 +67,7 @@ public readonly struct AxiosCircuitContext
     /// （<c>ECONNABORTED</c>，但下游连一个字节都没收到）。
     /// </summary>
     /// <remarks>
-    /// 与「发出后超时」区分开：那个说明下游不响应，是真的故障；这个只说明本地预算先到期
-    /// —— 过载时排队变长就足以让每条请求都撞上它。自定义策略若要自己记账，用它排除。
+    /// 自定义策略若要自己记账，用它排除：过载时排队变长就足以让每条请求都撞上它。
     /// </remarks>
     public bool TotalTimeoutExpiredBeforeSend => Exception is AxiosException { IsTotalTimeoutExceeded: true };
 
@@ -98,8 +97,6 @@ public readonly struct AxiosCircuitContext
             }
 
             // 总预算在请求发出之前就耗尽：本地约束先到期，不是下游不响应。
-            // 记成故障的后果是「过载 → 排队 → 预算耗尽」把一个健康的 host 熔断，
-            // 把局部排队放大成整条链路不可用 —— 而排队恰恰是 TotalTimeout 最该待命的场景。
             if (TotalTimeoutExpiredBeforeSend)
             {
                 return false;

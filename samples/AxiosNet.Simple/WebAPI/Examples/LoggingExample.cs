@@ -8,7 +8,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// </summary>
 public sealed class LoggingExample : IExample
 {
-    /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空（不能用共享客户端，否则日志拦截器会漏进其它示例）。</summary>
+    /// <summary>本示例专用客户端：拦截器只由本示例挂载，跨运行复用前先清空。</summary>
     private static ApiClient? _client;
 
     public int Number => 6;

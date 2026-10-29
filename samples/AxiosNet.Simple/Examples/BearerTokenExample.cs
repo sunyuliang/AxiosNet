@@ -92,7 +92,7 @@ public sealed class BearerTokenExample : IExample
                     throw ex;
                 }
 
-                // 属性不参与可空流分析，先取到局部变量
+                // 取到局部变量再判空
                 var config = error.Config;
                 if (config is null
                     || config.Url?.Contains("/api/token/login", StringComparison.OrdinalIgnoreCase) == true

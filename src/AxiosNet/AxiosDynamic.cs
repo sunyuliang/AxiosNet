@@ -6,16 +6,16 @@ using System.Reflection;
 namespace AxiosNet;
 
 /// <summary>
-/// dynamic 响应（<see cref="ResponseType.Dynamic"/>）的<b>对象节点</b>：无需 DTO 即可 <c>data.name</c> /
-/// <c>data["name"]</c> 访问，缺省成员返回 <c>null</c>（对齐 JS 的 <c>undefined</c>），运行期可随时增删属性。
+/// dynamic 响应（<see cref="ResponseType.Dynamic"/>）的对象节点：支持 <c>data.name</c> / <c>data["name"]</c>，
+/// 缺省成员返回 <c>null</c>，运行期可增删属性。
 /// 同时实现 <see cref="IDictionary{TKey,TValue}"/>，可原样当 <c>Params</c> / 请求体发出，也会被 <c>System.Text.Json</c>
 /// 序列化成普通 JSON 对象。
 /// </summary>
 /// <remarks>
 /// 值映射：字符串/布尔原样，整数为 <see cref="long"/>，浮点为 <see cref="double"/>，JSON <c>null</c> 保持 <c>null</c>，
 /// 数组节点是 <c>List&lt;object?&gt;</c>。
-/// 并发语义是「键快照 + 值实时」：shape 写时复制并原子发布，值数组原地可写；写入不抛异常，也不会读到撕裂的值。
-/// 动态成员优先于 CLR 成员：<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段，要字典语义请显式转换。
+/// 读无锁、写串行；枚举取键快照、值实时读取，枚举期间被删除的键值为 <c>null</c>。
+/// 动态成员优先于 CLR 成员：<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段。
 /// </remarks>
 public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<string, object?>
 {
@@ -27,10 +27,10 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
 
     private static readonly MethodInfo s_setValue = typeof(AxiosDynamic).GetMethod(nameof(SetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    /// <summary>写入串行化；读不加锁，靠「先发布值数组、再发布 shape」的顺序保证不越界。</summary>
+    /// <summary>写锁：写入串行化，读不加锁。</summary>
     private readonly object _gate = new();
 
-    /// <summary>当前形状（不可变，同形状实例共享同一个 <see cref="Shape"/>，因此 DLR 规则可跨实例复用）。</summary>
+    /// <summary>当前形状（不可变，同形状实例共享同一实例）。</summary>
     private Shape _shape = Shape.Empty;
 
     /// <summary>按槽位存值；扩容走整数组替换，永不原地改长度。</summary>
@@ -117,7 +117,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
     {
         lock (_gate)
         {
-            // 顺序与 Remove 一致：先撤销可见性（shape 换成空），再回收值数组。
+            // 先换空 shape，再回收值数组。
             Volatile.Write(ref _shape, Shape.Empty);
             Volatile.Write(ref _values, Array.Empty<object?>());
         }
@@ -153,12 +153,12 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
 
             var values = Volatile.Read(ref _values);
 
-            // 与「新增」相反的顺序：先撤销可见性，再断开引用，把「键在但值为 null」的窗口压到最小。
+            // 先撤销可见性，再断开值引用。
             Volatile.Write(ref _shape, shape.WithRemoved(key));
 
             if (slot < values.Length)
             {
-                // 断开引用，避免已删除的值被数组继续持有；已捕获旧 shape 的枚举器会读到 null。
+                // 断开引用；已捕获旧 shape 的枚举器读到 null。
                 Volatile.Write(ref values[slot], null);
             }
 
@@ -220,7 +220,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             var shape = Volatile.Read(ref _shape);
             if (shape.Slots.TryGetValue(name, out var existing))
             {
-                // 值数组原地可写，但写入必须走 Volatile：读侧全部是 Volatile.Read。
+                // 值数组原地可写，写入走 Volatile。
                 var current = Volatile.Read(ref _values);
                 Volatile.Write(ref current[existing], value);
                 return;
@@ -232,7 +232,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
 
             var values = Volatile.Read(ref _values);
             Volatile.Write(ref values[slot], value);
-            Volatile.Write(ref _shape, next); // 值先就位，再发布 shape：并发读不会看到「新 shape + 旧数组」
+            Volatile.Write(ref _shape, next); // 值先就位，再发布 shape。
         }
     }
 
@@ -250,8 +250,8 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
     }
 
     /// <summary>
-    /// 形状：名字 → 槽位的映射 + 有界迁移缓存。不可变，同形状的实例共享同一个对象。
-    /// 单节点缓存到 <see cref="MaxTransitions"/> 条后停止缓存并向下传递，避免从 <see cref="Empty"/> 静态根长出无界图。
+    /// 形状：名字 → 槽位的映射 + 有界迁移缓存。不可变，同形状的实例共享同一个对象；
+    /// 单节点缓存到 <see cref="MaxTransitions"/> 条后停止缓存。
     /// </summary>
     private sealed class Shape
     {
@@ -263,7 +263,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
         /// <summary>名字 → 槽位；构造后不再修改（增删都换新实例）。</summary>
         internal readonly Dictionary<string, int> Slots;
 
-        /// <summary>下一个可用槽位（只增不减；删除不复用旧槽，避免已绑定的常量槽位读到别的字段）。</summary>
+        /// <summary>下一个可用槽位（只增不减，删除不复用旧槽）。</summary>
         internal readonly int NextSlot;
 
         /// <summary>迁移缓存；<c>null</c> 表示已停止缓存（派生出的形状也不再缓存）。</summary>

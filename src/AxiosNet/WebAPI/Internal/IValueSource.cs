@@ -5,10 +5,7 @@ using System.Runtime.CompilerServices;
 
 namespace AxiosNet.WebAPI.Internal;
 
-/// <summary>
-/// 绑定取值来源：类模型读属性，接口模型读方法参数。
-/// 绑定规则只依赖本抽象，两套声明共用同一套内核。
-/// </summary>
+/// <summary>绑定取值来源：类模型读属性，接口模型读方法参数。</summary>
 internal interface IValueSource
 {
     /// <summary>绑定名缺省值（属性名 / 参数名）。</summary>
@@ -61,9 +58,7 @@ internal sealed class ArgumentValueSource : IValueSource
     public object? GetValue(object target) => ((object?[])target)[_index];
 }
 
-/// <summary>
-/// 属性读取器：JIT 下缓存取值委托，AOT 下退回反射，与既有类模型语义保持一致。
-/// </summary>
+/// <summary>属性读取器：JIT 下缓存取值委托，AOT 下退回反射。</summary>
 internal static class PropertyAccessor
 {
     private static readonly ConcurrentDictionary<PropertyInfo, Func<object, object?>> Getters = new();

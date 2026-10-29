@@ -17,7 +17,7 @@ public sealed class NamedPoolExample : IExample
         var baseUrl = context.BaseUrl;
         var server = context.Server;
 
-        // 名字是调用方给的「池名」，不做配置指纹：同名 = 同一条池。
+        // 池名由调用方指定：同名即同一条池。
         const string key = "demo.named-pool";
 
         // options 只在首次创建时生效：这里相当于启动时的一次性配置。
@@ -58,7 +58,7 @@ public sealed class NamedPoolExample : IExample
 
             Console.WriteLine($"  两个客户端都 Dispose 后: 命名池仍可用，节点数 = {pool.GetStatistics().EndpointCount}");
 
-            // 同一名字上传一份不同配置：明确报错，而不是静默忽略第二次的配置
+            // 同一名字传不同配置会报错
             try
             {
                 HttpConnectionPool.GetOrCreate(key, new ConnectionPoolOptions { MaxConnectionsPerServer = 64 });

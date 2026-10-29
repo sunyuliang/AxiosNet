@@ -18,8 +18,7 @@ public delegate ValueTask<AxiosAttemptResult> AxiosAttemptHandler(
 /// <c>next =&gt; async (request, ctx) =&gt; { 前置; var r = await next(request, ctx); 后置; return r; }</c>。
 /// </summary>
 /// <remarks>
-/// 链在客户端构造时编译一次，<b>不是每次请求编译</b>；因此中间件里只能读
-/// <see cref="AxiosAttemptContext.Config"/> 来按本次请求决定是否生效，不能按配置增删链成员。
-/// 想「每次请求定制」请用请求 / 响应拦截器。
+/// 链在客户端构造时编译一次：中间件只能读 <see cref="AxiosAttemptContext.Config"/> 决定本次是否生效，
+/// 不能按配置增删链成员。按请求定制请用请求 / 响应拦截器。
 /// </remarks>
 public delegate AxiosAttemptHandler AxiosAttemptMiddleware(AxiosAttemptHandler next);

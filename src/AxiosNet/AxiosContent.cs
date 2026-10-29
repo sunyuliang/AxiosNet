@@ -6,11 +6,9 @@ namespace AxiosNet;
 
 /// <summary>
 /// 请求体 / 响应体的内容格式入口，内置 JSON（默认）与 XML 两个实现。
-/// <para>
-/// 选择优先级：单次请求 / 实例的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>
-/// → 全局 <see cref="Serializer"/> → 按媒体类型查 <see cref="Register"/> → 内置 JSON。
+/// 选择优先级：单次请求 / 实例的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/> → 全局 <see cref="Serializer"/>
+/// → 按媒体类型查 <see cref="Register"/> → 内置 JSON。
 /// 请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
-/// </para>
 /// </summary>
 public static class AxiosContent
 {
@@ -73,7 +71,7 @@ public static class AxiosContent
             ?? Lookup(mediaType)
             ?? SystemTextJsonSerializer.Instance;
 
-    /// <summary>常见别名的归一：注册一次 canonical，<c>text/xml</c> 之类的别名头也要命中。</summary>
+    /// <summary>常见媒体类型别名的归一表。</summary>
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal)
     {
         ["text/xml"] = AxiosContentType.Xml,
@@ -83,7 +81,7 @@ public static class AxiosContent
     /// <summary>自动模式的查表：精确匹配 → 别名 → 结构化后缀回落；未注册返回 <c>null</c>。</summary>
     private static IContentSerializer? Lookup(string? mediaType)
     {
-        // 注册表为空时任何媒体类型都查不到，先于归一化返回，省掉每请求一次归一化开销。
+        // 注册表为空时直接返回，不做归一化。
         if (Volatile.Read(ref _registeredCount) == 0)
         {
             return null;

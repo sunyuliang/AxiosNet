@@ -15,7 +15,7 @@ public sealed class CircuitExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 阈值 / 冷却都取得很小，示例不必真的等 30 秒
+        // 阈值 / 冷却都取得很小，便于快速看到状态迁移
         var breaker = new CircuitBreaker
         {
             FailureThreshold = 2,                       // 连续 2 次下游故障

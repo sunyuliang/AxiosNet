@@ -26,7 +26,7 @@ internal sealed class DemoAuthApi
     /// <summary>签名时间戳允许的偏差窗口（秒）：|服务端时间 - X-Timestamp| 超出即判过期。</summary>
     private const long SignatureWindowSeconds = 300;
 
-    /// <summary>nonce 缓存上限，超过后顺手清理过期项（演示服务器不追求严谨的容量管理）。</summary>
+    /// <summary>nonce 缓存上限，超过后清理过期项。</summary>
     private const int NonceCacheLimit = 4096;
 
     private readonly ConcurrentDictionary<string, AccessEntry> _accessTokens = new();
@@ -184,10 +184,7 @@ internal sealed class DemoAuthApi
 
     /// <summary>
     /// 签名校验：POST /api/signed/orders、GET /api/signed/profile 共用。
-    /// <para>
-    /// 规范串（客户端与服务端必须逐字节一致）：
-    /// <c>token \n timestamp \n nonce \n METHOD \n path?query \n sha256hex(body)</c>
-    /// </para>
+    /// 规范串（客户端与服务端必须逐字节一致）：<c>token \n timestamp \n nonce \n METHOD \n path?query \n sha256hex(body)</c>
     /// </summary>
     public (int Status, string Json) VerifySigned(
         string method,
@@ -226,7 +223,7 @@ internal sealed class DemoAuthApi
 
         CleanupNonces(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
-        // 5) 重算签名并定长时间比较（避免逐字节比对泄露匹配长度信息）
+        // 5) 重算签名并做定长时间比较
         var token = headers["authorization"]["Bearer ".Length..].Trim();
         var pathAndQuery = query.Length == 0 ? path : path + "?" + query;
         var bodyHash = Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();

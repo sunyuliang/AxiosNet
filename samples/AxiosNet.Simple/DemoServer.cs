@@ -198,8 +198,7 @@ public sealed class DemoServer : IDisposable
                 return Json(200, UserJson());
 
             case "GET" when path == "/users/1/pascal":
-                // PascalCase 契约：用于演示自定义 JSON 序列化器（Newtonsoft 默认保留属性名，
-                // 而 System.Text.Json 的 Web 默认会输出 camelCase）
+                // PascalCase 契约：属性名保持原样，用于演示自定义 JSON 序列化器
                 return Json(200, """
                     {"UserName":"bob","Age":30,"Address":{"City":"Shanghai","Zip":"200000"},"Roles":["admin","user"]}
                     """);
@@ -237,8 +236,7 @@ public sealed class DemoServer : IDisposable
                 var failures = 2;
                 if (QueryValue(query, "fail") is { } failText && int.TryParse(failText, out var parsedFailures))
                 {
-                    // 注意 out 语义：解析失败会把 out 参数写成 0，所以必须和 TryParse 的结果一起判断，
-                    // 不能写成「先 TryParse 再赋值」，否则 ?fail=abc 会变成「永不失败」。
+                    // 仅在解析成功时采用该值（失败时 out 参数为 0）
                     failures = parsedFailures;
                 }
 

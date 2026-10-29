@@ -71,7 +71,7 @@ public sealed class ApiErrorContext
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // 错误体形态由服务端决定，解析失败只说明没有强类型错误体。
+            // 解析失败时按没有强类型错误体处理。
             return new ValueTask<TError?>(default(TError));
         }
     }

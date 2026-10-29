@@ -3,9 +3,7 @@ using System.Reflection;
 namespace AxiosNet;
 
 /// <summary>
-/// 本机能不能真的跑 HTTP/3（结果在首次访问时算一次，之后是只读字段）。
-/// 结论只覆盖本地能力：服务端支不支持 h3 只能发请求才知道，真实协议版本一律看 <see cref="AxiosResponse.ProtocolVersion"/>。
-/// 探测只读不写，不会去改进程级的 h3 开关。
+/// 本机能不能跑 HTTP/3（首次访问时算一次，之后是只读字段）；只覆盖本地能力，真实协议版本看 <see cref="AxiosResponse.ProtocolVersion"/>。
 /// </summary>
 public static class Http3Support
 {
@@ -39,7 +37,7 @@ public static class Http3Support
             return false;
         }
 
-        // .NET 6 运行时 h3 是预览特性，开关不写就是关，必须报「不支持」。
+        // 开关未设置且运行时低于 .NET 7：视为不支持。
         if (!hasSwitch && Environment.Version.Major < 7)
         {
             reason = $".NET {Environment.Version.Major} 运行时默认不启用 HTTP/3："
@@ -48,7 +46,7 @@ public static class Http3Support
             return false;
         }
 
-        // 反射读取：目标框架固定 net6.0，直接引用 .NET 7 才有的成员编译不过；探测失败不下结论。
+        // 反射读取 .NET 7 才有的成员；探测失败不下结论。
         try
         {
             var quic = Type.GetType(QuicConnectionTypeName, throwOnError: false);
@@ -64,10 +62,10 @@ public static class Http3Support
         }
         catch
         {
-            // 探测本身失败：不下结论（见上），reason 保持 null
+            // 探测失败：不下结论，reason 保持 null。
         }
 
-        // 只能确认「开关打开、QUIC 没被明确否定」，缺组件时会在发送阶段报错。
+        // 只确认开关打开且 QUIC 未被否定。
         return true;
     }
 }

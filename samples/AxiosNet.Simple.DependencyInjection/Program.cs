@@ -4,8 +4,8 @@ using AxiosNet.Simple.DependencyInjection.Examples;
 
 // AxiosNet.Simple.DependencyInjection —— AxiosNet.DependencyInjection 扩展示例
 // 启动时反射列出全部场景，输入编号运行，执行完毕回到菜单继续选择，直到输入 q 退出（a = 顺序运行全部）。
-// 场景零注册：Scenarios/ 下实现 IScenario 的类自动进菜单，按自身 Number 排序。
-// 每个场景各建一个 Host：同一容器内单例只能注册一次（TryAdd 先到先得），场景间互相隔离。
+// 场景零注册：Examples/ 下实现 IExample 的类自动进菜单，按自身 Number 排序。
+// 每个场景各建一个 Host，场景之间容器互相隔离。
 //   1) AddAxiosClient                   核心客户端单例
 //   2) AddApiClient 自建模式            自带 BaseAddress 自建底层客户端
 //   3) AddApiClient 门面模式            复用 AddAxiosClient 注册的单例
@@ -54,7 +54,7 @@ static Type[] Discover(Type scenarioInterface)
         .Where(t => t is { IsClass: true, IsAbstract: false } && scenarioInterface.IsAssignableFrom(t))
         .ToArray();
 
-// 演示服务器懒启动：第一次真正执行场景时创建，顺带打印地址（与 AxiosNet.Simple 的懒启动一致）
+// 演示服务器懒启动：第一次真正执行场景时创建，并打印地址
 static DemoApiServer StartServer()
 {
     var started = DemoApiServer.Start();

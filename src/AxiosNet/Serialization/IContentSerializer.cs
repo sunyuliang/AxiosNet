@@ -46,7 +46,7 @@ public interface IContentSerializer
 
     /// <summary>
     /// 把该格式的<b>字节</b>反序列化为业务对象（二进制格式的入口），不做文本解码。
-    /// 默认实现按响应字符集解码后转调文本入口，因此文本格式的序列化器不需要实现本方法。
+    /// 默认实现按响应字符集解码后转调文本入口，文本格式的序列化器无需实现本方法。
     /// </summary>
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding), type, config);

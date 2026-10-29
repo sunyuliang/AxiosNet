@@ -1,9 +1,6 @@
 namespace AxiosNet;
 
-/// <summary>
-/// 常用 <c>Content-Type</c> 的预置常量，用于给 <see cref="AxiosConfig.ContentType"/> 赋值。
-/// 用常量而非 <c>enum</c>：值可以带参数（如 <c>; boundary=----xxx</c>），也可直接用于 <c>switch</c> / 特性。
-/// </summary>
+/// <summary>常用 <c>Content-Type</c> 的预置常量，用于给 <see cref="AxiosConfig.ContentType"/> 赋值。</summary>
 public static class AxiosContentType
 {
     /// <summary><c>application/json</c>：库默认值，结构化数据序列化为 JSON 文本。</summary>

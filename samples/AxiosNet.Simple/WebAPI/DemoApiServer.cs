@@ -9,7 +9,7 @@ namespace AxiosNet.Simple.WebAPI;
 /// <summary>
 /// 示例专用的极简 HTTP/1.1 Keep-Alive 服务器（TcpListener 实现，零外部依赖，离线可运行）。
 /// 提供一组典型的 REST 端点：列表（含过滤）、详情、创建、删除、登录、受保护资源，
-/// 以及一个 SSE 流式端点（分块下发），供声明式示例做真实 HTTP 往返。
+/// 以及 SSE / JSON 数组 / 大帧三个流式端点（分块下发），供声明式示例做真实 HTTP 往返。
 /// </summary>
 public sealed class DemoApiServer : IDisposable
 {

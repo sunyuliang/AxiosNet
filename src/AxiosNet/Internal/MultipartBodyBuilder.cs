@@ -18,8 +18,7 @@ internal static class MultipartBodyBuilder
         Encoding encoding,
         AxiosConfig config)
     {
-        // 显式声明 boundary 时沿用（部分服务端会校验），否则由 MultipartFormDataContent 生成随机边界。
-        // 构造放进 try：非法 boundary 抛 ArgumentException，需归成带配置上下文的 ERR_BAD_OPTION_VALUE。
+        // 显式声明 boundary 时沿用，否则由 MultipartFormDataContent 生成；非法 boundary 归成 ERR_BAD_OPTION_VALUE。
         MultipartFormDataContent content;
         try
         {
@@ -42,10 +41,10 @@ internal static class MultipartBodyBuilder
         }
         catch (Exception ex)
         {
-            // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放，避免句柄泄漏。
+            // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放。
             content.Dispose();
 
-            // 再释放容器覆盖不到的「还没轮到装配」的裸流（它们同样已交过所有权）。
+            // 再释放容器覆盖不到的裸流（所有权已交出）。
             MultipartOwnership.DisposeOwned(data);
 
             // 字段名 / 声明值非法属于调用方选项错误，换成带配置上下文的 ERR_BAD_OPTION_VALUE。
@@ -54,7 +53,7 @@ internal static class MultipartBodyBuilder
                 throw AxiosException.InvalidOption(invalid.Message, config, invalid);
             }
 
-            // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
+            // 环检测：转成带配置的选项错误。
             if (ex is DataCycleException cycle)
             {
                 throw AxiosException.InvalidOption(cycle.Message, config, cycle);
@@ -77,7 +76,7 @@ internal static class MultipartBodyBuilder
         HashSet<object>? visited,
         PartOverride partOverride = default)
     {
-        // 字段名选择器从 config 读取（含实例默认值）；带 config 是为了失败路径能补请求上下文。
+        // 字段名选择器从 config 读取（含实例默认值）。
         var nameSelector = config.SerializationOrNull?.FormFieldNameSelector;
         switch (value)
         {
@@ -107,7 +106,7 @@ internal static class MultipartBodyBuilder
                 }
                 catch
                 {
-                    // 交进来的内容按「随请求释放」处理，装配失败不能把释放责任退回调用方。
+                    // 内容按「随请求释放」处理，装配失败也要释放。
                     part.Dispose();
                     throw;
                 }
@@ -175,7 +174,7 @@ internal static class MultipartBodyBuilder
                 return;
             }
 
-            // 只实现 IReadOnlyDictionary 的字典要单独处理，否则会被当 POCO 反射成 Key/Value 字段。
+            // 只实现 IReadOnlyDictionary 的字典要单独处理，不走 POCO 反射。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
                 visited = ObjectGraph.Enter(visited, readOnlyDictionary);
@@ -344,7 +343,7 @@ internal static class MultipartBodyBuilder
 
             ValidateDeclaredValue(partOverride);
 
-            // 三条来源都已在各自入口校验过控制字符，这里仍走统一入口再拦一次（第三方头值不可信）。
+            // 统一入口再校验一次控制字符（第三方头值不可信）。
             RequestContentType.Set(part, contentType, config);
             content.Add(part, field, fileName);
         }
@@ -415,7 +414,7 @@ internal static class MultipartBodyBuilder
             throw new InvalidMultipartOptionException("multipart 数据项缺少字段名：根节点不能是标量，请把内容放进对象/字典字段，或对 FormFile 设置 FieldName。");
         }
 
-        // 字段名最终写进 Content-Disposition 的 quoted-string，非法字符会破坏语法或让键名错位。
+        // 字段名会写进 Content-Disposition 的 quoted-string，先拦非法字符。
         if (DispositionTokens.FindInvalidCharacter(name) is { } invalid)
         {
             throw new InvalidMultipartOptionException(

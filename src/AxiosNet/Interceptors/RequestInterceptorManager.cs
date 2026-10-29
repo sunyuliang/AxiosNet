@@ -14,7 +14,7 @@ public sealed class RequestInterceptorManager
     private readonly List<RequestInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册 / 弹出 / 清空时失效；用数组是为了让 foreach 编译成下标循环，不装箱。
+    // 快照缓存：注册 / 弹出 / 清空时失效。
     private RequestInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
@@ -56,6 +56,7 @@ public sealed class RequestInterceptorManager
         }
     }
 
+    /// <summary>移除全部拦截器。</summary>
     public void Clear()
     {
         lock (_interceptors)
@@ -65,6 +66,7 @@ public sealed class RequestInterceptorManager
         }
     }
 
+    /// <summary>当前拦截器数量。</summary>
     public int Count
     {
         get
@@ -79,7 +81,7 @@ public sealed class RequestInterceptorManager
     /// <summary>快照并按 axios 规则逆序（后注册的先执行）；无变更时复用缓存。</summary>
     internal RequestInterceptor[] SnapshotReversed()
     {
-        // 稳态零锁：快照是不可变数组，写侧只在注册 / 弹出 / 清空时换引用。
+        // 稳态零锁：快照是不可变数组。
         var snapshot = Volatile.Read(ref _snapshot);
         if (snapshot is not null)
         {

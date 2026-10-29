@@ -7,7 +7,7 @@ namespace AxiosNet;
 /// <summary>请求 / 实例配置，字段与 axios 的 config 一一对应。</summary>
 public sealed partial class AxiosConfig
 {
-    // 按领域分组的可选设置：首次写入才分配，Clone 时按需复制。
+    // 按领域分组的可选设置：首次读取才分配，Clone 时各自复制。
     private SerializationSettings? _serialization;
     private ConnectionSettings? _connection;
     private LimitSettings? _limits;
@@ -32,7 +32,7 @@ public sealed partial class AxiosConfig
         set => _connection = value;
     }
 
-    /// <summary>体积、速率、在途并发上限、流式超时与流式单帧上限；首次读取时懒创建。</summary>
+    /// <summary>体积、速率、在途并发上限、排队上限与排队超时、流式单帧上限；首次读取时懒创建。</summary>
     public LimitSettings Limits
     {
         get => _limits ??= new LimitSettings();
@@ -144,7 +144,6 @@ public sealed partial class AxiosConfig
     private SynchronizedList<string>? _removeHeaders;
 
     /// <summary>按请求要删除的 Header 名（大小写不敏感），在 defaults 的头合并完成之后生效；线程安全，枚举走快照。</summary>
-    /// <remarks>手写属性而非自动属性：<see cref="Clone"/> 之后必须把集合成员换成独立副本。</remarks>
     public ICollection<string> RemoveHeaders => _removeHeaders ??= new SynchronizedList<string>();
 
     /// <summary>是否有要摘除的头（不创建集合）。</summary>
@@ -180,14 +179,14 @@ public sealed partial class AxiosConfig
 
     /// <summary>
     /// 请求体媒体类型（Content-Type），默认 <c>application/json</c>；编码格式由本项决定，与 <see cref="Data"/> 的运行时类型无关。
-    /// 不设置时头由序列化器自报（见 <see cref="IContentSerializer.MediaType"/>），显式设置过则以本项为准。
+    /// 未显式设置时由序列化器自报（见 <see cref="IContentSerializer.MediaType"/>）。
     /// </summary>
     public string ContentType
     {
         get => _contentType;
         set
         {
-            // 非 null 引用类型：赋 null 会压掉序列化器自报的 MediaType，直接拒绝。
+            // 拒绝 null：会压掉序列化器自报的 MediaType。
             ArgumentNullException.ThrowIfNull(value);
 
             var trimmed = value.Trim();
@@ -213,7 +212,7 @@ public sealed partial class AxiosConfig
     /// <summary>
     /// 对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码；string / byte[] / Stream / HttpContent 原样发送，
     /// <c>IAsyncEnumerable&lt;byte[]&gt;</c> / <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c> 按块流式发送（长度未知）。
-    /// 合并按「是否赋值过」区分：不碰 = 继承实例默认值，显式赋 <c>null</c> = 摘掉实例默认值（发空正文）。
+    /// 合并按「是否赋值过」区分：不碰继承实例默认值，显式赋 <c>null</c> 发空正文。
     /// </summary>
     public object? Data
     {
@@ -234,9 +233,9 @@ public sealed partial class AxiosConfig
     private TimeSpan _timeout;
 
     /// <summary>
-    /// 对应 axios timeout，零表示不超时；语义是<b>一次尝试</b>的预算（建连 + 等待响应头 + 读取正文），
-    /// 重试 / 备用端点 / 对冲各自复制一份 —— 要限制「整条逻辑请求」请用 <see cref="TotalTimeout"/>。
-    /// 流式响应的正文也计入本预算（预算在正文读完前方才失效）；零值下正文不限时。负值抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+    /// 对应 axios timeout，零表示不超时；一次尝试的预算（建连 + 等待响应头 + 读取正文），重试 / 备用端点 / 对冲各复制一份，
+    /// 要限制整条逻辑请求用 <see cref="TotalTimeout"/>。
+    /// 流式响应的正文也计入本预算；零值下正文不限时。负值抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
     /// </summary>
     public TimeSpan Timeout
     {
@@ -255,19 +254,10 @@ public sealed partial class AxiosConfig
 
     /// <summary>
     /// 整条逻辑请求的总预算（<c>null</c> = 不设，默认）：从调用开始计时，<b>跨重试、备用端点与对冲分支共享</b>。
-    /// 每次尝试实际拿到的上限是 <c>min(Timeout, TotalTimeout 剩余)</c>，剩余为负时该次尝试根本不发出，直接抛
-    /// <c>ECONNABORTED</c>（消息指明第几次尝试未发出）。
+    /// 每次尝试实际上限为 <c>min(Timeout, 剩余预算)</c>，剩余不足时该次尝试不发出并抛 <c>ECONNABORTED</c>；
+    /// <c>Zero</c> 与 <c>null</c> 等价，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
-    /// <remarks>
-    /// 与 <see cref="Timeout"/> 的分工：<c>Timeout</c> 是「单次尝试」的上限（重试 / 换端点 / 对冲各自复制一份），
-    /// 本项是「调用方感知的整条请求」的上限。两者同时设置取小者；排队时间计入本预算，并且**排队等待本身**
-    /// 也由剩余预算截断（与 <c>QueueTimeout</c> 取小，谁更紧听谁的）；<c>Zero</c> 与 <c>null</c> 等价（不设总预算），
-    /// 负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
-    /// <para>
-    /// 流式响应的正文也在预算之内：正文读取沿用被本预算压小后的剩余额度，读到一半到点即 <c>ECONNABORTED</c>。
-    /// 长连接场景（SSE / 大文件下载）不要设 <c>Timeout</c> / <c>TotalTimeout</c>，改用调用方令牌退出。
-    /// </para>
-    /// </remarks>
+    /// <remarks>排队时间与流式正文都在预算之内。</remarks>
     public TimeSpan? TotalTimeout
     {
         get => _totalTimeout;
@@ -312,7 +302,7 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool ResponseTypeSet { get; private set; }
 
-    /// <summary>管线内部的 responseType 自动切换：只改值、不置 <see cref="ResponseTypeSet"/>（自动切换不是调用方意图）。</summary>
+    /// <summary>管线内部的 responseType 自动切换：只改值、不置 <see cref="ResponseTypeSet"/>。</summary>
     internal void SetResponseTypeAuto(ResponseType value) => _responseType = value;
 
     private CancellationToken _cancellationToken;
@@ -356,7 +346,7 @@ public sealed partial class AxiosConfig
         set
         {
             ArgumentNullException.ThrowIfNull(value);
-            // 整体替换同样要保证线程安全：包成同一实现，避免调用方传入 List 时并发枚举抛异常。
+            // 整体替换也包成同一线程安全实现。
             _transformRequest = WrapTransforms(value);
         }
     }
@@ -399,7 +389,7 @@ public sealed partial class AxiosConfig
     /// </summary>
     public AxiosResponseInfo? Response { get; internal set; }
 
-    /// <summary>清掉实例级选项的「显式赋值过」标记（合并起点是 <c>Defaults.Clone()</c>，克隆会把标记带过来）。</summary>
+    /// <summary>清掉实例级选项的「显式赋值过」标记。</summary>
     internal void ClearInstanceOptionFlags()
     {
         if (_connection is not null)
@@ -410,7 +400,6 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>深拷贝（Headers / transform 链 / Params / Data 的字典容器独立；其余引用成员按引用共享）。</summary>
-    /// <remarks>用 <see cref="object.MemberwiseClone"/> 保留字段真实状态；源没有内容的集合保持 <c>null</c>。</remarks>
     public AxiosConfig Clone()
     {
         var clone = (AxiosConfig)MemberwiseClone();
@@ -418,7 +407,7 @@ public sealed partial class AxiosConfig
         // ① 库自有集合共享一版不可变数组；② 调用方容器复制一份；③ 设置分组各自 Clone()。
         clone._headers = _headers?.Clone();
 
-        // transform 链与删头名单走写时复制共享：只读用法零拷贝，空链在克隆侧保持 null。
+        // transform 链与删头名单写时复制共享；空链在克隆侧保持 null。
         clone._removeHeaders = _removeHeaders?.ShareIfNotEmpty();
         clone._transformRequest = _transformRequest?.ShareIfNotEmpty();
         clone._transformResponse = _transformResponse?.ShareIfNotEmpty();
@@ -432,17 +421,17 @@ public sealed partial class AxiosConfig
         clone._failover = _failover?.Clone();
         clone._telemetry = _telemetry?.Clone();
 
-        // Params / Data 装的是调用方持有的可变容器，没有不可变版本可共享，只能隔离。
+        // Params / Data 是可变的调用方容器，克隆时隔离一份。
         clone._params = IsolateMutableContainer(_params);
         clone._data = IsolateMutableContainer(_data);
 
         // 响应上下文属于某一次响应，不随克隆带过去。
         clone.Response = null;
 
-        // 短路响应同属那一次请求，跟着克隆走会让下一次请求返回旧结果。
+        // 短路响应只属于那一次请求，克隆时清空。
         clone.ShortCircuit = null;
 
-        // Auth 的值已是生效结果，克隆后不能再被当成按请求意图。
+        // Auth 的值已是生效结果，克隆后清掉「显式赋值过」标记。
         if (clone._connection is not null)
         {
             clone._connection.AuthSet = false;
@@ -453,7 +442,7 @@ public sealed partial class AxiosConfig
         {
             clone.EffectiveMerged = false;
 
-            // 但「这些实例级选项是实例的值」这条信息必须留下。
+            // 实例级选项的来源信息保留下来。
             clone.InstanceOptionsInherited = true;
         }
 
@@ -462,7 +451,6 @@ public sealed partial class AxiosConfig
 
     /// <summary>
     /// 派生一份按尝试隔离的浅拷贝：子设置与集合全部按引用共享，只把 <see cref="Response"/> 清空。
-    /// 对冲的每条分支各持一份 —— 终端会把本次响应的上下文写进它，共享同一份会互相覆盖。
     /// </summary>
     internal AxiosConfig CloneForAttempt()
     {
@@ -478,7 +466,7 @@ public sealed partial class AxiosConfig
     /// <remarks>字符串键字典按原类型 + 原 comparer 复制；其余 <see cref="IDictionary{TKey,TValue}"/> 退化成 <see cref="Dictionary{TKey,TValue}"/>（内容与顺序不变，运行时类型会变）。</remarks>
     private static object? IsolateMutableContainer(object? value)
     {
-        // 最常见的是「没设过」与「匿名对象 / 字符串」，先挡掉 null。
+        // 先挡掉 null。
         if (value is null)
         {
             return null;
@@ -486,7 +474,7 @@ public sealed partial class AxiosConfig
 
         return value switch
         {
-            // 具体类型必须排在接口之前，否则会被 IDictionary 分支接走并退化成 Dictionary。
+            // 具体类型排在接口分支之前。
             Dictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary, dictionary.Comparer),
             Dictionary<string, string> dictionary => new Dictionary<string, string>(dictionary, dictionary.Comparer),
             SortedDictionary<string, object?> dictionary => new SortedDictionary<string, object?>(dictionary, dictionary.Comparer),
@@ -496,7 +484,7 @@ public sealed partial class AxiosConfig
             ConcurrentDictionary<string, object?> dictionary => new ConcurrentDictionary<string, object?>(dictionary, dictionary.Comparer),
             ConcurrentDictionary<string, string> dictionary => new ConcurrentDictionary<string, string>(dictionary, dictionary.Comparer),
 
-            // 自定义实现读不到 comparer，只能退化。
+            // 其余 IDictionary 实现退化成 Dictionary。
             IDictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary),
             IDictionary<string, string> dictionary => new Dictionary<string, string>(dictionary),
             _ => value

@@ -22,8 +22,8 @@ public static class AxiosClientServiceCollectionExtensions
     /// </param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
-    /// TryAdd 语义：容器中已有 <see cref="AxiosClient"/> 注册时本次调用不生效（保留首次注册），
-    /// 避免重复创建连接池；要替换请先移除原注册。
+    /// TryAdd 语义：容器中已有 <see cref="AxiosClient"/> 注册时本次调用不生效（保留首次注册）；
+    /// 要替换请先移除原注册。
     /// </remarks>
     public static IServiceCollection AddAxiosClient(
         this IServiceCollection services,
@@ -32,7 +32,7 @@ public static class AxiosClientServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        // TryAdd 语义要连 configure 的副作用一起跳过，不能只丢注册却把 configure 跑一遍。
+        // TryAdd 语义：已有注册时连 configure 的副作用一起跳过。
         if (services.Any(d => d.ServiceType == typeof(AxiosClient)))
         {
             return services;

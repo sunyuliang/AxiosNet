@@ -19,7 +19,6 @@ internal sealed class ConcurrencyGate
 
     /// <summary>
     /// 当前正在等槽位的请求数（进程级，跨所有客户端 / 闸门）。
-    /// 与「排队超时次数」互补：那个是事后计数，这个是此刻的水位，容量规划看它。
     /// </summary>
     internal static long QueueDepth => Volatile.Read(ref _queued);
 
@@ -46,11 +45,7 @@ internal sealed class ConcurrencyGate
     /// <param name="queueTimeout">调用方给的排队上限（<c>QueueTimeout</c>）。</param>
     /// <param name="budgetRemaining">总预算剩余（<c>null</c> = 没设 <see cref="AxiosConfig.TotalTimeout"/>）；比排队上限更紧时由它封顶。</param>
     /// <param name="attempt">当前是第几次尝试，只用于「预算耗尽」的错误消息。</param>
-    /// <remarks>
-    /// 本方法刻意<b>不是</b> <c>async</c>：稳态下槽位总是立刻可得，这条快路径每请求都要走一次，
-    /// 进了状态机就白付一层异步机制（实测约 140 B/请求）。只有真的要排队时才落到
-    /// <see cref="AcquireQueuedAsync"/> 的异步路径。
-    /// </remarks>
+    /// <remarks>非 async：稳态下槽位立刻可得，只有真的要排队时才转到 <see cref="AcquireQueuedAsync"/>。</remarks>
     public ValueTask<IDisposable> AcquireAsync(
         AxiosConfig config,
         HttpRequestMessage request,
@@ -90,10 +85,8 @@ internal sealed class ConcurrencyGate
             throw AxiosException.QueueTimeout(config, request, TimeSpan.Zero, MaxConcurrency);
         }
 
-        // 总预算封顶排队等待：TotalTimeout 管的是「整条逻辑请求」的墙钟时间，
-        // 不约束排队的话，最需要它的过载场景（排队最长）反而成了预算之外的黑洞 ——
-        // 一个 TotalTimeout=200ms 的请求可以在闸门里排到 QueueTimeout 甚至无限等。
-        // 放在排队深度计数之前：这里抛出的错误没有真的等过，不该进水位。
+        // 总预算封顶排队等待：剩余预算不够时按预算报耗尽。
+        // 放在排队深度计数之前：这里抛出的错误没有真的等过，不进水位。
         var cutByBudget = false;
         if (budgetRemaining is { } budget)
         {

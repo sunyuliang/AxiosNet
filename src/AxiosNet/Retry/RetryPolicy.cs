@@ -139,7 +139,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return RetryStatusCodes(status);
         }
 
-        // 没有响应：网络层失败或超时，重发有意义
+        // 没有响应：网络层失败或超时。
         return context.Exception switch
         {
             AxiosException { Code: AxiosException.ErrNetwork or AxiosException.ErrConnAborted } => true,
@@ -167,7 +167,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
 
         if (Jitter && milliseconds > 0)
         {
-            // 50%–100% 抖动：保留退避的单调趋势，同时打散同时重试的客户端
+            // 50%–100% 抖动：打散同时重试的客户端。
             milliseconds *= 0.5d + (Random.Shared.NextDouble() * 0.5d);
         }
 

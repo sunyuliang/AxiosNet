@@ -19,7 +19,7 @@ public sealed class AuthorizeAttribute : Attribute
 
         var trimmed = scheme.Trim();
 
-        // scheme 与令牌拼进同一个头值，内部空白会让服务端按 RFC 7235 解析失败，构造期直接拒。
+        // scheme 与令牌拼进同一个头值：内部空白在构造期直接拒绝。
         foreach (var c in trimmed)
         {
             if (char.IsWhiteSpace(c))

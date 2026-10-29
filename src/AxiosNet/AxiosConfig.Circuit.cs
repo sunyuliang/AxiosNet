@@ -13,7 +13,7 @@ public sealed partial class AxiosConfig
         private IAxiosCircuitPolicy? _policy;
 
         /// <summary>熔断策略，<c>null</c> 表示不熔断（默认）；显式赋 <c>null</c> 是本次请求关掉实例默认的熔断。</summary>
-        /// <remarks>策略实例会被并发请求共享，熔断状态就存在策略里：想共享状态就传同一个实例。</remarks>
+        /// <remarks>策略实例被并发请求共享，熔断状态存在策略里：要共享状态就传同一个实例。</remarks>
         public IAxiosCircuitPolicy? Policy
         {
             get => _policy;

@@ -108,7 +108,7 @@ public static class AxiosTelemetry
     private const string TagRequestBodySize = "http.request.body.size";
     private const string TagResponseBodySize = "http.response.body.size";
 
-    // 库自有标签（语义约定没有对应项）：一律 axiosnet. 前缀，与已有的 axiosnet.retry.delay_ms 一致。
+    // 库自有标签（语义约定没有对应项）：一律 axiosnet. 前缀。
     private const string TagErrorCode = "axiosnet.error.code";
     private const string TagEndpointReused = "axiosnet.pool.endpoint.reused";
     private const string TagEvictionReason = "axiosnet.pool.eviction.reason";
@@ -172,17 +172,16 @@ public static class AxiosTelemetry
 
         Retries = meter.CreateCounter<long>(RetriesInstrumentName, unit: "{retry}", description: "按策略决定重试的次数（不含首次请求）；axiosnet.retry.reason 区分状态码 / 网络 / 超时等原因。");
 
-        // 预算耗尽 = 想重试但被共享令牌桶拒掉：和 retries 分开计，才能区分「没到重试条件」与「重试被预算拦下」。
+        // 预算耗尽与 retries 分开计。
         RetryBudgetExhausted = meter.CreateCounter<long>(RetryBudgetExhaustedInstrumentName, unit: "{retry}", description: "因共享重试预算不足而放弃的重试次数（请求未重发，错误原样返回给调用方）。");
 
-        // 排队深度：容量规划最直接的信号（「现在排了多长」而不是「排队超时了多少次」）。
-        // 与在途数同一手法：静态计数 + 收集时读取；闸门实例可以有很多个，这里看的是进程总量。
+        // 排队深度：静态计数 + 收集时读取，看的是进程总量。
         meter.CreateObservableGauge(GateQueueDepthInstrumentName, () => ConcurrencyGate.QueueDepth, unit: "{request}", description: "当前正在等并发槽位的请求数（进程级，跨所有客户端）。");
 
-        // 拒绝是「已经发生的损失」：水位看「现在排了多长」，这条看「刚才漏掉了多少」。
+        // 拒绝数：与排队深度分开计。
         GateRejections = meter.CreateCounter<long>(GateRejectionsInstrumentName, unit: "{request}", description: "被并发闸门拒绝的请求数（请求未发出），按 axiosnet.gate.reason（queue_full / queue_timeout）区分。");
 
-        // 熔断状态：按 state 报「多少个维度处于该状态」，不带 host —— 与池指标同一套低基数规则。
+        // 按 state 报维度数，不带 host（低基数）。
         meter.CreateObservableGauge(CircuitStateInstrumentName, ObserveCircuitStates, unit: "{circuit}", description: "熔断器跟踪的维度数，按 axiosnet.circuit.state（closed / open / half_open）分组；每个维度 = 一个熔断器实例上的一个 key（默认 host:port）。");
 
         PoolLeases = meter.CreateCounter<long>(PoolLeasesInstrumentName, unit: "{lease}", description: "成功租用 origin 节点的次数；axiosnet.pool.endpoint.reused=false 表示本次新建了节点。");
@@ -194,7 +193,7 @@ public static class AxiosTelemetry
         // 与在途请求数同一手法：计的是持有租约的请求，含正文还没读完的流式响应。
         meter.CreateObservableGauge(ActiveLeasesInstrumentName, () => Volatile.Read(ref _activeLeases), unit: "{lease}", description: "当前持有 origin 节点租约的请求数（含正文下载中的流式响应）。");
 
-        // 池的个数而不是池里的连接数：这条水位上涨 = 有地方在反复建池（典型是「按请求 new 客户端」）。
+        // 池的个数而不是连接数。
         meter.CreateObservableGauge(ActivePoolsInstrumentName, () => Volatile.Read(ref _livePools), unit: "{pool}", description: "当前存活（未 Dispose）的连接池数；持续增长说明有代码在反复建池。");
 
         // 条目数是 int（字典 Count），统一抬成 long：与其余水位的观测类型一致。
@@ -233,11 +232,7 @@ public static class AxiosTelemetry
     /// 一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），节点是新建时再记一条
     /// <c>pool.endpoints.created</c>。池域指标不受 <see cref="AxiosConfig.TelemetrySettings.Enabled"/> 约束。
     /// </summary>
-    /// <remarks>
-    /// <b>刻意不带 host / port</b>：网关、爬虫、多租户 SaaS 会访问成千上万个 origin，一个 host 一条时间序列
-    /// 会把指标后端打爆（OpenTelemetry 点名的 cardinality 反模式）。要定位到具体 origin 就看 span ——
-    /// 它本来就有 <c>server.address</c> / <c>server.port</c> 与 <c>axiosnet.pool.endpoint.reused</c>。
-    /// </remarks>
+    /// <remarks>不带 host / port（低基数）；要定位到具体 origin 看 span 上的 <c>server.address</c> / <c>server.port</c>。</remarks>
     internal static void RecordLease(bool reused)
     {
         if (!PoolLeases.Enabled)
@@ -301,7 +296,7 @@ public static class AxiosTelemetry
 
         try
         {
-            // 重试时会被再次调用：一旦写过就不再覆盖，避免冲掉「本次付了建节点代价」这条信息。
+            // 重试时会再次调用：写过就不再覆盖。
             if (reused && activity.GetTagItem(TagEndpointReused) is not null)
             {
                 return;
@@ -321,8 +316,7 @@ public static class AxiosTelemetry
     };
 
     /// <summary>
-    /// 熔断状态的分组计数：<c>closed</c> 由「已跟踪维度 - 打开 - 半开」推出，不必单独维护一个计数器
-    /// （三条计数各自在状态迁移时改一次，合计永远等于跟踪表大小）。
+    /// 熔断状态的分组计数：<c>closed</c> 由「已跟踪维度 - 打开 - 半开」推出。
     /// </summary>
     private static IEnumerable<Measurement<long>> ObserveCircuitStates()
     {
@@ -356,7 +350,7 @@ public static class AxiosTelemetry
         {
             if (Source.HasListeners())
             {
-                // span 名按语义约定取「方法」，URL 放在标签里：名称带 URL 会让后端按 URL 分组成千上万个「操作」。
+                // span 名按语义约定取「方法」，URL 放在标签里。
                 activity = Source.StartActivity(config.Method.Method, ActivityKind.Client);
 
                 if (activity is not null)
@@ -434,7 +428,7 @@ public static class AxiosTelemetry
 
                 if (response.ProtocolVersion is { } protocolVersion)
                 {
-                    // 协商结果是「线上真正用了什么」，默认 2.0 + 静默降级时这是唯一能确认协议的地方
+                    // 协商结果才是线上真正使用的协议版本。
                     activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
                 }
 
@@ -562,7 +556,7 @@ public static class AxiosTelemetry
                 return;
             }
 
-            // 三路都没人订阅时连 error.type 都不必算（它可能是一次 ToString 或异常类型名取字符串）
+            // 三路都没人订阅时直接返回。
             var activity = Activity.Current;
             var hasSpan = activity is not null && ReferenceEquals(activity.Source, Source);
             var hasEvent = Listener.IsEnabled(RetryEventName);
@@ -578,8 +572,7 @@ public static class AxiosTelemetry
             // 与耗时直方图同一口径：有状态码就用状态码（语义约定），没有才用库错误码
             var errorType = ErrorTypeOf(context.Exception, context.StatusCode);
 
-            // 重试原因：状态码归一到 "status"（具体码在 error.type），其余用库错误码 ——
-            // 这样「该调策略（429）还是该修下游（5xx）」在指标上直接分得开，基数仍然有界。
+            // 重试原因：状态码归一到 "status"（具体码在 error.type），其余用库错误码。
             var retryReason = RetryReasonOf(context.Exception, context.StatusCode);
 
             if (hasMetric)

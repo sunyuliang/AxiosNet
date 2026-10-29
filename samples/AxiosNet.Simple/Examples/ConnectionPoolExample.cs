@@ -14,7 +14,7 @@ public sealed class ConnectionPoolExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 客户端与池每次运行新建：每个场景都要用全新池来数连接数与峰值并发
+        // 客户端与池每次运行新建，每个场景用独立新池统计连接数与峰值并发
 
         var baseUrl = context.BaseUrl;
         var server = context.Server;
@@ -25,8 +25,7 @@ public sealed class ConnectionPoolExample : IExample
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
             IdleHandlerLifetime = TimeSpan.FromMinutes(30),
 
-            // h2 keep-alive：中间设备（ALB / NAT / 防火墙）静默回收连接后，客户端能提前发现，
-            // 而不是等下一个请求撞上死连接再重连（多一次 RTT，或者表现为偶发 ERR_NETWORK）。
+            // h2 keep-alive：定期探活，连接被中间设备（ALB / NAT / 防火墙）静默回收后能提前发现。
             // 默认关闭（与 SocketsHttpHandler 一致），这里显式打开演示。
             KeepAlivePingDelay = TimeSpan.FromSeconds(30),
             KeepAlivePingTimeout = TimeSpan.FromSeconds(20),

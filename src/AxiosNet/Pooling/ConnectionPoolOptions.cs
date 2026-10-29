@@ -16,7 +16,7 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 池化连接的最大存活时间（默认 10 分钟，到期优雅轮换）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。
-    /// 实际落到 Handler 的值有 ±10% 抖动（避免同一波连接在同一刻集体到期重连），本属性保持你设置的原值。
+    /// 实际落到 Handler 的值有 ±10% 抖动，本属性保持你设置的原值。
     /// </summary>
     public TimeSpan PooledConnectionLifetime { get; set; } = TimeSpan.FromMinutes(10);
 
@@ -28,11 +28,10 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 自定义建连回调（直通 <see cref="SocketsHttpHandler.ConnectCallback"/>）：接管「把目标端点变成一条流」这一步，
-    /// 用于拨到 Unix domain socket、本机进程内传输、或给每条连接套一层额外传输。为 <c>null</c> 时用 BCL 默认建连。
+    /// 为 <c>null</c> 时用 BCL 默认建连。
     /// </summary>
     /// <remarks>
-    /// 回调里的 DNS 解析与建连必须自己尊重 <c>cancellationToken</c>（<see cref="ConnectTimeout"/> 到点会触发它）；
-    /// 返回的流由 Handler 持有并释放。给的是 <see cref="SocketsHttpConnectionContext"/>，可读 <c>DnsEndPoint</c> 与请求头。
+    /// 回调必须自己尊重 <c>cancellationToken</c>（<see cref="ConnectTimeout"/> 到点会触发它）；返回的流由 Handler 持有并释放。
     /// TLS 仍由 Handler 在返回的流上完成（回调只负责明文传输），除非自行返回已加密的流。
     /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
     /// </remarks>
@@ -40,8 +39,8 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 响应头体积上限（单位 KB，必须大于 0，默认 64，对应 <see cref="SocketsHttpHandler.MaxResponseHeadersLength"/>）。
-    /// 超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>（HTTP/1.1 与 HTTP/2 都生效），用于挡住超长头造成的内存放大。
-    /// 底层没有「0 表示不限制」的写法：0 或负数会在建池时就以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
+    /// 超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>（HTTP/1.1 与 HTTP/2 都生效）。
+    /// 0 或负数在建池时就以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
     /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
     /// </summary>
     public int MaxResponseHeadersLength { get; set; } = 64;
@@ -61,7 +60,7 @@ public sealed class ConnectionPoolOptions
     /// <summary>最大自动重定向次数（默认 5，对应 axios maxRedirects）。</summary>
     public int MaxAutomaticRedirections { get; set; } = 5;
 
-    /// <summary>是否使用 Cookie 容器（整个池共用一个：Cookie 的隔离维度是域和路径，不是端口）。</summary>
+    /// <summary>是否使用 Cookie 容器（整个池共用一个）。</summary>
     public bool UseCookies { get; set; }
 
     /// <summary>
@@ -83,15 +82,11 @@ public sealed class ConnectionPoolOptions
     public bool EnableMultipleHttp2Connections { get; set; } = true;
 
     /// <summary>
-    /// HTTP/2 keep-alive ping 的间隔（默认 <see cref="Timeout.InfiniteTimeSpan"/>，即不发 ping，与 <c>SocketsHttpHandler</c> 一致）。
+    /// HTTP/2 keep-alive ping 的间隔（默认 <see cref="Timeout.InfiniteTimeSpan"/>，即不发 ping）。
     /// 只影响 HTTP/2 连接：h1 没有 ping 帧。
     /// </summary>
     /// <remarks>
-    /// 打开它是对付「静默掐断」的手段：AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，
-    /// 下次请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 <c>GOAWAY</c> / 流重置。
-    /// 发送 ping 的代价是一个 17 字节的帧，比一次重连便宜得多。默认关闭是因为它会改变线上行为：
-    /// 链路上有不回应 <c>PING</c> 的代理 / 中间盒时，连接会被判死重连（<c>ERR_NETWORK</c> 变多）——
-    /// 确认链路健康后再打开（常见取值 30 秒）。
+    /// 链路上的代理 / 中间盒不回应 <c>PING</c> 时连接会被判死重连（<c>ERR_NETWORK</c> 变多），确认链路健康后再打开。
     /// </remarks>
     public TimeSpan KeepAlivePingDelay { get; set; } = Timeout.InfiniteTimeSpan;
 
@@ -100,14 +95,13 @@ public sealed class ConnectionPoolOptions
     /// 只影响 HTTP/2 连接，且只有 <see cref="KeepAlivePingDelay"/> 为有限值（真的会发 ping）时才有意义。
     /// </summary>
     /// <remarks>
-    /// 一般取值<b>小于</b> <see cref="KeepAlivePingDelay"/>：等 ACK 的窗口要短于两次 ping 的间隔，否则还没判死就该发下一个 ping 了。
-    /// 本项不做「必须小于」的校验 —— 反过来配置不会报错，也不改变「隔多久发一次 ping」的语义。
+    /// 一般取值小于 <see cref="KeepAlivePingDelay"/>；本项不做「必须小于」的校验，反过来配置不会报错。
     /// </remarks>
     public TimeSpan KeepAlivePingTimeout { get; set; } = TimeSpan.FromSeconds(20);
 
     /// <summary>
     /// 何时发送 keep-alive ping（默认 <see cref="HttpKeepAlivePingPolicy.WithActiveRequests"/>，只在有在途请求时发）；
-    /// 改成 <see cref="HttpKeepAlivePingPolicy.Always"/> 会在完全空闲时也维持连接（长轮询 / 低频高价值调用场景）。
+    /// <see cref="HttpKeepAlivePingPolicy.Always"/> 在完全空闲时也维持连接。
     /// </summary>
     public HttpKeepAlivePingPolicy KeepAlivePingPolicy { get; set; } = HttpKeepAlivePingPolicy.WithActiveRequests;
 
@@ -136,8 +130,8 @@ public sealed class ConnectionPoolOptions
     public Func<PooledHandlerContext, HttpMessageHandler>? HandlerFactory { get; set; }
 
     /// <summary>
-    /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本），
-    /// 之后改原对象不会影响已建好的池。引用型字段（代理、委托）按引用共享，不做深拷贝。
+    /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本）。
+    /// 引用型字段（代理、委托）按引用共享，不做深拷贝。
     /// </summary>
     public ConnectionPoolOptions Clone() => new()
     {

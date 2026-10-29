@@ -50,7 +50,7 @@ internal static class DynamicJson
                 return BoxedBoolean.False;
 
             case JsonValueKind.Number:
-                // 整数保持 long，其余为 double；不能用三元表达式，long/double 会被统一提升为 double。
+                // 整数保持 long，其余为 double。
                 if (element.TryGetInt64(out var integer))
                 {
                     return integer;

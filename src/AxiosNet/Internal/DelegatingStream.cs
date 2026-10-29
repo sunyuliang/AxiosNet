@@ -1,9 +1,8 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 包装流基类：收编超时 / 租约 / 进度读 / 进度写四个包装流重复的透传成员，以及「同步成员阻塞等待
-/// 异步核心」的入口形状。子类只实现 <c>*CoreAsync</c>，同步入口由基类阻塞等待对应异步核心。
-/// 读 / 写 / Flush 与能力成员默认透传内层流；释放默认连同内层流一起，附加资源在 <see cref="OnReleased"/> 释放。
+/// 包装流基类：透传读 / 写 / Flush 与能力成员，同步入口阻塞等待子类的 <c>*CoreAsync</c>。
+/// 释放默认连同内层流一起，附加资源在 <see cref="OnReleased"/> 释放。
 /// </summary>
 internal abstract class DelegatingStream : Stream
 {

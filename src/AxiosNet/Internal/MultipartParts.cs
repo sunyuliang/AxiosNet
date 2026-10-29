@@ -42,7 +42,7 @@ internal static class MultipartOwnership
     /// <summary>回收一组表单值（装配前的表单字典）。</summary>
     public static void DisposeOwned(IEnumerable<object?> values)
     {
-        // 字典可以自引用（d["self"] = d）：按引用记录已访问，避免清理阶段无限递归。
+        // 按引用记录已访问，避免自引用字典无限递归。
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var owned = new List<IDisposable>();
 
@@ -64,8 +64,7 @@ internal static class MultipartOwnership
     }
 
     /// <summary>
-    /// 把 <paramref name="value"/> 里的部件收进 <paramref name="owned"/>（只读遍历，不释放）；
-    /// 遍历与释放分两步，避免某个部件的 <c>Dispose</c> 抛异常中断后续释放。
+    /// 把 <paramref name="value"/> 里的部件收进 <paramref name="owned"/>（只读遍历，不释放）。
     /// </summary>
     private static void Collect(object? value, HashSet<object> visited, List<IDisposable> owned)
     {
@@ -90,7 +89,7 @@ internal static class MultipartOwnership
             }
             catch
             {
-                // 单个部件释放失败不能连累其余部件（调用方看到的是装配失败的原始异常）
+                // 单个部件释放失败不连累其余部件。
             }
         }
     }
@@ -119,7 +118,7 @@ internal static class MultipartOwnership
         switch (value)
         {
             case null:
-            // string 也是 IEnumerable<char>；byte[] 是二进制内容，逐字节枚举纯属浪费
+            // string 也是 IEnumerable<char>；byte[] 按二进制内容处理
             case string _:
             case byte[] _:
             case JsonElement:
@@ -180,7 +179,7 @@ internal static class MultipartOwnership
                 return;
         }
 
-        // 嵌套对象：装配按 public 可读属性展平成部件，回收也要进到属性里。
+        // 嵌套对象：按 public 可读属性下钻回收。
         var type = value.GetType();
         if (BodyFields.IsScalar(type) || !visited.Add(value))
         {

@@ -3,18 +3,14 @@ namespace AxiosNet;
 public sealed partial class AxiosConfig
 {
     /// <summary>
-    /// 备用端点（<see cref="AxiosConfig.Failover"/>）：当前端点「用不了」时（网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx），
-    /// 把同一份请求嫁接到下一个端点的 base URL 上重发；全部失败才交给重试。
-    /// <see cref="Endpoints"/> 为空（默认）时不换端点。
+    /// 备用端点（<see cref="AxiosConfig.Failover"/>）：当前端点用不了时（网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx），
+    /// 把同一份请求嫁接到下一个端点的 base URL 上重发；全部失败才交给重试。<see cref="Endpoints"/> 为空（默认）时不换端点。
     /// </summary>
     /// <remarks>
-    /// 端点提供 origin 与路径前缀，请求本身的 path / query 原样接在后面；顺序即优先级，每次重试都从第一个端点重新开始。
-    /// 换端点要求请求体能按顺序重放（与重试同一份要求：流必须可 seek）。
-    /// 换端点会丢掉调用方显式设过的 <c>Host</c> 头，由目标地址重算 —— 否则镜像会按原端点的虚拟主机路由。
-    /// 端点拼出来就是当前地址时（同 origin 且端点不带路径前缀）跳过：换过去等于原地重发。
-    /// 4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置 / 编程错误与取消不换端点；<c>ERR_CIRCUIT_OPEN</c> 换 ——
-    /// 熔断按 <c>host:port</c> 独立成账，主端点开着的那一个挡不住备用端点。
-    /// 流式响应只在响应头阶段能换端点：正文由调用方消费，中途断流不会再换端点。
+    /// 端点提供 origin 与路径前缀，请求自己的 path / query 原样接在后面；顺序即优先级，每次重试都从第一个端点重新开始。
+    /// 换端点要求请求体能按顺序重放（流必须可 seek），并会丢掉调用方显式设过的 <c>Host</c> 头。
+    /// 4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置 / 编程错误与取消不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
+    /// 流式响应只在响应头阶段能换端点。
     /// </remarks>
     public sealed class FailoverSettings
     {
@@ -22,14 +18,11 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 备用端点（有序，可带路径前缀），例如 <c>["https://backup1.example.com", "https://backup2.example.com/api"]</c>；
-        /// <c>null</c> / 空集合（默认）= 不换端点。必须是绝对的 <c>http</c> / <c>https</c> 地址，且不能带 query / fragment
-        /// （端点提供 origin 与路径前缀，请求自己的 path / query 原样接在后面）。
+        /// <c>null</c> / 空集合（默认）= 不换端点。必须是绝对的 <c>http</c> / <c>https</c> 地址，且不能带 query / fragment。
         /// </summary>
         /// <remarks>
-        /// 赋值时快照成数组：之后改调用方自己的列表不会影响已生效的配置，克隆也能安全共享这一版。
-        /// 读回来的就是这一版内部数组，<b>调用方不得修改</b>（要改请重新赋值）。
-        /// 重复端点（拼出同一个 base URL，尾斜杠不算区别）在发请求前抛 <c>ERR_BAD_OPTION_VALUE</c>：
-        /// 同一份请求对同一个地址重打一遍只会放大下游压力。
+        /// 赋值时快照成数组，读回来的是这一版内部数组，<b>调用方不得修改</b>（要改请重新赋值）。
+        /// 重复端点（拼出同一个 base URL，尾斜杠不算区别）在发请求前抛 <c>ERR_BAD_OPTION_VALUE</c>。
         /// </remarks>
         public IReadOnlyList<Uri>? Endpoints
         {
@@ -60,7 +53,7 @@ public sealed partial class AxiosConfig
         {
             if (incoming.EndpointsSet)
             {
-                // 两边都是不可变快照：直接共享这一版，不必每请求再复制一次。
+                // 两边都是不可变快照，直接共享这一版。
                 _endpoints = incoming._endpoints;
                 EndpointsSet = true;
             }

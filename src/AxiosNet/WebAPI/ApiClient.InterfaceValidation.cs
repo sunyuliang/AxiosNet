@@ -6,10 +6,7 @@ namespace AxiosNet.WebAPI;
 
 public sealed partial class ApiClient
 {
-    /// <summary>
-    /// 校验接口级声明，返回全部错误（空集合 = 合法）；与 <see cref="Create{T}()"/> 共用同一份元数据与校验规则。
-    /// 不创建代理，可在启动时扫描后统一报告。
-    /// </summary>
+    /// <summary>校验接口级声明，返回全部错误（空集合 = 合法）；不创建代理，可在启动时扫描后统一报告。</summary>
     [RequiresUnreferencedCode("接口级校验通过反射读取接口方法与参数特性；裁剪时需 root 接口类型及其参数 / 返回类型。")]
     public static IReadOnlyList<string> ValidateInterfaces(params Type[] interfaceTypes)
     {
@@ -52,7 +49,7 @@ public sealed partial class ApiClient
         }
         catch (ReflectionTypeLoadException ex)
         {
-            // 与 ValidateModels(assembly) 一致：依赖缺失时能取到的照样校验。
+            // 依赖缺失时能取到的类型照样校验。
             types = [.. ex.Types.OfType<Type>()];
         }
 

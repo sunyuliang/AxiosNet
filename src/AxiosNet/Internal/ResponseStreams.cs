@@ -65,8 +65,7 @@ internal sealed class TimeoutStream : DelegatingStream
     private readonly TimeSpan? _effectiveTimeout;
 
     /// <summary>
-    /// 读一块。内层同步完成（缓冲命中的常见情形）时整条链路零分配：不建状态机、结果原样透传；
-    /// 真异步或故障才落到异步路径。同步抛出的异常同样要翻译。
+    /// 读一块：内层同步完成时原样透传，真异步或故障才落到异步路径。
     /// </summary>
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
@@ -158,8 +157,8 @@ internal sealed class TimeoutStream : DelegatingStream
 
     /// <summary>
     /// 把本次调用的令牌链接到「外部取消 + 超时」上：无令牌或已知令牌直接复用预建的链接源，
-    /// 反复传同一个自备令牌时按缓存复用。换令牌才释放上一个（单读者顺序读保证其读写已返回）。
-    /// 上一代链接源由本方法自己回收，调用方不持有任何要释放的 CTS。
+    /// 反复传同一个自备令牌时按缓存复用，换令牌才释放上一个。
+    /// 调用方不持有任何要释放的 CTS。
     /// </summary>
     private CancellationToken Link(CancellationToken callerToken)
     {
@@ -226,7 +225,7 @@ internal sealed class TimeoutStream : DelegatingStream
 
 /// <summary>
 /// 流式响应的所有权包装：把连接池租约、<see cref="HttpResponseMessage"/> 与并发槽位的生命周期
-/// 绑定到调用方手里的响应流上，流 Dispose 时才一并释放（提前归还会让空闲判定与并发上限失真）。
+/// 绑定到调用方手里的响应流上，流 Dispose 时一并释放。
 /// 注入自定义 Handler 的实例没有租约，<c>lease</c> 传 <c>null</c>。
 /// </summary>
 internal sealed class ResponseStreamOwner : DelegatingStream

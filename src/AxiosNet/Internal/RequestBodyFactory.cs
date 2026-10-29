@@ -24,8 +24,7 @@ internal static class RequestBodyFactory
         var appendCharset = requestEncoding is not null;
         var mediaType = config.ContentType;
 
-        // 显式声明的 charset 优先于 RequestEncoding，且只对文本正文生效；
-        // 两者矛盾时头与正文编码不一致，直接拦下。
+        // 显式声明的 charset 优先于 RequestEncoding，只对文本正文生效；两者矛盾时直接拦下。
         if (data is not null
             && EncodesText(data)
             && RequestContentType.GetCharsetEncoding(mediaType) is { } declared)
@@ -40,8 +39,7 @@ internal static class RequestBodyFactory
             encoding = declared;
         }
 
-        // 请求头里的 Content-Type 若带 charset，必须与正文实际编码一致；
-        // multipart 的 Content-Type 由库自己写头，不参与。
+        // 请求头里的 Content-Type 若带 charset，必须与正文实际编码一致（multipart 不参与）。
         if (data is not null
             && EncodesText(data)
             && !MediaTypes.Is(mediaType, MultipartMediaType)
@@ -56,7 +54,7 @@ internal static class RequestBodyFactory
                 + "（它的 charset 会驱动正文编码），或去掉请求头里的 charset。", config);
         }
 
-        // multipart + 原始内容是矛盾组合：没有 boundary 服务端无从解析。
+        // multipart + 原始内容：没有 boundary 无法解析。
         if (data is not null and not HttpContent
             && IsRawContent(data)
             && MediaTypes.Is(mediaType, MultipartMediaType)
@@ -120,8 +118,7 @@ internal static class RequestBodyFactory
                 return CreateStreaming(AsyncEnumerableBodyContent.FromMemoryChunks(chunks), mediaType, config);
         }
 
-        // 其余 IAsyncEnumerable<T> 不能当正文：既不是字节块，也不是可序列化的集合。
-        // 在这里拦下并给出可执行的指引，而不是让序列化器抛「请使用异步序列化方法」。
+        // 其余 IAsyncEnumerable<T> 不能当正文，直接拦下。
         if (ReflectionCache.IsAsyncEnumerable(data.GetType()))
         {
             throw AxiosException.InvalidOption(
@@ -143,7 +140,7 @@ internal static class RequestBodyFactory
 
     private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
     {
-        // 直接构造 ByteArrayContent 可保证携带 Content-Length，避免分块传输带来的兼容性问题。
+        // 用 ByteArrayContent 保证携带 Content-Length。
         var content = new ByteArrayContent(encoding.GetBytes(text));
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
@@ -156,7 +153,7 @@ internal static class RequestBodyFactory
         return content;
     }
 
-    /// <summary>零拷贝发送 <see cref="ReadOnlyMemory{T}"/>，避免 <see cref="ByteArrayContent"/> 的整段复制。</summary>
+    /// <summary>零拷贝发送 <see cref="ReadOnlyMemory{T}"/>。</summary>
     private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType, AxiosConfig config)
     {
         var content = new ReadOnlyMemoryContent(memory);
@@ -183,15 +180,14 @@ internal static class RequestBodyFactory
 
         var type = data.GetType();
 
-        // 头由正文产出者自报：调用方没显式设置时采用序列化器声明的媒体类型，显式设置过就绝不覆盖。
-        // 必须在「标量 / 结构化」分派之前，标量的头同样要跟着生效序列化器走。
+        // 未显式设置 ContentType 时采用序列化器自报的媒体类型（标量同样适用）。
         var serializer = AxiosContent.Get(config, mediaType);
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
         {
             mediaType = declared.Trim();
         }
 
-        // 基础类型不经过序列化器，直接取文本（XML / YAML 无法表达无名根标量）。
+        // 基础类型不经过序列化器，直接取文本。
         if (BodyFields.IsScalar(type))
         {
             var scalar = CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset, config);
@@ -212,8 +208,7 @@ internal static class RequestBodyFactory
     }
 
     /// <summary>
-    /// 正文产出后校验最终 Content-Type 的 charset 与正文编码一致（请求头优先，与 <c>ApplyHeaders</c> 的覆盖规则一致）。
-    /// 序列化器可能在序列化过程中写头，入口处的预校验看不到。
+    /// 正文产出后校验最终 Content-Type 的 charset 与正文编码一致（请求头优先）。
     /// </summary>
     private static void ValidateDeclaredCharset(HttpContent content, AxiosConfig config, Encoding bodyEncoding)
     {

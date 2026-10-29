@@ -28,7 +28,7 @@ public sealed class AuthorizationExample : IExample
         // 令牌提供方只负责「取令牌」，Authorization: Bearer xxx 由库按 scheme 拼
         var tokens = new SessionTokenProvider();
 
-        // 三个客户端都静态复用（首次运行创建）；授权提供方是每轮新建的演示实例（要数调用次数），运行前重新挂上
+        // 三个客户端都静态复用（首次运行创建）；授权提供方每轮新建，运行前重新挂上
         var client = _tokenClient ??= new ApiClient(context.BaseUrl);
         client.AccessTokenProvider = tokens;
 
@@ -61,7 +61,6 @@ public sealed class AuthorizationExample : IExample
         }
 
         // 4) 叠加自定义 IAuthorizationProvider：它最后执行，能看到令牌提供方写的头，也可以覆盖
-        //    （签名、多凭据轮换这类完全自定义的场景走这条；纯取令牌不必自建提供方）
         tokens.SetToken(DemoApiServer.DemoToken);
         var observer = new HeaderObserver();
         var layered = _layered ??= new ApiClient(context.BaseUrl);
@@ -88,7 +87,7 @@ public sealed class AuthorizationExample : IExample
 
     /// <summary>
     /// 演示用的会话令牌：登录前返回 null（不写头），登录后返回服务端下发的令牌。
-    /// 生产实现的缓存 / 过期刷新 / 单飞刷新都在这里做——库不缓存令牌。
+    /// 令牌的缓存与刷新由实现方负责，库不缓存令牌。
     /// </summary>
     private sealed class SessionTokenProvider : IAccessTokenProvider
     {

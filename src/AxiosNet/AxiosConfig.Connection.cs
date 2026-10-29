@@ -17,9 +17,8 @@ public sealed partial class AxiosConfig
         public ConnectionPoolOptions? PoolOptions { get; set; }
 
         /// <summary>
-        /// HTTP 版本，默认未设置（<c>null</c>）= HTTP/2（<see cref="System.Net.HttpVersion.Version20"/>），配合默认协商策略可自动降级到 1.1。
-        /// 显式设 <c>Version11</c> 用于连接级认证或 HTTP/2 禁止的连接级头；设 <c>Version30</c> 即要求 h3（环境支持见 <see cref="Http3Support"/>）。
-        /// 按请求项：单次请求覆盖实例默认值。
+        /// HTTP 版本，<c>null</c>（默认）= HTTP/2（<see cref="System.Net.HttpVersion.Version20"/>），配合默认协商策略可降级到 1.1。
+        /// 设 <c>Version30</c> 即要求 h3（环境支持见 <see cref="Http3Support"/>）；按请求项：单次请求覆盖实例默认值。
         /// </summary>
         public Version? HttpVersion { get; set; }
 
@@ -32,7 +31,7 @@ public sealed partial class AxiosConfig
         private AxiosAuth? _auth;
 
         /// <summary>对应 axios auth（HTTP Basic）。</summary>
-        /// <remarks>手写属性为了记住「显式赋过值」：<c>Auth = null</c> 表示本次请求不带认证，合并时必须压住实例默认凭据。</remarks>
+        /// <remarks><c>Auth = null</c> 表示本次请求不带认证，会压住实例默认凭据。</remarks>
         public AxiosAuth? Auth
         {
             get => _auth;

@@ -8,16 +8,16 @@ namespace AxiosNet;
 /// </summary>
 public class AxiosResponse
 {
+    /// <summary>响应体（已按 responseType 反序列化）。</summary>
     public object? Data { get; set; }
 
+    /// <summary>HTTP 状态码。</summary>
     public int Status { get; set; }
 
+    /// <summary>状态码对应的标准文案。</summary>
     public string StatusText { get; set; } = string.Empty;
 
-    /// <summary>
-    /// 这次请求实际协商到的 HTTP 版本（<c>1.1</c> / <c>2.0</c> / <c>3.0</c>）；
-    /// 默认 2.0 + 自动降级时，只有它能确认这次是否真跑在 h2 上。
-    /// </summary>
+    /// <summary>这次请求实际协商到的 HTTP 版本（<c>1.1</c> / <c>2.0</c> / <c>3.0</c>）。</summary>
     public Version? ProtocolVersion { get; set; }
 
     private IReadOnlyDictionary<string, IEnumerable<string>>? _headers;
@@ -29,6 +29,7 @@ public class AxiosResponse
         set => _headers = value;
     }
 
+    /// <summary>触发本次请求的生效配置。</summary>
     public AxiosConfig? Config { get; set; }
 
     /// <summary>错误响应的正文原文（只有状态码不合法时才有；正常、二进制 / 流式响应为 <c>null</c>）。</summary>
@@ -45,15 +46,12 @@ public class AxiosResponse
         => Headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
 
     /// <summary>
-    /// 便捷获取<b>请求</b>头第一个值（对应 axios 里从 <c>response.request</c> 读请求头）。
+    /// 便捷获取<b>请求</b>头第一个值（对应 axios 里从 <c>response.request</c> 读请求头）；
     /// 短路响应没有底层请求消息（<see cref="Request"/> 为 <c>null</c>），此时返回 <c>null</c>。
     /// </summary>
     /// <remarks>
-    /// 请求方向没有合并视图：<c>HttpRequestMessage</c> 的头分成「请求头」与「内容头」两组，
-    /// 这里先查请求头、查不到再查内容头（Content-Type / Content-Length 等在内容头里）。
-    /// 请求消息被 <c>Dispose</c> 后 <c>Content</c> 引用还在（释放的是它内部持有的流），内容头那时仍读得到；
-    /// 但重试过的请求会被显式摘掉正文（<see cref="HttpRequestMessage.Content"/> 置 <c>null</c>，好让同一份正文再发一次），
-    /// 内容头那时就读不到了 —— 想每次尝试都读到，请用尝试中间件而不是响应拦截器。
+    /// 先查请求头、查不到再查内容头（Content-Type / Content-Length 等在内容头里）；
+    /// 重试过的请求正文被摘掉（<see cref="HttpRequestMessage.Content"/> 为 <c>null</c>），内容头那时读不到。
     /// </remarks>
     public string? GetRequestHeader(string name)
     {
@@ -67,7 +65,7 @@ public class AxiosResponse
             return values.FirstOrDefault();
         }
 
-        // 内容头：请求消息 Dispose 后 Content 引用仍在，头集合照样可读；重试过的消息 Content 被置 null，这里自然返回 null。
+        // 内容头：重试过的消息 Content 为 null，这里返回 null。
         return request.Content?.Headers.TryGetValues(name, out var contentValues) is true
             ? contentValues.FirstOrDefault()
             : null;

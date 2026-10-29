@@ -113,7 +113,7 @@ internal sealed class BindingPlan
                 var value = FormatValue(entry.Value, formatter);
                 if (value is not null)
                 {
-                    // 与具名参数同名时后者覆盖：映射来自显式数据，优先于属性
+                    // 与具名参数同名时映射值覆盖。
                     query[entry.Key] = value;
                 }
             }

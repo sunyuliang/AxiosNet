@@ -4,7 +4,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
 /// 9. multipart 上传：<c>[Multipart]</c> 让模型自身即表单，<c>[Part]</c> 覆盖字段名 / 文件名 / Content-Type；
-/// 服务器按字节精确解析并回报部件清单，装配完全复用核心包的 multipart 通道（boundary / 所有权规则不变）。
+/// 服务器按字节精确解析并回报部件清单。
 /// </summary>
 public sealed class MultipartUploadExample : IExample
 {

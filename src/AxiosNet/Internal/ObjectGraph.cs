@@ -1,8 +1,8 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 对象图展平（表单 / multipart / params）的路径式环检测：只有节点重复出现在<b>自己的祖先链</b>里才算环。
-/// 进入时登记、退出时注销，共享子对象（DAG）照常展开；<c>JsonElement</c> 是树，不经过这里。
+/// 对象图展平（表单 / multipart / params）的路径式环检测：只有节点重复出现在自己的祖先链里才算环。
+/// 进入时登记、退出时注销，共享子对象照常展开。
 /// </summary>
 internal static class ObjectGraph
 {
@@ -12,7 +12,7 @@ internal static class ObjectGraph
     /// </summary>
     public static HashSet<object>? Enter(HashSet<object>? path, object value)
     {
-        // 值类型没有可比较的引用身份（属性取值每次都是新装箱），也不可能构成环。
+        // 值类型没有引用身份，不可能构成环。
         if (value.GetType().IsValueType)
         {
             return path;

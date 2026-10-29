@@ -7,23 +7,11 @@ namespace AxiosNet.Retry;
 /// 全局重试预算：给任意 <see cref="IAxiosRetryPolicy"/> 套一层共享的令牌桶，限制**整个客户端实例**的重试速率。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 解决的场景：熔断没配时，下游故障 / 429 风暴会让每条独立请求各自重试，「重试放大」不受任何约束；
-/// 本策略让全实例共享一只桶，桶空了就放弃重试。
-/// </para>
-/// <para>
-/// 只拦「重试」不拦首发：内层策略说重试时才扣令牌，扣不到就放弃重试，把这次失败<b>原样</b>抛给调用方
-/// （错误码不变，不会变成「预算耗尽」这类调用方需要额外认识的新错误）。
-/// </para>
-/// <para>
-/// 令牌桶按策略对象共享：挂在 <c>Defaults.Retry.Policy</c> 上，本实例（含声明式客户端）的所有请求共用一只桶；
-/// 按请求替换 <c>Retry.Policy</c> 会换成另一只桶，想全实例生效就不要在按请求上覆盖它。
-/// </para>
-/// <para>
+/// 只拦重试不拦首发：内层策略说重试时才扣令牌，扣不到就放弃重试，把这次失败原样抛给调用方。
+/// 令牌桶按策略对象共享：挂在 <c>Defaults.Retry.Policy</c> 上时本实例的所有请求共用一只桶。
 /// 线程安全，每次判定只在锁内做一次时间戳换算、不分配；<see cref="RefusedRetries"/> 与
 /// <see cref="OnBudgetExhausted"/> 用于本地观测，进程级指标见
 /// <c>axiosnet.client.retry.budget_exhausted</c>（无标签，受 <c>Telemetry.Enabled</c> 控制）。
-/// </para>
 /// </remarks>
 /// <example>
 /// <code>
@@ -85,7 +73,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
         _capacity = capacity;
         _refillPerSecond = refillPerSecond;
 
-        // 桶一开始是满的：全实例第一波重试优先放行，用完之后按补充速度恢复。
+        // 桶一开始是满的。
         _tokens = capacity;
         _lastRefillTimestamp = Stopwatch.GetTimestamp();
     }
@@ -117,7 +105,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
 
     /// <summary>预算不足、某次重试被拒时触发：入参是那次失败的尝试上下文（与 <c>Retry.OnRetry</c> 同形）。</summary>
     /// <remarks>
-    /// 在请求线程上同步执行且不在锁内，抛异常会中断本次请求（该错误原样冒给调用方）——耗时或可能抛异常的逻辑请自行包住。
+    /// 在请求线程上同步执行且不在锁内，抛出的异常会原样冒给调用方。
     /// </remarks>
     public Action<AxiosRetryContext>? OnBudgetExhausted { get; set; }
 
@@ -127,7 +115,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
     /// <inheritdoc />
     public bool ShouldRetry(AxiosRetryContext context)
     {
-        // 先问内层：不可重试的失败（4xx、非幂等方法等）不该消耗预算。
+        // 先问内层：不可重试的失败不该消耗预算。
         if (!_inner.ShouldRetry(context))
         {
             return false;
@@ -150,8 +138,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
     public TimeSpan GetDelay(AxiosRetryContext context) => _inner.GetDelay(context);
 
     /// <summary>
-    /// 退回一个已扣的令牌：重试决定已做出、但这次尝试在发出前就被总预算拦下（典型是退避等待把剩余预算睡完）。
-    /// 装饰器包住本策略时调用方识别不到，属已知的保守偏差。
+    /// 退回一个已扣的令牌：重试决定已做出，但这次尝试在发出前被总预算拦下。
     /// </summary>
     internal void Refund()
     {
@@ -159,10 +146,10 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
         {
             Refill(Stopwatch.GetTimestamp());
 
-            // 补完再封顶：Refill 可能已经把桶补到只差一点，直接 +1 会越过容量。
+            // 补完再封顶，避免越过容量。
             _tokens = Math.Min(_capacity, _tokens + 1d);
 
-            // 预算包预算时内层同样被扣过一次，一起退（外层只会在内层放行后才扣自己的）。
+            // 预算包预算时内层同样被扣过一次，一起退。
             (_inner as RetryBudgetPolicy)?.Refund();
         }
     }

@@ -44,7 +44,7 @@ internal static class RequestContentType
     /// <summary>媒体类型是否已声明 charset（按标准解析，容忍 <c>charset = utf-8</c> / 带引号等写法）。</summary>
     private static bool HasCharsetParameter(string mediaType)
     {
-        // 快速排除：连 "charset" 字样都没有时不必建解析对象。
+        // 快速排除：没有 "charset" 字样时直接返回。
         if (!mediaType.Contains("charset", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -61,7 +61,7 @@ internal static class RequestContentType
             }
         }
 
-        // 解析不出来时退回朴素查找：宁可少补一次，也不要写出重复 charset。
+        // 解析不出来时退回朴素查找，避免写出重复 charset。
         return mediaType.Contains("charset=", StringComparison.OrdinalIgnoreCase);
     }
 

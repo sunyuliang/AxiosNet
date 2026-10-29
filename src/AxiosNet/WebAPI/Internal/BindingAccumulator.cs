@@ -4,10 +4,7 @@ using AxiosNet.Internal;
 
 namespace AxiosNet.WebAPI.Internal;
 
-/// <summary>
-/// 声明构建器：类模型的属性集与接口模型的参数集都通过它累积绑定。
-/// 重名、路径模板、标量护栏、默认 Body 等规则只在这里实现一份。
-/// </summary>
+/// <summary>声明构建器：类模型的属性集与接口模型的参数集都通过它累积绑定。</summary>
 internal sealed class BindingAccumulator
 {
     private readonly string _owner;
@@ -128,7 +125,7 @@ internal sealed class BindingAccumulator
         _queries.Add((name, source));
     }
 
-    /// <summary>按声明顺序（更基础的层在前、更具体的层在后）解析静态头：无冒号 = 摘除同名头，有冒号 = 固定值。</summary>
+    /// <summary>按声明顺序解析静态头：无冒号 = 摘除同名头，有冒号 = 固定值。</summary>
     public void AddStaticHeaders(IEnumerable<HeadersAttribute> declarations)
     {
         foreach (var attribute in declarations)
@@ -215,7 +212,7 @@ internal sealed class BindingAccumulator
             }
         }
 
-        // 模板里识别不了的花括号单独指出，放在绑定核对之前：模板本身写坏时更接近根因。
+        // 模板里识别不了的花括号先于绑定核对单独指出。
         var leftover = template;
         foreach (var match in matches.Cast<Match>())
         {
@@ -261,7 +258,7 @@ internal sealed class BindingAccumulator
         return [.. matches.Cast<Match>().Select(m => (m.Groups[1].Value, bindingsByName[m.Groups[1].Value]))];
     }
 
-    /// <summary>路径占位符与请求头的值必须是标量：复杂对象只能得到 ToString() 垃圾值；查询参数与请求体不受限。</summary>
+    /// <summary>路径占位符与请求头的值必须是标量；查询参数与请求体不受限。</summary>
     private void ValidateScalarBindings()
     {
         foreach (var binding in _paths.Concat(_headers))

@@ -22,7 +22,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 本实例的尝试管线：构造期编译成单个委托并固化，此后不可变。
-    /// 每次请求重建链会多出 N 个闭包和一个委托数组，那是本库明确要避免的开销。
     /// </summary>
     private readonly AxiosAttemptHandler _attemptPipeline;
 
@@ -49,6 +48,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>是否使用连接池（即未直接注入 Handler）。</summary>
     public bool UsesConnectionPool => _pool is not null;
 
+    /// <summary>创建实例（未注入 <paramref name="handler"/> 时走连接池）。</summary>
     /// <param name="defaults">实例默认配置（对应 axios instance.defaults）。</param>
     /// <param name="pool">
     /// 共享连接池；与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
@@ -59,8 +59,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// </param>
     /// <param name="disposeHandler">释放本实例时是否一并释放注入的 <paramref name="handler"/>。</param>
     /// <param name="pipeline">
-    /// 尝试管线：<c>null</c> 用 <see cref="AxiosAttemptPipeline.Default"/>（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送）。
-    /// 它在构造时编译一次并固化，此后不可变；按请求定制请用请求 / 响应拦截器。
+    /// 尝试管线：<c>null</c> 用 <see cref="AxiosAttemptPipeline.Default"/>（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送）；
+    /// 构造期编译并固化，按请求定制请用拦截器。
     /// </param>
     public AxiosClient(
         AxiosConfig? defaults = null,
@@ -72,7 +72,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     {
         Defaults = defaults ?? new AxiosConfig();
 
-        // 管线必须先定下来：下面的分支里有提前 return，落到那里会漏掉初始化（readonly 属性直接编译不过）。
+        // 下面的分支有提前 return，管线先在此初始化。
         AttemptPipeline = pipeline ?? AxiosAttemptPipeline.Default;
         _attemptPipeline = AttemptPipeline.Compile(SendTerminalAsync, Defaults);
 
@@ -110,7 +110,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     + "共享池已按自己的 ConnectionPoolOptions 创建，请在创建池时配置，或改为只传 poolOptions 让本实例自建池。", Defaults);
             }
 
-            // 池的连接行为已固定，defaults 上的同类选项无从生效，故明确报错。
+            // 共享池的连接行为已固定，defaults 上的同类选项不生效。
             ValidateConnectionLevelOptions(defaults, Defaults, ConnectionLevelMessages.SharedPool);
 
             _pool = pool;
@@ -118,7 +118,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
         else
         {
-            // 两处都配时明确报错，不静默取一个。
+            // 两处都配时直接报错。
             if (poolOptions is not null && Defaults.ConnectionOrNull?.PoolOptions is not null)
             {
                 throw AxiosException.InvalidOption(
@@ -130,8 +130,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 池选项非法时在构造期带配置抛错。
             HttpConnectionPool.ValidateOptions(effective, Defaults);
 
-            // maxRedirects：0 = 不跟随重定向，> 0 = 覆盖池默认上限；必须按 *Set 判断，
-            // 否则会把调用方在 poolOptions 上配好的 MaxAutomaticRedirections 改回 5。
+            // maxRedirects：0 = 不跟随重定向，> 0 = 覆盖池默认上限；按 *Set 判断是否显式配置。
             if (Defaults.MaxRedirectsSet)
             {
                 var maxRedirects = Defaults.ConnectionOrNull?.MaxRedirects ?? 5;
@@ -151,7 +150,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 }
             }
 
-            // 两处都写时明确报错，不静默取一个。
+            // 两处都写时直接报错。
             if (poolOptions is not null)
             {
                 if (poolOptions.Proxy is not null && Defaults.ConnectionOrNull?.Proxy is not null)
@@ -180,12 +179,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     // ---- getUri：只组装 URL，不发请求（对应 axios.getUri） ----
 
-    /// <summary>按本实例的生效配置拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求；返回已转义，可直接用于签名与日志。传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按回放语义重新合并，实例级项取自本实例。</summary>
+    /// <summary>按本实例生效配置拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求，返回值已转义。传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按回放语义重新合并。</summary>
     public string GetUri(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        // 回放 response.Config 时实例级项让位给本实例默认值，与 RequestAsync 实际发出的地址一致。
+        // 回放 response.Config 时实例级项取自本实例默认值。
         var merged = MergeConfig(config);
         return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.ParamsSerializer, config: merged).AbsoluteUri;
     }
@@ -195,8 +194,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(configure);
 
-        // 直接拼生效配置，不走 MergeConfig：它的 instanceSourced 门禁会丢掉回调里显式写的 BaseAddress。
-        // 请求头不参与 URL 拼装，因此不需要 ApplyRemoveHeaders。
+        // 直接拼生效配置，不走 MergeConfig：回调里显式写的 BaseAddress 需保留。
         var config = NewEffectiveConfig();
         configure(config);
         return UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config).AbsoluteUri;
@@ -223,7 +221,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(configure);
 
-        // 回调在实例默认值的副本上增删改，删头 / 清空头集合都真的生效（见 NewEffectiveConfig）。
+        // 回调在实例默认值的副本上修改，删头 / 清空头集合都生效。
         var config = NewEffectiveConfig();
         configure(config);
         ApplyRemoveHeaders(config);

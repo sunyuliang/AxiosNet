@@ -19,11 +19,9 @@ internal sealed record MultipartPart(string Name, string? FileName, string? Cont
 }
 
 /// <summary>
-/// 极简但**按字节精确**的 multipart/form-data 解析器（示例用，零依赖）。
-/// <para>
-/// 只做三件事：按 boundary 切分部件、解析 Content-Disposition/Content-Type、截出内容字节。
-/// 关键是内容边界靠字节查找定位，因此二进制文件（含 CRLF、0x00）不会被截断或污染。
-/// </para>
+/// 极简的 multipart/form-data 解析器（示例用，无外部依赖）：按 boundary 切分部件、
+/// 解析 Content-Disposition / Content-Type、截出内容字节。
+/// 内容边界按字节查找定位，二进制文件（含 CRLF、0x00）不会被截断或污染。
 /// </summary>
 internal static class MultipartReader
 {
@@ -81,8 +79,7 @@ internal static class MultipartReader
 
             pos += 2;
 
-            // 下一个 boundary 的位置即当前部件内容的终点
-            // 下一个 boundary 相对 pos 的偏移，就是当前部件的字节长度
+            // 下一个 boundary 相对 pos 的偏移即当前部件的内容长度
             var next = span[pos..].IndexOf(delimiter);
             if (next < 0)
             {

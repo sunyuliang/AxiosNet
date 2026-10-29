@@ -215,7 +215,7 @@ internal static class InterfaceDeclaration
             errors.Add($"{display} 的返回类型是 {method.ReturnType.Name}：接口方法必须返回 Task<AxiosResponse<T>>（接口级声明不支持同步返回 / ValueTask）。");
         }
 
-        // [Stream] 只用于流式方法；帧格式值必须落在枚举内（只可能由显式 (AxiosStreamFormat)n 产生）。
+        // [Stream] 只用于流式方法；帧格式值必须落在枚举内。
         var stream = method.GetCustomAttribute<StreamAttribute>(inherit: false);
         if (stream is not null)
         {
@@ -288,7 +288,7 @@ internal static class InterfaceDeclaration
         {
             try
             {
-                // 校验只构建契约，不创建泛型调用器 —— Native AOT 下 ValidateInterfaces 同样可用。
+                // 只构建契约，不创建泛型调用器。
                 InterfaceMethodMetadata.Validate(interfaceType, method);
             }
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)

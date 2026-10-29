@@ -5,7 +5,7 @@ using System.Reflection;
 
 namespace AxiosNet.WebAPI.Internal;
 
-/// <summary>字符串键字典的识别与枚举：供查询参数平铺与 <see cref="HeaderCollectionAttribute"/> 共用。实例的实际实现类型可能只实现 <c>IReadOnlyDictionary&lt;string,T&gt;</c>，因此枚举有三条通道 + 一条反射兜底。</summary>
+/// <summary>字符串键字典的识别与枚举：供查询参数平铺与 <see cref="HeaderCollectionAttribute"/> 共用。</summary>
 internal static class QueryMap
 {
     /// <summary>是否为字符串键字典（<c>IDictionary</c> 或 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>）。</summary>

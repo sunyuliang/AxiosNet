@@ -24,16 +24,16 @@ internal static class FormBodyEncoder
         }
         catch (DataCycleException ex)
         {
-            // 环检测：无界递归会栈溢出（不可捕获），转成带配置的选项错误。
+            // 环检测：转成带配置的选项错误。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
         catch (UnsupportedFormValueException ex)
         {
-            // 表单装不下文件部件属于编码选择错误，与 multipart 侧同归 ERR_BAD_OPTION_VALUE。
+            // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
 
-        // 正文是已转义的 ASCII 串，因此编码只影响转义映射（默认 UTF-8 百分号编码）。
+        // 正文是已转义的 ASCII 串，编码只影响转义映射。
         var body = BuildBody(pairs);
 
         var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
@@ -112,7 +112,7 @@ internal static class FormBodyEncoder
                 AddPair(prefix, Convert.ToBase64String(segment.AsSpan()), pairs, encoding);
                 return;
 
-            // 文件类内容在 urlencoded 里无法表达：multipart 才有「字段 + 文件名」的位置。
+            // 文件类内容在 urlencoded 里无法表达。
             case FormFile:
             case Stream:
             case HttpContent:
@@ -143,7 +143,7 @@ internal static class FormBodyEncoder
                 return;
             }
 
-            // 只实现 IReadOnlyDictionary 的字典：按键值对展开，否则会被当 POCO 反射出 Key/Value 字段。
+            // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
                 visited = ObjectGraph.Enter(visited, readOnlyDictionary);
@@ -311,13 +311,13 @@ internal static class FormBodyEncoder
         }
     }
 
-    /// <summary>键名保留 <c>[</c> / <c>]</c>（<c>a[b]</c> 形式可读且被主流服务端接受），其余同值编码。</summary>
+    /// <summary>键名保留 <c>[</c> / <c>]</c>，其余同值编码。</summary>
     private static string EncodeKey(string value, Encoding encoding)
         => PercentEncode(value, encoding).Replace("%5B", "[").Replace("%5D", "]");
 
     private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding);
 
-    /// <summary>按字节流做百分号编码：可保留的 ASCII 字节直出，其余转义（直出是字节级可逆的）。</summary>
+    /// <summary>按字节流做百分号编码：可保留的 ASCII 字节直出，其余转义。</summary>
     private static string PercentEncode(string value, Encoding encoding)
     {
         if (encoding.CodePage == Encoding.UTF8.CodePage)
@@ -328,7 +328,7 @@ internal static class FormBodyEncoder
 
         var bytes = encoding.GetBytes(value);
 
-        // 容量一次算准（每字节 1 或 3 字符）：先数一遍需要转义的字节，避免反复扩容。
+        // 容量一次算准：先数一遍需要转义的字节。
         var escaped = 0;
         foreach (var b in bytes)
         {

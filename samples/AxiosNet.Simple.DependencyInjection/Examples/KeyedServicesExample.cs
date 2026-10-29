@@ -9,8 +9,7 @@ namespace AxiosNet.Simple.DependencyInjection.Examples;
 
 /// <summary>
 /// 6. 键名服务（.NET 8+ 官方机制）—— AddKeyedSingleton + [FromKeyedServices] / GetRequiredKeyedService。
-/// 与场景 5 等价的多站点方案：不经过扩展包的命名重载，直接用容器官方的键名服务。
-/// 适合消费方已是 .NET 8+、且希望完全走官方 API（键可以是字符串，也可以是 enum）。
+/// 与场景 5 等价的多站点方案：直接用容器官方的键名服务，键可以是字符串，也可以是 enum。
 /// </summary>
 public sealed class KeyedServicesExample : IExample
 {
@@ -23,14 +22,14 @@ public sealed class KeyedServicesExample : IExample
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
-        // 键名注册：同类型可按键注册多个单例（场景 5 的命名重载在内部就是同一思路的 net6.0 实现）
+        // 键名注册：同类型可按键注册多个单例
         builder.Services.AddKeyedSingleton<ApiClient>("a", (_, _) => new ApiClient(baseUrl)
         {
             Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
         });
         builder.Services.AddKeyedSingleton<ApiClient>("b", (_, _) => new ApiClient(baseUrl));
 
-        // 键不限于字符串：enum 作键没有魔法字符串，重构时编译器会提醒
+        // 键不限于字符串：也可以用 enum
         builder.Services.AddKeyedSingleton<AxiosClient>(SiteKey.C,
             (_, _) => new AxiosClient(new AxiosConfig { BaseAddress = baseUrl }));
 

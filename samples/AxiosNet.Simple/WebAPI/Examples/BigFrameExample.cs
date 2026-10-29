@@ -5,11 +5,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// <summary>
 /// 10. 单帧上限：默认 8 MB 会拒掉 9 MB 的单个元素，把 <c>Limits.MaxStreamFrameLength</c>
 /// 放大到 12 MB 后同一个端点可以正常逐帧读完。
-/// <para>
-/// 上限只是天花板：小帧只占 8 KB 读缓冲，不按上限预分配；但放大后峰值内存约为上限的 2–4 倍
-/// （读缓冲 + 溢写缓冲 + 解码后的 UTF-16 字符串），所以示例里只放到 12 MB，而不是「不限制」——
-/// 分帧器没有关闭语义，真要处理更大的正文应该用 <c>ResponseType.Stream</c> 自己分块。
-/// </para>
+/// 上限只是天花板，不按上限预分配；要处理更大的正文应改用 <c>ResponseType.Stream</c> 自己分块。
 /// </summary>
 public sealed class BigFrameExample : IExample
 {

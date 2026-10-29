@@ -75,7 +75,7 @@ internal static class ResponseTextDecoder
         // 允许 charset="utf-8" 这种带引号的写法。
         var name = charSet.AsSpan().Trim().Trim('"');
 
-        // 常见 charset 直接用内置实例，省掉名称表查找。
+        // 常见 charset 直接用内置实例。
         if (name.Equals(Utf8Name, StringComparison.OrdinalIgnoreCase))
         {
             return Encoding.UTF8;
@@ -104,7 +104,7 @@ internal static class ResponseTextDecoder
 
     internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
-        // 先判 4 字节的 UTF-32 BOM，再判 2 字节的 UTF-16 BOM。
+        // 依次判 UTF-8、UTF-32、UTF-16 的 BOM。
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             return Encoding.UTF8;
@@ -135,7 +135,7 @@ internal static class ResponseTextDecoder
         return null;
     }
 
-    // GetPreamble() 每次调用都新建数组，按编码实例缓存（键随编码一起被 GC 回收）。
+    // GetPreamble() 每次调用都新建数组，按编码实例缓存。
     private static readonly ConditionalWeakTable<Encoding, byte[]> Preambles = new();
 
     private static ReadOnlySpan<byte> PreambleOf(Encoding encoding)

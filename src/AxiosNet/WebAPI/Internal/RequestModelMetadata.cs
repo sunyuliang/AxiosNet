@@ -114,7 +114,7 @@ internal sealed partial class RequestModelMetadata
         return form.Count > 0 ? form : null;
     }
 
-    /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置。头名 / 头值的校验沿用 <see cref="AxiosHeaders.Set(string, string?)"/> 的公开契约，发生在配置构建期。</summary>
+    /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置。头名 / 头值在配置构建期按 <see cref="AxiosHeaders.Set(string, string?)"/> 校验。</summary>
     public void ApplyHeaders(object request, AxiosConfig config) => _plan.ApplyHeaders(request, config);
 
     /// <summary>应用类级 <see cref="HeadersAttribute"/> 声明：值写入头，只有名字的声明摘除同名头。</summary>

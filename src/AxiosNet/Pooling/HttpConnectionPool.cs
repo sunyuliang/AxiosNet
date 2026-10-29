@@ -29,7 +29,7 @@ public sealed class HttpConnectionPool : IDisposable
         _options = (options ?? new ConnectionPoolOptions()).Clone();
         ValidateOptions(_options);
 
-        // 整个池共用一个 Cookie 容器：Cookie 的隔离维度是域/路径而不是端口。
+        // 整个池共用一个 Cookie 容器。
         _cookies = _options.UseCookies ? new CookieContainer() : null;
 
         if (_options.IdleHandlerLifetime > TimeSpan.Zero && _options.EvictionInterval > TimeSpan.Zero)
@@ -37,13 +37,12 @@ public sealed class HttpConnectionPool : IDisposable
             _evictionTimer = new Timer(EvictIdleEndpoints, state: null, dueTime: _options.EvictionInterval, period: _options.EvictionInterval);
         }
 
-        // 存活池数（进程级水位）：先校验后计数，非法选项不该留下半条池。
+        // 存活池数（进程级水位）：先校验后计数。
         AxiosTelemetry.EnterPool();
     }
 
     /// <summary>
-    /// 构造期校验：这些值非法时底层 Handler 会在首次请求抛裸 <see cref="ArgumentOutOfRangeException"/>，
-    /// 这里提前收敛到统一错误模型。
+    /// 构造期校验：这些值非法时统一收敛到 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
     internal static void ValidateOptions(ConnectionPoolOptions options, AxiosConfig? config = null)
     {
@@ -67,7 +66,7 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption("ConnectTimeout 必须大于 0；不限请用 Timeout.InfiniteTimeSpan。", config);
         }
 
-        // 上限是 int.MaxValue 毫秒（约 24.85 天），越界时 BCL 抛裸 ArgumentOutOfRangeException。
+        // 上限是 int.MaxValue 毫秒（约 24.85 天）。
         if (options.ConnectTimeout > TimeSpan.FromMilliseconds(int.MaxValue))
         {
             throw AxiosException.InvalidOption(
@@ -76,7 +75,7 @@ public sealed class HttpConnectionPool : IDisposable
                 config);
         }
 
-        // SocketsHttpHandler 只接受正数：0 与负数都会在首次请求时抛裸 ArgumentOutOfRangeException（没有「0 表示不限制」的写法）。
+        // SocketsHttpHandler 只接受正数：没有「0 表示不限制」的写法。
         if (options.MaxResponseHeadersLength <= 0)
         {
             throw AxiosException.InvalidOption(
@@ -89,8 +88,8 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption("MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
         }
 
-        // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；除此之外，超出 gzip / deflate / br 的位
-        // 会被底层静默忽略 —— 静默失效比报错更难查，按配置错误拦下。
+        // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；
+        // 超出 gzip / deflate / br 的位按配置错误拦下。
         const DecompressionMethods knownDecompression =
             DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli;
         var requestedDecompression = options.Decompression == DecompressionMethods.All
@@ -113,13 +112,13 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption("EvictionInterval 不能为负（0 表示不启用后台驱逐定时器；要永不驱逐请设为 0 并手动调用 EvictIdleEndpoints）。", config);
         }
 
-        // Timer 的 dueTime / period 上限是 uint.MaxValue-1 毫秒（约 49.7 天），越界时 BCL 抛裸 ArgumentOutOfRangeException。
+        // Timer 的 dueTime / period 上限是 uint.MaxValue-1 毫秒（约 49.7 天）。
         if (options.EvictionInterval > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
         {
             throw AxiosException.InvalidOption($"EvictionInterval（{options.EvictionInterval}）超出后台计时器上限（约 49.7 天）：请调小，或设为 0 改用手动驱逐。", config);
         }
 
-        // h2 keep-alive：0 不是「不 ping」而是「立刻 ping」（会把连接打爆），不 ping 只有 InfiniteTimeSpan 一种写法。
+        // 0 不是「不 ping」而是「立刻 ping」：不 ping 只有 InfiniteTimeSpan 一种写法。
         if (options.KeepAlivePingDelay <= TimeSpan.Zero && options.KeepAlivePingDelay != Timeout.InfiniteTimeSpan)
         {
             throw AxiosException.InvalidOption("KeepAlivePingDelay 必须大于 0；不发 keep-alive ping 请设为 Timeout.InfiniteTimeSpan。", config);
@@ -140,7 +139,7 @@ public sealed class HttpConnectionPool : IDisposable
                 config);
         }
 
-        // 枚举只认两个值；别的值底层会当成「不 ping」，与调用方意图不符。
+        // 枚举只认两个值，别的值底层会当成「不 ping」。
         if (options.KeepAlivePingPolicy is not (HttpKeepAlivePingPolicy.WithActiveRequests or HttpKeepAlivePingPolicy.Always))
         {
             throw AxiosException.InvalidOption(
@@ -161,20 +160,17 @@ public sealed class HttpConnectionPool : IDisposable
 
     /// <summary>
     /// 按 key 取进程级共享池：没有就建一条登记进去，有就直接返回同一条。
-    /// 等价于「给这条池起个名字」，用来替代随手 <c>static readonly</c>，也省掉按请求建池的坑
-    /// （见 <see cref="AxiosClient"/> 文档：一个站点一个实例，或共享同一条池）。
     /// </summary>
     /// <param name="key">池的名字（区分大小写、按原文比较）；同名的池共享 Handler 与连接。</param>
     /// <param name="options">
     /// 只在首次创建时生效。只想取池就传 <c>null</c>；同一 key 上再传一份**不同**的配置会抛
-    /// <c>ERR_BAD_OPTION_VALUE</c>（引用成员按同一实例判定），避免「第二次传的配置被静默忽略」。
+    /// <c>ERR_BAD_OPTION_VALUE</c>（引用成员按同一实例判定）。
     /// </param>
     public static HttpConnectionPool GetOrCreate(string key, ConnectionPoolOptions? options = null)
     {
         ValidateSharedKey(key);
 
-        // 循环而不是「取一次 + 补一次」：登记与 Release 可能并发，落选后不能假定表里还有这一项
-        // （索引取值会抛 KeyNotFoundException），回到顶部重走一遍即可。
+        // 循环重试：登记与 Release 可能并发，落选后表里可能已没有这一项。
         while (true)
         {
             if (SharedPools.TryGetValue(key, out var existing))
@@ -191,7 +187,7 @@ public sealed class HttpConnectionPool : IDisposable
                 return created;
             }
 
-            // 竞态落选：自己这条必须释放（不释放会被后台驱逐定时器永久持有），再重走一遍复核配置。
+            // 竞态落选：释放自己这条，再重走一遍复核配置。
             created.Dispose();
         }
     }
@@ -213,10 +209,8 @@ public sealed class HttpConnectionPool : IDisposable
 
     /// <summary>
     /// 摘除命名池并优雅释放它（空闲节点立即释放，在途请求的节点等租约归还）；返回是否命中。
-    /// 摘除后仍在用这条池的客户端发请求会拿到 <c>ERR_CANCELED</c>（发送管线把池的
-    /// <see cref="ObjectDisposedException"/> 翻译成统一错误模型），只有直接调 <see cref="Lease(Uri)"/>
-    /// 才会看到裸的 <see cref="ObjectDisposedException"/>。它与自己 <c>Dispose</c> 掉一条共享池的
-    /// 后果相同，属显式的收尾动作，不是自动回收。
+    /// 摘除后仍在用这条池的客户端发请求会拿到 <c>ERR_CANCELED</c>，只有直接调 <see cref="Lease(Uri)"/>
+    /// 才会看到裸的 <see cref="ObjectDisposedException"/>。
     /// </summary>
     public static bool Release(string key)
     {
@@ -258,8 +252,7 @@ public sealed class HttpConnectionPool : IDisposable
     }
 
     /// <summary>
-    /// 两份选项是否等价：标量逐项比，引用成员（委托 / 代理 / 凭据）按同一实例判——
-    /// 它们没有可靠的结构等价（两个长得一样的 lambda 也可能行为不同），宁可报错也不静默共用一条池。
+    /// 两份选项是否等价：标量逐项比，引用成员（委托 / 代理 / 凭据）按同一实例判。
     /// </summary>
     private static bool SameOptions(ConnectionPoolOptions a, ConnectionPoolOptions b)
         => a.MaxConnectionsPerServer == b.MaxConnectionsPerServer
@@ -316,7 +309,7 @@ public sealed class HttpConnectionPool : IDisposable
             // 本次迭代是否真的新建并发布了节点。
             var createdNode = false;
 
-            // 稳态只做一次哈希查找：容量统计与闭包分配只在需要新建节点时发生。
+            // 稳态只做一次哈希查找。
             if (!_endpoints.TryGetValue(origin, out var endpoint))
             {
                 EnsureCapacity(origin, config);
@@ -332,14 +325,14 @@ public sealed class HttpConnectionPool : IDisposable
                 {
                     createdNode = true;
 
-                    // 节点创建是每个 origin 一次的事件，此刻没有持锁，可安全同步回调。
+                    // 节点创建事件：此刻没有持锁，可同步回调。
                     AxiosTelemetry.RecordEndpointCreated();
                 }
             }
 
             if (endpoint.TryAcquire())
             {
-                // 租用与关闭的竞态：池已关闭时归还并摘除节点，否则 Handler 与连接永久泄漏。
+                // 租用与关闭的竞态：池已关闭时归还并摘除节点。
                 if (Volatile.Read(ref _disposed) == 1)
                 {
                     endpoint.DisposeWhenIdle = true;
@@ -401,17 +394,11 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        // 运行期资源饱和，按「资源错误」而非「配置错误」报（之前误用 ErrBadOptionValue，会杀掉默认重试）。
-        // 与 ERR_QUEUE_TIMEOUT / ERR_CIRCUIT_OPEN 同哲学：可观测、默认不自动重发、文案引导退避。
+        // 运行期资源饱和按「资源错误」报：可观测、默认不自动重发、文案引导退避。
         throw AxiosException.PoolExhausted(config, request: null, max);
     }
 
     /// <summary>驱逐空闲节点；<paramref name="reason"/> 只用于指标标签。</summary>
-    /// <remarks>
-    /// 两条路径都不物化字典快照：全量清扫顺序无关，直接枚举（<see cref="ConcurrentDictionary{TKey,TValue}"/>
-    /// 的枚举器是结构体，零分配）；限额驱逐（容量不足取 LRU）逐轮挑一个，轮数按「条数 + 限额」封顶。
-    /// 后台定时器按周期跑这条路径，快照数组（每节点约 32 B）会随节点数线性变成常驻垃圾。
-    /// </remarks>
     private int EvictIdle(TimeSpan minIdle, int limit, string reason)
     {
         // InfiniteTimeSpan 是 -1ms，不特判的话所有空闲节点都会被判成可驱逐。
@@ -434,9 +421,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
         else
         {
-            // 限额驱逐：每轮挑「最久未使用且此刻可驱逐」的一个。轮数按「条数 + 限额」封顶：
-            // 正常情况下每轮都能摘掉一个，只有在挑选与摘除之间被别的线程抢先时才会空转一轮
-            //（限额驱逐只服务 EnsureCapacity，正常最多驱逐一两个）。
+            // 限额驱逐：每轮挑「最久未使用且此刻可驱逐」的一个，轮数按「条数 + 限额」封顶。
             var maxRounds = _endpoints.Count + limit;
             for (var round = 0; round < maxRounds && evicted < limit; round++)
             {
@@ -475,7 +460,7 @@ public sealed class HttpConnectionPool : IDisposable
             {
                 endpoint.ReleaseResources();
 
-                // 先释放再上报：监听者回调抛异常不该让节点漏掉 Handler。
+                // 先释放再上报：回调抛异常不能让节点漏掉 Handler。
                 AxiosTelemetry.RecordEndpointEvicted(reason);
             }
         }
@@ -584,7 +569,7 @@ public sealed class HttpConnectionPool : IDisposable
             return;
         }
 
-        // 与存活池数成对：Dispose 幂等（第二次进来上面就返回了），不会重复减。
+        // 与存活池数成对：Dispose 幂等，不会重复减。
         AxiosTelemetry.ExitPool();
 
         _evictionTimer?.Dispose();

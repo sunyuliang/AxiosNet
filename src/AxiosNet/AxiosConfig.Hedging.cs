@@ -7,23 +7,17 @@ public sealed partial class AxiosConfig
     /// <b>第一个成功结果胜出</b>，其余分支取消并收尾；<b>所有分支都失败</b>时把失败交给重试。
     /// <see cref="MaxHedges"/> 为 <c>0</c>（默认）时不对冲。
     /// </summary>
-    /// <remarks>
-    /// 对冲是延迟优化，不是语义保证：流式响应、非幂等方法（未显式允许时）、
-    /// 正文不能并发重放（流 / multipart / 进度包装）、响应侧带共享状态（下载进度回调 / 限速器）
-    /// 的请求一律按单次发送处理。泛型入口照常对冲：每条分支各填一份自己的响应对象，胜出者的那份交给调用方。
-    /// </remarks>
+    /// <remarks>流式响应、非幂等方法（未显式允许时）、正文不能并发重放、响应侧带共享状态的请求一律按单次发送处理。</remarks>
     public sealed class HedgingSettings
     {
-        /// <summary>对冲分支数的上限：再多的并发分支追不回延迟，只会把下游打满。</summary>
+        /// <summary>对冲分支数的上限。</summary>
         internal const int MaxHedgesLimit = 16;
 
         private int _maxHedges;
 
         /// <summary>
         /// 额外的并发分支数，<c>0</c>（默认）表示不对冲；<c>1</c> 表示首发 + 一条对冲分支，依此类推。
-        /// 每条分支各自过并发闸门、<b>各占一个槽位</b>（熔断在整组之外，只记一笔），
-        /// 所以一次请求占用的并发额度是 <c>1 + MaxHedges</c> 倍 ——
-        /// <see cref="LimitSettings.MaxConcurrentRequests"/> 要按这个倍数预留，否则对冲分支会排在闸门里等。
+        /// 每条分支各占一个并发槽位（熔断只记一笔），<see cref="LimitSettings.MaxConcurrentRequests"/> 要按 <c>1 + MaxHedges</c> 倍预留。
         /// </summary>
         public int MaxHedges
         {

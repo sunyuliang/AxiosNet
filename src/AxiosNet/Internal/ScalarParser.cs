@@ -24,7 +24,7 @@ internal static class ScalarParser
 
         if (target == typeof(char))
         {
-            // 只接受单字符文本，多字符截断会静默改变值。
+            // 只接受单字符文本。
             if (raw.Length != 1)
             {
                 return false;

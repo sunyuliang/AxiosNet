@@ -57,8 +57,8 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     private readonly object _gate = new();
 
     /// <summary>
-    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），全局 <see cref="_gate"/> 只保护字典读写。
-    /// 慢 configure 不会阻塞其他站点；configure 里做跨站点同步等待仍可能互锁。
+    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），全局 <see cref="_gate"/> 只保护字典读写；
+    /// configure 里做跨站点同步等待可能互锁。
     /// </summary>
     private readonly ConcurrentDictionary<string, object> _siteGates = new(StringComparer.Ordinal);
     private int _disposed;
@@ -143,7 +143,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             siteGate = _siteGates.GetOrAdd(name, static _ => new object());
         }
 
-        // 第二层（站点锁）：创建跑在这里 —— configure 与容器解析都是调用方代码，放全局锁内会阻塞全部站点。
+        // 第二层（站点锁）：创建跑在这里，configure 与容器解析都是调用方代码。
         lock (siteGate)
         {
             lock (_gate)
@@ -159,8 +159,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
                 }
             }
 
-            // 每站点自建底层客户端，由本解析器持有并在容器退出时释放。
-            // 先创建后登记：创建失败时 holder 当场释放，不会留在 _owned 里泄漏连接池。
+            // 每站点自建底层客户端，由本解析器持有并在容器退出时释放；创建失败时 holder 当场释放，不登记。
             var holder = new ApiClientOwnedAxiosClient(definition.Defaults);
 
             ApiClient created;
@@ -205,7 +204,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         lock (_gate)
         {
             Volatile.Write(ref _disposed, 1);
-            // 释放后 Get 未解析过的站点会新建客户端：没有属主释放它，连接池直接泄漏
+            // 清空已创建的客户端：释放后不再返回底层客户端已释放的实例。
             _clients.Clear();
             holders = _owned.ToArray();
             _owned.Clear();

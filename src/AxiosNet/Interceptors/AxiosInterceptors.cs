@@ -5,7 +5,9 @@ namespace AxiosNet.Interceptors;
 /// </summary>
 public sealed class AxiosInterceptors
 {
+    /// <summary>请求拦截器管理器。</summary>
     public RequestInterceptorManager Request { get; } = new();
 
+    /// <summary>响应拦截器管理器。</summary>
     public ResponseInterceptorManager Response { get; } = new();
 }

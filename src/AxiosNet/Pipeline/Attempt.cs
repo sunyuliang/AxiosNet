@@ -9,14 +9,8 @@ namespace AxiosNet.Pipeline;
 /// <summary>
 /// 内置尝试中间件的具名入口：<see cref="Retry"/> / <see cref="Failover"/> / <see cref="Hedging"/> /
 /// <see cref="Circuit"/> / <see cref="Gate"/> 永远在默认链上，<see cref="Audit"/> 是可选内置项（要显式 `Append` 才生效）。
-/// 它们是否真的干活由中间件自己看本次请求的生效配置决定（没配策略 / 端点 / 分支数就直接把请求交给下一环）——
-/// 这样链才能在客户端构造时编译一次，不必每次请求重建。
+/// 是否真的干活由中间件按本次请求的生效配置决定（没配策略 / 端点 / 分支数就交给下一环）。
 /// </summary>
-/// <remarks>
-/// 这里的默认中间件只是<b>调度器</b>：重试判据在 <see cref="IAxiosRetryPolicy"/>、
-/// 熔断判据在 <see cref="IAxiosCircuitPolicy"/>，对冲与换端点的开关在
-/// <see cref="AxiosConfig.Hedging"/> / <see cref="AxiosConfig.Failover"/>。要改行为请换策略或配置，不要换中间件。
-/// </remarks>
 public static partial class Attempt
 {
     /// <summary>
@@ -27,7 +21,7 @@ public static partial class Attempt
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        // 快路径刻意不写成 async：默认配置下绝大多数请求不重试，不该为它多建一个状态机。
+        // 快路径不写成 async：默认配置下多数请求不重试，不必为它多建一个状态机。
         return (request, ctx) =>
             ctx.Retry?.Policy is { } policy && policy.MaxRetries > 0
                 ? RetryLoopAsync(next, request, ctx, policy)
@@ -77,7 +71,6 @@ public static partial class Attempt
         var externalToken = ctx.ExternalToken;
 
         // 正文必须能拨回起点，否则重试只会发出空内容；在第一次发送之前就拦下。
-        // 放在这里而不是建上下文时：管线里没有重试中间件就不该做这项检查。
         var bodyRewind = RetryBody.Prepare(ctx.Config);
 
         // 第一条真实失败（非闸门拒绝）：后面某轮若在闸门被拒，抛的是它而不是「没排上队」（与对冲同一口径）。
@@ -103,16 +96,14 @@ public static partial class Attempt
                 // 取消类异常直接冒到调用方，不问策略是否重试。
                 var failed = new AxiosRetryContext(attempt, policy.MaxRetries, ex, ctx.Config, (ex as AxiosException)?.Response);
 
-                // 已经是「总预算耗尽」（上一次尝试的终端在预算已空时抛的）：消息里已经写明第几次没发出，
-                // 再包一层只会把序号 +1、让 Cause 链自相矛盾。
+                // 已经是「总预算耗尽」：消息里已写明第几次没发出，再包一层只会把序号 +1。
                 if (ex is AxiosException { IsTotalTimeoutExceeded: true })
                 {
                     throw;
                 }
 
-                // 本次尝试连槽位都没拿到（排队超时 / 队列满）：它说明不了下游健康与否，库级也不重试它。
-                // 前面已经有真实失败时抛那一条，别让「没排上队」盖掉能定位问题的故障（与对冲同一口径）；
-                // 没有更早的失败，入口拥塞本身就是本次请求的结论，照旧抛它。
+                // 本次尝试连槽位都没拿到（排队超时 / 队列满）：说明不了下游健康，库级也不重试它。
+                // 前面已有真实失败时抛那一条，不让「没排上队」盖掉能定位问题的故障。
                 if (IsGateRejection(ex))
                 {
                     if (firstRealFailure is not null)
@@ -126,11 +117,17 @@ public static partial class Attempt
                     firstRealFailure ??= ex;
                 }
 
-                // 库级终止原因（次数到顶 / 取消 / 熔断 / 闸门 / 配置错误）先判：它们与预算无关，
-                // 不能因为「这一刻预算恰好也空了」就把错误码改写成 ECONNABORTED（调用方会误判该重试）。
+                // 库级终止原因（次数到顶 / 取消 / 熔断 / 闸门 / 配置错误）先判：与预算无关，不因「预算恰好也空了」改写错误码。
                 if (!IsRetryableFailure(failed, externalToken, policy))
                 {
                     throw;
+                }
+
+                // 本次尝试的超时上限就是剩余总预算（被它压小），且已经到点：预算花完了，下一次尝试发不出去。
+                // 判在问策略之前：不重试就不该扣共享令牌，也不必再走一遍「发不出去再退费」。
+                if (ex is AxiosException { TimedOutOnTotalBudget: true })
+                {
+                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
                 }
 
                 // 再问策略：它决定「这类失败值不值得重试」（4xx / 非幂等方法等），「不」时原样抛给调用方。
@@ -143,7 +140,7 @@ public static partial class Attempt
 
                 // 策略放行、但预算已经不允许下一次尝试：这次重试注定发不出去，把刚扣的令牌退回再报预算耗尽
                 // （共享桶不该为一次没发生的发送记账，否则同一只桶里的其它请求会被白白饿死）。
-                if (ctx.RemainingTotalTimeout is { } remaining && remaining <= TimeSpan.Zero)
+                if (TotalTimeoutBudget.IsExhausted(ctx.RemainingTotalTimeout))
                 {
                     RefundRetryBudget(policy);
                     throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
@@ -161,20 +158,13 @@ public static partial class Attempt
                     delay = Timeouts.Max;
                 }
 
-                // 退避不能睡过总预算：剩下的时间不够就只等到截止点，下一次尝试会以「总预算耗尽」失败，
-                // 而不是先睡完一个早已到期的预算再失败（调用方感知的耗时不会超过 TotalTimeout）。
-                if (ctx.RemainingTotalTimeout is { } remainingBudget)
+                // 退避睡完就到截止点（含只剩不足一个计时器 tick）：这次重试发不出去，退回令牌并直接报预算耗尽，
+                // 不再白等一段只为「下一次尝试立刻失败」。
+                if (ctx.RemainingTotalTimeout is { } remainingBudget
+                    && remainingBudget - delay <= TotalTimeoutBudget.TimerResolution)
                 {
-                    // 等待本身就会吃掉全部剩余预算：下一次尝试注定在发出前失败，把为它预留的令牌退回去。
-                    if (delay >= remainingBudget)
-                    {
-                        RefundRetryBudget(policy);
-                    }
-
-                    if (delay > remainingBudget)
-                    {
-                        delay = remainingBudget > TimeSpan.Zero ? remainingBudget : TimeSpan.Zero;
-                    }
+                    RefundRetryBudget(policy);
+                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
                 }
 
                 // 回调与遥测共用同一个上下文

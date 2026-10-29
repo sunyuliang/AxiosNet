@@ -27,7 +27,7 @@ internal sealed class PooledEndpoint : IDisposable
 
     /// <summary>
     /// 池已 Dispose：本节点在最后一条租约归还时自行销毁。
-    /// 用 <c>volatile</c> 字段是因为这个标记在锁内、锁外都会写，读发生在 <see cref="Release"/> 的锁内。
+    /// 标记在锁内、锁外都会写，读发生在 <see cref="Release"/> 的锁内。
     /// </summary>
     public bool DisposeWhenIdle
     {
@@ -52,7 +52,7 @@ internal sealed class PooledEndpoint : IDisposable
         Handler = CreateHandler(Origin, options, cookieContainer);
         Client = new HttpClient(Handler, disposeHandler: false)
         {
-            // 超时由 AxiosClient 按请求统一控制，避免 Handler 级超时干扰
+            // 超时由 AxiosClient 按请求统一控制。
             Timeout = Timeout.InfiniteTimeSpan
         };
     }
@@ -67,7 +67,7 @@ internal sealed class PooledEndpoint : IDisposable
             return DefaultHandlerFactory.Create(options, cookieContainer);
         }
 
-        // 给工厂一份选项快照，避免工厂内的一次赋值改掉整个池的实时行为。
+        // 给工厂一份选项快照。
         var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options.Clone(), cookieContainer);
         var handler = options.HandlerFactory(context);
 
@@ -119,7 +119,7 @@ internal sealed class PooledEndpoint : IDisposable
             }
         }
 
-        // 只有真的减掉了才减水位，避免重复 Release 让计数漂到负数。
+        // 只有真的减掉了才减水位，避免重复 Release 让计数变成负数。
         if (released)
         {
             AxiosTelemetry.ExitLease();
@@ -163,12 +163,12 @@ internal sealed class PooledEndpoint : IDisposable
     {
         try
         {
-            // HttpClient 自身也持有计时器等资源（Handler 以 disposeHandler:false 传入，不会被连带释放）
+            // Handler 以 disposeHandler:false 传入，不会被连带释放。
             Client.Dispose();
         }
         catch
         {
-            // 忽略：关闭阶段的异常不应影响池的清理
+            // 关闭阶段的异常不影响池的清理。
         }
 
         try
@@ -177,7 +177,7 @@ internal sealed class PooledEndpoint : IDisposable
         }
         catch
         {
-            // 连接关闭异常不影响池关闭
+            // 连接关闭异常不影响池关闭。
         }
     }
 }

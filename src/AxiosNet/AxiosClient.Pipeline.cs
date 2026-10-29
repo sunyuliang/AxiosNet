@@ -9,19 +9,19 @@ namespace AxiosNet;
 // AxiosClient 的请求管线：合并 → 拦截 → 规范化 → 编码，以及一次请求的成型（URL / 协议 / 正文 / 请求头）。
 public sealed partial class AxiosClient
 {
-    /// <summary>请求入口：按固定顺序驱动整条管线 —— 合并 → 校验（实例级）→ 拦截 → 规范化 →（短路 | 校验 + 闸门 → 编码 → 发送）→ 收尾；顺序是契约，理由见各阶段方法。</summary>
+    /// <summary>请求入口：按固定顺序驱动整条管线 —— 合并 → 校验（实例级）→ 拦截 → 规范化 →（短路 | 校验 + 闸门 → 编码 → 发送）→ 收尾。</summary>
     private async Task<AxiosResponse> SendAsync(
         AxiosConfig perCallConfig,
         Type? dataType,
         AxiosResponse? target = null)
     {
-        // 阶段 0：守卫。放在 try 之外：它抛时名额还没占上，finally 不该归还。
+        // 阶段 0：守卫（在 try 之外，抛时名额还没占上，不归还）。
         EnterInFlight(perCallConfig);
 
-        // 总预算的计时起点：调用入口。合并与拦截器耗时都算在调用方感知的时长里。
+        // 总预算的计时起点：调用入口（含合并与拦截器耗时）。
         var entryTimestamp = Stopwatch.GetTimestamp();
 
-        // 遥测状态全是局部量：关闭遥测时零分配；后三项在 URL 拼好后才定。
+        // 遥测状态全是局部量；后三项在 URL 拼好后才定。
         AxiosConfig? config = null;
         Uri? telemetryUri = null;
         var telemetryEnabled = false;
@@ -33,16 +33,16 @@ public sealed partial class AxiosClient
             // 阶段 1：合并 —— 得到本次请求的生效配置。
             config = MergeEffectiveConfig(perCallConfig);
 
-            // 阶段 2：校验（实例级选项）—— 构造期已固化进连接池，改不了，故判在拦截器之前。
+            // 阶段 2：校验（实例级选项）—— 构造期已固化进连接池，判在拦截器之前。
             ValidatePerRequestOptions(config);
 
             // 阶段 3：拦截 —— 请求拦截器按注册逆序执行（与 axios 一致）。
             config = await InterceptRequestAsync(config).ConfigureAwait(false);
 
-            // 阶段 4a ~ 4d 都必须看拦截器之后的配置，否则拦截器可以绕过护栏或修正非法值。
+            // 阶段 4a ~ 4d 都必须使用拦截器之后的配置。
             ApplyAutoResponseType(config, dataType);
 
-            // 范围校验判的是配置自身是否可执行，与会不会真的发出请求无关，故放在短路之前。
+            // 范围校验与是否真的发出请求无关，放在短路之前。
             ValidateRangeConfig(config);
 
             // 闸门与编码只对真实 HTTP 操作有意义，短路不经过它们。
@@ -69,7 +69,7 @@ public sealed partial class AxiosClient
 
             var template = CreateRequestMessage(config, plan, telemetryActivity);
 
-            // 总预算换成一次绝对时间戳：重试 / 换端点 / 对冲分支共享同一个截止点，晚起跑的分支拿到更少的剩余。
+            // 总预算换成绝对时间戳：各分支共享同一截止点。
             var deadlineTimestamp = TotalTimeoutBudget.Start(config, entryTimestamp);
 
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
@@ -85,7 +85,7 @@ public sealed partial class AxiosClient
                 var result = attempt.Response;
                 var streamOwner = attempt.StreamOwner;
 
-                // 拦截器返回了新实例：原流式正文已无引用，需要在这里释放。
+                // 拦截器返回新实例时释放原流式正文。
                 if (streamOwner is not null && !ReferenceEquals(result.Data, streamOwner))
                 {
                     streamOwner.Dispose();
@@ -93,7 +93,7 @@ public sealed partial class AxiosClient
 
                 if (telemetryEnabled)
                 {
-                    // 必须在 template.Dispose() 之前（外层 finally）：那之后正文头已不可读。
+                    // 必须在 template.Dispose()（外层 finally）之前：之后正文头不可读。
                     AxiosTelemetry.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryActivity);
                 }
 
@@ -107,7 +107,7 @@ public sealed partial class AxiosClient
         }
         catch (Exception ex)
         {
-            // 遥测不该改变异常本身：记完原样抛（连栈都不动）。
+            // 记录后原样抛出，不改动异常。
             if (telemetryEnabled)
             {
                 AxiosTelemetry.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryActivity);
@@ -122,7 +122,7 @@ public sealed partial class AxiosClient
                 AxiosTelemetry.ExitRequest();
             }
 
-            // 必须收 span：否则它会一直挂在 Activity.Current 上，后续请求的 span 会错挂到它下面。
+            // 必须收 span，否则后续请求的 span 会错挂。
             AxiosTelemetry.StopRequest(telemetryActivity);
 
             ReleaseInFlight();
@@ -141,7 +141,7 @@ public sealed partial class AxiosClient
             AxiosConfig next;
             try
             {
-                // 返回 null Task 会炸成裸 NRE，这里提前给出可定位的错误（同步结果请用 Task.FromResult）。
+                // null Task 就地报错（同步结果用 Task.FromResult）。
                 var pending = interceptor.OnFulfilled(config)
                     ?? throw AxiosException.InvalidOption(
                         "请求拦截器返回了 null Task：OnFulfilled / OnRejected 必须返回 Task<AxiosConfig> 实例"
@@ -164,7 +164,7 @@ public sealed partial class AxiosClient
                 next = await rejected.ConfigureAwait(false);
             }
 
-            // 返回 null 会在下一层炸成裸 NRE，调用方看不出是哪层拦截器出的错。
+            // null 配置就地报错。
             config = next ?? throw AxiosException.InvalidOption(
                 "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
                 + "（要做修改请改传入的 config 后端返回它）。",
@@ -176,7 +176,7 @@ public sealed partial class AxiosClient
 
     /// <summary>
     /// 阶段 4a —— 规范化：泛型 <c>&lt;dynamic&gt;</c> / <c>&lt;object&gt;</c> 与 <c>&lt;Stream&gt;</c> 自动切换响应形态。
-    /// 判据是 <see cref="AxiosConfig.ResponseTypeSet"/>（Json 是默认值，只看值分不清「没表态」），切换本身不置该标记。
+    /// 判据是 <see cref="AxiosConfig.ResponseTypeSet"/>；切换本身不置该标记。
     /// </summary>
     private static void ApplyAutoResponseType(AxiosConfig config, Type? dataType)
     {
@@ -216,7 +216,7 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>一次请求的「成型结果」：最终 URL 与协议协商参数，结构体以免热路径多一次堆分配。</summary>
+    /// <summary>一次请求的成型结果：最终 URL 与协议协商参数（结构体）。</summary>
     private readonly struct RequestPlan
     {
         public RequestPlan(Uri uri, Version version, HttpVersionPolicy versionPolicy)
@@ -229,7 +229,7 @@ public sealed partial class AxiosClient
         /// <summary>最终请求 URL（已合并 baseURL / params 并转义）。</summary>
         public Uri Uri { get; }
 
-        /// <summary>请求的 HTTP 版本（默认 2.0，理由见 <see cref="BuildRequestPlan"/>）。</summary>
+        /// <summary>请求的 HTTP 版本（默认 2.0）。</summary>
         public Version Version { get; }
 
         /// <summary>版本协商策略（默认 <see cref="HttpVersionPolicy.RequestVersionOrLower"/>）。</summary>
@@ -238,8 +238,8 @@ public sealed partial class AxiosClient
 
     /// <summary>
     /// 阶段 5b —— 成型：拼出最终 URL、确定协议协商参数，并做 HTTP/3 的前置校验。
-    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>（不支持就降级是库的契约）；
-    /// 明文 http:// 不改写版本，默认策略下由 Handler 落到 1.1；强制 1.1 写 Version11，要 h3 写 Version30。
+    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>；明文 http:// 不改写版本；
+    /// 强制 1.1 写 Version11，要 h3 写 Version30。
     /// </summary>
     private static RequestPlan BuildRequestPlan(AxiosConfig config)
     {
@@ -249,7 +249,7 @@ public sealed partial class AxiosClient
         var httpVersion = connection?.HttpVersion ?? HttpVersion.Version20;
         var versionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower;
 
-        // HTTP/3 的前置校验：只在真的要 h3 时走（h2 / 1.1 请求一次 Major 比较就返回）。
+        // HTTP/3 前置校验：只在真的要 h3 时执行。
         ValidateHttp3Request(uri, httpVersion, versionPolicy, config);
 
         return new RequestPlan(uri, httpVersion, versionPolicy);
@@ -276,7 +276,7 @@ public sealed partial class AxiosClient
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
-                // 序列化失败走统一错误模型，取消类异常原样抛出；声明式表单报模型名而不是 Dictionary`2。
+                // 序列化失败走统一错误模型，声明式表单报模型名。
                 throw AxiosException.BadRequestPayload(
                     config,
                     template,
@@ -286,7 +286,7 @@ public sealed partial class AxiosClient
                     ex);
             }
 
-            // 上传进度 / 限速：包一层流量统计（头部复制，序列化逻辑不变）
+            // 上传进度 / 限速：包一层流量统计（头部复制）。
             var callbacks = config.CallbacksOrNull;
             var maxRate = config.LimitsOrNull?.MaxRate;
             if (content is not null && (callbacks?.OnUploadProgress is not null || maxRate is > 0))
@@ -306,7 +306,7 @@ public sealed partial class AxiosClient
 
                 template.Content = content;
 
-                // 长度已知时顺手写进 span；未知（chunked / 不可定位流）就不写，不猜。
+                // 长度已知时写进 span，未知则不写。
                 AxiosTelemetry.SetRequestBodySize(telemetryActivity, content.Headers.ContentLength);
             }
 

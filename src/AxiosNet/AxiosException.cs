@@ -31,9 +31,8 @@ public sealed class AxiosException : Exception
     public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
 
     /// <summary>
-    /// 并发闸门的排队队列已满（<see cref="AxiosConfig.LimitSettings.MaxQueueLength"/>）：请求<b>没有发出</b>。
-    /// 与 <see cref="ErrQueueTimeout"/> 同族但含义不同：不是「等太久了」，而是「连排队的名额都没了」——
-    /// 说明调用方的并发压力已经超过本实例的承受能力，应降速 / 换实例，而不是加大排队时间。
+    /// 并发闸门的排队队列已满（<see cref="AxiosConfig.LimitSettings.MaxQueueLength"/>）：请求<b>没有发出</b>，
+    /// 与 <see cref="ErrQueueTimeout"/> 的区别是「连排队名额都没有」。
     /// </summary>
     public const string ErrQueueFull = "ERR_QUEUE_FULL";
 
@@ -41,10 +40,8 @@ public sealed class AxiosException : Exception
     public const string ErrCircuitOpen = "ERR_CIRCUIT_OPEN";
 
     /// <summary>
-    /// 连接池 origin 基数饱和（<see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>）：
-    /// 同时「在途」的不同 host:port 数量达上限，且没有可驱逐的空闲节点。请求根本没发出去，
-    /// 与 <see cref="ErrQueueTimeout"/> / <see cref="ErrCircuitOpen"/> 同族——可观测、默认不自动重发、
-    /// 调用方应降扇出 / 调大上限 / 退避后重试。
+    /// 连接池 origin 基数饱和（<see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>）：同时「在途」的
+    /// 不同 host:port 数量达上限且无可驱逐的空闲节点，请求没有发出。
     /// </summary>
     public const string ErrPoolExhausted = "ERR_POOL_EXHAUSTED";
 
@@ -76,12 +73,11 @@ public sealed class AxiosException : Exception
     /// 是否属于「<see cref="AxiosConfig.TotalTimeout"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
     /// 与「发出之后超时」区分开。
     /// </summary>
-    /// <remarks>
-    /// 「发出之后超时」说明下游不响应，换端点或重试有意义；这条只说明本地预算先到期，下游一个字节都没收到。
-    /// 调用方据此应当缩短后续工作 / 降扇出，而不是立刻重试 —— 预算已经空了，重试必然在同一处立刻失败。
-    /// 库内部按同一口径分流：不计入熔断失败、不重试、不换端点（见 <see cref="Circuit.AxiosCircuitContext.TotalTimeoutExpiredBeforeSend"/>）。
-    /// </remarks>
+    /// <remarks>库内按同一口径分流：不计入熔断失败、不重试、不换端点。</remarks>
     public bool IsTotalTimeoutExceeded { get; private init; }
+
+    /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.TotalTimeout"/> 压小）。</summary>
+    internal bool TimedOutOnTotalBudget { get; private init; }
 
     private AxiosException(
         string message,
@@ -118,8 +114,7 @@ public sealed class AxiosException : Exception
     }
 
     /// <summary>
-    /// 单次尝试超时。<paramref name="effectiveTimeout"/> 只在「被总预算压小」时传入：
-    /// 那时真实上限已经不是 <see cref="AxiosConfig.Timeout"/>，消息里必须说清差额，否则调用方会以为配置没生效。
+    /// 单次尝试超时。<paramref name="effectiveTimeout"/> 只在被总预算压小时传入，用于在消息里写明真实上限。
     /// </summary>
     internal static AxiosException Timeout(
         AxiosConfig config,
@@ -148,7 +143,10 @@ public sealed class AxiosException : Exception
             message = $"timeout of {config.Timeout.TotalMilliseconds:0}ms exceeded";
         }
 
-        return new AxiosException(message, ErrConnAborted, config, request, null, inner);
+        return new AxiosException(message, ErrConnAborted, config, request, null, inner)
+        {
+            TimedOutOnTotalBudget = effectiveTimeout is not null
+        };
     }
 
     /// <summary>
@@ -158,12 +156,7 @@ public sealed class AxiosException : Exception
     /// <param name="config">本次请求的生效配置（错误码、回调文案与超时消息都取自它）。</param>
     /// <param name="request">触发本次失败的请求（挂在异常上供调用方定位）。</param>
     /// <param name="attempt">第几次尝试未能发出，写进消息里便于排查。</param>
-    /// <param name="budget">
-    /// 总预算的配置值，只用于消息。取 <see cref="AxiosConfig.TotalTimeout"/> 原样（可空）而不是强制解包：
-    /// 截止点由入口处的时间戳唯一决定（<c>TotalTimeoutBudget</c>），但配置对象是同一个实例，管线跑起来之后
-    /// 仍可能被自定义中间件 / 回调改写成 <c>null</c>。那种情况下这里只该少写一个金额，
-    /// 不该把「预算耗尽」变成 <c>InvalidOperationException</c>。
-    /// </param>
+    /// <param name="budget">总预算的配置值，只用于消息；取原样（可空）以免配置被中途改写时抛出无关异常。</param>
     /// <param name="inner">把预算耗尽归因到的那次失败（通常是上一次尝试抛出的异常），保留 <c>Cause</c> 链。</param>
     internal static AxiosException TotalTimeoutExceeded(
         AxiosConfig config,
@@ -287,9 +280,7 @@ public sealed class AxiosException : Exception
 
     /// <summary>
     /// 连接池 origin 基数饱和：distinct origin 同时「在途」的数量触顶 <see cref="AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount"/>，
-    /// 且没有可驱逐的空闲节点。请求没有发出去；与 <see cref="ErrQueueTimeout"/> / <see cref="ErrCircuitOpen"/> 同族，
-    /// 默认不自动重发。调用方应调大 <c>MaxEndpointCount</c>、用 <c>Limits.MaxConcurrentRequests</c> +
-    /// <c>Limits.QueueTimeout</c> 收扇出、显式 <c>Clear()</c> 回收，或退避后重试。
+    /// 且没有可驱逐的空闲节点，请求没有发出。
     /// </summary>
     internal static AxiosException PoolExhausted(AxiosConfig? config, HttpRequestMessage? request, int max, Exception? inner = null)
     {

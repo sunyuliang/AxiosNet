@@ -57,8 +57,7 @@ internal static class ResponseReader
 
     /// <summary>
     /// 读取整个响应体：声明长度在信任上限内时按声明值预分配，否则段式累积；两条路径都按真实字节数执行 maxContentLength。
-    /// 本方法只管读，<b>不释放流</b> —— 流的释放由取得它的那一层负责（<see cref="ReadAsync"/>），
-    /// 这样「预分配 → 溢出转段式」的交接不必和释放点纠缠，也不会出现重复释放。
+    /// 本方法只管读，不释放流。
     /// </summary>
     private static Task<byte[]> ReadAllBytesAsync(
         Stream stream,
@@ -71,10 +70,8 @@ internal static class ResponseReader
             : ReadSegmentedAsync(stream, config, request, cancellationToken, prefix: null);
 
     /// <summary>
-    /// 已知长度（≤ 信任上限）的读取：按声明值预分配。<b>声明长度只是提示</b> —— 读满之后还要再探一次，
-    /// 确认没有尾部数据才算结束：代理改头、自制 <see cref="System.Net.Http.HttpContent"/>、
-    /// Handler 不按声明截断时，声明值都比真实正文短，直接 return 会静默丢掉尾部（同时绕过 maxContentLength）。
-    /// 恰好命中时零拷贝交出预分配数组；多出数据时把它当作段式累积的第一段。
+    /// 已知长度（≤ 信任上限）的读取：按声明值预分配；读满后再探一次确认没有尾部数据，
+    /// 多出数据时转段式累积，恰好命中时零拷贝交出。
     /// </summary>
     private static async Task<byte[]> ReadDeclaredLengthAsync(
         Stream stream,
@@ -107,16 +104,14 @@ internal static class ResponseReader
         }
         catch (Exception ex) when (ex is not AxiosException)
         {
-            // 探测只是「确认有没有尾部数据」的启发式，它失败不该让已经按声明读满的正文变成失败
-            //（本改动之前这里根本不读，所以这条路径必须保持「正文完整就成功」）。
-            // AxiosException 不在此列：那可能是正文上限在读取时被触发（ProgressReadStream），吞掉等于绕过 MaxContentLength。
+            // 探测失败不影响已按声明读满的正文；AxiosException 除外（可能是正文上限被触发）。
             ArrayPool<byte>.Shared.Return(probe);
             return buffer;
         }
 
         if (more == 0)
         {
-            // 声明值与正文一致：零拷贝交出，不为「探测尾部」付第二份载荷的分配。
+            // 声明值与正文一致：零拷贝交出。
             ArrayPool<byte>.Shared.Return(probe);
             return buffer;
         }
@@ -127,10 +122,8 @@ internal static class ResponseReader
 
     /// <summary>
     /// 段式累积：从 <see cref="ArrayPool{T}"/> 租段、倍增增长，收齐后装配一个精确数组。
-    /// <paramref name="prefix"/> 是「已读满、所有权已交出」的预分配数组（不是租来的，不归还池）；
+    /// <paramref name="prefix"/> 是所有权已交出的预分配数组（不归还池）；
     /// <paramref name="current"/> / <paramref name="filled"/> 允许调用方交进一段已读过若干字节的池化段。
-    /// 池化数组只有一个归还点：交进 <c>segments</c> 的同时把 <c>current</c> 换成新段，
-    /// 因此任何失败路径都不会出现「既在列表里又被 finally 归还」的重复归还。
     /// </summary>
     private static async Task<byte[]> ReadSegmentedAsync(
         Stream stream,
@@ -169,7 +162,7 @@ internal static class ResponseReader
 
                 if (filled == current.Length)
                 {
-                    // 读满一段：先租到下一段再交出当前段，中途失败不会让同一数组被归还两次。
+                    // 读满一段：先租到下一段再交出当前段，避免重复归还。
                     var next = ArrayPool<byte>.Shared.Rent(Math.Min(current.Length * 2, MaxSegment));
                     segments.Add(current);
                     current = next;
@@ -279,7 +272,7 @@ internal static class ResponseReader
             }
             finally
             {
-                // 取得正文流的是这一层，释放也在这一层：读取方法不持有释放责任（读失败同样要还连接）。
+                // 释放由这一层负责，读失败同样要还连接。
                 downloadStream.Dispose();
             }
 
@@ -467,7 +460,7 @@ internal static class ResponseReader
 
             if (config.ResponseType == ResponseType.Stream)
             {
-                // 流式：正文以流交出；底层字节数组必须复制，否则调用方写入会污染缓存条目。
+                // 流式：正文以流交出，底层字节数组必须复制。
                 data = new MemoryStream((byte[])body.Clone(), writable: false);
             }
             else
@@ -606,7 +599,7 @@ internal static class ResponseReader
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
-                // 非 JSON 响应走统一错误模型：把 HTML 交回去只会在调用方炸成 RuntimeBinderException。
+                // 非 JSON 响应走统一错误模型。
                 if (lenient)
                 {
                     return json;
@@ -693,7 +686,7 @@ internal static class ResponseReader
         {
             var deserialized = AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
 
-            // 序列化器不复核枚举已定义值（STJ 会把 999 静默转成 (E)999），与第 8 步同一把尺子。
+            // 序列化器不复核枚举已定义值，与第 8 步同一把尺子。
             if (deserialized is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
             {
                 // lenient 时不因数据值失败：回退原文，不让正文问题盖住 HTTP 状态错误。

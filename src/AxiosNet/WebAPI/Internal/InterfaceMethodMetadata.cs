@@ -5,10 +5,7 @@ using AxiosNet.Internal;
 
 namespace AxiosNet.WebAPI.Internal;
 
-/// <summary>
-/// 接口方法的绑定元数据：路由、参数绑定计划、授权、返回类型特化后的调用器。
-/// 缓存键必须带上「被代理的接口」——同一个基接口方法经不同派生接口调用时，静态头与授权可能不同。
-/// </summary>
+/// <summary>接口方法的绑定元数据：路由、参数绑定计划、授权、返回类型特化后的调用器；缓存键包含被代理的接口。</summary>
 internal sealed class InterfaceMethodMetadata
 {
     private const DynamicallyAccessedMemberTypes InterfaceMembers =
@@ -85,7 +82,7 @@ internal sealed class InterfaceMethodMetadata
     {
         if (_buildError is not null)
         {
-            // Create<T>() 已做全量校验，这条路径不可达；真到了这里说明元数据被绕过，直接给出构建错误。
+            // 正常路径不可达；元数据被绕过时直接给出构建错误。
             throw new InvalidOperationException(_buildError);
         }
 
@@ -328,7 +325,7 @@ internal sealed class InterfaceMethodMetadata
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
-                // 与请求模型的 ResolveBody 一致：表单装配失败（延迟迭代器抛错等）归 ERR_BAD_REQUEST。
+                // 表单装配失败（延迟迭代器抛错等）归 ERR_BAD_REQUEST。
                 throw AxiosException.BadRequestPayload(config, request: null, $"{_interfaceType!.Name}.{_methodName}", ex);
             }
 

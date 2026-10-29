@@ -2,18 +2,8 @@ using System.Net;
 
 namespace AxiosNet.Internal;
 
-/// <summary>
-/// 流式请求正文（异步序列）：按调用方产出的块顺序写出，<b>不缓冲整段</b>。
-/// <para>
-/// 一次请求只能发送一次：序列被消费后无法回拨，因此开启重试 / 备用端点时由
-/// <see cref="RetryBody"/> 在第一次发送之前拒绝（与不可 seek 的流同一口径）。
-/// 长度始终未知，传输层按 chunked（HTTP/1.1）或 DATA 帧（HTTP/2）发送。
-/// </para>
-/// <para>
-/// 只依赖基础框架里的 <see cref="IAsyncEnumerable{T}"/>：<c>PipeReader</c> 在 net6.0 / net8.0 上不在基础框架内，
-/// 需要管道的地方请用 <c>pipe.Reader.AsStream()</c> 包装后按 <see cref="Stream"/> 传入（走 StreamContent 路径）。
-/// </para>
-/// </summary>
+/// <summary>流式请求正文：按调用方产出的块顺序写出，不缓冲整段；长度未知，按 chunked / DATA 帧发送。</summary>
+/// <remarks>只能发送一次：开启重试 / 备用端点时由 <see cref="RetryBody"/> 在首次发送前拒绝。</remarks>
 internal sealed class AsyncEnumerableBodyContent : HttpContent
 {
     private readonly Func<CancellationToken, IAsyncEnumerator<ReadOnlyMemory<byte>>> _open;

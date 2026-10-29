@@ -155,7 +155,7 @@ public sealed partial class AxiosClient
         => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
 
     // ------------------------------------------------------------------
-    // CancellationToken 显式重载（否则令牌会被装箱成 object 落到 data 上）
+    // CancellationToken 显式重载（令牌不再走 data 参数）。
     // ------------------------------------------------------------------
 
     public Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
@@ -218,7 +218,7 @@ public sealed partial class AxiosClient
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
         => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null));
 
-    /// <summary>表单快捷方法入口：默认 multipart 交给 <see cref="Shortcut"/> 决定与实例默认值谁生效。</summary>
+    /// <summary>表单快捷方法入口：默认 multipart/form-data，实例默认已是表单编码时保留实例值。</summary>
     private AxiosConfig FormShortcut(
         string url,
         HttpMethod method,
@@ -239,14 +239,14 @@ public sealed partial class AxiosClient
             return AsTyped<T>(response);
         }
 
-        // Data 必须是 T：不匹配时报 ERR_BAD_RESPONSE，而不是把检查推迟到 Data getter。
+        // Data 必须是 T：不匹配时报 ERR_BAD_RESPONSE。
         try
         {
             DataCast.EnsureCompatible<T>(typed.RawData, typed.Config, typed.Request);
         }
         catch
         {
-            // 响应已交不到调用方手里：流式正文必须在这里释放，否则租约永不归还；短路响应（Request == null）除外。
+            // 正文交不到调用方手里：流式正文必须在此释放，短路响应（Request == null）除外。
             if (typed.Request is not null)
             {
                 (typed.RawData as IDisposable)?.Dispose();
@@ -268,8 +268,8 @@ public sealed partial class AxiosClient
         }
         catch
         {
-            // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：流式正文必须在这里释放，
-            // 否则租约永不归还；短路响应除外（Data 归调用方）。
+            // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：流式正文必须在此释放，
+            // 短路响应除外（Data 归调用方）。
             if (response.Request is not null)
             {
                 (response.Data as IDisposable)?.Dispose();
@@ -291,7 +291,7 @@ public sealed partial class AxiosClient
     {
         var config = NewEffectiveConfig();
 
-        // url 是必填参数：null / 空白不能静默解释成「请求 baseAddress 本身」，要请求基地址请显式写 "/"。
+        // url 必填：null / 空白直接报错，要请求 baseAddress 请显式传 "/"。
         if (string.IsNullOrWhiteSpace(url))
         {
             throw AxiosException.InvalidUrl(url ?? string.Empty, config, message: "url 不能为 null 或空白：快捷方法的第一个参数是必填的请求地址" + "（要请求 baseAddress 本身请显式传 \"/\"）。");
@@ -300,20 +300,19 @@ public sealed partial class AxiosClient
         config.Url = url;
         config.Method = method;
 
-        // 表单快捷方法：编码由方法名承诺，优先级 configure > 方法默认 > 实例默认值。
-        // 实例默认值本身已是表单编码（urlencoded，或带 boundary 的 multipart）时保留它。
+        // 表单快捷方法：configure > 方法默认 > 实例默认值；实例默认已是表单编码时保留。
         if (defaultContentType is not null && !IsFormContentType(config.ContentType))
         {
             config.ContentType = defaultContentType;
         }
 
-        // 仅在调用方传入可取消的令牌时才写入，避免用 CancellationToken.None 覆盖掉实例默认令牌。
+        // 仅在令牌可取消时写入，避免覆盖实例默认令牌。
         if (cancellationToken.CanBeCanceled)
         {
             config.CancellationToken = cancellationToken;
         }
 
-        // (object)token 之类的写法仍可能落到 data 上：直接报错，别把令牌序列化成请求体。
+        // 令牌落到 data 上时直接报错。
         if (data is CancellationToken)
         {
             throw AxiosException.InvalidOption("CancellationToken 不能作为请求体传入，请使用 cancellationToken 参数。", config);
@@ -337,7 +336,7 @@ public sealed partial class AxiosClient
         config.EffectiveMerged = true;
         config.ClearInstanceOptionFlags();
 
-        // 记下继承来的 transform 段长度：合并层只对这一段去重，回调里追加的项原样保留。
+        // 记下继承来的 transform 段长度：合并层只对这一段去重。
         config.TransformInheritedRequest = Defaults.HasTransformRequest ? Defaults.TransformRequest.Count : 0;
         config.TransformInheritedResponse = Defaults.HasTransformResponse ? Defaults.TransformResponse.Count : 0;
         return config;
@@ -363,19 +362,19 @@ public sealed partial class AxiosClient
     /// <summary>把 url/method 填进调用方传入的配置，交给管线按常规路径合并到实例默认值。</summary>
     private AxiosConfig WithUrl(AxiosConfig? config, string url, HttpMethod method)
     {
-        // null 表示没有要传的配置，按普通快捷路径（空 data）处理，与 PostAsync(url) 等价。
+        // null 表示未传配置，按普通快捷路径处理。
         if (config is null)
         {
             return Shortcut(url, method, null, default);
         }
 
-        // 与快捷方法同一套 fail-fast：url 为 null / 空白时不能静默落到 baseAddress。
+        // 与快捷方法同一套校验：url 为 null / 空白直接报错。
         if (string.IsNullOrWhiteSpace(url))
         {
             throw AxiosException.InvalidUrl(url ?? string.Empty, config, message: "url 不能为 null 或空白：快捷方法的第一个参数是必填的请求地址" + "（要请求 baseAddress 本身请显式传 \"/\"）。");
         }
 
-        // 不能就地修改调用方传入的 config（并发复用会互相覆盖）；Clone() 同时清掉 EffectiveMerged。
+        // 不就地修改调用方传入的 config；Clone() 同时清掉 EffectiveMerged。
         var copy = config.Clone();
         copy.Url = url;
         copy.Method = method;

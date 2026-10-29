@@ -3,10 +3,8 @@ using System.Collections;
 namespace AxiosNet;
 
 /// <summary>
-/// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用。
-/// 实例持有一个不可变的条目数组（条目内含查找用判别位），写入 = 算出新数组 + 原子换上，读与克隆都无锁。
-/// 写入即校验：头名必须是 RFC 7230 token，取值不允许 <c>CR</c> / <c>LF</c> 等控制字符。
-/// 读/删入口对 <c>null</c> 名称抛 <see cref="ArgumentNullException"/>。
+/// 类似 axios 的 AxiosHeaders：大小写不敏感、同名覆盖（单值）、支持链式调用；读与克隆无锁，写入即校验。
+/// 头名必须是 RFC 7230 token，取值不允许 <c>CR</c> / <c>LF</c> 等控制字符；读 / 删入口对 <c>null</c> 名称抛 <see cref="ArgumentNullException"/>。
 /// </summary>
 public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
 {
@@ -37,21 +35,23 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         private static int Fold(char c) => c is >= 'a' and <= 'z' ? c - ('a' - 'A') : c;
     }
 
-    /// <summary>空数组单例：绝大多数 headers 是空的（懒创建的 <c>Config.Headers</c>）。</summary>
+    /// <summary>空数组单例。</summary>
     private static readonly Entry[] Empty = Array.Empty<Entry>();
 
     /// <summary>当前版本：<see cref="Volatile"/> 读，<see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/> 写。</summary>
     private Entry[] _items;
 
+    /// <summary>创建空集合。</summary>
     public AxiosHeaders() => _items = Empty;
 
     private AxiosHeaders(Entry[] items) => _items = items;
 
+    /// <summary>按给定键值对创建集合（<c>null</c> 取值等价于删除）。</summary>
     public AxiosHeaders(IEnumerable<KeyValuePair<string, string>> headers)
     {
         ArgumentNullException.ThrowIfNull(headers);
 
-        // 先在 List 里攒、最后一次性成型，避免逐条 CAS 复制 N 次数组。
+        // 先在 List 里攒，最后一次性成型。
         var capacity = headers is ICollection<KeyValuePair<string, string>> known ? known.Count : 4;
         var buffer = new List<Entry>(capacity);
 
@@ -59,7 +59,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         {
             var name = ValidateName(kv.Key);
 
-            // null 取值等价于删除：删一个不存在的条目就是空操作。
+            // null 取值等价于删除。
             if (kv.Value is null)
             {
                 Remove(buffer, name);
@@ -96,7 +96,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     {
         ArgumentNullException.ThrowIfNull(headers);
 
-        // 先物化：CAS 重试不能重复枚举一次性序列，且校验失败时已通过的前缀照常生效。
+        // 先物化再应用：校验失败时已通过的前缀照常生效。
         var ops = new List<(string Name, string? Value)>(4);
         try
         {
@@ -198,10 +198,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     }
 
     /// <summary>清空：无条件发布空版本。</summary>
-    /// <remarks>
-    /// 同 <see cref="Internal.SynchronizedList{T}.Clear"/>：盲写单例 <see cref="Empty"/>，没有「读-改-写」就没有丢更新，
-    /// 与并发 <see cref="Set(string, string?)"/> / <see cref="Delete"/> 的任意交错都可线性化。改成 CAS 循环是等价改写，不要为了「统一」而动。
-    /// </remarks>
+    /// <remarks>盲写空单例，与并发 <see cref="Set(string, string?)"/> / <see cref="Delete"/> 可线性化。</remarks>
     public void Clear()
     {
         // 空版本没有内容可清，不发布也不分配。
@@ -213,6 +210,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         Volatile.Write(ref _items, Empty);
     }
 
+    /// <summary>按名称读写请求头（大小写不敏感）；赋 <c>null</c> 等价于删除。</summary>
     public string? this[string name]
     {
         get => Get(name);
@@ -326,7 +324,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    /// <summary>批量应用：一次成型、只发布一次，避免逐条 CAS 的 O(N²) 复制。</summary>
+    /// <summary>批量应用：一次成型、只发布一次。</summary>
     private void Apply(List<(string Name, string? Value)> ops)
     {
         if (ops.Count == 0)
@@ -501,13 +499,13 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     /// <summary>写入前的名称校验：RFC 7230 token（RFC 9110 §5.1 同）。</summary>
     private static string ValidateName(string name)
     {
-        // ArgumentException.ThrowIfNullOrWhiteSpace 是 .NET 8 才有的 API，这里手写以兼容 net6.0 目标。
+        // 手写空值判断以兼容 net6.0 目标。
         if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", nameof(name));
         }
 
-        // 先按原始串拒绝控制字符（含 CR/LF）：尾部的 \r\n 会被 Trim 悄悄吃掉，那正是注入尝试的痕迹。
+        // 先按原始串拒绝控制字符（含 CR/LF），再 Trim。
         foreach (var c in name)
         {
             if (c < 0x20 || c == 0x7F)

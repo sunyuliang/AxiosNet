@@ -50,15 +50,19 @@ public static class Axios
         return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
     }
 
+    /// <summary>对应 axios(config)，用全局默认实例发送。</summary>
     public static Task<AxiosResponse> RequestAsync(AxiosConfig config)
         => DefaultClient.RequestAsync(config);
 
+    /// <summary>对应 axios(config)，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> RequestAsync<T>(AxiosConfig config)
         => DefaultClient.RequestAsync<T>(config);
 
+    /// <summary>对应 axios(config)，用 Action 配置请求。</summary>
     public static Task<AxiosResponse> RequestAsync(Action<AxiosConfig> configure)
         => DefaultClient.RequestAsync(configure);
 
+    /// <summary>对应 axios(config)，用 Action 配置请求，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> RequestAsync<T>(Action<AxiosConfig> configure)
         => DefaultClient.RequestAsync<T>(configure);
 
@@ -161,7 +165,7 @@ public static class Axios
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchFormAsync<T>(url, data, configure, cancellationToken);
 
-    // 令牌直接作第二个参数的重载：与实例方法一致，避免 CancellationToken 被装箱成请求体。
+    // 令牌直接作第二个参数的重载：与实例方法一致。
     public static Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.GetAsync(url, cancellationToken);
 

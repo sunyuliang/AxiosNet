@@ -4,7 +4,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
 /// 11. 接口级声明：路由写在方法上，[Path] / [Query] / [Header] / [Body] 写在参数上，
-/// <c>Create&lt;T&gt;()</c> 直接得到可用代理 —— 绑定语义与请求模型完全一致，无需每个接口写请求模型。
+/// <c>Create&lt;T&gt;()</c> 直接得到可用代理。
 /// </summary>
 public sealed class ApiInterfaceExample : IExample
 {

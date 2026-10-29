@@ -3,10 +3,12 @@ namespace AxiosNet;
 /// <summary>对应 axios config.auth，发送 HTTP Basic 认证头。</summary>
 public sealed class AxiosAuth
 {
+    /// <summary>创建空认证（用户名与密码均为空串）。</summary>
     public AxiosAuth()
     {
     }
 
+    /// <summary>按用户名与密码创建 Basic 认证。</summary>
     public AxiosAuth(string username, string password)
     {
         Username = username;
@@ -34,6 +36,7 @@ public sealed class AxiosAuth
         }
     }
 
+    /// <summary>Basic 认证的密码，默认空串。</summary>
     public string Password { get; set; } = string.Empty;
 
     internal string ToBasicHeaderValue()

@@ -23,9 +23,7 @@ internal sealed class TrafficMeter
     private TimeSpan _roundStartClock;
 
     /// <summary>
-    /// 本轮是否已定起点：由首字节到达时惰性确定，而不是计量器构造时。
-    /// 否则「响应已就绪 → 调用方稍后才开始读」的这段间隔会被当成已消耗的限速预算，
-    /// 停顿越久限速越弱（间隔超过整段应耗时后限速等于没有）。
+    /// 本轮起点是否已确定：由首字节到达时惰性确定，之前的空闲间隔不计入限速预算。
     /// </summary>
     private bool _roundStarted;
 
@@ -74,7 +72,7 @@ internal sealed class TrafficMeter
             return;
         }
 
-        // 读满本轮声明长度时必须立即上报，不受 50ms 节流，否则 100% 可能被吞掉。
+        // 读满本轮声明长度时立即上报，不受 50ms 节流。
         if (_total is long declared && declared > 0 && _loaded - _roundStart >= declared)
         {
             force = true;
@@ -94,8 +92,7 @@ internal sealed class TrafficMeter
         _lastReportMs = elapsedMs;
         _callback(BuildEvent(upload));
 
-        // 已传满本轮声明长度：后续 EOF / Complete 不再重复报 100%。
-        // total 必须大于 0，否则 0 >= 0 恒真，第一次上报就会锁死计量器。
+        // 已传满本轮声明长度：后续 EOF / Complete 不再重复报 100%；total 必须大于 0。
         if (_total is long total && total > 0 && _loaded - _roundStart >= total)
         {
             _completed = true;
@@ -122,7 +119,7 @@ internal sealed class TrafficMeter
 
     private AxiosProgressEvent BuildEvent(bool upload)
     {
-        // 只按本轮增量算，否则重发时百分比会超过 100%。
+        // 只按本轮增量算。
         var roundBytes = _loaded - _roundStart;
         var seconds = (_clock.Elapsed - _roundStartClock).TotalSeconds;
         double? rate = seconds > 0 && roundBytes > 0 ? roundBytes / seconds : null;
@@ -173,15 +170,13 @@ internal sealed class ProgressReadStream : DelegatingStream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
     /// <summary>
-    /// 读一块并记账。内层同步完成（缓冲命中的常见情形）时整条链路零分配；
-    /// 只有真的异步等待或需要限速睡一会儿时，才落到异步路径。
+    /// 读一块并记账：内层同步完成时走快路径，异步等待或需要限速时才落到异步路径。
     /// </summary>
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         var pending = Inner.ReadAsync(buffer, cancellationToken);
 
-        // IsCompletedSuccessfully 为 false 覆盖「真异步」与「同步故障」两种情形，
-        // 后者要与原来一样经 await 抛出（异常栈与错误翻译都在异步路径里）。
+        // IsCompletedSuccessfully 为 false 覆盖「真异步」与「同步故障」两种情形，都走异步路径抛出。
         if (!pending.IsCompletedSuccessfully)
         {
             return ReadSlowAsync(pending, cancellationToken);
@@ -342,7 +337,7 @@ internal sealed class ProgressWriteStream : DelegatingStream
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            // 回调异常必须换成统一错误模型，否则会被包成 HttpRequestException 再误报为 ERR_NETWORK。
+            // 回调异常换成统一错误模型，避免被包成 HttpRequestException 误报为 ERR_NETWORK。
             throw _mapCallbackError(ex);
         }
     }

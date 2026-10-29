@@ -22,8 +22,7 @@ public sealed class AttemptPipelineExample : IExample
         //    是否真的干活由它们自己看本次请求的生效配置决定（没配策略 / 端点 / 分支数就是纯直通）。
         Console.WriteLine($"  默认链: {string.Join(" → ", AxiosAttemptPipeline.Default.Middleware.Select(Describe))} + 发送");
 
-        // 2) 插一个「每次尝试」的探针：Append 落在最内层（闸门之后、发送之前），
-        //    于是重试 N 次它就被调用 N+1 次 —— 这是响应拦截器做不到的事（它只在最外层看到最终结果）。
+        // 2) 插一个「每次尝试」的探针：Append 落在最内层（闸门之后、发送之前），重试 N 次就调用 N+1 次。
         var log = new List<string>();
         var probed = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
         {
@@ -60,8 +59,7 @@ public sealed class AttemptPipelineExample : IExample
         Console.WriteLine($"  摘掉闸门后: {string.Join(" → ", noGate.Middleware.Select(Describe))} + 发送");
         Console.WriteLine($"  默认链不受影响（不可变）: {AxiosAttemptPipeline.Default.Middleware.Count} 项");
 
-        // 5) 不提供「放到最外层」的入口：那个位置每次请求只调用一次，
-        //    与响应拦截器完全同构 —— 两个等价选项只会让人选错，所以明确挡掉并指明该用什么。
+        // 5) 插到最外层会被拒绝（ArgumentException）：该位置每次请求只调用一次，等价于响应拦截器。
         try
         {
             AxiosAttemptPipeline.Default.InsertBefore(Attempt.Retry, next => (request, ctx) => next(request, ctx));

@@ -13,7 +13,7 @@ public sealed class ResponseInterceptorManager
     private readonly List<ResponseInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册 / 弹出 / 清空时失效；用数组是为了让 foreach 编译成下标循环，不装箱。
+    // 快照缓存：注册 / 弹出 / 清空时失效。
     private ResponseInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
@@ -55,6 +55,7 @@ public sealed class ResponseInterceptorManager
         }
     }
 
+    /// <summary>移除全部拦截器。</summary>
     public void Clear()
     {
         lock (_interceptors)
@@ -64,6 +65,7 @@ public sealed class ResponseInterceptorManager
         }
     }
 
+    /// <summary>当前拦截器数量。</summary>
     public int Count
     {
         get
@@ -77,7 +79,7 @@ public sealed class ResponseInterceptorManager
 
     internal ResponseInterceptor[] Snapshot()
     {
-        // 稳态零锁：快照是不可变数组，写侧只在注册 / 弹出 / 清空时换引用。
+        // 稳态零锁：快照是不可变数组。
         var snapshot = Volatile.Read(ref _snapshot);
         if (snapshot is not null)
         {

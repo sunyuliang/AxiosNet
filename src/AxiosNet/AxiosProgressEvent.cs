@@ -3,6 +3,7 @@ namespace AxiosNet;
 /// <summary>进度事件，对应 axios 的 <c>progressEvent</c>（upload / download 各一套）。</summary>
 public readonly struct AxiosProgressEvent
 {
+    /// <summary>按已传输字节数、总字节数、速率、预估剩余时间与方向构造。</summary>
     public AxiosProgressEvent(long loaded, long? total, double? rate, TimeSpan? estimated, bool upload)
     {
         Loaded = loaded;

@@ -11,7 +11,7 @@ internal sealed class ProgressHttpContent : HttpContent
     private readonly AxiosConfig _config;
 
     /// <summary>
-    /// 计量器挂在内容上复用：307/308 重定向与重试会重发同一份正文，共用计量器进度才单调推进。
+    /// 计量器挂在内容上复用：重发同一份正文时进度单调推进。
     /// </summary>
     private readonly TrafficMeter _meter;
 
@@ -43,8 +43,7 @@ internal sealed class ProgressHttpContent : HttpContent
 
         var wrapper = new ProgressWriteStream(stream, _meter, MapCallbackError);
 
-        // 不能把整段 CopyToAsync 的异常都翻译成「进度回调失败」：写正文的 IOException /
-        // HttpRequestException 是网络故障，必须原样冒泡到 AxiosClient 的错误模型（ERR_NETWORK）。
+        // 写正文的 IOException / HttpRequestException 是网络故障，原样冒泡到错误模型（ERR_NETWORK）。
         await _inner.CopyToAsync(wrapper, cancellationToken).ConfigureAwait(false);
         await wrapper.FlushAsync(cancellationToken).ConfigureAwait(false);
 

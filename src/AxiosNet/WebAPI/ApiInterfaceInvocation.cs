@@ -1,9 +1,6 @@
 namespace AxiosNet.WebAPI;
 
-/// <summary>
-/// 接口级调用上下文：授权钩子与错误工厂拿到的 <c>request</c> 载荷。
-/// 接口方法没有请求模型实例，用本类型承载「哪个接口、哪个方法、实参是什么」。
-/// </summary>
+/// <summary>接口级调用上下文：授权钩子与错误工厂拿到的 <c>request</c> 载荷（哪个接口、哪个方法、实参是什么）。</summary>
 public sealed class ApiInterfaceInvocation
 {
     internal ApiInterfaceInvocation(Type interfaceType, string methodName, object?[] arguments)

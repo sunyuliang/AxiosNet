@@ -17,7 +17,7 @@ public sealed partial class AxiosClient
     /// <summary>阶段 0 —— 入口守卫：先占一个在途名额，再复核释放标记；必须在调用方的 <c>try</c> 之外（它抛时名额还没占上，不该归还）。</summary>
     private void EnterInFlight(AxiosConfig config)
     {
-        // ObjectDisposedException.ThrowIf 是 .NET 7 才有的 API，手写以兼容 net6.0 目标。
+        // net6.0 目标无 ObjectDisposedException.ThrowIf，手写检查。
         if (Volatile.Read(ref _disposed) == 1)
         {
             throw DisposedError(config);
@@ -75,7 +75,7 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>与 <see cref="Dispose"/> 等价；连接池关闭本身是同步的，实现它只为支持 <c>await using</c>。</summary>
+    /// <summary>与 <see cref="Dispose"/> 等价，供 <c>await using</c> 使用。</summary>
     public ValueTask DisposeAsync()
     {
         Dispose();

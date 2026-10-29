@@ -7,7 +7,7 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>25. 弹性重试：默认不重试、内置策略、只对幂等方法生效、OnRetry 观察、自定义策略。</summary>
 public sealed class RetryExample : IExample
 {
-    /// <summary>演示服务器：首次运行创建后跨运行复用（服务端的 /flaky 计数会随运行累计）。</summary>
+    /// <summary>无重试策略的客户端：首次运行创建后跨运行复用。</summary>
     private static AxiosClient? _plain;
 
     /// <summary>带重试策略的客户端：策略挂在实例默认值上，一次配置处处生效。</summary>

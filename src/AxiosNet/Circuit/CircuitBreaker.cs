@@ -9,11 +9,6 @@ namespace AxiosNet.Circuit;
 /// →（冷却 <see cref="BreakDuration"/>）→ HalfOpen →（连续 <see cref="RecoverySuccesses"/> 次探测成功）→ Closed；
 /// 期间任何探测失败立刻回 Open。维度默认 <c>uri.Authority</c>，可用 <see cref="KeySelector"/> 改写。
 /// </summary>
-/// <remarks>
-/// <b>为什么两条规则并存</b>：只看连续失败，低流量下永远熔不断（半死不活的下游每夹一次成功就把计数清零，
-/// 而 50% 失败率恰恰最该熔断）；只看窗口失败率，小流量又填不满样本。所以两条各管一段：样本攒够看比率，
-/// 攒不够时连续失败兜底。
-/// </remarks>
 /// <example>
 /// <code>
 /// // 5 次连续失败、或最近 20 次里失败率过半（至少 10 个样本）就熔断；
@@ -42,10 +37,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 {
     private readonly ConcurrentDictionary<string, HostState> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
-    // 状态计数（进程级，跨所有熔断器实例）：只在「登记 / 移除 / 状态迁移」这些低频路径上改一次，
-    // 请求热路径上不碰它们。供 axiosnet.client.circuit.state 仪表读取（见 AxiosTelemetry）。
-    // 口径：实例被丢弃且没有 Reset() 的维度不会自动回收 —— Evict 只在该实例下一次 ShouldAllow 时跑，
-    // 所以「长期只建不弃」的代码看这条指标是安全的，「反复 new 客户端再丢」才会看到缓慢上涨。
+    // 进程级状态计数，只在登记 / 移除 / 状态迁移时改动，供 axiosnet.client.circuit.state 仪表读取。
     private static long _trackedHosts;
     private static long _openHosts;
     private static long _halfOpenHosts;
@@ -77,17 +69,13 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <summary>连续多少次下游故障后打开熔断，默认 5（中间任何一次成功都会归零）。</summary>
-    /// <remarks>低流量下的快速路径：样本还不够填满 <see cref="WindowSize"/> 时，只有这条规则管用。</remarks>
+    /// <remarks>样本不足 <see cref="WindowSize"/> 时的唯一判定规则。</remarks>
     public int FailureThreshold { get; set; } = 5;
 
     /// <summary>
     /// 滚动窗口的样本数，默认 20：按「最近 N 次结果」算失败率，与时间无关。
     /// <c>0</c> 表示关闭失败率判定，只按 <see cref="FailureThreshold"/> 的连续失败熔断。
     /// </summary>
-    /// <remarks>
-    /// 窗口只记结果、不记时间戳：这样热路径上是两次数组写入，不需要定时清理，也不会因为「某段时间没流量」
-    /// 而让旧账自然过期（那种语义要用 <see cref="BreakDuration"/> 之外的定期衰减，成本高得多）。
-    /// </remarks>
     public int WindowSize { get; set; } = 20;
 
     /// <summary>窗口里至少要有这么多个样本才判失败率，默认 10；样本不足时只走连续失败那条规则。</summary>
@@ -100,13 +88,9 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     public double FailureRateThreshold { get; set; } = 0.5;
 
     /// <summary>
-    /// 慢启动：半开态需要连续成功多少次才全量恢复，默认 3；<c>0</c>/<c>1</c> 表示探测一次成功就闭合（旧行为）。
+    /// 慢启动：半开态需要连续成功多少次才全量恢复，默认 3；<c>0</c>/<c>1</c> 表示探测一次成功就闭合。
+    /// 恢复期的探测并发上限为 <c>HalfOpenAttempts + 已连续成功次数</c>。
     /// </summary>
-    /// <remarks>
-    /// 恢复期不允许的探测并发上限是 <c>HalfOpenAttempts + 已连续成功次数</c>：默认从 1 个在途起步，
-    /// 每成功一次多放一个，凑满 <see cref="RecoverySuccesses"/> 次才转闭合。这样下游刚缓过来时不会被
-    /// 一次性打回满负荷 —— 那正是「恢复即二次雪崩」的常见来源。
-    /// </remarks>
     public int RecoverySuccesses { get; set; } = 3;
 
     /// <summary>打开后多久转入半开探测，默认 30 秒（冷却期内请求直接失败，不发出）。</summary>
@@ -205,9 +189,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                     goto case AxiosCircuitState.HalfOpen;
 
                 case AxiosCircuitState.HalfOpen:
-                    // 慢启动：允许的在途探测数随连续成功递增（HalfOpenAttempts → +1 → +2 …），
-                    // 凑满 RecoverySuccesses 次成功就转闭合。起步比旧行为慢，但不会在下游刚缓过来时
-                    // 一次性把满负荷压回去。
+                    // 慢启动：允许的在途探测数随连续成功递增，凑满 RecoverySuccesses 次成功转闭合。
                     allowed = host.ProbesInFlight < HalfOpenAttempts + host.ProbeSuccesses;
                     if (allowed)
                     {
@@ -261,8 +243,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         lock (host.Gate)
         {
-            // 三条路径对探测名额的处理各不相同（推进 / 作废 / 只归还），分开命名比挤在一串
-            // else-if 里更好核对 —— 名额漏还一次，半开态就永久少一个探测位。
+            // 三条路径对探测名额的处理各不相同（推进 / 作废 / 只归还）。
             transition = context.IsSuccess ? RecordSuccess(host)
                 : context.IsFailure ? RecordFailure(host)
                 : RecordIgnored(host);
@@ -349,7 +330,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         host.ProbesInFlight--;
 
-        // 0 与 1 都表示「不要慢启动」：探测一次成功就闭合（与旧行为一致）。
+        // 0 与 1 都表示「不要慢启动」：探测一次成功就闭合。
         var target = RecoverySuccesses > 1 ? RecoverySuccesses : 1;
         if (++host.ProbeSuccesses < target)
         {
@@ -406,14 +387,13 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                 return candidate;
             }
 
-            // 竞态落选：必须返回表里那一个。把从未登记的 candidate 交出去，它后续的状态迁移会照常
-            // 调整全局计数（跟踪表里却没有它），计数就永久歪掉且再也减不回来。
+            // 竞态落选：必须返回表里那一个，否则它的状态迁移会照常调整全局计数。
             if (_hosts.TryGetValue(key, out var raced))
             {
                 return raced;
             }
 
-            // 落选的那一条在这两步之间被驱逐了：重来一轮（每轮都以「别人刚完成一次驱逐」为前提，实际不空转）。
+            // 落选的那一条在这两步之间被驱逐了：重来一轮。
         }
     }
 
@@ -508,14 +488,8 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
     }
 
-    /// <summary>
-    /// 条目离开跟踪表：维度计数 -1，并把它<b>被移除那一刻</b>所处状态的计数也减回去；返回该状态供调用方发迁移通知。
-    /// </summary>
-    /// <remarks>
-    /// 必须在 <c>host.Gate</c> 内做：<see cref="MoveTo"/> 的状态迁移同样在锁内成对调整计数。
-    /// 不加锁的话，「移除」与「Open → HalfOpen」可以交错 —— 两边都按「移除前的状态」减一次，
-    /// <c>open</c> 被多减一次（乃至变负），而 <c>half_open</c> 加了没人减，计数永久漂移且合计不再等于跟踪表大小。
-    /// </remarks>
+    /// <summary>条目离开跟踪表：维度计数 -1 并减掉它当前状态的计数，返回该状态供调用方发迁移通知。</summary>
+    /// <remarks>必须在 <c>host.Gate</c> 内：<see cref="MoveTo"/> 的状态迁移同样在锁内成对调整计数。</remarks>
     private static AxiosCircuitState Unregister(HostState state)
     {
         lock (state.Gate)
@@ -626,12 +600,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         private int _windowFailures;
 
-        /// <summary>是否还有「近期失败」的账：连续失败数，或窗口里的失败样本，任一非零。</summary>
-        /// <remarks>
-        /// 淘汰优先级用。无锁读（允许看到旧值）：最坏是把一条「刚记上失败」的维度当成空闲丢掉，
-        /// 而那只发生在满 <see cref="MaxTrackedHosts"/> 需要腾位的时候 —— 与「优先丢真正空闲的那条」相比，
-        /// 这点误差换掉一把锁是划算的（命中该维度时它会重新建账）。
-        /// </remarks>
+        /// <summary>是否还有「近期失败」的账（连续失败数或窗口内失败样本），淘汰优先级用，无锁读。</summary>
         public bool HasRecentFailures => Volatile.Read(ref Failures) > 0 || Volatile.Read(ref _windowFailures) > 0;
 
         /// <summary>把一次结果记进滚动窗口；<paramref name="windowSize"/> <c>&lt;= 0</c> 表示关掉失败率判定。</summary>

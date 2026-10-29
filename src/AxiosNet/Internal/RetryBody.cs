@@ -4,8 +4,7 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 重发时的请求体重放：记住正文里各个流的起点，每次重发前拨回去。
-/// 重试与备用端点复用同一份 <see cref="HttpContent"/>，来自流的正文第二次发送时流已在末尾，
-/// 因此不可 seek 的流在请求发出之前就被拒绝（<c>ERR_BAD_OPTION_VALUE</c>）。
+/// 不可 seek 的流在请求发出之前就被拒绝（<c>ERR_BAD_OPTION_VALUE</c>）。
 /// </summary>
 internal sealed class RetryBody
 {
@@ -45,7 +44,7 @@ internal sealed class RetryBody
                 throw NotReplayable(config, "流式请求体（IAsyncEnumerable）");
         }
 
-        // 结构化数据里只有 multipart 会把流当成文件部件发出去（JSON 根本序列化不了流）。
+        // 结构化数据里只有 multipart 会把流当文件部件发出去。
         if (!MediaTypes.Is(config.ContentType, AxiosContentType.MultipartFormData))
         {
             return null;
@@ -87,7 +86,7 @@ internal sealed class RetryBody
             }
             catch (Exception ex) when (ex is ObjectDisposedException or NotSupportedException or IOException)
             {
-                // 不把裸异常漏给调用方：库内所有失败都落在统一错误模型里。
+                // 归到统一错误模型，不漏裸异常。
                 throw AxiosException.InvalidOption(
                     "重试 / 换端点前无法把请求正文的流拨回起点：流可能已被关闭，或不支持定位（CanSeek）。"
                     + "开启重试或备用端点要求正文可重放，请改用 byte[] / string / 业务对象，"
@@ -107,8 +106,7 @@ internal sealed class RetryBody
                 throw NotReplayable(config, "StreamContent");
 
             case AsyncEnumerableBodyContent:
-                // 库内的流式正文经由 data 分派进来时已在 Prepare 的 switch 里拦下；
-                // 这里兜住「被别的 HttpContent 包了一层」的情形。
+                // 兜住「流式正文被别的 HttpContent 包了一层」的情形。
                 throw NotReplayable(config, "流式请求体（IAsyncEnumerable）");
 
             case MultipartContent multipart:
@@ -120,15 +118,13 @@ internal sealed class RetryBody
                 return;
 
             default:
-                // JsonContent 长度未知但可重放：每次序列化都从持有的值重新写（BCL 类型，可信任）。
-                // 不认它会把「JsonContent + 重试」误伤成配置错误。
+                // JsonContent 长度未知但可重放（每次序列化都重新写）。
                 if (content is JsonContent)
                 {
                     return;
                 }
 
-                // 未知类型的自定义内容：库既拨不回读指针，也确认不了长度。
-                // 长度拿不到就意味着第二次发送可能只发出空正文，宁可先拒绝。
+                // 未知类型的自定义内容：长度未知时拒绝。
                 if (!HasKnownLength(content))
                 {
                     throw NotReplayable(config, "长度未知的自定义 HttpContent");
@@ -139,8 +135,7 @@ internal sealed class RetryBody
     }
 
     /// <summary>
-    /// 内容长度是否可确定：<c>ContentLength</c> 会触发 <see cref="HttpContent.TryComputeLength"/>。
-    /// 计算过程抛异常的按「未知」处理——拒绝比让重试发出空正文更安全。
+    /// 内容长度是否可确定；计算过程抛异常的按「未知」处理。
     /// </summary>
     private static bool HasKnownLength(HttpContent content)
     {

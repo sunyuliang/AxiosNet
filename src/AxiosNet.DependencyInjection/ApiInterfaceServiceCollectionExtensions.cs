@@ -5,8 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace AxiosNet.WebAPI.DependencyInjection;
 
 /// <summary>
-/// 把接口级声明注册进依赖注入容器：解析时用容器里的 <see cref="ApiClient"/> 创建代理，并以单例复用
-/// （代理创建依赖 DispatchProxy 生成类型，不值得每次解析都重建）。
+/// 把接口级声明注册进依赖注入容器：解析时用容器里的 <see cref="ApiClient"/> 创建代理，并以单例复用。
 /// </summary>
 public static class ApiInterfaceServiceCollectionExtensions
 {
@@ -56,7 +55,7 @@ public static class ApiInterfaceServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>注册期就拒绝非接口类型：否则错误要等到容器解析时才暴露。</summary>
+    /// <summary>注册期就拒绝非接口类型。</summary>
     private static void EnsureInterfaceType<TInterface>()
         where TInterface : class
     {

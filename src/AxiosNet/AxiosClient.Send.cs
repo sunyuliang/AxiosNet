@@ -13,9 +13,8 @@ namespace AxiosNet;
 public sealed partial class AxiosClient
 {
     /// <summary>
-    /// 一次尝试的时间预算：超时令牌源 + 流式响应的剩余预算计时器。粒度是一次尝试，因此每次重试各有独立预算；
-    /// 设了总预算时它取 <c>min(Timeout, 剩余总预算)</c>。只有「<see cref="AxiosConfig.Timeout"/> 与
-    /// <see cref="AxiosConfig.TotalTimeout"/> 都没设」时 <see cref="Token"/> 才直接是调用方令牌、不建 linked CTS。
+    /// 一次尝试的时间预算：超时令牌源 + 流式响应的剩余预算计时器。粒度是一次尝试，每次重试各有独立预算；
+    /// 设了总预算时取 <c>min(Timeout, 剩余总预算)</c>。
     /// </summary>
     private readonly struct AttemptBudget : IDisposable
     {
@@ -66,9 +65,8 @@ public sealed partial class AxiosClient
         public void Dispose() => _timeoutCts?.Dispose();
 
         /// <summary>
-        /// 按生效配置建预算：超时上限收敛到计时器可表示的范围（见 <see cref="Timeouts.Clamp"/>）。
-        /// 设了总预算时先看剩余：已耗尽就<b>根本不发这次尝试</b>（错误消息指明第几次），否则取
-        /// <c>min(Timeout, 剩余)</c> —— 否则每次尝试都拿满 <c>Timeout</c>，重试一叠加就把总预算撑穿。
+        /// 按生效配置建预算：设了总预算时先看剩余，已耗尽就<b>根本不发这次尝试</b>（错误消息指明第几次），
+        /// 否则取 <c>min(Timeout, 剩余)</c>。
         /// </summary>
         /// <exception cref="AxiosException">总预算已耗尽（<c>ECONNABORTED</c>）。</exception>
         public static AttemptBudget Start(in AxiosAttemptContext ctx, HttpRequestMessage request)
@@ -79,7 +77,7 @@ public sealed partial class AxiosClient
 
             if (ctx.RemainingTotalTimeout is { } remaining)
             {
-                if (remaining <= TimeSpan.Zero)
+                if (TotalTimeoutBudget.IsExhausted(remaining))
                 {
                     throw AxiosException.TotalTimeoutExceeded(config, request, ctx.AttemptNumber, config.TotalTimeout);
                 }

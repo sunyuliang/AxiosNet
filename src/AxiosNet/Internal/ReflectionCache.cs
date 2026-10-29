@@ -41,7 +41,7 @@ internal static class ReflectionCache
             return cached;
         }
 
-        // 用带标注的 type 直接反射；缓存字典的键不携带裁剪标注，不能把反射放进工厂 lambda。
+        // 用带标注的 type 直接反射，不放进工厂 lambda。
         var properties = type
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(static p => p.CanRead && p.GetIndexParameters().Length == 0)
@@ -71,8 +71,7 @@ internal static class ReflectionCache
         });
 
     /// <summary>
-    /// 类型是否实现了任意 <see cref="IAsyncEnumerable{T}"/>（按类型缓存）。只用于把「异步序列不能当正文」
-    /// 转成可执行的错误提示；<c>GetInterfaces</c> 会分配数组，所以不能在每个结构化请求上重复调用。
+    /// 类型是否实现了任意 <see cref="IAsyncEnumerable{T}"/>（按类型缓存），只用于错误提示。
     /// </summary>
     [UnconditionalSuppressMessage(
         "Trimming",

@@ -8,21 +8,15 @@ namespace AxiosNet.Pipeline;
 /// 真正的发送（终端）恒在最内层，不在列表里，也换不掉。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 调用次数由位置决定：落在 <see cref="Attempt.Retry"/> 之内 = 每次尝试一次（重试 N 次则 N+1 次）；
-/// 落在它之外 = 每次请求一次。后者与响应拦截器同构，所以本类型<b>不提供</b>把中间件放到最外层的方法 ——
-/// 「每次请求加工一次」请用响应拦截器（它还有 <c>OnRejected</c>、运行时可变、覆盖短路三个额外好处）。
-/// </para>
-/// <para>
-/// 链在客户端构造时编译一次并固化，之后不可变。想在中间件里按请求分支，请读
-/// <see cref="AxiosAttemptContext.Config"/>，不要指望每次请求换一条链。
-/// </para>
+/// 落在它之外 = 每次请求一次，该位置请改用响应拦截器（本类型不提供把中间件放到最外层的方法）。
+/// 链在客户端构造时编译一次并固化，中间件里按请求分支请读 <see cref="AxiosAttemptContext.Config"/>。
 /// </remarks>
 public sealed class AxiosAttemptPipeline
 {
     private readonly AxiosAttemptMiddleware[] _middleware;
 
-    // 对外只给只读视图：直接把数组交出去，调用方可以强转回数组改元素 —— 那样能改坏全局共享的 Default。
+    // 对外只给只读视图：直接交出数组会被强转回数组改元素，改坏全局共享的 Default。
     private readonly ReadOnlyCollection<AxiosAttemptMiddleware> _view;
 
     private AxiosAttemptPipeline(AxiosAttemptMiddleware[] middleware)
@@ -32,11 +26,9 @@ public sealed class AxiosAttemptPipeline
     }
 
     /// <summary>
-    /// 默认链：<c>[Retry, Failover, Circuit, Hedging, Gate]</c>。顺序是契约 ——
-    /// 重试在最外层，于是每次尝试都会重过一遍备用端点、熔断、对冲与闸门；
-    /// 备用端点与熔断都在对冲之外（每个端点各得一组对冲分支，熔断对整组分支只记一笔）；
-    /// 闸门在对冲之内，被熔断拒绝的请求不占槽位，而每条对冲分支各占一个。
-    /// 换成别的顺序会换掉这些语义（熔断按分支记账、槽位被整个重试序列占住），重排前先想清楚要哪个。
+    /// 默认链：<c>[Retry, Failover, Circuit, Hedging, Gate]</c>。顺序是契约：重试在最外层，每次尝试都会重过一遍
+    /// 备用端点、熔断、对冲与闸门；备用端点与熔断都在对冲之外，闸门在对冲之内。
+    /// 换成别的顺序会换掉这些语义。
     /// </summary>
     public static AxiosAttemptPipeline Default { get; } =
         new(new[] { Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate });
@@ -46,8 +38,7 @@ public sealed class AxiosAttemptPipeline
 
     /// <summary>
     /// 整体重排：按给出的顺序建链（第一个 = 最外层）。
-    /// 把自定义中间件放在 <see cref="Attempt.Retry"/> 之前会让它变成「每次请求一次」，
-    /// 与响应拦截器同构 —— 除非你确实需要在每次请求上做一次整体编排，否则请改用响应拦截器。
+    /// 把自定义中间件放在 <see cref="Attempt.Retry"/> 之前会让它变成「每次请求一次」，该场景请改用响应拦截器。
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="middleware"/> 或其元素为 <c>null</c>。</exception>
     /// <exception cref="ArgumentException">同一个内置中间件出现了多次（嵌套重试 / 双闸门几乎都是写错）。</exception>
@@ -120,8 +111,7 @@ public sealed class AxiosAttemptPipeline
     }
 
     /// <summary>
-    /// 把链编译成单个委托：索引 0 成为最外层。<b>只在客户端构造时调用一次</b> ——
-    /// 每次请求重建链会为每个请求多出 N 个闭包和一个委托数组，那是本库明确要避免的开销。
+    /// 把链编译成单个委托：索引 0 成为最外层。<b>只在客户端构造时调用一次</b>。
     /// </summary>
     internal AxiosAttemptHandler Compile(AxiosAttemptHandler terminal, AxiosConfig? config = null)
     {
@@ -144,8 +134,7 @@ public sealed class AxiosAttemptPipeline
     {
         if (anchor is null)
         {
-            // 用调用方的公共参数名（InsertBefore 是 anchor，Replace / Remove 是 target），
-            // 不要在这里固定成 nameof(anchor)。
+            // 用调用方的公共参数名（anchor / target），不固定成 nameof(anchor)。
             throw new ArgumentNullException(paramName);
         }
 
@@ -192,7 +181,7 @@ public sealed class AxiosAttemptPipeline
         return copy;
     }
 
-    /// <summary>内置项重复出现基本都是写错（嵌套重试 / 双闸门 / 双审计 / 双对冲）；自定义中间件重复不做限制。</summary>
+    /// <summary>内置项重复出现视为错误；自定义中间件重复不做限制。</summary>
     private static void RejectDuplicateBuiltIns(AxiosAttemptMiddleware[] middleware)
     {
         for (var i = 0; i < middleware.Length; i++)

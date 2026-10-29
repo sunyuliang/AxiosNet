@@ -22,7 +22,7 @@ public sealed class FormFile
 
         ArgumentNullException.ThrowIfNull(content);
 
-        // 文件名写进 Content-Disposition 的 quoted-string：引号、反斜杠与 CR/LF 会破坏头部语法。
+        // 文件名写进 Content-Disposition 的 quoted-string，先校验非法字符。
         if (DispositionTokens.FindInvalidCharacter(fileName) is { } invalid)
         {
             throw new ArgumentException(
@@ -32,7 +32,7 @@ public sealed class FormFile
                 nameof(fileName));
         }
 
-        // 这个值最终写进部件的 Content-Type 头（经 TryAddWithoutValidation，不拦控制字符）。
+        // 这个值最终写进部件的 Content-Type 头，先校验。
         if (contentType is not null)
         {
             AxiosHeaders.ValidateHeaderValue("Content-Type", contentType);
@@ -108,7 +108,7 @@ public sealed class FormFile
 
         try
         {
-            // 文件名校验在构造函数里；失败时已打开的流必须在这里关掉，否则句柄永久泄漏。
+            // 构造失败时关掉已打开的流。
             return new FormFile(fileName, stream, contentType);
         }
         catch

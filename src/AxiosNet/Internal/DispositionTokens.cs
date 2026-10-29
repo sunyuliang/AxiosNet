@@ -1,8 +1,7 @@
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// multipart 的 field name / filename 落在 <c>Content-Disposition</c> 的 quoted-string 里：
-/// 引号 / 反斜杠 / CR / LF / NUL 及控制字符会破坏语法，统一在组装前拦一道。
+/// multipart 的 field name / filename 合法性检查：quoted-string 里不能出现引号 / 反斜杠 / CR / LF / NUL 及控制字符。
 /// </summary>
 internal static class DispositionTokens
 {
@@ -24,7 +23,7 @@ internal static class DispositionTokens
                 case '\0':
                     return "NUL";
                 default:
-                    // 其余 C0 控制字符与 DEL 会让解析端退回原始带引号形态。
+                    // 其余 C0 控制字符与 DEL。
                     if (c < 0x20 || c == 0x7F)
                     {
                         return $"控制字符 U+{(int)c:X4}";
