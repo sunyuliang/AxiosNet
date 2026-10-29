@@ -285,6 +285,20 @@ internal static class ResponseReader
 
             bodyBytes = bytes.Length;
 
+            // 原始字节钩子：在字符集解码 / 反序列化 / transformResponse 之前触发，正文仍是 HttpClient 交付的原样字节。
+            // 不复制：回调期间零拷贝借用；需要长期持有由调用方自行复制。
+            if (config.CallbacksOrNull?.OnRawResponse is { } onRawResponse)
+            {
+                try
+                {
+                    onRawResponse(config.Response!, bytes.AsMemory());
+                }
+                catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                {
+                    throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.CallbackSettings.OnRawResponse), ex, upload: false);
+                }
+            }
+
             data = ConvertBody(
                 config,
                 request,

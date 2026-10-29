@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1555%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1566%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -27,7 +27,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 分组 | 章节 |
 | --- | --- |
 | 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) |
-| 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [表单与文件上传](#表单与文件上传) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [在途并发上限](#在途并发上限) |
+| 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [表单与文件上传](#表单与文件上传) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性 | [重试](#重试) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [尝试管线](#尝试管线) · [短路响应](#短路响应) |
 | 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
@@ -393,6 +393,29 @@ await http.PostAsync("upload", payload, c =>
 - 负值一律 `ERR_BAD_OPTION_VALUE`；`MaxRate = 0` 等于不限速。
 - `MaxRate` 的计时从**实际传输首字节**起算：拿到响应到开始读之间的空档（线程排队、业务先做别的事）不算已消耗预算，晚读不会让限速变松。
 
+### 原始响应字节
+
+需要在**反序列化之前**拿到响应正文（解密、验签、留档审计）时，用 `OnRawResponse`：
+
+```csharp
+await client.GetAsync<User>("users/1", c =>
+{
+    c.Callbacks.OnRawResponse = (response, bytes) =>
+    {
+        Console.WriteLine($"{response.Status} {response.MediaType} {bytes.Length}B");
+        audit.Write(response.GetHeader("X-Trace"), bytes.Span);
+    };
+});
+```
+
+- 触发时点：正文读完、文本解码与反序列化（以及 `transformResponse`）之前；拿到的是 `HttpClient` 交付的字节（已按 `AutomaticDecompression` 解压）。
+- 参数是 `AxiosResponseInfo`：`Status` / `StatusText` / `Headers`（与 `response.Headers` 同一实例）/ `MediaType` / `CharSet`，可用 `GetHeader` 取单个头。
+- 状态码被拒绝时，正文照样先读完再抛错，所以 4xx / 5xx 也会触发（便于记录错误体）。
+- `ReadOnlyMemory<byte>` 只在回调期间有效，需要保留请自行复制。
+- 只对**非流式**的网络响应触发：`ResponseType.Stream` 没有完整字节，短路响应不经过网络读取路径。
+- 每读一份正文触发一次：被重试放弃、被对冲丢弃的分支同样触发，对冲时多条分支会**并发**触发（回调需线程安全）；回调同步执行，抛异常中断请求（`ERR_BAD_RESPONSE`，原异常在 `Cause`）。
+- 按请求设置会整体覆盖实例默认，与其余 `Callbacks` 项一致。
+
 ### 在途并发上限
 
 `MaxRate` 限的是**字节速度**，拦不住「每秒几百个小请求」——那来自同时在途的请求条数：
@@ -448,7 +471,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | Code | 触发场景 |
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx；请求体超 `MaxBodyLength`；请求体序列化失败；上传进度回调抛异常 |
-| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `MaxContentLength`；泛型与 `ResponseType` 不匹配；下载进度回调 / `transformResponse` 抛异常 |
+| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `MaxContentLength`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调 / `transformResponse` 抛异常 |
 | `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `TotalTimeout` 总预算已耗尽 |
 | `ERR_NETWORK` | 连接被拒 / DNS 失败 / 连接中断 / 正文截断 |
 | `ERR_CANCELED` | `CancellationToken` 取消，或客户端已释放 |
@@ -787,12 +810,13 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 - **中间件自身的耗时不计入 `Timeout`**：超时预算在终端内部起算，闸门排队与中间件前置逻辑都在它之外。
 - 响应侧读请求头用 `response.GetRequestHeader(name)`（先查请求头、再查内容头）；短路响应没有底层请求消息，返回 `null`。
 
-与另外四个扩展点的分工：
+与其他扩展点的分工：
 
 | 想做的事 | 用哪个 |
 | --- | --- |
 | 改 URL / 头 / 请求体、注入短路（一次请求一次） | 请求拦截器 |
 | 在序列化前加工要发的 `Data` | `transformRequest` |
+| 在反序列化前拿原始响应字节（每次尝试） | `c.Callbacks.OnRawResponse` |
 | 在反序列化后加工回来的 `Data`（每次尝试） | `transformResponse` |
 | 加工最终响应、把异常兜成响应 | 响应拦截器 |
 | 观察或干预**每一次尝试**（含审计） | 尝试中间件 |
@@ -886,6 +910,8 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `PooledConnectionLifetime` | 10 分钟 | 连接最长复用时长，到期后下次取用换新（不打断在途）；实际落到 Handler 的值有 ±10% 抖动，避免同一时刻批量断连重连 |
 | `PooledConnectionIdleTimeout` | 2 分钟 | 空闲连接关闭 |
 | `ConnectTimeout` | 15 秒 | 建连超时 |
+| `ConnectCallback` | `null` | 自定义建连：接管「端点 → 流」（UDS / 本机进程内传输 / 自管 DNS）；TLS 仍由 Handler 在返回的流上完成 |
+| `MaxResponseHeadersLength` | 64 KB | 响应头体积上限，必须 `> 0`（底层没有「0 = 不限制」的写法）；h1 / h2 都生效，超限按 `ERR_NETWORK` 失败 |
 | `IdleHandlerLifetime` | 5 分钟 | origin 节点空闲多久被回收 |
 | `EvictionInterval` | 30 秒 | 后台清扫间隔；`<= 0` 不启动定时器 |
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | 自动重定向；`MaxRedirects = 0` 关闭 |
@@ -900,12 +926,13 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `HandlerFactory` | `null` | 每个 origin 创建 Handler 时调用，见[自定义 Handler](#自定义-handler) |
 
 - `Dispose()` 是优雅关闭：空闲节点立即释放，有在途请求的节点等租约归还后回收；`Clear()` 立即释放全部节点（会打断在途）。
-- DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；服务发现用 `HandlerFactory` + `ctx.CreateDefaultHandler()` 设 `ConnectCallback`。
+- DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；需要自定义建连（拨到 UDS / 本机传输 / 自管 DNS）时直接设 `ConnectionPoolOptions.ConnectCallback`。
+- `ConnectCallback` 与 `MaxResponseHeadersLength` 只作用于库默认 Handler：`HandlerFactory` 里用 `ctx.CreateDefaultHandler()` 建内层 Handler 会带过去，完全自建 Handler 则需自行映射。
 - **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。它对付的是「静默掐断」——AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多；低频高价值调用（webhook 回调、定时任务）可以配 `Always` 连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）——这也是它默认关闭的原因。
 - **`UseCookies` 是池级共享，不按业务身份隔离**：整个池共用一份 `CookieContainer`，隔离维度只有域 / 路径。多租户、爬虫、按用户切身份的进程打开它会让不同身份串 cookie —— 请按租户各建一条池，或用请求头自己管 `Cookie`。
 - **Trailers 目前不读取**：chunked 响应的尾部头（校验和、配额）停留在 `HttpResponseMessage.TrailingHeaders`，没有暴露到 `AxiosResponse`。需要时用 `HandlerFactory` 包一层在正文读完后取，或直接注入自定义 Handler。
 - **代理是池级的，同一个 origin 只能有一条代理**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP 就按代理各建一条池（`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`），每个出口一条池、客户端之间不共享 —— 隔离维度是「池」，不是「请求」。
-- **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
+- **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
 - 想知道「池是不是被建太多了」看指标 `axiosnet.client.pool.active_pools`（存活池数）与 `.shared_pools`（命名池条目数）。
 
 ### HTTP 版本
@@ -1212,7 +1239,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 **`Limits`** — `MaxContentLength` / `MaxBodyLength` / `MaxRate`（均 `null` = 不限）/ `MaxConcurrentRequests` / `MaxQueueLength`（`null`，仅实例级）/ `QueueTimeout`（`null` 一直等）/ `MaxStreamFrameLength`（`null` = 8 MB，1–64 MB）
 
-**`Callbacks`** — `ValidateStatus`（`Func<int,bool>`，默认 2xx）/ `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress`
+**`Callbacks`** — `ValidateStatus`（`Func<int,bool>`，默认 2xx）/ `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse`
 
 **`Retry`** — `Policy`（`null` = 不重试）/ `OnRetry`
 
@@ -1325,9 +1352,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1496 | `net8.0` / `net6.0` | 2992 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1507 | `net8.0` / `net6.0` | 3014 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1555** | | **3110** |
+| **合计** | **1566** | | **3132** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

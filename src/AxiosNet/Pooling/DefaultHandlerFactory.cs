@@ -17,6 +17,8 @@ internal static class DefaultHandlerFactory
             PooledConnectionLifetime = JitterLifetime(o.PooledConnectionLifetime),
             PooledConnectionIdleTimeout = o.PooledConnectionIdleTimeout,
             ConnectTimeout = o.ConnectTimeout,
+            ConnectCallback = o.ConnectCallback,
+            MaxResponseHeadersLength = o.MaxResponseHeadersLength,
             AllowAutoRedirect = o.AllowAutoRedirect,
             MaxAutomaticRedirections = o.MaxAutomaticRedirections,
             AutomaticDecompression = o.AutomaticDecompression

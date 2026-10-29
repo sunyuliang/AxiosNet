@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1555%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1566%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -27,7 +27,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Group | Sections |
 | --- | --- |
 | Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) |
-| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
+| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
@@ -393,6 +393,29 @@ await http.PostAsync("upload", payload, c =>
 - Negative values throw `ERR_BAD_OPTION_VALUE`; `MaxRate = 0` means unlimited.
 - `MaxRate` timing starts at the **first transferred byte**: the gap between receiving the response and starting to read (thread pool queueing, doing other work first) is not treated as spent budget, so reading later never loosens the cap.
 
+### Raw response bytes
+
+When you need the body **before deserialization** (decryption, signature checks, audit logging), use `OnRawResponse`:
+
+```csharp
+await client.GetAsync<User>("users/1", c =>
+{
+    c.Callbacks.OnRawResponse = (response, bytes) =>
+    {
+        Console.WriteLine($"{response.Status} {response.MediaType} {bytes.Length}B");
+        audit.Write(response.GetHeader("X-Trace"), bytes.Span);
+    };
+});
+```
+
+- Fires after the body is read and before text decoding, deserialization, and `transformResponse`; the bytes are what `HttpClient` delivered (already decompressed per `AutomaticDecompression`).
+- The context is `AxiosResponseInfo`: `Status` / `StatusText` / `Headers` (the same instance as `response.Headers`) / `MediaType` / `CharSet`, plus `GetHeader` for a single header.
+- A rejected status still reads the body before throwing, so 4xx / 5xx responses trigger it too (useful for logging error bodies).
+- The `ReadOnlyMemory<byte>` is only valid during the callback; copy it if you need to keep it.
+- Only for non-streaming network responses: `ResponseType.Stream` has no full byte array, and short-circuit responses never touch the network read path.
+- Fires once per body read, including retries that are abandoned and hedging branches that lose; under hedging several branches fire **concurrently**, so the callback must be thread-safe. It runs synchronously and a thrown exception aborts the request (`ERR_BAD_RESPONSE`, original exception in `Cause`).
+- A per-request value replaces the instance default, like every other `Callbacks` item.
+
 ### In-flight concurrency cap
 
 `MaxRate` limits **bytes per second** and cannot stop "hundreds of tiny requests per second" — that pressure comes from the number of in-flight requests:
@@ -448,7 +471,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | Code | Triggered by |
 | --- | --- |
 | `ERR_BAD_REQUEST` | 4xx; request body larger than `MaxBodyLength`; request body serialization failure; upload progress callback threw |
-| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `MaxContentLength`; generic argument vs `ResponseType` mismatch; download progress callback or `transformResponse` threw |
+| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `MaxContentLength`; generic argument vs `ResponseType` mismatch; download progress callback, raw response callback or `transformResponse` threw |
 | `ECONNABORTED` | `Timeout` exceeded (including the streaming body phase), or the `TotalTimeout` budget is exhausted |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
@@ -787,12 +810,13 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 - **Middleware time is not counted against `Timeout`**: the budget starts inside the terminal, and gate queuing plus any middleware prologue happen outside it.
 - Read request headers from the response side with `response.GetRequestHeader(name)` (request headers first, then content headers); a short-circuit response has no underlying request message and returns `null`.
 
-How it divides the work with the other four extension points:
+How it divides the work with the other extension points:
 
 | Goal | Use |
 | --- | --- |
 | Rewrite URL / headers / body, inject a short circuit (once per request) | Request interceptor |
 | Shape outgoing `Data` before serialization | `transformRequest` |
+| Get the raw response bytes before deserialization (per attempt) | `c.Callbacks.OnRawResponse` |
 | Shape incoming `Data` after deserialization (per attempt) | `transformResponse` |
 | Shape the final response, turn an exception into a response | Response interceptor |
 | Observe or steer **each attempt** (auditing included) | Attempt middleware |
@@ -888,6 +912,8 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `PooledConnectionLifetime` | 10 min | Max reuse age; replaced on next use (in-flight not interrupted); the value applied to the handler is jittered by ±10% so connections do not all drop and reconnect at the same instant |
 | `PooledConnectionIdleTimeout` | 2 min | Idle connections close |
 | `ConnectTimeout` | 15 s | Connect timeout |
+| `ConnectCallback` | `null` | Custom connect: takes over "endpoint → stream" (UDS / in-process transport / custom DNS); TLS is still done by the handler on the returned stream |
+| `MaxResponseHeadersLength` | 64 KB | Response header size cap; must be `> 0` (the handler has no "0 = unlimited"); enforced for h1 and h2, overflow fails with `ERR_NETWORK` |
 | `IdleHandlerLifetime` | 5 min | How long an idle origin node is kept |
 | `EvictionInterval` | 30 s | Background sweep interval; `<= 0` disables the timer |
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | Auto-redirect; `MaxRedirects = 0` disables |
@@ -902,12 +928,13 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `HandlerFactory` | `null` | Called when creating a per-origin handler, see [Custom handlers](#custom-handlers) |
 
 - `Dispose()` is a graceful shutdown: idle nodes go immediately, nodes with in-flight requests are reclaimed once leases return. `Clear()` drops every node now (interrupting in-flight requests).
-- How fast DNS changes converge is governed by `PooledConnectionLifetime`; for service discovery use `HandlerFactory` + `ctx.CreateDefaultHandler()` with a `ConnectCallback`.
+- How fast DNS changes converge is governed by `PooledConnectionLifetime`; for custom connects (UDS / in-process transport / custom DNS) set `ConnectionPoolOptions.ConnectCallback` directly.
+- `ConnectCallback` and `MaxResponseHeadersLength` apply to the library's default handler only: building the inner handler with `ctx.CreateDefaultHandler()` inside a `HandlerFactory` carries them over; a fully hand-built handler must map them itself.
 - **h2 keep-alive**: a ping every 30s by default (only while requests are in flight). It targets *silent* connection reaping — AWS ALB drops idle connections after 60s, NAT tables after 30–120s, and the client believes the connection is still pooled; the next request hits a closed one, costing either a fresh TLS handshake or a `GOAWAY` / stream reset on h2 (seen as sporadic `ERR_NETWORK`). The cost is a 17-byte frame; for low-frequency, high-value calls (webhooks, scheduled jobs) prefer `Always`. Note that `SocketsHttpHandler` defaults to **no** pings while this library enables them: behind a proxy or middlebox that does not answer `PING`, connections get torn down and re-established (more `ERR_NETWORK`), so turn it off there with `Timeout.InfiniteTimeSpan`.
 - **`UseCookies` is pool-wide and not identity-scoped**: the whole pool shares one `CookieContainer`, isolated by domain / path only. Multi-tenant processes, crawlers or anything switching identities will leak cookies across them — build one pool per tenant, or manage the `Cookie` header yourself.
 - **Trailers are not read today**: chunked trailing headers (checksums, quotas) stay on `HttpResponseMessage.TrailingHeaders` and are not exposed on `AxiosResponse`. Wrap the handler with `HandlerFactory` to read them after the body, or inject a custom handler.
 - **The proxy is pool-level; one origin cannot have two proxies**: `Proxy` lives on the handler instance, so setting it per request throws `ERR_BAD_OPTION_VALUE`. For several egress IPs build one pool per proxy (`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`) and do not share clients across egresses — the isolation unit is the pool, not the request.
-- **Named shared pools** (usage 4) cover "several clients want to reuse connections without passing a pool object around". The key is supplied by the caller — there is **no options fingerprint**: reference members such as `HandlerFactory` / `Proxy` / `Credentials` / the certificate callbacks have no reliable structural equality, so two "identical looking" configurations throw instead of silently sharing one pool. Three rules: the same name returns the same pool; `options` only apply on first creation (passing a **different** configuration later throws `ERR_BAD_OPTION_VALUE` rather than being silently ignored); pools in the registry are owned by nobody — disposing a client does not close them, `Release(key)` does.
+- **Named shared pools** (usage 4) cover "several clients want to reuse connections without passing a pool object around". The key is supplied by the caller — there is **no options fingerprint**: reference members such as `HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / the certificate callbacks have no reliable structural equality, so two "identical looking" configurations throw instead of silently sharing one pool. Three rules: the same name returns the same pool; `options` only apply on first creation (passing a **different** configuration later throws `ERR_BAD_OPTION_VALUE` rather than being silently ignored); pools in the registry are owned by nobody — disposing a client does not close them, `Release(key)` does.
 - To see whether pools are being built too often, watch `axiosnet.client.pool.active_pools` (live pools) and `.shared_pools` (named registry entries).
 
 ### HTTP versions
@@ -1214,7 +1241,7 @@ Nine sub-objects (created lazily on first access):
 
 **`Limits`** — `MaxContentLength` / `MaxBodyLength` / `MaxRate` (all `null` = unlimited) / `MaxConcurrentRequests` / `MaxQueueLength` (`null`, instance-level) / `QueueTimeout` (`null` = wait) / `MaxStreamFrameLength` (`null` = 8 MB, 1–64 MB)
 
-**`Callbacks`** — `ValidateStatus` (`Func<int,bool>`, 2xx by default) / `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress`
+**`Callbacks`** — `ValidateStatus` (`Func<int,bool>`, 2xx by default) / `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse`
 
 **`Retry`** — `Policy` (`null` = no retries) / `OnRetry`
 
@@ -1327,9 +1354,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1496 | `net8.0` / `net6.0` | 2992 |
+| `AxiosNet.Tests` (core + declarative) | 1507 | `net8.0` / `net6.0` | 3014 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1555** | | **3110** |
+| **Total** | **1566** | | **3132** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

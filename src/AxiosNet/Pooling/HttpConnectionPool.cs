@@ -76,6 +76,14 @@ public sealed class HttpConnectionPool : IDisposable
                 config);
         }
 
+        // SocketsHttpHandler 只接受正数：0 与负数都会在首次请求时抛裸 ArgumentOutOfRangeException（没有「0 表示不限制」的写法）。
+        if (options.MaxResponseHeadersLength <= 0)
+        {
+            throw AxiosException.InvalidOption(
+                $"MaxResponseHeadersLength 必须大于 0（当前 {options.MaxResponseHeadersLength} KB）："
+                + "它是响应头的绝对上限；需要更大余量请设成更大的 KB 值。", config);
+        }
+
         if (options.MaxAutomaticRedirections <= 0)
         {
             throw AxiosException.InvalidOption("MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
@@ -244,6 +252,7 @@ public sealed class HttpConnectionPool : IDisposable
            && a.PooledConnectionLifetime == b.PooledConnectionLifetime
            && a.PooledConnectionIdleTimeout == b.PooledConnectionIdleTimeout
            && a.ConnectTimeout == b.ConnectTimeout
+           && a.MaxResponseHeadersLength == b.MaxResponseHeadersLength
            && a.IdleHandlerLifetime == b.IdleHandlerLifetime
            && a.EvictionInterval == b.EvictionInterval
            && a.AllowAutoRedirect == b.AllowAutoRedirect
@@ -256,6 +265,7 @@ public sealed class HttpConnectionPool : IDisposable
            && a.KeepAlivePingPolicy == b.KeepAlivePingPolicy
            && a.MaxEndpointCount == b.MaxEndpointCount
            && a.EnabledSslProtocols == b.EnabledSslProtocols
+           && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
            && ReferenceEquals(a.Proxy, b.Proxy)
            && ReferenceEquals(a.Credentials, b.Credentials)
            && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)

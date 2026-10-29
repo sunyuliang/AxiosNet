@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Authentication;
 
 namespace AxiosNet.Pooling;
@@ -24,6 +25,26 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>建立 TCP/TLS 连接的超时时间（默认 15 秒）。</summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// 自定义建连回调（直通 <see cref="SocketsHttpHandler.ConnectCallback"/>）：接管「把目标端点变成一条流」这一步，
+    /// 用于拨到 Unix domain socket、本机进程内传输、或给每条连接套一层额外传输。为 <c>null</c> 时用 BCL 默认建连。
+    /// </summary>
+    /// <remarks>
+    /// 回调里的 DNS 解析与建连必须自己尊重 <c>cancellationToken</c>（<see cref="ConnectTimeout"/> 到点会触发它）；
+    /// 返回的流由 Handler 持有并释放。给的是 <see cref="SocketsHttpConnectionContext"/>，可读 <c>DnsEndPoint</c> 与请求头。
+    /// TLS 仍由 Handler 在返回的流上完成（回调只负责明文传输），除非自行返回已加密的流。
+    /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
+    /// </remarks>
+    public Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>>? ConnectCallback { get; set; }
+
+    /// <summary>
+    /// 响应头体积上限（单位 KB，必须大于 0，默认 64，对应 <see cref="SocketsHttpHandler.MaxResponseHeadersLength"/>）。
+    /// 超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>（HTTP/1.1 与 HTTP/2 都生效），用于挡住超长头造成的内存放大。
+    /// 底层没有「0 表示不限制」的写法：0 或负数会在建池时就以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
+    /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
+    /// </summary>
+    public int MaxResponseHeadersLength { get; set; } = 64;
 
     /// <summary>
     /// 某个 origin 的 Handler 空闲多久后从池中驱逐并释放（默认 5 分钟）。
@@ -112,6 +133,8 @@ public sealed class ConnectionPoolOptions
         PooledConnectionLifetime = PooledConnectionLifetime,
         PooledConnectionIdleTimeout = PooledConnectionIdleTimeout,
         ConnectTimeout = ConnectTimeout,
+        ConnectCallback = ConnectCallback,
+        MaxResponseHeadersLength = MaxResponseHeadersLength,
         IdleHandlerLifetime = IdleHandlerLifetime,
         EvictionInterval = EvictionInterval,
         AllowAutoRedirect = AllowAutoRedirect,

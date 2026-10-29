@@ -394,10 +394,10 @@ public sealed class AxiosException : Exception
     }
 
     /// <summary>
-    /// 进度回调抛出异常（回调属于请求管线，异常不能以裸类型漏给调用方）；上传阶段取
-    /// <c>ERR_BAD_REQUEST</c>、下载阶段取 <c>ERR_BAD_RESPONSE</c>，原始异常在 <see cref="Cause"/> 里。
+    /// 回调抛出异常（回调属于请求管线，异常不能以裸类型漏给调用方）；上传阶段取
+    /// <c>ERR_BAD_REQUEST</c>、下载 / 原始字节阶段取 <c>ERR_BAD_RESPONSE</c>，原始异常在 <see cref="Cause"/> 里。
     /// </summary>
-    internal static AxiosException ProgressCallbackFailed(AxiosConfig config, HttpRequestMessage? request, string callbackName, Exception inner, bool upload)
+    internal static AxiosException CallbackFailed(AxiosConfig config, HttpRequestMessage? request, string callbackName, Exception inner, bool upload)
     {
         return new AxiosException(
             $"{callbackName} 回调抛出异常，请求已中断：{inner.Message}",

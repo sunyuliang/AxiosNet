@@ -268,7 +268,7 @@ internal sealed class ProgressReadStream : DelegatingStream
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            throw AxiosException.ProgressCallbackFailed(_config, _request, nameof(AxiosConfig.CallbackSettings.OnDownloadProgress), ex, upload: false);
+            throw AxiosException.CallbackFailed(_config, _request, nameof(AxiosConfig.CallbackSettings.OnDownloadProgress), ex, upload: false);
         }
     }
 }

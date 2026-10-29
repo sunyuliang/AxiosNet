@@ -39,7 +39,7 @@ public sealed partial class AxiosConfig
         set => _limits = value;
     }
 
-    /// <summary>进度回调、状态校验与超时文案；首次读取时懒创建。</summary>
+    /// <summary>进度 / 原始字节回调、状态校验与超时文案；首次读取时懒创建。</summary>
     public CallbackSettings Callbacks
     {
         get => _callbacks ??= new CallbackSettings();

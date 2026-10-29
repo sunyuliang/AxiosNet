@@ -7,6 +7,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Net;
 using System.Security.Authentication;
 using System.Text.Json;
@@ -164,6 +165,86 @@ public sealed class ConnectionPoolTests
             new HttpConnectionPool(new ConnectionPoolOptions { MaxAutomaticRedirections = 0 }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveMaxResponseHeadersLength_FailsAtConstruction(int value)
+    {
+        // 底层没有「0 表示不限制」的写法：0 与负数都会在首次请求时抛裸异常，必须建池时拦下。
+        var ex = Assert.Throws<AxiosException>(() =>
+            new HttpConnectionPool(new ConnectionPoolOptions { MaxResponseHeadersLength = value }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
+    public async Task ConnectCallback_IsUsedAndKeepAliveReusesTheConnection()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            Body = Encoding.UTF8.GetBytes("ok"),
+            ContentType = "text/plain"
+        });
+
+        var endpoints = new ConcurrentQueue<DnsEndPoint>();
+
+        using var client = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            poolOptions: new ConnectionPoolOptions
+            {
+                ConnectCallback = async (context, cancellationToken) =>
+                {
+                    endpoints.Enqueue(context.DnsEndPoint);
+
+                    // 测试服务器监听 IPv4 回环；DnsEndPoint 的 AddressFamily 是 Unspecified，不能直接交给 Socket。
+                    var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    try
+                    {
+                        await socket.ConnectAsync(context.DnsEndPoint, cancellationToken);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch
+                    {
+                        socket.Dispose();
+                        throw;
+                    }
+                }
+            });
+
+        var first = await client.GetAsync<string>("a");
+        var second = await client.GetAsync<string>("b");
+
+        Assert.Equal("ok", first.Data);
+        Assert.Equal("ok", second.Data);
+
+        // 两次请求复用同一条 keep-alive 连接：回调只跑一次，且拿到的是目标端点。
+        var endpoint = Assert.Single(endpoints);
+        Assert.Equal(server.Port, endpoint.Port);
+    }
+
+    [Fact]
+    public async Task MaxResponseHeadersLength_RejectsOversizedHeaders()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse
+        {
+            Body = Encoding.UTF8.GetBytes("{}"),
+            ContentType = "application/json",
+            Headers = new Dictionary<string, string> { ["X-Huge"] = new string('a', 4 * 1024) }
+        });
+
+        using var client = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            poolOptions: new ConnectionPoolOptions
+            {
+                MaxResponseHeadersLength = 1,
+                EvictionInterval = TimeSpan.Zero
+            });
+
+        // 响应头超限在解析阶段就断开，按网络层失败归一。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+        Assert.Equal(AxiosException.ErrNetwork, ex.Code);
     }
 
     [Fact]
