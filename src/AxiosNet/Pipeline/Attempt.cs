@@ -138,55 +138,66 @@ public static partial class Attempt
                     throw;
                 }
 
-                // 策略放行、但预算已经不允许下一次尝试：这次重试注定发不出去，把刚扣的令牌退回再报预算耗尽
-                // （共享桶不该为一次没发生的发送记账，否则同一只桶里的其它请求会被白白饿死）。
-                if (TotalTimeoutBudget.IsExhausted(ctx.RemainingTotalTimeout))
+                // 令牌已经扣了，但重试还没发出去：这条路径上任何退出（预算耗尽 / 回调抛错 / 退避被取消）
+                // 都要把令牌退回（共享桶不该为一次没发生的发送记账，否则同一只桶里的其它请求会被白白饿死）。
+                var retryScheduled = false;
+                try
                 {
-                    RefundRetryBudget(policy);
-                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
-                }
-
-                var delay = policy.GetDelay(failed);
-                if (delay < TimeSpan.Zero)
-                {
-                    // 策略算错时间不该把请求变成配置错误：负值按「不等待」处理。
-                    delay = TimeSpan.Zero;
-                }
-                else if (delay > Timeouts.Max)
-                {
-                    // Task.Delay 上限约 49.7 天，自定义策略可返回任意值，在这里收敛。
-                    delay = Timeouts.Max;
-                }
-
-                // 退避睡完就到截止点（含只剩不足一个计时器 tick）：这次重试发不出去，退回令牌并直接报预算耗尽，
-                // 不再白等一段只为「下一次尝试立刻失败」。
-                if (ctx.RemainingTotalTimeout is { } remainingBudget
-                    && remainingBudget - delay <= TotalTimeoutBudget.TimerResolution)
-                {
-                    RefundRetryBudget(policy);
-                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
-                }
-
-                // 回调与遥测共用同一个上下文
-                var retryContext = new AxiosRetryContext(
-                    attempt, policy.MaxRetries, ex, ctx.Config, failed.Response, delay);
-
-                // 回调在 catch 块里调用：它抛出的异常按约定原样抛给调用方，不再问策略。
-                retry.OnRetry?.Invoke(retryContext);
-
-                // 观测点放在「决定重试」这一刻，与 OnRetry 同一语义。
-                AxiosTelemetry.RequestRetried(retryContext, ctx.Uri);
-
-                if (delay > TimeSpan.Zero)
-                {
-                    try
+                    if (TotalTimeoutBudget.IsExhausted(ctx.RemainingTotalTimeout))
                     {
-                        await Task.Delay(delay, externalToken).ConfigureAwait(false);
+                        throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
                     }
-                    catch (OperationCanceledException oce)
+
+                    var delay = policy.GetDelay(failed);
+                    if (delay < TimeSpan.Zero)
                     {
-                        // 等待期间被取消：仍按统一错误模型报「已取消」，而不是漏出裸 TaskCanceledException
-                        throw AxiosException.Canceled(ctx.Config, request, "请求在重试等待期间被取消", oce);
+                        // 策略算错时间不该把请求变成配置错误：负值按「不等待」处理。
+                        delay = TimeSpan.Zero;
+                    }
+                    else if (delay > Timeouts.Max)
+                    {
+                        // Task.Delay 上限约 49.7 天，自定义策略可返回任意值，在这里收敛。
+                        delay = Timeouts.Max;
+                    }
+
+                    // 退避睡完就到截止点（含只剩不足一个计时器 tick）：这次重试发不出去，
+                    // 不再白等一段只为「下一次尝试立刻失败」。
+                    if (ctx.RemainingTotalTimeout is { } remainingBudget
+                        && remainingBudget - delay <= TotalTimeoutBudget.TimerResolution)
+                    {
+                        throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
+                    }
+
+                    // 回调与遥测共用同一个上下文
+                    var retryContext = new AxiosRetryContext(
+                        attempt, policy.MaxRetries, ex, ctx.Config, failed.Response, delay);
+
+                    // 回调在 catch 块里调用：它抛出的异常按约定原样抛给调用方，不再问策略。
+                    retry.OnRetry?.Invoke(retryContext);
+
+                    // 观测点放在「决定重试」这一刻，与 OnRetry 同一语义。
+                    AxiosTelemetry.RequestRetried(retryContext, ctx.Uri);
+
+                    if (delay > TimeSpan.Zero)
+                    {
+                        try
+                        {
+                            await Task.Delay(delay, externalToken).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException oce)
+                        {
+                            // 等待期间被取消：仍按统一错误模型报「已取消」，而不是漏出裸 TaskCanceledException
+                            throw AxiosException.Canceled(ctx.Config, request, "请求在重试等待期间被取消", oce);
+                        }
+                    }
+
+                    retryScheduled = true;
+                }
+                finally
+                {
+                    if (!retryScheduled)
+                    {
+                        RefundRetryBudget(policy);
                     }
                 }
             }
@@ -220,7 +231,13 @@ public static partial class Attempt
 
         var context = new AxiosCircuitContext(CircuitHost(ctx.Uri), ctx.Uri, ctx.Config);
 
-        if (!policy.ShouldAllow(context))
+        // 内置熔断器额外发一张准入票：迟到的结果凭过期票被丢弃，不污染新一轮。
+        long ticket = 0;
+        var allowed = policy is CircuitBreaker breaker
+            ? breaker.ShouldAllow(context, out ticket)
+            : policy.ShouldAllow(context);
+
+        if (!allowed)
         {
             // 建议等待时间：策略说不准时给零，错误消息里就不带「retry after」。
             var retryAfter = policy.GetRetryAfter(context);
@@ -235,22 +252,23 @@ public static partial class Attempt
         try
         {
             result = await next(request, ctx).ConfigureAwait(false);
+
+            // 内部中间件漏返回时先给出可定位的错误：否则下面读 Status 会变成裸 NRE。
+            // 放在 try 内：这个错误同样要回报，否则半开态的探测名额泄漏，熔断器会永久卡在半开。
+            result = AxiosAttemptResult.Ensure(result, ctx.Config);
         }
         catch (Exception ex)
         {
             // 失败结论带上异常，策略据此区分下游故障与取消 / 4xx；策略异常按约定原样抛出。
-            policy.Record(new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, ex));
+            RecordCircuit(policy, new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, ex), ticket);
             throw;
         }
-
-        // 内部中间件漏返回时先给出可定位的错误：否则下面读 Status 会变成裸 NRE。
-        result = AxiosAttemptResult.Ensure(result, ctx.Config);
 
         // 状态码一并回报（validateStatus 放行时也可能是 5xx）；流式响应在响应头到达时记账。
         // 回报放在 try 之外，策略异常不会被记成一次尝试失败。
         try
         {
-            policy.Record(new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, statusCode: result.Response.Status));
+            RecordCircuit(policy, new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, statusCode: result.Response.Status), ticket);
         }
         catch
         {
@@ -414,6 +432,18 @@ public static partial class Attempt
     /// <summary>熔断的计数维度：<c>host:port</c>（同一 host 的不同端口是两个独立下游），非分层 URI 退化为 host。</summary>
     private static string CircuitHost(Uri uri)
         => uri.Authority is { Length: > 0 } authority ? authority : uri.Host;
+
+    /// <summary>回报一次熔断结果：内置熔断器带上准入票（迟到结果按代次丢弃），其它策略走原接口。</summary>
+    private static void RecordCircuit(IAxiosCircuitPolicy policy, in AxiosCircuitContext context, long ticket)
+    {
+        if (policy is CircuitBreaker breaker)
+        {
+            breaker.Record(context, ticket);
+            return;
+        }
+
+        policy.Record(context);
+    }
 
     /// <summary>
     /// 退回一次「已放行、但注定发不出去」的重试所扣的令牌（总预算已耗尽、或退避必然睡完预算）。

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using AxiosNet.Telemetry;
 
@@ -408,7 +409,9 @@ public sealed class HttpConnectionPool : IDisposable
         }
 
         var evicted = 0;
-        var now = DateTime.UtcNow;
+
+        // 单调时钟：墙钟回拨时 now - LastUsed 会变成负数，连 minIdle = 0 的容量驱逐都会失效。
+        var now = Stopwatch.GetTimestamp();
         List<PooledEndpoint>? pending = null;
 
         if (limit == int.MaxValue)
@@ -425,7 +428,7 @@ public sealed class HttpConnectionPool : IDisposable
             var maxRounds = _endpoints.Count + limit;
             for (var round = 0; round < maxRounds && evicted < limit; round++)
             {
-                var oldest = DateTime.MaxValue;
+                var oldest = long.MaxValue;
                 var found = false;
                 var candidateKey = default(OriginKey);
                 PooledEndpoint? candidate = null;
@@ -433,12 +436,13 @@ public sealed class HttpConnectionPool : IDisposable
                 foreach (var pair in _endpoints)
                 {
                     var endpoint = pair.Value;
-                    if (endpoint.LastUsedUtc >= oldest || !IsEvictable(endpoint, minIdle, now))
+                    var lastUsed = endpoint.LastUsedTimestamp;
+                    if (lastUsed >= oldest || !IsEvictable(endpoint, minIdle, now))
                     {
                         continue;
                     }
 
-                    oldest = endpoint.LastUsedUtc;
+                    oldest = lastUsed;
                     candidateKey = pair.Key;
                     candidate = endpoint;
                     found = true;
@@ -469,13 +473,13 @@ public sealed class HttpConnectionPool : IDisposable
     }
 
     /// <summary>锁内判定「此刻驱逐它等价于什么都没发生」。</summary>
-    private static bool IsEvictable(PooledEndpoint endpoint, TimeSpan minIdle, DateTime now)
+    private static bool IsEvictable(PooledEndpoint endpoint, TimeSpan minIdle, long now)
     {
         lock (endpoint.SyncRoot)
         {
             return !endpoint.IsDisposed
                 && endpoint.ActiveLeases == 0
-                && now - endpoint.LastUsedUtc >= minIdle;
+                && endpoint.IdleSinceLastUse(now) >= minIdle;
         }
     }
 
@@ -484,7 +488,7 @@ public sealed class HttpConnectionPool : IDisposable
         OriginKey key,
         PooledEndpoint endpoint,
         TimeSpan minIdle,
-        DateTime now,
+        long now,
         ref List<PooledEndpoint>? pending,
         ref int evicted)
     {
@@ -492,7 +496,7 @@ public sealed class HttpConnectionPool : IDisposable
         {
             if (endpoint.IsDisposed
                 || endpoint.ActiveLeases > 0
-                || now - endpoint.LastUsedUtc < minIdle)
+                || endpoint.IdleSinceLastUse(now) < minIdle)
             {
                 return;
             }

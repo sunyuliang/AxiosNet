@@ -160,7 +160,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <inheritdoc />
-    public bool ShouldAllow(AxiosCircuitContext context)
+    public bool ShouldAllow(AxiosCircuitContext context) => ShouldAllow(context, out _);
+
+    /// <summary>
+    /// 带准入票的准入判定（库内管线使用）：票号是放行那一刻的代次，回报时票号过期即视为上一轮的迟到结果。
+    /// </summary>
+    internal bool ShouldAllow(AxiosCircuitContext context, out long ticket)
     {
         var host = GetOrCreate(KeyOf(context));
         var transition = default(AxiosCircuitTransition);
@@ -203,6 +208,9 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                     allowed = true;
                     break;
             }
+
+            // 票号在状态迁移之后取：本次放行属于迁移后的新代次。
+            ticket = host.Generation;
         }
 
         Notify(transition);
@@ -231,7 +239,15 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <inheritdoc />
-    public void Record(AxiosCircuitContext context)
+    public void Record(AxiosCircuitContext context) => Record(context, ticket: 0);
+
+    /// <summary>
+    /// 带准入票的结果回报：票号与当前代次不一致时直接丢弃。打开 / 半开 / 恢复都会让代次前进，
+    /// 因此熔断打开前放行的请求迟到回报（超时长于冷却期时很常见）不会污染新一轮的探测名额与判定。
+    /// </summary>
+    /// <param name="context">结果上下文。</param>
+    /// <param name="ticket">准入票；<c>0</c> 表示没有票（直接调用公共 API），照旧记账。</param>
+    internal void Record(AxiosCircuitContext context, long ticket)
     {
         if (!_hosts.TryGetValue(KeyOf(context), out var host))
         {
@@ -243,6 +259,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         lock (host.Gate)
         {
+            // 迟到结果：它属于上一轮，这一轮的名额与台账都不该被它改动。
+            if (ticket != 0 && ticket != host.Generation)
+            {
+                return;
+            }
+
             // 三条路径对探测名额的处理各不相同（推进 / 作废 / 只归还）。
             transition = context.IsSuccess ? RecordSuccess(host)
                 : context.IsFailure ? RecordFailure(host)
@@ -525,6 +547,9 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         var previous = host.State;
         host.StateValue = (int)next;
 
+        // 每次迁移都换一代：上一轮放行的请求持旧票，之后回报的结果一律按迟到处理。
+        host.Generation++;
+
         // 计数跟着迁移走：调用方都在 host.Gate 内，所以这两步对同一维度是原子的。
         // 已经离开跟踪表的维度不再动计数：驱逐与迁移可能交错（Evict 拿到表项之后、本次 Report 才进锁），
         // 照常计数的话 open / half_open 会永久多算一个、由「总数 - 两者」推出的 closed 又少算，
@@ -581,6 +606,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         /// <summary>半开态下已放行、尚未回报结果的探测数。</summary>
         public int ProbesInFlight;
+
+        /// <summary>
+        /// 当前代次：每次状态迁移 +1。放行时把代次作为准入票发给调用方，迟到的结果凭旧票被丢弃。
+        /// 从 1 开始，<c>0</c> 专指「没有票」（直接调用公共 API）。
+        /// </summary>
+        public long Generation = 1;
 
         /// <summary>本次打开的时刻（<see cref="Stopwatch.GetTimestamp"/>）。</summary>
         public long OpenedAt;

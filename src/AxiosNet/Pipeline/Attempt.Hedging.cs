@@ -99,7 +99,17 @@ public static partial class Attempt
         {
             while (remaining.Count > 0)
             {
-                var completed = await Task.WhenAny(remaining).ConfigureAwait(false);
+                Task<AxiosAttemptResult> completed;
+                try
+                {
+                    // 分支可以不响应取消令牌：等待期间也要跟着调用方令牌走，否则取消要等到某条分支自己返回才生效。
+                    completed = await Task.WhenAny(remaining).WaitAsync(ctx.ExternalToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException oce)
+                {
+                    throw AxiosException.Canceled(ctx.Config, template, "请求在对冲等待期间被取消", oce);
+                }
+
                 remaining.Remove(completed);
 
                 try
@@ -149,43 +159,70 @@ public static partial class Attempt
         {
             // 取消仍在路上的分支并等它们收尾：否则会继续占着连接租约与并发槽位。
             group.Cancel();
+            await DiscardPendingAsync(remaining, ctx.ExternalToken.IsCancellationRequested).ConfigureAwait(false);
+        }
+    }
 
-            foreach (var pending in remaining)
+    /// <summary>胜出后等待败者收尾的整组上限：不响应取消令牌的分支最多挡胜出者这么久，之后改由后台续延收尾。</summary>
+    private static readonly TimeSpan DiscardGrace = TimeSpan.FromSeconds(2);
+
+    /// <summary>收尾所有没被采用的分支：整组共用一个截止时刻，而不是每条各等一份上限。</summary>
+    /// <param name="pending">还没被观察过的分支。</param>
+    /// <param name="callerCanceled">调用方已取消：收尾不占调用方的等待时间，全部交给后台续延。</param>
+    private static async Task DiscardPendingAsync(List<Task<AxiosAttemptResult>> pending, bool callerCanceled)
+    {
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        if (callerCanceled)
+        {
+            // 取消语义是「尽快退出」：不响应的分支不能把调用方拖到收尾上限。
+            foreach (var branch in pending)
             {
-                await DiscardAsync(pending).ConfigureAwait(false);
+                _ = DrainAsync(branch);
             }
+
+            return;
+        }
+
+        using var deadline = new CancellationTokenSource(DiscardGrace);
+
+        foreach (var branch in pending)
+        {
+            try
+            {
+                Discard(await branch.WaitAsync(deadline.Token).ConfigureAwait(false));
+            }
+            catch (OperationCanceledException)
+            {
+                // 要么分支不响应取消（还没结束），要么与截止时刻撞车：交给后台续延收尾。
+                _ = DrainAsync(branch);
+            }
+            catch
+            {
+                // 失败 / 被取消的分支：终端已经在自己的失败路径上归还了租约与槽位。
+            }
+        }
+    }
+
+    /// <summary>后台等分支真正结束并释放它持有的库内资源：结果已经丢弃，不能让收尾反过来挡住调用方。</summary>
+    private static async Task DrainAsync(Task<AxiosAttemptResult> branch)
+    {
+        try
+        {
+            Discard(await branch.ConfigureAwait(false));
+        }
+        catch
+        {
+            // 这里没有观察者：失败 / 取消只需吞掉。
         }
     }
 
     /// <summary>这条失败是不是「并发闸门拒绝」（排队超时 / 队列满）：它说明不了下游健康与否。</summary>
     private static bool IsGateRejection(Exception exception)
         => exception is AxiosException { Code: AxiosException.ErrQueueTimeout or AxiosException.ErrQueueFull };
-
-    /// <summary>
-    /// 收尾一条没被采用的分支：等它结束，再释放它持有的库内资源（已成功返回的败者同样要收尾）。
-    /// </summary>
-    private static async ValueTask DiscardAsync(Task<AxiosAttemptResult> branch)
-    {
-        AxiosAttemptResult result;
-        try
-        {
-            result = await branch.ConfigureAwait(false);
-        }
-        catch
-        {
-            // 失败 / 被取消的分支：终端已经在自己的失败路径上归还了租约与槽位。
-            return;
-        }
-
-        try
-        {
-            Discard(result);
-        }
-        catch
-        {
-            // 收尾失败不能盖掉胜出者的结果。
-        }
-    }
 
     /// <summary>
     /// 释放一条败者结果持有的库内资源（流式凭证：正文流 + 连接租约 + 并发槽位）。

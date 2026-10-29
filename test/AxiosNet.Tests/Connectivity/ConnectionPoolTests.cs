@@ -4,8 +4,10 @@ using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
+using System.Reflection;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -147,6 +149,32 @@ public sealed class ConnectionPoolTests
         Assert.Contains(stats.Endpoints, e => e.Origin.EndsWith(":9201"));
         Assert.Contains(stats.Endpoints, e => e.Origin.EndsWith(":9203"));
         Assert.DoesNotContain(stats.Endpoints, e => e.Origin.EndsWith(":9202"));
+    }
+
+    [Fact]
+    public void EnsureCapacity_IsIndependentOfWallClock()
+    {
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            MaxEndpointCount = 1,
+            EvictionInterval = TimeSpan.Zero
+        });
+
+        using (pool.Lease(new Uri("http://127.0.0.1:9204/x")))
+        {
+        }
+
+        // 把单调时间戳拨到未来一小时：等价于「系统时钟回拨」后 now - LastUsed 为负。
+        // 驱逐若按墙钟判定，连 minIdle = 0 的容量驱逐都会失效，池满后会一直报 ERR_POOL_EXHAUSTED。
+        typeof(PooledEndpoint)
+            .GetField("_lastUsedTimestamp", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(FirstEndpoint(pool), Stopwatch.GetTimestamp() + (Stopwatch.Frequency * 3600));
+
+        using var second = pool.Lease(new Uri("http://127.0.0.1:9205/x"));
+
+        var stats = pool.GetStatistics();
+        Assert.Equal(1, stats.EndpointCount);
+        Assert.Contains(stats.Endpoints, e => e.Origin.EndsWith(":9205"));
     }
 
     [Fact]
@@ -1773,6 +1801,12 @@ public sealed class ConnectionPoolTests
             HttpConnectionPool.Release(key);
         }
     }
+
+    /// <summary>读出池里唯一的节点：用于直接改写它的时间戳，模拟系统时钟回拨。</summary>
+    private static PooledEndpoint FirstEndpoint(HttpConnectionPool pool)
+        => ((ConcurrentDictionary<OriginKey, PooledEndpoint>)typeof(HttpConnectionPool)
+            .GetField("_endpoints", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(pool)!).Values.First();
 
     /// <summary>记录 Handler 创建/释放次数：用于断言驱逐与关闭「不漏释放、不重复释放」。</summary>
     private sealed class HandlerLedger

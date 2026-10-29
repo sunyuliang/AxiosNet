@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AxiosNet.Telemetry;
 
 namespace AxiosNet.Pooling;
@@ -21,7 +22,13 @@ internal sealed class PooledEndpoint : IDisposable
 
     public int ActiveLeases { get; private set; }
 
-    public DateTime LastUsedUtc { get; private set; } = DateTime.UtcNow;
+    /// <summary>最近一次租用 / 归还的时刻（由单调时钟换算，供统计展示；驱逐判定只看 <see cref="LastUsedTimestamp"/>）。</summary>
+    public DateTime LastUsedUtc => DateTime.UtcNow - IdleSinceLastUse(Stopwatch.GetTimestamp());
+
+    /// <summary>最近一次租用 / 归还的单调时间戳：驱逐判定与 LRU 排序的时间源，不受系统时钟调整影响。</summary>
+    internal long LastUsedTimestamp => Volatile.Read(ref _lastUsedTimestamp);
+
+    private long _lastUsedTimestamp = Stopwatch.GetTimestamp();
 
     public bool IsDisposed { get; private set; }
 
@@ -90,7 +97,9 @@ internal sealed class PooledEndpoint : IDisposable
             }
 
             ActiveLeases++;
-            LastUsedUtc = DateTime.UtcNow;
+
+            // 与 LastUsedTimestamp 的 Volatile.Read 配对：32 位平台上 64 位写入不加 Volatile 可能被读到半截。
+            Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
 
             // 进程级活跃租约水位（ObservableGauge 收集时读）。
             AxiosTelemetry.EnterLease();
@@ -110,7 +119,7 @@ internal sealed class PooledEndpoint : IDisposable
                 released = true;
             }
 
-            LastUsedUtc = DateTime.UtcNow;
+            Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
 
             if (DisposeWhenIdle && ActiveLeases == 0 && !IsDisposed)
             {
@@ -131,6 +140,13 @@ internal sealed class PooledEndpoint : IDisposable
             _owner.Forget(this);
             DisposeClientAndHandler();
         }
+    }
+
+    /// <summary>自最近一次使用起经过的时长（单调时钟；负值按零处理）。</summary>
+    internal TimeSpan IdleSinceLastUse(long now)
+    {
+        var seconds = (double)(now - LastUsedTimestamp) / Stopwatch.Frequency;
+        return seconds > 0 ? TimeSpan.FromSeconds(seconds) : TimeSpan.Zero;
     }
 
     public void Dispose()

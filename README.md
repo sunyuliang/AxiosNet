@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1617%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1627%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -685,7 +685,7 @@ budget.RefusedRetries;   // 累计被预算拦下的重试次数，随时可读
 ```
 
 - **只拦重试，不拦首发**：桶空了只是「不再重试」，调用方拿到的是内层策略判定为可重试的那次**真实失败**，不会被预算改写成新错误。
-- **只被「会发出」的重试消耗**：内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌；总预算已耗尽、这次重试注定发不出去时，刚扣的令牌会立刻退回（只认内建 `RetryBudgetPolicy`，自定义装饰器包住它时识别不到）；已经放行、但退避睡不完剩余总预算的那一次同样会**退回令牌并直接报耗尽**（不再白等一段只为「下一次尝试立刻失败」）—— 共享桶不会被空扣，也就不会连累同实例的其它请求。放行之后才发生的意外（进管线后被闸门拦下、等待期间被取消）仍计一次：决定那一刻不可预知，多计只让预算更紧，不会放大流量。
+- **只被「会发出」的重试消耗**：内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌；总预算已耗尽、这次重试注定发不出去时，刚扣的令牌会立刻退回（只认内建 `RetryBudgetPolicy`，自定义装饰器包住它时识别不到）；已经放行、但退避睡不完剩余总预算的那一次同样会**退回令牌并直接报耗尽**（不再白等一段只为「下一次尝试立刻失败」）—— 共享桶不会被空扣，也就不会连累同实例的其它请求。放行之后才发生的意外（进管线后被闸门拦下）仍计一次：决定那一刻不可预知，多计只让预算更紧，不会放大流量；退避等待期间被取消同样退回令牌 —— 那一发也没发出去。
 - **令牌管的是「重试轮次」，不是「发送次数」**：一轮重试若开了备用端点 / 对冲，实际发送量最多放大到 `(1 + 端点数) × (1 + MaxHedges)` 倍（失败会提前结束一轮、跳过的端点不发送，实际通常更小）；要按发送量估算容量，记得除以这个系数。首发不取令牌。
 - **桶按策略对象共享**：`Retry.Policy` 在配置克隆间是同一个引用，所以同一个客户端实例的所有请求共用一个桶；某次请求想单独用一个桶，就在那次请求里 `new RetryBudgetPolicy(...)`。
 - 桶初始是满的；`refillPerSecond = 0` 表示「只靠初始容量、不随时间恢复」（适合批处理 / 测试）。
@@ -737,13 +737,13 @@ breaker.Reset();                                                 // 运维手工
 - **「没发出」不算下游故障**：排队 / 入口处就耗尽 `TotalTimeout` 而抛的 `ECONNABORTED`（`AxiosCircuitContext.TotalTimeoutExpiredBeforeSend`）不进失败计数。过载时排队变长足以让每条请求都撞上它——记成故障就等于「越拥堵越容易熔断健康的下游」，把局部排队放大成整条链路不可用。已经发出去之后的超时仍照常计入，那才是下游不响应。
 - **按 host 计数**：默认维度 `host:port`（`uri.Authority`）；`KeySelector` 可改成 `ctx => ctx.Uri.Host` 或按路由前缀隔离租户。
 - **打开条件取「或」**：连续失败达 `FailureThreshold`，或窗口（`WindowSize`）内失败数 ≥ `ceil(样本数 × FailureRateThreshold)` 且样本数达 `MinimumSamples`。`WindowSize = 0` 表示只看连续失败；`MinimumSamples` 大于 `WindowSize` 会在发请求前报 `ERR_BAD_OPTION_VALUE`（那种配法永远触发不了）。
-- **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷。`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。
+- **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷。`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。熔断打开前就已放行、冷却结束之后才回报的迟到结果按代次丢弃：它属于上一轮，不会把刚进入的半开打回打开，也不会替这一轮归还探测名额。
 - 被拒请求**不发出**：不建连、不占租约，直接抛 `ERR_CIRCUIT_OPEN`，`AxiosException.RetryAfter` 给建议等待。
 - 与重试同时开：闸门在**每次尝试之前**，熔断打开后重试的下一轮会被立刻拦下；`ERR_CIRCUIT_OPEN` 本身不重试。
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
 - **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
 - 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度——正在熔断 / 半开的条目不会被丢，闭合态里优先丢窗口中没有失败样本的那条（连续失败数可能已被一次成功清零，但失败率台账仍然有效，丢掉等于把这条维度重置成全新维度）。
-- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。
+- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。用装饰器包住内置 `CircuitBreaker` 时拿不到准入票（接口上没有票号），迟到结果会按旧口径记账 —— 与 `RetryBudgetPolicy` 被装饰器包住时认不出退费同类的保守偏差。
 
 ## 并发对冲
 
@@ -765,7 +765,7 @@ await client.GetAsync("orders", c => c.Hedging.MaxHedges = 0);
 
 - **熔断在整组之外，只记一笔**：一次逻辑尝试 = 一次熔断记账，与重试口径一致。所以「一败一成」算成功，「全败」算一次失败，不会因为分支多而放大失败计数。
 - **并发额度按 `1 + MaxHedges` 倍占用**：每条分支各自过闸门、各占一个槽位。`Limits.MaxConcurrentRequests` 要按这个倍数预留 —— 留得太小、`QueueTimeout` 又是 `Zero` 时，分支会直接在闸门处 `ERR_QUEUE_TIMEOUT`，对冲静默失效（它只是延迟优化，不会让请求失败）。
-- **败者收尾的等待没有上限**：胜出后要等败者真正结束才返回（不等就会在返回后继续占着连接租约与槽位）。库内中间件都响应 `ctx.AttemptToken`；自写中间件忽略它就等于把调用方一起拖住。
+- **败者收尾有等待上限**：胜出后最多等败者 2 秒收尾（不等就会在返回后继续占着连接租约与槽位）；超时后改由后台续延，等分支真正结束再释放。库内中间件都响应 `ctx.AttemptToken`，正常情况立即收尾；忽略它的自写中间件最多把调用方拖住 2 秒。调用方取消时不等收尾（全部转后台续延），取消即时生效。
 - **`transformResponse` 与响应侧回调在每条分支上各跑一次**（含落败分支）：带副作用的转换请自行保证幂等，或关掉对冲。
 - **以下请求按单次发送处理**，不降级也不报错：流式响应（败者的正文无人消费）、非幂等方法（默认 `HedgeNonIdempotentMethods = false`）、正文不能并发重放（`Stream` / multipart / 上传进度包装）、响应侧带共享状态（`OnDownloadProgress` 或 `MaxRate > 0` 时进度会报两份、限速翻倍）。
 - 泛型入口照常对冲：每条分支各填一份自己的响应对象，胜出者的那份交给调用方，调用方从 `config.Response` 读到的也是胜出者的状态码与响应头。
@@ -1391,9 +1391,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1558 | `net8.0` / `net6.0` | 3116 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1568 | `net8.0` / `net6.0` | 3136 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1617** | | **3234** |
+| **合计** | **1627** | | **3254** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

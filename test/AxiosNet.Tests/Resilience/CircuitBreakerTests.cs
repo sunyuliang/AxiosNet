@@ -1,6 +1,7 @@
 ﻿
 using System.Diagnostics;
 using AxiosNet.Circuit;
+using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 
@@ -303,6 +304,138 @@ public sealed class CircuitBreakerTests
         var recovered = await client.GetAsync(server.Url + "x");
         Assert.Equal(200, recovered.Status);
         Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(HostOf(server)));
+    }
+
+    [Fact]
+    public void StaleTicket_FromPreviousRound_CannotReopenOrFreeASlot()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 3
+        };
+
+        var host = "late-ticket.example.com";
+
+        // 闭合期放行的请求拿到第一代票，它自己的失败把熔断打开（代次前进）
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out var stale));
+        breaker.Record(FailedContext(host), stale);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 冷却结束后的探测拿到新代次票
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out var probe));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 上一轮的迟到失败：不该把刚进入的半开打回打开
+        breaker.Record(FailedContext(host), stale);
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 上一轮的迟到「被忽略结果」：不该替这一轮的探测归还名额
+        Assert.False(breaker.ShouldAllow(ContextFor(host), out _));
+        breaker.Record(new AxiosCircuitContext(host, new Uri("https://" + host + "/orders"), statusCode: 404), stale);
+        Assert.False(breaker.ShouldAllow(ContextFor(host), out _));
+
+        // 只有新代次票的成功才推进慢启动
+        breaker.Record(ContextFor(host), probe);
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out _));
+    }
+
+    [Fact]
+    public async Task HalfOpen_LateFailureFromPreviousRound_DoesNotReopen()
+    {
+        await using var server = TestHttpServer.Start(async request =>
+        {
+            if (request.Path == "/slow")
+            {
+                await Task.Delay(2000);
+                return TestJson.Response(new { ok = true });
+            }
+
+            return request.Path == "/fail"
+                ? TestJson.Response(new { error = "boom" }, statusCode: 500)
+                : TestJson.Response(new { ok = true });
+        });
+
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 3
+        };
+
+        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        var host = HostOf(server);
+
+        // A：闭合态放行，超时回报远晚于冷却结束
+        var slow = client.GetAsync(server.Url + "slow", c => c.Timeout = TimeSpan.FromMilliseconds(800));
+        var waitForSend = Stopwatch.StartNew();
+        while (waitForSend.Elapsed < TimeSpan.FromSeconds(5) && !server.Received.Any(r => r.Path == "/slow"))
+        {
+            await Task.Delay(5);
+        }
+
+        // B：真失败 → 阈值 1 → 立刻打开
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "fail"));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        // 冷却过期 → C 作为半开探测并成功（慢启动还差两次）
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        var probe = await client.GetAsync(server.Url + "ok");
+        Assert.Equal(200, probe.Status);
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // A 迟到的超时回报属于上一轮：不该把这一轮打回打开
+        await Assert.ThrowsAsync<AxiosException>(() => slow);
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+    }
+
+    [Fact]
+    public async Task HalfOpen_DefaultResultFromInnerMiddleware_ReleasesProbeSlot()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(_ => Interlocked.Increment(ref calls) == 1
+            ? TestJson.Response(new { error = "boom" }, statusCode: 500)
+            : TestJson.Response(new { ok = true }));
+
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 1
+        };
+
+        // 插在熔断之后的中间件返回 default：终端一次都不执行，回报只能由熔断层自己补上。
+        var seen = 0;
+        AxiosAttemptMiddleware sabotage = next => (request, ctx) =>
+            Interlocked.Increment(ref seen) == 2
+                ? new ValueTask<AxiosAttemptResult>(default(AxiosAttemptResult))
+                : next(request, ctx);
+
+        using var client = new AxiosClient(
+            new AxiosConfig { Circuit = { Policy = breaker } },
+            pipeline: AxiosAttemptPipeline.Default.Append(sabotage));
+        var host = HostOf(server);
+
+        // 第 1 次：真失败 → 打开
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "fail"));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        // 第 2 次：半开探测撞上 default 结果 → ERR_BAD_OPTION_VALUE，状态停在半开
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        var broken = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "probe"));
+        Assert.Equal(AxiosException.ErrBadOptionValue, broken.Code);
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 第 3 次：名额已归还，否则这里会撞 ERR_CIRCUIT_OPEN
+        var recovered = await client.GetAsync(server.Url + "ok");
+        Assert.Equal(200, recovered.Status);
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
     }
 
     [Fact]

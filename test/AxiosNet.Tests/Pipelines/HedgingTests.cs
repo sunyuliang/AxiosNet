@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Circuit;
@@ -565,6 +566,51 @@ public sealed class HedgingTests
     }
 
     [Fact]
+    public async Task Hedging_LoserIgnoringCancellation_DoesNotHoldTheWinner()
+    {
+        // 自定义 Handler 可以不理会链接令牌：胜出后等它收尾必须有上限，
+        // 否则调用方、连接租约与并发槽位都被一条永远不回的分支占着。
+        using var handler = new CancellationIgnoringLoserHandler(TimeSpan.FromSeconds(6));
+        using var client = new AxiosClient(
+            new AxiosConfig { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero } },
+            handler: handler,
+            disposeHandler: false);
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.GetAsync("https://hedge.example/x");
+        stopwatch.Stop();
+
+        Assert.Equal(200, response.Status);
+
+        // 败者要 6s 才回；收尾上限是 2s，留出一倍余量仍远小于败者自己拖住的时间。
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(4), $"胜出后仍被不响应取消的败者拖住：{stopwatch.Elapsed}");
+    }
+
+    [Fact]
+    public async Task Hedging_CancelledDuringRace_ReturnsPromptly()
+    {
+        // 分支不响应取消令牌时，取消语义仍是「尽快退出」：不能等到某条分支自己返回，
+        // 也不能被败者收尾上限拖住。
+        using var handler = new HangingHandler(TimeSpan.FromSeconds(6));
+        using var client = new AxiosClient(
+            new AxiosConfig { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero } },
+            handler: handler,
+            disposeHandler: false);
+        using var cts = new CancellationTokenSource();
+
+        var pending = client.GetAsync("https://hedge.example/x", c => c.CancellationToken = cts.Token);
+        await Task.Delay(200);
+        cts.Cancel();
+
+        var stopwatch = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => pending);
+        stopwatch.Stop();
+
+        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"取消耗时：{stopwatch.Elapsed}");
+    }
+
+    [Fact]
     public async Task Hedging_SkipsResponsesWithSharedDownloadState()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
@@ -638,6 +684,49 @@ public sealed class HedgingTests
             }
 
             await Task.Delay(10);
+        }
+    }
+
+    /// <summary>
+    /// 第一条分支 200ms 后成功；其余分支睡满 <paramref name="loserDelay"/>，且故意不理会取消令牌。
+    /// 胜者故意慢一点，保证败者已经进入 Handler 再胜出 —— 否则取消可能落在败者起跑之前，测不到收尾等待。
+    /// </summary>
+    private sealed class CancellationIgnoringLoserHandler(TimeSpan loserDelay) : HttpMessageHandler
+    {
+        private int _calls;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _calls) == 1)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
+            }
+            else
+            {
+                await Task.Delay(loserDelay, CancellationToken.None);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"branch":1}""", Encoding.UTF8, "application/json")
+            };
+        }
+    }
+
+    /// <summary>任何请求都睡满 <paramref name="delay"/>，且不理会取消令牌。</summary>
+    private sealed class HangingHandler(TimeSpan delay) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay, CancellationToken.None);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"ok":true}""", Encoding.UTF8, "application/json")
+            };
         }
     }
 
