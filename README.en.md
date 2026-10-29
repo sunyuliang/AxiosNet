@@ -13,7 +13,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Item | Value |
 | --- | --- |
 | Packages | `AxiosNet` (core + declarative client in one package), `AxiosNet.DependencyInjection` (optional) |
-| Target | Single target `net6.0`, runs on .NET 6 / 7 / 8 / 9 / 10 and later |
+| Target | Dual-target `net6.0` / `net8.0`: .NET 8+ consumes `lib/net8.0`, .NET 6 / 7 consumes `lib/net6.0` |
 | Dependencies | Zero third-party, BCL only |
 | Style | Async first: `Task` + `CancellationToken` |
 | Telemetry | Trace / metrics / events on by default, zero cost when nobody listens |
@@ -148,7 +148,7 @@ Four groups of capabilities; details in the linked sections.
 | Declarative client | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
 | Interface declarations | Methods on an interface; `Create<T>()` generates the proxy | `[Get("users/{id}")] Task<AxiosResponse<User>> GetAsync([Path] int id)` |
 | Dependency injection | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| Native AOT | Declared `IsTrimmable`, trims with 0 warnings | Source-generated `JsonSerializerContext` |
+| Native AOT | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings) | Source-generated `JsonSerializerContext` |
 
 ## Clients
 
@@ -1354,9 +1354,9 @@ Two more samples:
 
 ## Runtime and AOT
 
-The library targets `net6.0` only; `net6.0` / `7.0` / `8.0` / `9.0` / `10.0` and later consume the `lib/net6.0` asset with no configuration. .NET Framework and .NET Core 3.1 or earlier are not supported.
+The library targets `net6.0` and `net8.0`: .NET 8 and later consume `lib/net8.0`, .NET 6 / 7 consume `lib/net6.0`, with no configuration. Both assets come from the same sources and behave the same at runtime (each binds to the BCL of the runtime it runs on); the `net8.0` target exists so the library can use net8-era BCL APIs and the net7+ analyzers. .NET Framework and .NET Core 3.1 or earlier are not supported.
 
-`IsTrimmable` is declared and the library trims with 0 warnings. For AOT publishing, consumers need:
+`IsTrimmable` is declared on both targets (the library trims with 0 warnings), and the `net8.0` target also sets `IsAotCompatible` — the AOT analyzer reports 0 warnings (the SDK does not offer that analyzer for a `net6.0` target). For AOT publishing, consumers need:
 
 ```xml
 <ItemGroup>
@@ -1464,7 +1464,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 ```
 .
 ├─ src/
-│  ├─ AxiosNet/                       # library (single target net6.0)
+│  ├─ AxiosNet/                       # library (dual target net6.0 / net8.0)
 │  │  ├─ Axios.cs                     # static facade
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
 │  │  ├─ AxiosConfig*.cs              # configuration (top level + nine sub-objects)

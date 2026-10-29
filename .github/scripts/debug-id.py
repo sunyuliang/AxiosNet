@@ -47,7 +47,7 @@ def load_dll_from_nupkg(path: str, entry: str | None) -> tuple[str, bytes]:
                 sys.exit(f"{path} 内没有条目 {entry}")
             chosen = entry
         else:
-            # 优先取 net6.0 资产（本项目单目标 net6.0，这是消费者实际拿到的 DLL）
+            # 优先取 net6.0 资产（双目标里覆盖面最广的那份：.NET 6/7 消费者拿到的就是它）
             preferred = [n for n in candidates if n.startswith("lib/net6.0/")]
             chosen = sorted(preferred or candidates)[0]
         return chosen, package.read(chosen)

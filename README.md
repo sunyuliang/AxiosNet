@@ -13,7 +13,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 项 | 值 |
 | --- | --- |
 | 包 | `AxiosNet`（核心 + 声明式客户端同包）、`AxiosNet.DependencyInjection`（可选） |
-| 目标框架 | 单目标 `net6.0`，直接跑在 .NET 6 / 7 / 8 / 9 / 10 及以上 |
+| 目标框架 | `net6.0` / `net8.0` 双目标：.NET 8 及以上取 `lib/net8.0`，.NET 6 / 7 取 `lib/net6.0` |
 | 依赖 | 零第三方，只用 BCL |
 | 风格 | 全异步：`Task` + `CancellationToken` |
 | 观测 | trace / metrics / events 默认开启，无人订阅时零产出 |
@@ -148,7 +148,7 @@ string url = http.GetUri(c =>
 | 声明式客户端 | 用模型 + 特性描述请求 | `[Get("users/{id}")] class X : IApiRequest<User>` |
 | 接口级声明 | 接口 + 方法特性，`Create<T>()` 直接生成代理 | `[Get("users/{id}")] Task<AxiosResponse<User>> GetAsync([Path] int id)` |
 | 依赖注入 | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| Native AOT | 已声明 `IsTrimmable`，裁剪 0 警告 | 源生成 `JsonSerializerContext` |
+| Native AOT | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告） | 源生成 `JsonSerializerContext` |
 
 ## 客户端
 
@@ -1352,9 +1352,9 @@ dotnet run --project samples/AxiosNet.Simple
 
 ## 运行时与 AOT
 
-类库单目标 `net6.0`，`net6.0` / `7.0` / `8.0` / `9.0` / `10.0` 及以上直接引用 `lib/net6.0`，无需配置。不支持 .NET Framework 与 .NET Core 3.1 及更早。
+类库 `net6.0` / `net8.0` 双目标：.NET 8 及以上引用 `lib/net8.0`，.NET 6 / 7 引用 `lib/net6.0`，无需配置。两份资产来自同一份源码，运行时行为不随 TFM 变化（都绑定到消费方运行时自带的 BCL）；`net8.0` 目标的价值是可以使用 net8 一档的 BCL 和 net7+ 的分析器。不支持 .NET Framework 与 .NET Core 3.1 及更早。
 
-已声明 `IsTrimmable`，自身裁剪 0 警告。AOT 发布时消费方需要：
+两个目标都声明 `IsTrimmable`（自身裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`，AOT 分析器 0 警告（`net6.0` 目标上 SDK 不提供该分析器）。AOT 发布时消费方需要：
 
 ```xml
 <ItemGroup>
@@ -1462,7 +1462,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 ```
 .
 ├─ src/
-│  ├─ AxiosNet/                       # 类库（单目标 net6.0）
+│  ├─ AxiosNet/                       # 类库（net6.0 / net8.0 双目标）
 │  │  ├─ Axios.cs                     # 静态门面
 │  │  ├─ AxiosClient*.cs              # 实例 + 请求管线 + 快捷方法
 │  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 九个子对象）

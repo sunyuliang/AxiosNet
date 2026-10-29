@@ -60,7 +60,7 @@ jobs:
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          # 类库是单目标 net6.0，但测试项目为 net6.0 + net8.0 双目标（验证同一份资产在两种运行时上的行为），
+          # 类库是 net6.0 / net8.0 双目标，测试项目同样双目标（两种运行时各测对应资产），
           # 因此 6.0 运行时必须显式安装（runner 镜像不保证保留已 EOL 的 6.0）
           dotnet-version: |
             8.0.x
@@ -224,8 +224,13 @@ jobs:
             echo "::error::pack 未生成 snupkg，源码映射将不可用，终止发布"
             exit 1
           fi
-          if ! unzip -l artifacts/*.snupkg | grep -q '\.pdb$'; then
-            echo "::error::snupkg 内未找到 .pdb，符号包内容异常，终止发布"
+          # 双目标：nupkg 里每个 lib/<tfm>/ 都必须有同名 PDB，缺哪个 TFM，哪个 TFM 的消费者就 F11 不进源码。
+          LIB_TFMS="$(unzip -l artifacts/*.nupkg | grep -oE 'lib/[^/]+/[^/]+\.dll' | cut -d/ -f2 | sort -u | tr '\n' ' ' || true)"
+          PDB_TFMS="$(unzip -l artifacts/*.snupkg | grep -oE 'lib/[^/]+/[^/]+\.pdb' | cut -d/ -f2 | sort -u | tr '\n' ' ' || true)"
+          echo "nupkg 资产 TFM: $LIB_TFMS"
+          echo "snupkg PDB TFM: $PDB_TFMS"
+          if [ -z "$LIB_TFMS" ] || [ "$LIB_TFMS" != "$PDB_TFMS" ]; then
+            echo "::error::snupkg 的 PDB 未覆盖 nupkg 的全部资产 TFM，缺失 TFM 的源码映射将不可用，终止发布"
             exit 1
           fi
 

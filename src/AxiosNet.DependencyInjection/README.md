@@ -244,4 +244,4 @@ builder.Services.AddApiClient("https://api.example.com");
 
 ## Runtime support
 
-Single `net6.0` assembly — runs on .NET 6 / 7 / 8 / 9 / 10 / 11. No third-party runtime dependencies.
+Dual-target `net6.0` / `net8.0` — runs on .NET 6 / 7 / 8 / 9 / 10 / 11 (.NET 8+ picks `lib/net8.0`). No third-party runtime dependencies.

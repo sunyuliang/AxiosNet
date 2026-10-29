@@ -1,10 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 单目标 net6.0：.NET 向高版本兼容，同一份程序集可直接跑在 .NET 6 / 7 / 8 / 9 / 10 / 11 上，
-         无需为每个运行时重复发布资产。代码也不使用任何 6.0 之后才有的 BCL API。
+    <!-- 双目标：net6.0 是运行基线（.NET 6 / 7 消费方取 lib/net6.0），net8.0 是分析基线（.NET 8+ 取 lib/net8.0）。
+         源码同一份，只有一处 #if NET8_0_OR_GREATER：枚举取值改用按底层类型返回的重载（AOT 安全）。
+         运行时行为不随 TFM 变化——两者都绑定到消费方运行时自带的 BCL；
+         多出 net8.0 目标的实际收益是 net7+ 才可用的分析器：AOT 分析器在 net6.0 目标上被 SDK 直接拒绝（NETSDK1210）。
          不使用 netstandard：连接池依赖 SocketsHttpHandler，netstandard2.0 里没有该类型。 -->
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFrameworks>net6.0;net8.0</TargetFrameworks>
     <!-- net6.0 默认 C# 10，显式用最新语言版本（测试项目同样如此） -->
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,6 +14,8 @@
     <!-- 声明本程序集可被裁剪（消费方 PublishTrimmed / PublishAot 时按需裁剪），
          同时启用裁剪分析器：反射入口的 DynamicallyAccessedMembers 标注与抑制理由必须始终自洽。 -->
     <IsTrimmable>true</IsTrimmable>
+    <!-- AOT 分析器（IL3050）只在 net7.0+ 目标上可用：net6.0 目标被 SDK 判为「不支持」并给 NETSDK1210。 -->
+    <IsAotCompatible Condition="'$(TargetFramework)' == 'net8.0'">true</IsAotCompatible>
   </PropertyGroup>
 
   <!-- ===== NuGet 包元数据 ===== -->
@@ -22,7 +26,7 @@
     <Version>1.0.1</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。同一包内置声明式 API 客户端（AxiosNet.WebAPI 命名空间，对标 Refit）：定义请求模型（路由/参数特性）+ 授权，调用只剩一句 client.RequestAsync(request)，返回类型由请求模型自动确定，底层仍是完整管线。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。支持 .NET 6 及以上全部运行时（6/7/8/9/10/11）：单目标 net6.0 程序集，一份资产直接引用，无需多目标配置。An axios-style HTTP client for .NET — single net6.0 assembly, runs on .NET 6/7/8/9/10/11. The same package also includes a declarative API client (namespace AxiosNet.WebAPI, Refit-style): request models with route/parameter attributes + authorization, one call client.RequestAsync(request). For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
+    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。同一包内置声明式 API 客户端（AxiosNet.WebAPI 命名空间，对标 Refit）：定义请求模型（路由/参数特性）+ 授权，调用只剩一句 client.RequestAsync(request)，返回类型由请求模型自动确定，底层仍是完整管线。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。支持 .NET 6 及以上全部运行时（6/7/8/9/10/11）：net6.0 / net8.0 双目标，.NET 8+ 自动取 net8.0 资产、旧运行时取 net6.0 资产，无需配置。An axios-style HTTP client for .NET — dual-targeted net6.0 / net8.0, runs on .NET 6/7/8/9/10/11. The same package also includes a declarative API client (namespace AxiosNet.WebAPI, Refit-style): request models with route/parameter attributes + authorization, one call client.RequestAsync(request). For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
     <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;declarative;refit;restsharp;flurl;typed-client;connection-pool;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>

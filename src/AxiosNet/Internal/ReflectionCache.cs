@@ -118,7 +118,7 @@ internal static class ReflectionCache
             if (Enum.GetUnderlyingType(type) == typeof(ulong))
             {
                 var unsignedMask = 0UL;
-                foreach (var defined in Enum.GetValues(type))
+                foreach (var defined in GetValues(type))
                 {
                     unsignedMask |= Convert.ToUInt64(defined, CultureInfo.InvariantCulture);
                 }
@@ -127,13 +127,23 @@ internal static class ReflectionCache
             }
 
             var signedMask = 0L;
-            foreach (var defined in Enum.GetValues(type))
+            foreach (var defined in GetValues(type))
             {
                 signedMask |= Convert.ToInt64(defined, CultureInfo.InvariantCulture);
             }
 
             return new EnumFlagMask(UnsignedMask: null, SignedMask: signedMask);
         });
+
+    /// <summary>枚举的全部定义值；net8 起用 AOT 安全的重载（按底层类型返回，不要求运行时代码生成）。</summary>
+    private static Array GetValues(Type enumType)
+    {
+#if NET8_0_OR_GREATER
+        return Enum.GetValuesAsUnderlyingType(enumType);
+#else
+        return Enum.GetValues(enumType);
+#endif
+    }
 }
 
 /// <summary>

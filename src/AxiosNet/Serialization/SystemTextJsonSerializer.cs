@@ -9,10 +9,17 @@ namespace AxiosNet.Serialization;
 /// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：用 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>），
 /// Native AOT / 裁剪下必须由消费方提供源生成上下文（<c>TypeInfoResolver</c>）。
 /// </summary>
+// 三个入口都走 STJ 的 Type 重载：它最终同样经 TypeInfoResolver 取元数据，AOT 下消费方提供源生成上下文即可用。
+// 换成 JsonSerializerOptions.GetTypeInfo(type) 看似更「AOT 友好」，但会关掉按最近祖先类型回退的解析语义，
+// 匿名类型等场景直接抛 NoMetadataForType（实测 187 个用例失败），因此保持原重载并按下述理由抑制分析器告警。
 [UnconditionalSuppressMessage(
     "Trimming",
     "IL2026",
     Justification = "STJ 反射重载；AOT 下由消费方通过 JsonSerializerOptions.TypeInfoResolver 提供源生成上下文（README「Native AOT / 裁剪」）。")]
+[UnconditionalSuppressMessage(
+    "AOT",
+    "IL3050",
+    Justification = "同上：元数据由 TypeInfoResolver 提供，不依赖运行时代码生成；未注册的类型在 AOT 下抛 NotSupportedException，属于已文档化的限制。")]
 public sealed class SystemTextJsonSerializer : IContentSerializer
 {
     /// <summary>无状态单例，可安全并发共享。</summary>
