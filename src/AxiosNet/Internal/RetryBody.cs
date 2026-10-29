@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+
 namespace AxiosNet.Internal;
 
 /// <summary>
@@ -36,6 +38,11 @@ internal sealed class RetryBody
                 }
 
                 return new RetryBody(new List<(Stream, long)> { (stream, stream.Position) });
+
+            // 流式正文：序列被消费后无法回拨，与不可 seek 的流同一口径。
+            case IAsyncEnumerable<byte[]>:
+            case IAsyncEnumerable<ReadOnlyMemory<byte>>:
+                throw NotReplayable(config, "流式请求体（IAsyncEnumerable）");
         }
 
         // 结构化数据里只有 multipart 会把流当成文件部件发出去（JSON 根本序列化不了流）。
@@ -99,6 +106,11 @@ internal sealed class RetryBody
             case StreamContent:
                 throw NotReplayable(config, "StreamContent");
 
+            case AsyncEnumerableBodyContent:
+                // 库内的流式正文经由 data 分派进来时已在 Prepare 的 switch 里拦下；
+                // 这里兜住「被别的 HttpContent 包了一层」的情形。
+                throw NotReplayable(config, "流式请求体（IAsyncEnumerable）");
+
             case MultipartContent multipart:
                 foreach (var part in multipart)
                 {
@@ -106,6 +118,39 @@ internal sealed class RetryBody
                 }
 
                 return;
+
+            default:
+                // JsonContent 长度未知但可重放：每次序列化都从持有的值重新写（BCL 类型，可信任）。
+                // 不认它会把「JsonContent + 重试」误伤成配置错误。
+                if (content is JsonContent)
+                {
+                    return;
+                }
+
+                // 未知类型的自定义内容：库既拨不回读指针，也确认不了长度。
+                // 长度拿不到就意味着第二次发送可能只发出空正文，宁可先拒绝。
+                if (!HasKnownLength(content))
+                {
+                    throw NotReplayable(config, "长度未知的自定义 HttpContent");
+                }
+
+                return;
+        }
+    }
+
+    /// <summary>
+    /// 内容长度是否可确定：<c>ContentLength</c> 会触发 <see cref="HttpContent.TryComputeLength"/>。
+    /// 计算过程抛异常的按「未知」处理——拒绝比让重试发出空正文更安全。
+    /// </summary>
+    private static bool HasKnownLength(HttpContent content)
+    {
+        try
+        {
+            return content.Headers.ContentLength is not null;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -114,5 +159,6 @@ internal sealed class RetryBody
             $"开启重试或备用端点要求请求体能重发，但当前 data 是{what}："
             + "重发时第二次发送发不出完整正文（只会发出空内容，或直接报「流已被消费」）。"
             + "请改用 byte[] / string / 业务对象 / FormFile，或先把内容读进可 seek 的 MemoryStream / FileStream；"
-            + "HttpContent 形态（尤其 StreamContent）库无法回拨，请换成上述可重放形态。", config);
+            + "HttpContent 形态（尤其 StreamContent / 长度未知的自定义内容）库无法回拨，请换成上述可重放形态；"
+            + "不需要重发时请关掉重试 / 备用端点（流式正文本身没有错）。", config);
 }

@@ -29,6 +29,9 @@ internal static class ReflectionCache
     /// <summary>flags 枚举的「已定义位掩码」（非 flags 枚举缓存 <c>null</c>）。</summary>
     private static readonly ConcurrentDictionary<Type, EnumFlagMask?> FlagMasks = new();
 
+    /// <summary>类型是否实现 <c>IAsyncEnumerable&lt;T&gt;</c>（只用于错误提示）。</summary>
+    private static readonly ConcurrentDictionary<Type, bool> AsyncEnumerableTypes = new();
+
     /// <param name="type">待展平的类型；标注要求裁剪器保留其公开属性（含 getter）。</param>
     public static PropertyInfo[] GetReadableProperties(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
@@ -66,6 +69,41 @@ internal static class ReflectionCache
             var attribute = p.GetCustomAttribute<JsonIgnoreAttribute>();
             return attribute is not null && attribute.Condition == JsonIgnoreCondition.Always;
         });
+
+    /// <summary>
+    /// 类型是否实现了任意 <see cref="IAsyncEnumerable{T}"/>（按类型缓存）。只用于把「异步序列不能当正文」
+    /// 转成可执行的错误提示；<c>GetInterfaces</c> 会分配数组，所以不能在每个结构化请求上重复调用。
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "只用于生成错误提示：传入的是已实例化对象的运行时类型，它的接口实现不可能被裁掉。")]
+    public static bool IsAsyncEnumerable(Type type)
+    {
+        if (AsyncEnumerableTypes.TryGetValue(type, out var cached))
+        {
+            return cached;
+        }
+
+        var implemented = false;
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
+        {
+            implemented = true;
+        }
+        else
+        {
+            foreach (var contract in type.GetInterfaces())
+            {
+                if (contract.IsGenericType && contract.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>))
+                {
+                    implemented = true;
+                    break;
+                }
+            }
+        }
+
+        return AsyncEnumerableTypes.GetOrAdd(type, implemented);
+    }
 
     /// <summary>
     /// flags 枚举的已定义位掩码；非 flags 枚举返回 <c>null</c>。底层类型为 <c>ulong</c> 的枚举按无符号汇总。

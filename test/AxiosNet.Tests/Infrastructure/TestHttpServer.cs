@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -289,6 +290,13 @@ public sealed class TestHttpServer : IAsyncDisposable
         IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
+        // 流式请求体没有长度，按 chunked 框架读完整段（测试规模小，整段收下便于断言）。
+        if (headers.TryGetValue("transfer-encoding", out var transferEncoding)
+            && transferEncoding.Contains("chunked", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ReadChunkedBodyAsync(stream, cancellationToken).ConfigureAwait(false);
+        }
+
         if (!headers.TryGetValue("content-length", out var lengthText)
             || !long.TryParse(lengthText, out var length)
             || length <= 0)
@@ -319,6 +327,96 @@ public sealed class TestHttpServer : IAsyncDisposable
         }
 
         return body;
+    }
+
+    /// <summary>读取 chunked 请求正文：块头（十六进制，可带扩展）→ 块数据 → 块尾 CRLF，直到 0 块与 trailer 结束。</summary>
+    private static async Task<byte[]> ReadChunkedBodyAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        using var body = new MemoryStream();
+
+        while (true)
+        {
+            var sizeLine = await ReadAsciiLineAsync(stream, cancellationToken).ConfigureAwait(false);
+            if (sizeLine is null)
+            {
+                return body.ToArray();
+            }
+
+            var separator = sizeLine.IndexOf(';');
+            var sizeText = (separator >= 0 ? sizeLine[..separator] : sizeLine).Trim();
+            if (!int.TryParse(sizeText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var size) || size < 0)
+            {
+                return body.ToArray();
+            }
+
+            if (size == 0)
+            {
+                // trailer：读到空行为止（常见实现不发 trailer）
+                while (true)
+                {
+                    var trailer = await ReadAsciiLineAsync(stream, cancellationToken).ConfigureAwait(false);
+                    if (trailer is null or { Length: 0 })
+                    {
+                        return body.ToArray();
+                    }
+                }
+            }
+
+            var chunk = new byte[size];
+            var offset = 0;
+            while (offset < size)
+            {
+                var read = await stream.ReadAsync(chunk.AsMemory(offset), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    return body.ToArray();
+                }
+
+                offset += read;
+            }
+
+            body.Write(chunk, 0, size);
+
+            // 块数据后的 CRLF
+            await ReadAsciiLineAsync(stream, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>逐字节读一行 ASCII（到 LF 为止，去掉行尾 CR）；连接关闭返回 <c>null</c>。</summary>
+    private static async Task<string?> ReadAsciiLineAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var bytes = new List<byte>(32);
+        var one = new byte[1];
+
+        while (true)
+        {
+            int read;
+            try
+            {
+                read = await stream.ReadAsync(one, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+            {
+                return null;
+            }
+
+            if (read == 0)
+            {
+                return null;
+            }
+
+            if (one[0] == (byte)'\n')
+            {
+                if (bytes.Count > 0 && bytes[^1] == (byte)'\r')
+                {
+                    bytes.RemoveAt(bytes.Count - 1);
+                }
+
+                return Encoding.ASCII.GetString(bytes.ToArray());
+            }
+
+            bytes.Add(one[0]);
+        }
     }
 
     private static async Task WriteResponseAsync(NetworkStream stream, string requestMethod, TestResponse response)

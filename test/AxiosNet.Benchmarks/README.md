@@ -85,7 +85,8 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 「Debug 就 Debug」是你的选择，但那种数字只能确认跑得通，启动时会有明确提示。
 
 默认作业是 **3 预热 + 8 迭代**（见 [`BenchmarkConfig.cs`](BenchmarkConfig.cs)），
-比 BDN 的 `DefaultJob`（6 + 15）轻一档：45 个基准的完整一轮在本机实测 **8 分 41 秒**（隔离模式）——
+比 BDN 的 `DefaultJob`（6 + 15）轻一档：45 个基准的完整一轮在本机实测 **8 分 41 秒**（隔离模式；
+大正文两组是后加的 36 个用例，单独一轮约十几分钟，按需用 `--filter '*LargeBody*'` 跑）——
 「前后各跑一轮」才落得进日常流程。代价是置信区间更宽，所以判定的第一依据是 `Allocated`（确定性量），
 第二依据是同运行内的比值；要更窄的区间就用作业覆盖：`--job long`。
 
@@ -121,7 +122,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 摘要只**呈现**不判定：没有阈值、没有通过 / 不通过。判定口径仍是下面几节写的那些。
 
 
-## 七组基准
+## 九组基准
 
 | 类 | 热点 | 基线 | 读什么 |
 | --- | --- | --- | --- |
@@ -132,10 +133,13 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `FormEncodingBenchmarks` | 表单展平 + 百分号编码 | `PostForm_FlatAscii` | 倍数 = 「编码成本 / 基础成本」 |
 | `DynamicDeserializationBenchmarks` | `dynamic` 对象图构建 | `Typed` | `Ratio` = 比强类型贵几倍；`Dynamic_Wide` 看每节点成本 |
 | `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` | `Ratio` = 格式差；`Frames` 三档的**斜率** = 每帧成本 |
+| `LargeBodyUploadBenchmarks` | 大正文上传（1 / 8 / 32MB：`byte[]` / `ReadOnlyMemory` / 流 / 异步序列） | `HttpClient_Upload_ByteArray` | `Allocated` 不随 `Megabytes` 涨 = 没有正文拷贝；三种 chunked 形态互相对照 |
+| `LargeBodyDownloadBenchmarks` | 大正文下载（1 / 8 / 32MB：缓冲成 `byte[]` vs 流式读完） | `HttpClient_Download_Buffered` | 缓冲下载 `Allocated` ≈ 1× 载荷（8MB 是预分配边界）；流式下载只有读缓冲 |
 
-两组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline`）与五组纯 CPU 的
-（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming`）
-不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。
+四组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `LargeBodyUpload` / `LargeBodyDownload`）
+与五组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming`）
+不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。大正文两组另有自己的口径：
+`Allocated` 是主轴（确定性量），耗时只用于「同量级 / 谁更快」的判断。
 
 ## 怎么读数字
 
@@ -310,6 +314,42 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 - **分帧**：NDJSON 与 JSON 数组几乎同价（100 帧 1.06×、1000 帧 0.98×，差异都在 `RatioSD` 的量级上），
   SSE 在 1000 帧下慢 14%，但**分配 2.93 倍**（556.88 KB vs 190.13 KB；每帧先攒进 `StringBuilder` 再 `ToString`）
   —— 三处里最值得优化的一处，而只看时间列会漏掉它。
+
+## 大正文组实测（2026-10-29）
+
+同一台机器（Intel Core Ultra 5 125H，Windows 10 22H2，.NET 8.0.31，Release，默认作业、同进程），
+`--filter '*LargeBody*'` 一轮 36 个用例。上传 / 下载各自有独立基线，行内 `Ratio` 只与同组基线比。
+
+**下载**（基线 `HttpClient_Download_Buffered`）：
+
+| 用例（MB） | Mean | Allocated | Ratio |
+| --- | ---: | ---: | ---: |
+| `HttpClient_Download_Buffered`（8） | 16,456.7 µs | 8,195.37 KB | 1.00 |
+| `AxiosNet_Download_Buffered`（8） | 16,358.0 µs | 8,197.08 KB | 1.00 |
+| `HttpClient_Download_Buffered`（32） | 39,603.2 µs | 32,771.30 KB | 1.00 |
+| `AxiosNet_Download_Buffered`（32） | 34,255.0 µs | 32,773.31 KB | 0.88 |
+| `HttpClient_Download_Stream`（32） | 28,146.8 µs | 3.04 KB | 0.72 |
+| `AxiosNet_Download_Stream`（32） | 26,481.4 µs | 5.60 KB | 0.68 |
+
+**上传**（基线 `HttpClient_Upload_ByteArray`；32MB 档）：
+
+| 用例（32MB） | Mean | Allocated | Ratio |
+| --- | ---: | ---: | ---: |
+| `HttpClient_Upload_ByteArray` | 43,855.5 µs | 7.66 KB | 1.00 |
+| `AxiosNet_Upload_ByteArray` | 35,252.6 µs | 27.85 KB | 0.81 |
+| `AxiosNet_Upload_ReadOnlyMemory` | 39,382.3 µs | 9.59 KB | 0.90 |
+| `AxiosNet_Upload_StreamSeekable` | 53,443.4 µs | 9.65 KB | 1.23 |
+| `HttpClient_Upload_StreamChunked` | 32,155.4 µs | 1,108.37 KB | 0.74 |
+| `AxiosNet_Upload_StreamChunked` | 94,746.8 µs | 1,110.25 KB | 2.18 |
+| `AxiosNet_Upload_AsyncEnumerableMemory` | 41,699.0 µs | 2,217.65 KB | 0.96 |
+| `AxiosNet_Upload_AsyncEnumerableBytes` | 28,741.6 µs | 2,216.86 KB | 0.66 |
+
+这组能读出什么：
+
+- **缓冲下载没有额外拷贝**：`Allocated / 载荷` = 1.003（1MB）、1.000（8MB，精确预分配边界）、1.000（32MB，段式装配）——两条路径都是「读满直接交出那个数组」。1MB 档的 1.003 是响应包装对象的固定开销。
+- **上传的 `byte[]` / `ReadOnlyMemory` / 可 seek 流不碰正文**：三档尺寸的 `Allocated` 都在 9.6 KB 量级（内容对象 + 请求 / 响应包装），与载荷大小无关；唯一例外是 32MB 档 `AxiosNet_Upload_ByteArray` 的 27.85 KB——这一轮的一次性池化缓冲，仍不是正文拷贝。
+- **chunked 传输有框架级的按次分配**：每次写出约 3–4 KB（`HttpClient` 侧同样有）。80 KB 缓冲的 `StreamChunked` 在 32MB 上是 1.1 MB（≈3.4%），64 KB 块的 `AsyncEnumerable` 是 2.2 MB（≈6.7%）——按块数乘出来的，块越大越省；它不是库内的正文缓冲。
+- **流式正文的耗时只与流式路径同量级，先后顺序不可当结论**：异步序列少一次「读进 80 KB 缓冲再写出」的搬运，但在 1MB / 8MB 档上这点差异完全埋进噪声。证据是本节数据的一次复跑（`--filter '*AsyncEnumerable*'`，只改测量时机、不改代码）：1MB 的 `AsyncEnumerableBytes` 从 2,450.2 µs 变成 876.9 µs（2.8 倍），8MB 的 `AsyncEnumerableMemory` 从 5,765.2 µs 变成 8,765.5 µs（1.5 倍）——同一份工作量在两轮里相差数倍，说明时间列只能读「同量级」。复跑里稳定的仍是分配：1MB 75.7 KB、8MB 559–560 KB、32MB 2.22 MB，两轮一致。
 
 ## 维护约定
 

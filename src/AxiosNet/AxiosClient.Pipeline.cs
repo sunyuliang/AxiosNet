@@ -239,7 +239,7 @@ public sealed partial class AxiosClient
     /// <summary>
     /// 阶段 5b —— 成型：拼出最终 URL、确定协议协商参数，并做 HTTP/3 的前置校验。
     /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>（不支持就降级是库的契约）；
-    /// 明文 http:// 一律 1.1；强制 1.1 写 Version11，要 h3 写 Version30。
+    /// 明文 http:// 不改写版本，默认策略下由 Handler 落到 1.1；强制 1.1 写 Version11，要 h3 写 Version30。
     /// </summary>
     private static RequestPlan BuildRequestPlan(AxiosConfig config)
     {

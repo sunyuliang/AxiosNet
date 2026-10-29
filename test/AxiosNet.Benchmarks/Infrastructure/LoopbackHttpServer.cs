@@ -19,8 +19,8 @@ namespace AxiosNet.Benchmarks.Infrastructure;
 /// 差异只有一处 —— 这里会按 <c>Content-Length</c> 跳过请求正文，因此能测带正文的请求（POST）。
 /// </para>
 /// <para>
-/// 已知边界：只支持 <c>Content-Length</c> 描述的正文；遇到 <c>Transfer-Encoding: chunked</c> 会在
-/// 控制台报错并断开连接（而不是把正文当成下一个请求解析，静默把数字搞脏）。
+/// 已知边界：正文支持 <c>Content-Length</c> 与 <c>Transfer-Encoding: chunked</c> 两种框架
+/// （后者用于流式上传）；其他传输编码会在控制台报错并断开连接（而不是把正文当成下一个请求解析，静默把数字搞脏）。
 /// </para>
 /// </summary>
 internal sealed class LoopbackHttpServer : IAsyncDisposable
@@ -110,11 +110,18 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
                     }
 
                     var headerLength = headerEnd + 4;
-                    var bodyLength = ParseContentLength(buffer, headerEnd);
+                    var (bodyLength, chunked) = ParseFraming(buffer, headerEnd);
                     var buffered = filled - headerLength;
 
                     int consumed;
-                    if (buffered >= bodyLength)
+                    if (chunked)
+                    {
+                        // 分块正文：按块头逐段丢弃，读到 0 块与结尾空行为止。
+                        // 逐块解析不会读过正文末尾，因此缓冲区里剩余的字节仍是下一个请求（若有）。
+                        consumed = await ConsumeChunkedAsync(stream, buffer, headerLength, filled, _cts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    else if (buffered >= bodyLength)
                     {
                         // 正文已全部在缓冲区里：其后可能是下一个请求（HTTP/1.1 允许流水线）
                         consumed = headerLength + bodyLength;
@@ -171,27 +178,26 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// 从请求头块里取 <c>Content-Length</c>（没有则 0）；<c>chunked</c> 直接拒绝。
+    /// 从请求头块里取正文框架：<c>Content-Length</c>（没有则 0）或 <c>Transfer-Encoding: chunked</c>。
     /// <para>
     /// 纯字节扫描，不 <c>GetString</c> + <c>Split</c>：服务器与客户端在同一个进程里，
-    /// 每请求几百字节的字符串分配会变成被测数字旁边的 GC 压力。这里只找两个字面量
-    /// （<c>content-length:</c> / <c>chunked</c>），足够覆盖基准自己发出的请求。
+    /// 每请求几百字节的字符串分配会变成被测数字旁边的 GC 压力。这里只找三个字面量
+    /// （<c>content-length:</c> / <c>transfer-encoding</c> / <c>chunked</c>），足够覆盖基准自己发出的请求。
     /// </para>
     /// </summary>
-    private static int ParseContentLength(byte[] buffer, int headerEnd)
+    private static (int BodyLength, bool Chunked) ParseFraming(byte[] buffer, int headerEnd)
     {
         var span = buffer.AsSpan(0, headerEnd);
 
         if (IndexOfAscii(span, "transfer-encoding"u8) >= 0 && IndexOfAscii(span, "chunked"u8) >= 0)
         {
-            throw new NotSupportedException(
-                "基准服务器不支持 chunked 请求正文：请让被测请求带 Content-Length（JSON / 表单编码都是）。");
+            return (0, true);
         }
 
         var at = IndexOfAscii(span, "content-length:"u8);
         if (at < 0)
         {
-            return 0;
+            return (0, false);
         }
 
         var index = at + "content-length:"u8.Length;
@@ -209,7 +215,186 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
             digits++;
         }
 
-        return digits > 0 ? value : 0;
+        return (digits > 0 ? value : 0, false);
+    }
+
+    /// <summary>
+    /// 解析并丢弃 chunked 正文，返回「从缓冲区里消费掉的字节数」（含请求头）。
+    /// <para>
+    /// 只在缓冲区耗尽后才直接读流，且每次读的字节数精确等于还缺的字节数（块数据 / CRLF / 块头字节），
+    /// 因此不会越过正文末尾，缓冲区里剩余的字节可以按流水线交给下一个请求。
+    /// </para>
+    /// </summary>
+    private static async Task<int> ConsumeChunkedAsync(
+        NetworkStream stream,
+        byte[] buffer,
+        int start,
+        int filled,
+        CancellationToken cancellationToken)
+    {
+        var position = start;
+
+        while (true)
+        {
+            var (size, next) = await ReadChunkSizeAsync(stream, buffer, position, filled, cancellationToken)
+                .ConfigureAwait(false);
+            position = next;
+            if (size < 0)
+            {
+                throw new IOException("chunked 请求正文的块头非法。");
+            }
+
+            if (size == 0)
+            {
+                // 0 块之后是 trailer（可能为空），读到空行为止。
+                while (true)
+                {
+                    var (trailerLength, trailerNext) =
+                        await ReadChunkSizeAsync(stream, buffer, position, filled, cancellationToken, hex: false)
+                            .ConfigureAwait(false);
+                    position = trailerNext;
+                    if (trailerLength <= 0)
+                    {
+                        break;
+                    }
+                }
+
+                return Math.Min(position, filled);
+            }
+
+            // 块数据 + 结尾 CRLF
+            position = await SkipAsync(stream, buffer, position, filled, (int)size + 2, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// 读一行块头 / trailer。十六进制模式返回块大小（忽略 <c>;</c> 之后的扩展参数），
+    /// 非十六进制模式用于 trailer：返回该行长度（空行返回 0）。
+    /// </summary>
+    private static async ValueTask<(long Value, int Position)> ReadChunkSizeAsync(
+        NetworkStream stream,
+        byte[] buffer,
+        int position,
+        int filled,
+        CancellationToken cancellationToken,
+        bool hex = true)
+    {
+        long value = 0;
+        var digits = 0;
+        var inExtension = false;
+
+        while (true)
+        {
+            var (b, next) = await ReadByteAsync(stream, buffer, position, filled, cancellationToken)
+                .ConfigureAwait(false);
+            if (b < 0)
+            {
+                return (-1, next);
+            }
+
+            position = next;
+
+            if (b == (byte)'\n')
+            {
+                return (hex ? (digits > 0 ? value : -1) : digits, position);
+            }
+
+            if (b == (byte)'\r')
+            {
+                continue;
+            }
+
+            digits++;
+            if (!hex)
+            {
+                continue;
+            }
+
+            if (b == (byte)';')
+            {
+                inExtension = true;
+                continue;
+            }
+
+            if (inExtension)
+            {
+                continue;
+            }
+
+            var nibble = b switch
+            {
+                >= (byte)'0' and <= (byte)'9' => b - '0',
+                >= (byte)'a' and <= (byte)'f' => b - 'a' + 10,
+                >= (byte)'A' and <= (byte)'F' => b - 'A' + 10,
+                _ => -1
+            };
+
+            if (nibble < 0)
+            {
+                return (-1, position);
+            }
+
+            value = (value << 4) | (uint)nibble;
+        }
+    }
+
+    /// <summary>精确丢弃 <paramref name="count"/> 个字节：先吃缓冲区里剩下的，再直接读流。</summary>
+    private static async Task<int> SkipAsync(
+        NetworkStream stream,
+        byte[] buffer,
+        int position,
+        int filled,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        // position 可能已经越过 filled（之前的块数据直接从流里读掉了），此时没有可复用的缓冲字节。
+        var fromBuffer = position < filled ? Math.Min(count, filled - position) : 0;
+        position += fromBuffer;
+
+        var remaining = count - fromBuffer;
+        if (remaining <= 0)
+        {
+            return position;
+        }
+
+        var scratch = new byte[Math.Min(remaining, 4096)];
+        while (remaining > 0)
+        {
+            var read = await stream.ReadAsync(scratch.AsMemory(0, Math.Min(remaining, scratch.Length)), cancellationToken)
+                .ConfigureAwait(false);
+            if (read == 0)
+            {
+                throw new IOException("chunked 请求正文尚未读完连接就关闭了。");
+            }
+
+            remaining -= read;
+        }
+
+        return position + (count - fromBuffer);
+    }
+
+    /// <summary>读一个字节：缓冲区有就从缓冲区取，没有就读流；连接关闭返回 -1。</summary>
+    private static async ValueTask<(int Byte, int Position)> ReadByteAsync(
+        NetworkStream stream,
+        byte[] buffer,
+        int position,
+        int filled,
+        CancellationToken cancellationToken)
+    {
+        if (position < filled)
+        {
+            return (buffer[position], position + 1);
+        }
+
+        var one = new byte[1];
+        var read = await stream.ReadAsync(one, cancellationToken).ConfigureAwait(false);
+        if (read == 0)
+        {
+            return (-1, position);
+        }
+
+        return (one[0], position + 1);
     }
 
     /// <summary>ASCII 大小写不敏感的 <c>IndexOf</c>（头名不区分大小写）。</summary>

@@ -45,6 +45,17 @@ public sealed class StreamRequest : IApiRequest<StreamFrame>
 
 internal static class Payloads
 {
+    /// <summary>大正文用的确定性内容（避免全零被中间层特殊对待，也让内容校验有意义）。</summary>
+    public const byte LargeBodyFill = 0x5A;
+
+    /// <summary>构造指定大小的正文载荷；只在 <c>GlobalSetup</c> 里调用一次，基准方法内不再分配。</summary>
+    public static byte[] Large(int bytes)
+    {
+        var payload = new byte[bytes];
+        Array.Fill(payload, LargeBodyFill);
+        return payload;
+    }
+
     /// <summary>小对象响应：与 <see cref="UserDto"/> 同形。</summary>
     public const string UserJson =
         """{"id":1,"name":"alice","active":true,"tags":["admin","user"],"address":{"city":"Shanghai","zip":"200000"}}""";

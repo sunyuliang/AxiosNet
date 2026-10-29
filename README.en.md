@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1568%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1582%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -27,7 +27,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Group | Sections |
 | --- | --- |
 | Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) |
-| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
+| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
@@ -110,6 +110,7 @@ Four groups of capabilities; details in the linked sections.
 | Query parameters | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
 | Request body | Encoding decided by `ContentType` alone, never guessed | `c.ContentType = AxiosContentType.FormUrlEncoded` |
 | Forms and uploads | Multipart fields + files, or a raw stream | `PostFormAsync(...)` / `FormFile` / `Stream` |
+| Streaming request body | Async sequence produced on the fly, never buffered whole | `data = IAsyncEnumerable<byte[]>` (or `ReadOnlyMemory<byte>` chunks) |
 | Five response types | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
 | Streaming | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
 | Timeouts and cancellation | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
@@ -212,7 +213,7 @@ c.Params = new[] { 1, 2 };            // root collection: [0]=1&[1]=2
 
 **Encoding is decided by `ContentType` alone, never by the runtime type of `data`** (default `application/json`).
 
-| `ContentType` | Object / dictionary / dynamic / collection | Primitives (number / bool / enum / Guid / date…) | `string` / `byte[]` / `Memory<byte>` / `Stream` / `HttpContent` |
+| `ContentType` | Object / dictionary / dynamic / collection | Primitives (number / bool / enum / Guid / date…) | Raw content (`string` / `byte[]` / `Memory<byte>` / `Stream` / `HttpContent` / async byte chunks) |
 | --- | --- | --- | --- |
 | `application/json` (default) | Current serializer emits JSON | Raw text (`42`, `true`, `Paid`) | Sent as-is |
 | `application/x-www-form-urlencoded` | Key-value form (`a[b]=v`, `a[]=v`, nulls skipped) | Ignored (empty body) | Sent as-is |
@@ -270,6 +271,38 @@ await http.PostAsync("upload", multipart);          // passed through with its o
 - Parts are disposed with the request (success / error / cancellation); read into `byte[]` first if you need to reuse them.
 - Field names or filenames containing `"`, `\`, CR/LF or control characters would break `Content-Disposition` and fail before sending.
 - In ASP.NET Core `FormFile` is ambiguous, alias it: `using ClientFile = AxiosNet.FormFile;`.
+
+### Streaming request bodies
+
+The body is produced on the fly and never buffered: pass `IAsyncEnumerable<byte[]>` or `IAsyncEnumerable<ReadOnlyMemory<byte>>` as `data`.
+
+```csharp
+// Yield chunks as they are produced (here from a stream; DB cursors, compression pipes, log exports alike)
+static async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadChunks(
+    Stream source, [EnumeratorCancellation] CancellationToken token = default)
+{
+    var buffer = new byte[64 * 1024];
+    int read;
+    while ((read = await source.ReadAsync(buffer, token)) > 0)
+    {
+        yield return buffer.AsMemory(0, read);
+    }
+}
+
+await using var file = File.OpenRead(@"D:\data\export.csv");
+await http.PostAsync<UploadResult>("ingest", ReadChunks(file), c =>
+{
+    c.ContentType = "text/csv";          // like any raw content: only Content-Type is applied
+});
+```
+
+- **Unknown length**: nothing is pre-read and no total is computed; the transport uses `Transfer-Encoding: chunked` (HTTP/1.1; under the default policy plain `http://` falls back to 1.1) or HTTP/2 DATA frames. Consequently `Limits.MaxBodyLength` cannot stop it — that cap only applies to bodies with a computable length.
+- **Single use**: the sequence cannot be rewound, so enabling retries or backup endpoints throws `ERR_BAD_OPTION_VALUE` **before sending** (turn them off when you do not need resends). Concurrent hedging does not throw: it only kicks in when the body can be replayed concurrently (in-memory buffers), so a streaming body is simply sent once. For replayable bodies use `byte[]` or a seekable stream.
+- **Chunk size is yours**: each chunk is written as-is, never split or merged; 64–256 KB is the usual sweet spot, and tiny chunks amplify the chunked-framing overhead.
+- **Byte chunks only**: an `IAsyncEnumerable<T>` (say `IAsyncEnumerable<Order>`) is not a body and fails with `ERR_BAD_OPTION_VALUE` plus guidance; write JSON arrays to a `Stream` or `byte[]` first.
+- **Cancellation**: the request token reaches your iterator (accept it via `[EnumeratorCancellation]`), and cancellation stops the enumeration.
+- **307 / 308 redirects**: redirects are followed by default, and those status codes resend the body — the library re-enumerates the sequence, so the producer must be restartable (the iterator is opened again, or a custom implementation returns a new enumerator each time). For one-shot sources (say relaying an already-consumed network stream) set `Connection.MaxRedirects = 0` on the client options (equivalent to `PoolOptions.AllowAutoRedirect = false` when the pool is built).
+- **`PipeReader`**: net6 / net8 base frameworks do not ship `System.IO.Pipelines`, and the library does not take a dependency for it; wrap it with `pipe.Reader.AsStream()` and pass the `Stream` (same chunk-by-chunk path as a non-seekable stream).
 
 ### Response types and downloads
 
@@ -389,7 +422,7 @@ await http.PostAsync("upload", payload, c =>
 - `MaxContentLength`: plain responses are counted while reading and aborted on overflow; `ResponseType.Stream` pre-checks the declared length and keeps counting while reading.
 - `MaxContentLength` defaults to `null` (unlimited, matching axios's `maxContentLength = -1`) and the library emits no warning or log about it: a buffered response (anything other than `ResponseType.Stream`) holds the whole body in memory, so set an explicit cap in production for untrusted or unknown-size downstreams.
 - `Content-Length` is a hint, never a cut-off: when the declared value is shorter than the real body (rewritten by a proxy, a custom `HttpContent`, or a handler that does not truncate), the body is still read to the end — no tail loss and no bypass of `MaxContentLength`.
-- `MaxBodyLength` only applies when the body length is computable (JSON / form / `byte[]` / seekable stream); multipart is not intercepted.
+- `MaxBodyLength` only applies when the body length is computable (JSON / form / `byte[]` / seekable stream); multipart and unknown-length bodies (non-seekable streams, `IAsyncEnumerable`) are not intercepted.
 - Negative values throw `ERR_BAD_OPTION_VALUE`; `MaxRate = 0` means unlimited.
 - `MaxRate` timing starts at the **first transferred byte**: the gap between receiving the response and starting to read (thread pool queueing, doing other work first) is not treated as spent budget, so reading later never loosens the cap.
 
@@ -628,7 +661,7 @@ Other members: `Delay` / `BackoffFactor` / `MaxDelay` / `Jitter` (`true` by defa
 
 - `Timeout` is **per attempt** (3 retries × 10s = 40s worst case); use `TotalTimeout` for a whole-request upper bound (or a `CancellationToken` from the caller).
 - Interceptors, `transformRequest` and body serialization run once; response interceptors see the final result.
-- The body must be replayable: seekable streams are rewound before each attempt; non-seekable streams and `StreamContent` (including multipart parts) throw `ERR_BAD_OPTION_VALUE` as soon as retries are enabled.
+- The body must be replayable: seekable streams are rewound before each attempt; non-seekable streams, `StreamContent` (including multipart parts) and streaming bodies (`IAsyncEnumerable`) throw `ERR_BAD_OPTION_VALUE` as soon as retries or backup endpoints are enabled. Custom `HttpContent` with an unknown length is rejected too (`JsonContent` is exempt: it re-serializes from its value on every send).
 - Custom policies: implement `IAxiosRetryPolicy` (`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`); `ctx` exposes `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`. Policies are shared by concurrent requests on the same instance, so they must be thread-safe (stateless is easiest; implementations with shared state, like the built-in `RetryBudgetPolicy`, synchronize themselves).
 
 ### Global retry budget (`RetryBudgetPolicy`)
@@ -1285,7 +1318,7 @@ Nine sub-objects (created lazily on first access):
 | — (needs cockatiel or similar) | `c.Hedging.MaxHedges` (concurrent hedging), `c.Failover.Endpoints` (backup endpoints) |
 | — (needs the OTel JS SDK) | Built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
 | — (axios-cache-interceptor and friends) | `c.ShortCircuit` (cache hit / mock / offline replay) |
-| — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` |
+| — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout`, `IAsyncEnumerable` streaming request bodies |
 
 Intentional differences from axios:
 
@@ -1357,9 +1390,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1509 | `net8.0` / `net6.0` | 3018 |
+| `AxiosNet.Tests` (core + declarative) | 1523 | `net8.0` / `net6.0` | 3046 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1568** | | **3136** |
+| **Total** | **1582** | | **3164** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
@@ -1419,6 +1452,8 @@ By default it runs **in-process** (no temp project, no rebuild). Add `--isolated
 | `FormEncodingBenchmarks` | Form flattening + percent-encoding | `PostForm_FlatAscii` |
 | `DynamicDeserializationBenchmarks` | `dynamic` deserialization | `Typed` |
 | `StreamingFramingBenchmarks` | Streaming framing (NDJSON / SSE / JSON array) | `Ndjson` |
+| `LargeBodyUploadBenchmarks` | Large uploads (1 / 8 / 32MB: `byte[]` / `ReadOnlyMemory` / stream / async sequence, real loopback socket) | `HttpClient_Upload_ByteArray` |
+| `LargeBodyDownloadBenchmarks` | Large downloads (1 / 8 / 32MB: buffered `byte[]` vs streamed) | `HttpClient_Download_Buffered` |
 
 Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
 

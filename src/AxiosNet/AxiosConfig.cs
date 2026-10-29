@@ -211,7 +211,8 @@ public sealed partial class AxiosConfig
     private object? _data;
 
     /// <summary>
-    /// 对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码；string / byte[] / Stream / HttpContent 原样发送。
+    /// 对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码；string / byte[] / Stream / HttpContent 原样发送，
+    /// <c>IAsyncEnumerable&lt;byte[]&gt;</c> / <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c> 按块流式发送（长度未知）。
     /// 合并按「是否赋值过」区分：不碰 = 继承实例默认值，显式赋 <c>null</c> = 摘掉实例默认值（发空正文）。
     /// </summary>
     public object? Data

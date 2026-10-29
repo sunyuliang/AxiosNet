@@ -15,11 +15,11 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 内容序列化器，优先级最高：高于 <see cref="AxiosContent.Serializer"/> 与按媒体类型的自动匹配；null 表示不覆盖。
-        /// 只有业务对象经过它，string / byte[] / Stream / HttpContent 请求体原样发送。
+        /// 只有业务对象经过它，string / byte[] / Stream / HttpContent / <c>IAsyncEnumerable</c> 字节块请求体原样发送。
         /// </summary>
         public IContentSerializer? ContentSerializer { get; set; }
 
-        /// <summary>请求体文本编码（string / 对象 / 表单），null 时使用 UTF-8；byte[] / Stream 原样透传。</summary>
+        /// <summary>请求体文本编码（string / 对象 / 表单），null 时使用 UTF-8；byte[] / Stream / <c>IAsyncEnumerable</c> 字节块原样透传。</summary>
         public Encoding? RequestEncoding { get; set; }
 
         /// <summary>响应体文本编码，null 时自动识别（Content-Type charset → BOM → UTF-8）；设置后强制按指定编码解码。</summary>

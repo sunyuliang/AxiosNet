@@ -7,6 +7,7 @@ namespace AxiosNet.Internal;
 /// 未显式设置时采用生效序列化器自报的 <see cref="IContentSerializer.MediaType"/>。
 /// <list type="bullet">
 /// <item>string / byte[] / Memory / ArraySegment / Stream / HttpContent：原样发送，只应用 Content-Type。</item>
+/// <item>IAsyncEnumerable&lt;byte[]&gt; / IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;：按块流式发送，长度未知。</item>
 /// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，不经过序列化器。</item>
 /// <item>结构化数据：json → 序列化器；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
 /// </list>
@@ -63,7 +64,7 @@ internal static class RequestBodyFactory
         {
             throw AxiosException.InvalidOption(
                 "Content-Type 为 multipart/form-data 时，data 不能是原始内容"
-                + "（string / byte[] / Memory / Stream）：请传入对象或字典由库组装 multipart 字段，"
+                + "（string / byte[] / Memory / Stream / IAsyncEnumerable）：请传入对象或字典由库组装 multipart 字段，"
                 + "或用 HttpContent（如 MultipartFormDataContent）承载预序列化的 multipart 正文。", config);
         }
 
@@ -110,9 +111,34 @@ internal static class RequestBodyFactory
                 var streamContent = new StreamContent(stream);
                 RequestContentType.Set(streamContent, mediaType, config);
                 return streamContent;
+
+            // 流式正文：按块写出、不缓冲；长度未知，传输层走 chunked / DATA 帧。
+            case IAsyncEnumerable<byte[]> chunks:
+                return CreateStreaming(AsyncEnumerableBodyContent.FromByteChunks(chunks), mediaType, config);
+
+            case IAsyncEnumerable<ReadOnlyMemory<byte>> chunks:
+                return CreateStreaming(AsyncEnumerableBodyContent.FromMemoryChunks(chunks), mediaType, config);
+        }
+
+        // 其余 IAsyncEnumerable<T> 不能当正文：既不是字节块，也不是可序列化的集合。
+        // 在这里拦下并给出可执行的指引，而不是让序列化器抛「请使用异步序列化方法」。
+        if (ReflectionCache.IsAsyncEnumerable(data.GetType()))
+        {
+            throw AxiosException.InvalidOption(
+                $"data 是 {data.GetType().Name}（IAsyncEnumerable），但请求体只支持按字节块流式发送："
+                + "请改用 IAsyncEnumerable<byte[]> / IAsyncEnumerable<ReadOnlyMemory<byte>>。"
+                + "要发送 JSON 数组或文本流，请先把内容写成 Stream 再传入；"
+                + "PipeReader 请用 pipe.Reader.AsStream() 包装后按 Stream 传入。", config);
         }
 
         return CreateStructured(data, config, mediaType, encoding, appendCharset);
+    }
+
+    /// <summary>流式正文只应用 Content-Type；长度与编码由内容自身决定。</summary>
+    private static HttpContent CreateStreaming(HttpContent content, string mediaType, AxiosConfig config)
+    {
+        RequestContentType.Set(content, mediaType, config);
+        return content;
     }
 
     private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
@@ -208,7 +234,14 @@ internal static class RequestBodyFactory
 
     /// <summary>「内容原样发送」的类型：不经过任何展平 / 序列化。</summary>
     private static bool IsRawContent(object data)
-        => data is string or byte[] or ReadOnlyMemory<byte> or Memory<byte> or ArraySegment<byte> or Stream;
+        => data is string
+            or byte[]
+            or ReadOnlyMemory<byte>
+            or Memory<byte>
+            or ArraySegment<byte>
+            or Stream
+            or IAsyncEnumerable<byte[]>
+            or IAsyncEnumerable<ReadOnlyMemory<byte>>;
 
     /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string 与结构化数据）。</summary>
     private static bool EncodesText(object data)
@@ -218,5 +251,7 @@ internal static class RequestBodyFactory
                 && data is not ReadOnlyMemory<byte>
                 && data is not Memory<byte>
                 && data is not ArraySegment<byte>
-                && data is not Stream);
+                && data is not Stream
+                && data is not IAsyncEnumerable<byte[]>
+                && data is not IAsyncEnumerable<ReadOnlyMemory<byte>>);
 }
