@@ -70,6 +70,45 @@ public sealed class ResponseParsingTests
     }
 
     [Fact]
+    public async Task NonAsciiWhitespaceOnlyBody_Scalar_IsTreatedAsEmpty()
+    {
+        // 标量分支同样在解析失败后补解码判空：NBSP 不能变成「无法转换」的坏响应。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("\u00a0"), ContentType: "application/json; charset=utf-8"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<int?>(server.Url + "nbsp");
+
+        Assert.Null(response.Data);
+    }
+
+    [Fact]
+    public async Task NonAsciiWhitespaceOnlyBody_UriTarget_IsTreatedAsEmpty()
+    {
+        // Uri.TryCreate 能把空串解析成空相对 URI：判空必须在 TryParse 之前，不能落到「解析成功」。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("\u00a0"), ContentType: "application/json; charset=utf-8"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Uri>(server.Url + "nbsp");
+
+        Assert.Null(response.Data);
+    }
+
+    [Fact]
+    public async Task NonAsciiWhitespaceOnlyBody_Dynamic_IsTreatedAsEmpty()
+    {
+        // dynamic 由框架直接解析字节，失败后才解码判空。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("\u00a0"), ContentType: "application/json; charset=utf-8"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<dynamic>(server.Url + "nbsp");
+
+        Assert.Null((object?)response.Data);
+    }
+
+    [Fact]
     public async Task TextResponseType_KeepsWhitespaceVerbatim()
     {
         // 空白判定只作用于按 JSON 解析的分支。
@@ -157,6 +196,53 @@ public sealed class ResponseParsingTests
     }
 
     [Fact]
+    public async Task TypedJson_WithUtf16Bom_NoCharset_StillDeserializes()
+    {
+        // 未声明 charset 时靠 BOM 探测：UTF-16 BOM 的正文不能按 UTF-8 字节直读。
+        var body = Encoding.Unicode.GetPreamble()
+            .Concat(Encoding.Unicode.GetBytes("""{"name":"wide","age":5}"""))
+            .ToArray();
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Person>(server.Url + "bom");
+
+        Assert.Equal(new Person("wide", 5), response.Data);
+    }
+
+    [Fact]
+    public async Task JsonDocument_WithUtf16Bom_NoCharset_IsParsed()
+    {
+        // 非泛型请求同样要走 BOM 探测：否则首字节 0xFF 会被当成「非 JSON」原样返回文本。
+        var body = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("""{"a":1}""")).ToArray();
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        var element = Assert.IsType<JsonElement>(response.Data);
+        Assert.Equal(1, element.GetProperty("a").GetInt32());
+    }
+
+    [Fact]
+    public async Task Dynamic_WithUtf16Bom_NoCharset_IsParsed()
+    {
+        var body = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("""{"a":1}""")).ToArray();
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: body, ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        dynamic data = (await client.GetAsync<dynamic>(server.Url)).Data!;
+
+        Assert.Equal(1L, (long)data.a);
+    }
+
+    [Fact]
     public async Task TypedJson_WithNonUtf8Charset_StillDeserializes()
     {
         // 非 UTF-8 编码必须回退解码路径，否则 UTF-16 字节会被当成 UTF-8 直读。
@@ -169,6 +255,67 @@ public sealed class ResponseParsingTests
         var response = await client.GetAsync<Person>(server.Url + "utf16");
 
         Assert.Equal(new Person("宽字符", 42), response.Data);
+    }
+
+    /// <summary>非法 UTF-8 的 JSON 正文：字节路径被严格校验拒绝后按解码文本重试（非法字节换成 U+FFFD）。</summary>
+    private static byte[] InvalidUtf8Json()
+        =>
+        [
+            .. Encoding.UTF8.GetBytes("{\"name\":\"a"),
+            0xFF,
+            .. Encoding.UTF8.GetBytes("\",\"age\":5}")
+        ];
+
+    [Fact]
+    public async Task TypedJson_InvalidUtf8_StillDeserializesViaDecodedText()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: InvalidUtf8Json(), ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Person>(server.Url + "invalid");
+
+        Assert.Equal(new Person("a\uFFFD", 5), response.Data);
+    }
+
+    [Fact]
+    public async Task JsonDocument_InvalidUtf8_IsParsedFromDecodedText()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: InvalidUtf8Json(), ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        var element = Assert.IsType<JsonElement>(response.Data);
+        Assert.Equal("a\uFFFD", element.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task Dynamic_InvalidUtf8_IsParsedFromDecodedText()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: InvalidUtf8Json(), ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        dynamic data = (await client.GetAsync<dynamic>(server.Url)).Data!;
+
+        Assert.Equal("a\uFFFD", (string)data.name);
+    }
+
+    [Fact]
+    public async Task TypedDictionary_InvalidUtf8_ValuesAreParsedFromDecodedText()
+    {
+        // 字典里的 object 值按 JsonElement 惰性保存：字节路径不会当场失败，坏字节会留到调用方 GetString() 时才炸。
+        // 所以非法 UTF-8 必须整体回退文本入口，不能只靠「字节入口抛错再重试」。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: InvalidUtf8Json(), ContentType: "application/json"));
+
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync<Dictionary<string, object?>>(server.Url + "invalid");
+
+        var element = Assert.IsType<JsonElement>(response.Data!["name"]);
+        Assert.Equal("a\uFFFD", element.GetString());
     }
 
     [Fact]
@@ -348,6 +495,20 @@ public sealed class ResponseParsingTests
     }
 
     [Fact]
+    public async Task Scalar_UnparseableBody_OnErrorStatus_KeepsStatusError()
+    {
+        // 标量解析失败在 lenient 下同样回退原文，不把正文问题提升成错误码。
+        await using var server = TestHttpServer.Start(
+            _ => new TestResponse(StatusCode: 500, Body: Encoding.UTF8.GetBytes("oops"), ContentType: "application/json"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<DateTime>(server.Url));
+
+        Assert.Contains("status code 500", ex.Message);
+        Assert.Equal("oops", ex.Response!.Data);
+    }
+
+    [Fact]
     public async Task GetAsync_OfInt_BareNumberText_IsParsed()
     {
         await using var server = TestHttpServer.Start(_ =>
@@ -420,6 +581,49 @@ public sealed class ResponseParsingTests
     // ---------------------------------------------------------------
     // 响应解码
     // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task JsonDocument_NonUtf8Charset_IsDecodedThenParsed()
+    {
+        // 声明了非 UTF-8 编码时不能按 UTF-8 字节解析：先按 charset 解码，再交给 JsonDocument。
+        var body = Encoding.Unicode.GetBytes("{\"a\":1}");
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: body, ContentType: "application/json; charset=utf-16"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        var element = Assert.IsType<JsonElement>(response.Data);
+        Assert.Equal(1, element.GetProperty("a").GetInt32());
+    }
+
+    [Fact]
+    public async Task NonJsonText_NonUtf8Charset_IsReturnedVerbatim()
+    {
+        // 非 UTF-8 文本走解码路径：闸口按解码后的首字符判断，非 JSON 原文原样返回。
+        const string html = "<html>你好</html>";
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.Unicode.GetBytes(html), ContentType: "text/html; charset=utf-16"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        Assert.Equal(html, response.Data);
+    }
+
+    [Fact]
+    public async Task BrokenJsonText_NonUtf8Charset_IsReturnedVerbatim()
+    {
+        // 闸口放行但解析失败：与 UTF-8 路径一致，原样返回文本。
+        const string broken = "{\"a\":";
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(Body: Encoding.Latin1.GetBytes(broken), ContentType: "application/json; charset=iso-8859-1"));
+        using var client = new AxiosClient();
+
+        var response = await client.GetAsync(server.Url);
+
+        Assert.Equal(broken, response.Data);
+    }
 
     [Fact]
     public async Task ResponseCharset_Utf16WithoutBom_IsDecoded()

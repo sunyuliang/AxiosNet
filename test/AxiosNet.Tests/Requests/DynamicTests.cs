@@ -413,6 +413,21 @@ public sealed class DynamicTests
     }
 
     [Fact]
+    public async Task Dynamic_NonJsonBody_OnErrorStatus_ExposesRawTextInResponse()
+    {
+        // 错误状态走 lenient：正文解析失败不得盖住 HTTP 状态错误，原文仍挂在 Response.Data 上。
+        const string html = "<html>boom</html>";
+        await using var server = TestHttpServer.Start(_ =>
+            new TestResponse(StatusCode: 500, Body: Encoding.UTF8.GetBytes(html), ContentType: "text/html"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<dynamic>(server.Url));
+
+        Assert.Equal(500, ex.Response!.Status);
+        Assert.Equal(html, ex.Response.Data);
+    }
+
+    [Fact]
     public async Task GetAsync_OfDynamic_ExplicitTextResponseType_IsRespected()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("""{"ok":true}"""), ContentType: "text/plain"));

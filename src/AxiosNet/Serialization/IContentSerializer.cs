@@ -39,13 +39,17 @@ public interface IContentSerializer
     ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
 
     /// <summary>
-    /// 把该格式的文本反序列化为业务对象，返回值原样进入 <c>Response.Data</c>；只有业务对象且响应为文本时才会被调用。
+    /// 把该格式的文本反序列化为业务对象，返回值原样进入 <c>Response.Data</c>；
+    /// 正文按声明字符集解码后调用（非 UTF-8 的文本响应，或经 <see cref="Deserialize(ReadOnlyMemory{byte}, Type, AxiosConfig)"/> 的默认实现转调）。
     /// 需要响应头时读 <see cref="AxiosConfig.Response"/>。
     /// </summary>
     object? Deserialize(string text, Type type, AxiosConfig config);
 
     /// <summary>
-    /// 把该格式的<b>字节</b>反序列化为业务对象（二进制格式的入口），不做文本解码。
+    /// 把该格式的<b>字节</b>反序列化为业务对象，不做文本解码。
+    /// 响应正文里的业务对象都从本入口进入：二进制正文原样交给序列化器，合法 UTF-8 的文本也直接按字节解析（省掉 UTF-16 中转）。
+    /// 正文不是合法 UTF-8 时库改调 <see cref="Deserialize(string, Type, AxiosConfig)"/>（坏字节已替换为 U+FFFD），
+    /// 与「先解码再解析」的旧路径一致，因此本入口不必处理非法 UTF-8。
     /// 默认实现按响应字符集解码后转调文本入口，文本格式的序列化器无需实现本方法。
     /// </summary>
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)

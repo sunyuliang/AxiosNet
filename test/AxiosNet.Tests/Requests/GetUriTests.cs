@@ -1,4 +1,5 @@
 ﻿
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -130,6 +131,34 @@ public sealed class GetUriTests
         });
 
         Assert.Equal("https://api.example.com/v1/users?page=2&ids[]=1&ids[]=2", uri);
+    }
+
+    [Fact]
+    public void RepeatedIdenticalUri_IsReused_AndCacheStaysBounded()
+    {
+        // 相同 URL 复用同一个已校验的 Uri 实例（每次请求不再 new Uri）。
+        // 并行用例的高基数冲洗可能刚好清空缓存，重试几次取一次命中，不把并发调度当失败。
+        var reused = false;
+        for (var i = 0; i < 8 && !reused; i++)
+        {
+            var first = UrlBuilder.Build("https://api.example.com", "/items", null);
+            reused = ReferenceEquals(first, UrlBuilder.Build("https://api.example.com", "/items", null));
+        }
+
+        Assert.True(reused, "相同 URL 连续两次构建没有复用同一个 Uri 实例——缓存没有生效。");
+
+        // 高基数 URL（REST 路径带 ID）不能让缓存无限增长：上限 256，超了整表清空。
+        for (var i = 0; i < 600; i++)
+        {
+            UrlBuilder.Build("https://api.example.com", "/items/" + i.ToString(CultureInfo.InvariantCulture), null);
+        }
+
+        var cache = (System.Collections.IDictionary)typeof(UrlBuilder)
+            .GetField("UriCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .GetValue(null)!;
+
+        // 并发用例可能同时写入、冲到软上限附近，留一档余量即可证明没有无限增长。
+        Assert.True(cache.Count <= 512, $"URI 缓存已增长到 {cache.Count} 条——应在上限处整表清空。");
     }
 
     [Fact]

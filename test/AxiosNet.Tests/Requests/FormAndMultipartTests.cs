@@ -1,4 +1,5 @@
 ﻿
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -446,6 +447,111 @@ public sealed class FormAndMultipartTests
 
         // 键名与值都按字节流编码：UTF-16 下每个字符都带一个 0x00 字节
         Assert.Equal("v%00=a%00+%00b%00", Body(server.Received[0]));
+    }
+
+    [Fact]
+    public async Task FormUrlEncoded_Utf8_SpecialCharacters_FollowEscapeDataStringRules()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+
+        // 保留字符逐字节转义、空格转 '+'、~ 不转义（RFC 3986 unreserved）。
+        await client.PostAsync(
+            server.Url + "up",
+            new { v = "a+b c&d=e/f" },
+            c => c.ContentType = "application/x-www-form-urlencoded");
+        Assert.Equal("v=a%2Bb+c%26d%3De%2Ff", Body(server.Received[0]));
+
+        await client.PostAsync(
+            server.Url + "up",
+            new { v = "!*()'~" },
+            c => c.ContentType = "application/x-www-form-urlencoded");
+        Assert.Equal("v=%21%2A%28%29%27~", Body(server.Received[1]));
+
+        // 键名里的方括号保留（axios 口径）。
+        await client.PostAsync(
+            server.Url + "up",
+            new { k = new { inner = 1 } },
+            c => c.ContentType = "application/x-www-form-urlencoded");
+        Assert.Equal("k[inner]=1", Body(server.Received[2]));
+    }
+
+    [Fact]
+    public void FormUrlEncoded_Utf8_MatchesEscapeDataString_ForEveryAsciiAndUnicodeSample()
+    {
+        // 新单趟编码器与旧实现（EscapeDataString + 空格替换）逐字符对拍：全部 ASCII 可打印字符 + 典型样本。
+        var mismatches = new List<string>();
+
+        void Check(string value)
+        {
+            var actual = EncodeForm(new { v = value }, Encoding.UTF8);
+            var expected = "v=" + Uri.EscapeDataString(value).Replace("%20", "+");
+            if (actual != expected)
+            {
+                mismatches.Add($"'{value}': '{actual}' vs '{expected}'");
+            }
+        }
+
+        for (var c = ' '; c <= '~'; c++)
+        {
+            Check(c.ToString());
+        }
+
+        foreach (var sample in new[] { "", " ", "  ", "+", "a+b c", "你好", "😀", "\u00a0", "\u201c", "%25", "[]", "a[b]", "\t\r\n", "~!*'()" })
+        {
+            Check(sample);
+        }
+
+        Assert.Empty(mismatches);
+    }
+
+    [Fact]
+    public void FormUrlEncoded_NonUtf8_MatchesLegacyByteWiseEncoding()
+    {
+        // 非 UTF-8 编码逐字节转义：与旧的「GetBytes 再逐字节判断」实现一致（键名保留方括号）。
+        foreach (var encoding in new[] { Encoding.Latin1, Encoding.Unicode, Encoding.BigEndianUnicode, Encoding.ASCII })
+        {
+            foreach (var value in new[] { "", "a b", "café", "你好", "~!*'()[]", "😀" })
+            {
+                var expected = LegacyFormKey(encoding) + "=" + LegacyFormValue(value, encoding);
+
+                Assert.Equal(expected, EncodeForm(new { v = value }, encoding));
+            }
+        }
+    }
+
+    /// <summary>旧实现：键名编码后再把方括号换回字面量。</summary>
+    private static string LegacyFormKey(Encoding encoding) => LegacyFormValue("v", encoding).Replace("%5B", "[").Replace("%5D", "]");
+
+    private static string LegacyFormValue(string value, Encoding encoding)
+    {
+        var builder = new StringBuilder();
+        foreach (var b in encoding.GetBytes(value))
+        {
+            if (b == (byte)' ')
+            {
+                builder.Append('+');
+            }
+            else if ((b >= (byte)'A' && b <= (byte)'Z')
+                || (b >= (byte)'a' && b <= (byte)'z')
+                || (b >= (byte)'0' && b <= (byte)'9')
+                || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~')
+            {
+                builder.Append((char)b);
+            }
+            else
+            {
+                builder.Append('%').Append((b >> 4).ToString("X")).Append((b & 0xF).ToString("X"));
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string EncodeForm(object data, Encoding encoding)
+    {
+        using var content = FormBodyEncoder.Create(data, new AxiosConfig(), "application/x-www-form-urlencoded", encoding, appendCharset: false);
+        return content.ReadAsStringAsync().GetAwaiter().GetResult();
     }
 
     private sealed class FormWithIgnoredMember

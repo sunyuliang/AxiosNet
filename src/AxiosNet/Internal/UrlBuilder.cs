@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
@@ -31,11 +32,6 @@ internal static class UrlBuilder
 
         var combined = Combine(baseAddress, url);
 
-        // 查询串必须拼在 fragment 之前，否则会落进 fragment 发不到服务端。
-        var hashIndex = combined.IndexOf('#');
-        var fragment = hashIndex >= 0 ? combined[hashIndex..] : string.Empty;
-        var target = hashIndex >= 0 ? combined[..hashIndex] : combined;
-
         // 自定义序列化器返回的串允许带前导 ?/&，这里统一去掉；回调异常统一成 ERR_BAD_OPTION_VALUE。
         string query;
         try
@@ -48,41 +44,71 @@ internal static class UrlBuilder
         {
             throw AxiosException.InvalidOption($"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
         }
-        if (query.Length > 0)
+
+        // 查询串必须拼在 fragment 之前，否则会落进 fragment 发不到服务端；一次成串，不做切片后再拼接。
+        var hashIndex = combined.IndexOf('#');
+        var target = hashIndex >= 0 ? combined.AsSpan(0, hashIndex) : combined.AsSpan();
+        var fragment = hashIndex >= 0 ? combined.AsSpan(hashIndex) : ReadOnlySpan<char>.Empty;
+
+        string pathAndQuery;
+        if (query.Length == 0)
+        {
+            pathAndQuery = combined;
+        }
+        else if (target.Length == 0)
+        {
+            pathAndQuery = string.Concat(query, fragment);
+        }
+        else if (target[^1] is '?' or '&')
         {
             // url 已以 ? / & 结尾时不能再补分隔符，否则会多出一个空参数。
-            if (target.Length == 0)
-            {
-                target = query;
-            }
-            else if (target[^1] is '?' or '&')
-            {
-                target += query;
-            }
-            else
-            {
-                target = string.Concat(target, target.Contains('?') ? "&" : "?", query);
-            }
+            pathAndQuery = string.Concat(target, query, fragment);
+        }
+        else
+        {
+            pathAndQuery = target.Contains('?')
+                ? string.Concat(target, "&", query, fragment)
+                : string.Concat(target, "?", query, fragment);
         }
 
-        combined = fragment.Length > 0 ? target + fragment : target;
+        if (UriCache.TryGetValue(pathAndQuery, out var cached))
+        {
+            return cached;
+        }
 
         try
         {
-            var uri = new Uri(combined, UriKind.RelativeOrAbsolute);
+            var uri = new Uri(pathAndQuery, UriKind.RelativeOrAbsolute);
 
             // 必须使用 http/https 绝对地址；IsFile 拦下 Unix 下被解析成 file:/// 的根相对路径。
             if (!uri.IsAbsoluteUri || uri.IsFile || !IsHttpScheme(uri))
             {
-                throw AxiosException.InvalidUrl(combined, config);
+                throw AxiosException.InvalidUrl(pathAndQuery, config);
             }
 
+            CacheUri(pathAndQuery, uri);
             return uri;
         }
         catch (UriFormatException ex)
         {
-            throw AxiosException.InvalidUrl(combined, config, ex);
+            throw AxiosException.InvalidUrl(pathAndQuery, config, ex);
         }
+    }
+
+    /// <summary>解析结果缓存上限：满了整表清空，URL 集合频繁变化时不会无限增长。</summary>
+    private const int UriCacheLimit = 256;
+
+    /// <summary>已校验过的绝对地址缓存（<see cref="Uri"/> 不可变，可安全共享）。</summary>
+    private static readonly ConcurrentDictionary<string, Uri> UriCache = new(StringComparer.Ordinal);
+
+    private static void CacheUri(string key, Uri uri)
+    {
+        if (UriCache.Count >= UriCacheLimit)
+        {
+            UriCache.Clear();
+        }
+
+        UriCache.TryAdd(key, uri);
     }
 
     /// <summary>对应 axios isAbsoluteURL + combineURLs。</summary>
@@ -107,7 +133,7 @@ internal static class UrlBuilder
             return url;
         }
 
-        return baseAddress.TrimEnd('/') + "/" + url.TrimStart('/');
+        return string.Concat(baseAddress.AsSpan().TrimEnd('/'), "/", url.AsSpan().TrimStart('/'));
     }
 
     /// <summary>是否为绝对地址（形如 <c>scheme://</c>）：要求 <c>scheme</c> 后紧跟 <c>//</c>，避免把「主机:端口」误判。</summary>

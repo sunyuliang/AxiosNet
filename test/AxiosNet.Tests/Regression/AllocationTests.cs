@@ -1,8 +1,13 @@
 ﻿
+using AxiosNet.Internal;
+using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
+using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Internal;
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
+using System.Text;
 
 namespace AxiosNet.Tests.Regression;
 
@@ -172,6 +177,73 @@ public sealed class AllocationTests
             + "——超出 1.5× 护栏：要么预分配路径变成了「预分配 + 重新装配」，要么段式累积退回了 MemoryStream 倍增。");
     }
 
+    [Fact]
+    public void JsonTextResponse_DoesNotDecodeWholeBodyBeforeSerialization()
+    {
+        // 1 MB 的 JSON 文本正文 + 只记录入口的序列化器：正文不该先解码成整串 UTF-16（2 倍体量），
+        // 再由 STJ 转码回 UTF-8——业务对象直接走字节入口。
+        var body = new byte[1024 * 1024];
+        Array.Fill(body, (byte)'a');
+
+        var serializer = new EntryOnlySerializer();
+        var config = new AxiosConfig();
+        config.Serialization.ContentSerializer = serializer;
+
+        object? Convert()
+            => ResponseReader.ConvertBody(config, null, typeof(JsonItem), body, AxiosContentType.Json, "utf-8", lenient: false, out _);
+
+        var average = AverageBytes(50, () => Convert());
+
+        Assert.Equal(0, serializer.TextCalls);
+        Assert.True(serializer.BytesCalls > 0, "业务对象的反序列化没有走字节入口。");
+        Assert.True(
+            average < 64 * 1024,
+            $"1 MB JSON 文本响应平均分配 {average:N0} B——超出护栏：正文又被解码成了整串 UTF-16。");
+    }
+
+    [Fact]
+    public async Task SseFrames_AreDeliveredWithoutPerLineDecoding()
+    {
+        // 每帧 data 行只按字节切片交给序列化器：帧开销不应随「每行解码 + 字段子串」线性增长。
+        const int frameCount = 2000;
+
+        // +1 帧供 AverageBytes 的测量前预热消费。
+        var body = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("data: {}\n\n", frameCount + 1)));
+
+        var serializer = new EntryOnlySerializer();
+        var config = new AxiosConfig();
+        config.Serialization.ContentSerializer = serializer;
+
+        await using var stream = new MemoryStream(body);
+        var frames = new JsonStreamEnumerable<JsonItem>(stream, config, null, AxiosStreamFormat.ServerSentEvents, charSet: null, "text/event-stream");
+        await using var enumerator = frames.GetAsyncEnumerator();
+
+        // 测量窗口内必须同步推进：await 会引入测试自己的分配。
+#pragma warning disable xUnit1031
+        bool MoveNext() => enumerator.MoveNextAsync().GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+        var average = AverageBytes(frameCount, () =>
+        {
+            if (!MoveNext())
+            {
+                throw new InvalidOperationException("帧数不足：枚举提前结束。");
+            }
+        });
+
+        Assert.Equal(0, serializer.TextCalls);
+        Assert.Equal(frameCount + 1, serializer.BytesCalls);
+
+        // Debug 下 async 状态机以类分配（Release 实测 0 B/帧），分配量没有参考价值：只验路由，分配断言留给优化构建。
+#if DEBUG
+        GC.KeepAlive(average);
+#else
+        Assert.True(
+            average < 64,
+            $"SSE 每帧平均分配 {average} B——超出护栏：每行又在解码成字符串、字段名与值又各切了一次子串。");
+#endif
+    }
+
     private static long AverageBytes(int iterations, Action action)
     {
         action(); // warmup：JIT 与静态缓存不计入
@@ -303,5 +375,33 @@ public sealed class AllocationTests
             c => c.ResponseType = ResponseType.ArrayBuffer).GetAwaiter().GetResult();
         Assert.Equal(expected, response.Data!.Length);
         return response.Data;
+    }
+
+    /// <summary>只记录入口、返回共享实例的序列化器：把「正文转换」本身的分配与反序列化分配隔离开。</summary>
+    private sealed class EntryOnlySerializer : IContentSerializer
+    {
+        public static readonly JsonItem Value = new();
+
+        public int TextCalls { get; private set; }
+
+        public int BytesCalls { get; private set; }
+
+        public string Serialize(object? value, Type type, AxiosConfig config) => throw new NotSupportedException();
+
+        public object? Deserialize(string text, Type type, AxiosConfig config)
+        {
+            TextCalls++;
+            return Value;
+        }
+
+        public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
+        {
+            BytesCalls++;
+            return Value;
+        }
+    }
+
+    private sealed class JsonItem
+    {
     }
 }

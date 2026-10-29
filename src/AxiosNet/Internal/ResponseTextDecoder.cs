@@ -65,6 +65,41 @@ internal static class ResponseTextDecoder
         return written == 2 && probe[0] == (byte)'A' && probe[1] == (byte)'\n';
     }
 
+    /// <summary>严格 UTF-8（不允许非法字节）：只用于判合法性，不产出字符串。</summary>
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// 字节是否为合法 UTF-8（不分配）。按字节解析 JSON 时 <see cref="System.Text.Json.JsonDocument"/> 不校验字符串内容，
+    /// 坏字节要到取值时才抛，所以交给调用方之前先判一次。
+    /// </summary>
+    public static bool IsValidUtf8(ReadOnlySpan<byte> bytes)
+    {
+        try
+        {
+            StrictUtf8.GetCharCount(bytes);
+            return true;
+        }
+        catch (DecoderFallbackException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 字节能否直接按 UTF-8 解析（不做解码中转）：未强制其它编码，且 charset 未声明或声明为 UTF-8。
+    /// 未知 charset 与 <c>Decode</c> 同口径（回落到 BOM / UTF-8）。
+    /// </summary>
+    public static bool IsUtf8(string? charSet, Encoding? forced)
+    {
+        if (forced is not null)
+        {
+            return forced.CodePage == Encoding.UTF8.CodePage;
+        }
+
+        var declared = ResolveFromCharset(charSet);
+        return declared is null || declared.CodePage == Encoding.UTF8.CodePage;
+    }
+
     internal static Encoding? ResolveFromCharset(string? charSet)
     {
         if (string.IsNullOrWhiteSpace(charSet))

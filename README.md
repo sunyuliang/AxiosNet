@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1582%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1617%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -622,6 +622,7 @@ AxiosContent.Serializer = new YamlSerializer();
 ```
 
 - 序列化器可写请求头（`config.Headers.Set(...)`），拿到的 `config` 是本次请求独占副本，不会污染实例默认值。
+- 响应正文里的业务对象统一走字节入口（合法 UTF-8 文本直接按字节解析，不做 UTF-16 中转）；正文不是合法 UTF-8 时改走文本入口，坏字节按 U+FFFD 替换，与只解码的老行为一致。文本格式无需实现字节入口，接口默认实现会按响应字符集解码后转调文本入口。
 - 表单 / multipart、基础类型、`string` / `byte[]` / `Stream` 不经过序列化器。
 - 实现需线程安全（会被并发共享）；异常统一包装成 `ERR_BAD_REQUEST` / `ERR_BAD_RESPONSE`。
 - 文本编码：`Serialization.RequestEncoding` / `ResponseEncoding`（默认 UTF-8 / 自动识别）。GBK 等代码页需先 `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`，否则静默乱码。
@@ -1390,9 +1391,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1523 | `net8.0` / `net6.0` | 3046 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1558 | `net8.0` / `net6.0` | 3116 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1582** | | **3164** |
+| **合计** | **1617** | | **3234** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

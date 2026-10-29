@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1582%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1617%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -622,6 +622,7 @@ AxiosContent.Serializer = new YamlSerializer();
 ```
 
 - A serializer may write headers (`config.Headers.Set(...)`); the `config` it sees is a per-request copy, so instance defaults stay clean.
+- Response business objects enter through the byte entry (valid UTF-8 text is parsed as bytes, with no UTF-16 round trip); a body that is not valid UTF-8 goes through the text entry instead, with bad bytes replaced by U+FFFD, matching the old decode-only behavior. Text formats need not implement the byte entry — the default implementation decodes by the response charset and forwards to the text entry.
 - Forms / multipart, primitives, `string` / `byte[]` / `Stream` never go through the serializer.
 - Implementations must be thread-safe (shared across concurrent requests); exceptions are wrapped as `ERR_BAD_REQUEST` / `ERR_BAD_RESPONSE`.
 - Text encodings: `Serialization.RequestEncoding` / `ResponseEncoding` (UTF-8 / auto-detect by default). Code pages like GBK need `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` first, otherwise you get silent mojibake.
@@ -1392,9 +1393,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1523 | `net8.0` / `net6.0` | 3046 |
+| `AxiosNet.Tests` (core + declarative) | 1558 | `net8.0` / `net6.0` | 3116 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1582** | | **3164** |
+| **Total** | **1617** | | **3234** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

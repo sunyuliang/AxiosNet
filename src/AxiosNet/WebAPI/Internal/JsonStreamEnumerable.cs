@@ -19,8 +19,8 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     /// <summary>元素收尾后允许继续留用的溢写缓冲上限（8 块）。</summary>
     private const int MaxRetainedSpill = 8 * ReadChunk;
 
-    /// <summary>一帧收尾后允许继续留用的帧缓冲容量（字符）。</summary>
-    private const int MaxRetainedFrameChars = 8 * ReadChunk;
+    /// <summary>一帧收尾后允许继续留用的帧缓冲容量（字节）。</summary>
+    private const int MaxRetainedFrameBytes = 8 * ReadChunk;
 
     /// <summary>单帧 / 单元素上限（字节），构造时从配置解析一次（未设置时用 8 MB）；只用于比较与扩容封顶，不按它预分配。</summary>
     private readonly int _maxFrameBytes;
@@ -33,11 +33,16 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     /// <summary>整个响应流固定的生效编码（取流时解析一次）：null = 未声明 charset 也未强制，按行 BOM 探测；JSON 数组模式恒为 UTF-8。</summary>
     private readonly Encoding? _encoding;
 
+    /// <summary>帧是否以原始字节交给序列化器：SSE / NDJSON 一律是；JSON 数组在声明非 UTF-8 时退回文本（数组分帧固定按 UTF-8 解释，两者不一致）。</summary>
+    private readonly bool _byteFrames;
+
     /// <summary>整个响应流固定的序列化器（取流时解析一次）。</summary>
     private readonly IContentSerializer _serializer;
 
-    /// <summary>SSE 帧正文的累积缓冲；按帧峰值扩容，收尾时超过基础容量就换新实例（见 <see cref="TakeFrame"/>）。</summary>
-    private StringBuilder _frameData = new();
+    /// <summary>SSE 帧正文的累积缓冲（原始字节，不逐行解码）；按帧峰值扩容，收尾时超过基础容量就换新实例（见 <see cref="TakeFrame"/>）。</summary>
+    private byte[] _frameBuffer = Array.Empty<byte>();
+
+    private int _frameLength;
 
     // —— JSON 数组模式的分帧状态（其余格式不用） ——
 
@@ -116,6 +121,11 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         // 复用 framing 校验解析出的生效编码；数组模式固定 UTF-8，与 Utf8JsonReader 的解释一致。
         _encoding = format == AxiosStreamFormat.JsonArray ? Encoding.UTF8 : framingEncoding;
 
+        // 字节入口的生效编码与序列化器自己按 charset 解析的结果必须一致：数组模式声明了非 UTF-8 时退回文本。
+        _byteFrames = format != AxiosStreamFormat.JsonArray
+            || framingEncoding is null
+            || framingEncoding.CodePage == Encoding.UTF8.CodePage;
+
         // 序列化器对整个响应流固定：取流时解析一次。
         _serializer = AxiosContent.Get(config, mediaType);
 
@@ -170,7 +180,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 throw AxiosException.Canceled(_config, _request, new OperationCanceledException(_token));
             }
 
-            string? payload;
+            FramePayload? payload;
             try
             {
                 payload = await ReadPayloadAsync().ConfigureAwait(false);
@@ -181,18 +191,18 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 throw AxiosException.Canceled(_config, _request, ex);
             }
 
-            if (payload is null)
+            if (payload is not { } frame)
             {
                 _finished = true;
                 return false;
             }
 
-            if (payload.Length == 0)
+            if (frame.Length == 0)
             {
                 continue;
             }
 
-            _current = Deserialize(payload);
+            _current = Deserialize(frame);
             return true;
         }
     }
@@ -212,7 +222,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     }
 
     /// <summary>读到下一个可交付的帧；<c>null</c> 表示流结束。</summary>
-    private async ValueTask<string?> ReadPayloadAsync()
+    private async ValueTask<FramePayload?> ReadPayloadAsync()
     {
         if (_format == AxiosStreamFormat.JsonArray)
         {
@@ -224,7 +234,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             if (await TryReadLineAsync().ConfigureAwait(false) is not { } line)
             {
                 // EOF：SSE 可能没写最后的空行，残留的 data 也要交付一次
-                if (_format == AxiosStreamFormat.ServerSentEvents && _frameData.Length > 0)
+                if (_format == AxiosStreamFormat.ServerSentEvents && _frameLength > 0)
                 {
                     return TakeFrame();
                 }
@@ -232,20 +242,23 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 return null;
             }
 
+            // 整行先看原始字节：字段名比较与 data 行切片都不经过 UTF-16。
+            var span = _buffer.AsSpan(line.Offset, line.Length);
+
             if (_format == AxiosStreamFormat.NewlineDelimitedJson)
             {
-                if (line.Text.Length == 0)
+                if (span.Length == 0)
                 {
                     continue;
                 }
 
-                return line.Text;
+                return FramePayload.FromBytes(_buffer.AsMemory(line.Offset, line.Length));
             }
 
             // SSE：空行结束一帧
-            if (line.Text.Length == 0)
+            if (span.Length == 0)
             {
-                if (_frameData.Length == 0)
+                if (_frameLength == 0)
                 {
                     // 心跳（`:` 注释）帧没有 data，跳过
                     continue;
@@ -254,33 +267,27 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 return TakeFrame();
             }
 
-            var text = line.Text;
-            if (text[0] == ':')
+            if (span[0] == (byte)':')
             {
                 // 注释 / 心跳
                 continue;
             }
 
-            var colon = text.IndexOf(':');
-            var field = colon < 0 ? text : text[..colon];
-            if (!field.Equals("data", StringComparison.Ordinal))
+            var colon = span.IndexOf((byte)':');
+            var field = colon < 0 ? span : span[..colon];
+            if (!IsAscii(field, "data"))
             {
                 // event: / id: / retry: 等字段不进入数据流
                 continue;
             }
 
-            var value = colon < 0 ? string.Empty : text[(colon + 1)..];
-            if (value.StartsWith(' '))
+            var value = colon < 0 ? ReadOnlySpan<byte>.Empty : span[(colon + 1)..];
+            if (!value.IsEmpty && value[0] == (byte)' ')
             {
                 value = value[1..];
             }
 
-            if (_frameData.Length > 0)
-            {
-                _frameData.Append('\n');
-            }
-
-            _frameData.Append(value);
+            AppendFrame(value);
 
             // 上限按字节数，与 NDJSON 的缓冲区口径一致。
             _frameBytes += line.ByteLength;
@@ -291,23 +298,100 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    private static bool IsDone(string frame)
-        => string.Equals(frame, DoneSentinel, StringComparison.Ordinal);
+    private static bool IsDone(ReadOnlySpan<byte> frame) => IsAscii(frame, DoneSentinel);
 
     /// <summary>取走当前累积的 SSE 帧并重置帧状态；<c>[DONE]</c> 返回 <c>null</c>（流结束）。超过基础容量的帧缓冲换成新实例。</summary>
-    private string? TakeFrame()
+    private FramePayload? TakeFrame()
     {
-        var frame = _frameData.ToString();
-        _frameData = _frameData.Capacity > MaxRetainedFrameChars ? new StringBuilder() : _frameData.Clear();
+        var frame = new ReadOnlyMemory<byte>(_frameBuffer, 0, _frameLength);
+        _frameLength = 0;
+        if (_frameBuffer.Length > MaxRetainedFrameBytes)
+        {
+            _frameBuffer = Array.Empty<byte>();
+        }
+
         _frameBytes = 0;
-        return IsDone(frame) ? null : frame;
+        return IsDone(frame.Span) ? null : FramePayload.FromBytes(frame);
+    }
+
+    /// <summary>把一条 data 行的值接到帧缓冲上（多条 data 行用 <c>\n</c> 连接）。</summary>
+    private void AppendFrame(ReadOnlySpan<byte> value)
+    {
+        if (_frameLength > 0)
+        {
+            EnsureFrameCapacity(_frameLength + 1);
+            _frameBuffer[_frameLength++] = (byte)'\n';
+        }
+
+        if (value.IsEmpty)
+        {
+            return;
+        }
+
+        EnsureFrameCapacity(_frameLength + value.Length);
+        value.CopyTo(_frameBuffer.AsSpan(_frameLength));
+        _frameLength += value.Length;
+    }
+
+    private void EnsureFrameCapacity(int required)
+    {
+        if (required <= _frameBuffer.Length)
+        {
+            return;
+        }
+
+        var grown = new byte[Math.Max(required, Math.Max(256, _frameBuffer.Length * 2))];
+        Buffer.BlockCopy(_frameBuffer, 0, grown, 0, _frameLength);
+        _frameBuffer = grown;
+    }
+
+    /// <summary>一帧的载荷：通常是原始字节（直接交给序列化器的字节入口），JSON 数组声明非 UTF-8 时是文本。</summary>
+    private readonly struct FramePayload
+    {
+        private readonly string? _text;
+        private readonly ReadOnlyMemory<byte> _bytes;
+
+        private FramePayload(string? text, ReadOnlyMemory<byte> bytes)
+        {
+            _text = text;
+            _bytes = bytes;
+        }
+
+        public static FramePayload FromText(string text) => new(text, default);
+
+        public static FramePayload FromBytes(ReadOnlyMemory<byte> bytes) => new(null, bytes);
+
+        public string? Text => _text;
+
+        public ReadOnlyMemory<byte> Bytes => _bytes;
+
+        public int Length => _text?.Length ?? _bytes.Length;
+    }
+
+    /// <summary>ASCII 常量比较（字段名 / <c>[DONE]</c> 哨兵）：不产生字符串。</summary>
+    private static bool IsAscii(ReadOnlySpan<byte> span, string value)
+    {
+        if (span.Length != value.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < span.Length; i++)
+        {
+            if (span[i] != value[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // JSON 数组：Utf8JsonReader 增量定位顶层元素
 
     /// <summary>读到数组里的下一个顶层元素；<c>null</c> 表示读到收尾的 <c>]</c>（或空正文）。
     /// 每轮用当前缓冲区与上次留下的 <see cref="JsonReaderState"/> 新建 reader，它只负责找边界，元素文本仍交给 <see cref="Deserialize"/>。</summary>
-    private async ValueTask<string?> ReadArrayElementAsync()
+    private async ValueTask<FramePayload?> ReadArrayElementAsync()
     {
         while (true)
         {
@@ -420,14 +504,14 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    /// <summary>元素收尾：切出它在字节流里的区间并解码，重置元素状态。元素跨多次读取时把尾巴拼到 spill 上再一次解码。</summary>
-    private string CompleteElement(Utf8JsonReader reader)
+    /// <summary>元素收尾：切出它在字节流里的区间（通常直接把字节交给序列化器），重置元素状态。元素跨多次读取时把尾巴拼到 spill 上再交付。</summary>
+    private FramePayload CompleteElement(Utf8JsonReader reader)
     {
         // BytesConsumed 是相对本次窗口起点 _start 的偏移
         var end = _start + (int)reader.BytesConsumed;
         var element = _elementStart >= 0
-            ? Decode(_elementStart, end - _elementStart)
-            : DecodeSpilled(end);
+            ? ElementInBuffer(end)
+            : ElementSpilled(end);
 
         _readerState = reader.CurrentState;
         _start = end;
@@ -435,6 +519,12 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _elementStart = -1;
         return element;
     }
+
+    /// <summary>元素完全落在当前缓冲区：按原始字节交付，不需要解码。</summary>
+    private FramePayload ElementInBuffer(int end)
+        => _byteFrames
+            ? FramePayload.FromBytes(_buffer.AsMemory(_elementStart, end - _elementStart))
+            : FramePayload.FromText(Decode(_elementStart, end - _elementStart));
 
     /// <summary>把「当前元素已消费、但还没交付」的字节搬进 spill 缓冲区，随后缓冲区可以安全压缩。</summary>
     private void SpillConsumed(int consumed)
@@ -456,8 +546,8 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _elementStart = -1;
     }
 
-    /// <summary>跨块元素收尾：把缓冲区里的尾巴接上 spill，一次解码。</summary>
-    private string DecodeSpilled(int end)
+    /// <summary>跨块元素收尾：把缓冲区里的尾巴接上 spill，一次交付。</summary>
+    private FramePayload ElementSpilled(int end)
     {
         AppendSpill(_start, end - _start);
 
@@ -471,9 +561,14 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             _elementSpill = null;
         }
 
-        return length == 0 || buffer is null
-            ? string.Empty
-            : ResponseTextDecoder.DecodeResolved(buffer.AsSpan(0, length), _encoding);
+        if (length == 0 || buffer is null)
+        {
+            return FramePayload.FromText(string.Empty);
+        }
+
+        return _byteFrames
+            ? FramePayload.FromBytes(buffer.AsMemory(0, length))
+            : FramePayload.FromText(ResponseTextDecoder.DecodeResolved(buffer.AsSpan(0, length), _encoding));
     }
 
     /// <summary>缓冲区 [start, end) 区间是否只有 JSON 空白（空格 / 制表 / CR / LF）。</summary>
@@ -553,7 +648,9 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 }
 
                 var byteLength = terminator - _start;
-                var line = Decode(_start, byteLength);
+                var offset = _start;
+                var length = byteLength;
+                SkipLineBom(ref offset, ref length);
                 _start = terminator + 1;
 
                 // 裸 CR / 裸 LF 只前进 1 字节；CRLF 再吃掉 LF。
@@ -564,7 +661,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                     _start++;
                 }
 
-                return new Line(line, byteLength);
+                return new Line(offset, length, byteLength);
             }
 
             if (_eof)
@@ -574,18 +671,30 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                     return null;
                 }
 
-                var tailLength = _end - _start;
-                var tail = Decode(_start, tailLength);
+                var rawLength = _end - _start;
+                var tailOffset = _start;
+                var tailLength = rawLength;
+                SkipLineBom(ref tailOffset, ref tailLength);
                 _start = _end;
-                return new Line(tail, tailLength);
+                return new Line(tailOffset, tailLength, rawLength);
             }
 
             await FillAsync().ConfigureAwait(false);
         }
     }
 
-    /// <summary>一行文本 + 它在原始字节流里的长度（SSE 分帧上限按字节判定）。</summary>
-    private readonly record struct Line(string Text, int ByteLength);
+    /// <summary>行首的 UTF-8 BOM 不进入帧内容（与解码路径一致）；<paramref name="length"/> 是原始字节数，另计。</summary>
+    private void SkipLineBom(ref int offset, ref int length)
+    {
+        if (length >= 3 && _buffer[offset] == 0xEF && _buffer[offset + 1] == 0xBB && _buffer[offset + 2] == 0xBF)
+        {
+            offset += 3;
+            length -= 3;
+        }
+    }
+
+    /// <summary>一行在缓冲区里的字节区间（不含行尾 CR / LF）+ 它在原始字节流里的长度（SSE 分帧上限按字节判定）。</summary>
+    private readonly record struct Line(int Offset, int Length, int ByteLength);
 
     /// <summary>行尾判定：LF / CR / CRLF 都是合法行分隔符，返回最早出现的 CR 或 LF 的下标，没有则返回 -1。</summary>
     private int IndexOfLineTerminator()
@@ -650,11 +759,21 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
-    private T Deserialize(string payload)
+    private T Deserialize(in FramePayload payload)
     {
         try
         {
-            var value = _serializer.Deserialize(payload, typeof(T), _config);
+            // 字节入口省掉逐帧的 UTF-16 往返；只有 JSON 数组声明非 UTF-8 时才回退文本入口。
+            // 非法 UTF-8 也回退文本入口：按字节解析的 JSON 不校验字符串内容，坏字节会留到调用方取值时才炸。
+            var text = payload.Text;
+            if (text is null && !ResponseTextDecoder.IsValidUtf8(payload.Bytes.Span))
+            {
+                text = ResponseTextDecoder.DecodeResolved(payload.Bytes.Span, _encoding);
+            }
+
+            var value = text is null
+                ? _serializer.Deserialize(payload.Bytes, typeof(T), _config)
+                : _serializer.Deserialize(text, typeof(T), _config);
 
             // null 是合法帧；非 null 却不是 T 说明序列化器与目标类型不匹配。
             if (value is null)

@@ -86,7 +86,7 @@ public sealed class StreamingTests
     [Fact]
     public async Task RequestStreamAsync_SseFrameOverByteLimit_ThrowsFrameTooLarge()
     {
-        // 3,000,000 个汉字 = 9,000,000 UTF-8 字节（> 8MB 上限），StringBuilder 侧只有 6,000,000 字符。
+        // 3,000,000 个汉字 = 9,000,000 UTF-8 字节（> 8MB 上限），字符数只有 6,000,000。
         // 上限按字节判：这里必然触发。
         var payload = new string('中', 3_000_000);
         var body = Encoding.UTF8.GetBytes("data: " + payload + "\n\n");
@@ -223,6 +223,38 @@ public sealed class StreamingTests
 
         var items = await CollectAsync(response.Data!);
         Assert.Equal(7, Assert.Single(items).N);
+    }
+
+    [Fact]
+    public async Task Sse_LeadingUtf8Bom_IsSkipped()
+    {
+        // 流开头的 UTF-8 BOM 不能留在首行行首，否则 `data:` 字段名比对失败、整帧被丢弃。
+        var body = Encoding.UTF8.GetPreamble()
+            .Concat(Encoding.UTF8.GetBytes("data: {\"n\":1}\n\ndata: {\"n\":2}\n\n"))
+            .ToArray();
+
+        using var client = CreateClient(new ScriptedStreamHandler(new[] { body }));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
+
+        var items = await CollectAsync(response.Data!);
+        Assert.Equal(new[] { 1, 2 }, items.Select(i => i.N));
+    }
+
+    [Fact]
+    public async Task Sse_NonUtf8Charset_DataFramesAreDecodedByDeclaredEncoding()
+    {
+        // 帧是原始字节，解码按 Content-Type 声明的 charset（这里是 Latin1，0xE9 = 'é'）。
+        var body = Encoding.Latin1.GetBytes("data: {\"n\":1,\"text\":\"caf\u00E9\"}\n\n");
+
+        using var client = CreateClient(new ScriptedStreamHandler(
+            new[] { body },
+            contentType: "text/event-stream; charset=iso-8859-1"));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
+
+        var items = await CollectAsync(response.Data!);
+        Assert.Equal("café", Assert.Single(items).Text);
     }
 
     // ------------------------------------------------------------------
@@ -404,8 +436,8 @@ public sealed class StreamingTests
         var response = await client.RequestStreamAsync(new AnyRequest_StreamFrameLimit(), AxiosStreamFormat.ServerSentEvents);
 
         var frames = response.Data!;
-        var frameData = typeof(JsonStreamEnumerable<string>).GetField(
-            "_frameData",
+        var frameBuffer = typeof(JsonStreamEnumerable<string>).GetField(
+            "_frameBuffer",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
 
         await using var enumerator = frames.GetAsyncEnumerator();
@@ -413,10 +445,10 @@ public sealed class StreamingTests
         Assert.True(await enumerator.MoveNextAsync());
         Assert.Equal(big.Length, enumerator.Current.Length);
 
-        var builder = (StringBuilder)frameData.GetValue(frames)!;
+        var buffer = (byte[])frameBuffer.GetValue(frames)!;
         Assert.True(
-            builder.Capacity <= 64 * 1024,
-            $"超大帧读完后帧缓冲仍保留 {builder.Capacity:N0} 字符容量——整条流会一直拖着它。");
+            buffer.Length <= 64 * 1024,
+            $"超大帧读完后帧缓冲仍保留 {buffer.Length:N0} 字节容量——整条流会一直拖着它。");
 
         // 后续帧照常可读。
         Assert.True(await enumerator.MoveNextAsync());
@@ -948,6 +980,67 @@ public sealed class StreamingTests
         Assert.Equal("naïve", items[1].Text);
     }
 
+    // ------------------------------------------------------------------
+    // 帧里的非法 UTF-8：回退解码文本入口（坏字节按 U+FFFD 替换），与只解码的旧路径一致
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Ndjson_InvalidUtf8Frame_FallsBackToDecodedText()
+    {
+        using var client = CreateClient(new ScriptedStreamHandler(
+            Array.Empty<byte[]>(),
+            body: InvalidUtf8Frame("{\"n\":1,\"text\":\"a", "b\"}\n"),
+            contentType: "application/x-ndjson"));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest());
+
+        var item = Assert.Single(await CollectAsync(response.Data!));
+        Assert.Equal("a\uFFFDb", item.Text);
+    }
+
+    [Fact]
+    public async Task Sse_InvalidUtf8Frame_FallsBackToDecodedText()
+    {
+        using var client = CreateClient(new ScriptedStreamHandler(
+            Array.Empty<byte[]>(),
+            body: InvalidUtf8Frame("data: {\"n\":1,\"text\":\"a", "b\"}\n\n"),
+            contentType: "text/event-stream"));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
+
+        var item = Assert.Single(await CollectAsync(response.Data!));
+        Assert.Equal("a\uFFFDb", item.Text);
+    }
+
+    [Fact]
+    public async Task JsonArray_InvalidUtf8Element_FallsBackToDecodedText()
+    {
+        using var client = CreateClient(new ScriptedStreamHandler(
+            Array.Empty<byte[]>(),
+            body: InvalidUtf8Frame("[{\"n\":1,\"text\":\"a", "b\"}]"),
+            contentType: "application/json"));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.JsonArray);
+
+        var item = Assert.Single(await CollectAsync(response.Data!));
+        Assert.Equal("a\uFFFDb", item.Text);
+    }
+
+    [Fact]
+    public async Task JsonElementFrames_InvalidUtf8_AreNotPoisoned()
+    {
+        // JsonElement 要到取值时才校验字符串字节：交给调用方的元素必须是按解码文本解析出来的。
+        using var client = CreateClient(new ScriptedStreamHandler(
+            Array.Empty<byte[]>(),
+            body: InvalidUtf8Frame("{\"text\":\"a", "b\"}\n"),
+            contentType: "application/x-ndjson"));
+
+        var response = await client.RequestStreamAsync(new JsonElementRequest());
+
+        var item = Assert.Single(await CollectAsync(response.Data!));
+        Assert.Equal("a\uFFFDb", item.GetProperty("text").GetString());
+    }
+
     [Fact]
     public async Task Streaming_SerializerResolvedOnceAtStreamStart()
     {
@@ -1388,6 +1481,15 @@ public sealed class StreamingTests
     private sealed class StreamFrameRequest : IApiRequest<StreamFrame>
     {
     }
+
+    [Get("stream/element")]
+    private sealed class JsonElementRequest : IApiRequest<JsonElement>
+    {
+    }
+
+    /// <summary>合法 UTF-8 前缀 + 一个非法字节 0xFF + 合法后缀。</summary>
+    private static byte[] InvalidUtf8Frame(string before, string after)
+        => [.. Encoding.UTF8.GetBytes(before), 0xFF, .. Encoding.UTF8.GetBytes(after)];
 
 
     /// <summary>永远返回 string 的序列化器：用于制造「非 null 但类型不符」的帧值。</summary>

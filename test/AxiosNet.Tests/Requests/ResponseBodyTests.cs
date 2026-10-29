@@ -223,6 +223,22 @@ public sealed class ResponseBodyTests
         Assert.Equal(payload, response.Data);
     }
 
+    [Fact]
+    public async Task DeclaredLength_SatisfiedThenCanceled_IsReportedAsCanceled()
+    {
+        // 取消发生在尾部探测阶段：已读满的正文不能当成完整交回，必须报 ERR_CANCELED。
+        var payload = Payload(4096, seed: 8);
+        using var cts = new CancellationTokenSource();
+        using var client = new AxiosClient(handler: new CancelOnProbeHandler(payload, cts));
+
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(
+            BlobUrl,
+            c => c.ResponseType = ResponseType.ArrayBuffer,
+            cts.Token));
+
+        Assert.Equal(AxiosException.ErrCanceled, error.Code);
+    }
+
     // ------------------------------------------------------------------
     // 2. 段式累积：跨多个池化段装配后字节一致
     // ------------------------------------------------------------------
@@ -472,6 +488,113 @@ public sealed class ResponseBodyTests
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    /// <summary>正文恰好按声明长度交出，尾部探测时先取消请求令牌、再抛取消（模拟取消落在探测阶段）。</summary>
+    private sealed class CancelOnProbeHandler : HttpMessageHandler
+    {
+        private readonly byte[] _body;
+        private readonly CancellationTokenSource _cts;
+
+        public CancelOnProbeHandler(byte[] body, CancellationTokenSource cts)
+        {
+            _body = body;
+            _cts = cts;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var content = new CancelOnProbeContent(_body, _cts);
+            content.Headers.ContentLength = _body.Length;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    private sealed class CancelOnProbeContent : HttpContent
+    {
+        private readonly byte[] _body;
+        private readonly CancellationTokenSource _cts;
+
+        public CancelOnProbeContent(byte[] body, CancellationTokenSource cts)
+        {
+            _body = body;
+            _cts = cts;
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => throw new NotSupportedException();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = _body.Length;
+            return true;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync()
+            => Task.FromResult<Stream>(new CancelOnProbeStream(_body, _cts));
+
+        private sealed class CancelOnProbeStream : Stream
+        {
+            private readonly byte[] _body;
+            private readonly CancellationTokenSource _cts;
+            private int _position;
+
+            public CancelOnProbeStream(byte[] body, CancellationTokenSource cts)
+            {
+                _body = body;
+                _cts = cts;
+            }
+
+            public override bool CanRead => true;
+
+            public override bool CanSeek => false;
+
+            public override bool CanWrite => false;
+
+            public override long Length => throw new NotSupportedException();
+
+            public override long Position
+            {
+                get => _position;
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush()
+            {
+            }
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            public override int Read(byte[] buffer, int offset, int count) => Fill(buffer.AsSpan(offset, count));
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                if (_position >= _body.Length)
+                {
+                    // 正文已交完：取消请求令牌，让这次探测表现为「取消」而不是「正常结束」。
+                    _cts.Cancel();
+                    return ValueTask.FromException<int>(new OperationCanceledException(_cts.Token));
+                }
+
+                return new ValueTask<int>(Fill(buffer.Span));
+            }
+
+            private int Fill(Span<byte> buffer)
+            {
+                if (_position >= _body.Length)
+                {
+                    return 0;
+                }
+
+                var take = Math.Min(buffer.Length, _body.Length - _position);
+                _body.AsSpan(_position, take).CopyTo(buffer);
+                _position += take;
+                return take;
+            }
         }
     }
 

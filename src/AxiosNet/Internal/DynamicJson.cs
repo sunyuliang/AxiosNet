@@ -14,6 +14,13 @@ internal static class DynamicJson
         return FromElement(document.RootElement);
     }
 
+    /// <summary>UTF-8 字节入口（不做 UTF-16 中转）；入参不能带 BOM。</summary>
+    public static object? Parse(ReadOnlyMemory<byte> utf8Json)
+    {
+        using var document = JsonDocument.Parse(utf8Json);
+        return FromElement(document.RootElement);
+    }
+
     private static object? FromElement(JsonElement element)
     {
         switch (element.ValueKind)

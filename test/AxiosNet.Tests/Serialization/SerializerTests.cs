@@ -386,21 +386,70 @@ public sealed class SerializerTests
     }
 
     [Fact]
-    public async Task TextualResponse_NeverCallsByteOverload()
+    public async Task TextualResponse_UsesByteEntry_WithoutUtf16RoundTrip()
     {
         await using var server = TestHttpServer.Start(_ => XmlResponse(new XmlOrder { Id = 9, Name = "ink" }));
 
-        // 字节入口一旦被调用就炸：XML 响应必须走文本入口
+        // 文本响应的业务对象走字节入口：UTF-8 正文零转码，不再先解码成字符串。
+        var serializer = new EntryRecordingXmlSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(bytesThrow: true),
+                ContentSerializer = serializer,
             },
         });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/9");
 
         Assert.Equal(9, response.Data!.Id);
+        Assert.Null(serializer.TextPayload);
+        Assert.Equal(
+            Encoding.UTF8.GetBytes(ToXml(new XmlOrder { Id = 9, Name = "ink" }, typeof(XmlOrder))),
+            serializer.BytePayload);
+    }
+
+    [Fact]
+    public async Task TextualResponse_TextOnlySerializer_UsesInterfaceDefaultDecode()
+    {
+        // 只实现文本入口的序列化器（不覆写字节入口）：接口默认实现按响应字符集解码后转调。
+        await using var server = TestHttpServer.Start(_ => XmlResponse(new XmlOrder { Id = 6, Name = "sun" }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = new PlainXmlSerializer(),
+            },
+        });
+
+        var response = await client.GetAsync<XmlOrder>(server.Url + "orders/6");
+
+        Assert.Equal("sun", response.Data!.Name);
+    }
+
+    [Fact]
+    public async Task TextualResponse_NonUtf8Charset_GoesThroughTextEntry()
+    {
+        // 声明了非 UTF-8 的文本响应不能直接把字节当 UTF-8 交给序列化器：先按声明解码。
+        var body = Encoding.Unicode.GetBytes(ToXml(new XmlOrder { Id = 11, Name = "坛" }, typeof(XmlOrder)));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: body,
+            ContentType: "application/xml; charset=utf-16"));
+
+        var serializer = new EntryRecordingXmlSerializer();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Serialization = new()
+            {
+                ContentSerializer = serializer,
+            },
+        });
+
+        var response = await client.GetAsync<XmlOrder>(server.Url + "orders/11");
+
+        Assert.Equal("坛", response.Data!.Name);
+        Assert.Null(serializer.BytePayload);
+        Assert.NotNull(serializer.TextPayload);
     }
 
     [Fact]
@@ -1295,18 +1344,36 @@ public sealed class SerializerTests
     /// <summary>XML 文本序列化器：可注入「字节入口抛异常」用于验证文本响应的路由。</summary>
     private sealed class CustomXmlSerializer : IContentSerializer
     {
-        private readonly bool _bytesThrow;
-
-        public CustomXmlSerializer(bool bytesThrow = false) => _bytesThrow = bytesThrow;
-
         public string Serialize(object? value, Type type, AxiosConfig config) => ToXml(value!, type);
 
         public object? Deserialize(string text, Type type, AxiosConfig config) => FromXml(text, type);
 
         public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
-            => _bytesThrow
-                ? throw new InvalidOperationException("文本响应不应进入字节入口。")
-                : Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
+            => Deserialize(Encoding.UTF8.GetString(data.Span), type, config);
+    }
+
+    /// <summary>记录哪个入口被调用、载荷是什么：确认文本响应的字节入口拿到了原始 UTF-8 字节。</summary>
+    private sealed class EntryRecordingXmlSerializer : IContentSerializer
+    {
+        public string? TextPayload { get; private set; }
+
+        public byte[]? BytePayload { get; private set; }
+
+        public string Serialize(object? value, Type type, AxiosConfig config) => ToXml(value!, type);
+
+        public object? Deserialize(string text, Type type, AxiosConfig config)
+        {
+            TextPayload = text;
+            BytePayload = null;
+            return FromXml(text, type);
+        }
+
+        public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
+        {
+            BytePayload = data.ToArray();
+            TextPayload = null;
+            return FromXml(Encoding.UTF8.GetString(data.Span), type);
+        }
     }
 
     /// <summary>记录「谁被序列化了」：用来确认哪些类型会进序列化器。</summary>

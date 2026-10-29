@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -313,50 +314,65 @@ internal static class FormBodyEncoder
 
     /// <summary>键名保留 <c>[</c> / <c>]</c>，其余同值编码。</summary>
     private static string EncodeKey(string value, Encoding encoding)
-        => PercentEncode(value, encoding).Replace("%5B", "[").Replace("%5D", "]");
+        => PercentEncode(value, encoding, keepBrackets: true);
 
-    private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding);
+    private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding, keepBrackets: false);
 
-    /// <summary>按字节流做百分号编码：可保留的 ASCII 字节直出，其余转义。</summary>
-    private static string PercentEncode(string value, Encoding encoding)
+    /// <summary>
+    /// 单趟百分号编码：按字节流直出可保留的 ASCII，其余转义（空格转 <c>+</c>），不在 EscapeDataString 之后再串 Replace。
+    /// </summary>
+    private static string PercentEncode(string value, Encoding encoding, bool keepBrackets)
     {
-        if (encoding.CodePage == Encoding.UTF8.CodePage)
+        if (value.Length == 0)
         {
-            // 与 FormUrlEncodedContent 完全一致：空格转义为 '+'。
-            return Uri.EscapeDataString(value).Replace("%20", "+");
+            return string.Empty;
         }
 
-        var bytes = encoding.GetBytes(value);
-
-        // 容量一次算准：先数一遍需要转义的字节。
-        var escaped = 0;
-        foreach (var b in bytes)
+        var byteCount = encoding.GetByteCount(value);
+        var rented = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
         {
-            if (b != (byte)' ' && !IsUnreserved(b))
-            {
-                escaped++;
-            }
-        }
+            encoding.GetBytes(value.AsSpan(), rented);
+            var bytes = rented.AsSpan(0, byteCount);
 
-        var builder = new StringBuilder(bytes.Length + escaped * 2);
-        foreach (var b in bytes)
+            // 容量一次算准：先数一遍需要转义的字节。
+            var escaped = 0;
+            foreach (var b in bytes)
+            {
+                if (b != (byte)' ' && !IsLiteral(b, keepBrackets))
+                {
+                    escaped++;
+                }
+            }
+
+            var builder = new StringBuilder(bytes.Length + escaped * 2);
+            foreach (var b in bytes)
+            {
+                if (b == (byte)' ')
+                {
+                    // 与 FormUrlEncodedContent 完全一致：空格转义为 '+'。
+                    builder.Append('+');
+                }
+                else if (IsLiteral(b, keepBrackets))
+                {
+                    builder.Append((char)b);
+                }
+                else
+                {
+                    builder.Append('%').Append(HexUpper(b >> 4)).Append(HexUpper(b & 0xF));
+                }
+            }
+
+            return builder.ToString();
+        }
+        finally
         {
-            if (b == (byte)' ')
-            {
-                builder.Append('+');
-            }
-            else if (IsUnreserved(b))
-            {
-                builder.Append((char)b);
-            }
-            else
-            {
-                builder.Append('%').Append(HexUpper(b >> 4)).Append(HexUpper(b & 0xF));
-            }
+            ArrayPool<byte>.Shared.Return(rented);
         }
-
-        return builder.ToString();
     }
+
+    private static bool IsLiteral(byte b, bool keepBrackets)
+        => IsUnreserved(b) || (keepBrackets && b is (byte)'[' or (byte)']');
 
     private static bool IsUnreserved(byte b) =>
         (b >= (byte)'A' && b <= (byte)'Z')
