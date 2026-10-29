@@ -199,7 +199,7 @@ public sealed class ConcurrencyPerformanceTests
             AllowAutoRedirect = defaults.AllowAutoRedirect,
             MaxAutomaticRedirections = defaults.MaxAutomaticRedirections,
             AutomaticDecompression = defaults.AutomaticDecompression
-                ? DecompressionMethods.All
+                ? defaults.Decompression
                 : DecompressionMethods.None,
             UseCookies = defaults.UseCookies,
             UseProxy = defaults.Proxy is not null

@@ -22,7 +22,7 @@ internal static class DefaultHandlerFactory
             AllowAutoRedirect = o.AllowAutoRedirect,
             MaxAutomaticRedirections = o.MaxAutomaticRedirections,
             AutomaticDecompression = o.AutomaticDecompression
-                ? DecompressionMethods.All
+                ? o.Decompression
                 : DecompressionMethods.None,
 
             // h2 的并发度受服务端 MAX_CONCURRENT_STREAMS 限制，打开后按 MaxConnectionsPerServer 继续加连接。

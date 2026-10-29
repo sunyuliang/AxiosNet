@@ -64,8 +64,20 @@ public sealed class ConnectionPoolOptions
     /// <summary>是否使用 Cookie 容器（整个池共用一个：Cookie 的隔离维度是域和路径，不是端口）。</summary>
     public bool UseCookies { get; set; }
 
-    /// <summary>是否自动解压 gzip/deflate/br（默认 true）。</summary>
+    /// <summary>
+    /// 自动解压响应正文的总开关（默认 true）。为 false 时等价于 <see cref="DecompressionMethods.None"/>，
+    /// <see cref="Decompression"/> 不再生效；开启时具体解哪些算法由 <see cref="Decompression"/> 决定。
+    /// </summary>
     public bool AutomaticDecompression { get; set; } = true;
+
+    /// <summary>
+    /// 自动解压启用的算法集合（默认 <see cref="DecompressionMethods.All"/>，即 gzip / deflate / br 全开）。
+    /// 接受 <see cref="DecompressionMethods.GZip"/> / <see cref="DecompressionMethods.Deflate"/> / <see cref="DecompressionMethods.Brotli"/>
+    /// 的任意组合，或 <see cref="DecompressionMethods.All"/>（BCL 里为 -1，等价于全开）；<see cref="DecompressionMethods.None"/>
+    /// 表示一个都不解压，其余位在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
+    /// 只在 <see cref="AutomaticDecompression"/> 为 true 时生效：客户端只宣告、也只解压这里列出的编码。
+    /// </summary>
+    public DecompressionMethods Decompression { get; set; } = DecompressionMethods.All;
 
     /// <summary>HTTP/2 下是否允许同一 origin 打开多条连接（默认 true）；只用 HTTP/1.1 时无影响。</summary>
     public bool EnableMultipleHttp2Connections { get; set; } = true;
@@ -141,6 +153,7 @@ public sealed class ConnectionPoolOptions
         MaxAutomaticRedirections = MaxAutomaticRedirections,
         UseCookies = UseCookies,
         AutomaticDecompression = AutomaticDecompression,
+        Decompression = Decompression,
         EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,
         KeepAlivePingDelay = KeepAlivePingDelay,
         KeepAlivePingTimeout = KeepAlivePingTimeout,

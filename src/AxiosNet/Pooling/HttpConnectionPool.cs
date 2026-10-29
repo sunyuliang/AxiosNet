@@ -89,6 +89,20 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption("MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
         }
 
+        // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；除此之外，超出 gzip / deflate / br 的位
+        // 会被底层静默忽略 —— 静默失效比报错更难查，按配置错误拦下。
+        const DecompressionMethods knownDecompression =
+            DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli;
+        var requestedDecompression = options.Decompression == DecompressionMethods.All
+            ? knownDecompression
+            : options.Decompression;
+        if ((requestedDecompression & ~knownDecompression) != 0)
+        {
+            throw AxiosException.InvalidOption(
+                $"Decompression 含不支持的算法（当前 {options.Decompression}）：只允许 GZip / Deflate / Brotli 的组合或 All，"
+                + "一个都不解压请设为 None（或把 AutomaticDecompression 设为 false）。", config);
+        }
+
         if (IsNegativeLimit(options.IdleHandlerLifetime))
         {
             throw AxiosException.InvalidOption("IdleHandlerLifetime 不能为负（0 表示任何空闲节点立即可被驱逐；不限请用 Timeout.InfiniteTimeSpan）。", config);
@@ -259,6 +273,7 @@ public sealed class HttpConnectionPool : IDisposable
            && a.MaxAutomaticRedirections == b.MaxAutomaticRedirections
            && a.UseCookies == b.UseCookies
            && a.AutomaticDecompression == b.AutomaticDecompression
+           && a.Decompression == b.Decompression
            && a.EnableMultipleHttp2Connections == b.EnableMultipleHttp2Connections
            && a.KeepAlivePingDelay == b.KeepAlivePingDelay
            && a.KeepAlivePingTimeout == b.KeepAlivePingTimeout

@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1566%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1568%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -408,7 +408,7 @@ await client.GetAsync<User>("users/1", c =>
 });
 ```
 
-- Fires after the body is read and before text decoding, deserialization, and `transformResponse`; the bytes are what `HttpClient` delivered (already decompressed per `AutomaticDecompression`).
+- Fires after the body is read and before text decoding, deserialization, and `transformResponse`; the bytes are what `HttpClient` delivered (already decompressed per `AutomaticDecompression` / `Decompression`).
 - The context is `AxiosResponseInfo`: `Status` / `StatusText` / `Headers` (the same instance as `response.Headers`) / `MediaType` / `CharSet`, plus `GetHeader` for a single header.
 - A rejected status still reads the body before throwing, so 4xx / 5xx responses trigger it too (useful for logging error bodies).
 - The `ReadOnlyMemory<byte>` is only valid during the callback; copy it if you need to keep it.
@@ -877,6 +877,7 @@ What is skipped is the HTTP operation itself; what is kept is the response-side 
 > **Always `Dispose` before dropping an instance**: an undisposed pool is held by its background eviction timer and is never garbage-collected; its connections are only reclaimed once `IdleHandlerLifetime` (5 min by default) elapses.
 
 ```csharp
+using System.Net;
 using AxiosNet.Pooling;
 
 // 1) Own pool (configured at construction)
@@ -884,7 +885,8 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
 {
     MaxConnectionsPerServer = 32,
     PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-    AutomaticDecompression = true
+    AutomaticDecompression = true,                                             // master switch
+    Decompression = DecompressionMethods.GZip | DecompressionMethods.Brotli    // only these two (default: All)
 });
 
 // 2) Share one pool across clients
@@ -917,7 +919,8 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `IdleHandlerLifetime` | 5 min | How long an idle origin node is kept |
 | `EvictionInterval` | 30 s | Background sweep interval; `<= 0` disables the timer |
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | Auto-redirect; `MaxRedirects = 0` disables |
-| `AutomaticDecompression` | `true` | gzip / deflate / br |
+| `AutomaticDecompression` | `true` | Master switch for response decompression; off is equivalent to `DecompressionMethods.None` |
+| `Decompression` | `All` | Algorithms: any combination of `GZip` / `Deflate` / `Brotli`, or `All` (everything, the default); `None` disables, unknown bits throw `ERR_BAD_OPTION_VALUE` at pool construction |
 | `EnableMultipleHttp2Connections` | `true` | Under h2, allow more connections up to `MaxConnectionsPerServer` |
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan` (off) / 20 s | h2 keep-alive ping interval and ACK timeout; off by default to match `SocketsHttpHandler`, set a positive value to enable. No effect on h1 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | When to ping: `WithActiveRequests` / `Always` (keeps idle connections alive) |
@@ -1354,9 +1357,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1507 | `net8.0` / `net6.0` | 3014 |
+| `AxiosNet.Tests` (core + declarative) | 1509 | `net8.0` / `net6.0` | 3018 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1566** | | **3132** |
+| **Total** | **1568** | | **3136** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

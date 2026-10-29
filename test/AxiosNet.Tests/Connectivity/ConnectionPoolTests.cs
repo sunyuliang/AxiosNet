@@ -5,6 +5,7 @@ using AxiosNet.Tests.Infrastructure;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Globalization;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -177,6 +178,82 @@ public sealed class ConnectionPoolTests
             new HttpConnectionPool(new ConnectionPoolOptions { MaxResponseHeadersLength = value }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
+    public async Task Decompression_SelectedAlgorithmOnly_DecodesMatchingEncoding()
+    {
+        var plain = Encoding.UTF8.GetBytes("hello-compression");
+        byte[] compressed;
+        using (var output = new MemoryStream())
+        {
+            using (var gzip = new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            {
+                gzip.Write(plain);
+            }
+
+            compressed = output.ToArray();
+        }
+
+        var seenEncoding = new ConcurrentDictionary<string, string?>();
+        await using var server = TestHttpServer.Start(request =>
+        {
+            seenEncoding[request.Path.TrimStart('/')] =
+                request.Headers.TryGetValue("Accept-Encoding", out var value) ? value : null;
+
+            return new TestResponse
+            {
+                Body = compressed,
+                ContentType = "text/plain",
+                Headers = new Dictionary<string, string> { ["Content-Encoding"] = "gzip" }
+            };
+        });
+
+        // 只开 gzip：正文被解压后交给调用方，且只向服务端宣告 gzip。
+        using var gzipClient = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            poolOptions: new ConnectionPoolOptions { Decompression = DecompressionMethods.GZip });
+
+        Assert.Equal("hello-compression", (await gzipClient.GetAsync<string>("gzip")).Data);
+        Assert.Equal("gzip", seenEncoding["gzip"]);
+
+        // 只开 br：gzip 正文原样交付（客户端没宣告、也不解 gzip）。
+        using var brotliClient = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            poolOptions: new ConnectionPoolOptions { Decompression = DecompressionMethods.Brotli });
+
+        Assert.Equal(compressed, (await brotliClient.GetAsync<byte[]>("brotli")).Data);
+        Assert.Equal("br", seenEncoding["brotli"]);
+
+        // 总开关关掉时算法集合不生效：既不宣告也不解压。
+        using var offClient = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            poolOptions: new ConnectionPoolOptions
+            {
+                AutomaticDecompression = false,
+                Decompression = DecompressionMethods.GZip
+            });
+
+        Assert.Equal(compressed, (await offClient.GetAsync<byte[]>("off")).Data);
+        Assert.Null(seenEncoding["off"]);
+    }
+
+    [Fact]
+    public void Decompression_UnknownAlgorithm_FailsAtConstruction()
+    {
+        var ex = Assert.Throws<AxiosException>(() =>
+            new HttpConnectionPool(new ConnectionPoolOptions { Decompression = (DecompressionMethods)1024 }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+
+        // All 在 BCL 里是 -1（每一位都亮），属合法的「全开」，不能被上面的掩码校验误杀。
+        using var all = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            Decompression = DecompressionMethods.All,
+            EvictionInterval = TimeSpan.Zero
+        });
+
+        Assert.Equal(DecompressionMethods.All, all.Options.Decompression);
     }
 
     [Fact]

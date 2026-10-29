@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1566%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1568%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -408,7 +408,7 @@ await client.GetAsync<User>("users/1", c =>
 });
 ```
 
-- 触发时点：正文读完、文本解码与反序列化（以及 `transformResponse`）之前；拿到的是 `HttpClient` 交付的字节（已按 `AutomaticDecompression` 解压）。
+- 触发时点：正文读完、文本解码与反序列化（以及 `transformResponse`）之前；拿到的是 `HttpClient` 交付的字节（已按 `AutomaticDecompression` / `Decompression` 解压）。
 - 参数是 `AxiosResponseInfo`：`Status` / `StatusText` / `Headers`（与 `response.Headers` 同一实例）/ `MediaType` / `CharSet`，可用 `GetHeader` 取单个头。
 - 状态码被拒绝时，正文照样先读完再抛错，所以 4xx / 5xx 也会触发（便于记录错误体）。
 - `ReadOnlyMemory<byte>` 只在回调期间有效，需要保留请自行复制。
@@ -876,6 +876,7 @@ var response = await client.GetAsync<User>("users/1",
 > **丢弃实例前必须 `Dispose`**：未释放的池由后台驱逐定时器持有，GC 收不走，它的连接要等到 `IdleHandlerLifetime`（默认 5 分钟）之后才被回收。
 
 ```csharp
+using System.Net;
 using AxiosNet.Pooling;
 
 // 1) 自建池（构造时配置）
@@ -883,7 +884,8 @@ var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
 {
     MaxConnectionsPerServer = 32,
     PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-    AutomaticDecompression = true
+    AutomaticDecompression = true,                                             // 总开关
+    Decompression = DecompressionMethods.GZip | DecompressionMethods.Brotli    // 只解这两种（默认 All）
 });
 
 // 2) 多客户端共享一条池
@@ -915,7 +917,8 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `IdleHandlerLifetime` | 5 分钟 | origin 节点空闲多久被回收 |
 | `EvictionInterval` | 30 秒 | 后台清扫间隔；`<= 0` 不启动定时器 |
 | `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | 自动重定向；`MaxRedirects = 0` 关闭 |
-| `AutomaticDecompression` | `true` | gzip / deflate / br |
+| `AutomaticDecompression` | `true` | 自动解压总开关；关掉等价于 `DecompressionMethods.None` |
+| `Decompression` | `All` | 解压算法：`GZip` / `Deflate` / `Brotli` 任意组合或 `All`（全开，默认）；`None` 一个都不解，其余位建池时抛 `ERR_BAD_OPTION_VALUE` |
 | `EnableMultipleHttp2Connections` | `true` | h2 下允许按 `MaxConnectionsPerServer` 继续加连接 |
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan`（不发）/ 20 秒 | h2 keep-alive ping 的间隔与等 ACK 的上限；默认与 `SocketsHttpHandler` 一致（关闭），设正值即打开。h1 无影响 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | 何时 ping：`WithActiveRequests`（有在途请求时）/ `Always`（空闲也维持）|
@@ -1352,9 +1355,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1507 | `net8.0` / `net6.0` | 3014 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1509 | `net8.0` / `net6.0` | 3018 |
 | `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1566** | | **3132** |
+| **合计** | **1568** | | **3136** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

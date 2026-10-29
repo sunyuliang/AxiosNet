@@ -13,7 +13,7 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 原始响应字节回调：正文读完后、文本解码与反序列化（以及 <see cref="AxiosConfig.TransformResponse"/>）之前触发，
-        /// 拿到的是 <see cref="System.Net.Http.HttpClient"/> 交付的正文字节（已按 <c>AutomaticDecompression</c> 解压，
+        /// 拿到的是 <see cref="System.Net.Http.HttpClient"/> 交付的正文字节（已按 <c>AutomaticDecompression</c> / <c>Decompression</c> 解压，
         /// 但未做字符集解码），参数是状态码 / 响应头 / 内容类型上下文。
         /// </summary>
         /// <remarks>
