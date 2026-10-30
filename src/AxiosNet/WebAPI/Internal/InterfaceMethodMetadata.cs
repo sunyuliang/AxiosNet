@@ -59,6 +59,9 @@ internal sealed class InterfaceMethodMetadata
         _fault = fault;
     }
 
+    /// <summary>声明里的方法名（生成代理用它校验索引是否与注册声明一致）。</summary>
+    internal string? Name => _methodName;
+
     /// <summary>取（必要时构建并缓存）方法元数据；构建期错误在首次访问时抛 <see cref="InvalidOperationException"/>。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
@@ -635,8 +638,8 @@ internal sealed class InterfaceMethodMetadata
         return invocation;
     }
 
-    /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>：交付完整响应。</summary>
-    private async Task<AxiosResponse<T>> SendResponseAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>：交付完整响应（生成代理经 <c>InterfaceMethodRuntime</c> 直接调用）。</summary>
+    internal async Task<AxiosResponse<T>> SendResponseAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
@@ -645,7 +648,7 @@ internal sealed class InterfaceMethodMetadata
     }
 
     /// <summary><c>Task&lt;AxiosResponse&gt;</c>：交付响应，正文按 JsonElement 原样给。</summary>
-    private async Task<AxiosResponse> SendUntypedAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    internal async Task<AxiosResponse> SendUntypedAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
@@ -654,14 +657,14 @@ internal sealed class InterfaceMethodMetadata
     }
 
     /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
-    private async Task<T?> SendDataAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    internal async Task<T?> SendDataAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var response = await SendResponseAsync<T>(client, args, cancellationToken).ConfigureAwait(false);
         return response.Data;
     }
 
     /// <summary><c>Task</c>：只完成请求，正文丢弃。</summary>
-    private async Task SendVoidAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    internal async Task SendVoidAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
@@ -670,7 +673,7 @@ internal sealed class InterfaceMethodMetadata
     }
 
     /// <summary>接口侧流式发送：绑定配置后把授权交给客户端内核统一执行。</summary>
-    private async Task<AxiosResponse<IAsyncEnumerable<TItem>>> SendStreamAsync<TItem>(
+    internal async Task<AxiosResponse<IAsyncEnumerable<TItem>>> SendStreamAsync<TItem>(
         ApiClient client,
         object?[] args,
         CancellationToken cancellationToken,
@@ -689,7 +692,14 @@ internal sealed class InterfaceMethodMetadata
         return await client.SendStreamAsync<TItem>(invocation, _authorization, config, cancellationToken, format).ConfigureAwait(false);
     }
 
-    /// <summary>接口自身在前的接口链（含全部基接口，去重）。</summary>
+    /// <summary>
+    /// 接口链：自身在前，其余按「依赖的接口数量」降序（派生接口依赖更多，必然排在它继承的接口之前）。
+    /// 单纯按反射遍历顺序会随菱形的分支交错而把基接口排到派生接口前面，导致同名静态头 / 最近授权选错层。
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "基接口类型来自已标注的接口图；调用方负责 root 接口及其基接口。")]
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -700,23 +710,11 @@ internal sealed class InterfaceMethodMetadata
         Justification = "基接口类型来自已标注的接口图；调用方负责 root 接口及其基接口。")]
     private static List<Type> GetInterfaceChain([DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType)
     {
-        var chain = new List<Type>();
-        var pending = new Stack<Type>();
-        pending.Push(interfaceType);
-
-        while (pending.Count > 0)
+        var inherited = interfaceType.GetInterfaces();
+        var chain = new List<Type>(inherited.Length + 1) { interfaceType };
+        foreach (var baseInterface in inherited.OrderByDescending(static type => type.GetInterfaces().Length))
         {
-            var type = pending.Pop();
-            if (chain.Contains(type))
-            {
-                continue;
-            }
-
-            chain.Add(type);
-            foreach (var baseInterface in type.GetInterfaces())
-            {
-                pending.Push(baseInterface);
-            }
+            chain.Add(baseInterface);
         }
 
         return chain;

@@ -49,6 +49,16 @@ internal static class GeneratedMetadataRegistry
     }
 
     internal static void RegisterInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
+        => AddInterface(declaration, factory, allowExisting: false);
+
+    /// <summary>
+    /// 生成代码的注册入口：两个互不引用的程序集引用同一份契约程序集时，会各自为同一接口生成代理并注册；
+    /// 生成结果等价，保留先注册的一份即可（否则第二个模块初始化器会抛错）。
+    /// </summary>
+    internal static void RegisterGeneratedInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
+        => AddInterface(declaration, factory, allowExisting: true);
+
+    private static void AddInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(declaration);
         ArgumentNullException.ThrowIfNull(factory);
@@ -59,6 +69,11 @@ internal static class GeneratedMetadataRegistry
             var current = _interfaces;
             if (current.ContainsKey(declaration.InterfaceType))
             {
+                if (allowExisting)
+                {
+                    return;
+                }
+
                 throw new InvalidOperationException(
                     $"接口 {Describe(declaration.InterfaceType)} 的元数据已注册：源生成器与手工 AxiosMetadata.RegisterInterface 不能同时声明同一类型。");
             }

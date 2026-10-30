@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1968%2F1964%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.6%25_(branch_88.4%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1978%2F1974%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.3%25_(branch_87.9%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -124,7 +124,7 @@ Once endpoints multiply, URLs, parameters and headers scattered across call site
 | Style | What it looks like | Use for | Cost |
 | --- | --- | --- | --- |
 | Request model | `class GetUserRequest : IApiRequest<User>` with `[Path]` / `[Query]` / `[Body]` on properties | Endpoints fairly independent; requests passed around or reused as objects | One type per endpoint |
-| Interface | `interface IUserApi` with routes and bindings on methods / parameters | Endpoints in groups; calls feel like local methods | JIT only, unavailable under Native AOT |
+| Interface | `interface IUserApi` with routes and bindings on methods / parameters | Endpoints in groups; calls feel like local methods | Source generator emits real proxies (same path for JIT / Native AOT); falls back to `DispatchProxy` (JIT only) when not generated |
 
 Both forms share one kernel: path-template validation, duplicate detection, default body inference, scalar guards, static headers and authorization semantics are identical. Start with request models.
 
@@ -178,7 +178,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 
 ### Interface-based API
 
-When writing a request model per endpoint is too much, hand the interface to `client.Create<T>()`: routes live on methods, binding attributes on parameters, and `DispatchProxy` generates the implementation at runtime.
+When writing a request model per endpoint is too much, hand the interface to `client.Create<T>()`: routes live on methods, binding attributes on parameters. With the bundled source generator the proxy class is emitted at compile time (the same path for JIT and Native AOT); only when nothing was generated does it fall back to `DispatchProxy` (JIT only).
 
 ```csharp
 [Headers("Accept: application/json")]                    // interface-level static headers
@@ -222,7 +222,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 - Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
 - Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
 - Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
-- The proxy is built on `DispatchProxy` (Reflection.Emit) and is **JIT-only**: `Create<T>()` throws `PlatformNotSupportedException` under Native AOT, and trimming requires rooting the interface plus its parameter / return types.
+- **Native AOT**: as long as the assembly declaring the interface runs the source generator, a real proxy is emitted (internal interfaces included); closed generic interfaces (e.g. `IRepo<User>`) are generated at the call site — `Create<T>()` / `AddApiInterface<T>()` — and only an open generic declaration itself reports warning `AXA011`. Without generated metadata, `Create<T>()` throws `AxiosAotMetadataException` (with repair guidance) under AOT and falls back to `DispatchProxy` (requires a public interface) on JIT. The generated path needs no `TrimmerRootAssembly` and no longer roots the interface type.
 
 ## Capability map
 
@@ -279,7 +279,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [HTTP versions](#http-versions) | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
 | [Custom handlers](#custom-handlers) | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
 | [Dependency injection](#dependency-injection) | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings); built-in request-model source generator, no `TrimmerRootAssembly` needed | On by reference; configure `JsonSerializerContext` for serialization |
+| [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings); built-in request-model / interface-proxy source generator, no `TrimmerRootAssembly` needed | On by reference; configure `JsonSerializerContext` for serialization |
 
 ## Token management
 
@@ -1661,24 +1661,31 @@ The library targets `net6.0` and `net8.0`: .NET 8 and later consume `lib/net8.0`
 
 `IsTrimmable` is declared on both targets (the library trims with 0 warnings), and the `net8.0` target also sets `IsAotCompatible` — the AOT analyzer reports 0 warnings (the SDK does not offer that analyzer for a `net6.0` target).
 
-### Request models: built-in source generator
+### Request models and interfaces: built-in source generator
 
-The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute and registers it from a module initializer. It replaces the old "root the model assembly" approach:
+The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute, and emits real proxy classes for interface-based declarations (inherited interfaces, authorization, multipart, streaming), registering both from a module initializer. It replaces the old "root the model assembly" approach:
 
 - **Zero configuration**: no `TrimmerRootAssembly`, no hand-written registration;
 - **One declaration for both paths**: the generator only writes facts (route / members / bindings / authorization); validation and the binding plan still run through the shared runtime builder, so JIT and AOT behave the same and produce the same error text;
-- **No runtime reflection over models**: generated code reads members through direct getter delegates; under AOT a registry miss throws `AxiosAotMetadataException` (with repair guidance) instead of silently dropping fields;
+- **No runtime reflection over models or interfaces**: request models read members through direct getter delegates; interface proxies only "gather arguments → call the shared binding implementation" and never use `MakeGenericMethod`; under AOT a registry miss throws `AxiosAotMetadataException` (with repair guidance) instead of silently dropping fields;
+- **Where interface proxies are emitted**: non-generic interfaces at their declaration; closed generic interfaces (`IRepo<User>`) at the `Create<T>()` / `AddApiInterface<T>()` / `ValidateInterfaces(typeof(...))` call site, while an open generic declaration itself (including a nested interface whose outer type is open generic) only reports `AXA011` (suppressed when the same compilation contains a closed call site). When a referenced assembly has already generated a proxy for the same interface, the consumer recognises it by the generated class name and reuses that registration instead of emitting a duplicate (a duplicate registration would throw at startup); only when the referenced assembly did not run the generator does the consumer generate at the call site;
+- **Fallback path**: without generated metadata JIT falls back to `DispatchProxy`; Native AOT has no fallback and throws `AxiosAotMetadataException`;
 - **Prerequisite**: consumers need C# 9 or later (`[ModuleInitializer]`); the generator itself targets `netstandard2.0` and ships with the package (built against Roslyn 4.0.1, so any compiler from .NET SDK 6.0.100 / VS 2022 17.0 onward can load it);
 - **Custom route attributes**: a custom subclass of `HttpApiAttribute` cannot have its constructor executed at compile time → warning `AXA010` and generation is skipped; JIT still uses reflection, and under AOT use `[HttpApi("METHOD", "path")]` or the built-in `[Get]` / `[Post]` etc. instead;
-- **Disabling the generator**: `<AxiosNetSourceGen>false</AxiosNetSourceGen>`. JIT falls back to reflection automatically; when `PublishAot` is true it raises warning `AXA012`.
+- **Disabling the generator**: `<AxiosNetSourceGen>false</AxiosNetSourceGen>`. JIT falls back to reflection / `DispatchProxy` automatically; when `PublishAot` is true it raises warning `AXA012`.
 
 | Diagnostic | Severity | Scenario |
 | --- | --- | --- |
-| `AXA003` | Error | Multiple route attributes; blank route method / path |
+| `AXA001` | Error | Interface member that cannot be proxied: property / event / static member |
+| `AXA002` | Error | Unsupported interface method shape: generic method, `ref` / `out` / `in`, ref struct / pointer parameter, non-public abstract member, `CancellationToken` with binding attributes |
+| `AXA003` | Error | Multiple route attributes; blank route method / path or a missing route |
+| `AXA004` | Error | Unsupported interface method return shape (synchronous return / `ValueTask` etc.) |
+| `AXA005` | Error | Invalid `[Stream]` declaration on an interface method or an undefined frame format value |
 | `AXA006` | Error | `[ApiIgnore]` combined with Path / Query / Header / HeaderCollection / Part / Body |
-| `AXA008` | Error | `[Authorize]` and `[AllowAnonymous]` on the same level |
-| `AXA009` | Error | Model cannot be generated: static class / inaccessible / generic / ref struct / file-local / non-public member getter / invisible member type |
+| `AXA008` | Error | `[Authorize]` and `[AllowAnonymous]` on the same level (model, interface or method) |
+| `AXA009` | Error | Model / interface cannot be generated: static class / inaccessible / generic / ref struct / file-local / non-public member getter / invisible type |
 | `AXA010` | Warning | Custom `HttpApiAttribute` subclass used (generation skipped) |
+| `AXA011` | Warning | Open generic interface (including a nested interface whose outer type is open generic) without a closed call site (`Create` fails explicitly under AOT) |
 | `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
@@ -1699,9 +1706,9 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
-Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosMetadata.RegisterRequestModel(typeof(T), ...)` API can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver`; `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
+Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models and interfaces throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` APIs can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver`; `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
 
-Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and interface declarations via `Create<T>()` (`DispatchProxy` relies on Reflection.Emit and throws `PlatformNotSupportedException` at call time; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`).
+Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`).
 
 ## Build and test
 
@@ -1713,13 +1720,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1905 / 1901 | `net8.0` / `net6.0` | 3806 |
+| `AxiosNet.Tests` (core + declarative) | 1915 / 1911 | `net8.0` / `net6.0` | 3826 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1968 / 1964** | | **3932** |
+| **Total** | **1978 / 1974** | | **3952** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **92.6%**, branch coverage **88.4%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
+Line coverage **92.3%**, branch coverage **87.9%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash

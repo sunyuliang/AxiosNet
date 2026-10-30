@@ -21,6 +21,12 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     internal static AxiosAotMetadataException MissingRequestModel(Type type)
         => new($"请求模型 {Describe(type)} 缺少生成元数据：当前运行时不支持动态代码（Native AOT），无法通过反射读取属性与特性。" + RepairHint);
 
+    /// <summary>接口代理缺少生成元数据。</summary>
+    internal static AxiosAotMetadataException MissingInterface(Type type)
+        => new($"接口 {Describe(type)} 缺少生成元数据：当前运行时不支持动态代码（Native AOT），无法通过 DispatchProxy 生成代理。"
+            + "请确认接口声明在启用 AxiosNet 源生成器的程序集里（闭合泛型接口还需在调用点 Create<T>() / AddApiInterface<T>() 出现），"
+            + "或用 AxiosMetadata.RegisterInterface 手工注册。" + RepairHint);
+
     /// <summary>System.Text.Json 缺少该类型的源生成元数据。</summary>
     internal static AxiosAotMetadataException MissingJsonPropertyInfo(Type type)
         => new($"类型 {Describe(type)} 没有可用的 System.Text.Json 元数据："

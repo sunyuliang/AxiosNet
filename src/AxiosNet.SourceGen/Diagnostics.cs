@@ -70,5 +70,97 @@ namespace AxiosNet.SourceGen
             DiagnosticSeverity.Warning,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceMemberNotSupported = new DiagnosticDescriptor(
+            "AXA001",
+            "接口含无法代理的成员",
+            "接口 {0} 的 {1} 无法代理：接口级声明只支持实例方法（不支持属性、事件与静态成员）。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceShapeUnsupported = new DiagnosticDescriptor(
+            "AXA002",
+            "接口方法形态不支持",
+            "接口 {0} 的 {1} 无法生成代理：{2}。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceRouteInvalid = new DiagnosticDescriptor(
+            "AXA003",
+            "接口方法必须且只能标注一个路由特性",
+            "接口 {0} 的 {1} {2}：请在方法上标注一个 [Get(\"...\")] / [Post(\"...\")] 等 HttpApiAttribute 子类。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceReturnUnsupported = new DiagnosticDescriptor(
+            "AXA004",
+            "接口方法返回形态不支持",
+            "接口 {0} 的 {1} 返回 {2}：必须返回 Task<AxiosResponse<T>> / Task<T> / Task<AxiosResponse> / Task（不支持同步返回 / ValueTask）。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceStreamInvalid = new DiagnosticDescriptor(
+            "AXA005",
+            "接口方法的 [Stream] 声明无效",
+            "接口 {0} 的 {1} 的 [Stream] 无效：{2}。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceAuthorizationConflictAtType = new DiagnosticDescriptor(
+            "AXA008",
+            "[Authorize] 与 [AllowAnonymous] 同层",
+            "接口 {0} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceAuthorizationConflict = new DiagnosticDescriptor(
+            "AXA008",
+            "[Authorize] 与 [AllowAnonymous] 同层",
+            "接口 {0} 的 {1} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceUnsupportedType = new DiagnosticDescriptor(
+            "AXA009",
+            "接口无法生成代理",
+            "接口 {0} 无法生成代理：{1}。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor InterfaceCustomRouteAttribute = new DiagnosticDescriptor(
+            "AXA010",
+            "自定义 HttpApiAttribute 子类无法静态求值",
+            "接口 {0} 的 {1} 使用了自定义路由特性 {2}：源生成器无法静态执行自定义构造器，已跳过该接口的代理生成。"
+            + "请改用 [HttpApi(\"METHOD\", \"path\")] 或内置的 [Get]/[Post] 等（JIT 下仍可走 DispatchProxy）。",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor ClosedGenericInterfaceMissing = new DiagnosticDescriptor(
+            "AXA011",
+            "开放泛型接口需要闭合调用点",
+            "接口 {0} 是开放泛型，无法直接生成代理：请在使用方的调用点写成闭合类型（如 Create<{0}<T>>() / AddApiInterface<...>()）由该程序集生成；"
+            + "Native AOT 下若没有任何闭合调用点，Create 时会显式失败。",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
     }
 }

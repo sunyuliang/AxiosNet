@@ -63,6 +63,69 @@ public static class AxiosMetadata
     }
 
     /// <summary>
+    /// 源生成代码专用的接口注册入口：同一接口可能被多个引用同一契约程序集、但互不引用的程序集各生成一份，
+    /// 结果等价，保留先注册的一份而不是抛错。
+    /// </summary>
+    /// <param name="interfaceType">被代理的接口类型。</param>
+    /// <param name="factory">由 <see cref="ApiClient"/> 创建代理实例的工厂（生成代理的构造函数）。</param>
+    /// <param name="configure">声明构建器。</param>
+    public static void RegisterGeneratedInterface(
+        Type interfaceType,
+        Func<ApiClient, object> factory,
+        Action<InterfaceBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(interfaceType);
+        ArgumentNullException.ThrowIfNull(factory);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new InterfaceBuilder(interfaceType);
+        try
+        {
+            configure(builder);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
+        {
+            builder.Declaration.Error = ex.Message;
+        }
+
+        GeneratedMetadataRegistry.RegisterGeneratedInterface(builder.Declaration, factory);
+    }
+
+    /// <summary>
+    /// 取某个已注册接口的方法调用桥（生成代理的静态字段初始化时调用）。
+    /// 声明错误在首次取用该方法时抛出；元数据缺失（未生成 / 未手工注册）属编程错误，直接提示如何修复。
+    /// </summary>
+    /// <param name="interfaceType">被代理的接口类型（与注册时一致）。</param>
+    /// <param name="index">方法在注册声明里的顺序（生成器与代理共用同一顺序）。</param>
+    /// <param name="methodName">生成代理写入的方法名；用于识别「代理与注册声明来自不同版本的生成器」。</param>
+    public static InterfaceMethodRuntime GetInterfaceMethod(Type interfaceType, int index, string? methodName = null)
+    {
+        ArgumentNullException.ThrowIfNull(interfaceType);
+
+        if (!GeneratedMetadataRegistry.TryGetInterface(interfaceType, out var entry))
+        {
+            throw AxiosAotMetadataException.MissingInterface(interfaceType);
+        }
+
+        var methods = entry.GetMethods();
+        if ((uint)index >= (uint)methods.Length)
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.FullName} 没有第 {index} 个方法声明：代理与注册声明的顺序不一致（元数据已过期，请重新编译）。");
+        }
+
+        if (methodName is not null && !string.Equals(methods[index].Name, methodName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.FullName} 的第 {index} 个方法声明是 {methods[index].Name}，代理期望 {methodName}："
+                + "代理与注册声明来自不同版本的生成器（元数据已过期，请重新编译）。");
+        }
+
+        methods[index].EnsureValid();
+        return new InterfaceMethodRuntime(methods[index]);
+    }
+
+    /// <summary>
     /// 注册对象形状（params / 表单 / multipart 展平）：每个成员一个取值委托。
     /// 配置过程抛出的声明错误不会在这里抛出，而是随形状进入首次展平该类型时的构建错误。
     /// </summary>

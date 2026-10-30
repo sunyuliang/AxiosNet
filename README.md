@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1968%2F1964%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.6%25_(branch_88.4%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1978%2F1974%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.3%25_(branch_87.9%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -124,7 +124,7 @@ string url = http.GetUri(c =>
 | 写法 | 长什么样 | 适合 | 代价 |
 | --- | --- | --- | --- |
 | 请求模型 | `class GetUserRequest : IApiRequest<User>`，属性上标 `[Path]` / `[Query]` / `[Body]` | 端点相对独立，请求要当对象传递或复用 | 每个端点一个类型 |
-| 接口声明 | `interface IUserApi`，路由与绑定写在方法 / 参数上 | 端点成组，调用像本地方法 | 仅 JIT，Native AOT 下不可用 |
+| 接口声明 | `interface IUserApi`，路由与绑定写在方法 / 参数上 | 端点成组，调用像本地方法 | 源生成器烘焙真实代理（JIT / Native AOT 同一路径）；未生成时回退 `DispatchProxy`（仅 JIT） |
 
 两种写法共用同一套内核：路径模板校验、重名检测、默认 Body 推断、标量护栏、静态头、授权语义全部一致。先看请求模型。
 
@@ -178,7 +178,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 
 ### 接口式 API
 
-不想为每个端点写请求模型时，可直接把接口交给 `client.Create<T>()`：路由写在方法上、绑定特性写在参数上，运行时由 `DispatchProxy` 生成代理。
+不想为每个端点写请求模型时，可直接把接口交给 `client.Create<T>()`：路由写在方法上、绑定特性写在参数上。启用包内源生成器时，代理类在编译期生成（JIT / Native AOT 同一路径）；未生成时才回退 `DispatchProxy`（仅 JIT）。
 
 ```csharp
 [Headers("Accept: application/json")]                    // 接口级静态头
@@ -222,7 +222,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 - 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
 - 接口级流式：帧格式用 `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` 声明，省略按 NDJSON；返回流只能枚举一次，超时与错误口径与 `RequestStreamAsync(...)` 完全一致。
 - 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
-- 代理基于 `DispatchProxy`（Reflection.Emit），**仅 JIT**：Native AOT 下 `Create<T>()` 抛 `PlatformNotSupportedException`；裁剪时需 root 接口类型及其参数 / 返回类型。
+- **Native AOT**：接口所在程序集启用源生成器即生成真实代理（内部接口同样支持）；闭合泛型接口（如 `IRepo<User>`）在调用点 `Create<T>()` / `AddApiInterface<T>()` 出现时生成，只有开放泛型声明本身会给出 `AXA011` 警告。未生成 / 未注册时 AOT 下 `Create<T>()` 抛 `AxiosAotMetadataException`（带修复指引），JIT 下回退 `DispatchProxy`（需 public 接口）。生成路径不要求 `TrimmerRootAssembly`，也不再需要 root 接口类型。
 
 ## 能力地图
 
@@ -279,7 +279,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 | [HTTP 版本](#http-版本) | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
 | [自定义 Handler](#自定义-handler) | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
 | [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告），内置请求模型源生成器，零 `TrimmerRootAssembly` | 引用即生效；序列化另配 `JsonSerializerContext` |
+| [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告），内置请求模型 / 接口代理源生成器，零 `TrimmerRootAssembly` | 引用即生效；序列化另配 `JsonSerializerContext` |
 
 ## 令牌管理
 
@@ -1659,24 +1659,31 @@ dotnet run --project samples/AxiosNet.Simple
 
 两个目标都声明 `IsTrimmable`（自身裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`，AOT 分析器 0 警告（`net6.0` 目标上 SDK 不提供该分析器）。
 
-### 请求模型：内置源生成器
+### 请求模型与接口：内置源生成器
 
-包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并在模块初始化器里注册。它取代了旧版「root 模型程序集」的做法：
+包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并为接口级声明生成真实代理类（含继承接口、授权、multipart、流式），全部在模块初始化器里注册。它取代了旧版「root 模型程序集」的做法：
 
 - **零配置**：不需要 `TrimmerRootAssembly`，也不需要手写注册；
 - **两条路径同一份声明**：生成器只写事实（路由 / 成员 / 绑定 / 授权），校验与绑定计划仍由运行时共享构建器完成，JIT 与 AOT 的行为、错误文本一致；
-- **运行时不再反射模型**：生成代码把成员取值写成直接 getter 委托；AOT 下未命中注册表会抛 `AxiosAotMetadataException`（带修复指引），不会静默丢字段；
+- **运行时不再反射模型 / 接口**：请求模型把成员取值写成直接 getter 委托；接口代理只做「取参 → 调用共享绑定实现」，不 `MakeGenericMethod`；AOT 下未命中注册表会抛 `AxiosAotMetadataException`（带修复指引），不会静默丢字段；
+- **接口代理的生成位置**：非泛型接口在声明处生成；闭合泛型接口（`IRepo<User>`）在 `Create<T>()` / `AddApiInterface<T>()` / `ValidateInterfaces(typeof(...))` 调用点生成，开放泛型声明本身（含外层类型为开放泛型的嵌套接口）只提示 `AXA011`（同一编译里已有闭合调用点时不报）。被引用程序集已经为同一接口生成过代理时，使用方按生成的类名识别并直接复用对方注册，不重复生成（重复注册会在启动期抛错）；只有被引用程序集没启用生成器时，使用方才在调用点生成；
+- **回退路径**：没有生成元数据时 JIT 回退 `DispatchProxy`；Native AOT 下没有回退，直接抛 `AxiosAotMetadataException`；
 - **前提**：消费方需 C# 9 及以上（`[ModuleInitializer]`）；生成器本身是 `netstandard2.0`，随包分发（按 Roslyn 4.0.1 编译，.NET SDK 6.0.100 / VS 2022 17.0 及以上的编译器均可加载）；
 - **自定义路由特性**：`HttpApiAttribute` 的自定义子类无法在编译期执行构造器 → 警告 `AXA010` 并跳过生成；JIT 下仍走反射，AOT 下请改用 `[HttpApi("METHOD", "path")]` 或内置的 `[Get]` / `[Post]` 等；
-- **关闭生成器**：`<AxiosNetSourceGen>false</AxiosNetSourceGen>`。JIT 下自动回退反射；`PublishAot` 为 true 时给出警告 `AXA012`。
+- **关闭生成器**：`<AxiosNetSourceGen>false</AxiosNetSourceGen>`。JIT 下自动回退反射 / `DispatchProxy`；`PublishAot` 为 true 时给出警告 `AXA012`。
 
 | 诊断 | 级别 | 场景 |
 | --- | --- | --- |
-| `AXA003` | Error | 标了多个路由特性；路由方法 / 路径为空白 |
+| `AXA001` | Error | 接口含无法代理的成员：属性 / 事件 / 静态成员 |
+| `AXA002` | Error | 接口方法形态不支持：泛型方法、`ref` / `out` / `in`、ref struct / 指针参数、非 public 抽象成员、`CancellationToken` 附带绑定特性 |
+| `AXA003` | Error | 标了多个路由特性；路由方法 / 路径为空白或缺少路由 |
+| `AXA004` | Error | 接口方法返回形态不支持（同步返回 / `ValueTask` 等） |
+| `AXA005` | Error | 接口方法的 `[Stream]` 声明无效或帧格式值未定义 |
 | `AXA006` | Error | `[ApiIgnore]` 与 Path / Query / Header / HeaderCollection / Part / Body 同用 |
-| `AXA008` | Error | `[Authorize]` 与 `[AllowAnonymous]` 标在同一层 |
-| `AXA009` | Error | 模型无法生成：静态类 / 不可访问 / 泛型 / ref struct / file-local / 成员 getter 非 public / 成员类型不可见 |
+| `AXA008` | Error | `[Authorize]` 与 `[AllowAnonymous]` 标在同一层（模型或接口 / 方法） |
+| `AXA009` | Error | 模型 / 接口无法生成：静态类 / 不可访问 / 泛型 / ref struct / file-local / 成员 getter 非 public / 类型不可见 |
 | `AXA010` | Warning | 使用了自定义 `HttpApiAttribute` 子类（已跳过生成） |
+| `AXA011` | Warning | 开放泛型接口（含外层类型为开放泛型的嵌套接口）没有闭合调用点（AOT 下 `Create` 会显式失败） |
 | `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
 
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
@@ -1697,9 +1704,9 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
-AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosMetadata.RegisterRequestModel(typeof(T), ...)` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
+AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型 / 接口缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
 
-AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、匿名对象作为 params / 表单值、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）、接口级声明 `Create<T>()`（`DispatchProxy` 依赖 Reflection.Emit，调用时抛 `PlatformNotSupportedException`；`ValidateInterfaces(Assembly)` 同受裁剪影响，改用 `ValidateInterfaces(typeof(IA), ...)`）。
+AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、匿名对象作为 params / 表单值、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT；`ValidateInterfaces(Assembly)` 同受裁剪影响，改用 `ValidateInterfaces(typeof(IA), ...)`）。
 
 ## 构建与测试
 
@@ -1711,13 +1718,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1905 / 1901 | `net8.0` / `net6.0` | 3806 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1915 / 1911 | `net8.0` / `net6.0` | 3826 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1968 / 1964** | | **3932** |
+| **合计** | **1978 / 1974** | | **3952** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.6%**、分支覆盖率 **88.4%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
+行覆盖率 **92.3%**、分支覆盖率 **87.9%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash

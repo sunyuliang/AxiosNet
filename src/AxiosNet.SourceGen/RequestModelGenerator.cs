@@ -13,9 +13,10 @@ namespace AxiosNet.SourceGen
     /// <summary>
     /// 请求模型源生成器：编译期为每个带路由特性的请求模型烘焙一份声明，经 <c>AxiosMetadata.RegisterRequestModel</c>
     /// 写入运行时注册表。声明里只有事实（路由 / 静态头 / 成员 / 绑定 / 授权），校验仍由运行时共享构建器完成。
+    /// 接口代理（真实代理类 + <c>RegisterInterface</c>）见 <c>RequestModelGenerator.Interfaces.cs</c>。
     /// </summary>
     [Generator(LanguageNames.CSharp)]
-    public sealed class RequestModelGenerator : IIncrementalGenerator
+    public sealed partial class RequestModelGenerator : IIncrementalGenerator
     {
         internal const string GeneratorName = "AxiosNet.SourceGen";
         internal const string GeneratorVersion = "1.0.0";
@@ -35,6 +36,8 @@ namespace AxiosNet.SourceGen
 
             context.RegisterSourceOutput(models.Collect().Combine(options), static (output, pair)
                 => Execute(output, pair.Left, pair.Right));
+
+            InitializeInterfaces(context, options);
         }
 
         private static bool IsCandidate(SyntaxNode node)
@@ -829,6 +832,17 @@ namespace AxiosNet.SourceGen
             ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.ApiIgnoreAttribute");
             ApiRequest = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.IApiRequest`1");
             JsonPropertyName = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonPropertyNameAttribute");
+            Task = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task");
+            TaskOfT = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task`1");
+            AxiosResponse = compilation.GetTypeByMetadataName("AxiosNet.AxiosResponse");
+            AxiosResponseOfT = compilation.GetTypeByMetadataName("AxiosNet.AxiosResponse`1");
+            AsyncEnumerable = compilation.GetTypeByMetadataName("System.Collections.Generic.IAsyncEnumerable`1");
+            CancellationToken = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
+            Stream = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.StreamAttribute");
+            StreamFormat = compilation.GetTypeByMetadataName("AxiosNet.AxiosStreamFormat");
+            ApiClient = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.ApiClient");
+            ApiInterfaceExtensions = compilation.GetTypeByMetadataName(
+                "AxiosNet.WebAPI.DependencyInjection.ApiInterfaceServiceCollectionExtensions");
         }
 
         public INamedTypeSymbol? HttpApi { get; }
@@ -858,6 +872,26 @@ namespace AxiosNet.SourceGen
         public INamedTypeSymbol? ApiRequest { get; }
 
         public INamedTypeSymbol? JsonPropertyName { get; }
+
+        public INamedTypeSymbol? Task { get; }
+
+        public INamedTypeSymbol? TaskOfT { get; }
+
+        public INamedTypeSymbol? AxiosResponse { get; }
+
+        public INamedTypeSymbol? AxiosResponseOfT { get; }
+
+        public INamedTypeSymbol? AsyncEnumerable { get; }
+
+        public INamedTypeSymbol? CancellationToken { get; }
+
+        public INamedTypeSymbol? Stream { get; }
+
+        public INamedTypeSymbol? StreamFormat { get; }
+
+        public INamedTypeSymbol? ApiClient { get; }
+
+        public INamedTypeSymbol? ApiInterfaceExtensions { get; }
 
         public static WellKnownSymbols Resolve(Compilation compilation) => new WellKnownSymbols(compilation);
     }

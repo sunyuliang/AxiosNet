@@ -88,10 +88,48 @@ if (searchRequest.HasHeader("Authorization"))
     throw new InvalidOperationException("[AllowAnonymous] 模型不应带 Authorization 头。");
 }
 
+// 3) 接口级声明（Refit 风格）：源生成器在编译期写出真实代理，AOT 下不走 DispatchProxy。
+var personApi = api.Create<IPersonApi>();
+var interfaceGet = await personApi.GetAsync(7, "true", default);
+Verify(
+    server.TakeLast(),
+    "GET /persons/7?verbose=true HTTP/1.1",
+    ("X-Api", "v1"),
+    ("Authorization", "Bearer aot-token"));
+
+await personApi.SaveAsync(payload, true, default);
+var interfacePostRequest = server.TakeLast();
+Verify(interfacePostRequest, "POST /persons?notify=true HTTP/1.1", ("Authorization", "Bearer aot-token"));
+if (!interfacePostRequest.Body.Contains("\"name\":\"alice\"", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException($"接口 POST 请求体没有按 STJ 序列化：{interfacePostRequest.Body}");
+}
+
+// 闭合泛型接口只在调用点出现，代理同样由源生成器生成。
+var feed = api.Create<IFeedApi<Person>>();
+var feedResponse = await feed.StreamAsync(default);
+var feedCount = 0;
+await foreach (var person in feedResponse.Data!)
+{
+    feedCount++;
+    if (person.Name != "alice")
+    {
+        throw new InvalidOperationException($"SSE 帧内容不符：{person.Name}");
+    }
+}
+
+Verify(server.TakeLast(), "GET /feed HTTP/1.1");
+if (feedCount != 2)
+{
+    throw new InvalidOperationException($"SSE 应产出 2 帧，实际 {feedCount}。");
+}
+
 Console.WriteLine($"POST /echo      -> {posted.Data?.Name} / {posted.Data?.Age} / {posted.Data?.Address?.City}");
 Console.WriteLine($"GET persons/7   -> {fetched.Data?.Name} / query+header+auth 校验通过");
 Console.WriteLine($"POST persons    -> {created.Data?.Name} / body+query+auth 校验通过");
 Console.WriteLine($"GET persons     -> {searched.Data?.Name} / 匿名请求校验通过");
+Console.WriteLine($"接口 GET/POST   -> {interfaceGet.Data?.Name} / POST 已发送 / 声明式代理校验通过");
+Console.WriteLine($"接口 SSE 流式   -> {feedCount} 帧 / 闭合泛型接口代理校验通过");
 
 static void Verify(
     RequestSnapshot request,
@@ -158,6 +196,29 @@ public sealed record Person(string Name, int Age, Address? Address);
 
 public sealed record Address(string City, string Zip);
 
+// 接口级声明：GET / POST 由源生成器烘焙成真实代理（内部接口同样支持，不需要 root 反射元数据）。
+[Headers("X-Api: v1")]
+internal interface IPersonApi
+{
+    [Get("persons/{id}")]
+    Task<AxiosResponse<Person>> GetAsync(
+        [Path] int id,
+        [Query("verbose")] string verbose,
+        CancellationToken cancellationToken);
+
+    [Post("persons")]
+    [Authorize]
+    Task SaveAsync([Body] Person person, [Query("notify")] bool notify, CancellationToken cancellationToken);
+}
+
+// 闭合泛型接口：代理在 Create<IFeedApi<Person>>() 调用点生成（接口声明本身只提示 AXA011）。
+internal interface IFeedApi<T>
+{
+    [Get("feed")]
+    [Stream(AxiosStreamFormat.ServerSentEvents)]
+    Task<AxiosResponse<IAsyncEnumerable<T>>> StreamAsync(CancellationToken cancellationToken);
+}
+
 internal sealed class FixedTokenProvider : IAccessTokenProvider
 {
     public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
@@ -177,6 +238,7 @@ internal partial class ExchangeJsonContext : JsonSerializerContext
 internal sealed class LoopbackServer : IDisposable
 {
     private const string PersonJson = """{"name":"alice","age":30,"address":{"city":"Shanghai","zip":"200000"}}""";
+    private const string FeedJson = "data: " + PersonJson + "\n\ndata: " + PersonJson + "\n\n";
 
     private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource _cts = new();
@@ -235,8 +297,11 @@ internal sealed class LoopbackServer : IDisposable
                 _last = snapshot;
             }
 
-            var payload = Encoding.UTF8.GetBytes(PersonJson);
-            var responseHead = $"HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n";
+            // /feed 回 SSE 帧，其余场景回单个 Person，覆盖声明式 GET / POST 与流式代理。
+            var isStream = snapshot.RequestLine.StartsWith("GET /feed ", StringComparison.Ordinal);
+            var payload = Encoding.UTF8.GetBytes(isStream ? FeedJson : PersonJson);
+            var contentType = isStream ? "text/event-stream" : "application/json; charset=utf-8";
+            var responseHead = $"HTTP/1.1 200 OK\r\nContent-Type: {contentType}\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n";
 
             await stream.WriteAsync(Encoding.ASCII.GetBytes(responseHead));
             await stream.WriteAsync(payload);

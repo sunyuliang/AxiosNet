@@ -51,4 +51,66 @@ namespace AxiosNet.SourceGen
 
     /// <summary>生成器开关（来自 buildTransitive props 暴露的 CompilerVisibleProperty）。</summary>
     internal readonly record struct GeneratorOptions(bool Enabled, bool PublishAot);
+
+    /// <summary>接口方法参数的绑定声明（与请求模型成员同一套绑定规则）。</summary>
+    internal sealed record InterfaceParameterInfo(
+        int Index,
+        string Name,
+        string TypeOfExpression,
+        string Description,
+        bool Ignore,
+        bool Path,
+        string? PathName,
+        bool Query,
+        string? QueryName,
+        bool Header,
+        string? HeaderName,
+        bool HeaderCollection,
+        bool Body,
+        bool Part,
+        string? PartName,
+        string? PartFileName,
+        string? PartContentType);
+
+    /// <summary>接口方法的返回形态（生成器侧；写入 <c>InterfaceBuilder.Returns*</c>）。</summary>
+    internal enum InterfaceReturnKind
+    {
+        Response = 0,
+        Data = 1,
+        Void = 2
+    }
+
+    /// <summary>一个接口方法：路由 / 静态头 / 授权 / 参数绑定 / 返回形态；生成代理与注册声明共用。</summary>
+    internal sealed record InterfaceMethodInfo(
+        int Index,
+        string Name,
+        string DeclaringInterfaceExpression,
+        string RouteMethod,
+        string RoutePath,
+        EquatableArray<string> StaticHeaders,
+        bool Multipart,
+        bool AllowAnonymous,
+        string? AuthorizeScheme,
+        bool IsStreaming,
+        int StreamFormat,
+        string? ResponseTypeExpression,
+        string? StreamFrameTypeExpression,
+        InterfaceReturnKind ReturnKind,
+        int CancellationTokenIndex,
+        EquatableArray<InterfaceParameterInfo> Parameters);
+
+    /// <summary>一个接口（可能是闭合泛型）的完整生成数据；<see cref="Emit"/> 为 false 时只携带诊断。</summary>
+    internal sealed record InterfaceModelInfo(
+        string FullTypeName,
+        string ClassName,
+        string HintName,
+        string InterfaceTypeExpression,
+        EquatableArray<string> StaticHeaders,
+        bool AllowAnonymous,
+        string? AuthorizeScheme,
+        bool OpenGeneric,
+        string? GenericDefinitionFullName,
+        EquatableArray<InterfaceMethodInfo> Methods,
+        EquatableArray<DiagnosticInfo> Diagnostics,
+        bool Emit);
 }

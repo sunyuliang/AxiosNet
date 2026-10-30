@@ -10,8 +10,13 @@ namespace AxiosNet.WebAPI.DependencyInjection;
 public static class ApiInterfaceServiceCollectionExtensions
 {
     /// <summary>为接口注册单例代理，使用未命名的 <see cref="ApiClient"/>（需先调用 <c>AddApiClient(...)</c>）。</summary>
-    [RequiresUnreferencedCode("接口级声明通过反射读取接口方法与参数特性；裁剪时需 root 接口类型及其参数 / 返回类型。")]
-    public static IServiceCollection AddApiInterface<TInterface>(this IServiceCollection services)
+    /// <remarks>代理来自源生成器 / 手工注册的元数据；未注册时 JIT 回退 DispatchProxy，Native AOT 下在解析时显式失败。</remarks>
+    public static IServiceCollection AddApiInterface<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods
+            | DynamicallyAccessedMemberTypes.PublicProperties
+            | DynamicallyAccessedMemberTypes.PublicEvents
+            | DynamicallyAccessedMemberTypes.Interfaces)] TInterface>(
+        this IServiceCollection services)
         where TInterface : class
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -32,8 +37,13 @@ public static class ApiInterfaceServiceCollectionExtensions
     }
 
     /// <summary>为接口注册单例代理，使用命名站点（需先调用带 <c>name</c> 的 <c>AddApiClient(name, baseAddress, ...)</c>）。</summary>
-    [RequiresUnreferencedCode("接口级声明通过反射读取接口方法与参数特性；裁剪时需 root 接口类型及其参数 / 返回类型。")]
-    public static IServiceCollection AddApiInterface<TInterface>(this IServiceCollection services, string name)
+    public static IServiceCollection AddApiInterface<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods
+            | DynamicallyAccessedMemberTypes.PublicProperties
+            | DynamicallyAccessedMemberTypes.PublicEvents
+            | DynamicallyAccessedMemberTypes.Interfaces)] TInterface>(
+        this IServiceCollection services,
+        string name)
         where TInterface : class
     {
         ArgumentNullException.ThrowIfNull(services);
