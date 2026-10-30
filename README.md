@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1689%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1790%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -919,6 +919,7 @@ await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a"
 ```
 
 - **默认关闭**：非幂等方法自动带键会把「重复写」变成「静默去重」，必须由你确认接口支持幂等键。
+- **重试本身要先放行非幂等方法**：`RetryPolicy` 默认只重试幂等方法，键再好也不会让 POST 被重发 —— 需要同时打开 `RetryPolicy.RetryNonIdempotentMethods`（见[重试](#重试)）。
 - **键在请求模板上写一次**，模板被复制时随头一起搬走 —— 重试不会换键。`OnSendingRequest` 是**每次尝试**一次，在那里写键是错的（每次重试都会换一个键）。
 - **一个逻辑请求一个键**：每调用一次 `RequestAsync` 都是新的生效配置、新键；认证失败后的重放要沿用原键，请把它写进 `Idempotency.Key` 再发。
 - `Key`（显式值）优先于 `KeyFactory`；两者都没有时用 `Guid` 的 `N` 格式。
@@ -1543,7 +1544,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
-- **核心 35 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、全局重试预算、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压。
+- **核心 36 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、全局重试预算、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压。
 - **声明式 14 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式。
 
 另有两个示例：
@@ -1591,13 +1592,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1723 | `net8.0` / `net6.0` | 3446 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1727 | `net8.0` / `net6.0` | 3454 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1786** | | **3572** |
+| **合计** | **1790** | | **3580** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.7%**、分支覆盖率 **89.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
+行覆盖率 **92.7%**、分支覆盖率 **89.1%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash

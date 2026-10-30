@@ -1,3 +1,4 @@
+using System.Text;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.Cache;
@@ -317,6 +318,26 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task FullStore_StillOverwritesExistingKey_AndRenewsItsLifetime()
+    {
+        // 覆盖已有键不增加条目数：满了也必须放行，否则热门键的存活时长再也续不上（值一直是旧的）。
+        var store = new MemoryCacheStore(maxEntries: 1);
+
+        await store.SetAsync("a", Entry("first"), TimeSpan.FromMilliseconds(60), CancellationToken.None);
+        await store.SetAsync("a", Entry("second"), TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(1, store.Count);
+        Assert.Equal("second", Encoding.UTF8.GetString((await store.GetAsync("a", CancellationToken.None))!.Body!));
+
+        // 存活时长按第二次写入续期：过了第一次的 60ms 仍然在。
+        await Task.Delay(200);
+        Assert.NotNull(await store.GetAsync("a", CancellationToken.None));
+    }
+
+    private static AxiosShortCircuit Entry(string body)
+        => new() { Status = 200, ContentType = "text/plain", Body = Encoding.UTF8.GetBytes(body) };
+
+    [Fact]
     public async Task ConcurrentRequests_SendOnce()
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -369,6 +390,22 @@ public sealed class CacheTests
         await WaitUntilAsync(() => server.Received.Count == 5);
         release.SetResult(true);
         await Task.WhenAll(tasks);
+    }
+
+    [Fact]
+    public async Task SingleFlightDisabled_StillStoresEntries()
+    {
+        // 关掉单飞只是「不合并并发」，落库照旧：否则这条策略下的缓存永远没有条目、命中率为零。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache(o => o.SingleFlight = false) });
+
+        var first = await client.GetAsync<Person>(server.Url + "x");
+        var second = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.NotNull(first.Request);
+        Assert.Null(second.Request);
+        Assert.Equal("ada", second.Data?.Name);
     }
 
     [Fact]

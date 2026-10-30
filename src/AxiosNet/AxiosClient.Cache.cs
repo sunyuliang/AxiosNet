@@ -31,8 +31,11 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>领导者落库并放行跟随者：只有 2xx 且拿到了原始字节才入缓存，写缓存失败不影响这次请求。</summary>
-    private static async Task CompleteCacheFlightAsync(AxiosCache cache, string key, AxiosCacheFlight flight, AxiosResponse response)
+    /// <summary>
+    /// 落库并放行跟随者：只有 2xx 且拿到了原始字节才入缓存，写缓存失败不影响这次请求。
+    /// <paramref name="flight"/> 为 <c>null</c> 时表示这次请求不参与单飞（关掉了单飞，或是跟随者落空后自己补发），只落库。
+    /// </summary>
+    private static async Task StoreAsync(AxiosCache cache, string key, AxiosCacheFlight? flight, AxiosResponse response)
     {
         AxiosShortCircuit? reply = null;
         try
@@ -54,7 +57,11 @@ public sealed partial class AxiosClient
         {
             // 条目已持有自己那一份，响应不必再拉着原始字节。
             response.RawBody = null;
-            cache.CompleteFlight(key, flight, reply);
+
+            if (flight is not null)
+            {
+                cache.CompleteFlight(key, flight, reply);
+            }
         }
     }
 

@@ -142,9 +142,10 @@ public sealed partial class AxiosClient
                 }
 
                 // 落库 + 放行跟随者：两者都要在返回之前完成，跟随者读的就是这份结果。
-                if (flight is not null && cache is not null && cacheKey is not null)
+                // 关掉单飞时 flight 为 null，这里只落库（否则缓存永远没有条目）。
+                if (cache is not null && cacheKey is not null)
                 {
-                    await CompleteCacheFlightAsync(cache, cacheKey, flight, result).ConfigureAwait(false);
+                    await StoreAsync(cache, cacheKey, flight, result).ConfigureAwait(false);
                     flight = null;
                 }
 

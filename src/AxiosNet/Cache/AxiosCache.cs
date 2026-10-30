@@ -59,7 +59,10 @@ public sealed class AxiosCache
 
         if (_options.TimeToLive <= TimeSpan.Zero)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), _options.TimeToLive, "TimeToLive 必须大于零：零会让每个条目刚存进去就过期。");
+            throw new ArgumentOutOfRangeException(
+                nameof(AxiosCacheOptions.TimeToLive),
+                _options.TimeToLive,
+                "TimeToLive 必须大于零：零会让每个条目刚存进去就过期。");
         }
 
         // MaxEntries 只在用内置存储时才校验：自建存储的条目上限归它自己管。

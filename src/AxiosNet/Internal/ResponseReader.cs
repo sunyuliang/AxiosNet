@@ -718,8 +718,7 @@ internal static class ResponseReader
                 {
                     try
                     {
-                        // 先 Clone 再释放：不 Clone、让元素持有文档看似省一次文本复制，实测反而更贵——
-                        // 文档不释放，解析每次都要重新租元数据数组，总量从 4.09× 升到 5.02×（AllocationTests 护栏锁住）。
+                        // Clone 后立刻释放文档：交给调用方的元素不依赖文档存活，元数据数组随文档归还池。
                         using var parsed = JsonDocument.Parse(json);
                         return parsed.RootElement.Clone();
                     }

@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1689%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1790%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -918,6 +918,7 @@ await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a"
 ```
 
 - **Off by default**: attaching a key to non-idempotent methods turns "duplicate write" into "silent dedupe", so enabling it is a decision about your endpoint.
+- **Retries must opt in to non-idempotent methods first**: `RetryPolicy` only retries idempotent methods by default, so a key alone will not make a POST resend — set `RetryPolicy.RetryNonIdempotentMethods` as well (see [Retries](#retries)).
 - **The key is written once onto the request template**, and copies of the template carry the header along — retries never change it. `OnSendingRequest` fires **per attempt**, so writing the key there is wrong (every retry gets a new one).
 - **One key per logical request**: every `RequestAsync` call builds a new effective config and therefore a new key; a replay after an auth failure must reuse the original key, so put it into `Idempotency.Key` and send again.
 - `Key` (explicit) wins over `KeyFactory`; when neither is set, a `Guid` in `N` format is used.
@@ -1545,7 +1546,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **35 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, global retry budget, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
+- **36 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, global retry budget, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
 - **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
@@ -1593,13 +1594,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1626 | `net8.0` / `net6.0` | 3252 |
+| `AxiosNet.Tests` (core + declarative) | 1727 | `net8.0` / `net6.0` | 3454 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1689** | | **3378** |
+| **Total** | **1790** | | **3580** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **92.7%**, branch coverage **89.5%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
+Line coverage **92.7%**, branch coverage **89.1%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash

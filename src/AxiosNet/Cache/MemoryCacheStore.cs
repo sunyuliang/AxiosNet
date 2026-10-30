@@ -6,8 +6,8 @@ namespace AxiosNet.Cache;
 /// 内置的内存存储：进程内字典 + 到期时间 + 条目上限，<see cref="AxiosCache"/> 默认用它。
 /// </summary>
 /// <remarks>
-/// 每个条目自带到期时刻，读的时候顺手摘掉过期项；条目满了先清过期项，仍满就不再接收新条目
-/// （不做随机淘汰 —— 命中率不会因为「刚好轮到你」而抖动，行为也可测）。
+/// 每个条目自带到期时刻，读的时候顺手摘掉过期项；条目满了先清过期项，仍满就不再接收**新**键
+/// （已存在的键照常覆盖，存活时长随之续期；不做随机淘汰 —— 命中率不会因为「刚好轮到你」而抖动，行为也可测）。
 /// 进程重启即清空；要跨进程共享请自己实现 <see cref="IAxiosCacheStore"/>。
 /// </remarks>
 public sealed class MemoryCacheStore : IAxiosCacheStore
@@ -52,7 +52,8 @@ public sealed class MemoryCacheStore : IAxiosCacheStore
     /// <inheritdoc />
     public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
     {
-        if (_entries.Count >= _maxEntries)
+        // 覆盖已有键不增加条目数，所以满了也要放行 —— 否则热门键的存活时长再也不会续期。
+        if (!_entries.ContainsKey(key) && _entries.Count >= _maxEntries)
         {
             PurgeExpired();
 

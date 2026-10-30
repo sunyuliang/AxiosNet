@@ -1022,6 +1022,21 @@ public sealed class ConnectionPoolTests
     }
 
     [Fact]
+    public void PoolOptions_CookieCapacity_IsIgnored_WhenCookiesDisabled()
+    {
+        // 三项只在真的建容器时才有意义：关掉 cookie 后不该被这些无关值拦下。
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            UseCookies = false,
+            CookieCapacity = 0,
+            CookiePerDomainCapacity = 0,
+            CookieMaxCookieSize = 0
+        });
+
+        Assert.Null(pool.Cookies);
+    }
+
+    [Fact]
     public async Task ClearCookies_LogsOutSession()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(

@@ -243,9 +243,10 @@ public sealed class DemoServer : IDisposable
             case "GET" when path == "/not-found":
                 return Json(404, """{"message":"resource not found"}""");
 
-            case "GET" when path == "/flaky":
+            case "GET" or "POST" when path == "/flaky":
             {
                 // ?fail=N：同一个 tag 的前 N 次调用返回 503，之后成功（演示弹性重试）
+                // POST 也收：幂等键示例演示的是「同一个键的多次写只算一次」。
                 var failures = 2;
                 if (QueryValue(query, "fail") is { } failText && int.TryParse(failText, out var parsedFailures))
                 {

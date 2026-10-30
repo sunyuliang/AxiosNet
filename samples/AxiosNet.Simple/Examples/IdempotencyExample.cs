@@ -19,7 +19,18 @@ public sealed class IdempotencyExample : IExample
 
         var client = _client ??= new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(3, TimeSpan.FromMilliseconds(100)) },
+            // POST 默认不重试（非幂等）；这里显式打开，正是幂等键存在的意义：同键重发不会被当成两次写。
+            Retry =
+            {
+                Policy = new RetryPolicy
+                {
+                    MaxRetries = 3,
+                    Delay = TimeSpan.FromMilliseconds(100),
+                    BackoffFactor = 1d,
+                    Jitter = false,
+                    RetryNonIdempotentMethods = true
+                }
+            },
             Idempotency = { Enabled = true },
             Callbacks =
             {

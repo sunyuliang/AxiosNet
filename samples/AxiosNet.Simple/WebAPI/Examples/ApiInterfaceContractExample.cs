@@ -92,9 +92,9 @@ public interface IMissingRouteAuthApi
     Task<AxiosResponse<UserProfile>> GetAsync(int id);
 }
 
-/// <summary>返回类型不是 Task&lt;AxiosResponse&lt;T&gt;&gt;。</summary>
+/// <summary>返回类型不受支持（ValueTask 不认）。</summary>
 public interface IWriterApi
 {
     [Get("api/users")]
-    Task<UserProfile[]> ListAsync();
+    ValueTask<UserProfile[]> ListAsync();
 }
