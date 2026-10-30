@@ -1677,6 +1677,8 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 
 读法、前后对比流程与已知噪声见 [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md)。
 
+跨实现横向对比另见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：同一回环服务器、同一负载（默认 8 并发 × 1s × 5 轮、每轮轮转顺序），对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告；加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁（不设阈值时只出数字、不判定）。它不进 CI、也不被 `dotnet test` 收集（`IsTestProject=false`，放在 sln 里只为 IDE 直接打开）；口径、读法与一次本机参考数据见该工程 README。
+
 ## 项目结构
 
 ```
@@ -1703,7 +1705,8 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/
-   └─ AxiosNet.Benchmarks/
+   ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet（单实现分项成本）
+   └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```
 
 ## License

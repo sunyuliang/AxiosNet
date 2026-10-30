@@ -33,6 +33,11 @@ coverage.cobertura.xml
 BenchmarkDotNet.Artifacts/
 .baseline/
 
+# ---- 横向对比基准产物（test/AxiosNet.Comparison，默认输出目录随工作目录）----
+test/AxiosNet.Comparison/results/
+test/AxiosNet.Comparison/results-*/
+/results/
+
 # ---- Visual Studio ----
 .vs/
 *.userprefs

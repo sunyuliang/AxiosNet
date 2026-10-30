@@ -1679,6 +1679,8 @@ By default it runs **in-process** (no temp project, no rebuild). Add `--isolated
 
 Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
 
+For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison): one loopback server, one load profile (8 concurrent × 1s × 5 rounds by default, with the implementation order rotated every round), comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV. Add `--min-ratio` / `--max-alloc-ratio` to use it as a regression gate (without thresholds it only reports, never judges). It is not part of CI and is not collected by `dotnet test` (`IsTestProject=false`; it sits in the solution only so the IDE can open it). Methodology, reading guide and one sample run live in that project's README.
+
 ## Project layout
 
 ```
@@ -1705,7 +1707,8 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/
-   └─ AxiosNet.Benchmarks/
+   ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet (per-stage cost of one implementation)
+   └─ AxiosNet.Comparison/             # cross-implementation comparison (RPS / p99 / allocations, optional gate)
 ```
 
 ## License

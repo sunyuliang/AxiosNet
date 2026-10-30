@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 跨实现横向对比工具：net8.0 独立控制台，不进 CI、不被 dotnet test 收集。
+         它在 AxiosNet.sln 里只是为了 IDE 能直接打开运行 —— 代价是 `dotnet build AxiosNet.sln`
+         会一并还原 Refit / RestSharp / Flurl。它不是产品资产，也要引第三方库，
+         所以和 src/ 的「零第三方运行时依赖」隔离。 -->
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AxiosNet.Comparison</RootNamespace>
+    <AssemblyName>AxiosNet.Comparison</AssemblyName>
+
+    <!-- 与 test/AxiosNet.Benchmarks 同口径：Debug 构建也不该测未优化的 IL。 -->
+    <Optimize>true</Optimize>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 第三方实现。Refit 只走 source-generated 的 ForGenerated；RestService.For<T> 的反射回退路径
+         是另一档，不要在同一个数字里混两种模式。 -->
+    <PackageReference Include="Refit" Version="16.4.0" />
+    <PackageReference Include="RestSharp" Version="113.0.0" />
+    <PackageReference Include="Flurl.Http" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+  </ItemGroup>
+
+  <!-- 基准基建链接源码而不是复制：
+       PerfHttpServer 与 ConcurrencyPerformanceTests 是同一份回环服务器（口径必须能互相印证），
+       ComparableHttpClientHandler 与 AxiosNet 默认连接池逐项对齐（否则测的是默认值差异）。
+       链接而不是复制，任何一边改了基建都会同时反映到这里。 -->
+  <ItemGroup>
+    <Compile Include="..\AxiosNet.Tests\Infrastructure\PerfHttpServer.cs" Link="Linked\PerfHttpServer.cs" />
+    <Compile Include="..\AxiosNet.Benchmarks\Infrastructure\ComparableHttpClientHandler.cs" Link="Linked\ComparableHttpClientHandler.cs" />
+  </ItemGroup>
+
+</Project>
