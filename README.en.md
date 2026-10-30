@@ -1171,7 +1171,8 @@ var cache = new AxiosCache(new AxiosCacheOptions
 {
     TimeToLive = TimeSpan.FromSeconds(30),   // 30s by default
     SingleFlight = true,                     // true by default
-    MaxEntries = 1024                        // 1024 by default
+    MaxEntries = 1024,                       // 1024 by default
+    FreshnessMode = CacheFreshnessMode.Configured  // default: trust TimeToLive only; Server / Intersection also available
 });
 
 client.Defaults.Cache = cache;               // on instance defaults: applies to the whole instance
@@ -1183,17 +1184,30 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `TimeToLive` | 30s | Entry lifetime, must be greater than zero |
+| `FreshnessMode` | `Configured` | Where the lifetime comes from: `Configured` trusts your TTL; `Server` trusts the response; `Intersection` takes the smaller of the two |
 | `SingleFlight` | `true` | Send once for concurrent requests with the same key |
 | `Store` | `null` | Entry storage; `null` = the built-in `MemoryCacheStore`. Implement `IAxiosCacheStore` for Redis or a shared cache |
 | `MaxEntries` | 1024 | Entry cap of the built-in store: expired entries are purged first, then new entries are refused (ignored when `Store` is set) |
 | `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
-| `ShouldCache` | `null` | Which requests take part; defaults to GET / HEAD, no short circuit, not streaming, no body |
+| `ShouldCache` | built-in rule | Which requests take part; defaults to `AxiosCache.IsCacheable` (GET / HEAD, no short circuit, not streaming, no body), and can be composed on top of it |
 
 **Key = method + absolute URL (+ credential digest)**: credentials (`Authorization` header or `Connection.Auth`) are part of the key, and only as a 64-bit digest — two users hitting the same endpoint on one instance never share an entry. Use `KeySelector` when identity lives in cookies or a custom header, or when you want per-tenant / per-language partitions.
 
 **What is stored is the raw body bytes**, re-parsed per call with the current `ResponseType` and generic argument: the same bytes feed `GetAsync<User>` and `GetAsync<string>` and each gets the shape it asked for.
 
-An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected.
+An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. An empty body counts as raw bytes too (HEAD / 204 have no body — the headers are what gets cached). Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected.
+
+**Three ways to pick the lifetime** (`FreshnessMode`):
+
+| Mode | Store decision | Effective TTL |
+| --- | --- | --- |
+| `Configured` (default) | Client gate only; `no-store` is ignored; **headers are not parsed before storing** (parsed on demand only when the store reads the policy's HTTP fields) | `TimeToLive` |
+| `Server` | `no-store` / `no-cache` / past or invalid `Expires` are not stored; **neither is a response that declares no freshness at all** | Server's remaining freshness, **not** capped by `TimeToLive` |
+| `Intersection` | Same as above (the server veto wins) | `min(TimeToLive, remaining freshness)`; falls back to `TimeToLive` when no freshness is declared |
+
+Remaining freshness = `max-age` (or `Expires - Date` when absent) minus the current age (the larger of the `Age` header and "received at − `Date`"). Neither mode attempts a `Last-Modified` heuristic.
+
+The library interprets responses as a **private cache**: `private` / `public` do not change the decision, `s-maxage` is not used, `Vary` does not take part in the key (use `KeySelector` for partitioning), and there is no conditional revalidation (`ETag` / 304 reuse) or `stale-*` serving. None of that information is lost — it is all handed to the store in `AxiosCacheEntryPolicy`.
 
 | | Short circuit | Response cache |
 | --- | --- | --- |
@@ -1208,8 +1222,10 @@ An entry is only stored when all of these hold: status is 2xx, the raw bytes wer
 - **Headers keep their first value**: the short-circuit header dictionary is single-valued, so multi-value headers (`Set-Cookie`) keep only the first.
 - **The key does not include the body**: by default only bodiless GET / HEAD requests are cached; if `ShouldCache` lets a method with a body through, fold a body fingerprint into `KeySelector`, otherwise different bodies share one entry.
 - **Policy lives on the instance**: one `AxiosCache` is one policy; create several and attach them separately when endpoints need different lifetimes or keys.
-- **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `IAxiosCacheStore` / `MemoryCacheStore` live there; `AxiosShortCircuit` stays in `AxiosNet` (it is not cache-specific — mocks and replays use it too).
-- **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (four methods: `GetAsync` / `SetAsync` / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend). The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries. A failing store only means "not cached this time" — requests still go out.
+- **Force clearing**: `cache.ClearAsync()` drops every entry and `cache.RemoveAsync(key)` drops one (compute the key with `cache.KeyFor(config, uri)`); requests already in flight are unaffected and still store on completion.
+- **Custom stores receive the full policy**: `IAxiosCacheStore` has a new `SetAsync` overload that takes an `AxiosCacheEntryPolicy` (effective / configured TTL, HTTP freshness, age, parsed `Cache-Control`, `Date` / `Expires` / `Vary`). Its default implementation forwards to the old signature, so existing stores need no change; override it to reject `private` responses from a shared cache, partition by `Vary`, or extend the servable window with `stale-while-revalidate`. In `Configured` mode nothing is parsed before storing: those HTTP fields are parsed on demand the first time the store reads them, so a store that only uses the TTL pays nothing.
+- **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `MemoryCacheStore` live there; `AxiosShortCircuit` stays in `AxiosNet` (it is not cache-specific — mocks and replays use it too).
+- **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend). The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries. A failing store only means "not cached this time" — requests still go out.
 - Replaying `response.Config` carries the same cache object along (it is shared state, not "the result of that request").
 
 ## Connection pool

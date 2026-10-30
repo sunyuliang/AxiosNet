@@ -1170,7 +1170,8 @@ var cache = new AxiosCache(new AxiosCacheOptions
 {
     TimeToLive = TimeSpan.FromSeconds(30),   // 默认 30 秒
     SingleFlight = true,                     // 默认 true
-    MaxEntries = 1024                        // 默认 1024
+    MaxEntries = 1024,                       // 默认 1024
+    FreshnessMode = CacheFreshnessMode.Configured  // 默认：只信 TimeToLive；另有 Server / Intersection
 });
 
 client.Defaults.Cache = cache;               // 挂在实例默认值上，整个实例生效
@@ -1182,17 +1183,30 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | 项 | 默认 | 说明 |
 | --- | --- | --- |
 | `TimeToLive` | 30 秒 | 条目存活时长，必须大于零 |
+| `FreshnessMode` | `Configured` | 缓存时长怎么来：`Configured` 只信配置 TTL；`Server` 只信服务器；`Intersection` 取交集（见下） |
 | `SingleFlight` | `true` | 同键并发只发一次 |
 | `Store` | `null` | 条目存储，`null` = 内置 `MemoryCacheStore`；接 Redis / 共享缓存时换成自己的 `IAxiosCacheStore` |
 | `MaxEntries` | 1024 | 内置内存存储的条目上限：满了先清过期条目，仍满就不再收新条目（自建 `Store` 时本项不生效） |
 | `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
-| `ShouldCache` | `null` | 哪些请求参与缓存；默认 GET / HEAD、无短路响应、非流式、无请求体 |
+| `ShouldCache` | 默认口径 | 哪些请求参与缓存，默认为 `AxiosCache.IsCacheable`（GET / HEAD、无短路响应、非流式、无请求体），可在此基础上组合 |
 
 **键 = 方法 + 绝对 URL（+ 凭据摘要）**：凭据（`Authorization` 头或 `Connection.Auth`）参与键，且只以 64 位摘要进键——同一实例上不同用户的同名接口不会串用同一条缓存。用 Cookie 或自定义头区分身份、或要按租户 / 语言分区时，给 `KeySelector`。
 
 **存的是原始正文字节**，命中时按本次调用的 `ResponseType` 与泛型参数重新解析：同一份字节喂给 `GetAsync<User>` 与 `GetAsync<string>` 各得该有的形态。
 
-只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。
+只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库；空正文同样算原始字节（HEAD / 204 本就没有正文，缓存的是头）。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。
+
+**三种取值方式**（`FreshnessMode`）：
+
+| 模式 | 落库判定 | 生效 TTL |
+| --- | --- | --- |
+| `Configured`（默认） | 只走客户端闸门，忽略 `no-store`；**落库前不解析响应头**（存储读策略的 HTTP 字段时才按需解析） | `TimeToLive` |
+| `Server` | `no-store` / `no-cache` / 已过期或非法的 `Expires` 不落库；**没有声明任何新鲜期也不落库** | 服务器剩余新鲜期，不受 `TimeToLive` 上限约束 |
+| `Intersection` | 同上（服务器否决优先） | `min(TimeToLive, 剩余新鲜期)`；无新鲜期时用 `TimeToLive` |
+
+剩余新鲜期 = `max-age`（没有则 `Expires - Date`）减去龄期（`Age` 头与「收到时刻 − `Date`」的较大值）。两种解析模式都不做 `Last-Modified` 启发式估算。
+
+库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`），也没有条件请求（`ETag` / 304 复用）与 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
 
 | | 短路响应 | 响应缓存 |
 | --- | --- | --- |
@@ -1207,8 +1221,10 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 - **响应头按首值存**：短路响应的头字典是单值的，多值头（`Set-Cookie`）只留第一条。
 - **键不含请求体**：默认口径只缓存无正文的 GET / HEAD；用 `ShouldCache` 放行带正文的方法时，必须在 `KeySelector` 里把正文特征算进键，否则不同正文会串用同一条缓存。
 - **策略挂在实例上**：一个 `AxiosCache` 就是一份策略；要按接口区分存活时长或键规则，建多个实例分别挂。
-- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `IAxiosCacheStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
-- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` / `RemoveAsync` / `ClearAsync` 四个方法，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发。
+- **强制清除**：`cache.ClearAsync()` 清空全部条目，`cache.RemoveAsync(key)` 摘掉单条（键由 `cache.KeyFor(config, uri)` 得到）；已发出的请求不受影响，完成后照常落库。
+- **自定义存储收到完整策略**：`IAxiosCacheStore` 新增带 `AxiosCacheEntryPolicy` 的 `SetAsync` 重载（生效 / 配置 TTL、HTTP 新鲜期、龄期、解析后的 `Cache-Control`、`Date` / `Expires` / `Vary`）。默认实现转发到旧签名，已经写好的存储不用改；要按 `private` 拒写共享缓存、按 `Vary` 分区、或用 `stale-while-revalidate` 延长可服务窗口时覆写它即可。`Configured` 模式下落库前不解析响应头，这些 HTTP 字段在存储读取时才按需解析；只读 TTL 的存储没有任何解析开销。
+- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
+- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发。
 - 回放 `response.Config` 会带着同一个缓存对象（它是共享状态，不是「那次请求的结果」）。
 
 ## 连接池

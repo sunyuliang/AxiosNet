@@ -95,6 +95,460 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public void ConfiguredMode_DoesNotTouchHeadersBeforeStoring()
+    {
+        // 「落库前不解析」：存的时候一个头都不读，读到 HTTP 字段才碰响应头（用会抛异常的字典证明）。
+        var policy = NewCache().CreateEntryPolicy(new ThrowingHeaders(), DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.TimeToLive);
+        Assert.Equal(CacheFreshnessMode.Configured, policy.Mode);
+        Assert.Throws<InvalidOperationException>(() => policy.Vary);
+    }
+
+    [Fact]
+    public void ConfiguredMode_IgnoresHeaders_ButExposesThemOnDemand()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var policy = NewCache(o => o.TimeToLive = TimeSpan.FromSeconds(30))
+            .CreateEntryPolicy(Headers(("Cache-Control", "no-store, max-age=5")), now);
+
+        Assert.NotNull(policy);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy!.TimeToLive);
+        Assert.Equal(CacheFreshnessMode.Configured, policy.Mode);
+        Assert.True(policy.CacheControl.NoStore);
+        Assert.Equal(TimeSpan.FromSeconds(5), policy.CacheControl.MaxAge);
+    }
+
+    [Theory]
+    [InlineData("no-store")]
+    [InlineData("no-cache")]
+    public void ServerAndIntersection_SkipNoStoreAndNoCache(string directive)
+    {
+        var headers = Headers(("Cache-Control", directive));
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.Null(NewCache(o => o.FreshnessMode = CacheFreshnessMode.Server).CreateEntryPolicy(headers, now));
+        Assert.Null(NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection).CreateEntryPolicy(headers, now));
+    }
+
+    [Fact]
+    public void IntersectionMode_TakesTheSmallerOfConfiguredTtlAndMaxAge()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var httpShorter = NewCache(o =>
+        {
+            o.FreshnessMode = CacheFreshnessMode.Intersection;
+            o.TimeToLive = TimeSpan.FromMinutes(5);
+        }).CreateEntryPolicy(Headers(("Cache-Control", "max-age=30")), now)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(30), httpShorter.TimeToLive);
+        Assert.Equal(TimeSpan.FromMinutes(5), httpShorter.ConfiguredTimeToLive);
+        Assert.Equal(CacheFreshnessMode.Intersection, httpShorter.Mode);
+
+        var configuredShorter = NewCache(o =>
+        {
+            o.FreshnessMode = CacheFreshnessMode.Intersection;
+            o.TimeToLive = TimeSpan.FromSeconds(30);
+        }).CreateEntryPolicy(Headers(("Cache-Control", "max-age=600")), now)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(30), configuredShorter.TimeToLive);
+        Assert.Equal(TimeSpan.FromSeconds(600), configuredShorter.HttpFreshnessLifetime);
+    }
+
+    [Fact]
+    public void ServerMode_UsesServerTtl_EvenWhenLongerThanConfigured()
+    {
+        var policy = NewCache(o =>
+        {
+            o.FreshnessMode = CacheFreshnessMode.Server;
+            o.TimeToLive = TimeSpan.FromSeconds(30);
+        }).CreateEntryPolicy(Headers(("Cache-Control", "max-age=600")), DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(600), policy.TimeToLive);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.ConfiguredTimeToLive);
+        Assert.Equal(CacheFreshnessMode.Server, policy.Mode);
+    }
+
+    [Fact]
+    public void ServerMode_DoesNotCacheResponsesWithoutFreshnessHeaders()
+    {
+        var policy = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Server)
+            .CreateEntryPolicy(Headers(), DateTimeOffset.UtcNow);
+
+        Assert.Null(policy);
+    }
+
+    [Fact]
+    public void IntersectionMode_SubtractsAgeFromTheFreshnessLifetime()
+    {
+        var policy = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+            .CreateEntryPolicy(Headers(("Cache-Control", "max-age=10"), ("Age", "4")), DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(4), policy.Age);
+        Assert.Equal(TimeSpan.FromSeconds(6), policy.TimeToLive);
+    }
+
+    [Fact]
+    public void ServerMode_SubtractsAgeFromTheFreshnessLifetime()
+    {
+        var policy = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Server)
+            .CreateEntryPolicy(Headers(("Cache-Control", "max-age=10"), ("Age", "4")), DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(4), policy.Age);
+        Assert.Equal(TimeSpan.FromSeconds(6), policy.TimeToLive);
+    }
+
+    [Theory]
+    [InlineData(CacheFreshnessMode.Server)]
+    [InlineData(CacheFreshnessMode.Intersection)]
+    public void ServerAndIntersection_TreatFreshnessExhaustedByAgeAsStale(CacheFreshnessMode mode)
+    {
+        var policy = NewCache(o => o.FreshnessMode = mode).CreateEntryPolicy(
+            Headers(("Cache-Control", "max-age=5"), ("Age", "10")),
+            DateTimeOffset.UtcNow);
+
+        Assert.Null(policy);
+    }
+
+    [Fact]
+    public void FutureDate_DoesNotCreateApparentAge()
+    {
+        // 服务器时钟快了几分钟：龄期只认 Age 头，不把负的 apparent age 算进去。
+        var now = DateTimeOffset.UtcNow;
+        var policy = NewCache().CreateEntryPolicy(
+            Headers(("Date", now.AddMinutes(5).ToString("R")), ("Age", "7")),
+            now)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(7), policy.Age);
+    }
+
+    [Fact]
+    public void IntersectionMode_UsesExpiresMinusDate_WhenMaxAgeIsAbsent()
+    {
+        // 整秒取值：HTTP 日期头只有秒精度，带小数的「收到时刻」会被算成额外龄期。
+        var date = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var policy = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+            .CreateEntryPolicy(
+                Headers(("Date", date.ToString("R")), ("Expires", date.AddSeconds(20).ToString("R"))),
+                date)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(20), policy.HttpFreshnessLifetime);
+        Assert.Equal(TimeSpan.FromSeconds(20), policy.TimeToLive);
+    }
+
+    [Fact]
+    public void ServerAndIntersection_TreatPastOrInvalidExpiresAsAlreadyExpired()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var headers = new[]
+        {
+            Headers(("Date", now.ToString("R")), ("Expires", now.AddSeconds(-1).ToString("R"))),
+            Headers(("Expires", "0"))
+        };
+
+        foreach (var mode in new[] { CacheFreshnessMode.Server, CacheFreshnessMode.Intersection })
+        {
+            var cache = NewCache(o => o.FreshnessMode = mode);
+            foreach (var entry in headers)
+            {
+                Assert.Null(cache.CreateEntryPolicy(entry, now));
+            }
+        }
+    }
+
+    [Fact]
+    public void IntersectionMode_WithoutFreshnessHeaders_StillUsesConfiguredTtl()
+    {
+        var policy = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+            .CreateEntryPolicy(Headers(), DateTimeOffset.UtcNow)!;
+
+        Assert.Null(policy.HttpFreshnessLifetime);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.TimeToLive);
+    }
+
+    [Fact]
+    public void IntersectionMode_ParsesPrivateSMaxAgeAndVary_ForTheStore()
+    {
+        var policy = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+            .CreateEntryPolicy(
+                Headers(
+                    ("Cache-Control", "private, s-maxage=60, stale-while-revalidate=10"),
+                    ("Vary", "Accept-Language, Accept-Encoding")),
+                DateTimeOffset.UtcNow)!;
+
+        Assert.True(policy.CacheControl.Private);
+        Assert.Equal(TimeSpan.FromSeconds(60), policy.CacheControl.SharedMaxAge);
+        Assert.Equal(TimeSpan.FromSeconds(10), policy.CacheControl.StaleWhileRevalidate);
+        Assert.Equal(new[] { "Accept-Language", "Accept-Encoding" }, policy.Vary);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.TimeToLive);
+    }
+
+    [Fact]
+    public void CacheControlParser_HandlesCaseQuotingExtensionsAndOddValues()
+    {
+        var policy = NewCache().CreateEntryPolicy(
+            Headers(("Cache-Control", "NO-STORE, Max-Age=\"5\", community=\"UCI, Inc.\", foo, bar=baz")),
+            DateTimeOffset.UtcNow)!;
+
+        Assert.True(policy.CacheControl.NoStore);
+        Assert.Equal(TimeSpan.FromSeconds(5), policy.CacheControl.MaxAge);
+
+        // 引号里的逗号不算分隔符；不认识的指令留下参数（无参数为 null）。
+        Assert.Equal("UCI, Inc.", policy.CacheControl.Extensions["COMMUNITY"]);
+        Assert.True(policy.CacheControl.Extensions.ContainsKey("foo"));
+        Assert.Null(policy.CacheControl.Extensions["foo"]);
+        Assert.Equal("baz", policy.CacheControl.Extensions["bar"]);
+
+        // 非法或负数的数字指令按「未出现」处理。
+        var invalid = NewCache().CreateEntryPolicy(
+            Headers(("Cache-Control", "max-age=abc, s-maxage=-1")),
+            DateTimeOffset.UtcNow)!;
+
+        Assert.Null(invalid.CacheControl.MaxAge);
+        Assert.Null(invalid.CacheControl.SharedMaxAge);
+    }
+
+    [Fact]
+    public void CacheControlParser_MergesMultipleHeaderLines()
+    {
+        var policy = NewCache().CreateEntryPolicy(
+            HeaderLines(("Cache-Control", new[] { "max-age=5", "no-cache" })),
+            DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(TimeSpan.FromSeconds(5), policy.CacheControl.MaxAge);
+        Assert.True(policy.CacheControl.NoCache);
+    }
+
+    [Fact]
+    public void VaryParser_SplitsEveryHeaderLine()
+    {
+        var policy = NewCache().CreateEntryPolicy(
+            HeaderLines(("Vary", new[] { " Accept-Language , Accept-Encoding ", "*" })),
+            DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(new[] { "Accept-Language", "Accept-Encoding", "*" }, policy.Vary);
+    }
+
+    [Fact]
+    public async Task ConfiguredMode_CachesNoStoreResponses()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "no-store" }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
+    public async Task IntersectionMode_DoesNotCacheNoStoreResponses()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "no-store" }));
+
+        var store = new RecordingStore();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = store,
+                FreshnessMode = CacheFreshnessMode.Intersection
+            })
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Empty(store.Policies);
+    }
+
+    [Fact]
+    public async Task IntersectionMode_NoStore_WithConcurrency_EveryRequestReachesTheServer()
+    {
+        // 不落库时没有可共享的字节：等待者各自补发，不能拿到空结果。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "no-store" }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+        });
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5)
+            .Select(_ => client.GetAsync<Person>(server.Url + "x")));
+
+        Assert.Equal(5, server.Received.Count);
+        Assert.All(responses, response => Assert.Equal("ada", response.Data!.Name));
+    }
+
+    [Fact]
+    public async Task IntersectionMode_TreatsMaxAgeZeroAsAlreadyStale()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "max-age=0" }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task ServerMode_CachesBeyondConfiguredTtl()
+    {
+        // 服务器说 600 秒，配置只给 100 毫秒：睡过配置 TTL 后仍然命中，证明配置值不是上限。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "max-age=600" }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o =>
+            {
+                o.FreshnessMode = CacheFreshnessMode.Server;
+                o.TimeToLive = TimeSpan.FromMilliseconds(100);
+            })
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await Task.Delay(250);
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
+    public async Task ServerMode_HandlesAbsurdMaxAgeWithoutOverflow()
+    {
+        // long.MaxValue 秒会封顶到 TimeSpan.MaxValue：到期计算不能溢成「立刻过期」。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "max-age=9223372036854775807" }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Server)
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
+    public async Task ServerMode_DoesNotCacheResponsesWithoutFreshnessHeaders_EndToEnd()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Server)
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task CustomStore_ReceivesTheEntryPolicy()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string>
+            {
+                ["Cache-Control"] = "max-age=600",
+                ["Vary"] = "Accept-Language"
+            }));
+
+        var store = new RecordingStore();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = store,
+                FreshnessMode = CacheFreshnessMode.Intersection,
+                TimeToLive = TimeSpan.FromSeconds(30)
+            })
+        });
+
+        await client.GetAsync(server.Url + "x");
+
+        var policy = Assert.Single(store.Policies);
+        Assert.Equal(CacheFreshnessMode.Intersection, policy.Mode);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.TimeToLive);
+        Assert.Equal(TimeSpan.FromSeconds(600), policy.HttpFreshnessLifetime);
+        Assert.Equal(TimeSpan.FromSeconds(600), policy.CacheControl.MaxAge);
+        Assert.Equal(new[] { "Accept-Language" }, policy.Vary);
+    }
+
+    [Fact]
+    public async Task ConfiguredMode_StoreStillGetsHttpDetails_OnDemand()
+    {
+        // Configured 落库前不解析响应头；存储读到策略里的 HTTP 字段时才解析，内容与解析模式一致。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string>
+            {
+                ["Cache-Control"] = "max-age=600",
+                ["Vary"] = "Accept-Language"
+            }));
+
+        var store = new RecordingStore();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = store,
+                TimeToLive = TimeSpan.FromSeconds(30)
+            })
+        });
+
+        await client.GetAsync(server.Url + "x");
+
+        var policy = Assert.Single(store.Policies);
+        Assert.Equal(CacheFreshnessMode.Configured, policy.Mode);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy.TimeToLive);
+        Assert.Equal(TimeSpan.FromSeconds(600), policy.HttpFreshnessLifetime);
+        Assert.Equal(TimeSpan.FromSeconds(600), policy.CacheControl.MaxAge);
+        Assert.Equal(new[] { "Accept-Language" }, policy.Vary);
+    }
+
+    [Fact]
+    public async Task LegacyStore_WithoutPolicyOverload_StillWorks()
+    {
+        // 新重载带默认实现：只实现四个方法的老存储不改一行也能跑（TTL 走旧签名）。
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        var store = new LegacyStore();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.Equal(TimeSpan.FromSeconds(30), store.LastTimeToLive);
+    }
+
+    [Fact]
     public async Task NonGet_IsNotCached_ByDefault()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
@@ -141,6 +595,42 @@ public sealed class CacheTests
         }
 
         Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task HeadResponse_IsCached_WithoutABody()
+    {
+        // HEAD 没有正文，但头就是它的全部内容：落库后第二次命中不重发。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: Array.Empty<byte>(),
+            Headers: new Dictionary<string, string> { ["X-Trace"] = "head" }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var first = await client.HeadAsync(server.Url + "x");
+        var second = await client.HeadAsync(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.NotNull(first.Request);
+        Assert.Null(second.Request);
+        Assert.Equal("head", second.GetHeader("X-Trace"));
+    }
+
+    [Fact]
+    public async Task EmptySuccessBody_IsCached()
+    {
+        // 204 / 空 200 也是可缓存响应：空正文同样是一份「原始字节」。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(200, Body: Array.Empty<byte>()));
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var first = await client.GetAsync<string>(server.Url + "x");
+        var second = await client.GetAsync<string>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.NotNull(first.Request);
+        Assert.Null(second.Request);
+        Assert.Equal(200, second.Status);
     }
 
     [Fact]
@@ -213,6 +703,23 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public void ShouldCache_DefaultsToTheBuiltInRule_AndCanBeComposed()
+    {
+        var options = new AxiosCacheOptions();
+
+        Assert.True(options.ShouldCache(new AxiosConfig { Method = HttpMethod.Get }));
+        Assert.True(options.ShouldCache(new AxiosConfig { Method = HttpMethod.Head }));
+        Assert.False(options.ShouldCache(new AxiosConfig { Method = HttpMethod.Post }));
+
+        // 默认口径可直接复用：组合新规则，或用来恢复默认。
+        options.ShouldCache = config => AxiosCache.IsCacheable(config) || config.Method == HttpMethod.Post;
+        Assert.True(options.ShouldCache(new AxiosConfig { Method = HttpMethod.Post }));
+
+        options.ShouldCache = AxiosCache.IsCacheable;
+        Assert.False(options.ShouldCache(new AxiosConfig { Method = HttpMethod.Post }));
+    }
+
+    [Fact]
     public async Task ShouldCache_CanOptInNonGetMethods()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
@@ -260,6 +767,30 @@ public sealed class CacheTests
 
         Assert.Single(server.Received);
         Assert.Equal(2, intercepted);
+    }
+
+    [Fact]
+    public async Task SwappedResponse_WithoutRawBytes_IsNotCached()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        // 拦截器换了一个响应对象：新的那份没有原始字节，不能落库。
+        client.Interceptors.Response.Use(response => new AxiosResponse
+        {
+            Status = response.Status,
+            StatusText = response.StatusText,
+            Data = response.Data,
+            Headers = response.Headers,
+            Config = response.Config
+        });
+
+        var first = await client.GetAsync<Person>(server.Url + "x");
+        var second = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("ada", first.Data!.Name);
+        Assert.Equal("ada", second.Data!.Name);
     }
 
     [Fact]
@@ -644,6 +1175,8 @@ public sealed class CacheTests
 
         public List<string> Sets { get; } = new();
 
+        public List<AxiosCacheEntryPolicy> Policies { get; } = new();
+
         public Func<ValueTask<AxiosShortCircuit?>>? OnGet { get; set; }
 
         public Func<ValueTask>? OnSet { get; set; }
@@ -660,9 +1193,82 @@ public sealed class CacheTests
             return OnSet is { } onSet ? onSet() : _inner.SetAsync(key, entry, timeToLive, cancellationToken);
         }
 
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
+        {
+            Sets.Add(key);
+            Policies.Add(policy);
+            return OnSet is { } onSet ? onSet() : _inner.SetAsync(key, entry, policy.TimeToLive, cancellationToken);
+        }
+
         public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
             => _inner.RemoveAsync(key, cancellationToken);
 
         public ValueTask ClearAsync(CancellationToken cancellationToken) => _inner.ClearAsync(cancellationToken);
+    }
+
+    /// <summary>只实现旧四方法签名的存储：验证新重载的默认实现仍然把写入接住。</summary>
+    private sealed class LegacyStore : IAxiosCacheStore
+    {
+        private readonly MemoryCacheStore _inner = new();
+
+        public TimeSpan LastTimeToLive { get; private set; }
+
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => _inner.GetAsync(key, cancellationToken);
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+        {
+            LastTimeToLive = timeToLive;
+            return _inner.SetAsync(key, entry, timeToLive, cancellationToken);
+        }
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
+            => _inner.RemoveAsync(key, cancellationToken);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken) => _inner.ClearAsync(cancellationToken);
+    }
+
+    private static Dictionary<string, IEnumerable<string>> Headers(params (string Name, string Value)[] pairs)
+    {
+        var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in pairs)
+        {
+            headers[name] = new[] { value };
+        }
+
+        return headers;
+    }
+
+    /// <summary>一碰就抛的响应头：用来证明某条路径根本没有读取响应头。</summary>
+    private sealed class ThrowingHeaders : IReadOnlyDictionary<string, IEnumerable<string>>
+    {
+        private static InvalidOperationException Touched() => new("响应头被读取了。");
+
+        public IEnumerable<string> this[string key] => throw Touched();
+
+        public IEnumerable<string> Keys => throw Touched();
+
+        public IEnumerable<IEnumerable<string>> Values => throw Touched();
+
+        public int Count => throw Touched();
+
+        public bool ContainsKey(string key) => throw Touched();
+
+        public bool TryGetValue(string key, out IEnumerable<string> value) => throw Touched();
+
+        public IEnumerator<KeyValuePair<string, IEnumerable<string>>> GetEnumerator() => throw Touched();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private static Dictionary<string, IEnumerable<string>> HeaderLines(params (string Name, string[] Values)[] pairs)
+    {
+        var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, values) in pairs)
+        {
+            headers[name] = values;
+        }
+
+        return headers;
     }
 }

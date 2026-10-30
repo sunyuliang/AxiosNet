@@ -149,8 +149,8 @@ public sealed class DemoServer : IDisposable
                     UpdatePeak(active);
                     try
                     {
-                        var (status, payload, contentType, contentDisposition, location) = Route(method, path, query, version, headers, body);
-                        await WriteResponseAsync(stream, status, payload, contentType, contentDisposition, location);
+                        var (status, payload, contentType, contentDisposition, location, extraHeaders) = Route(method, path, query, version, headers, body);
+                        await WriteResponseAsync(stream, status, payload, contentType, contentDisposition, location, extraHeaders);
                     }
                     finally
                     {
@@ -165,7 +165,7 @@ public sealed class DemoServer : IDisposable
         }
     }
 
-    private (int Status, byte[] Body, string ContentType, string? ContentDisposition, string? Location) Route(
+    private (int Status, byte[] Body, string ContentType, string? ContentDisposition, string? Location, string? ExtraHeaders) Route(
         string method,
         string path,
         string query,
@@ -210,6 +210,26 @@ public sealed class DemoServer : IDisposable
 
                 return Json(200, $"{{\"served\":{Interlocked.Increment(ref _cacheHits)}}}");
 
+            case "GET" when path == "/cache/ttl":
+            {
+                // 响应自己声明新鲜期：FreshnessMode = Server / Intersection 时客户端按它算 TTL。
+                // ?max-age=N 自定义新鲜期（默认 2 秒），?no-store=1 声明不许缓存。
+                var maxAge = 2;
+                if (QueryValue(query, "max-age") is { } maxAgeText && int.TryParse(maxAgeText, out var parsedMaxAge))
+                {
+                    maxAge = parsedMaxAge;
+                }
+
+                var cacheControl = QueryValue(query, "no-store") == "1"
+                    ? "no-store"
+                    : $"public, max-age={maxAge}";
+
+                return Json(
+                    200,
+                    $"{{\"served\":{Interlocked.Increment(ref _cacheHits)}}}",
+                    $"Cache-Control: {cacheControl}\r\n");
+            }
+
             case "GET" when path == "/users/1/pascal":
                 // PascalCase 契约：属性名保持原样，用于演示自定义 JSON 序列化器
                 return Json(200, """
@@ -222,6 +242,7 @@ public sealed class DemoServer : IDisposable
                     Encoding.UTF8.GetBytes("""<?xml version="1.0" encoding="utf-8"?><User><Id>1</Id><Name>alice</Name><Age>30</Age></User>"""),
                     "application/xml; charset=utf-8",
                     null,
+                    null,
                     null);
 
             case "GET" when path == "/orders/1/binary":
@@ -229,6 +250,7 @@ public sealed class DemoServer : IDisposable
                 return (200,
                     OrderBinarySerializer.Write(new BinaryOrder { Id = 1, Name = "alice", Quantity = 2, AmountCents = 1999 }),
                     "application/octet-stream",
+                    null,
                     null,
                     null);
 
@@ -238,7 +260,7 @@ public sealed class DemoServer : IDisposable
             case "GET" when path == "/secure":
                 return headers.TryGetValue("authorization", out var auth)
                     ? Json(200, $"{{\"authenticated\":true,\"authorization\":\"{Escape(auth)}\"}}")
-                    : (401, Encoding.UTF8.GetBytes("""{"message":"unauthorized"}"""), "application/json; charset=utf-8", null, null);
+                    : (401, Encoding.UTF8.GetBytes("""{"message":"unauthorized"}"""), "application/json; charset=utf-8", null, null, null);
 
             case "GET" when path == "/not-found":
                 return Json(404, """{"message":"resource not found"}""");
@@ -274,7 +296,7 @@ public sealed class DemoServer : IDisposable
 
             case "POST" when path == "/echo":
                 var contentType = headers.GetValueOrDefault("content-type", "application/json");
-                return (200, body, contentType, null, null);
+                return (200, body, contentType, null, null, null);
 
             case "GET" when path == "/download":
             {
@@ -291,19 +313,19 @@ public sealed class DemoServer : IDisposable
                     file[i] = (byte)(i % 251);
                 }
 
-                return (200, file, "application/octet-stream", "attachment; filename=\"sample-report.bin\"", null);
+                return (200, file, "application/octet-stream", "attachment; filename=\"sample-report.bin\"", null, null);
             }
 
             case "GET" when path == "/big":
             {
                 // 8 MB：用于演示 maxContentLength 拦截
                 var file = new byte[8 * 1024 * 1024];
-                return (200, file, "application/octet-stream", null, null);
+                return (200, file, "application/octet-stream", null, null, null);
             }
 
             case "GET" when path == "/redirect":
                 // 302：用于演示 maxRedirects / 是否跟随重定向
-                return (302, Array.Empty<byte>(), "text/plain", null, "/users/1");
+                return (302, Array.Empty<byte>(), "text/plain", null, "/users/1", null);
 
             case "GET" when path == "/headers":
             {
@@ -404,11 +426,11 @@ public sealed class DemoServer : IDisposable
         }
     }
 
-    private static (int, byte[], string, string?, string?) Json(int status, string json)
-        => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8", null, null);
+    private static (int, byte[], string, string?, string?, string?) Json(int status, string json, string? extraHeaders = null)
+        => (status, Encoding.UTF8.GetBytes(json), "application/json; charset=utf-8", null, null, extraHeaders);
 
     /// <summary>DemoAuthApi 返回 (状态码, JSON 文本)，转成路由元组。</summary>
-    private static (int, byte[], string, string?, string?) Json((int Status, string Json) result)
+    private static (int, byte[], string, string?, string?, string?) Json((int Status, string Json) result)
         => Json(result.Status, result.Json);
 
     /// <summary>把解析出的部件序列化成一段 JSON（用于 /upload 的明细）。</summary>
@@ -433,7 +455,8 @@ public sealed class DemoServer : IDisposable
         byte[] body,
         string contentType,
         string? contentDisposition,
-        string? location)
+        string? location,
+        string? extraHeaders)
     {
         var reason = status switch
         {
@@ -450,6 +473,7 @@ public sealed class DemoServer : IDisposable
             $"Content-Length: {body.Length}\r\n" +
             (contentDisposition is null ? string.Empty : $"Content-Disposition: {contentDisposition}\r\n") +
             (location is null ? string.Empty : $"Location: {location}\r\n") +
+            (extraHeaders ?? string.Empty) +
             "Connection: keep-alive\r\n\r\n";
 
         await stream.WriteAsync(Encoding.ASCII.GetBytes(header));

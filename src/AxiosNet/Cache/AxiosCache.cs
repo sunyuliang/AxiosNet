@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -9,6 +10,17 @@ public sealed class AxiosCacheOptions
 {
     /// <summary>条目存活时长，默认 30 秒；必须大于零（零会让条目刚存进去就过期）。</summary>
     public TimeSpan TimeToLive { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// 缓存时长的取值方式，默认 <see cref="CacheFreshnessMode.Configured"/>：只信 <see cref="TimeToLive"/>，落库前不解析响应头。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 会解析响应的
+    /// <c>Cache-Control</c>（<c>max-age</c>）与 <c>Expires</c> / <c>Date</c> / <c>Age</c>，见枚举各项说明。
+    /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c>、条件请求（ETag 复用）不在库的取舍范围，
+    /// 但这些信息都会随 <see cref="AxiosCacheEntryPolicy"/> 交给自建存储，由存储决定要不要用。
+    /// </remarks>
+    public CacheFreshnessMode FreshnessMode { get; set; }
 
     /// <summary>同键并发只发一次（单飞），默认 <c>true</c>；关掉后每个请求各自发送，只共享已落库的条目。</summary>
     public bool SingleFlight { get; set; } = true;
@@ -24,8 +36,11 @@ public sealed class AxiosCacheOptions
     /// <remarks>需要按租户 / 用户 / 语言区分缓存时在这里拼进键；返回空白视为配置错误。</remarks>
     public Func<AxiosConfig, Uri, string>? KeySelector { get; set; }
 
-    /// <summary>哪些请求参与缓存，默认 GET / HEAD、无短路响应、非流式、无请求体。</summary>
-    public Func<AxiosConfig, bool>? ShouldCache { get; set; }
+    /// <summary>
+    /// 哪些请求参与缓存，默认 <see cref="AxiosCache.IsCacheable"/>：GET / HEAD、无短路响应、非流式、无请求体。
+    /// </summary>
+    /// <remarks>可以在默认口径上组合：<c>c =&gt; AxiosCache.IsCacheable(c) || c.Method == HttpMethod.Post</c>。</remarks>
+    public Func<AxiosConfig, bool> ShouldCache { get; set; } = AxiosCache.IsCacheable;
 }
 
 /// <summary>
@@ -130,17 +145,12 @@ public sealed class AxiosCache
         return builder.ToString();
     }
 
-    /// <summary>这个请求要不要走缓存：<see cref="AxiosCacheOptions.ShouldCache"/> 优先，否则按默认口径判定。</summary>
+    /// <summary>这个请求要不要走缓存（<see cref="AxiosCacheOptions.ShouldCache"/>，默认 <see cref="IsCacheable"/>）。</summary>
     internal bool CanHandle(AxiosConfig config)
     {
-        if (_options.ShouldCache is not { } shouldCache)
-        {
-            return IsCacheable(config);
-        }
-
         try
         {
-            return shouldCache(config);
+            return _options.ShouldCache(config);
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
@@ -148,15 +158,165 @@ public sealed class AxiosCache
         }
     }
 
-    /// <summary>默认口径：GET / HEAD、没有短路响应、不是流式、没有请求体。</summary>
-    private static bool IsCacheable(AxiosConfig config)
-        => config.ShortCircuit is null
+    /// <summary>默认的缓存准入口径：GET / HEAD、没有短路响应、不是流式、没有请求体。</summary>
+    public static bool IsCacheable(AxiosConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        return config.ShortCircuit is null
             && config.Data is null
             && config.ResponseType != ResponseType.Stream
             && (IsMethod(config.Method, "GET") || IsMethod(config.Method, "HEAD"));
+    }
 
     private static bool IsMethod(HttpMethod method, string expected)
         => string.Equals(method.Method, expected, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 按响应头算一条写入策略；返回 <c>null</c> 表示 HTTP 语义要求「不落库」（只有
+    /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 时才会发生）。
+    /// <see cref="CacheFreshnessMode.Configured"/> 一个头都不解析：TTL 就是配置值，HTTP 信息留给
+    /// <see cref="AxiosCacheEntryPolicy"/> 在被读取时按需解析。
+    /// </summary>
+    internal AxiosCacheEntryPolicy? CreateEntryPolicy(
+        IReadOnlyDictionary<string, IEnumerable<string>> headers,
+        DateTimeOffset receivedAt)
+    {
+        var mode = _options.FreshnessMode;
+
+        if (mode == CacheFreshnessMode.Configured)
+        {
+            return new AxiosCacheEntryPolicy(
+                _options.TimeToLive, _options.TimeToLive, mode, headers, receivedAt, http: null);
+        }
+
+        var http = ReadHttpCacheInfo(headers, receivedAt);
+        var remaining = http.Remaining;
+
+        // 服务器否决优先：no-store / no-cache / 新鲜期已用尽，两种解析方式都不落库。
+        if (http.CacheControl.NoStore || http.CacheControl.NoCache || remaining == TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        TimeSpan timeToLive;
+        if (mode == CacheFreshnessMode.Server)
+        {
+            // 只信服务器：没有声明新鲜期就不缓存；有则完全按它，配置 TTL 不设上限。
+            if (remaining is not { } serverTtl)
+            {
+                return null;
+            }
+
+            timeToLive = serverTtl;
+        }
+        else
+        {
+            // 取交集：配置 TTL 是上限，HTTP 剩余新鲜期更短时以它为准；没有新鲜期则只有配置 TTL。
+            timeToLive = remaining is { } available && available < _options.TimeToLive
+                ? available
+                : _options.TimeToLive;
+        }
+
+        return new AxiosCacheEntryPolicy(
+            timeToLive, _options.TimeToLive, mode, headers: null, receivedAt, http);
+    }
+
+    /// <summary>解析响应头里与缓存相关的全部信息；只有解析模式或按需读取策略的存储才会走到这里。</summary>
+    internal static HttpCacheInfo ReadHttpCacheInfo(
+        IReadOnlyDictionary<string, IEnumerable<string>> headers,
+        DateTimeOffset receivedAt)
+    {
+        var cacheControl = CacheControlDirectives.Parse(GetValues(headers, "Cache-Control"));
+        var date = ParseHttpDate(FirstValue(headers, "Date"));
+        var expiresText = FirstValue(headers, "Expires");
+        var expires = ParseHttpDate(expiresText);
+
+        // RFC 9111 的 current_age：Age 头与「收到响应 - Date」取较大值，负数按零。
+        var age = ParseSeconds(FirstValue(headers, "Age")) ?? TimeSpan.Zero;
+        if (date is { } parsedDate && receivedAt > parsedDate)
+        {
+            var apparentAge = receivedAt - parsedDate;
+            if (apparentAge > age)
+            {
+                age = apparentAge;
+            }
+        }
+
+        TimeSpan? freshness = null;
+        if (cacheControl.MaxAge is { } maxAge)
+        {
+            freshness = maxAge;
+        }
+        else if (expiresText is not null)
+        {
+            // 非法 Expires 按「已过期」处理（RFC 9111 §5.3）；合法值的新鲜期是 Expires - Date，缺 Date 时用收到响应的时刻。
+            var reference = date ?? receivedAt;
+            freshness = expires is { } parsedExpires && parsedExpires > reference
+                ? parsedExpires - reference
+                : TimeSpan.Zero;
+        }
+
+        return new HttpCacheInfo(freshness, age, cacheControl, date, expires, ParseVary(headers));
+    }
+
+    private static IEnumerable<string>? GetValues(
+        IReadOnlyDictionary<string, IEnumerable<string>> headers,
+        string name)
+        => headers.TryGetValue(name, out var values) ? values : null;
+
+    private static string? FirstValue(
+        IReadOnlyDictionary<string, IEnumerable<string>> headers,
+        string name)
+        => GetValues(headers, name)?.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static DateTimeOffset? ParseHttpDate(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+            && DateTimeOffset.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal | DateTimeStyles.AllowWhiteSpaces,
+                out var parsed)
+            ? parsed
+            : null;
+
+    private static TimeSpan? ParseSeconds(string? value)
+    {
+        if (value is null
+            || !long.TryParse(value.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+            || seconds < 0)
+        {
+            return null;
+        }
+
+        return seconds > long.MaxValue / TimeSpan.TicksPerSecond
+            ? TimeSpan.MaxValue
+            : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
+    }
+
+    private static IReadOnlyList<string> ParseVary(IReadOnlyDictionary<string, IEnumerable<string>> headers)
+    {
+        var values = GetValues(headers, "Vary");
+        if (values is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        List<string>? fields = null;
+        foreach (var value in values)
+        {
+            foreach (var part in value.Split(','))
+            {
+                var field = part.Trim();
+                if (field.Length > 0)
+                {
+                    (fields ??= new List<string>()).Add(field);
+                }
+            }
+        }
+
+        return fields ?? (IReadOnlyList<string>)Array.Empty<string>();
+    }
 
     /// <summary>读一条；存储报错按「没命中」处理（缓存不可用不该让请求失败），但调用方取消要照常抛。</summary>
     internal async ValueTask<AxiosShortCircuit?> TryGetAsync(string key, CancellationToken cancellationToken)
@@ -176,11 +336,11 @@ public sealed class AxiosCache
     }
 
     /// <summary>写一条；失败只是这次不入缓存。写不跟随调用方的取消（结果已经拿到了，不该因为超时被丢掉）。</summary>
-    internal async ValueTask<bool> TrySetAsync(string key, AxiosShortCircuit reply)
+    internal async ValueTask<bool> TrySetAsync(string key, AxiosShortCircuit reply, AxiosCacheEntryPolicy policy)
     {
         try
         {
-            await _store.SetAsync(key, reply, _options.TimeToLive, CancellationToken.None).ConfigureAwait(false);
+            await _store.SetAsync(key, reply, policy, CancellationToken.None).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)

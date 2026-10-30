@@ -32,7 +32,7 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 落库并放行跟随者：只有 2xx 且拿到了原始字节才入缓存，写缓存失败不影响这次请求。
+    /// 落库并放行跟随者：只有 2xx、拿到了原始字节、且 <see cref="CacheFreshnessMode"/> 允许落库时才入缓存；写缓存失败不影响这次请求。
     /// <paramref name="flight"/> 为 <c>null</c> 时表示这次请求不参与单飞（关掉了单飞，或是跟随者落空后自己补发），只落库。
     /// </summary>
     private static async Task StoreAsync(AxiosCache cache, string key, AxiosCacheFlight? flight, AxiosResponse response)
@@ -40,12 +40,22 @@ public sealed partial class AxiosClient
         AxiosShortCircuit? reply = null;
         try
         {
-            reply = TryCreateCacheEntry(response);
-
-            if (reply is not null && !await cache.TrySetAsync(key, reply).ConfigureAwait(false))
+            // 先挡掉不可能落库的响应（非 2xx / 没拿到原始字节）：解析模式连响应头都不用解析。
+            if (IsStorable(response))
             {
-                // 存储没接住：跟随者别去读一条不存在的条目，自己发。
-                reply = null;
+                // 再判 HTTP 语义、最后才复制正文：no-store / no-cache 的响应没必要为落库克隆一份字节。
+                var policy = cache.CreateEntryPolicy(response.Headers, DateTimeOffset.UtcNow);
+
+                if (policy is not null)
+                {
+                    reply = TryCreateCacheEntry(response);
+
+                    if (!await cache.TrySetAsync(key, reply, policy).ConfigureAwait(false))
+                    {
+                        // 存储没接住：跟随者别去读一条不存在的条目，自己发。
+                        reply = null;
+                    }
+                }
             }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -65,13 +75,17 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>从响应里做一条缓存条目：非 2xx、没有原始字节（流式 / 响应拦截器换了对象）都返回 <c>null</c>。</summary>
-    private static AxiosShortCircuit? TryCreateCacheEntry(AxiosResponse response)
+    /// <summary>
+    /// 只有 2xx 且拿到了原始字节的响应才可能落库（流式 / 响应拦截器换了对象都拿不到字节）。
+    /// 空正文同样是可缓存的响应（HEAD / 204 本来就没有正文），因此只判 <c>null</c> 不判长度。
+    /// </summary>
+    private static bool IsStorable(AxiosResponse response)
+        => response.Status is >= 200 and <= 299 && response.RawBody is not null;
+
+    /// <summary>从响应里做一条缓存条目；调用方先用 <see cref="IsStorable"/> 挡掉不可能落库的响应。</summary>
+    private static AxiosShortCircuit TryCreateCacheEntry(AxiosResponse response)
     {
-        if (response.Status is < 200 or > 299 || response.RawBody is not { Length: > 0 } body)
-        {
-            return null;
-        }
+        var body = response.RawBody!;
 
         // 头按首值存：短路响应的头字典是单值的（多值的 Set-Cookie 只留第一条）。
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

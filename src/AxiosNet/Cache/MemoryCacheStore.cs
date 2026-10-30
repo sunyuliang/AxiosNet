@@ -51,6 +51,13 @@ public sealed class MemoryCacheStore : IAxiosCacheStore
 
     /// <inheritdoc />
     public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+        => SetCore(key, entry, timeToLive);
+
+    /// <inheritdoc />
+    public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
+        => SetCore(key, entry, policy.TimeToLive);
+
+    private ValueTask SetCore(string key, AxiosShortCircuit entry, TimeSpan timeToLive)
     {
         // 覆盖已有键不增加条目数，所以满了也要放行 —— 否则热门键的存活时长再也不会续期。
         if (!_entries.ContainsKey(key) && _entries.Count >= _maxEntries)
