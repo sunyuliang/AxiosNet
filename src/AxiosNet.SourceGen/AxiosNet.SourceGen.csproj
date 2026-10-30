@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 源生成器只在编译期运行：netstandard2.0 是 Roslyn 组件的最低目标，消费方 TFM 不受限制。 -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <!-- 生成器是分析器资产：不进入运行时依赖，也不作为普通引用流入消费方。 -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IsPackable>false</IsPackable>
+    <Deterministic>true</Deterministic>
+    <!-- 生成器不随包发布独立的 analyzer release 文件；AXA 规则清单维护在 README。 -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 4.0.1：VS 2022 17.0 / .NET SDK 6.0.100 起即可加载；不使用 4.3 才有的 ForAttributeWithMetadataName。 -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.0.1" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

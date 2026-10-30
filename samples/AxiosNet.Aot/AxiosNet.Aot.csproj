@@ -17,12 +17,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
-  </ItemGroup>
-
-  <!-- 方案 B 的 AOT 前提一：声明式客户端用反射读模型元数据，
-       把应用程序集整体 root，保证模型 getter 与特性不被裁剪。 -->
-  <ItemGroup>
-    <TrimmerRootAssembly Include="$(AssemblyName)" />
+    <!-- 源生成器（随 NuGet 包自动分发的分析器）：编译期为请求模型烘焙元数据，AOT 下不再依赖 TrimmerRootAssembly。 -->
+    <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

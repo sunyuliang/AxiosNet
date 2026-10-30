@@ -74,7 +74,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
-        Justification = "请求模型的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
+        Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「Native AOT / 裁剪」）。")]
     public async Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
@@ -94,7 +95,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
-        Justification = "请求模型的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
+        Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「Native AOT / 裁剪」）。")]
     public string GetUri<TResponse>(IApiRequest<TResponse> request)
     {
         ArgumentNullException.ThrowIfNull(request);

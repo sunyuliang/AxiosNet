@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1957%2F1953%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.8%25_(branch_89.1%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1968%2F1964%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.6%25_(branch_88.4%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -279,7 +279,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [HTTP versions](#http-versions) | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
 | [Custom handlers](#custom-handlers) | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
 | [Dependency injection](#dependency-injection) | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings) | Source-generated `JsonSerializerContext` |
+| [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings); built-in request-model source generator, no `TrimmerRootAssembly` needed | On by reference; configure `JsonSerializerContext` for serialization |
 
 ## Token management
 
@@ -1653,17 +1653,35 @@ Two more samples:
 - [`samples/AxiosNet.Simple.DependencyInjection`](samples/AxiosNet.Simple.DependencyInjection): six DI scenarios on the Generic Host.
 - [`samples/AxiosNet.Aot`](samples/AxiosNet.Aot): Native AOT + trimming with a built-in loopback server.
 
+<a id="native-aot"></a>
+
 ## Runtime and AOT
 
 The library targets `net6.0` and `net8.0`: .NET 8 and later consume `lib/net8.0`, .NET 6 / 7 consume `lib/net6.0`, with no configuration. Both assets come from the same sources and behave the same at runtime (each binds to the BCL of the runtime it runs on); the `net8.0` target exists so the library can use net8-era BCL APIs and the net7+ analyzers. .NET Framework and .NET Core 3.1 or earlier are not supported.
 
-`IsTrimmable` is declared on both targets (the library trims with 0 warnings), and the `net8.0` target also sets `IsAotCompatible` — the AOT analyzer reports 0 warnings (the SDK does not offer that analyzer for a `net6.0` target). For AOT publishing, consumers need:
+`IsTrimmable` is declared on both targets (the library trims with 0 warnings), and the `net8.0` target also sets `IsAotCompatible` — the AOT analyzer reports 0 warnings (the SDK does not offer that analyzer for a `net6.0` target).
 
-```xml
-<ItemGroup>
-  <TrimmerRootAssembly Include="MyApp.Models" />
-</ItemGroup>
-```
+### Request models: built-in source generator
+
+The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute and registers it from a module initializer. It replaces the old "root the model assembly" approach:
+
+- **Zero configuration**: no `TrimmerRootAssembly`, no hand-written registration;
+- **One declaration for both paths**: the generator only writes facts (route / members / bindings / authorization); validation and the binding plan still run through the shared runtime builder, so JIT and AOT behave the same and produce the same error text;
+- **No runtime reflection over models**: generated code reads members through direct getter delegates; under AOT a registry miss throws `AxiosAotMetadataException` (with repair guidance) instead of silently dropping fields;
+- **Prerequisite**: consumers need C# 9 or later (`[ModuleInitializer]`); the generator itself targets `netstandard2.0` and ships with the package (built against Roslyn 4.0.1, so any compiler from .NET SDK 6.0.100 / VS 2022 17.0 onward can load it);
+- **Custom route attributes**: a custom subclass of `HttpApiAttribute` cannot have its constructor executed at compile time → warning `AXA010` and generation is skipped; JIT still uses reflection, and under AOT use `[HttpApi("METHOD", "path")]` or the built-in `[Get]` / `[Post]` etc. instead;
+- **Disabling the generator**: `<AxiosNetSourceGen>false</AxiosNetSourceGen>`. JIT falls back to reflection automatically; when `PublishAot` is true it raises warning `AXA012`.
+
+| Diagnostic | Severity | Scenario |
+| --- | --- | --- |
+| `AXA003` | Error | Multiple route attributes; blank route method / path |
+| `AXA006` | Error | `[ApiIgnore]` combined with Path / Query / Header / HeaderCollection / Part / Body |
+| `AXA008` | Error | `[Authorize]` and `[AllowAnonymous]` on the same level |
+| `AXA009` | Error | Model cannot be generated: static class / inaccessible / generic / ref struct / file-local / non-public member getter / invisible member type |
+| `AXA010` | Warning | Custom `HttpApiAttribute` subclass used (generation skipped) |
+| `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
+
+`System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
 ```csharp
 [JsonSerializable(typeof(Person))]
@@ -1695,13 +1713,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1894 / 1890 | `net8.0` / `net6.0` | 3784 |
+| `AxiosNet.Tests` (core + declarative) | 1905 / 1901 | `net8.0` / `net6.0` | 3806 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1957 / 1953** | | **3910** |
+| **Total** | **1968 / 1964** | | **3932** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **92.8%**, branch coverage **89.1%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
+Line coverage **92.6%**, branch coverage **88.4%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1728,7 +1746,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry, attempt audit events |
 | `Errors/` | Error model, error codes, `ToJson` snapshot |
 | `Regression/` | Allocation guards (isolated collection + precise counting; `AllocationTests` uses process-wide averages, `AllocationSweepTests` uses thread-local minima over several windows — when the measured path completes synchronously the true value is a constant and noise only adds), concurrent throughput |
-| `WebAPI/` | Declarative model binding and validation, authorization, streaming, interface proxies and startup validation |
+| `WebAPI/` | Declarative model binding and validation, authorization, streaming, interface proxies and startup validation, the request-model source generator (field-by-field parity between generated and reflection paths) |
 | `Infrastructure/` | Test plumbing: HTTP server, models, telemetry probe, isolated collections |
 
 Timing-sensitive cases (upper-bound duration assertions, telling "placeholder vs budget" apart) and allocation cases each run in isolation — see `Infrastructure/TimingCollection.cs` and `Infrastructure/AllocationCollection.cs`.

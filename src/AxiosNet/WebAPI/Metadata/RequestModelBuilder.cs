@@ -69,6 +69,34 @@ public sealed class RequestModelBuilder
 
     /// <summary>声明一个成员：<paramref name="getValue"/> 是生成期写死的直接 getter（不经过 <c>PropertyInfo</c>）。</summary>
     public RequestModelMemberBuilder Member(string name, Type valueType, Func<object, object?> getValue)
+        => AddMember(name, valueType, getValue, null, null);
+
+    /// <summary>
+    /// 声明一个成员并一次性配置它的全部绑定（同一属性可同时绑定路径 + 头 + 查询 + 请求体）。
+    /// 生成器用本重载，因为每个绑定方法返回所属模型构建器，无法在同一条链上连续调用。
+    /// </summary>
+    /// <param name="name">成员名（CLR 属性名）。</param>
+    /// <param name="valueType">成员类型。</param>
+    /// <param name="getValue">生成期写死的直接 getter。</param>
+    /// <param name="configure">绑定配置；null 表示不标注任何参数特性。</param>
+    /// <param name="description">错误消息里的定位文本（如 <c>BaseRequest.Id</c>）；null 时用 <c>{模型名}.{成员名}</c>。</param>
+    public RequestModelBuilder Member(
+        string name,
+        Type valueType,
+        Func<object, object?> getValue,
+        Action<RequestModelMemberBuilder>? configure,
+        string? description = null)
+    {
+        AddMember(name, valueType, getValue, configure, description);
+        return this;
+    }
+
+    private RequestModelMemberBuilder AddMember(
+        string name,
+        Type valueType,
+        Func<object, object?> getValue,
+        Action<RequestModelMemberBuilder>? configure,
+        string? description)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(valueType);
@@ -80,11 +108,13 @@ public sealed class RequestModelBuilder
             FieldName = name,
             ValueType = valueType,
             GetValue = getValue,
-            Description = $"{Declaration.ModelType.Name}.{name}"
+            Description = description ?? $"{Declaration.ModelType.Name}.{name}"
         };
 
         Declaration.Members.Add(member);
-        return new RequestModelMemberBuilder(this, member);
+        var builder = new RequestModelMemberBuilder(this, member);
+        configure?.Invoke(builder);
+        return builder;
     }
 }
 

@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    源生成器随 AxiosNet 包分发（analyzers/dotnet/cs），默认开启；消费方设置
+    <AxiosNetSourceGen>false</AxiosNetSourceGen> 可关闭（JIT 下回退反射路径）。
+    PublishAot 暴露给生成器，用于在「AOT + 关闭生成器」时给 AXA012 警告。
+  -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="AxiosNetSourceGen" />
+    <CompilerVisibleProperty Include="PublishAot" />
+  </ItemGroup>
+</Project>

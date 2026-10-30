@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1957%2F1953%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.8%25_(branch_89.1%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1968%2F1964%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.6%25_(branch_88.4%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -279,7 +279,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 | [HTTP 版本](#http-版本) | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
 | [自定义 Handler](#自定义-handler) | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
 | [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告） | 源生成 `JsonSerializerContext` |
+| [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告），内置请求模型源生成器，零 `TrimmerRootAssembly` | 引用即生效；序列化另配 `JsonSerializerContext` |
 
 ## 令牌管理
 
@@ -1651,17 +1651,35 @@ dotnet run --project samples/AxiosNet.Simple
 - [`samples/AxiosNet.Simple.DependencyInjection`](samples/AxiosNet.Simple.DependencyInjection)：Generic Host 六个 DI 场景。
 - [`samples/AxiosNet.Aot`](samples/AxiosNet.Aot)：Native AOT + 裁剪，自带回环服务。
 
+<a id="native-aot"></a>
+
 ## 运行时与 AOT
 
 类库 `net6.0` / `net8.0` 双目标：.NET 8 及以上引用 `lib/net8.0`，.NET 6 / 7 引用 `lib/net6.0`，无需配置。两份资产来自同一份源码，运行时行为不随 TFM 变化（都绑定到消费方运行时自带的 BCL）；`net8.0` 目标的价值是可以使用 net8 一档的 BCL 和 net7+ 的分析器。不支持 .NET Framework 与 .NET Core 3.1 及更早。
 
-两个目标都声明 `IsTrimmable`（自身裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`，AOT 分析器 0 警告（`net6.0` 目标上 SDK 不提供该分析器）。AOT 发布时消费方需要：
+两个目标都声明 `IsTrimmable`（自身裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`，AOT 分析器 0 警告（`net6.0` 目标上 SDK 不提供该分析器）。
 
-```xml
-<ItemGroup>
-  <TrimmerRootAssembly Include="MyApp.Models" />
-</ItemGroup>
-```
+### 请求模型：内置源生成器
+
+包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并在模块初始化器里注册。它取代了旧版「root 模型程序集」的做法：
+
+- **零配置**：不需要 `TrimmerRootAssembly`，也不需要手写注册；
+- **两条路径同一份声明**：生成器只写事实（路由 / 成员 / 绑定 / 授权），校验与绑定计划仍由运行时共享构建器完成，JIT 与 AOT 的行为、错误文本一致；
+- **运行时不再反射模型**：生成代码把成员取值写成直接 getter 委托；AOT 下未命中注册表会抛 `AxiosAotMetadataException`（带修复指引），不会静默丢字段；
+- **前提**：消费方需 C# 9 及以上（`[ModuleInitializer]`）；生成器本身是 `netstandard2.0`，随包分发（按 Roslyn 4.0.1 编译，.NET SDK 6.0.100 / VS 2022 17.0 及以上的编译器均可加载）；
+- **自定义路由特性**：`HttpApiAttribute` 的自定义子类无法在编译期执行构造器 → 警告 `AXA010` 并跳过生成；JIT 下仍走反射，AOT 下请改用 `[HttpApi("METHOD", "path")]` 或内置的 `[Get]` / `[Post]` 等；
+- **关闭生成器**：`<AxiosNetSourceGen>false</AxiosNetSourceGen>`。JIT 下自动回退反射；`PublishAot` 为 true 时给出警告 `AXA012`。
+
+| 诊断 | 级别 | 场景 |
+| --- | --- | --- |
+| `AXA003` | Error | 标了多个路由特性；路由方法 / 路径为空白 |
+| `AXA006` | Error | `[ApiIgnore]` 与 Path / Query / Header / HeaderCollection / Part / Body 同用 |
+| `AXA008` | Error | `[Authorize]` 与 `[AllowAnonymous]` 标在同一层 |
+| `AXA009` | Error | 模型无法生成：静态类 / 不可访问 / 泛型 / ref struct / file-local / 成员 getter 非 public / 成员类型不可见 |
+| `AXA010` | Warning | 使用了自定义 `HttpApiAttribute` 子类（已跳过生成） |
+| `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
+
+`System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
 ```csharp
 [JsonSerializable(typeof(Person))]
@@ -1679,7 +1697,7 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
-AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式，也可用隐藏 API `AxiosMetadata.RegisterRequestModel(typeof(T), ...)` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
+AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosMetadata.RegisterRequestModel(typeof(T), ...)` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
 
 AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、匿名对象作为 params / 表单值、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）、接口级声明 `Create<T>()`（`DispatchProxy` 依赖 Reflection.Emit，调用时抛 `PlatformNotSupportedException`；`ValidateInterfaces(Assembly)` 同受裁剪影响，改用 `ValidateInterfaces(typeof(IA), ...)`）。
 
@@ -1693,13 +1711,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1894 / 1890 | `net8.0` / `net6.0` | 3784 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1905 / 1901 | `net8.0` / `net6.0` | 3806 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1957 / 1953** | | **3910** |
+| **合计** | **1968 / 1964** | | **3932** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 
-行覆盖率 **92.8%**、分支覆盖率 **89.1%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
+行覆盖率 **92.6%**、分支覆盖率 **88.4%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1726,7 +1744,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 | `Diagnostics/` | Activity / Meter / DiagnosticListener 三路遥测、尝试审计事件 |
 | `Errors/` | 错误模型、错误码、`ToJson` 快照 |
 | `Regression/` | 分配护栏（独占集合 + 精确计数；`AllocationTests` 走进程级均值，`AllocationSweepTests` 走线程级多窗最小值——被测路径同步完成时真实值是个定值，噪声只会往上加）、并发吞吐 |
-| `WebAPI/` | 声明式模型绑定与校验、授权、流式、接口级代理与启动期校验 |
+| `WebAPI/` | 声明式模型绑定与校验、授权、流式、接口级代理与启动期校验、请求模型源生成器（生成路径 vs 反射路径逐字段对照） |
 | `Infrastructure/` | 测试基建：HTTP 服务器、模型、遥测探针、独占集合 |
 
 时序敏感用例（断言上限耗时、靠「占位 vs 预算」区分口径）与分配用例各自独占运行，见 `Infrastructure/TimingCollection.cs`、`Infrastructure/AllocationCollection.cs`。

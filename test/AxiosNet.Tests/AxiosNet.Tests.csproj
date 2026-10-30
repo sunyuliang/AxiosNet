@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.1.0" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
@@ -26,6 +27,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
+    <!-- 生成器测试用 CSharpGeneratorDriver 直接驱动；普通引用（非 Analyzer），不会分析本测试项目源码。 -->
+    <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj" />
   </ItemGroup>
 
 </Project>
