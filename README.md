@@ -1242,7 +1242,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 | 查询参数 | `[Query]` / 无标注属性 | 默认绑 Query；数组 `a[]=v`、嵌套 `a[b]=v` |
 | 字典查询 | `[Query]` + 字典 | 未命名平铺 `?a=1&b=2`，显式命名保留 `?filters[a]=1` |
 | 请求头 | `[Header]` / `[HeaderCollection]` | `null` 跳过 |
-| 静态头 | `[Headers]`（类级） | `"Name: Value"`；只写名字表示删除该头 |
+| 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
@@ -1296,7 +1296,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 - 每个方法必须标注且只标注一个路由特性。返回类型有四种：`Task<AxiosResponse<T>>`（完整响应）/ `Task<AxiosResponse>`（正文按 `JsonElement` 原样交付）/ `Task<T>`（只交付 `Data`）/ `Task`（只完成请求，不解析正文——非 JSON 正文不会变成解析错误）。不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法（裸 `Task<IAsyncEnumerable<T>>` 缺少响应元数据与释放归属，启动期校验即报错）。
 - 四种形态的失败口径一致：非 2xx 抛 `AxiosException`，配置了 `ErrorFactory` 时照常替换/包装；用 `Task` 形态时 `ErrorFactory` 仍能拿到响应（只是正文被丢弃）。
 - `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
-- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。
+- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口或接口方法上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。方法级声明压过接口级：静态头同名项覆盖、`[AllowAnonymous]` 可让接口里单个方法匿名、`[Authorize("Basic")]` 可让单个方法换 scheme；方法上同标 `[Authorize]` 与 `[AllowAnonymous]` 属二义性（`Create<T>()` / `ValidateInterfaces` 报错）。
 - 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛）。
 - 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
 - 接口级流式：帧格式用 `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` 声明，省略按 NDJSON；返回流只能枚举一次，超时与错误口径与 `RequestStreamAsync(...)` 完全一致。

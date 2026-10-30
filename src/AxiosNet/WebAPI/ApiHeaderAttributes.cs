@@ -1,7 +1,10 @@
 namespace AxiosNet.WebAPI;
 
-/// <summary>声明级静态请求头（请求模型类 / 接口）：整份声明共用的固定头，一次声明。每个字符串形如 <c>"Name: Value"</c>；只有名字、冒号后为空表示删除该头。</summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, Inherited = true, AllowMultiple = false)]
+/// <summary>
+/// 声明级静态请求头：类 / 接口上是整份声明共用的固定头，接口方法上是该方法独有的固定头（覆盖接口级同名项）。
+/// 每个字符串形如 <c>"Name: Value"</c>；只有名字、冒号后为空表示删除该头。
+/// </summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class HeadersAttribute : Attribute
 {
     /// <summary>声明一组静态头。</summary>

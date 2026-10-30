@@ -138,6 +138,12 @@ internal sealed class InterfaceMethodMetadata
         var accumulator = new BindingAccumulator(owner, "参数");
         accumulator.AddStaticHeaders(EnumerateStaticHeaders(interfaceType));
 
+        // 方法级 [Headers] 后加入：同名项覆盖接口级声明。
+        if (method.GetCustomAttribute<HeadersAttribute>(inherit: false) is { } methodHeaders)
+        {
+            accumulator.AddStaticHeaders([methodHeaders]);
+        }
+
         // multipart：方法声明 [Multipart] 时，参数自身即表单
         var isMultipart = method.GetCustomAttribute<MultipartAttribute>(inherit: false) is not null;
         var parts = new List<PartBinding>();
@@ -290,7 +296,7 @@ internal sealed class InterfaceMethodMetadata
                 $"接口 {interfaceType.Name} 的 {method.Name} 的 [Stream] 帧格式值 {(int)streamFormat} 无效：请使用 AxiosStreamFormat 的已定义值。");
         }
 
-        var authorization = ApiAuthorizationBuilder.Build(GetInterfaceChain(interfaceType), "接口");
+        var authorization = ApiAuthorizationBuilder.Build(GetInterfaceChain(interfaceType), method, "接口");
 
         return new InterfaceMethodMetadata(
             interfaceType,

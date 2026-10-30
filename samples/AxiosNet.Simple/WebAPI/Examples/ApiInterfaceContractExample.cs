@@ -3,8 +3,9 @@ using AxiosNet.WebAPI;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 12. 接口级契约的授权与校验：<c>[Authorize]</c> / <c>[AllowAnonymous]</c> 标在接口上，
-/// 代理发请求时自动拼 Authorization；<see cref="ApiClient.ValidateInterfaces(Type[])"/> 在启动期把写错的接口逐条报出来。
+/// 12. 接口级契约的授权与校验：<c>[Authorize]</c> / <c>[AllowAnonymous]</c> 标在接口或接口方法上，
+/// 代理发请求时自动拼 Authorization；方法级 <c>[Headers]</c> 覆盖接口级同名项；
+/// <see cref="ApiClient.ValidateInterfaces(Type[])"/> 在启动期把写错的接口逐条报出来。
 /// </summary>
 public sealed class ApiInterfaceContractExample : IExample
 {
@@ -13,7 +14,7 @@ public sealed class ApiInterfaceContractExample : IExample
 
     public int Number => 12;
 
-    public string Title => "接口级契约：[Authorize] / [AllowAnonymous] 授权 + ValidateInterfaces 静态校验";
+    public string Title => "接口级契约：[Authorize] / [AllowAnonymous] 授权 + 方法级 [Headers] + ValidateInterfaces 静态校验";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -35,7 +36,12 @@ public sealed class ApiInterfaceContractExample : IExample
         Console.WriteLine($"  GET  /api/secure/profile -> {profile.Status} {ExampleConsole.Pretty(profile.Data)}");
         Console.WriteLine($"    实际头 Authorization = {Header(profile.Request, "Authorization")}");
 
-        // 3) 启动期校验：写错的接口不等到发请求才炸，ValidateInterfaces 一次返回全部问题
+        // 3) 方法级 [Headers]：同名项覆盖接口级，其余接口级头照常保留
+        var scoped = await client.Create<IAuthorizedAuthApi>().ScopedProfileAsync("sample-console");
+        Console.WriteLine($"  GET  /api/secure/profile -> {scoped.Status} {ExampleConsole.Pretty(scoped.Data)}");
+        Console.WriteLine($"    实际头 X-Scope = {Header(scoped.Request, "X-Scope")}（接口级是 interface，方法级覆盖成 method）");
+
+        // 4) 启动期校验：写错的接口不等到发请求才炸，ValidateInterfaces 一次返回全部问题
         var errors = ApiClient.ValidateInterfaces(typeof(IMissingRouteAuthApi), typeof(IWriterApi));
         Console.WriteLine($"  ValidateInterfaces 发现 {errors.Count} 条问题：");
         foreach (var error in errors)
@@ -60,12 +66,20 @@ public interface IAnonymousAuthApi
         CancellationToken cancellationToken = default);
 }
 
-/// <summary>受保护接口：所有方法自动拼 <c>Authorization: Bearer {token}</c>。</summary>
+/// <summary>受保护接口：所有方法自动拼 <c>Authorization: Bearer {token}</c>，并共用接口级静态头。</summary>
 [Authorize]
+[Headers("X-Scope: interface")]
 public interface IAuthorizedAuthApi
 {
     [Get("api/secure/profile")]
     Task<AxiosResponse<SecureProfile>> ProfileAsync(
+        [Header("X-Device")] string device,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>方法级 <c>[Headers]</c>：同名项覆盖接口级，不同名项追加。</summary>
+    [Get("api/secure/profile")]
+    [Headers("X-Scope: method")]
+    Task<AxiosResponse<SecureProfile>> ScopedProfileAsync(
         [Header("X-Device")] string device,
         CancellationToken cancellationToken = default);
 }

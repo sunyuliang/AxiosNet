@@ -288,11 +288,22 @@ internal sealed class BindingAccumulator
     private static readonly Regex PathTokenRegex = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
 }
 
-/// <summary>授权声明解析：按「更具体的一层优先」的链条查找，两个特性同标一层属二义性。</summary>
+/// <summary>授权声明解析：方法级优先，其次按「更具体的一层优先」的类型链查找，两个特性同标一层属二义性。</summary>
 internal static class ApiAuthorizationBuilder
 {
+    /// <summary>只按类型链解析（请求模型没有方法级声明）。</summary>
     public static ApiAuthorization Build(IReadOnlyList<Type> mostDerivedFirst, string ownerPrefix)
+        => Build(mostDerivedFirst, method: null, ownerPrefix);
+
+    /// <summary>按「方法 → 类型链」解析；<paramref name="method"/> 为 <c>null</c> 时等价于只按类型链。</summary>
+    public static ApiAuthorization Build(IReadOnlyList<Type> mostDerivedFirst, MethodInfo? method, string ownerPrefix)
     {
+        // 方法级声明压过任何类型级声明（含接口上的 [Authorize]）。
+        if (method is not null && TryResolve(method, $"{ownerPrefix} {method.DeclaringType?.Name}.{method.Name}", out var fromMethod))
+        {
+            return fromMethod;
+        }
+
         foreach (var type in mostDerivedFirst)
         {
             if (type == typeof(object))
@@ -300,25 +311,39 @@ internal static class ApiAuthorizationBuilder
                 continue;
             }
 
-            var anonymous = type.GetCustomAttribute<AllowAnonymousAttribute>(inherit: false) is not null;
-            var authorize = type.GetCustomAttribute<AuthorizeAttribute>(inherit: false);
-
-            if (anonymous && authorize is not null)
+            if (TryResolve(type, $"{ownerPrefix} {type.Name}", out var fromType))
             {
-                throw new InvalidOperationException($"{ownerPrefix} {type.Name} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。");
-            }
-
-            if (anonymous)
-            {
-                return new ApiAuthorization(ApiAuthorizationMode.Anonymous, "Bearer");
-            }
-
-            if (authorize is not null)
-            {
-                return new ApiAuthorization(ApiAuthorizationMode.Required, authorize.Scheme);
+                return fromType;
             }
         }
 
         return ApiAuthorization.Inherit;
+    }
+
+    /// <summary>取一层的授权声明；没有声明时返回 <c>false</c>，交由更外层决定。</summary>
+    private static bool TryResolve(MemberInfo member, string owner, out ApiAuthorization authorization)
+    {
+        var anonymous = member.GetCustomAttribute<AllowAnonymousAttribute>(inherit: false) is not null;
+        var authorize = member.GetCustomAttribute<AuthorizeAttribute>(inherit: false);
+
+        if (anonymous && authorize is not null)
+        {
+            throw new InvalidOperationException($"{owner} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。");
+        }
+
+        if (anonymous)
+        {
+            authorization = new ApiAuthorization(ApiAuthorizationMode.Anonymous, "Bearer");
+            return true;
+        }
+
+        if (authorize is not null)
+        {
+            authorization = new ApiAuthorization(ApiAuthorizationMode.Required, authorize.Scheme);
+            return true;
+        }
+
+        authorization = default;
+        return false;
     }
 }
