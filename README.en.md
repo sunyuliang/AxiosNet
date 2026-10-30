@@ -8,7 +8,7 @@
 
 [简体中文](README.md) | **English**
 
-An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming responses, an in-flight concurrency gate, a declarative API client (models or interfaces), and OpenTelemetry instrumentation.
+An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming responses, an in-flight concurrency gate, a declarative API client (model-based / interface-based), and OpenTelemetry instrumentation.
 
 | Item | Value |
 | --- | --- |
@@ -26,12 +26,12 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [Model-based API](#model-based-api) · [Interface-based API](#interface-based-api) · [Token management](#token-management) · [What it supports](#what-it-supports) · [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) |
 | Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
-| Engineering | [Declarative API client](#declarative-api-client) · [Interface declarations](#interface-declarations) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
+| Engineering | [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
 ---
 
@@ -45,6 +45,15 @@ dotnet add package AxiosNet.DependencyInjection   # optional: DI registration
 Referencing the source tree: `dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj`
 
 ## Quick start
+
+Two popular entry points. Capabilities are identical underneath; only the way a request is described differs:
+
+| Entry | In one line | Use for | See |
+| --- | --- | --- | --- |
+| Raw HTTP | `Axios.GetAsync<T>(url)`, with URL / params / headers at the call site | Scattered calls, scripts, a handful of endpoints | This section |
+| Declarative | Each endpoint is a model or an interface; calls are one-liners | Many endpoints; routes and bindings deserve a central place | [Model-based API](#model-based-api) · [Interface-based API](#interface-based-api) |
+
+Start with raw HTTP:
 
 ```csharp
 using AxiosNet;
@@ -96,6 +105,138 @@ string url = http.GetUri(c =>
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
 
+## Model-based API
+
+Once endpoints multiply, URLs, parameters and headers scattered across call sites get hard to manage. The declarative entry point describes each endpoint as a **request model** or an **interface**, leaving calls as one-liners (`client.RequestAsync(request)` / `api.GetAsync(5)`); both forms are carried by the same `ApiClient`, only the description differs. Namespace `AxiosNet.WebAPI`, same package as the core.
+
+| Style | What it looks like | Use for | Cost |
+| --- | --- | --- | --- |
+| Request model | `class GetUserRequest : IApiRequest<User>` with `[Path]` / `[Query]` / `[Body]` on properties | Endpoints fairly independent; requests passed around or reused as objects | One type per endpoint |
+| Interface | `interface IUserApi` with routes and bindings on methods / parameters | Endpoints in groups; calls feel like local methods | JIT only, unavailable under Native AOT |
+
+This section covers the model-based API; interfaces are in [Interface-based API](#interface-based-api).
+
+```csharp
+using AxiosNet.WebAPI;
+
+[Get("users/{id}")]
+[Headers("Accept: application/json")]                    // class-level static headers
+public sealed class GetUserRequest : IApiRequest<User>
+{
+    [Path] public int Id { get; set; }
+    [Query("verbose")] public string? Verbose { get; set; }
+    [Header("X-Trace")] public string? Trace { get; set; }
+}
+
+[Post("users")]
+public sealed class CreateUserRequest : IApiRequest<User>
+{
+    [Body] public UserPayload Payload { get; set; } = null!;
+}
+
+var client = new ApiClient("https://api.example.com/")
+{
+    Authorization = new BearerAuthorizationProvider(ct => GetTokenAsync(ct))
+};
+
+var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
+string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
+```
+
+| Binding | Attribute | Notes |
+| --- | --- | --- |
+| Path segment | `[Path]` | Replaces `{name}`; value URL-escaped; `null` is an error |
+| Query parameter | `[Query]` / undecorated | Bound to the query by default; arrays `a[]=v`, nesting `a[b]=v` |
+| Dictionary query | `[Query]` + dictionary | Unnamed flattens to `?a=1&b=2`, explicit name keeps `?filters[a]=1` |
+| Header | `[Header]` / `[HeaderCollection]` | `null` is skipped |
+| Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header; method level overrides interface level |
+| Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
+| Body | `[Body]` | At most one per model; `null` sends no body |
+| Skip | `[ApiIgnore]` | Not bound at all |
+
+- **Single-payload models can omit `[Body]`**: for POST / PUT / PATCH with exactly one undecorated **non-scalar** property, it binds as the body (dictionary properties excepted — always query).
+- One property may carry several binding attributes (`[Path]` + `[Header]`); the value is read once and applied to each.
+- Per-request tweaks: derive from `ApiRequest<T>` and override `Configure(config)`, or `RequestAsync(request, config => ...)`.
+- Invalid models (missing route, unbound placeholder, multiple bodies…) throw `InvalidOperationException` on first call; validate at startup with `ApiClient.ValidateModels(typeof(A), ...)` or `ValidateModels(assembly)` (returns all messages, never throws).
+- Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; `IAuthorizationProvider` is the extension point, with `BearerAuthorizationProvider` built in.
+- Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
+- Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
+
+## Interface-based API
+
+When writing a request model per endpoint is too much, hand the interface to `client.Create<T>()`: routes live on methods, binding attributes on parameters, and `DispatchProxy` generates the implementation at runtime. Binding semantics are the **same kernel** as request models (path-template validation, duplicate detection, default body inference, scalar guard, static headers and authorization all identical).
+
+```csharp
+[Headers("Accept: application/json")]                    // interface-level static headers
+public interface IUserApi
+{
+    [Get("users/{id}")]
+    Task<AxiosResponse<User>> GetAsync(
+        [Path] int id,
+        [Query("verbose")] string? verbose = null,
+        [Header("X-Trace")] string? trace = null,
+        CancellationToken cancellationToken = default);
+
+    [Post("users")]
+    Task<AxiosResponse<User>> CreateAsync(UserPayload payload, CancellationToken cancellationToken = default);
+}
+
+var api = client.Create<IUserApi>();
+var response = await api.GetAsync(5);
+```
+
+Multipart and streaming are declared on the interface the same way (semantics match request models one-to-one):
+
+```csharp
+[Post("upload")]
+[Multipart]                                              // parameters are the form
+Task<AxiosResponse<UploadResult>> UploadAsync(
+    [Part("Title")] string title,
+    [Part(FileName = "data.bin")] byte[] blob,
+    CancellationToken cancellationToken = default);
+
+[Get("stream/events")]
+[Stream(AxiosStreamFormat.ServerSentEvents)]            // omit for NDJSON
+Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
+```
+
+- Every method must carry exactly one route attribute. Four return shapes are supported: `Task<AxiosResponse<T>>` (full response) / `Task<AxiosResponse>` (body delivered as a raw `JsonElement`) / `Task<T>` (only `Data`) / `Task` (request only, body never parsed — a non-JSON body is not a parse error). Synchronous returns / `ValueTask` / generic methods / `ref`·`out` are rejected. Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method (a bare `Task<IAsyncEnumerable<T>>` has no response metadata or disposal ownership and fails startup validation).
+- Failure semantics are identical across shapes: non-2xx throws `AxiosException`, and a configured `ErrorFactory` still replaces/wraps it; with the `Task` shape the factory still receives the response (only the body is discarded).
+- `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
+- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface or on an interface method; with base interfaces, static headers and authorization merge in the **derived interface's scope** (the same base method can carry different static headers per derived interface). Method-level declarations win over interface level: same-name static headers are overridden, `[AllowAnonymous]` makes a single method anonymous, `[Authorize("Basic")]` switches the scheme for one method; declaring both `[Authorize]` and `[AllowAnonymous]` on one method is ambiguous (`Create<T>()` / `ValidateInterfaces` reports it).
+- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws).
+- Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
+- Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
+- Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
+- The proxy is built on `DispatchProxy` (Reflection.Emit) and is **JIT-only**: `Create<T>()` throws `PlatformNotSupportedException` under Native AOT, and trimming requires rooting the interface plus its parameter / return types.
+
+## Token management
+
+`IAccessTokenProvider` is only a "fetch a token per request" callback. When you want caching and automatic refresh, use the built-in `AccessTokenManager`: it decides **when to refresh and keeps concurrent refreshes to one**, while the HTTP call that actually exchanges a token stays yours (the library never calls a token endpoint for you).
+
+```csharp
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
+{
+    RefreshAsync = RefreshAsync,                        // falls back to AcquireAsync when omitted
+    RefreshAhead = TimeSpan.FromSeconds(30),            // 1 minute by default
+    RefreshTimeout = TimeSpan.FromSeconds(10)           // 30 seconds by default
+});
+
+using var client = new ApiClient("https://api.example.com/") { AccessTokenProvider = tokens };
+
+// Both callbacks return the token plus its expiry (ExpiresAt = null means "never expires")
+static ValueTask<AccessToken> AcquireAsync(CancellationToken ct) { ... }
+static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
+```
+
+- **Cache hits are free**: a token outside the refresh window is returned without touching a callback.
+- **One refresh in flight**: concurrent callers share the same refresh; failures are not cached, so the next call retries.
+- **Refreshes ignore caller cancellation**: one client disconnecting neither fails the other waiters nor wastes a refresh (the refresh itself is bounded by `RefreshTimeout`, which throws `TimeoutException`).
+- **Refresh-ahead is clamped**: the effective lead is min(`RefreshAhead`, half the token lifetime), so short-lived tokens are not refreshed the moment they arrive.
+- **Forced refresh after 401**: `tokens.Invalidate(staleToken)` drops the current token (passing the stale value avoids discarding a token another request just refreshed); the next call must refresh.
+- **Automatic replay on 401**: when the response is 401 and this request's `Authorization` header came from the token provider, the token is refreshed and the request is replayed **once** (a second 401 goes through the normal error path). Bodies that cannot be replayed (streams / streaming bodies / multipart), declarations with an explicit `Authorization` header, and `[AllowAnonymous]` are never replayed; the replay keeps the same idempotency key. Turn it off with `ApiClient.RetryOnUnauthorized = false`.
+- Register `IAccessTokenProvider` in the container and every `ApiClient` picks it up (see [dependency injection](#dependency-injection)).
+
 ## What it supports
 
 Four groups of capabilities; details in the linked sections.
@@ -105,6 +246,8 @@ Four groups of capabilities; details in the linked sections.
 | Capability | What you get | How |
 | --- | --- | --- |
 | Four response shapes | Raw text / `JsonElement` / `dynamic` / strong type | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
+| Model-based API | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
+| Interface-based API | Methods on an interface; `Create<T>()` generates the proxy | `[Get("users/{id}")] Task<AxiosResponse<User>> GetAsync([Path] int id)` |
 | Client instance | One baseURL + timeout + default headers | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
 | URL only | Build the final URL without sending | `client.GetUri(c => ...)` |
 | Query parameters | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
@@ -147,20 +290,18 @@ Four groups of capabilities; details in the linked sections.
 | Connection pool | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` or `HttpConnectionPool.GetOrCreate("key")` |
 | HTTP versions | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
 | Custom handlers | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
-| Declarative client | Describe requests with models and attributes | `[Get("users/{id}")] class X : IApiRequest<User>` |
-| Interface declarations | Methods on an interface; `Create<T>()` generates the proxy | `[Get("users/{id}")] Task<AxiosResponse<User>> GetAsync([Path] int id)` |
 | Dependency injection | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
 | Native AOT | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings) | Source-generated `JsonSerializerContext` |
 
 ## Clients
 
-Three entry points, identical capabilities:
+Three client shapes, identical capabilities underneath:
 
-| Entry point | How to create | Use for |
+| Shape | How to create | Use for |
 | --- | --- | --- |
 | Static facade | `Axios.GetAsync(...)` / `Axios.Defaults` / `Axios.Interceptors` | Scripts, single-endpoint apps |
 | Instance | `Axios.Create(c => ...)` or `new AxiosClient(config)` | The normal case: one long-lived instance — one set of defaults + one pool |
-| Declarative | `new ApiClient(baseAddress)` | Many endpoints, describe requests with models or interfaces ([details](#declarative-api-client)) |
+| Declarative | `new ApiClient(baseAddress)` | Many endpoints, describe requests with models or interfaces ([details](#model-based-api)) |
 
 **Instance defaults vs per-request**: what you set in `Axios.Create` are instance defaults; the trailing `configure` argument configures a single request. `configure` receives a **copy** of the instance defaults, so you can really remove a default header:
 
@@ -1280,131 +1421,6 @@ await client.GetAsync<object>("api",    c => c.Telemetry.CaptureUrl = false);   
 await client.GetAsync<object>("api?token=...", c => c.Telemetry.CaptureQuery = true);   // include the query in url.full
 ```
 
-## Declarative API client
-
-Namespace `AxiosNet.WebAPI` (same package as the core): describe the request with a model plus attributes, then call `client.RequestAsync(request)`.
-
-```csharp
-using AxiosNet.WebAPI;
-
-[Get("users/{id}")]
-[Headers("Accept: application/json")]                    // class-level static headers
-public sealed class GetUserRequest : IApiRequest<User>
-{
-    [Path] public int Id { get; set; }
-    [Query("verbose")] public string? Verbose { get; set; }
-    [Header("X-Trace")] public string? Trace { get; set; }
-}
-
-[Post("users")]
-public sealed class CreateUserRequest : IApiRequest<User>
-{
-    [Body] public UserPayload Payload { get; set; } = null!;
-}
-
-var client = new ApiClient("https://api.example.com/")
-{
-    Authorization = new BearerAuthorizationProvider(ct => GetTokenAsync(ct))
-};
-
-var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
-string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
-```
-
-| Binding | Attribute | Notes |
-| --- | --- | --- |
-| Path segment | `[Path]` | Replaces `{name}`; value URL-escaped; `null` is an error |
-| Query parameter | `[Query]` / undecorated | Bound to the query by default; arrays `a[]=v`, nesting `a[b]=v` |
-| Dictionary query | `[Query]` + dictionary | Unnamed flattens to `?a=1&b=2`, explicit name keeps `?filters[a]=1` |
-| Header | `[Header]` / `[HeaderCollection]` | `null` is skipped |
-| Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header; method level overrides interface level |
-| Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
-| Body | `[Body]` | At most one per model; `null` sends no body |
-| Skip | `[ApiIgnore]` | Not bound at all |
-
-- **Single-payload models can omit `[Body]`**: for POST / PUT / PATCH with exactly one undecorated **non-scalar** property, it binds as the body (dictionary properties excepted — always query).
-- One property may carry several binding attributes (`[Path]` + `[Header]`); the value is read once and applied to each.
-- Per-request tweaks: derive from `ApiRequest<T>` and override `Configure(config)`, or `RequestAsync(request, config => ...)`.
-- Invalid models (missing route, unbound placeholder, multiple bodies…) throw `InvalidOperationException` on first call; validate at startup with `ApiClient.ValidateModels(typeof(A), ...)` or `ValidateModels(assembly)` (returns all messages, never throws).
-- Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; `IAuthorizationProvider` is the extension point, with `BearerAuthorizationProvider` built in.
-- Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
-- Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
-
-### Token management
-
-`IAccessTokenProvider` is only a "fetch a token per request" callback. When you want caching and automatic refresh, use the built-in `AccessTokenManager`: it decides **when to refresh and keeps concurrent refreshes to one**, while the HTTP call that actually exchanges a token stays yours (the library never calls a token endpoint for you).
-
-```csharp
-using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
-{
-    RefreshAsync = RefreshAsync,                        // falls back to AcquireAsync when omitted
-    RefreshAhead = TimeSpan.FromSeconds(30),            // 1 minute by default
-    RefreshTimeout = TimeSpan.FromSeconds(10)           // 30 seconds by default
-});
-
-using var client = new ApiClient("https://api.example.com/") { AccessTokenProvider = tokens };
-
-// Both callbacks return the token plus its expiry (ExpiresAt = null means "never expires")
-static ValueTask<AccessToken> AcquireAsync(CancellationToken ct) { ... }
-static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
-```
-
-- **Cache hits are free**: a token outside the refresh window is returned without touching a callback.
-- **One refresh in flight**: concurrent callers share the same refresh; failures are not cached, so the next call retries.
-- **Refreshes ignore caller cancellation**: one client disconnecting neither fails the other waiters nor wastes a refresh (the refresh itself is bounded by `RefreshTimeout`, which throws `TimeoutException`).
-- **Refresh-ahead is clamped**: the effective lead is min(`RefreshAhead`, half the token lifetime), so short-lived tokens are not refreshed the moment they arrive.
-- **Forced refresh after 401**: `tokens.Invalidate(staleToken)` drops the current token (passing the stale value avoids discarding a token another request just refreshed); the next call must refresh.
-- **Automatic replay on 401**: when the response is 401 and this request's `Authorization` header came from the token provider, the token is refreshed and the request is replayed **once** (a second 401 goes through the normal error path). Bodies that cannot be replayed (streams / streaming bodies / multipart), declarations with an explicit `Authorization` header, and `[AllowAnonymous]` are never replayed; the replay keeps the same idempotency key. Turn it off with `ApiClient.RetryOnUnauthorized = false`.
-- Register `IAccessTokenProvider` in the container and every `ApiClient` picks it up (see [dependency injection](#dependency-injection)).
-
-## Interface declarations
-
-When writing a request model per endpoint is too much, hand the interface to `client.Create<T>()`: routes live on methods, binding attributes on parameters, and `DispatchProxy` generates the implementation at runtime. Binding semantics are the **same kernel** as request models (path-template validation, duplicate detection, default body inference, scalar guard, static headers and authorization all identical).
-
-```csharp
-[Headers("Accept: application/json")]                    // interface-level static headers
-public interface IUserApi
-{
-    [Get("users/{id}")]
-    Task<AxiosResponse<User>> GetAsync(
-        [Path] int id,
-        [Query("verbose")] string? verbose = null,
-        [Header("X-Trace")] string? trace = null,
-        CancellationToken cancellationToken = default);
-
-    [Post("users")]
-    Task<AxiosResponse<User>> CreateAsync(UserPayload payload, CancellationToken cancellationToken = default);
-}
-
-var api = client.Create<IUserApi>();
-var response = await api.GetAsync(5);
-```
-
-Multipart and streaming are declared on the interface the same way (semantics match request models one-to-one):
-
-```csharp
-[Post("upload")]
-[Multipart]                                              // parameters are the form
-Task<AxiosResponse<UploadResult>> UploadAsync(
-    [Part("Title")] string title,
-    [Part(FileName = "data.bin")] byte[] blob,
-    CancellationToken cancellationToken = default);
-
-[Get("stream/events")]
-[Stream(AxiosStreamFormat.ServerSentEvents)]            // omit for NDJSON
-Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
-```
-
-- Every method must carry exactly one route attribute. Four return shapes are supported: `Task<AxiosResponse<T>>` (full response) / `Task<AxiosResponse>` (body delivered as a raw `JsonElement`) / `Task<T>` (only `Data`) / `Task` (request only, body never parsed — a non-JSON body is not a parse error). Synchronous returns / `ValueTask` / generic methods / `ref`·`out` are rejected. Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method (a bare `Task<IAsyncEnumerable<T>>` has no response metadata or disposal ownership and fails startup validation).
-- Failure semantics are identical across shapes: non-2xx throws `AxiosException`, and a configured `ErrorFactory` still replaces/wraps it; with the `Task` shape the factory still receives the response (only the body is discarded).
-- `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
-- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface or on an interface method; with base interfaces, static headers and authorization merge in the **derived interface's scope** (the same base method can carry different static headers per derived interface). Method-level declarations win over interface level: same-name static headers are overridden, `[AllowAnonymous]` makes a single method anonymous, `[Authorize("Basic")]` switches the scheme for one method; declaring both `[Authorize]` and `[AllowAnonymous]` on one method is ambiguous (`Create<T>()` / `ValidateInterfaces` reports it).
-- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws).
-- Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
-- Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
-- Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
-- The proxy is built on `DispatchProxy` (Reflection.Emit) and is **JIT-only**: `Create<T>()` throws `PlatformNotSupportedException` under Native AOT, and trimming requires rooting the interface plus its parameter / return types.
-
 ## Dependency injection
 
 ```csharp
@@ -1626,7 +1642,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry, attempt audit events |
 | `Errors/` | Error model, error codes, `ToJson` snapshot |
-| `Regression/` | Allocation guards (isolated collection + precise counting, process- or thread-wide), concurrent throughput |
+| `Regression/` | Allocation guards (isolated collection + precise counting; `AllocationTests` uses process-wide averages, `AllocationSweepTests` uses thread-local minima over several windows — when the measured path completes synchronously the true value is a constant and noise only adds), concurrent throughput |
 | `WebAPI/` | Declarative model binding and validation, authorization, streaming, interface proxies and startup validation |
 | `Infrastructure/` | Test plumbing: HTTP server, models, telemetry probe, isolated collections |
 
@@ -1638,7 +1654,7 @@ Timing-sensitive cases (upper-bound duration assertions, telling "placeholder vs
 
 [`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) is a standalone BenchmarkDotNet project (single target `net8.0`, `IsPackable=false`, not referenced by `src/`) that turns "did this change help?" into numbers. It is not part of `dotnet test` and CI does not run it (benchmarks are machine-sensitive).
 
-Division of labour: `AxiosNet.Tests/ConcurrencyPerformanceTests` is a **concurrency correctness** test (5 rounds, the best round must reach the 85% capability line, median must stay above the 75% floor) that stops collapses; use the benchmarks to quantify changes. It deliberately does not judge on the median: this kind of noise only pushes single rounds down, so the best round is the estimate of capability — judging on the median measures the machine, not the code. In CI this test runs in a **dedicated process placed before the heavy suite** (the suite filters it out, then a separate step runs it per TFM, one after the other): it judges a paired ratio, so both sides' compilation state has to be comparable — `HttpClient` ships ReadyToRun in the shared framework and is optimized from the first call, while this library is plain IL that starts in Tier0 and waits for tiering to promote it to Tier1 + PGO. That ramp advances by wall clock, so a slower or busier runner gets less of it done inside a fixed warmup, and the rounds end up measuring compilation progress rather than code. The warmup is therefore **adaptive rather than a fixed number of seconds**: one-second windows, at least 4 and at most 10 of them, and judging starts only once the last 3 windows' ratios span 3 percentage points or less (measured: the first 4 windows can sit flat at 82–87% and only jump to ~95% at window 5–6). After convergence the judged rounds sit at 93.5–96.2%, whereas the fixed 2-second warmup control run started at 84.1% in round 1. Tiered compilation itself stays on by default — real-world steady state relies on PGO, so CI does not special-case it.
+Division of labour: `AxiosNet.Tests/ConcurrencyPerformanceTests` is a **concurrency correctness** test (5 rounds, the best round must reach the 85% capability line, median must stay above the 75% floor) that stops collapses; use the benchmarks to quantify changes. It deliberately does not judge on the median: this kind of noise only pushes single rounds down, so the best round is the estimate of capability — judging on the median measures the machine, not the code. In CI this test runs in a **dedicated process placed before the heavy suite** (the suite filters it out, then a separate step runs it per TFM, one after the other): it judges a paired ratio, so both sides' compilation state has to be comparable — `HttpClient` ships ReadyToRun in the shared framework and is optimized from the first call, while this library is plain IL that starts in Tier0 and waits for tiering to promote it to Tier1 + PGO. That ramp advances by wall clock, so a slower or busier runner gets less of it done inside a fixed warmup, and the rounds end up measuring compilation progress rather than code. The warmup is therefore **adaptive rather than a fixed number of seconds**: one-second windows, at least 4 and at most 10 of them, and judging starts only once the last 3 windows' ratios span 3 percentage points or less (measured: the first 4 windows can sit flat at 82–87% and only jump to ~95% at window 5–6). After convergence the judged rounds sit at 93.5–96.2%, whereas the fixed 2-second warmup control run started at 84.1% in round 1. When the ratio **misses** the line, the test first checks the **CPU share the process actually got** (`Process.TotalProcessorTime` ÷ wall clock ÷ core count, median over the judged rounds): on one machine with one build, the ratio stayed at 77–87% while the process got 50–56% of the CPU, but swung between 54% and 90% once it was squeezed down to 30–32% — that range cannot measure slow or fast. The threshold is therefore 42%; below it the numbers are printed but not asserted (a passing run needs no explanation, so the threshold only applies to a miss). Tiered compilation itself stays on by default — real-world steady state relies on PGO, so CI does not special-case it.
 
 ```bash
 dotnet run -c Release --project test/AxiosNet.Benchmarks                        # interactive menu
@@ -1682,7 +1698,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML implementations
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / statistics + handler injection
-│  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
+│  │  ├─ WebAPI/                      # declarative API client (model-based / interface-based)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
 ├─ samples/                           # Simple (50 items) / DI / Aot

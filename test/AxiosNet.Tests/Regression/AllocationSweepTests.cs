@@ -35,12 +35,12 @@ public sealed class AllocationSweepTests
             }
 
             // 修复前实测 810 B/次（24 个节点 × KeyValuePair 快照数组）：这些数组纯粹是
-            // 「为了排序 / 遍历而复制」，节点一个也没被驱逐时更是白付。护栏 256 B。
-            var average = AverageBytes(200, () => pool.EvictIdleEndpoints());
+            // 「为了排序 / 遍历而复制」，节点一个也没被驱逐时更是白付。护栏 256 B，现测地板 80 B。
+            var floor = MinimumBytes(200, () => pool.EvictIdleEndpoints());
 
             Assert.True(
-                average < 256,
-                $"空闲清扫平均 {average} B/次（{Endpoints} 个节点），超出护栏 256 B——"
+                floor < 256,
+                $"空闲清扫最小 {floor} B/次（{Endpoints} 个节点），超出护栏 256 B——"
                 + "疑似又回到了「先 ToArray 整张字典再遍历」的路径：清扫不需要快照，"
                 + "并发字典的枚举器本身就是结构体。");
         }
@@ -107,12 +107,12 @@ public sealed class AllocationSweepTests
         await Task.Yield(); // 让测试方法自己不占测量窗口
 
         // 槽位总是空的：走的是「Wait(0) 成功」的快路径。修复前实测 247 B/次
-        //（SlotLease 对象 24 B + 两层 async 状态机），护栏 64 B。
-        var average = AverageBytes(500, AcquireOnce);
+        //（SlotLease 对象 24 B + 两层 async 状态机），护栏 64 B，现测地板 24 B（只剩 SlotLease）。
+        var floor = MinimumBytes(500, AcquireOnce);
 
         Assert.True(
-            average < 64,
-            $"并发槽位快路径平均 {average} B/次，超出护栏 64 B——"
+            floor < 64,
+            $"并发槽位快路径最小 {floor} B/次，超出护栏 64 B——"
             + "同步就能拿到槽位的路径不该建 async 状态机，应拆成「同步快路径 + 排队慢路径」。");
     }
 
@@ -126,7 +126,7 @@ public sealed class AllocationSweepTests
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("http://127.0.0.1:59999/"));
 
         // 进度 / 限速包装：没有回调也没有限速时，每次读只是「读 + 记账 + 判上限」，
-        // 修复前实测 212 B/chunk（两层 async 状态机），护栏每 64 KB 合计 64 B。
+        // 修复前实测 212 B/chunk（两层 async 状态机），护栏每 64 KB 合计 64 B，现测地板 0 B。
         using var stream = new ProgressReadStream(inner, payload.Length, null, null, null, config, request);
 
         void ReadWholeBody()
@@ -138,11 +138,11 @@ public sealed class AllocationSweepTests
             }
         }
 
-        var average = AverageBytes(200, ReadWholeBody);
+        var floor = MinimumBytes(200, ReadWholeBody);
 
         Assert.True(
-            average < 64,
-            $"进度包装流读 64 KB（8 块）平均 {average} B，超出护栏 64 B——内层同步完成时"
+            floor < 64,
+            $"进度包装流读 64 KB（8 块）最小 {floor} B，超出护栏 64 B——内层同步完成时"
             + "整条读链路不该有任何分配。");
     }
 
@@ -155,7 +155,7 @@ public sealed class AllocationSweepTests
         var config = new AxiosConfig();
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("http://127.0.0.1:59999/"));
 
-        // 超时窗口包装：修复前实测 177 B/chunk，护栏每 64 KB 合计 64 B。
+        // 超时窗口包装：修复前实测 177 B/chunk，护栏每 64 KB 合计 64 B，现测地板 0 B。
         using var stream = new TimeoutStream(inner, TimeSpan.FromSeconds(30), CancellationToken.None, config, request);
 
         void ReadWholeBody()
@@ -167,24 +167,39 @@ public sealed class AllocationSweepTests
             }
         }
 
-        var average = AverageBytes(200, ReadWholeBody);
+        var floor = MinimumBytes(200, ReadWholeBody);
 
         Assert.True(
-            average < 64,
-            $"超时窗口流读 64 KB（8 块）平均 {average} B，超出护栏 64 B——内层同步完成时"
+            floor < 64,
+            $"超时窗口流读 64 KB（8 块）最小 {floor} B，超出护栏 64 B——内层同步完成时"
             + "整条读链路不该有任何分配。");
     }
 
-    private static long AverageBytes(int iterations, Action action)
+    /// <summary>
+    /// 多次取<b>最小值</b>：被测路径是同步的，真实值是个定值（通常为 0），而噪声只会往上加
+    /// （分层编译在窗口内升级、GC 在别的线程分配）。最小值因此是「这条路径的地板成本」的无偏估计，
+    /// 平均值则会把别人的分配算进来。
+    /// </summary>
+    /// <remarks>
+    /// 计数器用<b>当前线程</b>而不是进程总量：进程级计数会把其它线程（线程池续延、定时器、终结器）的分配
+    /// 一并算进护栏，全量跑时那才是抖动的主因。
+    /// </remarks>
+    private static long MinimumBytes(int iterations, Action action, int windows = 3)
     {
         action(); // 预热：JIT、静态缓存、首次反射
-        var before = GC.GetTotalAllocatedBytes(precise: true);
-        for (var i = 0; i < iterations; i++)
+        var best = long.MaxValue;
+        for (var window = 0; window < windows; window++)
         {
-            action();
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < iterations; i++)
+            {
+                action();
+            }
+
+            best = Math.Min(best, (GC.GetAllocatedBytesForCurrentThread() - before) / iterations);
         }
 
-        return (GC.GetTotalAllocatedBytes(precise: true) - before) / iterations;
+        return best;
     }
 
     /// <summary>包装流会释放内层流，本用例要反复复用同一份内存，所以忽略释放。</summary>
