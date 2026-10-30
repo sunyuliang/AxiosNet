@@ -29,7 +29,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) |
 | 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
-| 弹性 | [重试](#重试) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) |
+| 弹性 | [重试](#重试) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) · [响应缓存](#响应缓存) |
 | 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
 | 工程化 | [声明式 API 客户端](#声明式-api-客户端) · [接口级声明](#接口级声明) · [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
 
@@ -127,6 +127,7 @@ string url = http.GetUri(c =>
 | 备用端点 | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | 尝试管线 | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | 短路响应 | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
+| 响应缓存 | 按 URL 与身份缓存 2xx 响应，命中不发请求；同键并发只发一次 | `client.Defaults.Cache = new AxiosCache(...)` |
 
 **数据与错误**
 
@@ -1018,6 +1019,53 @@ var response = await client.GetAsync<User>("users/1",
 - 可辨痕迹只有 `response.Request == null`（没有发出过请求）；`ProtocolVersion` 不替你编，默认 `null`。
 - 缓存条目最少要存 `Status` / `ContentType` / `Body` 三样；响应头的 `Content-Type` 决定文本解码，丢了字符集会让非 UTF-8 正文在命中时乱码。
 
+## 响应缓存
+
+`c.Cache` 是内置的响应缓存：命中时**不发请求**，直接把上次的响应交付（走与[短路响应](#短路响应)同一条路径）。它同时负责**单飞**——同一个键的并发请求只发一次，其余等这一次的结果。
+
+```csharp
+var cache = new AxiosCache(new AxiosCacheOptions
+{
+    TimeToLive = TimeSpan.FromSeconds(30),   // 默认 30 秒
+    SingleFlight = true,                     // 默认 true
+    MaxEntries = 1024                        // 默认 1024
+});
+
+client.Defaults.Cache = cache;               // 挂在实例默认值上，整个实例生效
+
+var user = await client.GetAsync<User>("users/1");    // 发请求并落库
+var again = await client.GetAsync<User>("users/1");   // 命中：没有发出去
+```
+
+| 项 | 默认 | 说明 |
+| --- | --- | --- |
+| `TimeToLive` | 30 秒 | 条目存活时长，必须大于零 |
+| `SingleFlight` | `true` | 同键并发只发一次 |
+| `MaxEntries` | 1024 | 条目上限：满了先清过期条目，仍满就不再收新条目 |
+| `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
+| `ShouldCache` | `null` | 哪些请求参与缓存；默认 GET / HEAD、无短路响应、非流式、无请求体 |
+
+**键 = 方法 + 绝对 URL（+ 凭据摘要）**：凭据（`Authorization` 头或 `Connection.Auth`）参与键，且只以 64 位摘要进键——同一实例上不同用户的同名接口不会串用同一条缓存。用 Cookie 或自定义头区分身份、或要按租户 / 语言分区时，给 `KeySelector`。
+
+**存的是原始正文字节**，命中时按本次调用的 `ResponseType` 与泛型参数重新解析：同一份字节喂给 `GetAsync<User>` 与 `GetAsync<string>` 各得该有的形态。
+
+只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。
+
+| | 短路响应 | 响应缓存 |
+| --- | --- | --- |
+| 谁决定「不发」 | 调用方直接给一份响应 | 库按键查缓存 |
+| 存活范围 | 只属于那一次请求 | 实例级共享，跨请求复用 |
+| 命中时 | 反序列化 / `transformResponse` / `ValidateStatus` / 响应拦截器照常 | 同上 |
+| 并发闸门 / 遥测 span | 不参与 | 不参与 |
+
+- **命中不发请求**：不占并发闸门、不产生遥测 span 与在途计数，`response.Request` 为 `null`（与短路响应同一处可辨痕迹）。
+- **单飞的失败是共享的**：领导者抛错，等待者拿到同一个错误（同一个只读的 `AxiosException` 实例，`Response` 也是那一份）；但领导者被**它自己的调用方**取消时不算失败——等待者各自补发一次。
+- **等待者可以被取消**：`CancellationToken` 取消只放弃等待，不会取消那次共享的发送（`ERR_CANCELED`）。
+- **响应头按首值存**：短路响应的头字典是单值的，多值头（`Set-Cookie`）只留第一条。
+- **键不含请求体**：默认口径只缓存无正文的 GET / HEAD；用 `ShouldCache` 放行带正文的方法时，必须在 `KeySelector` 里把正文特征算进键，否则不同正文会串用同一条缓存。
+- **策略挂在实例上**：一个 `AxiosCache` 就是一份策略；要按接口区分存活时长或键规则，建多个实例分别挂。
+- 回放 `response.Config` 会带着同一个缓存对象（它是共享状态，不是「那次请求的结果」）。
+
 ## 连接池
 
 `AxiosClient` 默认自建一条按 `scheme://host:port` 隔离的连接池（`HttpConnectionPool`）：每个 origin 一个调优过的 `SocketsHttpHandler`，请求共享 TCP 长连接。
@@ -1414,6 +1462,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `TransformRequest` / `TransformResponse` | 空 | 转换链 |
 | `Response` | `null` | 响应阶段可读（状态码 / 头 / 媒体类型） |
 | `ShortCircuit` | `null` | 短路响应：不发请求直接交付（只对本次请求生效） |
+| `Cache` | `null` | 响应缓存（`AxiosCache`）：命中不发请求，跨请求复用 |
 
 十个子对象（首次访问才创建）：
 
@@ -1465,7 +1514,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | —（需接 opossum 之类） | `c.Circuit.Policy` / `c.Circuit.OnRejected` |
 | —（需接 cockatiel 之类） | `c.Hedging.MaxHedges`（并发对冲）、`c.Failover.Endpoints`（备用端点） |
 | —（需接 OTel JS SDK） | 内置 `ActivitySource` / `Meter` / `DiagnosticListener` |
-| —（axios-cache-interceptor 之类） | `c.ShortCircuit`（短路：缓存命中 / mock / 离线回放） |
+| —（axios-cache-interceptor 之类） | `c.Cache = new AxiosCache(...)`（内置响应缓存 + 单飞）、`c.ShortCircuit`（手写缓存命中 / mock / 离线回放） |
 | —（无对应） | `HttpConnectionPool`、声明式 `ApiClient`、`RequestStreamAsync`、`MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout`、`IAsyncEnumerable` 流式请求体 |
 
 与 axios 的有意差异：
@@ -1490,7 +1539,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）。
 
-- **核心 34 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、全局重试预算、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压。
+- **核心 35 项**：静态门面、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、文件上传下载、getUri 与大小限制、进度与限速、自定义 Handler、单文件上传、Newtonsoft.Json 替换、DNS 切换、Bearer 令牌、请求签名、XML 序列化、二进制序列化、弹性重试、全局重试预算、HTTP/2 与 HTTP/3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压。
 - **声明式 14 项**：GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式。
 
 另有两个示例：
@@ -1542,7 +1591,7 @@ dotnet build AxiosNet.sln -c Release
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
 | **合计** | **1689** | | **3378** |
 
-测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
+测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 
 行覆盖率 **92.7%**、分支覆盖率 **89.5%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
@@ -1617,6 +1666,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 十个子对象）
 │  │  ├─ AxiosHeaders.cs              # 请求头
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
+│  │  ├─ AxiosCache.cs（响应缓存 + 单飞）
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
 │  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 备用端点 / 熔断 / 对冲 / 闸门 + 可选审计
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy

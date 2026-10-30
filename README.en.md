@@ -29,7 +29,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) |
 | Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
-| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
+| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
 | Engineering | [Declarative API client](#declarative-api-client) · [Interface declarations](#interface-declarations) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
@@ -127,6 +127,7 @@ Four groups of capabilities; details in the linked sections.
 | Backup endpoints | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | Attempt pipeline | One attempt = a composable middleware chain, pluggable and reorderable | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | Short circuit | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
+| Response cache | Cache 2xx responses by URL and identity; a hit sends nothing, concurrent requests share one send | `client.Defaults.Cache = new AxiosCache(...)` |
 
 **Data and errors**
 
@@ -1019,6 +1020,53 @@ What is skipped is the HTTP operation itself; what is kept is the response-side 
 - The only visible trace is `response.Request == null` (no request was made); `ProtocolVersion` stays `null` unless you set it.
 - A cache entry needs at least `Status` / `ContentType` / `Body`; the `Content-Type` header drives text decoding, so dropping the charset garbles non-UTF-8 bodies on hits.
 
+## Response cache
+
+`c.Cache` is the built-in response cache: on a hit the request is **not sent** and the stored response is delivered instead (through the same path as a [short circuit](#short-circuit)). It also does **single flight** — concurrent requests with the same key are sent once and the rest wait for that one result.
+
+```csharp
+var cache = new AxiosCache(new AxiosCacheOptions
+{
+    TimeToLive = TimeSpan.FromSeconds(30),   // 30s by default
+    SingleFlight = true,                     // true by default
+    MaxEntries = 1024                        // 1024 by default
+});
+
+client.Defaults.Cache = cache;               // on instance defaults: applies to the whole instance
+
+var user = await client.GetAsync<User>("users/1");    // sent and stored
+var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `TimeToLive` | 30s | Entry lifetime, must be greater than zero |
+| `SingleFlight` | `true` | Send once for concurrent requests with the same key |
+| `MaxEntries` | 1024 | Entry cap: expired entries are purged first, then new entries are refused |
+| `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
+| `ShouldCache` | `null` | Which requests take part; defaults to GET / HEAD, no short circuit, not streaming, no body |
+
+**Key = method + absolute URL (+ credential digest)**: credentials (`Authorization` header or `Connection.Auth`) are part of the key, and only as a 64-bit digest — two users hitting the same endpoint on one instance never share an entry. Use `KeySelector` when identity lives in cookies or a custom header, or when you want per-tenant / per-language partitions.
+
+**What is stored is the raw body bytes**, re-parsed per call with the current `ResponseType` and generic argument: the same bytes feed `GetAsync<User>` and `GetAsync<string>` and each gets the shape it asked for.
+
+An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected.
+
+| | Short circuit | Response cache |
+| --- | --- | --- |
+| Who decides "do not send" | The caller hands over a response | The library looks the key up |
+| Scope | That one request only | Instance-wide, reused across requests |
+| On a hit | Deserialization / `transformResponse` / `ValidateStatus` / response interceptors still run | Same |
+| Concurrency gate / telemetry span | Not involved | Not involved |
+
+- **A hit sends nothing**: no concurrency slot, no telemetry span, no in-flight gauge, and `response.Request` is `null` (the same visible trace as a short circuit).
+- **Single flight shares failures**: when the leader throws, waiters get the same error (one read-only `AxiosException` instance, `Response` included). But a leader cancelled by **its own caller** does not count as a failure — each waiter sends its own request instead.
+- **Waiters stay cancellable**: cancelling `CancellationToken` gives up the wait only and never cancels the shared send (`ERR_CANCELED`).
+- **Headers keep their first value**: the short-circuit header dictionary is single-valued, so multi-value headers (`Set-Cookie`) keep only the first.
+- **The key does not include the body**: by default only bodiless GET / HEAD requests are cached; if `ShouldCache` lets a method with a body through, fold a body fingerprint into `KeySelector`, otherwise different bodies share one entry.
+- **Policy lives on the instance**: one `AxiosCache` is one policy; create several and attach them separately when endpoints need different lifetimes or keys.
+- Replaying `response.Config` carries the same cache object along (it is shared state, not "the result of that request").
+
 ## Connection pool
 
 `AxiosClient` builds its own pool (`HttpConnectionPool`) keyed by `scheme://host:port`: one tuned `SocketsHttpHandler` per origin, requests sharing keep-alive TCP connections.
@@ -1416,6 +1464,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `TransformRequest` / `TransformResponse` | empty | Transform chains |
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |
 | `ShortCircuit` | `null` | Deliver a response without sending (this request only) |
+| `Cache` | `null` | Response cache (`AxiosCache`): hits send nothing and are reused across requests |
 
 Ten sub-objects (created lazily on first access):
 
@@ -1467,7 +1516,7 @@ Ten sub-objects (created lazily on first access):
 | — (needs opossum or similar) | `c.Circuit.Policy` / `c.Circuit.OnRejected` |
 | — (needs cockatiel or similar) | `c.Hedging.MaxHedges` (concurrent hedging), `c.Failover.Endpoints` (backup endpoints) |
 | — (needs the OTel JS SDK) | Built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
-| — (axios-cache-interceptor and friends) | `c.ShortCircuit` (cache hit / mock / offline replay) |
+| — (axios-cache-interceptor and friends) | `c.Cache = new AxiosCache(...)` (built-in cache + single flight), `c.ShortCircuit` (hand-rolled cache hit / mock / offline replay) |
 | — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout`, `IAsyncEnumerable` streaming request bodies |
 
 Intentional differences from axios:
@@ -1492,7 +1541,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
 
-- **34 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, global retry budget, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
+- **35 core items**: static facade, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, single-file upload, Newtonsoft.Json replacement, DNS refresh, bearer token, request signing, XML serialization, binary serialization, retries, global retry budget, HTTP/2 and HTTP/3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure.
 - **14 declarative items**: GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming.
 
 Two more samples:
@@ -1544,7 +1593,7 @@ dotnet build AxiosNet.sln -c Release
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
 | **Total** | **1689** | | **3378** |
 
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
+Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
 Line coverage **92.7%**, branch coverage **89.5%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
@@ -1619,6 +1668,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ AxiosConfig*.cs              # configuration (top level + ten sub-objects)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
+│  │  ├─ AxiosCache.cs (response cache + single flight)
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / failover / breaker / hedging / gate + optional audit
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy

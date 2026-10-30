@@ -50,6 +50,12 @@ public sealed partial class AxiosClient
             merged.ShortCircuit = perCall.ShortCircuit;
         }
 
+        // 缓存是实例级的共享状态：按请求项给了就用它，否则沿用实例默认。
+        if (perCall.Cache is not null)
+        {
+            merged.Cache = perCall.Cache;
+        }
+
         // BaseAddress 属「实例来源」，不搬来源实例的值。
         if (!instanceSourced)
         {

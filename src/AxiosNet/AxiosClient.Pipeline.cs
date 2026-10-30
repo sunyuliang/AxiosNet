@@ -28,6 +28,11 @@ public sealed partial class AxiosClient
         var telemetryStart = 0L;
         Activity? telemetryActivity = null;
 
+        // 缓存状态：命中直接返回；未命中时由领导者落库并放行跟随者。
+        AxiosCache? cache = null;
+        string? cacheKey = null;
+        AxiosCacheFlight? flight = null;
+
         try
         {
             // 阶段 1：合并 —— 得到本次请求的生效配置。
@@ -56,6 +61,44 @@ public sealed partial class AxiosClient
             // 阶段 5：编码 —— transformRequest → URL / 协议 → 正文 / 请求头。
             ApplyRequestTransforms(config);
             var plan = BuildRequestPlan(config);
+
+            // 阶段 5.5：缓存 —— 命中不发请求（不建正文、不占闸门、不产生 span）；未命中时同键并发只发一次。
+            if (config.Cache is { } configuredCache && configuredCache.CanHandle(config))
+            {
+                cache = configuredCache;
+                cacheKey = configuredCache.KeyFor(config, plan.Uri);
+
+                if (configuredCache.TryGet(cacheKey, out var cachedReply))
+                {
+                    return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
+                }
+
+                if (configuredCache.SingleFlight)
+                {
+                    flight = configuredCache.Join(cacheKey);
+
+                    if (!flight.IsLeader)
+                    {
+                        try
+                        {
+                            var sharedReply = await AwaitFlightAsync(flight, config).ConfigureAwait(false);
+
+                            if (sharedReply is not null)
+                            {
+                                return await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            // 跟随者不落库，也不参与「领导者失败」的广播。
+                            flight = null;
+                        }
+                    }
+                }
+
+                // 由管线决定要不要留原始字节：只有真的会尝试落库的请求才留。
+                config.CacheCaptureRawBody = true;
+            }
 
             // 遥测起点必须在 URL 拼好之后，且只数真的进入发送阶段的请求。
             telemetryUri = plan.Uri;
@@ -97,6 +140,13 @@ public sealed partial class AxiosClient
                     AxiosTelemetry.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryActivity);
                 }
 
+                // 落库 + 放行跟随者：两者都要在返回之前完成，跟随者读的就是这份结果。
+                if (flight is not null && cache is not null && cacheKey is not null)
+                {
+                    CompleteCacheFlight(cache, cacheKey, flight, result);
+                    flight = null;
+                }
+
                 return result;
             }
             finally
@@ -107,6 +157,12 @@ public sealed partial class AxiosClient
         }
         catch (Exception ex)
         {
+            // 领导者失败：跟随者原样拿到这个错误，不要挂在原地等。
+            if (flight is not null && cache is not null && cacheKey is not null)
+            {
+                cache.FailFlight(cacheKey, flight, ex);
+            }
+
             // 记录后原样抛出，不改动异常。
             if (telemetryEnabled)
             {

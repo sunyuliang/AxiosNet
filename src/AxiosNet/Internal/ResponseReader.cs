@@ -267,6 +267,8 @@ internal static class ResponseReader
         string? rawText = null;
         // 实际收到的正文字节数；流式路径无法统计，为 null。
         long? bodyBytes = null;
+        // 原始正文字节：只在启用缓存时留给管线，其余情况读完即弃。
+        byte[]? rawBody = null;
         if (config.ResponseType == ResponseType.Stream)
         {
             var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -289,6 +291,7 @@ internal static class ResponseReader
             }
 
             bodyBytes = bytes.Length;
+            rawBody = bytes;
 
             // 原始字节钩子：在字符集解码 / 反序列化 / transformResponse 之前触发，正文仍是 HttpClient 交付的原样字节。
             // 不复制：回调期间零拷贝借用；需要长期持有由调用方自行复制。
@@ -326,6 +329,7 @@ internal static class ResponseReader
         // 实际协商出的协议版本（降级是静默的）。
         response.ProtocolVersion = message.Version;
         response.BodyBytes = bodyBytes;
+        response.RawBody = config.CacheCaptureRawBody ? rawBody : null;
         response.Headers = headers;
         response.Config = config;
         response.Request = request;

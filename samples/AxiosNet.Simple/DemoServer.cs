@@ -20,6 +20,9 @@ public sealed class DemoServer : IDisposable
     private int _activeRequests;
     private int _peakRequests;
 
+    // 缓存示例用：每次真正被请求到就加一，命中缓存时客户端看不到增长。
+    private int _cacheHits;
+
     /// <summary><c>/flaky</c> 的调用计数：按 tag 分别累计（演示重试用：前 N 次失败，之后成功）。</summary>
     private readonly ConcurrentDictionary<string, int> _flakyAttempts = new(StringComparer.Ordinal);
 
@@ -196,6 +199,16 @@ public sealed class DemoServer : IDisposable
 
             case "GET" when path == "/users/1":
                 return Json(200, UserJson());
+
+            case "GET" when path == "/cache/counter":
+                // 每次真正到达服务端都递增：客户端命中缓存时这个数不会变。
+                // 带 ms= 时故意慢一点，用来看「同键并发只发一次」。
+                if (query.Contains("ms=") && int.TryParse(query["ms=".Length..], out var cacheDelay) && cacheDelay > 0)
+                {
+                    Thread.Sleep(cacheDelay);
+                }
+
+                return Json(200, $"{{\"served\":{Interlocked.Increment(ref _cacheHits)}}}");
 
             case "GET" when path == "/users/1/pascal":
                 // PascalCase 契约：属性名保持原样，用于演示自定义 JSON 序列化器

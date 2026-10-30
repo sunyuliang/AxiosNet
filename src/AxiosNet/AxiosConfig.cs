@@ -248,6 +248,13 @@ public sealed partial class AxiosConfig
     /// <summary>短路响应：设置后本次请求不发送，直接以这份结果作为响应；只属于本次请求，<see cref="Clone"/> 不复制它（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。</summary>
     public AxiosShortCircuit? ShortCircuit { get; set; }
 
+    /// <summary>响应缓存：设置后命中的请求不发出去，直接交付缓存里的那份响应（细节见 <see cref="AxiosNet.AxiosCache"/>）。</summary>
+    /// <remarks>与 <see cref="ShortCircuit"/> 不同，它是实例级的共享状态：<see cref="Clone"/> 保留同一个实例，挂在 Defaults 上对整个实例生效。</remarks>
+    public AxiosCache? Cache { get; set; }
+
+    /// <summary>本次请求是否要留原始响应字节：缓存阶段决定，响应读取据此决定留不留（不留时字节读完即弃）。</summary>
+    internal bool CacheCaptureRawBody { get; set; }
+
     private TimeSpan _timeout;
 
     /// <summary>
@@ -450,6 +457,11 @@ public sealed partial class AxiosConfig
 
         // 短路响应只属于那一次请求，克隆时清空。
         clone.ShortCircuit = null;
+
+        // 缓存是实例级共享状态，随克隆保留（MemberwiseClone 已复制，这里只作说明）。
+
+        // 「要不要留原始字节」属于那一次请求的缓存判定，克隆出来的是新请求的输入。
+        clone.CacheCaptureRawBody = false;
 
         // 已生成的幂等键属于某一次发送：克隆是「新请求的输入」，不能带着旧键走。
         if (clone._idempotency is not null)

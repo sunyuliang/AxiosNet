@@ -78,6 +78,9 @@ public class AxiosResponse
     /// <summary>响应正文字节数（只有非流式响应有值），供遥测写进 span。</summary>
     internal long? BodyBytes { get; set; }
 
+    /// <summary>响应正文的原始字节（只有非流式响应有值）：只在启用缓存时保留，落库后由管线清空。</summary>
+    internal byte[]? RawBody { get; set; }
+
     /// <summary>把非泛型响应复制成 <typeparamref name="TData"/> 的响应；只在响应拦截器换掉响应对象时使用。</summary>
     internal AxiosResponse<TData> AsTyped<TData>()
     {
@@ -89,6 +92,7 @@ public class AxiosResponse
             StatusText = StatusText,
             ProtocolVersion = ProtocolVersion,
             BodyBytes = BodyBytes,
+            RawBody = RawBody,
             Headers = Headers,
             Config = Config,
             Request = Request
