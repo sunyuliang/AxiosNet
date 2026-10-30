@@ -26,7 +26,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 分组 | 章节 |
 | --- | --- |
-| 入门 | [安装](#安装) · [快速上手](#快速上手) · [能力地图](#能力地图) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api)） · [令牌管理](#令牌管理) |
+| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api)） · [能力地图](#能力地图) · [令牌管理](#令牌管理) |
 | 请求与响应 | [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) · [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [发送前钩子](#发送前钩子签名--最终请求) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性与治理 | [重试](#重试) · [全局重试预算](#全局重试预算retrybudgetpolicy) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) · [响应缓存](#响应缓存) |
@@ -115,64 +115,7 @@ string url = http.GetUri(c =>
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
 
-到这里已经能发请求。接下来按[能力地图](#能力地图)选入口，或直接看[声明式 API](#声明式-api)。
-
-## 能力地图
-
-按能力分四组，点能力名直达对应章节。这里只给入口，边界条件都在章节里。
-
-**请求与响应**
-
-| 能力 | 一句话 | 怎么做 |
-| --- | --- | --- |
-| [四种调用形态](#快速上手) | 原文 / `JsonElement` / `dynamic` / 强类型 | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
-| [声明式 API](#声明式-api) | 用模型或接口描述请求，`ApiClient` 生成调用 | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` |
-| [客户端实例](#客户端) | 一套 baseURL + 超时 + 默认头 | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
-| [只拼 URL](#方法与-url) | 不发请求，拿最终 URL | `client.GetUri(c => ...)` |
-| [查询参数](#查询参数-params) | 对象 / 字典 / 集合 / 已编码串 | `c.Params = new { page = 2 }` |
-| [请求体](#请求体-data-与-contenttype) | 编码只看 `ContentType`，不猜类型 | `c.ContentType = AxiosContentType.FormUrlEncoded` |
-| [表单与上传](#表单与文件上传) | multipart 字段 + 文件，或裸流直传 | `PostFormAsync(...)` / `FormFile` / `Stream` |
-| [流式请求体](#流式请求体) | 异步序列边算边发，不缓冲整段 | `data = IAsyncEnumerable<byte[]>`（或 `ReadOnlyMemory<byte>` 块） |
-| [响应类型](#响应类型与下载) | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
-| [流式响应](#流式响应) | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
-| [超时与取消](#超时与取消) | 单次尝试预算 + 整条请求总预算 + `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
-| [令牌管理](#令牌管理) | 令牌缓存、提前刷新、并发刷新单飞、401 重放 | `AccessTokenManager` / `AccessTokenProvider` |
-
-**流量治理**
-
-| 能力 | 一句话 | 怎么做 |
-| --- | --- | --- |
-| [进度与限速](#进度限速与大小上限) | 上传下载进度、字节限速、体积上限 | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
-| [在途并发闸门](#在途并发上限) | 限制同时发出的请求条数，排队深度可设上限 | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
-| [弹性重试](#重试) | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 / 全局重试预算 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
-| [熔断](#熔断) | 按 host 计数的 Closed/Open/HalfOpen 状态机：滚动窗口失败率 + 连续失败两条打开规则，恢复期慢启动 | `c.Circuit.Policy = new CircuitBreaker()` |
-| [并发对冲](#并发对冲) | 同一份请求并发多条分支，先成功的胜出 | `c.Hedging.MaxHedges = 1` |
-| [备用端点](#备用端点) | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
-| [幂等键](#幂等键) | 一个逻辑请求一个键，重试 / 换端点 / 对冲共用 | `c.Idempotency.Enabled = true` |
-| [尝试管线](#尝试管线) | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
-| [短路响应](#短路响应) | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
-| [响应缓存](#响应缓存) | 按 URL 与身份缓存 2xx 响应，命中不发请求；同键并发只发一次；过期条目走 `ETag` / 304 条件复用 | `client.Defaults.Cache = new AxiosCache(...)` |
-
-**数据与错误**
-
-| 能力 | 一句话 | 怎么做 |
-| --- | --- | --- |
-| [统一错误模型](#错误处理) | 所有失败都是 `AxiosException`，带稳定 `Code` | `catch (AxiosException ex) { ex.Code }` |
-| [拦截器](#拦截器) | 请求 / 响应双向，可异步 | `client.Interceptors.Request.Use(...)` |
-| [数据转换](#数据转换) | axios 同构的两条 transform 链 | `c.TransformRequest.Add(...)` |
-| [序列化可替换](#序列化) | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` / `client.ContentSerializers` |
-| [请求体压缩](#请求体压缩) | gzip / deflate / br，压缩后自动写 `Content-Encoding` | `c.RequestCompression = AxiosCompression.Gzip` |
-| [可观测性](#可观测性) | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
-
-**连接与工程化**
-
-| 能力 | 一句话 | 怎么做 |
-| --- | --- | --- |
-| [连接池](#连接池) | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 或 `HttpConnectionPool.GetOrCreate("key")` 可共享 |
-| [HTTP 版本](#http-版本) | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
-| [自定义 Handler](#自定义-handler) | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
-| [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告） | 源生成 `JsonSerializerContext` |
+到这里已经能发请求。接下来先看[声明式 API](#声明式-api)；需要按能力找入口，再往下看[能力地图](#能力地图)。
 
 ## 声明式 API
 
@@ -280,6 +223,63 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 - 接口级流式：帧格式用 `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` 声明，省略按 NDJSON；返回流只能枚举一次，超时与错误口径与 `RequestStreamAsync(...)` 完全一致。
 - 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
 - 代理基于 `DispatchProxy`（Reflection.Emit），**仅 JIT**：Native AOT 下 `Create<T>()` 抛 `PlatformNotSupportedException`；裁剪时需 root 接口类型及其参数 / 返回类型。
+
+## 能力地图
+
+按能力分四组，点能力名直达对应章节。这里只给入口，边界条件都在章节里。
+
+**请求与响应**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| [四种调用形态](#快速上手) | 原文 / `JsonElement` / `dynamic` / 强类型 | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
+| [声明式 API](#声明式-api) | 用模型或接口描述请求，`ApiClient` 生成调用 | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` |
+| [客户端实例](#客户端) | 一套 baseURL + 超时 + 默认头 | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
+| [只拼 URL](#方法与-url) | 不发请求，拿最终 URL | `client.GetUri(c => ...)` |
+| [查询参数](#查询参数-params) | 对象 / 字典 / 集合 / 已编码串 | `c.Params = new { page = 2 }` |
+| [请求体](#请求体-data-与-contenttype) | 编码只看 `ContentType`，不猜类型 | `c.ContentType = AxiosContentType.FormUrlEncoded` |
+| [表单与上传](#表单与文件上传) | multipart 字段 + 文件，或裸流直传 | `PostFormAsync(...)` / `FormFile` / `Stream` |
+| [流式请求体](#流式请求体) | 异步序列边算边发，不缓冲整段 | `data = IAsyncEnumerable<byte[]>`（或 `ReadOnlyMemory<byte>` 块） |
+| [响应类型](#响应类型与下载) | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
+| [流式响应](#流式响应) | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
+| [超时与取消](#超时与取消) | 单次尝试预算 + 整条请求总预算 + `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
+| [令牌管理](#令牌管理) | 令牌缓存、提前刷新、并发刷新单飞、401 重放 | `AccessTokenManager` / `AccessTokenProvider` |
+
+**流量治理**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| [进度与限速](#进度限速与大小上限) | 上传下载进度、字节限速、体积上限 | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
+| [在途并发闸门](#在途并发上限) | 限制同时发出的请求条数，排队深度可设上限 | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
+| [弹性重试](#重试) | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 / 全局重试预算 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
+| [熔断](#熔断) | 按 host 计数的 Closed/Open/HalfOpen 状态机：滚动窗口失败率 + 连续失败两条打开规则，恢复期慢启动 | `c.Circuit.Policy = new CircuitBreaker()` |
+| [并发对冲](#并发对冲) | 同一份请求并发多条分支，先成功的胜出 | `c.Hedging.MaxHedges = 1` |
+| [备用端点](#备用端点) | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
+| [幂等键](#幂等键) | 一个逻辑请求一个键，重试 / 换端点 / 对冲共用 | `c.Idempotency.Enabled = true` |
+| [尝试管线](#尝试管线) | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
+| [短路响应](#短路响应) | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
+| [响应缓存](#响应缓存) | 按 URL 与身份缓存 2xx 响应，命中不发请求；同键并发只发一次；过期条目走 `ETag` / 304 条件复用 | `client.Defaults.Cache = new AxiosCache(...)` |
+
+**数据与错误**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| [统一错误模型](#错误处理) | 所有失败都是 `AxiosException`，带稳定 `Code` | `catch (AxiosException ex) { ex.Code }` |
+| [拦截器](#拦截器) | 请求 / 响应双向，可异步 | `client.Interceptors.Request.Use(...)` |
+| [数据转换](#数据转换) | axios 同构的两条 transform 链 | `c.TransformRequest.Add(...)` |
+| [序列化可替换](#序列化) | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` / `client.ContentSerializers` |
+| [请求体压缩](#请求体压缩) | gzip / deflate / br，压缩后自动写 `Content-Encoding` | `c.RequestCompression = AxiosCompression.Gzip` |
+| [可观测性](#可观测性) | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
+
+**连接与工程化**
+
+| 能力 | 一句话 | 怎么做 |
+| --- | --- | --- |
+| [连接池](#连接池) | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 或 `HttpConnectionPool.GetOrCreate("key")` 可共享 |
+| [HTTP 版本](#http-版本) | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
+| [自定义 Handler](#自定义-handler) | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
+| [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
+| [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告） | 源生成 `JsonSerializerContext` |
 
 ## 令牌管理
 

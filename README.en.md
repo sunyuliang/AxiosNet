@@ -26,7 +26,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [Capability map](#capability-map) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api)) · [Token management](#token-management) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api)) · [Capability map](#capability-map) · [Token management](#token-management) |
 | Requests and responses | [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) · [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience and governance | [Retries](#retries) · [Global retry budget](#global-retry-budget-retrybudgetpolicy) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
@@ -115,64 +115,7 @@ string url = http.GetUri(c =>
 // -> https://api.example.com/users?page=2&ids[]=1&ids[]=2
 ```
 
-You can send requests already. Next, pick an entry point from the [capability map](#capability-map), or go straight to the [declarative API](#declarative-api).
-
-## Capability map
-
-Four groups; click a capability to jump to its section. Boundaries and edge cases live in the sections themselves.
-
-**Requests and responses**
-
-| Capability | What you get | How |
-| --- | --- | --- |
-| [Four response shapes](#quick-start) | Raw text / `JsonElement` / `dynamic` / strong type | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
-| [Declarative API](#declarative-api) | Describe requests with models or interfaces; `ApiClient` makes the call | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` |
-| [Client instance](#clients) | One baseURL + timeout + default headers | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
-| [URL only](#methods-and-urls) | Build the final URL without sending | `client.GetUri(c => ...)` |
-| [Query parameters](#query-parameters) | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
-| [Request body](#body-and-contenttype) | Encoding decided by `ContentType` alone, never guessed | `c.ContentType = AxiosContentType.FormUrlEncoded` |
-| [Forms and uploads](#forms-and-uploads) | Multipart fields + files, or a raw stream | `PostFormAsync(...)` / `FormFile` / `Stream` |
-| [Streaming request body](#streaming-request-bodies) | Async sequence produced on the fly, never buffered whole | `data = IAsyncEnumerable<byte[]>` (or `ReadOnlyMemory<byte>` chunks) |
-| [Response types](#response-types-and-downloads) | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
-| [Streaming responses](#streaming-responses) | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
-| [Timeouts and cancellation](#timeouts-and-cancellation) | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
-| [Token management](#token-management) | Token cache, refresh-ahead, single-flight refresh, 401 replay | `AccessTokenManager` / `AccessTokenProvider` |
-
-**Traffic control**
-
-| Capability | What you get | How |
-| --- | --- | --- |
-| [Progress and throttling](#progress-rate-and-size-limits) | Upload/download progress, byte rate cap, size caps | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
-| [In-flight gate](#in-flight-concurrency-cap) | Cap concurrent requests; queue depth can be capped | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
-| [Retries](#retries) | Exponential backoff / jitter / `Retry-After` / idempotency gate / global retry budget | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
-| [Circuit breaker](#circuit-breaker) | Per-host Closed/Open/HalfOpen state machine: rolling-window failure rate plus a consecutive-failure rule, with slow-start recovery | `c.Circuit.Policy = new CircuitBreaker()` |
-| [Concurrent hedging](#concurrent-hedging) | Fire several copies of one request, first success wins | `c.Hedging.MaxHedges = 1` |
-| [Backup endpoints](#backup-endpoints) | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
-| [Idempotency keys](#idempotency-keys) | One key per logical request, shared by retries / endpoints / hedges | `c.Idempotency.Enabled = true` |
-| [Attempt pipeline](#attempt-pipeline) | One attempt = a composable middleware chain, pluggable and reorderable | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
-| [Short circuit](#short-circuit) | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
-| [Response cache](#response-cache) | Cache 2xx responses by URL and identity; a hit sends nothing, concurrent requests share one send; stale entries revalidate via `ETag` / 304 | `client.Defaults.Cache = new AxiosCache(...)` |
-
-**Data and errors**
-
-| Capability | What you get | How |
-| --- | --- | --- |
-| [Unified errors](#errors) | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
-| [Interceptors](#interceptors) | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
-| [Data transforms](#data-transforms) | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
-| [Swappable serialization](#serialization) | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` / `client.ContentSerializers` |
-| [Request body compression](#request-body-compression) | gzip / deflate / br, `Content-Encoding` written for you | `c.RequestCompression = AxiosCompression.Gzip` |
-| [Observability](#observability) | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
-
-**Transport and engineering**
-
-| Capability | What you get | How |
-| --- | --- | --- |
-| [Connection pool](#connection-pool) | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` or `HttpConnectionPool.GetOrCreate("key")` |
-| [HTTP versions](#http-versions) | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
-| [Custom handlers](#custom-handlers) | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
-| [Dependency injection](#dependency-injection) | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
-| [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings) | Source-generated `JsonSerializerContext` |
+You can send requests already. Next up is the [declarative API](#declarative-api); to browse by capability instead, keep going to the [capability map](#capability-map).
 
 ## Declarative API
 
@@ -280,6 +223,63 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 - Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
 - Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
 - The proxy is built on `DispatchProxy` (Reflection.Emit) and is **JIT-only**: `Create<T>()` throws `PlatformNotSupportedException` under Native AOT, and trimming requires rooting the interface plus its parameter / return types.
+
+## Capability map
+
+Four groups; click a capability to jump to its section. Boundaries and edge cases live in the sections themselves.
+
+**Requests and responses**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| [Four response shapes](#quick-start) | Raw text / `JsonElement` / `dynamic` / strong type | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
+| [Declarative API](#declarative-api) | Describe requests with models or interfaces; `ApiClient` makes the call | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` |
+| [Client instance](#clients) | One baseURL + timeout + default headers | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
+| [URL only](#methods-and-urls) | Build the final URL without sending | `client.GetUri(c => ...)` |
+| [Query parameters](#query-parameters) | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
+| [Request body](#body-and-contenttype) | Encoding decided by `ContentType` alone, never guessed | `c.ContentType = AxiosContentType.FormUrlEncoded` |
+| [Forms and uploads](#forms-and-uploads) | Multipart fields + files, or a raw stream | `PostFormAsync(...)` / `FormFile` / `Stream` |
+| [Streaming request body](#streaming-request-bodies) | Async sequence produced on the fly, never buffered whole | `data = IAsyncEnumerable<byte[]>` (or `ReadOnlyMemory<byte>` chunks) |
+| [Response types](#response-types-and-downloads) | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
+| [Streaming responses](#streaming-responses) | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
+| [Timeouts and cancellation](#timeouts-and-cancellation) | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
+| [Token management](#token-management) | Token cache, refresh-ahead, single-flight refresh, 401 replay | `AccessTokenManager` / `AccessTokenProvider` |
+
+**Traffic control**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| [Progress and throttling](#progress-rate-and-size-limits) | Upload/download progress, byte rate cap, size caps | `c.Callbacks.OnDownloadProgress` / `c.Limits.MaxRate` |
+| [In-flight gate](#in-flight-concurrency-cap) | Cap concurrent requests; queue depth can be capped | `c.Limits.MaxConcurrentRequests` + `MaxQueueLength` / `QueueTimeout` |
+| [Retries](#retries) | Exponential backoff / jitter / `Retry-After` / idempotency gate / global retry budget | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
+| [Circuit breaker](#circuit-breaker) | Per-host Closed/Open/HalfOpen state machine: rolling-window failure rate plus a consecutive-failure rule, with slow-start recovery | `c.Circuit.Policy = new CircuitBreaker()` |
+| [Concurrent hedging](#concurrent-hedging) | Fire several copies of one request, first success wins | `c.Hedging.MaxHedges = 1` |
+| [Backup endpoints](#backup-endpoints) | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
+| [Idempotency keys](#idempotency-keys) | One key per logical request, shared by retries / endpoints / hedges | `c.Idempotency.Enabled = true` |
+| [Attempt pipeline](#attempt-pipeline) | One attempt = a composable middleware chain, pluggable and reorderable | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
+| [Short circuit](#short-circuit) | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
+| [Response cache](#response-cache) | Cache 2xx responses by URL and identity; a hit sends nothing, concurrent requests share one send; stale entries revalidate via `ETag` / 304 | `client.Defaults.Cache = new AxiosCache(...)` |
+
+**Data and errors**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| [Unified errors](#errors) | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
+| [Interceptors](#interceptors) | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
+| [Data transforms](#data-transforms) | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
+| [Swappable serialization](#serialization) | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` / `client.ContentSerializers` |
+| [Request body compression](#request-body-compression) | gzip / deflate / br, `Content-Encoding` written for you | `c.RequestCompression = AxiosCompression.Gzip` |
+| [Observability](#observability) | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
+
+**Transport and engineering**
+
+| Capability | What you get | How |
+| --- | --- | --- |
+| [Connection pool](#connection-pool) | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` or `HttpConnectionPool.GetOrCreate("key")` |
+| [HTTP versions](#http-versions) | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Connection.HttpVersion` |
+| [Custom handlers](#custom-handlers) | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
+| [Dependency injection](#dependency-injection) | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
+| [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings) | Source-generated `JsonSerializerContext` |
 
 ## Token management
 
