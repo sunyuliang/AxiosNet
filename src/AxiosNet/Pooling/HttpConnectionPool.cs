@@ -32,7 +32,7 @@ public sealed class HttpConnectionPool : IDisposable
         ValidateOptions(_options);
 
         // 整个池共用一个 Cookie 容器。
-        _cookies = _options.UseCookies ? new CookieContainer() : null;
+        _cookies = _options.UseCookies ? CreateCookieContainer(_options) : null;
 
         if (_options.IdleHandlerLifetime > TimeSpan.Zero && _options.EvictionInterval > TimeSpan.Zero)
         {
@@ -88,6 +88,23 @@ public sealed class HttpConnectionPool : IDisposable
         if (options.MaxAutomaticRedirections <= 0)
         {
             throw AxiosException.InvalidOption("MaxAutomaticRedirections 必须大于 0；不跟随重定向请设 AllowAutoRedirect = false。", config);
+        }
+
+        if (options.CookieCapacity <= 0)
+        {
+            throw AxiosException.InvalidOption($"CookieCapacity 必须大于 0（当前 {options.CookieCapacity}）。", config);
+        }
+
+        if (options.CookiePerDomainCapacity <= 0 || options.CookiePerDomainCapacity > options.CookieCapacity)
+        {
+            throw AxiosException.InvalidOption(
+                $"CookiePerDomainCapacity 必须在 1 到 CookieCapacity（{options.CookieCapacity}）之间（当前 {options.CookiePerDomainCapacity}）："
+                + "只调小总容量时请一并调小单域上限。", config);
+        }
+
+        if (options.CookieMaxCookieSize <= 0)
+        {
+            throw AxiosException.InvalidOption($"CookieMaxCookieSize 必须大于 0（当前 {options.CookieMaxCookieSize}）。", config);
         }
 
         // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；
@@ -267,6 +284,9 @@ public sealed class HttpConnectionPool : IDisposable
            && a.AllowAutoRedirect == b.AllowAutoRedirect
            && a.MaxAutomaticRedirections == b.MaxAutomaticRedirections
            && a.UseCookies == b.UseCookies
+           && a.CookieCapacity == b.CookieCapacity
+           && a.CookiePerDomainCapacity == b.CookiePerDomainCapacity
+           && a.CookieMaxCookieSize == b.CookieMaxCookieSize
            && a.AutomaticDecompression == b.AutomaticDecompression
            && a.Decompression == b.Decompression
            && a.EnableMultipleHttp2Connections == b.EnableMultipleHttp2Connections
@@ -321,11 +341,21 @@ public sealed class HttpConnectionPool : IDisposable
                 return;
             }
 
-            Volatile.Write(ref _cookies, new CookieContainer());
+            Volatile.Write(ref _cookies, CreateCookieContainer(_options));
         }
 
         RetireAllEndpoints(AxiosTelemetry.EvictionReasonCookies);
     }
+
+    /// <summary>按池选项建一个 Cookie 容器（容量三项与 BCL 默认值对齐，显式设置保证升级后行为稳定）。</summary>
+    private static CookieContainer CreateCookieContainer(ConnectionPoolOptions options)
+        => new()
+        {
+            // 先设总容量：单域上限必须不大于它（校验已在构造期保证）。
+            Capacity = options.CookieCapacity,
+            PerDomainCapacity = options.CookiePerDomainCapacity,
+            MaxCookieSize = options.CookieMaxCookieSize
+        };
 
     /// <summary>池实际生效的选项（不克隆，仅限库内只读使用）。</summary>
     internal ConnectionPoolOptions EffectiveOptions => _options;

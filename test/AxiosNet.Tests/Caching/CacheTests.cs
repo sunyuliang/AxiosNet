@@ -1,7 +1,8 @@
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.Cache;
 
-namespace AxiosNet.Tests.Client;
+namespace AxiosNet.Tests.Caching;
 
 /// <summary>响应缓存：命中不发请求、原始字节按每次调用重新解析、同键并发只发一次。</summary>
 public sealed class CacheTests
@@ -264,13 +265,14 @@ public sealed class CacheTests
     public async Task Clear_DropsEveryEntry()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
-        var cache = NewCache();
+        var store = new MemoryCacheStore();
+        var cache = new AxiosCache(new AxiosCacheOptions { Store = store });
         using var client = new AxiosClient(new AxiosConfig { Cache = cache });
 
         await client.GetAsync(server.Url + "x");
-        Assert.Equal(1, cache.Count);
+        Assert.Equal(1, store.Count);
 
-        cache.Clear();
+        await cache.ClearAsync();
 
         await client.GetAsync(server.Url + "x");
         Assert.Equal(2, server.Received.Count);
@@ -286,7 +288,7 @@ public sealed class CacheTests
         await client.GetAsync("x");
 
         var config = new AxiosConfig { BaseAddress = server.Url, Url = "x" };
-        Assert.True(cache.Remove(cache.KeyFor(config, new Uri(server.Url + "x"))));
+        Assert.True(await cache.RemoveAsync(cache.KeyFor(config, new Uri(server.Url + "x"))));
 
         await client.GetAsync("x");
         Assert.Equal(2, server.Received.Count);
@@ -296,13 +298,16 @@ public sealed class CacheTests
     public async Task MaxEntries_StopsAcceptingNewEntries()
     {
         await using var server = TestHttpServer.Start(request => TestJson.Response(new { path = request.Path }));
-        var cache = NewCache(o => o.MaxEntries = 1);
-        using var client = new AxiosClient(new AxiosConfig { Cache = cache });
+        var store = new MemoryCacheStore(maxEntries: 1);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
+        });
 
         await client.GetAsync(server.Url + "a");
         await client.GetAsync(server.Url + "b");
 
-        Assert.Equal(1, cache.Count);
+        Assert.Equal(1, store.Count);
 
         // 满了不收新条目：b 再取还是发请求，a 仍然命中。
         await client.GetAsync(server.Url + "b");
@@ -471,10 +476,82 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task CustomStore_IsUsedForReadsAndWrites()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        var store = new RecordingStore();
+        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions { Store = store }) });
+
+        await client.GetAsync<Person>(server.Url + "x");
+        await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.Equal(2, store.Gets.Count);
+        Assert.Single(store.Sets);
+        Assert.Equal("GET " + server.Url + "x", store.Sets[0]);
+    }
+
+    [Fact]
+    public async Task CustomStore_IsSharedAcrossClients()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        var store = new MemoryCacheStore();
+
+        using var first = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions { Store = store }) });
+        await first.GetAsync<Person>(server.Url + "x");
+
+        // 第二个实例挂同一个存储：跨实例命中（Redis 这类外部存储的形态）。
+        using var second = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions { Store = store }) });
+        var hit = await second.GetAsync<Person>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.Equal("ada", hit.Data?.Name);
+    }
+
+    [Fact]
+    public async Task CustomStore_ReadFailure_FallsBackToSending()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        var store = new RecordingStore { OnGet = () => throw new InvalidOperationException("store down") };
+        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions { Store = store }) });
+
+        var response = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Equal("ada", response.Data?.Name);
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
+    public async Task CustomStore_WriteFailure_DoesNotBreakTheRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        var store = new RecordingStore { OnSet = () => throw new InvalidOperationException("store down") };
+        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions { Store = store }) });
+
+        var first = await client.GetAsync<Person>(server.Url + "x");
+        var second = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Equal("ada", first.Data?.Name);
+        Assert.Equal("ada", second.Data?.Name);
+
+        // 写不进去就每次都发，但请求本身不受影响。
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
     public async Task Options_RejectNonPositiveValues()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new AxiosCache(new AxiosCacheOptions { TimeToLive = TimeSpan.Zero }));
         Assert.Throws<ArgumentOutOfRangeException>(() => new AxiosCache(new AxiosCacheOptions { MaxEntries = 0 }));
+    }
+
+    [Fact]
+    public void CustomStore_MakesMaxEntriesIrrelevant()
+    {
+        // 自建存储时条目上限归存储自己管：MaxEntries 既不生效，也不该因为「非法值」拦住构造。
+        var cache = new AxiosCache(new AxiosCacheOptions { Store = new MemoryCacheStore(), MaxEntries = 0 });
+
+        Assert.IsType<MemoryCacheStore>(cache.Store);
     }
 
     [Fact]
@@ -519,5 +596,36 @@ public sealed class CacheTests
     [Get("person")]
     private sealed class PersonRequest : IApiRequest<Person>
     {
+    }
+
+    /// <summary>记录读写的存储：用来验证管线确实走的是接口，而不是内置字典。</summary>
+    private sealed class RecordingStore : IAxiosCacheStore
+    {
+        private readonly MemoryCacheStore _inner = new();
+
+        public List<string> Gets { get; } = new();
+
+        public List<string> Sets { get; } = new();
+
+        public Func<ValueTask<AxiosShortCircuit?>>? OnGet { get; set; }
+
+        public Func<ValueTask>? OnSet { get; set; }
+
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+        {
+            Gets.Add(key);
+            return OnGet is { } onGet ? onGet() : _inner.GetAsync(key, cancellationToken);
+        }
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+        {
+            Sets.Add(key);
+            return OnSet is { } onSet ? onSet() : _inner.SetAsync(key, entry, timeToLive, cancellationToken);
+        }
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
+            => _inner.RemoveAsync(key, cancellationToken);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken) => _inner.ClearAsync(cancellationToken);
     }
 }

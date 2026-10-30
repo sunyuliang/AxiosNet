@@ -1,3 +1,5 @@
+using AxiosNet.Cache;
+
 namespace AxiosNet;
 
 // AxiosClient 的缓存阶段：命中直接交付、未命中参与单飞、成功后落库。
@@ -30,16 +32,17 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>领导者落库并放行跟随者：只有 2xx 且拿到了原始字节才入缓存，写缓存失败不影响这次请求。</summary>
-    private static void CompleteCacheFlight(AxiosCache cache, string key, AxiosCacheFlight flight, AxiosResponse response)
+    private static async Task CompleteCacheFlightAsync(AxiosCache cache, string key, AxiosCacheFlight flight, AxiosResponse response)
     {
         AxiosShortCircuit? reply = null;
         try
         {
             reply = TryCreateCacheEntry(response);
 
-            if (reply is not null)
+            if (reply is not null && !await cache.TrySetAsync(key, reply).ConfigureAwait(false))
             {
-                cache.Set(key, reply);
+                // 存储没接住：跟随者别去读一条不存在的条目，自己发。
+                reply = null;
             }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)

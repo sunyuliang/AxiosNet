@@ -64,6 +64,24 @@ public sealed class ConnectionPoolOptions
     public bool UseCookies { get; set; }
 
     /// <summary>
+    /// Cookie 容器总条数上限（默认 300，与 <see cref="CookieContainer"/> 默认值一致）；超出时按容器规则淘汰最早的。
+    /// 只在 <see cref="UseCookies"/> 打开时生效。
+    /// </summary>
+    public int CookieCapacity { get; set; } = 300;
+
+    /// <summary>
+    /// 单个域名的 cookie 上限（默认 20）；超出时淘汰该域名下最早的。不能大于 <see cref="CookieCapacity"/>。
+    /// 只在 <see cref="UseCookies"/> 打开时生效。
+    /// </summary>
+    public int CookiePerDomainCapacity { get; set; } = 20;
+
+    /// <summary>
+    /// 单个 cookie 的最大字节数（默认 4096）；超长的 cookie 不会进入容器。
+    /// 只在 <see cref="UseCookies"/> 打开时生效。
+    /// </summary>
+    public int CookieMaxCookieSize { get; set; } = 4096;
+
+    /// <summary>
     /// 自动解压响应正文的总开关（默认 true）。为 false 时等价于 <see cref="DecompressionMethods.None"/>，
     /// <see cref="Decompression"/> 不再生效；开启时具体解哪些算法由 <see cref="Decompression"/> 决定。
     /// </summary>
@@ -146,6 +164,9 @@ public sealed class ConnectionPoolOptions
         AllowAutoRedirect = AllowAutoRedirect,
         MaxAutomaticRedirections = MaxAutomaticRedirections,
         UseCookies = UseCookies,
+        CookieCapacity = CookieCapacity,
+        CookiePerDomainCapacity = CookiePerDomainCapacity,
+        CookieMaxCookieSize = CookieMaxCookieSize,
         AutomaticDecompression = AutomaticDecompression,
         Decompression = Decompression,
         EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,

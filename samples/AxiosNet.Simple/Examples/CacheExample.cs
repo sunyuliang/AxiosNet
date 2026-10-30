@@ -1,4 +1,5 @@
 using AxiosNet;
+using AxiosNet.Cache;
 
 namespace AxiosNet.Simple.Examples;
 
@@ -19,7 +20,7 @@ public sealed class CacheExample : IExample
         SampleConsole.Section(Number, Title);
 
         var client = _client ??= new AxiosClient(new AxiosConfig { Cache = Cache });
-        Cache.Clear();
+        await Cache.ClearAsync();
 
         // 1) 没有缓存：每发一次，服务端的计数器就加一
         using var plain = new AxiosClient();

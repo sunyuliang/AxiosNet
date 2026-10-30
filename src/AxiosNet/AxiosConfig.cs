@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AxiosNet.Cache;
 using AxiosNet.Internal;
 using AxiosNet.Serialization;
 
@@ -248,7 +249,7 @@ public sealed partial class AxiosConfig
     /// <summary>短路响应：设置后本次请求不发送，直接以这份结果作为响应；只属于本次请求，<see cref="Clone"/> 不复制它（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。</summary>
     public AxiosShortCircuit? ShortCircuit { get; set; }
 
-    /// <summary>响应缓存：设置后命中的请求不发出去，直接交付缓存里的那份响应（细节见 <see cref="AxiosNet.AxiosCache"/>）。</summary>
+    /// <summary>响应缓存：设置后命中的请求不发出去，直接交付缓存里的那份响应（细节见 <see cref="AxiosNet.Cache.AxiosCache"/>）。</summary>
     /// <remarks>与 <see cref="ShortCircuit"/> 不同，它是实例级的共享状态：<see cref="Clone"/> 保留同一个实例，挂在 Defaults 上对整个实例生效。</remarks>
     public AxiosCache? Cache { get; set; }
 

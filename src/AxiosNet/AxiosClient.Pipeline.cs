@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using AxiosNet.Cache;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
@@ -68,7 +69,7 @@ public sealed partial class AxiosClient
                 cache = configuredCache;
                 cacheKey = configuredCache.KeyFor(config, plan.Uri);
 
-                if (configuredCache.TryGet(cacheKey, out var cachedReply))
+                if (await configuredCache.TryGetAsync(cacheKey, config.CancellationToken).ConfigureAwait(false) is { } cachedReply)
                 {
                     return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
                 }
@@ -143,7 +144,7 @@ public sealed partial class AxiosClient
                 // 落库 + 放行跟随者：两者都要在返回之前完成，跟随者读的就是这份结果。
                 if (flight is not null && cache is not null && cacheKey is not null)
                 {
-                    CompleteCacheFlight(cache, cacheKey, flight, result);
+                    await CompleteCacheFlightAsync(cache, cacheKey, flight, result).ConfigureAwait(false);
                     flight = null;
                 }
 

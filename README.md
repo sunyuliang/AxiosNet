@@ -1041,7 +1041,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | --- | --- | --- |
 | `TimeToLive` | 30 秒 | 条目存活时长，必须大于零 |
 | `SingleFlight` | `true` | 同键并发只发一次 |
-| `MaxEntries` | 1024 | 条目上限：满了先清过期条目，仍满就不再收新条目 |
+| `Store` | `null` | 条目存储，`null` = 内置 `MemoryCacheStore`；接 Redis / 共享缓存时换成自己的 `IAxiosCacheStore` |
+| `MaxEntries` | 1024 | 内置内存存储的条目上限：满了先清过期条目，仍满就不再收新条目（自建 `Store` 时本项不生效） |
 | `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
 | `ShouldCache` | `null` | 哪些请求参与缓存；默认 GET / HEAD、无短路响应、非流式、无请求体 |
 
@@ -1064,6 +1065,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 - **响应头按首值存**：短路响应的头字典是单值的，多值头（`Set-Cookie`）只留第一条。
 - **键不含请求体**：默认口径只缓存无正文的 GET / HEAD；用 `ShouldCache` 放行带正文的方法时，必须在 `KeySelector` 里把正文特征算进键，否则不同正文会串用同一条缓存。
 - **策略挂在实例上**：一个 `AxiosCache` 就是一份策略；要按接口区分存活时长或键规则，建多个实例分别挂。
+- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `IAxiosCacheStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
+- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` / `RemoveAsync` / `ClearAsync` 四个方法，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发。
 - 回放 `response.Config` 会带着同一个缓存对象（它是共享状态，不是「那次请求的结果」）。
 
 ## 连接池
@@ -1123,6 +1126,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `KeepAlivePingPolicy` | `WithActiveRequests` | 何时 ping：`WithActiveRequests`（有在途请求时）/ `Always`（空闲也维持）|
 | `MaxEndpointCount` | 1024 | origin 节点上限，满了先驱逐最久未用的空闲节点；若全部在途（无可驱逐），新建节点抛 `ERR_POOL_EXHAUSTED`（请求未发出，可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试） |
 | `UseCookies` | `false` | 打开后整个池共用一份 `CookieContainer`，可通过 `pool.Cookies` 读写（未开启时为 `null`），登出用 `pool.ClearCookies()` |
+| `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` | `300` / `20` / `4096` | Cookie 容器容量（总条数 / 单域名条数 / 单条字节数），超出按容器规则淘汰最早的、超长 cookie 直接丢弃；仅 `UseCookies` 打开时生效 |
 | `Proxy` / `Credentials` | `null` | 不设代理时**不使用**系统 / 环境代理；要走系统代理请设 `HttpClient.DefaultProxy` |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | 证书校验、TLS 版本、客户端证书 |
 | `HandlerFactory` | `null` | 每个 origin 创建 Handler 时调用，见[自定义 Handler](#自定义-handler) |
@@ -1131,7 +1135,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 - DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；需要自定义建连（拨到 UDS / 本机传输 / 自管 DNS）时直接设 `ConnectionPoolOptions.ConnectCallback`。
 - `ConnectCallback` 与 `MaxResponseHeadersLength` 只作用于库默认 Handler：`HandlerFactory` 里用 `ctx.CreateDefaultHandler()` 建内层 Handler 会带过去，完全自建 Handler 则需自行映射。
 - **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。它对付的是「静默掐断」——AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多；低频高价值调用（webhook 回调、定时任务）可以配 `Always` 连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）——这也是它默认关闭的原因。
-- **`UseCookies` 是池级共享，不按业务身份隔离**：整个池共用一份 `CookieContainer`，隔离维度只有域 / 路径。多租户、爬虫、按用户切身份的进程打开它会让不同身份串 cookie —— 请按租户各建一条池，或用请求头自己管 `Cookie`。容器可用 `pool.Cookies` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去；登出用 `pool.ClearCookies()`（`CookieContainer` 没有删除 API，实现上是换一份空容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie）。注意开启容器后请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。
+- **`UseCookies` 是池级共享，不按业务身份隔离**：整个池共用一份 `CookieContainer`，隔离维度只有域 / 路径。多租户、爬虫、按用户切身份的进程打开它会让不同身份串 cookie —— 请按租户各建一条池，或用请求头自己管 `Cookie`。容器可用 `pool.Cookies` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去；登出用 `pool.ClearCookies()`（`CookieContainer` 没有删除 API，实现上是换一份空容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie）。注意开启容器后请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。命名共享池上调用 `ClearCookies()` 会影响所有共用该池的客户端；容器容量默认 300 条 / 单域 20 条 / 单条 4096 字节，超出会静默淘汰最早的，可用 `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` 调整。
 - **Trailers 目前不读取**：chunked 响应的尾部头（校验和、配额）停留在 `HttpResponseMessage.TrailingHeaders`，没有暴露到 `AxiosResponse`。需要时用 `HandlerFactory` 包一层在正文读完后取，或直接注入自定义 Handler。
 - **代理是池级的，同一个 origin 只能有一条代理**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP 就按代理各建一条池（`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`），每个出口一条池、客户端之间不共享 —— 隔离维度是「池」，不是「请求」。
 - **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
@@ -1587,9 +1591,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1626 | `net8.0` / `net6.0` | 3252 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1723 | `net8.0` / `net6.0` | 3446 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1689** | | **3378** |
+| **合计** | **1786** | | **3572** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 
@@ -1613,6 +1617,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 | `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
 | `Governance/` | 并发闸门、进度回调与限速 |
 | `Resilience/` | 重试策略与计时、总预算（`TotalTimeout`）、熔断状态机、短路响应 |
+| `Caching/` | 响应缓存与单飞、`IAxiosCacheStore` 契约与自建存储、键规则与身份隔离、命中路径 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
 | `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse`、尝试管线（内置顺序、插入位置、重排校验）、并发对冲、备用端点 |
 | `Connectivity/` | 连接池（含命名共享池）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
@@ -1666,7 +1671,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 十个子对象）
 │  │  ├─ AxiosHeaders.cs              # 请求头
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
-│  │  ├─ AxiosCache.cs（响应缓存 + 单飞）
+│  │  ├─ Cache/                      # AxiosCache（响应缓存 + 单飞）/ IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
 │  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 备用端点 / 熔断 / 对冲 / 闸门 + 可选审计
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy
@@ -1677,7 +1682,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ WebAPI/                      # 声明式 API 客户端（模型 / 接口）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（48 项）/ DI / Aot
+├─ samples/                           # Simple（50 项）/ DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/

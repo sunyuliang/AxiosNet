@@ -927,6 +927,101 @@ public sealed class ConnectionPoolTests
     }
 
     [Fact]
+    public async Task Cookies_ManualHeader_IsMergedWithContainer()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("{}"),
+            Headers: new Dictionary<string, string> { ["Set-Cookie"] = "session=abc; Path=/" }));
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions { UseCookies = true });
+
+        await client.GetAsync(server.Url + "login");
+        await client.GetAsync(server.Url + "manual", c => c.Headers.Set("Cookie", "manual=1"));
+
+        // 锁定 .NET 连接层行为：手动值在前、容器值追加在后；请求头不能覆盖同名 cookie。
+        Assert.Equal("manual=1; session=abc", server.Received[1].Headers["cookie"]);
+    }
+
+    [Fact]
+    public void Cookies_DefaultsMatchBclDefaults()
+    {
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions { UseCookies = true });
+
+        var cookies = client.Pool!.Cookies!;
+        Assert.Equal(300, cookies.Capacity);
+        Assert.Equal(20, cookies.PerDomainCapacity);
+        Assert.Equal(4096, cookies.MaxCookieSize);
+    }
+
+    [Fact]
+    public void Cookies_AppliesConfiguredCapacity()
+    {
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            UseCookies = true,
+            CookieCapacity = 50,
+            CookiePerDomainCapacity = 5,
+            CookieMaxCookieSize = 1024
+        });
+
+        var cookies = client.Pool!.Cookies!;
+        Assert.Equal(50, cookies.Capacity);
+        Assert.Equal(5, cookies.PerDomainCapacity);
+        Assert.Equal(1024, cookies.MaxCookieSize);
+    }
+
+    [Fact]
+    public void ClearCookies_KeepsConfiguredCapacity()
+    {
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            UseCookies = true,
+            CookieCapacity = 50,
+            CookiePerDomainCapacity = 5,
+            CookieMaxCookieSize = 1024
+        });
+
+        client.Pool!.ClearCookies();
+
+        var cookies = client.Pool.Cookies!;
+        Assert.Equal(50, cookies.Capacity);
+        Assert.Equal(5, cookies.PerDomainCapacity);
+        Assert.Equal(1024, cookies.MaxCookieSize);
+    }
+
+    [Fact]
+    public void PoolOptions_Clone_CopiesCookieCapacity()
+    {
+        var clone = new ConnectionPoolOptions
+        {
+            CookieCapacity = 10,
+            CookiePerDomainCapacity = 5,
+            CookieMaxCookieSize = 512
+        }.Clone();
+
+        Assert.Equal(10, clone.CookieCapacity);
+        Assert.Equal(5, clone.CookiePerDomainCapacity);
+        Assert.Equal(512, clone.CookieMaxCookieSize);
+    }
+
+    [Theory]
+    [InlineData(0, 20, 4096)]
+    [InlineData(300, 0, 4096)]
+    [InlineData(10, 20, 4096)]
+    [InlineData(300, 20, 0)]
+    public void PoolOptions_InvalidCookieCapacity_Throws(int capacity, int perDomainCapacity, int maxCookieSize)
+    {
+        var ex = Assert.Throws<AxiosException>(() => new HttpConnectionPool(new ConnectionPoolOptions
+        {
+            UseCookies = true,
+            CookieCapacity = capacity,
+            CookiePerDomainCapacity = perDomainCapacity,
+            CookieMaxCookieSize = maxCookieSize
+        }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+    }
+
+    [Fact]
     public async Task ClearCookies_LogsOutSession()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(

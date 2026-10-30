@@ -1042,7 +1042,8 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | --- | --- | --- |
 | `TimeToLive` | 30s | Entry lifetime, must be greater than zero |
 | `SingleFlight` | `true` | Send once for concurrent requests with the same key |
-| `MaxEntries` | 1024 | Entry cap: expired entries are purged first, then new entries are refused |
+| `Store` | `null` | Entry storage; `null` = the built-in `MemoryCacheStore`. Implement `IAxiosCacheStore` for Redis or a shared cache |
+| `MaxEntries` | 1024 | Entry cap of the built-in store: expired entries are purged first, then new entries are refused (ignored when `Store` is set) |
 | `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
 | `ShouldCache` | `null` | Which requests take part; defaults to GET / HEAD, no short circuit, not streaming, no body |
 
@@ -1065,6 +1066,8 @@ An entry is only stored when all of these hold: status is 2xx, the raw bytes wer
 - **Headers keep their first value**: the short-circuit header dictionary is single-valued, so multi-value headers (`Set-Cookie`) keep only the first.
 - **The key does not include the body**: by default only bodiless GET / HEAD requests are cached; if `ShouldCache` lets a method with a body through, fold a body fingerprint into `KeySelector`, otherwise different bodies share one entry.
 - **Policy lives on the instance**: one `AxiosCache` is one policy; create several and attach them separately when endpoints need different lifetimes or keys.
+- **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `IAxiosCacheStore` / `MemoryCacheStore` live there; `AxiosShortCircuit` stays in `AxiosNet` (it is not cache-specific — mocks and replays use it too).
+- **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (four methods: `GetAsync` / `SetAsync` / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend). The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries. A failing store only means "not cached this time" — requests still go out.
 - Replaying `response.Config` carries the same cache object along (it is shared state, not "the result of that request").
 
 ## Connection pool
@@ -1125,6 +1128,7 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `KeepAlivePingPolicy` | `WithActiveRequests` | When to ping: `WithActiveRequests` / `Always` (keeps idle connections alive) |
 | `MaxEndpointCount` | 1024 | Origin node cap; evicts the least recently used idle node; if all are in use, creating a new node throws `ERR_POOL_EXHAUSTED` (request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry) |
 | `UseCookies` | `false` | When on, the whole pool shares one `CookieContainer`, readable/writable via `pool.Cookies` (`null` when off); use `pool.ClearCookies()` to log out |
+| `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` | `300` / `20` / `4096` | Cookie container limits (total / per domain / per cookie size); overflow evicts the oldest and oversized cookies are dropped — only active when `UseCookies` is on |
 | `Proxy` / `Credentials` | `null` | With no proxy set, system / env proxies are **not** used; set `HttpClient.DefaultProxy` if you want them |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | Certificate validation, TLS versions, client certificates |
 | `HandlerFactory` | `null` | Called when creating a per-origin handler, see [Custom handlers](#custom-handlers) |
@@ -1133,7 +1137,7 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 - How fast DNS changes converge is governed by `PooledConnectionLifetime`; for custom connects (UDS / in-process transport / custom DNS) set `ConnectionPoolOptions.ConnectCallback` directly.
 - `ConnectCallback` and `MaxResponseHeadersLength` apply to the library's default handler only: building the inner handler with `ctx.CreateDefaultHandler()` inside a `HandlerFactory` carries them over; a fully hand-built handler must map them itself.
 - **h2 keep-alive**: a ping every 30s by default (only while requests are in flight). It targets *silent* connection reaping — AWS ALB drops idle connections after 60s, NAT tables after 30–120s, and the client believes the connection is still pooled; the next request hits a closed one, costing either a fresh TLS handshake or a `GOAWAY` / stream reset on h2 (seen as sporadic `ERR_NETWORK`). The cost is a 17-byte frame; for low-frequency, high-value calls (webhooks, scheduled jobs) prefer `Always`. Note that `SocketsHttpHandler` defaults to **no** pings while this library enables them: behind a proxy or middlebox that does not answer `PING`, connections get torn down and re-established (more `ERR_NETWORK`), so turn it off there with `Timeout.InfiniteTimeSpan`.
-- **`UseCookies` is pool-wide and not identity-scoped**: the whole pool shares one `CookieContainer`, isolated by domain / path only. Multi-tenant processes, crawlers or anything switching identities will leak cookies across them — build one pool per tenant, or manage the `Cookie` header yourself. The container is directly accessible via `pool.Cookies` (thread-safe) for seeding cookies at startup or diagnosing why a cookie was not sent; log out with `pool.ClearCookies()` (`CookieContainer` has no delete API, so this swaps in an empty container and retires existing origin endpoints, which rebuilds connections on the next request; in-flight requests are not interrupted and may still carry the old cookie). With the container enabled, a request-level `Cookie` header is **merged** with container contents and cannot override a same-named cookie; neither `Clear()` nor `Dispose()` empties the container.
+- **`UseCookies` is pool-wide and not identity-scoped**: the whole pool shares one `CookieContainer`, isolated by domain / path only. Multi-tenant processes, crawlers or anything switching identities will leak cookies across them — build one pool per tenant, or manage the `Cookie` header yourself. The container is directly accessible via `pool.Cookies` (thread-safe) for seeding cookies at startup or diagnosing why a cookie was not sent; log out with `pool.ClearCookies()` (`CookieContainer` has no delete API, so this swaps in an empty container and retires existing origin endpoints, which rebuilds connections on the next request; in-flight requests are not interrupted and may still carry the old cookie). With the container enabled, a request-level `Cookie` header is **merged** with container contents and cannot override a same-named cookie; neither `Clear()` nor `Dispose()` empties the container. On a named shared pool, `ClearCookies()` affects every client sharing that pool; container limits default to 300 total / 20 per domain / 4096 bytes per cookie, overflowing entries are silently evicted oldest-first — tune with `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize`.
 - **Trailers are not read today**: chunked trailing headers (checksums, quotas) stay on `HttpResponseMessage.TrailingHeaders` and are not exposed on `AxiosResponse`. Wrap the handler with `HandlerFactory` to read them after the body, or inject a custom handler.
 - **The proxy is pool-level; one origin cannot have two proxies**: `Proxy` lives on the handler instance, so setting it per request throws `ERR_BAD_OPTION_VALUE`. For several egress IPs build one pool per proxy (`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`) and do not share clients across egresses — the isolation unit is the pool, not the request.
 - **Named shared pools** (usage 4) cover "several clients want to reuse connections without passing a pool object around". The key is supplied by the caller — there is **no options fingerprint**: reference members such as `HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / the certificate callbacks have no reliable structural equality, so two "identical looking" configurations throw instead of silently sharing one pool. Three rules: the same name returns the same pool; `options` only apply on first creation (passing a **different** configuration later throws `ERR_BAD_OPTION_VALUE` rather than being silently ignored); pools in the registry are owned by nobody — disposing a client does not close them, `Release(key)` does.
@@ -1615,6 +1619,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
 | `Governance/` | Concurrency gate, progress callbacks and rate limiting |
 | `Resilience/` | Retry policies and timing, whole-request budget (`TotalTimeout`), circuit-breaker state machine, short circuits |
+| `Caching/` | Response cache and single flight, the `IAxiosCacheStore` contract and custom stores, key rules and identity isolation, the hit path |
 | `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
 | `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation), concurrent hedging, backup endpoints |
 | `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
@@ -1668,7 +1673,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ AxiosConfig*.cs              # configuration (top level + ten sub-objects)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
-│  │  ├─ AxiosCache.cs (response cache + single flight)
+│  │  ├─ Cache/                      # AxiosCache (response cache + single flight) / IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / failover / breaker / hedging / gate + optional audit
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy
@@ -1679,7 +1684,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  │  ├─ WebAPI/                      # declarative API client (models / interfaces)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (48 items) / DI / Aot
+├─ samples/                           # Simple (50 items) / DI / Aot
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/
