@@ -11,6 +11,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class FormBodyEncoder
 {
+    /// <summary>展平数据、百分号编码成正文，并按需压缩 / 写 Content-Type。</summary>
     public static HttpContent Create(
         object data,
         AxiosConfig config,

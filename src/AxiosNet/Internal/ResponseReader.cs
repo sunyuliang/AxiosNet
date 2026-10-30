@@ -946,6 +946,7 @@ internal sealed class ResponseHeadersView : IReadOnlyDictionary<string, IEnumera
 
     private Dictionary<string, IEnumerable<string>> Map => Volatile.Read(ref _map) ?? Build();
 
+    /// <summary>把两套头集合并成大小写不敏感的字典（内容头覆盖同名响应头），并发首次访问只发布一份。</summary>
     private Dictionary<string, IEnumerable<string>> Build()
     {
         var map = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);

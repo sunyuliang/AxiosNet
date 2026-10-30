@@ -10,8 +10,9 @@ using AxiosNet.Retry;
 namespace AxiosNet.Telemetry;
 
 /// <summary>
-/// 库的观测点：链路（<see cref="ActivitySource"/>）、指标（<see cref="Meter"/>）与事件（<see cref="DiagnosticListener"/>），
-/// 三者共用「AxiosNet」这个名字；量的是请求成型到响应读完（含拦截器与重试），观测异常一律不影响请求结果。
+/// 库的观测点：链路（<see cref="ActivitySource"/>）、指标（<see cref="Meter"/>）与事件（<see cref="DiagnosticListener"/>）。
+/// 前两者共用「AxiosNet」这个名字，监听器名不同（见 <see cref="DiagnosticListenerName"/>）；
+/// 量的是请求成型到响应读完（含拦截器与重试），观测异常一律不影响请求结果。
 /// </summary>
 public static class AxiosTelemetry
 {
@@ -69,7 +70,7 @@ public static class AxiosTelemetry
     /// <summary>指标名：熔断器各状态的维度数（ObservableGauge），带 <c>axiosnet.circuit.state</c> 标签。</summary>
     public const string CircuitStateInstrumentName = "axiosnet.client.circuit.state";
 
-    /// <summary>指标名：因跟踪表已满而未登记熔断状态的维度数（Counter，无标签）。</summary>
+    /// <summary>指标名：因跟踪表已满而未登记熔断状态、按闭合态直通的维度访问次数（Counter，无标签）。</summary>
     public const string CircuitUntrackedInstrumentName = "axiosnet.client.circuit.untracked_host";
 
     /// <summary>指标名：租约次数（Counter），带 <c>axiosnet.pool.endpoint.reused</c> 标签（<c>true</c> / <c>false</c>）；<b>不带 host</b>，见 <see cref="RecordLease"/>。</summary>
@@ -608,8 +609,8 @@ public static class AxiosTelemetry
     }
 
     /// <summary>
-    /// 一次尝试失败后决定重试：重试计数 +1，在 span 上累加 <c>http.request.resend_count</c> 并记一条
-    /// <c>retry</c> 事件，同时发出 <see cref="RetryEventName"/>；只写本库的 span，且自己判开关。
+    /// 一次尝试失败后决定重试：重试计数 +1，在 span 上写入 <c>http.request.resend_count</c>（= 第几次尝试）
+    /// 并记一条 <c>retry</c> 事件，同时发出 <see cref="RetryEventName"/>；只写本库的 span，且自己判开关。
     /// </summary>
     internal static void RequestRetried(in AxiosRetryContext context, Uri uri)
     {
@@ -714,7 +715,7 @@ public static class AxiosTelemetry
     internal static void CacheStored(AxiosConfig? config) => AddCacheCount(CacheStores, config);
 
     /// <summary>
-    /// 落库失败（存储抛错 / 写超时）：只影响命中率，这次请求的响应照常交付。
+    /// 落库失败（存储抛错 / 写超时 / 总预算已耗尽）：只影响命中率，这次请求的响应照常交付。
     /// </summary>
     internal static void CacheStoreFailed(AxiosConfig? config) => AddCacheCount(CacheStoreFailures, config);
 

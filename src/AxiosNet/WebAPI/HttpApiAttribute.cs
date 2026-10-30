@@ -51,7 +51,7 @@ public class HttpApiAttribute : Attribute
     /// <summary>本次请求的 HTTP 方法。</summary>
     public HttpMethod Method { get; }
 
-    /// <summary>路径模板（原样保留，占位符在解析请求模型时替换）。</summary>
+    /// <summary>路径模板（去掉首尾空白后原样保留；占位符在解析请求模型 / 接口方法时替换）。</summary>
     public string Path { get; }
 }
 

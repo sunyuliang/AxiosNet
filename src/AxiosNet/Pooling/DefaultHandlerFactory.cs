@@ -7,6 +7,7 @@ namespace AxiosNet.Pooling;
 /// <summary>按 <see cref="ConnectionPoolOptions"/> 构建库默认的 <see cref="SocketsHttpHandler"/>。</summary>
 internal static class DefaultHandlerFactory
 {
+    /// <summary>按选项构建一个 <see cref="SocketsHttpHandler"/>；需要 Cookie 但未给容器时新建一个。</summary>
     /// <param name="o">池选项。</param>
     /// <param name="cookieContainer">池共享的 Cookie 容器（<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空）。</param>
     public static SocketsHttpHandler Create(ConnectionPoolOptions o, CookieContainer? cookieContainer = null)

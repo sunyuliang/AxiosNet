@@ -32,6 +32,7 @@ internal static class ReflectionCache
     /// <summary>类型是否实现 <c>IAsyncEnumerable&lt;T&gt;</c>（只用于错误提示）。</summary>
     private static readonly ConcurrentDictionary<Type, bool> AsyncEnumerableTypes = new();
 
+    /// <summary>取类型 public 且可读、非索引器的属性（按类型缓存；返回的数组共享，不可修改）。</summary>
     /// <param name="type">待展平的类型；标注要求裁剪器保留其公开属性（含 getter）。</param>
     public static PropertyInfo[] GetReadableProperties(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)

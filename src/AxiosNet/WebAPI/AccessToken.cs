@@ -38,7 +38,7 @@ public sealed class AccessTokenOptions
         AcquireAsync = acquireAsync;
     }
 
-    /// <summary>首次取令牌的回调（<see cref="AccessTokenManager"/> 只调一次，之后走 <see cref="RefreshAsync"/>）。</summary>
+    /// <summary>取令牌的回调：首次成功前每次取令牌都会调用；成功之后配置了 <see cref="RefreshAsync"/> 就改走它（刷新失败也不回退），未配置时继续用本回调。</summary>
     public Func<CancellationToken, ValueTask<AccessToken>> AcquireAsync { get; }
 
     /// <summary>刷新令牌的回调（通常是 <c>grant_type=refresh_token</c>）；<c>null</c> 时回落到 <see cref="AcquireAsync"/>。</summary>

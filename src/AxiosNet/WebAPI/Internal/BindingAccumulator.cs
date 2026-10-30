@@ -35,6 +35,7 @@ internal sealed class BindingAccumulator
 
     public string? BodyName => _body?.Name;
 
+    /// <summary>路径绑定：占位符名称大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
     public void AddPath(IValueSource source, string explicitName)
     {
         var name = ResolveName(explicitName, source.Name);
@@ -46,6 +47,7 @@ internal sealed class BindingAccumulator
         _paths.Add((name, source));
     }
 
+    /// <summary>请求头绑定：头名大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
     public void AddHeader(IValueSource source, string explicitName)
     {
         var name = ResolveName(explicitName, source.Name);
@@ -75,6 +77,7 @@ internal sealed class BindingAccumulator
         _headerCollections.Add(source);
     }
 
+    /// <summary>请求体唯一：重复的 <see cref="BodyAttribute"/> 绑定在构建期报错。</summary>
     public void AddBody(IValueSource source)
     {
         if (_body is not null)
@@ -196,6 +199,7 @@ internal sealed class BindingAccumulator
             _body);
     }
 
+    /// <summary>路径模板与 [Path] 绑定一一核对：模板占位符必须有绑定、绑定也必须出现在模板里；返回模板顺序的替换表。</summary>
     private (string Token, IValueSource Source)[] ValidatePathTemplate(string template)
     {
         var matches = PathTokenRegex.Matches(template);

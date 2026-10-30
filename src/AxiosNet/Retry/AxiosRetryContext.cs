@@ -11,7 +11,7 @@ public readonly struct AxiosRetryContext
     /// <param name="exception">本次失败抛出的异常（库内统一错误模型 <see cref="AxiosException"/>）。</param>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="response">失败时拿到的响应（状态码非法 / 5xx 时可用；网络错误为 <c>null</c>）。</param>
-    /// <param name="delay">本次重试前的等待时间（仅 <see cref="AxiosConfig.RetrySettings.OnRetry"/> 回调中有值）。</param>
+    /// <param name="delay">本次重试前的等待时间（策略判定阶段为 <c>default</c>；决定重试后才填入，随 <see cref="AxiosConfig.RetrySettings.OnRetry"/> 回调与 <c>AxiosNet.Retry</c> 事件下发）。</param>
     public AxiosRetryContext(
         int attempt,
         int maxRetries,
@@ -52,7 +52,7 @@ public readonly struct AxiosRetryContext
     /// </summary>
     public AxiosResponse? Response { get; }
 
-    /// <summary>本次重试前的等待时间（仅 <see cref="AxiosConfig.RetrySettings.OnRetry"/> 回调中有值）。</summary>
+    /// <summary>本次重试前的等待时间（策略判定阶段为 <c>default</c>，决定重试后才填入；OnRetry 回调与 <c>AxiosNet.Retry</c> 事件读到的是填入后的值）。</summary>
     public TimeSpan Delay { get; }
 
     /// <summary>HTTP 状态码（有响应时可用），构造时的快照，不会随下一次尝试改变。</summary>

@@ -4,8 +4,8 @@ namespace AxiosNet;
 
 /// <summary>
 /// 短路响应：本次请求<b>不发出去</b>，直接把这份结果当作响应返回；挂在 <see cref="AxiosConfig.ShortCircuit"/> 上。
-/// 闸门（排队 / 并发名额）、编码、连接租约、发送、重试、熔断、遥测 span 都不参与；响应方向照常反序列化、跑 transformResponse、
-/// 过 <see cref="AxiosConfig.CallbackSettings.ValidateStatus"/>、执行响应拦截器。唯一可辨的痕迹是 <see cref="AxiosResponse.Request"/> 为 <c>null</c>。
+/// 闸门（排队 / 并发名额）、编码、连接租约、发送、重试、熔断、遥测 span 都不参与；响应方向照常反序列化
+/// （<see cref="Body"/> 路径还会跑 transformResponse，<see cref="Data"/> 已成型则原样交付）、过 <see cref="AxiosConfig.CallbackSettings.ValidateStatus"/>、执行响应拦截器。唯一可辨的痕迹是 <see cref="AxiosResponse.Request"/> 为 <c>null</c>。
 /// </summary>
 /// <remarks>
 /// <see cref="Body"/> 是原始字节，按每次调用的类型重新解析；<see cref="Data"/> 是已成型的结果，原样交付。

@@ -36,6 +36,8 @@ namespace AxiosNet.Circuit;
 /// </example>
 public sealed class CircuitBreaker : IAxiosCircuitPolicy
 {
+    // 维度 → 状态，键不区分大小写（host 名本来就不区分，KeySelector 返回的键也按此口径合并）；
+    // 每条的读写与判定都在自己的 HostState.Gate 内完成。
     private readonly ConcurrentDictionary<string, HostState> _hosts = new(StringComparer.OrdinalIgnoreCase);
 
     // 进程级状态计数，只在登记 / 移除 / 状态迁移时改动，供 axiosnet.client.circuit.state 仪表读取。
@@ -70,7 +72,10 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <summary>连续多少次下游故障后打开熔断，默认 5（中间任何一次成功都会归零）。</summary>
-    /// <remarks>样本不足 <see cref="WindowSize"/> 时的唯一判定规则。</remarks>
+    /// <remarks>
+    /// 与窗口失败率两条规则取或，本项与样本多少无关；窗口样本不足 <see cref="MinimumSamples"/> 时，
+    /// 这是唯一能打开熔断的规则（低流量维度靠它）。
+    /// </remarks>
     public int FailureThreshold { get; set; } = 5;
 
     /// <summary>
@@ -94,7 +99,10 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// </summary>
     public int RecoverySuccesses { get; set; } = 3;
 
-    /// <summary>打开后多久转入半开探测，默认 30 秒（冷却期内请求直接失败，不发出）。</summary>
+    /// <summary>
+    /// 打开后多久转入半开探测，默认 30 秒（冷却期内请求直接失败，不发出）。
+    /// 转入是惰性的：冷却满后的下一次准入判定才真正切换，没有后台计时器。
+    /// </summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>半开态初始允许同时进行的探测请求数（也是慢启动的起点），默认 1。</summary>
@@ -107,11 +115,13 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// 探测在此时长内没有回报就视为卡死：整轮半开探测作废（重新打开、重新冷却），
     /// 迟到的结果凭过期票被丢弃。没有这条上限时，一个挂住的探测（请求没配超时）会
     /// 永久占着名额，该维度再也无法恢复。探测自身的超时预算更长时应把本项调大。
+    /// 看门狗只在准入判定时检查，且以最近一次放行探测的时刻计时（新的探测放行会重置计时）。
     /// </remarks>
     public TimeSpan? ProbeTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// 最多跟踪多少个维度（host），默认 512。<b>硬上限</b>：满员时先淘汰不影响判定的条目，
+    /// 最多跟踪多少个维度（host），默认 512（必须 &gt;= 1，否则客户端校验报错）。<b>硬上限</b>：满员时优先淘汰窗口里
+    /// 没有失败样本的闭合维度，其次才是有失败台账的闭合维度与冷却早已过期的打开维度（正在熔断与半开探测中的不动）；
     /// 仍然放不下就不再登记新维度 —— 新维度按闭合态直通（不参与熔断判定，也不记账），
     /// 已跟踪维度的判定不受影响。熔断保护失效总好过状态表无界增长。
     /// </summary>
@@ -126,13 +136,13 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// <summary>状态迁移回调（只在真的发生迁移时触发；订阅方抛出的异常会被忽略）。</summary>
     public event Action<AxiosCircuitTransition>? StateChanged;
 
-    /// <summary>当前跟踪的维度数（用于观测 / 断言上限生效）。</summary>
+    /// <summary>当前跟踪的维度数（用于观测 / 断言上限生效）；并发新建时可能短暂略超 <see cref="MaxTrackedHosts"/>，随后自愈。</summary>
     public int TrackedHostCount => _hosts.Count;
 
     /// <summary>测试专用：淘汰候选选出后、按 Gate 复核前触发（参数为候选 key）。生产代码不要设置。</summary>
     internal Action<string>? EvictionCandidateChosen { get; set; }
 
-    /// <summary>某个维度当前的状态；未跟踪过（= 从未失败）的维度返回 <see cref="AxiosCircuitState.Closed"/>。</summary>
+    /// <summary>某个维度当前的状态；没有登记（含跟踪表已满、按直通处理）的维度返回 <see cref="AxiosCircuitState.Closed"/>。</summary>
     public AxiosCircuitState GetState(string host)
         => host is not null && _hosts.TryGetValue(host, out var state)
             ? state.State
@@ -348,7 +358,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                 host.Failures++;
                 host.PushWindow(success: false, WindowSize);
 
-                // 两条规则取或：样本够了看失败率（治「半死不活」），样本不够靠连续失败（治低流量）。
+                // 两条规则取或：连续失败治低流量，窗口失败率治「半死不活」；样本不足 MinimumSamples 时后者不触发。
                 if (host.Failures >= FailureThreshold
                     || host.WindowTrips(MinimumSamples, FailureRateThreshold))
                 {
@@ -524,7 +534,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
     }
 
-    /// <summary>在目标条目的 <see cref="HostState.Gate"/> 内复核「丢了不改变判定」并移除。</summary>
+    /// <summary>在目标条目的 <see cref="HostState.Gate"/> 内复核仍可淘汰（闭合态，或冷却已过期且无在途探测的打开态）并移除。</summary>
     private bool TryEvict(string? key)
     {
         if (key is null || !_hosts.TryGetValue(key, out var state))
@@ -669,8 +679,8 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         public long OpenedAt;
 
         /// <summary>
-        /// 半开态已连续成功多少次（慢启动的进度）。清零时机只有两处：探测失败，以及下次从
-        /// <see cref="AxiosCircuitState.Open"/> 转入半开（进度不跨轮沿用）；被忽略的结果不动它。
+        /// 半开态已连续成功多少次（慢启动的进度）。清零时机：探测失败、探测超时作废、慢启动走完闭合，
+        /// 以及下次从 <see cref="AxiosCircuitState.Open"/> 转入半开（进度不跨轮沿用）；被忽略的结果不动它。
         /// </summary>
         public int ProbeSuccesses;
 

@@ -6,7 +6,7 @@ namespace AxiosNet;
 /// </summary>
 public class AxiosException : Exception
 {
-    /// <summary>HTTP 状态码非法（默认 validateStatus 不接受 4xx，且非 5xx）。</summary>
+    /// <summary>HTTP 状态码非法且非 5xx（默认 validateStatus 下即 4xx），或请求阶段就失败（载荷序列化、上传 / 发送前回调）。</summary>
     public const string ErrBadRequest = "ERR_BAD_REQUEST";
 
     /// <summary>服务端 5xx，或响应体无法按目标类型解析、超出 maxContentLength。</summary>

@@ -6,6 +6,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class ScalarTypes
 {
+    /// <summary>是否为标量类型（含 <see cref="Nullable{T}"/> 形态）；这是表单 / 查询 / 响应兜底共用的判定。</summary>
     public static bool IsScalarType(Type type)
     {
         var t = Nullable.GetUnderlyingType(type) ?? type;

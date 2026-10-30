@@ -2,12 +2,13 @@ namespace AxiosNet.Cache;
 
 /// <summary>
 /// 缓存条目的存储：只负责「按 key 存 / 取一条响应」，可以是内存、共享内存，也可以是 Redis 之类的外部存储。
-/// 键规则、存活时长、准入判定与并发合并（单飞）都在 <see cref="AxiosCache"/> 里，不归存储管。
+/// 键规则、存活时长的计算、准入判定与并发合并（单飞）都在 <see cref="AxiosCache"/> 里；存储只按收到的 key / TTL
+/// 落库，并自己执行过期（删除还是只做逻辑失效由存储决定）。
 /// </summary>
 /// <remarks>
 /// <see cref="AxiosShortCircuit"/> 是自描述的（状态码 / 头 / 原始字节），可以直接序列化成任何后端的一条记录。
 /// 存储出错不应让请求失败：取失败按「没命中」处理，写失败只是这次不入缓存 —— 由 <see cref="AxiosCache"/> 兜住。
-/// 例外是读取挂起超出本次请求的剩余 <c>TotalTimeout</c>：按「总预算耗尽」报出，不会无限期等存储。
+/// 例外是配了 <c>TotalTimeout</c> 时，读取挂起超出本次请求的剩余总预算：按「总预算耗尽」报出，不会无限期等存储。
 /// </remarks>
 /// <example>
 /// <code>
@@ -18,8 +19,8 @@ public interface IAxiosCacheStore
 {
     /// <summary>取一条；没有、已过期或已失效都返回 <c>null</c>。</summary>
     /// <remarks>
-    /// 读取受本次请求的剩余 <c>TotalTimeout</c> 约束：实现应当尊重 <paramref name="cancellationToken"/>，
-    /// 挂起不返回会被库按「总预算耗尽」放弃（并观察后续失败）。
+    /// 实现应当尊重 <paramref name="cancellationToken"/>：配了 <c>TotalTimeout</c> 时，挂起不返回会被库按
+    /// 「总预算耗尽」放弃（并观察后续失败）；没配则库会一直等到实现返回。
     /// </remarks>
     ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken);
 

@@ -279,14 +279,18 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             _index = -1;
         }
 
+        /// <summary>当前条目（<see cref="MoveNext"/> 返回 <c>true</c> 后有效）。</summary>
         public KeyValuePair<string, string> Current => new(_items[_index].Name, _items[_index].Value);
 
         object IEnumerator.Current => Current;
 
+        /// <summary>推进到下一项；越过数组末尾即结束（枚举的是进入枚举时的快照）。</summary>
         public bool MoveNext() => ++_index < _items.Length;
 
+        /// <summary>回到首项之前（结构体枚举器可重复使用）。</summary>
         public void Reset() => _index = -1;
 
+        /// <summary>无资源可释放（基于是不可变数组的快照）。</summary>
         public void Dispose()
         {
         }

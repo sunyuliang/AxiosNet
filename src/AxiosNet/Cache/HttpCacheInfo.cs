@@ -29,6 +29,7 @@ internal sealed class HttpCacheInfo
     /// <summary>响应声明的新鲜期；没有声明时为 <c>null</c>，已过期或非法的 <c>Expires</c> 为零。</summary>
     internal TimeSpan? FreshnessLifetime { get; }
 
+    /// <summary>当前龄期（RFC 9111 的 current_age）：<c>Age</c> 头与「收到响应 - Date」取较大值，负数按零。</summary>
     internal TimeSpan Age { get; }
 
     /// <summary>剩余新鲜期（新鲜期减龄期）；没有声明新鲜期时为 <c>null</c>，用尽时为零。</summary>

@@ -138,7 +138,8 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
     public TimeSpan GetDelay(AxiosRetryContext context) => _inner.GetDelay(context);
 
     /// <summary>
-    /// 退回一个已扣的令牌：重试决定已做出，但这次尝试在发出前被总预算拦下。
+    /// 退回一个已扣的令牌：重试决定已做出，但这次重试没发出去（预算拦下 / 回调抛错 / 退避被取消）；
+    /// 预算包预算时内层同样被扣过一次，一起退。
     /// </summary>
     internal void Refund()
     {

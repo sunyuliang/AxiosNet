@@ -29,7 +29,7 @@ public sealed class PooledHandlerContext
     /// <summary>该 origin 的根地址（<c>https://api.example.com:443/</c>）。</summary>
     public Uri BaseAddress { get; }
 
-    /// <summary>本次连接池的选项（只读使用；要改配置请在构造池之前改）。</summary>
+    /// <summary>建 Handler 时的池选项快照副本（改它不会影响池；要改配置请在构造池之前改）。</summary>
     public ConnectionPoolOptions Options { get; }
 
     /// <summary>

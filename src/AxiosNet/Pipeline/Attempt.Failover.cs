@@ -13,7 +13,8 @@ public static partial class Attempt
     /// <remarks>
     /// 位置在 <see cref="Retry"/> 之内、<see cref="Hedging"/> 之外：每个端点各得一组对冲分支。
     /// 换端点走 <see cref="AxiosAttemptContext.WithUri"/> 与 <see cref="AxiosAttemptContext.WithEndpointIndex"/>，
-    /// 连接租约、熔断计数维度、遥测标签与审计事件里的端点序号都跟着新端点走。
+    /// 连接租约、熔断计数维度与审计事件里的地址 / 端点序号都跟着新端点走；
+    /// 请求级 span 与本库的重试指标 / 重试事件仍按逻辑地址记（拿不到分支实际连的主机）。
     /// 端点表为 <c>null</c> / 空时是纯直通；4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、
     /// 配置 / 编程错误与取消都不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
     /// 换端点要求正文能按顺序重放；跑不了当前 HTTP 版本的端点、以及拼出来就是当前地址的端点都直接跳过。

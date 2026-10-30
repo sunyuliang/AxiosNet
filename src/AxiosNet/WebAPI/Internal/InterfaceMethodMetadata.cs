@@ -59,6 +59,7 @@ internal sealed class InterfaceMethodMetadata
         _fault = fault;
     }
 
+    /// <summary>取（必要时构建并缓存）方法元数据；构建期错误在首次访问时抛 <see cref="InvalidOperationException"/>。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2077",
@@ -121,6 +122,7 @@ internal sealed class InterfaceMethodMetadata
         }
     }
 
+    /// <summary>构建方法契约：路由 → 接口 / 方法级静态头 → 参数绑定（multipart 部件）→ 返回形态 / [Stream] → 授权；<paramref name="createRuntime"/> 为 false 时只校验、不特化泛型调用器。</summary>
     private static InterfaceMethodMetadata BuildCore(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method,
@@ -312,6 +314,7 @@ internal sealed class InterfaceMethodMetadata
             createRuntime ? CreateFault(shape, responseType) : null);
     }
 
+    /// <summary>把参数绑定成配置：URL / 查询 / 请求体（含 multipart）→ 声明级静态头 → 参数头（后者覆盖同名项）。</summary>
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
         var config = new AxiosConfig
@@ -398,7 +401,7 @@ internal sealed class InterfaceMethodMetadata
         return form.Count > 0 ? form : null;
     }
 
-    /// <summary>调用前准备：组装本次配置、写入调用方令牌、跑授权。</summary>
+    /// <summary>调用前准备：写入调用方取消令牌、组装调用上下文并跑授权。</summary>
     private async Task<ApiInterfaceInvocation> PrepareAsync(
         ApiClient client,
         object?[] args,
@@ -452,6 +455,7 @@ internal sealed class InterfaceMethodMetadata
         await client.SendWithoutBodyAsync(invocation, config, invocation.TokenManaged, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>接口侧流式发送：绑定配置后把授权交给客户端内核统一执行。</summary>
     private async Task<AxiosResponse<IAsyncEnumerable<TItem>>> SendStreamAsync<TItem>(
         ApiClient client,
         object?[] args,

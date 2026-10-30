@@ -8,6 +8,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class DynamicJson
 {
+    /// <summary>UTF-16 文本入口（与字节入口共用同一套对象图展开）。</summary>
     public static object? Parse(string text)
     {
         using var document = JsonDocument.Parse(text);

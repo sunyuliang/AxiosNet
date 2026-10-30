@@ -32,9 +32,11 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     /// <summary><c>application/json</c>（与库的 <see cref="AxiosConfig.ContentType"/> 默认值一致）。</summary>
     public string? MediaType => AxiosContentType.Json;
 
+    /// <inheritdoc />
     public string Serialize(object? value, Type type, AxiosConfig config)
         => JsonSerializer.Serialize(value, type, AxiosJson.GetOptions(config));
 
+    /// <inheritdoc />
     public object? Deserialize(string json, Type type, AxiosConfig config)
         => JsonSerializer.Deserialize(json, type, AxiosJson.GetOptions(config));
 

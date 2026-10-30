@@ -16,7 +16,7 @@ public sealed partial class ApiClient
         => RequestStreamAsync(request, AxiosStreamFormat.NewlineDelimitedJson, configure: null, cancellationToken);
 
     /// <summary>
-    /// 以指定帧格式读取流式响应（NDJSON / SSE / JSON 数组）；三种格式共用同一套字节级分帧与单帧上限（默认 8 MB）。
+    /// 以指定帧格式读取流式响应（NDJSON / SSE / JSON 数组）；三种格式共用同一层字节读取与单帧上限（默认 8 MB）。
     /// 正文超时与响应头同一份预算（本次尝试的 <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.TotalTimeout"/> 压过）；
     /// 不设超时时正文不限时，靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求响应是 UTF-8。
     /// 响应流只能枚举一次；帧解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。

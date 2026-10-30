@@ -5,6 +5,7 @@ namespace AxiosNet.Internal;
 /// <summary>常见状态码的 reason phrase（与 axios 一致）。</summary>
 internal static class StatusTextMap
 {
+    /// <summary>取状态码的 reason phrase：常见码按 axios 文案，表外优先用 <see cref="HttpStatusCode"/> 枚举名，未知留空。</summary>
     public static string Get(int statusCode) => statusCode switch
     {
         200 => "OK",

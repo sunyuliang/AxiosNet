@@ -10,8 +10,8 @@ public enum AxiosCircuitState
     Open,
 
     /// <summary>
-    /// 半开：冷却期已过，按慢启动放行有限个探测请求；连续成功达 <see cref="CircuitBreaker.RecoverySuccesses"/> 次才回到 <see cref="Closed"/>，
-    /// 期间任何一次失败都立刻回到 <see cref="Open"/> 并重新计时。
+    /// 半开：冷却期已过，按慢启动放行有限个探测请求；连续成功达 <see cref="CircuitBreaker.RecoverySuccesses"/> 次
+    /// （0 / 1 时探测一次成功即可）才回到 <see cref="Closed"/>，期间任何一次失败都立刻回到 <see cref="Open"/> 并重新计时。
     /// </summary>
     HalfOpen
 }

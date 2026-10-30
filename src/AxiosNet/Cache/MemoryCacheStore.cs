@@ -16,6 +16,8 @@ namespace AxiosNet.Cache;
 public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidationStore
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    // 写锁把「条目表 + 字节计量」绑成一次原子更新：SetCore 是「读旧尺寸 → 覆盖 → 记差值」，
+    // 退账的路径（Remove / 读时摘除 / 清过期）若不进同一把锁，就会与它各退一次、把计量越跑越负。
     private readonly object _writeLock = new();
     private readonly int _maxEntries;
     private readonly long _maxBytes;
@@ -24,6 +26,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     /// <summary>构造一份内存存储。</summary>
     /// <param name="maxEntries">条目上限，必须大于零。</param>
     /// <param name="maxBytes">近似字节上限，<c>0</c> = 不限制。</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxEntries"/> 不大于零，或 <paramref name="maxBytes"/> 为负。</exception>
     public MemoryCacheStore(int maxEntries = 1024, long maxBytes = 64L * 1024 * 1024)
     {
         if (maxEntries <= 0)
@@ -93,6 +96,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
         => SetCore(key, entry, timeToLive);
 
     /// <inheritdoc />
+    /// <remarks>内置存储只取 <see cref="AxiosCacheEntryPolicy.TimeToLive"/>；Vary / private / stale-* 等细节留给需要它们的自建存储。</remarks>
     public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
         => SetCore(key, entry, policy.TimeToLive);
 
@@ -159,6 +163,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
         => _entries.Count < _maxEntries
            && (_maxBytes == 0 || Interlocked.Read(ref _bytes) + size <= _maxBytes);
 
+    /// <summary>在写锁内清掉全部过期条目（含带校验器的：容量压力下它们同样要让位）；清完由调用方重新判容量。</summary>
     private void PurgeExpiredLocked()
     {
         var now = Environment.TickCount64;

@@ -4,7 +4,7 @@ using AxiosNet.WebAPI.Internal;
 namespace AxiosNet.WebAPI;
 
 /// <summary>声明请求体是 <c>multipart/form-data</c>：请求模型标在类上、接口级声明标在方法上。
-/// 模型自身即表单，未标注参数特性的属性 / 参数默认按部件绑定（字段名 = 属性名 / 参数名）。
+/// 模型自身即表单，未标注参数特性的属性 / 参数默认按部件绑定（字段名 = <see cref="JsonPropertyNameAttribute"/> 或属性名 / 参数名）。
 /// 标了 <see cref="PartAttribute"/> 的成员可覆盖字段名、文件名与部件 Content-Type；与 <c>[Body]</c> 互斥。</summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class MultipartAttribute : Attribute
@@ -31,7 +31,7 @@ public sealed class PartAttribute : Attribute
         Name = name;
     }
 
-    /// <summary>部件字段名（Content-Disposition 的 <c>name</c>）；null 表示用 [JsonPropertyName] / 属性名。</summary>
+    /// <summary>部件字段名（Content-Disposition 的 <c>name</c>）；null 表示用 [JsonPropertyName] / 属性名（接口方法的参数回退到参数名）。</summary>
     public string? Name { get; }
 
     /// <summary>文件部件的文件名（Content-Disposition 的 <c>filename</c>）；null 表示用字段名（builder 默认）。</summary>

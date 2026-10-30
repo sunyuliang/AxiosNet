@@ -116,149 +116,197 @@ public static class Axios
         exception is OperationCanceledException
         || exception is AxiosException { Code: AxiosException.ErrCanceled };
 
+    /// <summary>对应 axios.get，返回非泛型响应。</summary>
     public static Task<AxiosResponse> GetAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.get，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> GetAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync<T>(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.get 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> GetAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.get 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> GetAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.GetAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.delete，返回非泛型响应。</summary>
     public static Task<AxiosResponse> DeleteAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.delete，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync<T>(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.delete 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> DeleteAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.delete 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.DeleteAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.head，返回非泛型响应。</summary>
     public static Task<AxiosResponse> HeadAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.head，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> HeadAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync<T>(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.head 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> HeadAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.head 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.HeadAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.options，返回非泛型响应。</summary>
     public static Task<AxiosResponse> OptionsAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.options，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync<T>(url, configure, cancellationToken);
 
+    /// <summary>对应 axios.options 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> OptionsAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.options 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.OptionsAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.post 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PostAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.post 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PostAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PostAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.put 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> PutAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PutAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.put 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PutAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PutAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.patch 携带请求体，返回非泛型响应。</summary>
     public static Task<AxiosResponse> PatchAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.patch 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchAsync<T>(url, data, configure, cancellationToken);
 
     // 对应 axios postForm / putForm / patchForm：默认 multipart/form-data
+    /// <summary>对应 axios.postForm（multipart/form-data），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PostFormAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.postForm（multipart/form-data），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PostFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PostFormAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.putForm（multipart/form-data），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PutFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PutFormAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.putForm（multipart/form-data），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PutFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PutFormAsync<T>(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.patchForm（multipart/form-data），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PatchFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchFormAsync(url, data, configure, cancellationToken);
 
+    /// <summary>对应 axios.patchForm（multipart/form-data），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
         => DefaultClient.PatchFormAsync<T>(url, data, configure, cancellationToken);
 
     // 令牌直接作第二个参数的重载：与实例方法一致。
+    /// <summary>对应 axios.get 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.GetAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.get 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> GetAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.GetAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.delete 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> DeleteAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.DeleteAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.delete 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> DeleteAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.DeleteAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.head 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> HeadAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.HeadAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.head 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> HeadAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.HeadAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.options 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> OptionsAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.OptionsAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.options 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> OptionsAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.OptionsAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.post 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PostAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.PostAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.post 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PostAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PostAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.put 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PutAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.PutAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.put 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PutAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PutAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.patch 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PatchAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.PatchAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.patch 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PatchAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PatchAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.postForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PostFormAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.PostFormAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.postForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PostFormAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PostFormAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.putForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PutFormAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.PutFormAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.putForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PutFormAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PutFormAsync<T>(url, cancellationToken);
 
+    /// <summary>对应 axios.patchForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public static Task<AxiosResponse> PatchFormAsync(string url, CancellationToken cancellationToken)
         => DefaultClient.PatchFormAsync(url, cancellationToken);
 
+    /// <summary>对应 axios.patchForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public static Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
         => DefaultClient.PatchFormAsync<T>(url, cancellationToken);
 

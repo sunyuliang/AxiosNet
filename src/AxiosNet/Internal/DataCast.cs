@@ -3,6 +3,7 @@ namespace AxiosNet.Internal;
 /// <summary>把非泛型响应的 Data 收敛到目标类型；不匹配时抛 <see cref="AxiosException"/>（<c>ERR_BAD_RESPONSE</c>）。</summary>
 internal static class DataCast
 {
+    /// <summary>把非泛型响应的 Data 转成 <typeparamref name="T"/>；<c>null</c> 给默认值，类型不符抛 <c>ERR_BAD_RESPONSE</c>。</summary>
     public static T? To<T>(object? data, AxiosConfig? config, HttpRequestMessage? request)
     {
         EnsureCompatible<T>(data, config, request);

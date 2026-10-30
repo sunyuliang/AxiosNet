@@ -25,6 +25,7 @@ public sealed class HttpConnectionPool : IDisposable
     private long _totalLeases;
     private int _disposed;
 
+    /// <summary>按选项建池（内部保存副本）；不传时用默认选项。选项非法时抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     public HttpConnectionPool(ConnectionPoolOptions? options = null)
     {
         // 克隆：调用方之后修改自己持有的 options 不影响已建成的池。
@@ -443,7 +444,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    /// <summary>异步租用：先检查取消令牌，其余与同步版本一致。</summary>
+    /// <summary>异步租用：先检查取消令牌，其余与同步版本一致（实现上同步完成，建节点 / 调工厂都在调用线程）。</summary>
     public ValueTask<PoolLease> LeaseAsync(Uri requestUri, CancellationToken cancellationToken = default)
         => LeaseAsync(requestUri, config: null, cancellationToken);
 
@@ -454,6 +455,7 @@ public sealed class HttpConnectionPool : IDisposable
         return new ValueTask<PoolLease>(Lease(requestUri, config));
     }
 
+    /// <summary>归还租约（由 <see cref="PoolLease.Dispose"/> 调用）：只减占用计数，节点是否销毁由它自己的状态决定。</summary>
     internal void Return(PooledEndpoint endpoint)
     {
         endpoint.Release();
@@ -469,6 +471,7 @@ public sealed class HttpConnectionPool : IDisposable
     }
 
     /// <summary>手动驱逐空闲超过 IdleHandlerLifetime 的 origin 节点。</summary>
+    /// <returns>本次驱逐的节点数。</returns>
     public int EvictIdleEndpoints() => EvictIdle(_options.IdleHandlerLifetime, int.MaxValue, AxiosTelemetry.EvictionReasonManual);
 
     /// <summary>新建节点前的容量检查：达到上限时先驱逐最久未使用的空闲节点，全部在途才拒绝（抛 <see cref="AxiosException.ErrPoolExhausted"/>，可观测、默认不自动重发）。</summary>
@@ -562,7 +565,7 @@ public sealed class HttpConnectionPool : IDisposable
         return evicted;
     }
 
-    /// <summary>锁内判定「此刻驱逐它等价于什么都没发生」。</summary>
+    /// <summary>锁内判定节点此刻能否驱逐：未释放、无在途租约、空闲时间已达标。</summary>
     private static bool IsEvictable(PooledEndpoint endpoint, TimeSpan minIdle, long now)
     {
         lock (endpoint.SyncRoot)
@@ -669,6 +672,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
+    /// <summary>取池的瞬时快照：逐节点在各自的锁内读取，各节点之间可能来自不同时刻。</summary>
     public ConnectionPoolStatistics GetStatistics()
     {
         var endpoints = _endpoints

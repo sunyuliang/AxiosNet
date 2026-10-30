@@ -38,7 +38,7 @@ internal sealed class ProgressHttpContent : HttpContent
         TransportContext? context,
         CancellationToken cancellationToken)
     {
-        // 新的一轮写出：累计值与计时器保留，只解除「已完成」状态
+        // 新的一轮写出：累计值与计时器保留，只解除「已完成」状态并重设本轮起点
         _meter.Restart();
 
         var wrapper = new ProgressWriteStream(stream, _meter, MapCallbackError);

@@ -12,6 +12,10 @@ internal static class MultipartBodyBuilder
 {
     private const string OctetStreamMediaType = AxiosContentType.OctetStream;
 
+    /// <summary>
+    /// 把数据装配成 multipart 正文；显式 boundary 沿用。失败时先释放已装部件：
+    /// 非法选项 / 环归一为 <c>ERR_BAD_OPTION_VALUE</c>，其余异常原样上抛。
+    /// </summary>
     public static HttpContent Create(
         object data,
         string mediaType,
@@ -44,7 +48,7 @@ internal static class MultipartBodyBuilder
             // 构建中途失败：已加入的部件（含已打开的 FileStream）必须释放。
             content.Dispose();
 
-            // 再释放容器覆盖不到的裸流（所有权已交出）。
+            // 再兜底释放数据里的流 / 自定义内容（可能含容器已覆盖的项，Dispose 可重复调用）。
             MultipartOwnership.DisposeOwned(data);
 
             // 字段名 / 声明值非法属于调用方选项错误，换成带配置上下文的 ERR_BAD_OPTION_VALUE。
@@ -63,6 +67,7 @@ internal static class MultipartBodyBuilder
         }
     }
 
+    /// <summary>按值形态把数据项装配进容器：文件类 → 文件部件，标量 → 文本字段，字典 / 集合 / POCO 递归展开。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
@@ -406,6 +411,7 @@ internal static class MultipartBodyBuilder
         ((MultipartContent)content).Add(part);
     }
 
+    /// <summary>字段名必须存在且能安全写进 Content-Disposition 的 quoted-string；不合法抛配置错误。</summary>
     private static string RequireName(string? name)
     {
         if (string.IsNullOrEmpty(name))

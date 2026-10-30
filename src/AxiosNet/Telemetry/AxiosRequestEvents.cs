@@ -94,7 +94,8 @@ public sealed class AxiosRequestFailedEvent
 /// <c>AxiosNet.AttemptStop</c> / <c>AxiosNet.AttemptFailed</c> 事件的载荷：一次尝试（单次发送）的结果。
 /// 只有链上装了 <see cref="Pipeline.Attempt.Audit"/> 时才会产生，且只覆盖真正到达终端的尝试
 /// （熔断拒绝、闸门排队超时与短路响应都不产生尝试事件）。
-/// 对冲的每条分支、备用端点的每个端点各一条事件（<see cref="AttemptNumber"/> 不变，靠 <see cref="EndpointIndex"/> 区分）。
+/// 对冲的每条分支、备用端点的每个端点各一条事件；<see cref="EndpointIndex"/> 只区分端点，
+/// 同一端点下的对冲分支三项序号完全相同，无法靠字段区分。
 /// 被胜出者取消的败者不发失败事件。
 /// </summary>
 public sealed class AxiosAttemptEvent
@@ -124,7 +125,8 @@ public sealed class AxiosAttemptEvent
 
     /// <summary>
     /// 第几个端点（从 <c>0</c> 开始）：<c>0</c> = 请求自己的地址，<c>n</c> = 端点表里第 n 个备用端点。
-    /// 换端点不推进 <see cref="AttemptNumber"/>，所以同一个尝试号下可能有多条事件，靠这一项区分。
+    /// 换端点不推进 <see cref="AttemptNumber"/>，所以同一个尝试号下可能有多条事件，靠这一项区分；
+    /// 对冲分支不推进它，同一端点下的分支事件序号相同。
     /// </summary>
     public int EndpointIndex { get; }
 
@@ -135,8 +137,8 @@ public sealed class AxiosAttemptEvent
     public Uri Uri { get; }
 
     /// <summary>
-    /// 本次尝试的耗时：从进入终端前到终端返回（流式响应只到响应头）。
-    /// 不含闸门排队与退避等待，但包含取连接租约与缓冲响应读完正文的时间。
+    /// 本次尝试的耗时：审计中间件装在推荐位置（闸门之后）时，从进入终端前到终端返回（流式响应只到响应头），
+    /// 不含闸门排队与退避等待，但包含取连接租约与缓冲响应读完正文的时间；装在更外层时会连它内层的耗时一起算。
     /// </summary>
     public TimeSpan Elapsed { get; }
 

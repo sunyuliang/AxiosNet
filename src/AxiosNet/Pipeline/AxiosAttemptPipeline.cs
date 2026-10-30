@@ -8,7 +8,8 @@ namespace AxiosNet.Pipeline;
 /// 真正的发送（终端）恒在最内层，不在列表里，也换不掉。
 /// </summary>
 /// <remarks>
-/// 调用次数由位置决定：落在 <see cref="Attempt.Retry"/> 之内 = 每次尝试一次（重试 N 次则 N+1 次）；
+/// 调用次数由位置决定：落在 <see cref="Attempt.Retry"/> 之内 = 每次尝试一次（重试 N 次则 N+1 次），
+/// 若又落在 <see cref="Attempt.Hedging"/> 之内则每条对冲分支各一次（一次尝试最多 1 + MaxHedges 次）；
 /// 落在它之外 = 每次请求一次，该位置请改用响应拦截器（本类型不提供把中间件放到最外层的方法）。
 /// 链在客户端构造时编译一次并固化，中间件里按请求分支请读 <see cref="AxiosAttemptContext.Config"/>。
 /// </remarks>
@@ -49,7 +50,8 @@ public sealed class AxiosAttemptPipeline
     }
 
     /// <summary>
-    /// 追加到最内层（并发闸门之后、真正的发送之前）：<b>每次尝试各调用一次</b>，重试 N 次就是 N+1 次。
+    /// 追加到最内层（并发闸门之后、真正的发送之前）：<b>每次尝试各调用一次</b>，重试 N 次就是 N+1 次；
+    /// 开启对冲时每条分支各一次（一次尝试最多 1 + MaxHedges 次），因此必须能并发执行、不共享可变状态。
     /// 这是绝大多数自定义中间件（每次尝试的观测、审计、指标）该待的位置。
     /// </summary>
     public AxiosAttemptPipeline Append(AxiosAttemptMiddleware middleware)

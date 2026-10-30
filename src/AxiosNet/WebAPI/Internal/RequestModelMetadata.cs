@@ -39,7 +39,7 @@ internal sealed partial class RequestModelMetadata
     /// <summary>是否声明了 <see cref="MultipartAttribute"/>（请求体 = 模型自身装配的 multipart 表单）。</summary>
     internal bool IsMultipart { get; init; }
 
-    /// <summary>multipart 部件绑定：未标注参数特性的属性默认参与（名字 = 属性名），[Part] 可覆盖。</summary>
+    /// <summary>multipart 部件绑定：未标注参数特性的属性默认参与（名字 = [JsonPropertyName] / 属性名），[Part] 可覆盖。</summary>
     internal PartBinding[] PartBindings { get; init; } = [];
 
     /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
@@ -136,6 +136,7 @@ internal sealed partial class RequestModelMetadata
         }
     }
 
+    /// <summary>构建契约：路由 → 类级静态头 → 属性绑定（multipart 部件）→ 默认 Body 推断 → 授权。</summary>
     private static RequestModelMetadata BuildCore(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
     {

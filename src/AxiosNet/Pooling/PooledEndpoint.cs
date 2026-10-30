@@ -14,12 +14,16 @@ internal sealed class PooledEndpoint : IDisposable
     /// <summary>池 key（scheme / host / port）。</summary>
     public OriginKey Key { get; }
 
+    /// <summary>origin 文本（<c>scheme://host:port</c>），也用于 HandlerFactory 上下文与统计展示。</summary>
     public string Origin { get; }
 
+    /// <summary>该 origin 上的 Handler（默认 <see cref="SocketsHttpHandler"/>，或工厂返回的实例）；由本节点释放。</summary>
     public HttpMessageHandler Handler { get; }
 
+    /// <summary>发往该 origin 的请求共用这一个 HttpClient（超时交给请求级控制）。</summary>
     public HttpClient Client { get; }
 
+    /// <summary>当前未归还的租约数（只在 <see cref="SyncRoot"/> 锁内读写）。</summary>
     public int ActiveLeases { get; private set; }
 
     /// <summary>最近一次租用 / 归还的时刻（由单调时钟换算，供统计展示；驱逐判定只看 <see cref="LastUsedTimestamp"/>）。</summary>
@@ -136,7 +140,7 @@ internal sealed class PooledEndpoint : IDisposable
 
         if (retire)
         {
-            // 池已关闭：归还租约的同时把自己从池里摘掉并释放。
+            // 节点已被池摘除（池关闭 / ClearCookies）：归还租约的同时把自己从池里摘掉并释放。
             _owner.Forget(this);
             DisposeClientAndHandler();
         }
@@ -149,6 +153,7 @@ internal sealed class PooledEndpoint : IDisposable
         return seconds > 0 ? TimeSpan.FromSeconds(seconds) : TimeSpan.Zero;
     }
 
+    /// <summary>立即释放：标记已释放并关闭 Client / Handler，不等在途租约（在途请求会失败）。</summary>
     public void Dispose()
     {
         if (MarkDisposed())

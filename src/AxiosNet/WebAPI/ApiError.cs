@@ -38,7 +38,7 @@ public sealed class ApiErrorContext
     public int Status => Response.Status;
 
     /// <summary>错误响应正文原文：<see cref="AxiosResponse.RawText"/> 优先，其次按 <see cref="AxiosResponse.Data"/> 的实际形态取文本。
-    /// byte[] 按响应的 Content-Type charset 解码；都不适用时为 <c>null</c>。</summary>
+    /// byte[] 按响应 charset / 强制 ResponseEncoding 解码；都不适用时为 <c>null</c>。</summary>
     public string? Body => Response.RawText ?? Response.Data switch
     {
         null => null,
@@ -48,7 +48,7 @@ public sealed class ApiErrorContext
         _ => null
     };
 
-    /// <summary>把错误体反序列化成 <typeparamref name="TError"/>（用响应 <c>Content-Type</c> 选中的序列化器）。正文为空、无法解析或类型不匹配时返回 <c>default</c>。</summary>
+    /// <summary>把错误体反序列化成 <typeparamref name="TError"/>（用按响应 <c>Content-Type</c> 解析出的生效序列化器）。正文为空、无法解析或类型不匹配时返回 <c>default</c>。</summary>
     public ValueTask<TError?> TryReadAsync<TError>(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -3,7 +3,7 @@ namespace AxiosNet.Retry;
 /// <summary>
 /// 重试策略：决定一次失败后要不要再试一次，以及等多久再试；默认不重试（<see cref="AxiosConfig.RetrySettings.Policy"/> 为 <c>null</c> 时管线不进重试分支）。
 /// 实现会被同一实例的并发请求共享，必须线程安全。
-/// 次数到顶、调用方已取消、错误本身是取消、熔断拒绝、并发排队超时、
+/// 次数到顶、调用方已取消、错误本身是取消、熔断拒绝、并发排队超时 / 队列满、
 /// 尝试阶段的配置错误（<c>ERR_BAD_OPTION_VALUE</c>）这六类情况库已提前挡掉，策略改不掉。
 /// </summary>
 /// <example>

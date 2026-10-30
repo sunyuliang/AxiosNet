@@ -92,7 +92,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
     /// <summary>默认的状态码判定：408（请求超时）、429（限流）与全部 5xx。</summary>
     public static Func<int, bool> DefaultRetryStatus { get; } = static status => status is 408 or 429 or (>= 500 and < 600);
 
-    /// <summary>固定间隔策略：每次重试都等 <paramref name="interval"/>，不翻倍、不加抖动。</summary>
+    /// <summary>固定间隔策略：每次重试都等 <paramref name="interval"/>，不翻倍、不加抖动（<see cref="HonorRetryAfter"/> 仍默认开启：服务端给了 <c>Retry-After</c> 时以它为准）。</summary>
     public static RetryPolicy Constant(int maxRetries, TimeSpan interval)
         => new(maxRetries, interval);
 

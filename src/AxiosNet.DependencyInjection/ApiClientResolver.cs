@@ -17,10 +17,11 @@ public interface IApiClientResolver
     /// <param name="name">站点名（区分大小写）。</param>
     /// <exception cref="ArgumentNullException"><paramref name="name"/> 为 null。</exception>
     /// <exception cref="InvalidOperationException">站点名未注册（消息中列出全部已注册站点）。</exception>
+    /// <exception cref="ObjectDisposedException">解析器已释放。</exception>
     ApiClient Get(string name);
 
     /// <summary>尝试取指定站点的 <see cref="ApiClient"/>；站点名未注册时返回 false。</summary>
-    /// <param name="name">站点名（区分大小写），null 时返回 false。</param>
+    /// <param name="name">站点名（区分大小写），null 或解析器已释放时返回 false。</param>
     /// <param name="client">取到的站点客户端；未注册时为 null。</param>
     bool TryGet(string name, [MaybeNullWhen(false)] out ApiClient client);
 }
@@ -98,7 +99,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         return TryGetCore(name, out client, throwIfDisposed: false);
     }
 
-    /// <summary>已释放时：按 <c>Get</c> 语义抛 <see cref="ObjectDisposedException"/>，或按 <c>TryGet</c> 语义返回 <c>true</c>。</summary>
+    /// <summary>已释放时返回 <c>true</c>：Get 语义直接抛 <see cref="ObjectDisposedException"/>，TryGet 语义由调用方返回 <c>false</c>。</summary>
     private bool TryHandleDisposed(bool throwIfDisposed, out ApiClient client)
     {
         client = null!;
@@ -270,7 +271,7 @@ internal static class HolderDisposal
     }
 }
 
-/// <summary>创建 <see cref="ApiClient"/> 并应用「显式 Authorization 优先、否则取容器 IAuthorizationProvider」规则。</summary>
+/// <summary>创建 <see cref="ApiClient"/>：显式设置的 Authorization / AccessTokenProvider / ErrorFactory 优先，未设置时才取容器里的单例。</summary>
 internal static class ApiClientFactory
 {
     public static ApiClient Create(IServiceProvider services, AxiosClient axiosClient, Action<ApiClient>? configure)

@@ -6,7 +6,7 @@ namespace AxiosNet.Serialization;
 /// 按媒体类型登记序列化器的表（每个 <see cref="AxiosNet.AxiosClient"/> 一份）。
 /// 查表规则与全局 <see cref="AxiosNet.AxiosContent.Register"/> 一致：归一化后精确匹配 → 常见别名（text/xml、text/json）
 /// → 结构化后缀（RFC 6839，<c>application/vnd.x+yaml</c> 回落到 <c>application/yaml</c>）。
-/// 登记是写时复制，查表不加锁；本表只影响持有它的客户端，不改变其它实例与全局注册表。
+/// 登记是写时复制，查表不加锁；本表只影响使用它的客户端，不改变全局注册表。
 /// 表对象随配置走：同一个 <see cref="AxiosNet.AxiosConfig"/> 被多个客户端使用、或被 <c>Clone()</c> 时，彼此共享这一张表。
 /// </summary>
 public sealed class ContentSerializerRegistry

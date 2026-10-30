@@ -10,7 +10,7 @@ public enum CacheFreshnessMode
     Configured,
 
     /// <summary>
-    /// 只信服务器：用剩余新鲜期作为 TTL，不受 <see cref="AxiosCacheOptions.TimeToLive"/> 上限约束。
+    /// 只信服务器：用剩余新鲜期作为 TTL，不受 <see cref="AxiosCacheOptions.TimeToLive"/> 上限约束（请求侧的 <c>max-age</c> 仍会封顶）。
     /// <c>no-store</c> / <c>no-cache</c>、已过期或非法的 <c>Expires</c>、以及没有声明任何新鲜期的响应都不落库。
     /// </summary>
     Server,

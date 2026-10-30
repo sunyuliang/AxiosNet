@@ -16,7 +16,8 @@ public static partial class Attempt
     /// 熔断看整组分支的最终结果，每条分支各过并发闸门、各占一个槽位 —— 开启对冲后占用的并发额度是
     /// <c>1 + MaxHedges</c> 倍，<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/> 要按此预留。
     /// <c>Hedging.MaxHedges = 0</c> 时纯直通。流式响应、非幂等方法、正文不能并发重放、响应侧带共享状态的请求
-    /// 按单次发送处理。每条分支各执行一次 <c>transformResponse</c> 与响应侧回调（含落败分支）。
+    /// 按单次发送处理。每条分支各执行一次 <c>transformResponse</c> 与响应侧回调（含落败分支）；
+    /// 响应拦截器在管线之外，仍只对胜出结果执行一次。
     /// </remarks>
     public static AxiosAttemptMiddleware Hedging { get; } = next =>
     {

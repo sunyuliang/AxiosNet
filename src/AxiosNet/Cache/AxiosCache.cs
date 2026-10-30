@@ -18,9 +18,9 @@ public sealed class AxiosCacheOptions
     /// <remarks>
     /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 会解析响应的
     /// <c>Cache-Control</c>（<c>max-age</c>）与 <c>Expires</c> / <c>Date</c> / <c>Age</c>，同时解析<b>请求</b>的
-    /// <c>Cache-Control</c> / <c>Pragma</c>，两者取交集：请求 <c>no-store</c> 不读也不写、<c>no-cache</c> / <c>max-age=0</c>
-    /// 跳过新鲜查询（仍可落库；开启 <see cref="ConditionalRequests"/> 时还会拿旧条目做条件请求）、
-    /// 请求 <c>max-age</c> 作为落库 TTL 的上限、响应 <c>Vary: *</c> 不落库。
+    /// <c>Cache-Control</c> / <c>Pragma</c>，两者取交集：请求 <c>no-store</c> 不读也不写；请求 <c>no-cache</c> /
+    /// <c>max-age=0</c> 跳过新鲜查询（<c>no-cache</c> 仍可落库，开启 <see cref="ConditionalRequests"/> 时还会拿旧条目做条件请求；
+    /// <c>max-age=0</c> 连落库也一并拒绝）；请求 <c>max-age=N</c> 作为落库 TTL 的上限；响应 <c>Vary: *</c> 不落库。
     /// <c>Configured</c> 是「强制按配置执行」，两侧的 HTTP 指令都不参与取舍。
     /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c> 分区、<c>stale-*</c> 服务不在库的取舍范围，
     /// 但这些信息都会随 <see cref="AxiosCacheEntryPolicy"/> 交给自建存储，由存储决定要不要用。
@@ -28,6 +28,11 @@ public sealed class AxiosCacheOptions
     public CacheFreshnessMode FreshnessMode { get; set; }
 
     /// <summary>同键并发只发一次（单飞），默认 <c>true</c>；关掉后每个请求各自发送，只共享已落库的条目。</summary>
+    /// <remarks>
+    /// 请求侧要求绕开缓存（<c>no-store</c> / <c>no-cache</c> / <c>max-age=0</c>）时不查缓存、也不参与单飞，各自发送；
+    /// 领导者正常结束但没拿到可共享的正文（非 2xx、不落库、存储没接住）时，跟随者也各自补发；
+    /// 领导者抛错时跟随者拿到同一个错误（领导者自己被取消除外，跟随者会自己补发）。
+    /// </remarks>
     public bool SingleFlight { get; set; } = true;
 
     /// <summary>
@@ -37,6 +42,7 @@ public sealed class AxiosCacheOptions
     /// </summary>
     /// <remarks>
     /// 只有实现 <see cref="IAxiosCacheRevalidationStore"/> 的存储（内置 <see cref="MemoryCacheStore"/>）才有旧条目可取；
+    /// 请求侧 <c>no-cache</c> / <c>max-age=0</c> 跳过新鲜查询时同样会尝试条件请求（<c>no-store</c> 不会）；
     /// 调用方自己写了条件头时以调用方为准，库不覆盖、也不接管 304。
     /// </remarks>
     public bool ConditionalRequests { get; set; } = true;
@@ -45,14 +51,14 @@ public sealed class AxiosCacheOptions
     /// <remarks>只在构造 <see cref="AxiosCache"/> 时读取一次（换存储请新建一个缓存实例），故为 <c>init</c>。</remarks>
     public IAxiosCacheStore? Store { get; init; }
 
-    /// <summary>内置内存存储的条目上限，默认 1024；自建 <see cref="Store"/> 时本项不生效（上限归存储自己管）。</summary>
+    /// <summary>内置内存存储的条目上限，默认 1024（必须大于零）；自建 <see cref="Store"/> 时本项不生效（上限归存储自己管）。</summary>
     public int MaxEntries { get; set; } = 1024;
 
     /// <summary>
     /// 内置内存存储的近似字节上限，默认 64 MB；<c>0</c> = 不限制。自建 <see cref="Store"/> 时本项不生效。
     /// </summary>
     /// <remarks>
-    /// 按「正文长度 + 头名 / 头值长度」估算（UTF-16 计），不是精确的托管堆占用；只用来兜住「1024 条大响应」这类失控。
+    /// 按「正文字节数 + 头名 / 头值字符数 ×2」估算，不是精确的托管堆占用；只用来兜住「1024 条大响应」这类失控。
     /// 超限与条目满同一口径：先清过期项，仍放不下就不收新条目（已存在的键照常覆盖）。
     /// </remarks>
     public long MaxBytes { get; set; } = 64L * 1024 * 1024;
@@ -72,7 +78,7 @@ public sealed class AxiosCacheOptions
     public Func<AxiosConfig, Uri, string>? KeySelector { get; set; }
 
     /// <summary>
-    /// 哪些请求参与缓存，默认 <see cref="AxiosCache.IsCacheable"/>：GET / HEAD、无短路响应、非流式、无请求体。
+    /// 哪些请求参与缓存，默认 <see cref="AxiosCache.IsCacheable"/>：GET / HEAD、无短路响应、非流式、无请求体、非范围请求。
     /// </summary>
     /// <remarks>可以在默认口径上组合：<c>c =&gt; AxiosCache.IsCacheable(c) || c.Method == HttpMethod.Post</c>。</remarks>
     public Func<AxiosConfig, bool> ShouldCache { get; set; } = AxiosCache.IsCacheable;
@@ -88,7 +94,8 @@ public sealed class AxiosCacheOptions
 /// 想接 Redis 之类的外部存储就实现那个接口。
 /// 缓存的是<b>原始正文字节</b>，命中时按本次调用的 responseType 与泛型参数重新解析，所以 <c>GetAsync&lt;User&gt;</c> 与
 /// <c>GetAsync&lt;string&gt;</c> 命中同一条目各自得到该有的形态。
-/// 只存 2xx 且拿到原始字节的响应；流式响应、响应拦截器换了响应对象、存储读写失败都不影响这次请求。
+/// 只存 2xx（206 与带 <c>Content-Range</c> 的除外）且拿到原始字节的响应，条目头里也不含 <c>Set-Cookie</c>；
+/// 流式响应、响应拦截器换了响应对象、存储读写失败都不影响这次请求。
 /// 条目过期后，若响应带 <c>ETag</c> / <c>Last-Modified</c> 且存储实现了 <see cref="IAxiosCacheRevalidationStore"/>，
 /// 库会发条件请求：服务端回 <c>304</c> 时直接交付库里的正文（见 <see cref="AxiosCacheOptions.ConditionalRequests"/>）。
 /// 命中不发请求，因此不占并发闸门、不产生遥测 span 与在途计数，<see cref="AxiosResponse.Request"/> 为 <c>null</c>；
@@ -101,12 +108,17 @@ public sealed class AxiosCacheOptions
 /// </example>
 public sealed class AxiosCache
 {
+    // 在飞登记：键 → 领导者那一轮。跟随者只是共享领导者的 Completion，完成 / 失败后按「键 + 实例」摘除。
     private readonly ConcurrentDictionary<string, AxiosCacheFlight> _flights = new(StringComparer.Ordinal);
     private readonly AxiosCacheOptions _options;
     private readonly IAxiosCacheStore _store;
     private readonly IAxiosCacheRevalidationStore? _revalidationStore;
 
     /// <summary>构造一份缓存策略；<paramref name="options"/> 为 <c>null</c> 时全用默认值。</summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="AxiosCacheOptions.TimeToLive"/> 不大于零、<see cref="AxiosCacheOptions.StoreTimeout"/> 为负，
+    /// 或用内置存储时 <see cref="AxiosCacheOptions.MaxBytes"/> 为负 / <see cref="AxiosCacheOptions.MaxEntries"/> 不大于零。
+    /// </exception>
     public AxiosCache(AxiosCacheOptions? options = null)
     {
         _options = options ?? new AxiosCacheOptions();
@@ -143,7 +155,7 @@ public sealed class AxiosCache
     /// <summary>这份缓存的策略。</summary>
     public AxiosCacheOptions Options => _options;
 
-    /// <summary>条目存储。</summary>
+    /// <summary>条目存储：<see cref="AxiosCacheOptions.Store"/> 未配置时就是内置的 <see cref="MemoryCacheStore"/>，构造后不再变化。</summary>
     public IAxiosCacheStore Store => _store;
 
     /// <summary>同键并发是否只发一次。</summary>
@@ -408,6 +420,7 @@ public sealed class AxiosCache
             return null;
         }
 
+        // 秒数换算成 tick 可能超出 TimeSpan 上限：超出就按「无限长」处理。
         return seconds > long.MaxValue / TimeSpan.TicksPerSecond
             ? TimeSpan.MaxValue
             : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
@@ -514,6 +527,7 @@ public sealed class AxiosCache
         }
     }
 
+    /// <summary>观察被放弃的任务的异常（仅故障时续接），免得它拖到 GC 报「未观察的任务异常」。</summary>
     private static void Observe(Task? task)
         => task?.ContinueWith(
             static completed => _ = completed.Exception,
@@ -621,6 +635,7 @@ public sealed class AxiosCache
         }
     }
 
+    /// <summary>身份来源：显式 <c>Authorization</c> 头优先，其次连接级 Basic 凭据；两者都只以摘要进键。</summary>
     private static string? ResolveIdentity(AxiosConfig config)
     {
         if (config.HasHeaders && config.Headers.Get("Authorization") is { } authorization)
@@ -631,6 +646,7 @@ public sealed class AxiosCache
         return config.ConnectionOrNull?.Auth?.ToBasicHeaderValue();
     }
 
+    /// <summary>凭据摘要：SHA-256 的前 8 字节转十六进制（16 个字符），只够区分身份、不足以还原原值。</summary>
     private static string Digest(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 8));
 }

@@ -3,7 +3,7 @@ using System.IO.Compression;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 请求体压缩：只作用于本库按字节缓冲出来的正文（文本 / 二进制 / 表单），压缩率优先于体积
+/// 请求体压缩：只作用于本库按字节缓冲出来的正文（文本 / 二进制 / 表单），速度优先于压缩率
 /// （<see cref="CompressionLevel.Fastest"/>：HTTP 传输瓶颈通常在网络，省 CPU 更划算）。
 /// </summary>
 internal static class RequestCompression

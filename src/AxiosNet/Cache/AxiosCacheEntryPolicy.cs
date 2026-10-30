@@ -37,7 +37,8 @@ public sealed class AxiosCacheEntryPolicy
     }
 
     /// <summary>最终生效的存活时长（库的结论）：<see cref="CacheFreshnessMode.Configured"/> 取配置值，
-    /// <see cref="CacheFreshnessMode.Server"/> 取剩余新鲜期，<see cref="CacheFreshnessMode.Intersection"/> 取两者较小值。</summary>
+    /// <see cref="CacheFreshnessMode.Server"/> 取剩余新鲜期，<see cref="CacheFreshnessMode.Intersection"/> 取两者较小值；
+    /// 请求带 <c>max-age</c> 时再以它为上限。</summary>
     public TimeSpan TimeToLive { get; }
 
     /// <summary><see cref="AxiosCacheOptions.TimeToLive"/> 的配置值（未经 HTTP 语义调整）。</summary>

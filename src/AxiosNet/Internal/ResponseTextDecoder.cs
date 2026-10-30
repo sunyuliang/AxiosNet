@@ -12,9 +12,11 @@ internal static class ResponseTextDecoder
     private const string AsciiName = "us-ascii";
     private const string Latin1Name = "iso-8859-1";
 
+    /// <summary>字节数组入口：按 <c>forced → charset → BOM → UTF-8</c> 解析编码并剥离匹配的 BOM。</summary>
     public static string Decode(byte[] bytes, string? charSet, Encoding? forced)
         => Decode(bytes.AsSpan(), charSet, forced);
 
+    /// <summary>解析编码并解码；空正文直接返回空串，不做编码判定。</summary>
     public static string Decode(ReadOnlySpan<byte> bytes, string? charSet, Encoding? forced)
     {
         if (bytes.Length == 0)
@@ -100,6 +102,7 @@ internal static class ResponseTextDecoder
         return declared is null || declared.CodePage == Encoding.UTF8.CodePage;
     }
 
+    /// <summary>解析 charset 名对应的编码；空白、未知或平台不支持的 charset 返回 <c>null</c>（交给 BOM / UTF-8 兜底）。</summary>
     internal static Encoding? ResolveFromCharset(string? charSet)
     {
         if (string.IsNullOrWhiteSpace(charSet))
@@ -137,6 +140,7 @@ internal static class ResponseTextDecoder
         }
     }
 
+    /// <summary>按 BOM 识别编码：UTF-8 / UTF-32（BE、LE）/ UTF-16（BE、LE）；无 BOM 返回 <c>null</c>。</summary>
     internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
         // 依次判 UTF-8、UTF-32、UTF-16 的 BOM。

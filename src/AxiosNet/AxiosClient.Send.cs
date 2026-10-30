@@ -395,7 +395,7 @@ public sealed partial class AxiosClient
     /// <summary>流式失败响应保留的错误体上限。</summary>
     private const int StreamErrorBodyLimit = 64 * 1024;
 
-    /// <summary>把流式失败响应的正文读成文本（最多 <see cref="StreamErrorBodyLimit"/> 字节）；读取失败 / 超时 / 超限都只保留已读部分。</summary>
+    /// <summary>把流式失败响应的正文读成文本（上限取 <see cref="StreamErrorBodyLimit"/> 与 <c>MaxContentLength</c> 的较小值）；读取失败 / 超时 / 超限都只保留已读部分。</summary>
     private static async Task<string?> ReadStreamErrorBodyAsync(
         Stream? body,
         AxiosConfig config,

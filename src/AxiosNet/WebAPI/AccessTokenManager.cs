@@ -6,7 +6,7 @@ namespace AxiosNet.WebAPI;
 /// </summary>
 /// <remarks>
 /// <para>刷新任务不跟随调用方的取消令牌：一个调用方断开不会让同批等待者一起失败，也不会白刷一次。</para>
-/// <para>刷新失败（回调抛异常 / 返回空白）会原样抛给全部等待者，且不缓存失败 —— 下一次取令牌会重新尝试。</para>
+/// <para>刷新回调抛的异常原样抛给全部等待者；返回 <c>null</c> / 空白令牌转成 <see cref="InvalidOperationException"/>。失败不缓存 —— 下一次取令牌会重新尝试。</para>
 /// <para>过期时间取自 <see cref="AccessToken.ExpiresAt"/>；提前量 = min(<see cref="AccessTokenOptions.RefreshAhead"/>, 令牌寿命的一半)。</para>
 /// </remarks>
 /// <example>
@@ -74,7 +74,7 @@ public sealed class AccessTokenManager : IAccessTokenProvider, IAccessTokenRefre
         return token.Value;
     }
 
-    /// <summary>作废当前令牌：下一次取令牌必然刷新。401 之后调用。</summary>
+    /// <summary>作废当前令牌：下一次取令牌会重新获取（已有刷新在途时等它完成）。401 之后调用。</summary>
     /// <param name="staleToken">只作废这个令牌值（并发下避免把别人刚刷新的新令牌也作废）；<c>null</c> 表示无条件作废。</param>
     public void Invalidate(string? staleToken = null)
     {

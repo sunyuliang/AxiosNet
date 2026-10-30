@@ -9,6 +9,7 @@ namespace AxiosNet.Internal;
 
 internal static class ScalarParser
 {
+    /// <summary>把裸标量文本解析成 <paramref name="type"/>（含可空形态）；不支持的形态返回 <c>false</c>，不抛异常。</summary>
     public static bool TryParse(string text, Type type, out object? value)
     {
         value = null;

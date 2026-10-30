@@ -14,7 +14,7 @@ internal static class TotalTimeoutBudget
     /// <summary>计时器分辨率：<see cref="Task.Delay(TimeSpan)"/> 与 <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> 都截断毫秒以下的部分。</summary>
     public static readonly TimeSpan TimerResolution = TimeSpan.FromMilliseconds(1);
 
-    /// <summary>剩余预算是否已不足以再发一次尝试：<c>null</c> = 没设总预算；不足一个计时器 tick 视为已耗尽。</summary>
+    /// <summary>剩余预算是否已不足以再发一次尝试：<c>null</c> = 没设总预算；剩余不超过一个计时器刻度视为已耗尽。</summary>
     public static bool IsExhausted(TimeSpan? remaining) => remaining is { } left && left <= TimerResolution;
 
     /// <summary>

@@ -362,7 +362,7 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>解析（必要时懒创建）本实例的并发闸门：容量创建时固定，与本次生效上限不一致就报错；未设置时不建闸门，并发为 <c>null</c> / 排队上限未表态均视为本次没表态。</summary>
+    /// <summary>解析（必要时懒创建）本实例的并发闸门：容量在创建时固定，本次生效上限与已建闸门不一致就报错；本次没要求上限时沿用已有闸门（没有则不建），排队上限只有显式写过（*Set）才参与比较。</summary>
     private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
     {
         var requested = config.LimitsOrNull?.MaxConcurrentRequests;

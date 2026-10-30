@@ -18,7 +18,7 @@ namespace AxiosNet.Circuit;
 ///     RecoverySuccesses = 3
 /// };
 ///
-/// // 自定义策略：只熔断「连续 3 次 5xx」，且冷却期固定 10 秒
+/// // 自定义策略：连续 3 次下游故障（IsFailure 口径，含网络错误与 5xx）就熔断，冷却期固定 10 秒
 /// public sealed class BizCircuitPolicy : IAxiosCircuitPolicy
 /// {
 ///     private int _failures;
@@ -50,7 +50,8 @@ public interface IAxiosCircuitPolicy
     TimeSpan GetRetryAfter(AxiosCircuitContext context);
 
     /// <summary>
-    /// 记录一次尝试的结论：<paramref name="context"/>.<see cref="AxiosCircuitContext.Exception"/> 为 <c>null</c> 表示成功，否则按 <see cref="AxiosCircuitContext.IsFailure"/> 判断算不算下游故障。
+    /// 记录一次尝试的结论：按 <see cref="AxiosCircuitContext.IsSuccess"/> / <see cref="AxiosCircuitContext.IsFailure"/> 判定 ——
+    /// 异常为 <c>null</c> 也可能是 5xx 被 <c>validateStatus</c> 放行（仍算下游故障），两者皆否时（取消 / 4xx / 请求从未发出）只归还名额。
     /// 放行之后必然调用一次（成功、失败、取消 / 4xx、以及「预算耗尽、请求从未发出」都会走到），半开态的探测名额靠它归还。
     /// </summary>
     void Record(AxiosCircuitContext context);

@@ -13,7 +13,7 @@ namespace AxiosNet.Cache;
 /// 过期且带校验器的条目留到被覆盖、被容量压力清掉或 <see cref="IAxiosCacheStore.ClearAsync"/>。
 /// </para>
 /// <para>
-/// 读取与 <see cref="IAxiosCacheStore.GetAsync"/> 同一口径：出错按「没有」处理，挂起受本次请求剩余 <c>TotalTimeout</c> 约束。
+/// 读取与 <see cref="IAxiosCacheStore.GetAsync"/> 同一口径：出错按「没有」处理，配了 <c>TotalTimeout</c> 时挂起受剩余总预算约束。
 /// </para>
 /// </remarks>
 public interface IAxiosCacheRevalidationStore

@@ -31,6 +31,7 @@ public readonly struct AxiosProgressEvent
     /// <summary>true = 上传进度，false = 下载进度。</summary>
     public bool Upload { get; }
 
+    /// <summary>调试用文本：方向、已传 / 总字节与百分比（总长未知时显示 <c>?%</c>）。</summary>
     public override string ToString()
     {
         var percent = Progress is double p ? $"{p * 100:0.0}%" : "?%";

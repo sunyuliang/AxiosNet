@@ -59,15 +59,16 @@ public readonly struct AxiosCircuitContext
     /// <summary>被熔断拒绝时的建议等待时间（只有 <see cref="AxiosConfig.CircuitSettings.OnRejected"/> 回调里有值）。</summary>
     public TimeSpan RetryAfter { get; }
 
-    /// <summary>本次尝试是否成功：拿到响应，且状态码不是 4xx / 5xx（3xx 视为成功）。</summary>
+    /// <summary>本次尝试是否成功：没有异常，且状态码小于 400（3xx 视为成功）；没有状态码时按成功处理（准入上下文本来就没有响应）。</summary>
     public bool IsSuccess => Exception is null && (StatusCode is null || StatusCode < 400);
 
     /// <summary>
     /// 本次尝试是否「一次都没发出」：<see cref="AxiosConfig.TotalTimeout"/> 在排队或入口处就耗尽了
-    /// （<c>ECONNABORTED</c>，但下游连一个字节都没收到）。
+    /// （<c>ECONNABORTED</c>，对应 <see cref="AxiosException.IsTotalTimeoutExceeded"/>，下游连一个字节都没收到）。
     /// </summary>
     /// <remarks>
     /// 自定义策略若要自己记账，用它排除：过载时排队变长就足以让每条请求都撞上它。
+    /// 发送中途被总预算截断走的是普通超时（同样是 <c>ECONNABORTED</c>），不带这个标记、照常算故障。
     /// </remarks>
     public bool TotalTimeoutExpiredBeforeSend => Exception is AxiosException { IsTotalTimeoutExceeded: true };
 

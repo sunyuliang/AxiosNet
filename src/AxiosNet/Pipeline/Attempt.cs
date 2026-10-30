@@ -8,7 +8,8 @@ namespace AxiosNet.Pipeline;
 
 /// <summary>
 /// 内置尝试中间件的具名入口：<see cref="Retry"/> / <see cref="Failover"/> / <see cref="Hedging"/> /
-/// <see cref="Circuit"/> / <see cref="Gate"/> 永远在默认链上，<see cref="Audit"/> 是可选内置项（要显式 `Append` 才生效）。
+/// <see cref="Circuit"/> / <see cref="Gate"/> 恒在默认链上（要摘掉得显式 <see cref="AxiosAttemptPipeline.Remove"/>
+/// 或整体 <see cref="AxiosAttemptPipeline.Create"/>），<see cref="Audit"/> 是可选内置项（要显式 `Append` 才生效）。
 /// 是否真的干活由中间件按本次请求的生效配置决定（没配策略 / 端点 / 分支数就交给下一环）。
 /// </summary>
 public static partial class Attempt
@@ -446,7 +447,7 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 退回一次「已放行、但注定发不出去」的重试所扣的令牌（总预算已耗尽、或退避必然睡完预算）。
+    /// 退回一次「已放行、但注定发不出去」的重试所扣的令牌（总预算已耗尽 / 回调抛错 / 退避被取消）。
     /// 只认内建预算策略（含嵌套）；自定义装饰器包住它时识别不到，属已知的保守偏差。
     /// </summary>
     private static void RefundRetryBudget(IAxiosRetryPolicy policy) => (policy as RetryBudgetPolicy)?.Refund();

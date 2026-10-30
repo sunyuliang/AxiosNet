@@ -46,12 +46,16 @@ public sealed class ConnectionPoolOptions
     public int MaxResponseHeadersLength { get; set; } = 64;
 
     /// <summary>
-    /// 某个 origin 的 Handler 空闲多久后从池中驱逐并释放（默认 5 分钟）。
-    /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点立即可被驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示永不驱逐。
+    /// 某个 origin 的 Handler 空闲（无在途租约）多久后从池中驱逐并释放（默认 5 分钟）。
+    /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点立即可被驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示不按空闲时间驱逐
+    /// （容量压力 / 关闭池时仍可能被收回）。
     /// </summary>
     public TimeSpan IdleHandlerLifetime { get; set; } = TimeSpan.FromMinutes(5);
 
-    /// <summary>空闲 Handler 驱逐扫描间隔（默认 30 秒）；0 表示不启动后台驱逐定时器，只能手动调 <c>EvictIdleEndpoints()</c>。</summary>
+    /// <summary>
+    /// 空闲 Handler 驱逐扫描间隔（默认 30 秒）；0 表示不启动后台定时扫描（<see cref="IdleHandlerLifetime"/> 为
+    /// <see cref="Timeout.InfiniteTimeSpan"/> 时同样不启动），此时仍可按容量压力驱逐或手动调 <c>EvictIdleEndpoints()</c>。
+    /// </summary>
     public TimeSpan EvictionInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>是否自动跟随重定向（默认 true）。</summary>
@@ -144,7 +148,10 @@ public sealed class ConnectionPoolOptions
     /// <summary>TLS 选项扩展入口：在库构造的 <see cref="SslClientAuthenticationOptions"/> 上做最后调整（回调内的赋值不会被覆盖）。</summary>
     public Action<SslClientAuthenticationOptions>? ConfigureSslOptions { get; set; }
 
-    /// <summary>自定义 Handler 工厂：每个 origin 调用一次，必须返回非 null 的独立实例，由池负责释放。</summary>
+    /// <summary>
+    /// 自定义 Handler 工厂：每个 origin 节点创建时调用一次（节点被驱逐 / 重建后会再次调用），
+    /// 必须返回非 null 的独立实例，由池负责释放。
+    /// </summary>
     public Func<PooledHandlerContext, HttpMessageHandler>? HandlerFactory { get; set; }
 
     /// <summary>

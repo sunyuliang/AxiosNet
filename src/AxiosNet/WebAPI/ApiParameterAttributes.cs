@@ -1,6 +1,6 @@
 namespace AxiosNet.WebAPI;
 
-/// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / Body 同用直接报错。</summary>
+/// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / HeaderCollection / Part / Body 同用直接报错。</summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class ApiIgnoreAttribute : Attribute
 {
@@ -23,7 +23,7 @@ public sealed class PathAttribute : Attribute
 
 /// <summary>
 /// 把属性 / 参数值序列化为 query string 参数（数组 <c>a[]=v</c>、嵌套对象 <c>a[b]=v</c>、null 跳过）。
-/// 不传名称时使用属性名 / 参数名；未标注参数特性的成员默认也是本语义，例外是 POST/PUT/PATCH 且声明只有一个未标注的非标量成员时按 <see cref="BodyAttribute"/> 绑定。
+/// 不传名称时使用属性名 / 参数名；未标注参数特性的成员默认也是本语义，例外是 POST/PUT/PATCH 且只有一个未标注成员、且该成员不是标量 / 字典映射时按 <see cref="BodyAttribute"/> 绑定。
 /// 字符串键字典且没有显式命名时键直接进查询串（<c>?a=1&amp;b=2</c>），显式命名则保留嵌套形态。
 /// </summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
@@ -57,8 +57,8 @@ public sealed class HeaderAttribute : Attribute
 
 /// <summary>
 /// 把属性 / 参数值作为请求体发送（序列化规则与 <c>data</c> 一致）。
-/// 编码格式只由 <see cref="AxiosConfig.ContentType"/> 决定，含 <see cref="FormFile"/> 时须显式设为 <c>multipart/form-data</c>；每份声明最多一个，值为 <c>null</c> 时不发送。
-/// 单负载声明可省略本特性：POST/PUT/PATCH 且只有一个未标注的非标量成员时，该成员默认按 Body 绑定。
+/// 编码格式由 <see cref="AxiosConfig.ContentType"/> 决定（未设置时结构化对象采用序列化器自报的 MediaType），含 <see cref="FormFile"/> 时须显式设为 <c>multipart/form-data</c>；每份声明最多一个，值为 <c>null</c> 时不发送。
+/// 单负载声明可省略本特性：POST/PUT/PATCH 且只有一个未标注成员、且该成员不是标量 / 字典映射时，该成员默认按 Body 绑定。
 /// </summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class BodyAttribute : Attribute

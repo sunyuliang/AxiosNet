@@ -22,7 +22,7 @@ public static class ApiClientServiceCollectionExtensions
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
     /// TryAdd 语义：已注册过 <see cref="ApiClient"/> 时本次调用不生效（保留首次注册）。
-    /// 容器中注册了 <see cref="IAuthorizationProvider"/> 单例且未显式设置 <see cref="ApiClient.Authorization"/> 时自动采用它。
+    /// 容器中注册的 <see cref="IAuthorizationProvider"/> / <see cref="IAccessTokenProvider"/> / <see cref="IApiErrorFactory"/> 单例，在对应属性未显式设置时自动采用。
     /// </remarks>
     public static IServiceCollection AddApiClient(
         this IServiceCollection services,
@@ -61,7 +61,7 @@ public static class ApiClientServiceCollectionExtensions
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
     /// 命名站点只经 <see cref="IApiClientResolver"/> 暴露，不注册未命名的 <see cref="ApiClient"/>；站点名重复时注册期即抛 <see cref="InvalidOperationException"/>。
-    /// 其余语义（自建底层客户端、容器 <see cref="IAuthorizationProvider"/> 自动采用）与不带 name 的重载一致。
+    /// 其余语义（自建底层客户端、容器内的授权 / 令牌 / 错误工厂单例自动采用）与不带 name 的重载一致。
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="name"/> 或 <paramref name="baseAddress"/> 为空白。</exception>
     /// <exception cref="InvalidOperationException">站点名已注册。</exception>
@@ -111,7 +111,7 @@ public static class ApiClientServiceCollectionExtensions
     /// <remarks>
     /// 容器中没有 <see cref="AxiosClient"/> 注册时，解析 <see cref="ApiClient"/> 抛
     /// <see cref="InvalidOperationException"/>（请先注册，或改用带 <c>baseAddress</c> 的重载自建）。
-    /// 其余语义（TryAdd、<see cref="IAuthorizationProvider"/> 自动采用）与自建模式重载一致。
+    /// 其余语义（TryAdd、容器内授权 / 令牌 / 错误工厂单例自动采用）与自建模式重载一致。
     /// </remarks>
     public static IServiceCollection AddApiClient(this IServiceCollection services, Action<ApiClient>? configure = null)
     {

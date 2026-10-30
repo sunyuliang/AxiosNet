@@ -16,6 +16,7 @@ internal static class RequestBodyFactory
 {
     private const string MultipartMediaType = AxiosContentType.MultipartFormData;
 
+    /// <summary>按 data 的实际形态与生效 Content-Type 产出请求正文；<c>null</c> 表示没有正文。</summary>
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
         // 正文编码：默认 UTF-8；charset 只在显式设置 RequestEncoding 时写入。
@@ -144,6 +145,7 @@ internal static class RequestBodyFactory
         return content;
     }
 
+    /// <summary>文本正文：按生效编码取字节，按需压缩并写 Content-Type（charset 只随显式 RequestEncoding 补）。</summary>
     private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
     {
         // 用 ByteArrayContent 保证携带 Content-Length。
@@ -176,6 +178,7 @@ internal static class RequestBodyFactory
         return content;
     }
 
+    /// <summary>结构化数据的分派：form-urlencoded / multipart 走专用编码器，其余交给序列化器（标量直接取文本）。</summary>
     private static HttpContent CreateStructured(
         object data,
         AxiosConfig config,

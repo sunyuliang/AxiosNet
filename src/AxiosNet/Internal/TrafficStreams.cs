@@ -23,7 +23,8 @@ internal sealed class TrafficMeter
     private TimeSpan _roundStartClock;
 
     /// <summary>
-    /// 本轮起点是否已确定：由首字节到达时惰性确定，之前的空闲间隔不计入限速预算。
+    /// 本轮起点是否已确定：构造后由首字节到达时惰性确定，<see cref="Restart"/> 时直接推进到那一刻，
+    /// 因此空闲间隔不计入限速预算。
     /// </summary>
     private bool _roundStarted;
 
@@ -65,6 +66,7 @@ internal sealed class TrafficMeter
         return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
     }
 
+    /// <summary>节流上报进度：force 或本轮已传满声明长度时立即上报并置「已完成」，之后的结束上报不再重复。</summary>
     public void Report(bool force, bool upload)
     {
         if (_callback is null || _completed)

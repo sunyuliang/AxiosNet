@@ -134,7 +134,7 @@ internal static class InterfaceDeclaration
         Void
     }
 
-    /// <summary>解析返回形态；<paramref name="responseType"/> 是正文类型（<c>Void</c> 时为 <c>void</c>，非泛型响应为 <c>null</c>）。</summary>
+    /// <summary>解析返回形态；<paramref name="responseType"/> 是正文类型（<c>Void</c> 与非泛型响应均为 <c>null</c>）。</summary>
     public static ReturnShape GetReturnShape(MethodInfo method, out Type? responseType)
     {
         var returnType = method.ReturnType;
@@ -231,6 +231,7 @@ internal static class InterfaceDeclaration
         return true;
     }
 
+    /// <summary>校验单个接口方法：静态 / 泛型 / 路由 / 返回形态 / [Stream] / 参数形态，最后把绑定层错误一并聚合。</summary>
     private static IReadOnlyList<string> ValidateMethod(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method)

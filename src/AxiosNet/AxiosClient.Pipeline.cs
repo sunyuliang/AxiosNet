@@ -10,7 +10,7 @@ namespace AxiosNet;
 // AxiosClient 的请求管线：合并 → 拦截 → 规范化 → 编码，以及一次请求的成型（URL / 协议 / 正文 / 请求头）。
 public sealed partial class AxiosClient
 {
-    /// <summary>请求入口：按固定顺序驱动整条管线 —— 合并 → 校验（实例级）→ 拦截 → 规范化 →（短路 | 校验 + 闸门 → 编码 → 发送）→ 收尾。</summary>
+    /// <summary>请求入口：按固定顺序驱动整条管线 —— 合并 → 校验（实例级）→ 拦截 → 规范化 / 范围校验 →（短路响应 | 编码 → 缓存查询 → 尝试管线 → 缓存落库）→ 收尾。</summary>
     private async Task<AxiosResponse> SendAsync(
         AxiosConfig perCallConfig,
         Type? dataType,

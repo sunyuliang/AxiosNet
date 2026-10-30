@@ -2,7 +2,7 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>体积、速率与流式超时限制（<see cref="AxiosConfig.Limits"/>）。</summary>
+    /// <summary>体积、速率、在途并发闸门与流式分帧限制（<see cref="AxiosConfig.Limits"/>）。</summary>
     public sealed class LimitSettings
     {
         private long? _maxContentLength;

@@ -12,12 +12,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>底层 AxiosNet 客户端（实例默认值、拦截器、连接池都从它进入）。</summary>
     public AxiosClient Axios { get; }
 
-    /// <summary>授权提供方：每次请求发送前调用，把凭据写进最终配置；null 表示匿名访问。标注了 <see cref="AllowAnonymousAttribute"/> 的模型会跳过它。</summary>
+    /// <summary>授权提供方：每次请求发送前调用，把凭据写进最终配置；null 表示匿名访问。标注了 <see cref="AllowAnonymousAttribute"/> 的声明会跳过它。</summary>
     public IAuthorizationProvider? Authorization { get; set; }
 
     /// <summary>
     /// 访问令牌来源：在 <see cref="Authorization"/> 之前调用，按 <c>Authorization: {scheme} {token}</c> 写头
-    /// （scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。令牌为 null / 空白时不写头，模型已显式写该头时不覆盖。
+    /// （scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。令牌为 null / 空白时不写头，模型或实例默认值已显式写该头时不覆盖。
     /// </summary>
     public IAccessTokenProvider? AccessTokenProvider { get; set; }
 
@@ -25,7 +25,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     public Func<object, string?>? UrlParameterFormatter { get; set; }
 
     /// <summary>
-    /// 收到 401 时用新令牌重放一次，默认开启（只在 <see cref="AccessTokenProvider"/> 真的写了 <c>Authorization</c> 头时生效）。
+    /// 收到 401 时用新令牌重放一次，默认开启（只在 <see cref="AccessTokenProvider"/> 真的写了 <c>Authorization</c> 头时生效；
+    /// 另配了 <see cref="Authorization"/> 时不重放，它可能覆盖该头）。
     /// 关掉后 401 直接按错误模型抛出。正文不可重放（流 / 流式请求体 / multipart）时一律不重放。
     /// </summary>
     public bool RetryOnUnauthorized { get; set; } = true;
@@ -219,7 +220,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken)
         => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.SendInternalAsync(config, dataType: null, target: null)));
 
-    /// <summary>只完成请求、不读正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
+    /// <summary>只完成请求、不装配正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
     internal async Task SendWithoutBodyAsync(
         object request,
         AxiosConfig config,

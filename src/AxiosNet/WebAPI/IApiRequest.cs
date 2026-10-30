@@ -3,7 +3,7 @@ namespace AxiosNet.WebAPI;
 /// <summary>
 /// 声明式请求模型契约：<typeparamref name="TResponse"/> 即本次请求的返回类型，调用处不必再写响应类型。
 /// 路由与参数绑定见 <see cref="HttpApiAttribute"/> 与 <see cref="PathAttribute"/> / <see cref="QueryAttribute"/> / <see cref="HeaderAttribute"/> / <see cref="BodyAttribute"/>；
-/// 未标注参数特性的公共可读属性按 <see cref="QueryAttribute"/> 处理。
+/// 未标注参数特性的公共可读属性按 <see cref="QueryAttribute"/> 处理；例外是 POST / PUT / PATCH 的单个未标注非标量成员，按 <see cref="BodyAttribute"/> 处理。
 /// </summary>
 /// <typeparam name="TResponse">本次请求的返回模型类型（也可以是 string / byte[] / Stream 等原始形态）。</typeparam>
 public interface IApiRequest<out TResponse>

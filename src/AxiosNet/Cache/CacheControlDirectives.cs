@@ -15,7 +15,7 @@ namespace AxiosNet.Cache;
 /// </remarks>
 public sealed class CacheControlDirectives
 {
-    /// <summary>响应用没有 <c>Cache-Control</c> 的实例。</summary>
+    /// <summary>响应没有 <c>Cache-Control</c> 时共用的空实例（不可变，避免每次解析都新建）。</summary>
     internal static readonly CacheControlDirectives Empty = new()
     {
         Extensions = new ReadOnlyDictionary<string, string?>(

@@ -44,6 +44,7 @@ public sealed class XmlContentSerializer : IContentSerializer
     /// <summary><c>application/xml</c>：注入本序列化器后请求头会自动用它（调用方未显式设置时）。</summary>
     public string? MediaType => AxiosContentType.Xml;
 
+    /// <inheritdoc />
     public string Serialize(object? value, Type type, AxiosConfig config)
     {
         if (value is null)
@@ -67,6 +68,7 @@ public sealed class XmlContentSerializer : IContentSerializer
         return text.ToString();
     }
 
+    /// <inheritdoc />
     public object? Deserialize(string text, Type type, AxiosConfig config)
     {
         // 禁用 DTD 与外部解析。

@@ -12,6 +12,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class UrlBuilder
 {
+    /// <summary>合并 baseURL 与 url、拼上查询串，校验并缓存为绝对 http(s) 地址；非法地址抛 <c>ERR_INVALID_URL</c>。</summary>
     public static Uri Build(
         string? baseAddress,
         string? url,
@@ -101,6 +102,7 @@ internal static class UrlBuilder
     /// <summary>已校验过的绝对地址缓存（<see cref="Uri"/> 不可变，可安全共享）。</summary>
     private static readonly ConcurrentDictionary<string, Uri> UriCache = new(StringComparer.Ordinal);
 
+    /// <summary>缓存已校验的绝对地址；达到上限时整表清空（不做逐项淘汰，胜在简单且不会无界增长）。</summary>
     private static void CacheUri(string key, Uri uri)
     {
         if (UriCache.Count >= UriCacheLimit)
@@ -181,6 +183,10 @@ internal static class UrlBuilder
     }
 }
 
+/// <summary>
+/// params 序列化（buildURL 的默认实现）：对象 / 字典 / 集合 / JSON 树展平成查询串，
+/// null 跳过，键按 encodeURIComponent 转义且保留方括号。
+/// </summary>
 internal static class ParamsSerializer
 {
     /// <summary>把查询参数序列化成查询串：对象 / 字典 / 集合 / 已序列化的字符串原样透传。</summary>
@@ -312,6 +318,7 @@ internal static class ParamsSerializer
         return trimmed.Length == 0 ? string.Empty : trimmed.TrimStart('?', '&');
     }
 
+    /// <summary>把单个值按实际形态展平成查询键值对：null 跳过，字典 / 集合 / JSON 树 / 标量 / 嵌套对象分别处理。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
