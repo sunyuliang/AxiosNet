@@ -29,7 +29,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) |
 | Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
-| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
+| Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
 | Engineering | [Declarative API client](#declarative-api-client) · [Interface declarations](#interface-declarations) · [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
@@ -471,7 +471,7 @@ await http.PostAsync("upload", payload, c =>
 
 ### Sending-request hook (signing / final request)
 
-When you need to rewrite the **final request** just before it goes out (signatures, timestamps, idempotency keys), use `OnSendingRequest`:
+When you need to rewrite the **final request** just before it goes out (signatures, timestamps), use `OnSendingRequest`:
 
 ```csharp
 await client.PostAsync<OrderResult>("orders", order, c =>
@@ -490,7 +490,8 @@ await client.PostAsync<OrderResult>("orders", order, c =>
 ```
 
 - Fires after the URL is merged, the body is serialized and the headers are written, and **before a connection is leased and the request is sent**; the `HttpRequestMessage` you get is the very object used for that send.
-- Fires once per attempt: retries, failover endpoints and hedging branches each fire again, so timestamps, nonces and idempotency keys never repeat across retries.
+- Fires once per attempt: retries, failover endpoints and hedging branches each fire again, so timestamps and nonces are fresh on every send.
+- Keys that must stay **identical across attempts** (idempotency keys) do not belong here — every retry would get a new value, turning one write into two. Use [`Idempotency`](#idempotency-keys) instead.
 - Rewrites apply to that one send: the library clones the message for the attempt before firing (sharing the body), so headers written on the first attempt are not copied into later attempts.
 - Cost of reading the body: buffered bodies (JSON / form / `byte[]` / `string`) hand over their bytes directly; streaming bodies (`IAsyncEnumerable<byte[]>` or a non-seekable `Stream`) get consumed, and a body wrapped for progress / rate limiting is serialized a second time — for signing, stick to buffered bodies or sign the headers only.
 - A thrown exception aborts the request (`ERR_BAD_REQUEST`, original exception in `Cause`) without leasing a connection, so nothing is sent; cancellation / timeout thrown by the hook is attributed to the attempt (`ERR_CANCELED` / `ECONNABORTED`).
@@ -903,6 +904,25 @@ An endpoint supplies the **origin and path prefix**; the request's own path and 
 - **Assigning the list snapshots it**: mutating your own list afterwards does not affect the effective config; what you read back is that internal snapshot and must not be modified.
 - **Failing over re-checks the HTTP/3 guard**: an endpoint that cannot run the requested version (e.g. a plaintext mirror with a strict h3 policy) is skipped and the next one is tried; only when none is usable does it throw `ERR_BAD_OPTION_VALUE`.
 - Each failover produces one attempt event with the same `AttemptNumber` and an incremented `EndpointIndex` (see [Observability](#observability)).
+
+## Idempotency keys
+
+One key per **logical request**, written into a request header; retries, backup endpoints and hedging branches all carry the same key, so the server treats them as a single write.
+
+```csharp
+var client = Axios.Create(c => c.Idempotency.Enabled = true);        // off by default
+
+await client.PostAsync("orders", order);                             // Idempotency-Key: <32-char Guid>
+await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a");  // pass an upstream key through
+```
+
+- **Off by default**: attaching a key to non-idempotent methods turns "duplicate write" into "silent dedupe", so enabling it is a decision about your endpoint.
+- **The key is written once onto the request template**, and copies of the template carry the header along — retries never change it. `OnSendingRequest` fires **per attempt**, so writing the key there is wrong (every retry gets a new one).
+- **One key per logical request**: every `RequestAsync` call builds a new effective config and therefore a new key; a replay after an auth failure must reuse the original key, so put it into `Idempotency.Key` and send again.
+- `Key` (explicit) wins over `KeyFactory`; when neither is set, a `Guid` in `N` format is used.
+- `HeaderName` defaults to `Idempotency-Key`; a request that already carries that header is left untouched.
+- A blank key from the factory or an invalid header name throws `ERR_BAD_OPTION_VALUE` before anything is sent.
+- **Hedging + idempotency key**: both branches share one key, so after dedupe the server returns "already processed" to one of them. That is the point of an idempotency key, but it requires the server to actually dedupe by key — otherwise you just sent the same write twice.
 
 ## Attempt pipeline
 
@@ -1370,7 +1390,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |
 | `ShortCircuit` | `null` | Deliver a response without sending (this request only) |
 
-Nine sub-objects (created lazily on first access):
+Ten sub-objects (created lazily on first access):
 
 **`Serialization`** — `JsonSerializerOptions` (web style) / `ContentSerializer` (`null` = built-in JSON) / `ContentSerializers` (instance registry `ContentSerializerRegistry`, always present on a client) / `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat` (`Brackets`)
 
@@ -1389,6 +1409,8 @@ Nine sub-objects (created lazily on first access):
 **`Failover`** — `Endpoints` (`null` = no failover; ordered absolute `http`/`https` URLs, path prefix allowed, no query or fragment, no duplicates)
 
 **`Telemetry`** — `Enabled` (`null` = on) / `CaptureUrl` (`null` = capture, without the query string) / `CaptureQuery` (`null` = omit the query string)
+
+**`Idempotency`** — `Enabled` (`false`) / `HeaderName` (`Idempotency-Key`) / `Key` (`null` = generated) / `KeyFactory` (`null` = `Guid` in `N` format)
 
 > Assigning `null` per request disables the instance's `Retry.Policy` / `Circuit.Policy` / `Failover.Endpoints` — that is a different state from "not set".
 
@@ -1513,7 +1535,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 
 | Folder | What it covers |
 | --- | --- |
-| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the nine sub-objects |
+| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the ten sub-objects |
 | `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
 | `Governance/` | Concurrency gate, progress callbacks and rate limiting |
 | `Resilience/` | Retry policies and timing, whole-request budget (`TotalTimeout`), circuit-breaker state machine, short circuits |
@@ -1567,7 +1589,7 @@ Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/READ
 │  ├─ AxiosNet/                       # library (dual target net6.0 / net8.0)
 │  │  ├─ Axios.cs                     # static facade
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
-│  │  ├─ AxiosConfig*.cs              # configuration (top level + nine sub-objects)
+│  │  ├─ AxiosConfig*.cs              # configuration (top level + ten sub-objects)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # request / response interceptors

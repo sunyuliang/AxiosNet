@@ -148,6 +148,12 @@ public sealed partial class AxiosClient
             merged.Telemetry.MergeFrom(incomingTelemetry);
         }
 
+        // 幂等键同属按请求项；已生成的键不跨合并搬运（那是某次发送的状态）。
+        if (perCall.IdempotencyOrNull is { } incomingIdempotency)
+        {
+            merged.Idempotency.MergeFrom(incomingIdempotency);
+        }
+
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
             // 注册表属实例级：库产出的配置（回放 response.Config 等）沿用本实例的登记，不搬来源实例的。
@@ -365,4 +371,78 @@ public sealed partial class AxiosClient
     private static bool IsLengthHeaderMatching(string headerValue, long actual)
         => long.TryParse(headerValue.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
             && parsed == actual;
+
+    /// <summary>把幂等键写进请求模板：模板只建一次，重试 / 换端点 / 对冲复制时随头沿用同一个键。</summary>
+    private static void ApplyIdempotencyKey(HttpRequestMessage request, AxiosConfig config)
+    {
+        if (config.IdempotencyOrNull is not { Enabled: true } settings)
+        {
+            return;
+        }
+
+        var headerName = string.IsNullOrWhiteSpace(settings.HeaderName)
+            ? AxiosConfig.IdempotencySettings.DefaultHeaderName
+            : settings.HeaderName.Trim();
+
+        bool added;
+        try
+        {
+            // 调用方自己写了同名头：以显式头为准，不覆盖。
+            if (request.Headers.Contains(headerName))
+            {
+                return;
+            }
+
+            added = request.Headers.TryAddWithoutValidation(headerName, ResolveIdempotencyKey(settings, config));
+        }
+        catch (FormatException ex)
+        {
+            throw AxiosException.InvalidOption($"幂等键头名 \"{headerName}\" 不是合法的 HTTP 头名。", config, ex);
+        }
+
+        if (!added)
+        {
+            throw AxiosException.InvalidOption($"幂等键头名 \"{headerName}\" 不是合法的 HTTP 头名。", config);
+        }
+    }
+
+    /// <summary>取本次逻辑请求的键：显式键 → 已生成的键 → 工厂 → 默认 Guid；生成后内存化，重发沿用。</summary>
+    private static string ResolveIdempotencyKey(AxiosConfig.IdempotencySettings settings, AxiosConfig config)
+    {
+        if (settings.Key is { } explicitKey)
+        {
+            var trimmed = explicitKey.Trim();
+            if (trimmed.Length == 0)
+            {
+                throw AxiosException.InvalidOption("显式设置的幂等键是空白：每个逻辑请求必须有一个非空键。", config);
+            }
+
+            return trimmed;
+        }
+
+        if (settings.GeneratedKey is { } generated)
+        {
+            return generated;
+        }
+
+        string? key;
+        try
+        {
+            key = settings.KeyFactory?.Invoke(config) ?? Guid.NewGuid().ToString("N");
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            throw AxiosException.InvalidOption("幂等键工厂抛异常。", config, ex);
+        }
+
+        key = key?.Trim();
+
+        if (string.IsNullOrEmpty(key))
+        {
+            throw AxiosException.InvalidOption("幂等键工厂返回了空白：每个逻辑请求必须有一个非空键。", config);
+        }
+
+        settings.GeneratedKey = key;
+        return key;
+    }
 }

@@ -26,7 +26,8 @@ public sealed partial class AxiosConfig
         /// 参数是本次尝试的请求消息、生效配置与本次尝试的取消令牌。
         /// </summary>
         /// <remarks>
-        /// 每次尝试触发一次：重试 / 换端点 / 对冲的每条分支各一次，因此可以在这里写只对某次发送有效的头（签名、时间戳、幂等键）。
+        /// 每次尝试触发一次：重试 / 换端点 / 对冲的每条分支各一次，因此可以在这里写只对某次发送有效的头（签名、时间戳）。
+        /// 必须在多次尝试间保持不变的键（幂等键）不要写在这里——每次尝试都会重新生成；请用 <see cref="AxiosConfig.Idempotency"/>。
         /// 异步执行，抛异常即中断本次请求（<c>ERR_BAD_REQUEST</c>，原始异常在 <see cref="Exception.InnerException"/>）；
         /// 读 <see cref="HttpRequestMessage.Content"/> 时注意：已缓冲的正文直接取字节，流式正文会被读走，包了进度 / 限速的内容会再序列化一遍。
         /// </remarks>

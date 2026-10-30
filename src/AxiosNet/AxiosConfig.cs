@@ -17,6 +17,7 @@ public sealed partial class AxiosConfig
     private HedgingSettings? _hedging;
     private FailoverSettings? _failover;
     private TelemetrySettings? _telemetry;
+    private IdempotencySettings? _idempotency;
 
     /// <summary>序列化相关设置：JSON 选项、内容序列化器、文本编码、查询串与表单字段命名；首次读取时懒创建。</summary>
     public SerializationSettings Serialization
@@ -81,6 +82,13 @@ public sealed partial class AxiosConfig
         set => _telemetry = value;
     }
 
+    /// <summary>幂等键：打开后每个逻辑请求写一个键，重试 / 换端点 / 对冲共用同一个键（默认关闭）。</summary>
+    public IdempotencySettings Idempotency
+    {
+        get => _idempotency ??= new IdempotencySettings();
+        set => _idempotency = value;
+    }
+
     // 库内读取一律走这几个访问器：公共 getter 会懒创建对象。
     internal SerializationSettings? SerializationOrNull => _serialization;
 
@@ -99,6 +107,8 @@ public sealed partial class AxiosConfig
     internal FailoverSettings? FailoverOrNull => _failover;
 
     internal TelemetrySettings? TelemetryOrNull => _telemetry;
+
+    internal IdempotencySettings? IdempotencyOrNull => _idempotency;
 
     /// <summary>对应 axios baseURL。</summary>
     public string? BaseAddress { get; set; }
@@ -429,6 +439,7 @@ public sealed partial class AxiosConfig
         clone._hedging = _hedging?.Clone();
         clone._failover = _failover?.Clone();
         clone._telemetry = _telemetry?.Clone();
+        clone._idempotency = _idempotency?.Clone();
 
         // Params / Data 是可变的调用方容器，克隆时隔离一份。
         clone._params = IsolateMutableContainer(_params);
@@ -439,6 +450,12 @@ public sealed partial class AxiosConfig
 
         // 短路响应只属于那一次请求，克隆时清空。
         clone.ShortCircuit = null;
+
+        // 已生成的幂等键属于某一次发送：克隆是「新请求的输入」，不能带着旧键走。
+        if (clone._idempotency is not null)
+        {
+            clone._idempotency.GeneratedKey = null;
+        }
 
         // Auth 的值已是生效结果，克隆后清掉「显式赋值过」标记。
         if (clone._connection is not null)

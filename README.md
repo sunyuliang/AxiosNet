@@ -29,7 +29,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) |
 | 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
-| 弹性 | [重试](#重试) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [尝试管线](#尝试管线) · [短路响应](#短路响应) |
+| 弹性 | [重试](#重试) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) |
 | 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
 | 工程化 | [声明式 API 客户端](#声明式-api-客户端) · [接口级声明](#接口级声明) · [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
 
@@ -471,7 +471,7 @@ await http.PostAsync("upload", payload, c =>
 
 ### 发送前钩子（签名 / 最终请求）
 
-需要在**真正发出之前**改写最终请求（签名、时间戳、幂等键）时，用 `OnSendingRequest`：
+需要在**真正发出之前**改写最终请求（签名、时间戳）时，用 `OnSendingRequest`：
 
 ```csharp
 await client.PostAsync<OrderResult>("orders", order, c =>
@@ -490,7 +490,8 @@ await client.PostAsync<OrderResult>("orders", order, c =>
 ```
 
 - 触发时点：URL 已合并、正文已序列化、请求头已写入，**取连接与发送之前**；拿到的 `HttpRequestMessage` 就是这条请求真正使用的对象。
-- 每次尝试各触发一次：重试 / 换端点 / 对冲的每条分支都重新触发，所以时间戳、nonce、幂等键不会在重试里重复。
+- 每次尝试各触发一次：重试 / 换端点 / 对冲的每条分支都重新触发，所以时间戳、nonce 每次发送都是新的。
+- 要在多次尝试间**保持不变**的键（幂等键）不要写在这里 —— 每次重试都会换一个值，等于把同一份写操作当成两次。请用 [`Idempotency`](#幂等键)。
 - 改写只作用于本次发送：库在触发前给本次尝试复制一份请求消息（正文共享），第一次尝试写进头里的内容不会被后续尝试复制叠加。
 - 读正文的代价：已缓冲的正文（JSON / 表单 / `byte[]` / `string`）直接取字节；流式请求体（`IAsyncEnumerable<byte[]>`、不可 seek 的 `Stream`）会被读走，包了进度 / 限速的内容会再序列化一遍 —— 签名这类场景请只对已缓冲的正文下手，或只签请求头。
 - 抛异常即中断请求（`ERR_BAD_REQUEST`，原异常在 `Cause`），此时不占连接、请求没有发出；钩子里抛出的取消 / 超时按本次尝试归属（`ERR_CANCELED` / `ECONNABORTED`）。
@@ -904,6 +905,25 @@ await client.GetAsync("health", c => c.Failover.Endpoints = null);
 - **端点表赋值即快照**：之后改调用方自己的列表不影响已生效的配置；读回来的就是内部那一版，调用方不得修改。
 - **换端点会重判 HTTP/3 护栏**：跑不了当前 HTTP 版本的端点（如明文镜像 + 严格 h3）直接跳过继续下一个，全部不可用时才抛 `ERR_BAD_OPTION_VALUE`。
 - 每次换端点产生一条尝试事件，`AttemptNumber` 不变、`EndpointIndex` 递增（见[可观测性](#可观测性)）。
+
+## 幂等键
+
+一个**逻辑请求**一个键，写进请求头；重试 / 换端点 / 对冲的各次发送带的是同一个键，服务端因此只把它当作一次写操作。
+
+```csharp
+var client = Axios.Create(c => c.Idempotency.Enabled = true);        // 默认关闭
+
+await client.PostAsync("orders", order);                             // Idempotency-Key: <32 位 Guid>
+await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a");  // 透传上游的键
+```
+
+- **默认关闭**：非幂等方法自动带键会把「重复写」变成「静默去重」，必须由你确认接口支持幂等键。
+- **键在请求模板上写一次**，模板被复制时随头一起搬走 —— 重试不会换键。`OnSendingRequest` 是**每次尝试**一次，在那里写键是错的（每次重试都会换一个键）。
+- **一个逻辑请求一个键**：每调用一次 `RequestAsync` 都是新的生效配置、新键；认证失败后的重放要沿用原键，请把它写进 `Idempotency.Key` 再发。
+- `Key`（显式值）优先于 `KeyFactory`；两者都没有时用 `Guid` 的 `N` 格式。
+- `HeaderName` 默认 `Idempotency-Key`；已经显式写了同名头的请求不会被覆盖。
+- 键工厂返回空白、头名非法都在发请求前抛 `ERR_BAD_OPTION_VALUE`。
+- **对冲 + 幂等键**：两条分支同键，服务端去重后其中一条会拿到「已处理」的结果。这正是幂等键该有的行为，但要求服务端真的按键去重 —— 否则只是把同一份写操作发了两次。
 
 ## 尝试管线
 
@@ -1368,7 +1388,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `Response` | `null` | 响应阶段可读（状态码 / 头 / 媒体类型） |
 | `ShortCircuit` | `null` | 短路响应：不发请求直接交付（只对本次请求生效） |
 
-九个子对象（首次访问才创建）：
+十个子对象（首次访问才创建）：
 
 **`Serialization`** — `JsonSerializerOptions`（Web 风格）/ `ContentSerializer`（`null` = 内置 JSON）/ `ContentSerializers`（实例注册表 `ContentSerializerRegistry`，构造时必有）/ `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat`（`Brackets`）
 
@@ -1385,6 +1405,8 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 **`Hedging`** — `MaxHedges`（`0` = 不对冲，上限 16）/ `Delay`（80ms，第 n 条分支起跑于 `n × Delay`，`Delay × MaxHedges` 不得超过计时器范围）/ `HedgeNonIdempotentMethods`（`false`）
 
 **`Failover`** — `Endpoints`（`null` = 不换端点；有序的绝对 `http`/`https` 地址，可带路径前缀，不能带 query / fragment，不能重复）
+
+**`Idempotency`** — `Enabled`（`false`）/ `HeaderName`（`Idempotency-Key`）/ `Key`（`null` = 自动生成）/ `KeyFactory`（`null` = `Guid` 的 `N` 格式）
 
 **`Telemetry`** — `Enabled`（`null` = 开启）/ `CaptureUrl`（`null` = 记录，不含查询串）/ `CaptureQuery`（`null` = 不记查询串）
 
@@ -1511,7 +1533,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 
 | 目录 | 覆盖范围 |
 | --- | --- |
-| `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与九个子对象 |
+| `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与十个子对象 |
 | `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
 | `Governance/` | 并发闸门、进度回调与限速 |
 | `Resilience/` | 重试策略与计时、总预算（`TotalTimeout`）、熔断状态机、短路响应 |
@@ -1565,7 +1587,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  ├─ AxiosNet/                       # 类库（net6.0 / net8.0 双目标）
 │  │  ├─ Axios.cs                     # 静态门面
 │  │  ├─ AxiosClient*.cs              # 实例 + 请求管线 + 快捷方法
-│  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 九个子对象）
+│  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 十个子对象）
 │  │  ├─ AxiosHeaders.cs              # 请求头
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器

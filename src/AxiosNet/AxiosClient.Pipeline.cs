@@ -311,6 +311,7 @@ public sealed partial class AxiosClient
             }
 
             ApplyHeaders(template, config);
+            ApplyIdempotencyKey(template, config);
             return template;
         }
         catch
