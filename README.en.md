@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1687%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1689%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1491,9 +1491,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1624 | `net8.0` / `net6.0` | 3248 |
+| `AxiosNet.Tests` (core + declarative) | 1626 | `net8.0` / `net6.0` | 3252 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1687** | | **3374** |
+| **Total** | **1689** | | **3378** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 
@@ -1555,6 +1555,7 @@ By default it runs **in-process** (no temp project, no rebuild). Add `--isolated
 | `StreamingFramingBenchmarks` | Streaming framing (NDJSON / SSE / JSON array) | `Ndjson` |
 | `LargeBodyUploadBenchmarks` | Large uploads (1 / 8 / 32MB: `byte[]` / `ReadOnlyMemory` / stream / async sequence, real loopback socket) | `HttpClient_Upload_ByteArray` |
 | `LargeBodyDownloadBenchmarks` | Large downloads (1 / 8 / 32MB: buffered `byte[]` vs streamed) | `HttpClient_Download_Buffered` |
+| `LargeBodyJsonBenchmarks` | Large JSON responses (1 / 8 / 32MB: `byte[]` / typed / `JsonElement`) | `HttpClient_GetBytes` |
 
 Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
 

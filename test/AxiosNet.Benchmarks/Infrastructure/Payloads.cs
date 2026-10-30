@@ -27,6 +27,16 @@ public sealed class AddressDto
     public string Zip { get; set; } = string.Empty;
 }
 
+/// <summary>大正文 JSON 数组的元素：数字 / 字符串 / 浮点三种字段，覆盖常见对象图成本。</summary>
+public sealed class JsonItemDto
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public double Value { get; set; }
+}
+
 /// <summary>流式响应的单帧（模拟 LLM token 流的一行）。</summary>
 public sealed class StreamFrame
 {
@@ -54,6 +64,30 @@ internal static class Payloads
         var payload = new byte[bytes];
         Array.Fill(payload, LargeBodyFill);
         return payload;
+    }
+
+    /// <summary>
+    /// 构造不小于 <paramref name="bytes"/> 的 JSON 数组正文（同一对象重复），
+    /// 用于「大正文 JSON 响应的分配量尺」。只在 <c>GlobalSetup</c> 里调用一次。
+    /// </summary>
+    public static byte[] LargeJson(int bytes)
+    {
+        const string item = """{"id":123,"name":"abcdefghij","value":1234.5}""";
+        var count = (bytes / item.Length) + 1;
+        var builder = new StringBuilder(2 + (count * (item.Length + 1)));
+        builder.Append('[');
+        for (var i = 0; i < count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append(',');
+            }
+
+            builder.Append(item);
+        }
+
+        builder.Append(']');
+        return Encoding.UTF8.GetBytes(builder.ToString());
     }
 
     /// <summary>小对象响应：与 <see cref="UserDto"/> 同形。</summary>

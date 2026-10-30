@@ -8,6 +8,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 
 namespace AxiosNet.Tests.Regression;
 
@@ -178,6 +179,56 @@ public sealed class AllocationTests
     }
 
     [Fact]
+    public void JsonTypedResponse_PaysObjectGraphNotAnExtraCopy()
+    {
+        // 现有 JSON 用例只验「正文转换入口不整串解码」；整条响应（原始字节 + 对象图）的分配量没有量尺，
+        // 字节被多复制一份这种退化不会被发现。本机实测（net6 / net8 一致）：1MB 正文约 3.40×——
+        // 1× 原始字节 + List / 对象 / 字符串；4× 的门槛卡在「再多一次整串复制」之下。
+        const int size = 1024 * 1024;
+        using var client = new AxiosClient(handler: new MemoryPayloadHandler(BuildJsonPayload(size), "application/json"));
+
+        // 测量窗口内必须同步推进：await 会引入测试自己的分配。
+#pragma warning disable xUnit1031
+        void Read() => _ = client.GetAsync<List<JsonNode>>("http://localhost/json").GetAwaiter().GetResult();
+        var sample = client.GetAsync<List<JsonNode>>("http://localhost/json").GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+        Assert.True(sample.Data!.Count > 0, "JSON 没有反序列化成对象图，这条用例测不到被测路径。");
+
+        var average = AverageBytes(3, Read);
+
+        Assert.True(
+            average < size * 4,
+            $"1MB JSON 强类型响应平均分配 {average:N0} B（{average / (double)size:0.00}× 载荷）——超出 4× 护栏："
+            + "疑似整串解码成 UTF-16 再反序列化，或字节被额外复制了一份。");
+    }
+
+    [Fact]
+    public void JsonElementResponse_PaysDocumentAndClone()
+    {
+        // 非泛型路径保留 JsonElement：实测 4.09× = 1× 原始字节 + Parse + RootElement.Clone() + 释放 3.09×。
+        // 3.09× 与裸 JsonSerializer.Deserialize<JsonElement> 逐字节相同，是 STJ 交付 JsonElement 的地板。
+        // 门槛 4.5× 专门卡住「省掉 Clone、让元素持有未释放的文档」这个看似划算的改法——实测更贵：
+        // 不释放的文档每次都要重新租元数据数组，总量反而升到 5.02×（见 test/AxiosNet.Benchmarks/README.md）。
+        const int size = 1024 * 1024;
+        using var client = new AxiosClient(handler: new MemoryPayloadHandler(BuildJsonPayload(size), "application/json"));
+
+#pragma warning disable xUnit1031
+        void Read() => _ = client.GetAsync("http://localhost/json").GetAwaiter().GetResult();
+        var sample = client.GetAsync("http://localhost/json").GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+        Assert.True(((JsonElement)sample.Data!).GetArrayLength() > 0, "JSON 没有解析成 JsonElement，这条用例测不到被测路径。");
+
+        var average = AverageBytes(3, Read);
+
+        Assert.True(
+            average < size * 9 / 2,
+            $"1MB JSON JsonElement 响应平均分配 {average:N0} B（{average / (double)size:0.00}× 载荷）——超出 4.5× 护栏："
+            + "要么是文档之外又多了一次整串解码 / 复制，要么是省掉了 Clone、让未释放的文档每次重新租元数据（后者实测更贵）。");
+    }
+
+    [Fact]
     public void JsonTextResponse_DoesNotDecodeWholeBodyBeforeSerialization()
     {
         // 1 MB 的 JSON 文本正文 + 只记录入口的序列化器：正文不该先解码成整串 UTF-16（2 倍体量），
@@ -256,12 +307,52 @@ public sealed class AllocationTests
         return (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;
     }
 
+    /// <summary>固定形状的 JSON 数组（元素 = 整数 / 10 字符字符串 / 浮点），让两条 JSON 护栏的量尺可比。</summary>
+    private static byte[] BuildJsonPayload(int size)
+    {
+        const string item = """{"id":123,"name":"abcdefghij","value":1234.5}""";
+        var count = (size / item.Length) + 1;
+        var builder = new StringBuilder(2 + (count * (item.Length + 1)));
+        builder.Append('[');
+        for (var i = 0; i < count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append(',');
+            }
+
+            builder.Append(item);
+        }
+
+        builder.Append(']');
+        return Encoding.UTF8.GetBytes(builder.ToString());
+    }
+
+    private sealed class JsonNode
+    {
+        public int Id { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public double Value { get; set; }
+    }
+
     /// <summary>返回内存响应的 Handler：读取同步完成，用于确定的分配测量。</summary>
     private sealed class MemoryPayloadHandler : HttpMessageHandler
     {
         private readonly byte[] _payload;
+        private readonly string _mediaType;
 
-        public MemoryPayloadHandler(int size) => _payload = new byte[size];
+        public MemoryPayloadHandler(int size)
+            : this(new byte[size], "application/octet-stream")
+        {
+        }
+
+        public MemoryPayloadHandler(byte[] payload, string mediaType)
+        {
+            _payload = payload;
+            _mediaType = mediaType;
+        }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -270,7 +361,7 @@ public sealed class AllocationTests
             var response = new HttpResponseMessage(HttpStatusCode.OK);
             response.Content = new ByteArrayContent(_payload);
             response.Content.Headers.ContentType =
-                new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                new System.Net.Http.Headers.MediaTypeHeaderValue(_mediaType);
             return Task.FromResult(response);
         }
     }

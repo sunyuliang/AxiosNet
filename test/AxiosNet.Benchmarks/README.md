@@ -85,8 +85,8 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 「Debug 就 Debug」是你的选择，但那种数字只能确认跑得通，启动时会有明确提示。
 
 默认作业是 **3 预热 + 8 迭代**（见 [`BenchmarkConfig.cs`](BenchmarkConfig.cs)），
-比 BDN 的 `DefaultJob`（6 + 15）轻一档：45 个基准的完整一轮在本机实测 **8 分 41 秒**（隔离模式；
-大正文两组是后加的 36 个用例，单独一轮约十几分钟，按需用 `--filter '*LargeBody*'` 跑）——
+比 BDN 的 `DefaultJob`（6 + 15）轻一档：不含大正文的 45 个基准在本机实测 **8 分 41 秒**（隔离模式；
+大正文三组（上传 / 下载 / JSON）是后加的 54 个用例，单独一轮约十几分钟，按需用 `--filter '*LargeBody*'` 跑）——
 「前后各跑一轮」才落得进日常流程。代价是置信区间更宽，所以判定的第一依据是 `Allocated`（确定性量），
 第二依据是同运行内的比值；要更窄的区间就用作业覆盖：`--job long`。
 
@@ -104,7 +104,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 分组的先后由 `[BenchmarkGroup(..., Order = n)]` 定：
 
 - 输入编号跑一组，跑完回到菜单；
-- `a` = 顺序跑全部（默认作业，本机 8~9 分钟）；
+- `a` = 顺序跑全部（默认作业；不含大正文的 45 个基准约 8~9 分钟，加大正文三组会更久）；
 - `s` = 冒烟跑全部（`--job short`，3 轮，只确认跑得通）；
 - `m` = 在同进程 / 隔离之间切换（当前方式印在标题下方，每组摘要末尾也会标一次）；
 - `q` = 退出。
@@ -122,7 +122,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 摘要只**呈现**不判定：没有阈值、没有通过 / 不通过。判定口径仍是下面几节写的那些。
 
 
-## 九组基准
+## 十组基准
 
 | 类 | 热点 | 基线 | 读什么 |
 | --- | --- | --- | --- |
@@ -135,10 +135,11 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` | `Ratio` = 格式差；`Frames` 三档的**斜率** = 每帧成本 |
 | `LargeBodyUploadBenchmarks` | 大正文上传（1 / 8 / 32MB：`byte[]` / `ReadOnlyMemory` / 流 / 异步序列） | `HttpClient_Upload_ByteArray` | `Allocated` 不随 `Megabytes` 涨 = 没有正文拷贝；三种 chunked 形态互相对照 |
 | `LargeBodyDownloadBenchmarks` | 大正文下载（1 / 8 / 32MB：缓冲成 `byte[]` vs 流式读完） | `HttpClient_Download_Buffered` | 缓冲下载 `Allocated` ≈ 1× 载荷（8MB 是预分配边界）；流式下载只有读缓冲 |
+| `LargeBodyJsonBenchmarks` | 大正文 JSON 响应（1 / 8 / 32MB：`byte[]` / 强类型 / `JsonElement`） | `HttpClient_GetBytes` | `Allocated / 载荷`：`byte[]` ≈ 1×；强类型 ≈ 3.4×；`JsonElement` ≈ 4.1×（文档 + 克隆 + token 元数据），三档线性 = 没有额外整串复制 |
 
-四组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `LargeBodyUpload` / `LargeBodyDownload`）
+五组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `LargeBodyUpload` / `LargeBodyDownload` / `LargeBodyJson`）
 与五组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming`）
-不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。大正文两组另有自己的口径：
+不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。大正文三组另有自己的口径：
 `Allocated` 是主轴（确定性量），耗时只用于「同量级 / 谁更快」的判断。
 
 ## 怎么读数字
@@ -318,7 +319,7 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 ## 大正文组实测（2026-10-29）
 
 同一台机器（Intel Core Ultra 5 125H，Windows 10 22H2，.NET 8.0.31，Release，默认作业、同进程），
-`--filter '*LargeBody*'` 一轮 36 个用例。上传 / 下载各自有独立基线，行内 `Ratio` 只与同组基线比。
+`--filter '*LargeBody*'` 当时一轮 36 个用例（JSON 组是后加的，现在共 54 个）。上传 / 下载各自有独立基线，行内 `Ratio` 只与同组基线比。
 
 **下载**（基线 `HttpClient_Download_Buffered`）：
 
@@ -350,6 +351,43 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 - **上传的 `byte[]` / `ReadOnlyMemory` / 可 seek 流不碰正文**：三档尺寸的 `Allocated` 都在 9.6 KB 量级（内容对象 + 请求 / 响应包装），与载荷大小无关；唯一例外是 32MB 档 `AxiosNet_Upload_ByteArray` 的 27.85 KB——这一轮的一次性池化缓冲，仍不是正文拷贝。
 - **chunked 传输有框架级的按次分配**：每次写出约 3–4 KB（`HttpClient` 侧同样有）。80 KB 缓冲的 `StreamChunked` 在 32MB 上是 1.1 MB（≈3.4%），64 KB 块的 `AsyncEnumerable` 是 2.2 MB（≈6.7%）——按块数乘出来的，块越大越省；它不是库内的正文缓冲。
 - **流式正文的耗时只与流式路径同量级，先后顺序不可当结论**：异步序列少一次「读进 80 KB 缓冲再写出」的搬运，但在 1MB / 8MB 档上这点差异完全埋进噪声。证据是本节数据的一次复跑（`--filter '*AsyncEnumerable*'`，只改测量时机、不改代码）：1MB 的 `AsyncEnumerableBytes` 从 2,450.2 µs 变成 876.9 µs（2.8 倍），8MB 的 `AsyncEnumerableMemory` 从 5,765.2 µs 变成 8,765.5 µs（1.5 倍）——同一份工作量在两轮里相差数倍，说明时间列只能读「同量级」。复跑里稳定的仍是分配：1MB 75.7 KB、8MB 559–560 KB、32MB 2.22 MB，两轮一致。
+
+## 大正文 JSON 组实测（2026-10-30）
+
+同机（Intel Core Ultra 5 125H，Windows 10 22H2，.NET 8.0.31，Release，默认作业、同进程），
+`--filter '*LargeBodyJson*'` 一轮 18 个用例。表中是 `Allocated / 载荷`（换算自报告的 `Allocated` 列），
+基线为 `HttpClient_GetBytes`：
+
+| 用例 | 1MB | 8MB | 32MB |
+| --- | ---: | ---: | ---: |
+| `HttpClient_GetBytes`（基线，只读字节） | 1.00× | 1.00× | 1.00× |
+| `AxiosNet_Bytes` | 1.00× | 1.00× | 1.00× |
+| `HttpClient_Typed`（裸 STJ 强类型） | 3.39× | 3.40× | 3.40× |
+| `AxiosNet_Typed` | 3.39× | 3.40× | 3.40× |
+| `HttpClient_JsonElement`（裸 `Parse + Clone`） | 4.07× | 4.09× | 4.09× |
+| `AxiosNet_JsonElement` | 4.08× | 4.09× | 4.09× |
+
+这组能读出什么：
+
+- **库侧与裸 STJ 的分配逐档一致**（强类型 3.40×、JsonElement 4.09×）：JSON 交付没有多复制一份字节，
+  成本全在「对象图」或「文档 + 克隆」本身，库侧零额外分配。
+- **强类型 3.4×** = 1× 原始字节 + `List` / 对象 / 每字符串一份 UTF-16；**JsonElement 4.09×** =
+  1× 原始字节 + `Parse + RootElement.Clone() + 释放` 3.09×，而 3.09× 与裸
+  `JsonSerializer.Deserialize<JsonElement>` 逐字节相同 —— 是 STJ 交付 `JsonElement` 的地板，
+  不是库里的多余复制。常说的「3×」不够，实测是 4.09×；想再降只能改交付形态
+  （例如改用流式 `IAsyncEnumerable<T>` 不落整图），不是改拷贝次数。
+- **`Clone()` 不能省**（2026-10-30 实测，1MB、net6 / net8 一致）：省掉 Clone、让元素持有未释放的
+  `JsonDocument`，看似省一次文本复制，实际更贵 —— 文档不释放就没有元数据数组回到池里，每次解析都要重新租：
+  裸 `Parse`（不 Clone）本身就 3.91×，放进库的真实路径实测 **5.02×**（`AllocationTests` 里改成那样跑出来是红的），
+  比现在的 `Parse + Clone + Dispose`（3.09× + 1× = 4.09×）多近 1×。护栏因此收到 4.5×：
+  这个「优化」现在会被判红。
+- **三档线性**：1 / 8 / 32MB 的比例不漂，说明没有隐藏的整串复制；`Bytes` 一档与二进制下载同口径（1×）。
+- **时间列只作参考**：1MB 档 `AxiosNet_Typed` 28.3 ms vs `HttpClient_Typed` 11.5 ms，32MB 档反过来
+  349 ms vs 410 ms —— 同进程共享 JIT / GC 状态下，先后顺序不可当结论；判定依据仍是 `Allocated`。
+
+回归护栏在 `AxiosNet.Tests/Regression/AllocationTests.cs`：`JsonTypedResponse_PaysObjectGraphNotAnExtraCopy`
+（1MB，< 4×）与 `JsonElementResponse_PaysDocumentAndClone`（1MB，< 4.5×），任何一次「整串 UTF-16 往返 /
+额外复制」都会把比例推到门槛之上，省掉 `Clone` 的改法同样会撞线。
 
 ## 维护约定
 

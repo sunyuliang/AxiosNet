@@ -8,7 +8,10 @@ namespace AxiosNet.Pipeline;
 /// 中间件若自己新建了消息再往下传，就由它自己负责释放。
 /// </param>
 /// <param name="context">本次尝试的上下文（按值传递，中间件只能用 <c>WithXxx</c> 派生副本）。</param>
-/// <returns>本次尝试的结果；不调用 <c>next</c> 就等于跳过后续所有环节（含真正的发送）。</returns>
+/// <returns>
+/// 本次尝试的结果；不调用 <c>next</c> 就等于跳过后续所有环节（含真正的发送）。
+/// 返回值只能消费一次：要多次观察（自建重试、<c>WhenAny</c> 扇出）请先 <c>AsTask()</c>。
+/// </returns>
 public delegate ValueTask<AxiosAttemptResult> AxiosAttemptHandler(
     HttpRequestMessage request,
     AxiosAttemptContext context);
