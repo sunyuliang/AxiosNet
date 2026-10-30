@@ -16,6 +16,7 @@ namespace AxiosNet.Serialization;
 ///
 /// AxiosContent.Serializer = new YamlSerializer();                  // 全局显式注入（一个应用一种格式）
 /// AxiosContent.Register("application/yaml", new YamlSerializer()); // 或注册：未注入时按 Content-Type 自动匹配
+/// client.ContentSerializers.Register("application/yaml", new YamlSerializer()); // 或只给一个客户端登记
 /// </code>
 /// </example>
 public interface IContentSerializer

@@ -114,7 +114,72 @@ public sealed class ApiInterfaceRegistrationTests
         var services = new ServiceCollection();
 
         Assert.Same(services, services.AddApiInterface<IDiUserApi>());
-        Assert.Same(services, services.AddApiInterface<IDiUserApi>("a"));
+        Assert.Same(services, services.AddApiInterface<IDiOtherApi>("a"));
+    }
+
+    // ------------------------------------------------------------------
+    // 同一接口绑两个站点：第二条会被 TryAddSingleton 静默丢弃，必须在注册期报错
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void AddApiInterface_SameInterfaceTwoSites_ThrowsAtRegistration()
+    {
+        var services = new ServiceCollection();
+        services.AddApiClient("a", "https://a.example.com");
+        services.AddApiClient("b", "https://b.example.com");
+        services.AddApiInterface<IDiUserApi>("a");
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => services.AddApiInterface<IDiUserApi>("b"));
+
+        Assert.Contains("\"a\"", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("\"b\"", ex.Message, StringComparison.Ordinal);
+
+        // 报错不该留下半截描述符：接口仍只注册一次
+        using var provider = services.BuildServiceProvider();
+        Assert.Single(provider.GetServices<IDiUserApi>());
+    }
+
+    [Fact]
+    public void AddApiInterface_UnnamedAndNamed_ConflictInBothDirections()
+    {
+        var unnamedFirst = new ServiceCollection();
+        unnamedFirst.AddApiClient("https://api.example.com");
+        unnamedFirst.AddApiInterface<IDiUserApi>();
+        Assert.Throws<InvalidOperationException>(() => unnamedFirst.AddApiInterface<IDiUserApi>("a"));
+
+        var namedFirst = new ServiceCollection();
+        namedFirst.AddApiClient("a", "https://a.example.com");
+        namedFirst.AddApiInterface<IDiUserApi>("a");
+        Assert.Throws<InvalidOperationException>(() => namedFirst.AddApiInterface<IDiUserApi>());
+    }
+
+    [Fact]
+    public void AddApiInterface_SameSiteRepeated_IsIdempotent()
+    {
+        using var provider = BuildProvider(services =>
+        {
+            services.AddApiClient("a", "https://a.example.com");
+            services.AddApiInterface<IDiUserApi>("a");
+            services.AddApiInterface<IDiUserApi>("a");
+        });
+
+        Assert.Single(provider.GetServices<IDiUserApi>());
+    }
+
+    [Fact]
+    public void AddApiInterface_DifferentInterfacesOnDifferentSites_AreAllowed()
+    {
+        using var provider = BuildProvider(services =>
+        {
+            services.AddApiClient("a", "https://a.example.com");
+            services.AddApiClient("b", "https://b.example.com");
+            services.AddApiInterface<IDiUserApi>("a");
+            services.AddApiInterface<IDiOtherApi>("b");
+        });
+
+        Assert.NotNull(provider.GetRequiredService<IDiUserApi>());
+        Assert.NotNull(provider.GetRequiredService<IDiOtherApi>());
     }
 
     [Fact]
@@ -147,6 +212,13 @@ public interface IDiUserApi
 {
     [Get("users/{id}")]
     Task<AxiosResponse<Person>> GetAsync([Path] int id);
+}
+
+/// <summary>第二个最小接口声明：用于「不同接口可以挂不同站点」。</summary>
+public interface IDiOtherApi
+{
+    [Get("ping")]
+    Task<AxiosResponse<Person>> PingAsync();
 }
 
 /// <summary>故意不是接口：AddApiInterface 的注册期守卫用。</summary>

@@ -104,6 +104,9 @@ public sealed partial class AxiosClient
             merged.ResponseType = perCall.ResponseType;
         }
 
+        // 请求体压缩属按请求项；显式 None 用于关掉实例默认的压缩。
+        merged.RequestCompression = perCall.RequestCompression ?? merged.RequestCompression;
+
         // 取消令牌同属「实例来源」，不搬到目标实例；setter 会置 CancellationTokenSet，故只在显式设置时赋值。
         if (!instanceSourced && perCall.CancellationTokenSet)
         {
@@ -147,7 +150,15 @@ public sealed partial class AxiosClient
 
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
+            // 注册表属实例级：库产出的配置（回放 response.Config 等）沿用本实例的登记，不搬来源实例的。
+            var ownRegistry = merged.SerializationOrNull?.ContentSerializers;
+
             merged.Serialization.MergeFrom(incomingSerialization);
+
+            if (instanceSourced)
+            {
+                merged.Serialization.ContentSerializers = ownRegistry;
+            }
         }
 
         if (perCall.LimitsOrNull is { } incomingLimits)

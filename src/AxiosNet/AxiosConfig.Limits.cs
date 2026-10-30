@@ -26,7 +26,8 @@ public sealed partial class AxiosConfig
 
         private long? _maxBodyLength;
 
-        /// <summary>对应 axios maxBodyLength：请求体最大字节数，null 不限；仅在长度可确定时校验，超出抛 <see cref="AxiosException"/>。</summary>
+        /// <summary>对应 axios maxBodyLength：请求体最大字节数，null 不限；仅在长度可确定时校验，超出抛 <see cref="AxiosException"/>。
+        /// 开启 <see cref="AxiosConfig.RequestCompression"/> 时按压缩后（实际发送）的字节数校验。</summary>
         public long? MaxBodyLength
         {
             get => _maxBodyLength;

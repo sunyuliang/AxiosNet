@@ -19,10 +19,7 @@ public sealed class RequestSigningExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 静态复用：签名拦截器每次运行重挂，先清掉上一轮的
         var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
-        http.Interceptors.Request.Clear();
-        http.Interceptors.Response.Clear();
 
         // 登录同时取回 appSecret（示例把密钥随登录下发，便于跑通闭环）
         var login = await http.PostAsync<JsonElement>(DemoAuthApi.LoginPath, new { username = "alice", password = "wonderland" });
@@ -30,40 +27,22 @@ public sealed class RequestSigningExample : IExample
         var secret = login.Data.GetProperty("appSecret").GetString()!;
         Console.WriteLine($"  登录成功，拿到 accessToken={token[..8]}… 与 appSecret={secret[..8]}…");
 
-        // 签名拦截器：每个请求自动附加 Authorization / X-Timestamp / X-Nonce / X-Signature
-        http.Interceptors.Request.Use(config =>
-        {
-            // 已预置签名头的请求跳过（下面几项「异常场景」需要手工构造签名）
-            if (config.Headers.Has("X-Signature"))
-            {
-                return config;
-            }
-
-            // 签名覆盖最终上送的字节：string 类型的 Data 原样透传，所以先自己序列化成 JSON 文本
-            var body = config.Data as string ?? string.Empty;
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
-            var nonce = Guid.NewGuid().ToString("N");
-            var signature = RequestSigner.Sign(
-                secret, token, config.Method.Method, new Uri(http.GetUri(config)).PathAndQuery, body, timestamp, nonce);
-
-            config.Headers.Set("Authorization", "Bearer " + token);
-            config.Headers.Set("X-Timestamp", timestamp);
-            config.Headers.Set("X-Nonce", nonce);
-            config.Headers.Set("X-Signature", signature);
-            Console.WriteLine($"      [签名] {config.Method.Method} {config.Url} bodyHash={RequestSigner.BodyHash(body)[..12]}…");
-            return config;
-        });
+        // 发送前钩子：拿到的是最终请求（URL 已拼好、正文已序列化），签的就是实际发出的字节。
+        // 每次尝试各触发一次（含重试），时间戳与 nonce 因此天然不会在重试里重复。
+        void UseSigning(AxiosConfig config)
+            => config.Callbacks.OnSendingRequest = (request, _, cancellationToken)
+                => SignAsync(request, secret, token, cancellationToken);
 
         var order = """{"sku":"AXN-1001","quantity":2,"remark":"签名演示"}""";
 
         // ---- 1) 正常签名请求 ----
         Console.WriteLine("  [1] 正常签名请求（POST 带 JSON 请求体）");
-        var created = await http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, order);
+        var created = await http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, order, UseSigning);
         Console.WriteLine($"      {created.Status} -> {created.Data.GetRawText()}");
 
         // ---- 2) 无请求体的签名请求 ----
         Console.WriteLine("  [2] 签名 GET（无请求体，bodyHash 取空串哈希）");
-        var profile = await http.GetAsync<JsonElement>(DemoAuthApi.SignedProfilePath);
+        var profile = await http.GetAsync<JsonElement>(DemoAuthApi.SignedProfilePath, UseSigning);
         Console.WriteLine($"      {profile.Status} -> {profile.Data.GetRawText()}");
 
         // ---- 3) 请求体被篡改：签名针对原请求体计算，实际上送改过的内容 ----
@@ -72,13 +51,11 @@ public sealed class RequestSigningExample : IExample
         var tamperedTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         var tamperedNonce = Guid.NewGuid().ToString("N");
         var tamperedSignature = RequestSigner.Sign(
-            secret, token, "POST", DemoAuthApi.SignedOrdersPath, order, tamperedTimestamp, tamperedNonce);
+            secret, token, "POST", DemoAuthApi.SignedOrdersPath, Encoding.UTF8.GetBytes(order), tamperedTimestamp, tamperedNonce);
         await ShowSignedErrorAsync(http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, tampered, c =>
         {
-            c.Headers.Set("Authorization", "Bearer " + token);
-            c.Headers.Set("X-Timestamp", tamperedTimestamp);
-            c.Headers.Set("X-Nonce", tamperedNonce);
-            c.Headers.Set("X-Signature", tamperedSignature);
+            UseSigning(c);
+            SetSignatureHeaders(c, token, tamperedTimestamp, tamperedNonce, tamperedSignature);
         }));
 
         // ---- 4) 重放攻击：同一 nonce + 时间戳 + 签名原样再发一次 ----
@@ -86,13 +63,11 @@ public sealed class RequestSigningExample : IExample
         var replayTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         var replayNonce = Guid.NewGuid().ToString("N");
         var replaySignature = RequestSigner.Sign(
-            secret, token, "POST", DemoAuthApi.SignedOrdersPath, order, replayTimestamp, replayNonce);
+            secret, token, "POST", DemoAuthApi.SignedOrdersPath, Encoding.UTF8.GetBytes(order), replayTimestamp, replayNonce);
         Action<AxiosConfig> replayHeaders = c =>
         {
-            c.Headers.Set("Authorization", "Bearer " + token);
-            c.Headers.Set("X-Timestamp", replayTimestamp);
-            c.Headers.Set("X-Nonce", replayNonce);
-            c.Headers.Set("X-Signature", replaySignature);
+            UseSigning(c);
+            SetSignatureHeaders(c, token, replayTimestamp, replayNonce, replaySignature);
         };
 
         var first = await http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, order, replayHeaders);
@@ -104,21 +79,57 @@ public sealed class RequestSigningExample : IExample
         var staleTimestamp = (DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 600).ToString();
         var staleNonce = Guid.NewGuid().ToString("N");
         var staleSignature = RequestSigner.Sign(
-            secret, token, "POST", DemoAuthApi.SignedOrdersPath, order, staleTimestamp, staleNonce);
+            secret, token, "POST", DemoAuthApi.SignedOrdersPath, Encoding.UTF8.GetBytes(order), staleTimestamp, staleNonce);
         await ShowSignedErrorAsync(http.PostAsync<JsonElement>(DemoAuthApi.SignedOrdersPath, order, c =>
         {
-            c.Headers.Set("Authorization", "Bearer " + token);
-            c.Headers.Set("X-Timestamp", staleTimestamp);
-            c.Headers.Set("X-Nonce", staleNonce);
-            c.Headers.Set("X-Signature", staleSignature);
+            UseSigning(c);
+            SetSignatureHeaders(c, token, staleTimestamp, staleNonce, staleSignature);
         }));
 
         Console.WriteLine();
         Console.WriteLine("  要点：");
         Console.WriteLine("    · 规范串 = token \\n timestamp \\n nonce \\n METHOD \\n path?query \\n sha256hex(body)，任何一项被改动服务端都能发现");
-        Console.WriteLine("    · 请求体先序列化成字符串再签名（string 数据 AxiosNet 原样透传），保证签的就是上送的字节");
+        Console.WriteLine("    · 签名放在 OnSendingRequest 钩子里：request.Content 就是最终上送的字节，不必自己预序列化请求体");
+        Console.WriteLine("    · 钩子每次尝试各触发一次，重试会重新签名（时间戳 / nonce 随之更新）");
         Console.WriteLine("    · 防重放两道闸：时间戳窗口（容忍时钟偏差）+ nonce 一次性缓存");
         Console.WriteLine("    · 服务端用 CryptographicOperations.FixedTimeEquals 做定长时间比较，且签名同时绑定令牌——换令牌签名即失效");
+    }
+
+    /// <summary>手工构造签名的「异常场景」用：模型里显式写了这些头时，钩子不再覆盖。</summary>
+    private static void SetSignatureHeaders(AxiosConfig config, string token, string timestamp, string nonce, string signature)
+    {
+        config.Headers.Set("Authorization", "Bearer " + token);
+        config.Headers.Set("X-Timestamp", timestamp);
+        config.Headers.Set("X-Nonce", nonce);
+        config.Headers.Set("X-Signature", signature);
+    }
+
+    /// <summary>对最终请求消息签名：已带 <c>X-Signature</c> 的请求跳过（异常场景手工构造）。</summary>
+    private static async ValueTask SignAsync(
+        HttpRequestMessage request,
+        string secret,
+        string token,
+        CancellationToken cancellationToken)
+    {
+        if (request.Headers.Contains("X-Signature"))
+        {
+            return;
+        }
+
+        var body = request.Content is null
+            ? Array.Empty<byte>()
+            : await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        var nonce = Guid.NewGuid().ToString("N");
+        var pathAndQuery = request.RequestUri!.PathAndQuery;
+        var signature = RequestSigner.Sign(secret, token, request.Method.Method, pathAndQuery, body, timestamp, nonce);
+
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+        request.Headers.TryAddWithoutValidation("X-Timestamp", timestamp);
+        request.Headers.TryAddWithoutValidation("X-Nonce", nonce);
+        request.Headers.TryAddWithoutValidation("X-Signature", signature);
+        Console.WriteLine($"      [签名] {request.Method.Method} {pathAndQuery} bodyHash={RequestSigner.BodyHash(body)[..12]}…");
     }
 
     private static async Task ShowSignedErrorAsync(Task<AxiosResponse<JsonElement>> request)
@@ -142,8 +153,8 @@ public sealed class RequestSigningExample : IExample
 internal static class RequestSigner
 {
     /// <summary>请求体的 SHA256 十六进制摘要（小写）。</summary>
-    public static string BodyHash(string body)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
+    public static string BodyHash(ReadOnlySpan<byte> body)
+        => Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();
 
     /// <summary>计算签名，规范串：<c>token \n timestamp \n nonce \n METHOD \n path?query \n sha256hex(body)</c>。</summary>
     public static string Sign(
@@ -151,7 +162,7 @@ internal static class RequestSigner
         string token,
         string method,
         string pathAndQuery,
-        string body,
+        ReadOnlySpan<byte> body,
         string timestamp,
         string nonce)
     {

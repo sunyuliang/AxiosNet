@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1627%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1687%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -26,8 +26,8 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) |
-| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [What it supports](#what-it-supports) · [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) |
+| Requests | [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience | [Retries](#retries) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) |
 | Infrastructure | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
@@ -135,7 +135,8 @@ Four groups of capabilities; details in the linked sections.
 | Unified errors | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
 | Interceptors | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
 | Data transforms | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
-| Swappable serialization | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` |
+| Swappable serialization | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` / `client.ContentSerializers` |
+| Request body compression | gzip / deflate / br, `Content-Encoding` written for you | `c.RequestCompression = AxiosCompression.Gzip` |
 | Observability | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
 
 **Transport and engineering**
@@ -171,6 +172,31 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 - **`Params` / `Data` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Data = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Data`; write `Data = null` to send an empty body.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
 - Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
+
+### Replaying `response.Config`
+
+`AxiosResponse.Config` (and `AxiosException.Config`) is the **effective config of that one request**: instance defaults, the trailing `configure` and request interceptors are already folded in. Handing it back to `RequestAsync` / any overload taking an `AxiosConfig` treats it as per-request items and re-merges them onto the defaults of the **current instance**:
+
+```csharp
+var first = await a.GetAsync("items/1");            // a's defaults + this request's items
+var again = await b.RequestAsync(first.Config!);    // b's instance-level settings + first's per-request items
+```
+
+**Instance-owned items do not travel** — they always come from the current instance, even if you overwrite them on that object:
+
+| Item | Value on replay |
+| --- | --- |
+| `BaseAddress` | The current instance's default |
+| `CancellationToken` | The current instance's default (to swap the token, pass `cancellationToken:` to a shortcut) |
+| `Connection.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `PoolOptions` / `MaxRedirects` | The current instance's defaults (the previous call's per-request `Auth` is not carried over) |
+| `Limits.MaxConcurrentRequests` / `Limits.MaxQueueLength` | The current instance's defaults |
+| `Serialization.ContentSerializers` | The current instance's registry (media types registered on the source instance do not travel) |
+| `ShortCircuit` | Not applied (a short-circuit response belongs to that call only) |
+
+Everything else is copied as per-request items: `Url` / `Method` / `Headers` / `Params` / `Data` / `ContentType` / `RequestCompression` / `Timeout` / `TotalTimeout` / `ResponseType` / retry / circuit / hedging / failover / telemetry / the rest of serialization / the remaining `Limits` / `Connection.HttpVersion` / `VersionPolicy` / transform chains (appended and de-duplicated by reference against the inherited segment).
+
+- The "instance-sourced" rule applies only to **configs produced by the library**: `response.Config`, its `Clone()`, and the effective configs built inside shortcuts. A config you write yourself (`new AxiosConfig { BaseAddress = ... }`) is used as-is.
+- To send the same request to a different host or with a different token: use another instance (`Axios.Create(c => c.BaseAddress = ...)`) or write your own `new AxiosConfig { Url = ..., Method = ... }`. To tweak a few fields on the current instance, use the `RequestAsync(c => ...)` Action overload (it edits a copy of the current instance's defaults).
 
 ## Requests
 
@@ -236,6 +262,22 @@ await http.DeleteAsync("users/1", new { reason = "duplicated" });
 ```
 
 Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml`; a parameterized string works too: `"multipart/form-data; boundary=----axios-net"`.
+
+### Request body compression
+
+`RequestCompression` (a per-request / instance-default item, `null` = off) makes the library compress the body before sending and write `Content-Encoding`:
+
+```csharp
+await http.PostAsync("users", new { name = "bob" }, c => c.RequestCompression = AxiosCompression.Gzip);
+
+var client = new AxiosClient(new AxiosConfig { RequestCompression = AxiosCompression.Brotli });   // instance default
+await client.PostAsync(url, data, c => c.RequestCompression = AxiosCompression.None);             // off for one call
+```
+
+- Algorithms: `Gzip` / `Deflate` / `Brotli` (`br`), always at `CompressionLevel.Fastest` — HTTP is usually network-bound, so saving CPU beats squeezing the last byte.
+- Only bodies the library buffers as bytes are compressed: objects / primitives / `string` / `byte[]` / `Memory<byte>` / form encoding. `Content-Length` (and the `Limits.MaxBodyLength` check) then reflect the compressed size.
+- Rejected with `ERR_BAD_OPTION_VALUE`: `Stream` and streaming bodies (no full length to compress — compress upstream instead), caller-supplied `HttpContent` (encoding belongs to the content), multipart (parts may stream files), and a hand-written `Content-Encoding` header (mutually exclusive with `RequestCompression`).
+- The server must decompress request bodies by `Content-Encoding` itself (ASP.NET Core and most frameworks don't do it by default); don't enable this against a peer that can't.
 
 ### Forms and uploads
 
@@ -427,6 +469,34 @@ await http.PostAsync("upload", payload, c =>
 - Negative values throw `ERR_BAD_OPTION_VALUE`; `MaxRate = 0` means unlimited.
 - `MaxRate` timing starts at the **first transferred byte**: the gap between receiving the response and starting to read (thread pool queueing, doing other work first) is not treated as spent budget, so reading later never loosens the cap.
 
+### Sending-request hook (signing / final request)
+
+When you need to rewrite the **final request** just before it goes out (signatures, timestamps, idempotency keys), use `OnSendingRequest`:
+
+```csharp
+await client.PostAsync<OrderResult>("orders", order, c =>
+{
+    c.Callbacks.OnSendingRequest = async (request, config, ct) =>
+    {
+        // request.Content already holds the bytes produced from Data
+        var body = request.Content is null
+            ? Array.Empty<byte>()
+            : await request.Content.ReadAsByteArrayAsync(ct);
+
+        request.Headers.TryAddWithoutValidation(
+            "X-Signature", Sign(request.Method.Method, request.RequestUri!.PathAndQuery, body));
+    };
+});
+```
+
+- Fires after the URL is merged, the body is serialized and the headers are written, and **before a connection is leased and the request is sent**; the `HttpRequestMessage` you get is the very object used for that send.
+- Fires once per attempt: retries, failover endpoints and hedging branches each fire again, so timestamps, nonces and idempotency keys never repeat across retries.
+- Rewrites apply to that one send: the library clones the message for the attempt before firing (sharing the body), so headers written on the first attempt are not copied into later attempts.
+- Cost of reading the body: buffered bodies (JSON / form / `byte[]` / `string`) hand over their bytes directly; streaming bodies (`IAsyncEnumerable<byte[]>` or a non-seekable `Stream`) get consumed, and a body wrapped for progress / rate limiting is serialized a second time — for signing, stick to buffered bodies or sign the headers only.
+- A thrown exception aborts the request (`ERR_BAD_REQUEST`, original exception in `Cause`) without leasing a connection, so nothing is sent; cancellation / timeout thrown by the hook is attributed to the attempt (`ERR_CANCELED` / `ECONNABORTED`).
+- A body swapped in by the hook still obeys `Limits.MaxBodyLength`: if its length is known and over the cap, it is rejected with `ERR_BAD_REQUEST` (bodies of unknown length are not intercepted, as described under `Limits` above).
+- A per-request value replaces the instance default, like every other `Callbacks` item.
+
 ### Raw response bytes
 
 When you need the body **before deserialization** (decryption, signature checks, audit logging), use `OnRawResponse`:
@@ -516,6 +586,20 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme |
 | `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…) |
 
+Branch on `ex.ErrorCode` (an enum you can exhaustively `switch`) or `ex.Code` (the axios-aligned string); never parse the message:
+
+```csharp
+switch (ex.ErrorCode)
+{
+    case AxiosErrorCode.ConnAborted: /* timeout: the same request may be worth one more try */ break;
+    case AxiosErrorCode.BadRequest:  /* 4xx: the request itself is wrong, resending will not help */ break;
+    case AxiosErrorCode.Canceled:    return;
+    default: throw;
+}
+```
+
+`ErrorCode` and `Code` always agree; a `Code` that is not a built-in constant (for example a custom code written by a derived type) maps to `AxiosErrorCode.Unknown`, and then `Code` stays authoritative.
+
 Custom accepted status codes (2xx by default):
 
 ```csharp
@@ -604,7 +688,17 @@ await http.PostAsync("orders", order);
 // B: select by Content-Type (mixing formats in one app)
 AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 await http.PostAsync("orders", order, c => c.ContentType = AxiosContentType.Xml);
+
+// C: register on this instance only (recommended: sites and tests stay isolated)
+http.ContentSerializers.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 ```
+
+**Priority** (later wins): built-in JSON → global registry `AxiosContent.Register` → global `AxiosContent.Serializer` → instance `client.ContentSerializers` → explicit `c.Serialization.ContentSerializer`.
+
+- The instance registry is a per-client `ContentSerializerRegistry` with the same lookup rules as the global table (exact match → aliases such as `text/xml` → structured suffix `+xml`). Registering there never affects other clients or the global table; in tests, global changes leak into other cases in the same process, so use the instance registry when you need isolation.
+- Replace the whole table per request with `c => c.Serialization.ContentSerializers = new ContentSerializerRegistry()` — that request sees only the new table, and the instance registry is untouched.
+- The table object is shared: the per-request `c.Serialization.ContentSerializers` **is** the instance table, so calling `.Register(...)` on it changes the instance. To scope a registration to one request, assign a new table instead. Two clients constructed from the same `AxiosConfig`, or `Defaults.Clone()`, also share the same table.
+- The registry is instance-level: replaying `response.Config` uses the target instance's registry, never the source instance's registrations.
 
 **Custom formats**: implement `IContentSerializer` (two methods for text formats; binary formats add the byte channel `SerializeToBytes` / `Deserialize(ReadOnlyMemory<byte>)`; optional `MediaType` to advertise one).
 
@@ -852,6 +946,7 @@ How it divides the work with the other extension points:
 | --- | --- |
 | Rewrite URL / headers / body, inject a short circuit (once per request) | Request interceptor |
 | Shape outgoing `Data` before serialization | `transformRequest` |
+| Rewrite the final request message before sending (signing, timestamps, idempotency keys; per attempt) | `c.Callbacks.OnSendingRequest` |
 | Get the raw response bytes before deserialization (per attempt) | `c.Callbacks.OnRawResponse` |
 | Shape incoming `Data` after deserialization (per attempt) | `transformResponse` |
 | Shape the final response, turn an exception into a response | Response interceptor |
@@ -1159,7 +1254,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 - Per-request tweaks: derive from `ApiRequest<T>` and override `Configure(config)`, or `RequestAsync(request, config => ...)`.
 - Invalid models (missing route, unbound placeholder, multiple bodies…) throw `InvalidOperationException` on first call; validate at startup with `ApiClient.ValidateModels(typeof(A), ...)` or `ValidateModels(assembly)` (returns all messages, never throws).
 - Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; `IAuthorizationProvider` is the extension point, with `BearerAuthorizationProvider` built in.
-- Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory).
+- Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
 - Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
 
 ## Interface declarations
@@ -1200,7 +1295,8 @@ Task<AxiosResponse<UploadResult>> UploadAsync(
 Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
 ```
 
-- Every method must carry exactly one route attribute; the return type must be `Task<AxiosResponse<T>>` (no synchronous returns / `ValueTask` / generic methods / `ref`·`out`). Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method.
+- Every method must carry exactly one route attribute. Four return shapes are supported: `Task<AxiosResponse<T>>` (full response) / `Task<AxiosResponse>` (body delivered as a raw `JsonElement`) / `Task<T>` (only `Data`) / `Task` (request only, body never parsed — a non-JSON body is not a parse error). Synchronous returns / `ValueTask` / generic methods / `ref`·`out` are rejected. Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method (a bare `Task<IAsyncEnumerable<T>>` has no response metadata or disposal ownership and fails startup validation).
+- Failure semantics are identical across shapes: non-2xx throws `AxiosException`, and a configured `ErrorFactory` still replaces/wraps it; with the `Task` shape the factory still receives the response (only the body is discarded).
 - `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface; with base interfaces, static headers and authorization merge in the **derived interface's scope** (the same base method can carry different static headers per derived interface).
 - Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws).
@@ -1249,6 +1345,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 - Lifetime belongs to the container: disposing an injected `ApiClient` does not dispose the shared underlying client.
 - Multi-site via `IApiClientResolver.Get(name)` / `TryGet` / `Names`; on .NET 8+ keyed services (`AddKeyedSingleton` + `[FromKeyedServices]`) work too.
 - Interface declarations register directly: `services.AddApiInterface<IUserApi>()` (unkeyed `ApiClient`) or `AddApiInterface<IUserApi>("a")` (named site); the proxy is reused as a singleton and is JIT-only.
+- One interface binds to one site: registering it again under a different name (including unkeyed ↔ named) throws `InvalidOperationException` at registration time instead of silently dropping the second registration; to share a method set across two sites, derive an interface and register that against the other site.
 
 ## Configuration reference
 
@@ -1263,6 +1360,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `RemoveHeaders` | empty | Instance default headers to strip |
 | `Params` | `null` | Object / dictionary / collection / pre-encoded string |
 | `ContentType` | `application/json` | Decides how `Data` is encoded |
+| `RequestCompression` | `null` (off) | Compress the body: `Gzip` / `Deflate` / `Brotli`; `None` overrides an instance default |
 | `Data` | `null` | Request body |
 | `Timeout` | `Zero` (no timeout) | Per-attempt budget (connect + headers + body) |
 | `TotalTimeout` | `null` (none) | Whole-request budget: shared across retries / endpoints / hedges, `min` with `Timeout` |
@@ -1274,13 +1372,13 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 Nine sub-objects (created lazily on first access):
 
-**`Serialization`** — `JsonSerializerOptions` (web style) / `ContentSerializer` (`null` = built-in JSON) / `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat` (`Brackets`)
+**`Serialization`** — `JsonSerializerOptions` (web style) / `ContentSerializer` (`null` = built-in JSON) / `ContentSerializers` (instance registry `ContentSerializerRegistry`, always present on a client) / `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat` (`Brackets`)
 
 **`Connection`** — `Auth` (`new AxiosAuth(user, pass)`) / `MaxRedirects` (5, `0` disables, instance-level) / `WithCredentials` (instance-level) / `Proxy` / `Credentials` / `PoolOptions` (instance-level) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`)
 
 **`Limits`** — `MaxContentLength` / `MaxBodyLength` / `MaxRate` (all `null` = unlimited) / `MaxConcurrentRequests` / `MaxQueueLength` (`null`, instance-level) / `QueueTimeout` (`null` = wait) / `MaxStreamFrameLength` (`null` = 8 MB, 1–64 MB)
 
-**`Callbacks`** — `ValidateStatus` (`Func<int,bool>`, 2xx by default) / `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse`
+**`Callbacks`** — `ValidateStatus` (`Func<int,bool>`, 2xx by default) / `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnSendingRequest` / `OnRawResponse`
 
 **`Retry`** — `Policy` (`null` = no retries) / `OnRetry`
 
@@ -1393,9 +1491,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1568 | `net8.0` / `net6.0` | 3136 |
-| `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **Total** | **1627** | | **3254** |
+| `AxiosNet.Tests` (core + declarative) | 1624 | `net8.0` / `net6.0` | 3248 |
+| `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
+| **Total** | **1687** | | **3374** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, telemetry, declarative binding, interface proxies and DI registration.
 

@@ -6,10 +6,14 @@ namespace AxiosNet;
 
 /// <summary>
 /// 请求体 / 响应体的内容格式入口，内置 JSON（默认）与 XML 两个实现。
-/// 选择优先级：单次请求 / 实例的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/> → 全局 <see cref="Serializer"/>
+/// 选择优先级：单次请求 / 实例的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>
+/// → 实例注册表（<see cref="AxiosClient.ContentSerializers"/>）→ 全局 <see cref="Serializer"/>
 /// → 按媒体类型查 <see cref="Register"/> → 内置 JSON。
 /// 请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
 /// </summary>
+/// <remarks>
+/// 全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosClient.ContentSerializers"/>。
+/// </remarks>
 public static class AxiosContent
 {
     private static readonly ConcurrentDictionary<string, IContentSerializer> Registry = new(StringComparer.Ordinal);
@@ -62,54 +66,25 @@ public static class AxiosContent
         return true;
     }
 
-    /// <summary>取本次请求实际生效的序列化器：单次/实例注入 → 全局注入 → 按媒体类型自动匹配 → 内置 JSON。</summary>
-    /// <param name="config">请求配置（读取单次/实例注入）。</param>
+    /// <summary>取本次请求实际生效的序列化器：单次/实例注入 → 实例注册表 → 全局注入 → 全局注册表 → 内置 JSON。</summary>
+    /// <param name="config">请求配置（读取单次/实例注入与实例注册表）。</param>
     /// <param name="mediaType">请求的 <see cref="AxiosConfig.ContentType"/> 或响应的 <c>Content-Type</c>。</param>
     internal static IContentSerializer Get(AxiosConfig config, string? mediaType)
-        => config.SerializationOrNull?.ContentSerializer
+    {
+        var serialization = config.SerializationOrNull;
+
+        return serialization?.ContentSerializer
+            // 实例登记比全局兜底更具体：显式登记了某格式就按格式走，不受全局 Serializer 压住。
+            ?? serialization?.ContentSerializers?.Lookup(mediaType)
             ?? Volatile.Read(ref _serializer)
             ?? Lookup(mediaType)
             ?? SystemTextJsonSerializer.Instance;
-
-    /// <summary>常见媒体类型别名的归一表。</summary>
-    private static readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal)
-    {
-        ["text/xml"] = AxiosContentType.Xml,
-        ["text/json"] = AxiosContentType.Json
-    };
-
-    /// <summary>自动模式的查表：精确匹配 → 别名 → 结构化后缀回落；未注册返回 <c>null</c>。</summary>
-    private static IContentSerializer? Lookup(string? mediaType)
-    {
-        // 注册表为空时直接返回，不做归一化。
-        if (Volatile.Read(ref _registeredCount) == 0)
-        {
-            return null;
-        }
-
-        var main = MediaTypes.Normalize(mediaType);
-        if (main is null)
-        {
-            return null;
-        }
-
-        if (Registry.TryGetValue(main, out var exact))
-        {
-            return exact;
-        }
-
-        if (Aliases.TryGetValue(main, out var canonical) && Registry.TryGetValue(canonical, out var aliased))
-        {
-            return aliased;
-        }
-
-        var plus = main.LastIndexOf('+');
-        if (plus > 0 && plus < main.Length - 1
-            && Registry.TryGetValue("application/" + main[(plus + 1)..], out var structured))
-        {
-            return structured;
-        }
-
-        return null;
     }
+
+    /// <summary>全局注册表的查表：精确匹配 → 别名 → 结构化后缀回落；未注册返回 <c>null</c>。</summary>
+    private static IContentSerializer? Lookup(string? mediaType)
+        // 注册表为空时直接返回，不做归一化。
+        => Volatile.Read(ref _registeredCount) == 0
+            ? null
+            : ContentSerializerRegistry.Lookup(Registry, mediaType);
 }

@@ -29,7 +29,11 @@ public class AxiosResponse
         set => _headers = value;
     }
 
-    /// <summary>触发本次请求的生效配置。</summary>
+    /// <summary>触发本次请求的生效配置（实例默认值 + 本次请求项已合并）。</summary>
+    /// <remarks>
+    /// 交回 <see cref="AxiosClient.RequestAsync(AxiosConfig)"/> 时按「按请求项」重新合并到目标实例的默认值上；
+    /// 实例级项（<c>BaseAddress</c> / <c>CancellationToken</c> / 连接级设置 / 并发上限）不回放，取目标实例的值。
+    /// </remarks>
     public AxiosConfig? Config { get; set; }
 
     /// <summary>错误响应的正文原文（只有状态码不合法时才有；正常、二进制 / 流式响应为 <c>null</c>）。</summary>

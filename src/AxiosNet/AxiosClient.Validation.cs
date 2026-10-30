@@ -103,6 +103,23 @@ public sealed partial class AxiosClient
                 config);
         }
 
+        // 请求体压缩：枚举必须已定义；压缩与手写 Content-Encoding 只能二选一。
+        if (config.RequestCompression is { } compression)
+        {
+            if (!Enum.IsDefined(typeof(AxiosCompression), compression))
+            {
+                throw AxiosException.InvalidOption(
+                    $"RequestCompression 取值 {(int)compression} 未定义：可选 AxiosCompression.None / Gzip / Deflate / Brotli。", config);
+            }
+
+            if (compression != AxiosCompression.None && config.HasHeaders && config.Headers.Has("Content-Encoding"))
+            {
+                throw AxiosException.InvalidOption(
+                    "已开启 RequestCompression 时不能再手写 Content-Encoding 头：压缩算法会按 RequestCompression 写入该头，"
+                    + "两者同时存在会互相覆盖。自行压缩正文请去掉 RequestCompression，并传入预压缩的字节 / 流。", config);
+            }
+        }
+
         var limits = config.LimitsOrNull;
 
         if (limits?.MaxRate is < 0)

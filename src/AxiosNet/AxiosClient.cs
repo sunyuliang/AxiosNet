@@ -2,6 +2,7 @@
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
+using AxiosNet.Serialization;
 
 namespace AxiosNet;
 
@@ -38,6 +39,15 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public AxiosInterceptors Interceptors { get; } = new();
 
     /// <summary>
+    /// 本实例按媒体类型登记的序列化器表（即 <c>Defaults.Serialization.ContentSerializers</c>）。
+    /// 登记与全局 <see cref="AxiosContent.Register"/> 同款规则（精确 → 别名 → 结构化后缀），但只作用于本实例：
+    /// 测试之间、多个站点之间互不干扰；优先级高于全局注入与全局注册表，低于 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>。
+    /// 表对象随 <c>Defaults</c> 走：同一个 <see cref="AxiosConfig"/> 交给多个客户端、或 <c>Defaults.Clone()</c>，得到的仍是这一张表。
+    /// </summary>
+    public ContentSerializerRegistry ContentSerializers
+        => Defaults.Serialization.ContentSerializers ??= new ContentSerializerRegistry();
+
+    /// <summary>
     /// 本实例的尝试管线（构造期固化，之后不可变）；未显式传入时是 <see cref="AxiosAttemptPipeline.Default"/>。
     /// </summary>
     public AxiosAttemptPipeline AttemptPipeline { get; }
@@ -71,6 +81,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         AxiosAttemptPipeline? pipeline = null)
     {
         Defaults = defaults ?? new AxiosConfig();
+
+        // 每个实例一份序列化注册表：登记只影响本实例，全局 AxiosContent.Register 继续作为兜底。
+        // 配置里自带一份时沿用它（DI 的 configure 回调可以预先放好）。
+        Defaults.Serialization.ContentSerializers ??= new ContentSerializerRegistry();
 
         // 下面的分支有提前 return，管线先在此初始化。
         AttemptPipeline = pipeline ?? AxiosAttemptPipeline.Default;
@@ -179,7 +193,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     // ---- getUri：只组装 URL，不发请求（对应 axios.getUri） ----
 
-    /// <summary>按本实例生效配置拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求，返回值已转义。传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按回放语义重新合并。</summary>
+    /// <summary>按本实例生效配置拼出最终 URL（含 baseURL 合并与 params 序列化），不发请求，返回值已转义。</summary>
+    /// <remarks>传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按回放语义重新合并：实例级项（<c>BaseAddress</c> / <c>CancellationToken</c> / 连接级设置 / 并发上限）取自本实例，写在该对象上的值无效。</remarks>
     public string GetUri(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -203,6 +218,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     // ---- request(config) 入口 ----
 
     /// <summary>对应 axios(config)，返回非泛型响应（JSON 时 Data 为 JsonElement）。</summary>
+    /// <remarks>传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按回放语义重新合并：<c>BaseAddress</c> / <c>CancellationToken</c> / 连接级设置 / 并发上限一律取自本实例，写在该对象上的值无效。详见 README「回放 response.Config」。</remarks>
     public Task<AxiosResponse> RequestAsync(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -210,6 +226,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>对应 axios(config)，Data 反序列化为 T。</summary>
+    /// <remarks>传入生效配置（如 <see cref="AxiosResponse.Config"/>）时按回放语义重新合并：<c>BaseAddress</c> / <c>CancellationToken</c> / 连接级设置 / 并发上限一律取自本实例，写在该对象上的值无效。详见 README「回放 response.Config」。</remarks>
     public Task<AxiosResponse<T>> RequestAsync<T>(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -237,6 +254,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         configure(config);
         ApplyRemoveHeaders(config);
         return SendTypedAsync<T>(config);
+    }
+
+    /// <summary>
+    /// 按目标类型发送（供声明式客户端）：<paramref name="dataType"/> 为 <c>null</c> 时正文按 JsonElement 交付，
+    /// 为 <c>typeof(void)</c> 时只完成请求、不装配正文，其余类型按泛型入口同款规则反序列化。
+    /// </summary>
+    internal Task<AxiosResponse> SendInternalAsync(AxiosConfig config, Type? dataType, AxiosResponse? target)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return SendAsync(PreparePerCall(config), dataType, target);
     }
 
     /// <summary>把调用方交进来的配置整理成本次请求的生效配置：普通配置原样返回，已合并的（如回放 Config）在这里直接合并。</summary>

@@ -1,7 +1,10 @@
 namespace AxiosNet;
 
-/// <summary>对应 axios 的 AxiosError：携带 code / config / request / response，错误码与 axios 对齐。</summary>
-public sealed class AxiosException : Exception
+/// <summary>
+/// 对应 axios 的 AxiosError：携带 code / config / request / response，错误码与 axios 对齐。
+/// 库抛出的都是本类型；<c>catch (AxiosException)</c> 能接住包括 <see cref="AxiosNet.WebAPI.ApiError{TError}"/> 在内的全部请求错误。
+/// </summary>
+public class AxiosException : Exception
 {
     /// <summary>HTTP 状态码非法（默认 validateStatus 不接受 4xx，且非 5xx）。</summary>
     public const string ErrBadRequest = "ERR_BAD_REQUEST";
@@ -51,6 +54,12 @@ public sealed class AxiosException : Exception
     /// <summary>错误码，取值见 <see cref="ErrBadRequest"/> 等常量（与 axios 对齐）；分支判断用它，别解析消息文本。</summary>
     public string? Code { get; }
 
+    /// <summary>
+    /// <see cref="Code"/> 的枚举形式：值相同时可直接 <c>switch</c> 穷举；<see cref="Code"/> 不是内置常量时为
+    /// <see cref="AxiosErrorCode.Unknown"/>（例如派生类写入的自定义码）。
+    /// </summary>
+    public AxiosErrorCode ErrorCode => AxiosErrorCodes.FromString(Code);
+
     /// <summary>触发本次错误的请求配置（该请求的生效值）。想在错误里复盘「当时用了什么参数」看这里。</summary>
     public AxiosConfig? Config { get; }
 
@@ -79,7 +88,11 @@ public sealed class AxiosException : Exception
     /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.TotalTimeout"/> 压小）。</summary>
     internal bool TimedOutOnTotalBudget { get; private init; }
 
-    private AxiosException(
+    /// <summary>
+    /// 供派生类型（如 <see cref="AxiosNet.WebAPI.ApiError{TError}"/>）构造异常；调用方应当读取库抛出的实例，而不是自己创建。
+    /// <paramref name="code"/> 决定 <see cref="ErrorCode"/>，取值请用 <see cref="ErrBadRequest"/> 等常量。
+    /// </summary>
+    protected AxiosException(
         string message,
         string? code,
         AxiosConfig? config,

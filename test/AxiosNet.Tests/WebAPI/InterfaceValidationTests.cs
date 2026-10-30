@@ -134,11 +134,12 @@ public sealed class InterfaceValidationTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void ValidateInterfaces_StreamOnNonResponseReturn_IsReported()
+    public void ValidateInterfaces_StreamOnDataReturn_IsReported()
     {
+        // Task<string> 本身合法（只交付正文），但 [Stream] 需要 Task<AxiosResponse<IAsyncEnumerable<T>>>。
         var errors = ApiClient.ValidateInterfaces(typeof(IStreamWithoutResponseApi));
 
-        Assert.Contains(errors, error => error.Contains("返回类型不是 Task<AxiosResponse<T>>"));
+        Assert.Contains(errors, error => error.Contains("Task<AxiosResponse<IAsyncEnumerable<T>>>"));
     }
 
     [Fact]

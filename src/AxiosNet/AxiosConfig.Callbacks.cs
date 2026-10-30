@@ -21,6 +21,17 @@ public sealed partial class AxiosConfig
         /// </remarks>
         public Action<AxiosResponseInfo, ReadOnlyMemory<byte>>? OnRawResponse { get; set; }
 
+        /// <summary>
+        /// 发送前钩子：请求消息成型（URL 已拼好、正文已按 <see cref="Data"/> 序列化、请求头已写入）之后、真正发出之前触发，
+        /// 参数是本次尝试的请求消息、生效配置与本次尝试的取消令牌。
+        /// </summary>
+        /// <remarks>
+        /// 每次尝试触发一次：重试 / 换端点 / 对冲的每条分支各一次，因此可以在这里写只对某次发送有效的头（签名、时间戳、幂等键）。
+        /// 异步执行，抛异常即中断本次请求（<c>ERR_BAD_REQUEST</c>，原始异常在 <see cref="Exception.InnerException"/>）；
+        /// 读 <see cref="HttpRequestMessage.Content"/> 时注意：已缓冲的正文直接取字节，流式正文会被读走，包了进度 / 限速的内容会再序列化一遍。
+        /// </remarks>
+        public Func<HttpRequestMessage, AxiosConfig, CancellationToken, ValueTask>? OnSendingRequest { get; set; }
+
         /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
         public string? TimeoutMessage { get; set; }
 
@@ -35,6 +46,7 @@ public sealed partial class AxiosConfig
             OnUploadProgress = incoming.OnUploadProgress ?? OnUploadProgress;
             OnDownloadProgress = incoming.OnDownloadProgress ?? OnDownloadProgress;
             OnRawResponse = incoming.OnRawResponse ?? OnRawResponse;
+            OnSendingRequest = incoming.OnSendingRequest ?? OnSendingRequest;
         }
 
         internal CallbackSettings Clone() => (CallbackSettings)MemberwiseClone();

@@ -130,11 +130,48 @@ public sealed partial class AxiosClient
         // 槽位由闸门中间件交给本终端：此后任何失败路径都由这里归还（占位后不能漏）。
         IDisposable? slot = ctx.Slot;
 
+        // 发送前钩子的专用副本：钩子改写只作用于本次发送，不会留在模板上被后续尝试复制。
+        HttpRequestMessage? hookedRequest = null;
+        HttpContent? templateContent = null;
+
         try
         {
             // 阶段 2：时间预算 —— 一次尝试一份超时令牌源；闸门排队在它之前，不计入 Timeout（但计入 TotalTimeout）。
             // 总预算已耗尽时这里直接抛出，本次尝试连连接都不会去租。
             using var budget = AttemptBudget.Start(ctx, request);
+
+            // 阶段 3 前：发送前钩子 —— 每次尝试一次，失败时不占连接；钩子里抛的取消按本次尝试的预算归属。
+            if (config.CallbacksOrNull?.OnSendingRequest is { } onSendingRequest)
+            {
+                // 模板会被后续重试 / 换端点 / 对冲反复复制（且第一次尝试就是模板本身），
+                // 钩子的改写因此落在独占副本上：一次发送一份头，重试各自签名不会互相污染。
+                templateContent = request.Content;
+                hookedRequest = Attempt.CloneRequest(request);
+                request = hookedRequest;
+
+                try
+                {
+                    await onSendingRequest(request, config, budget.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException ex)
+                {
+                    throw budget.Translate(ex, config, request);
+                }
+                catch (Exception ex) when (ex is not AxiosException)
+                {
+                    throw AxiosException.CallbackFailed(
+                        config, request, nameof(AxiosConfig.CallbackSettings.OnSendingRequest), ex, upload: true);
+                }
+
+                // 模板的长度上限检查在钩子之前：钩子把正文换得更大时，这里对已知长度再判一次。
+                if (!ReferenceEquals(request.Content, templateContent)
+                    && config.LimitsOrNull?.MaxBodyLength is long maxBody
+                    && request.Content?.Headers.ContentLength is long replacementLength
+                    && replacementLength > maxBody)
+                {
+                    throw AxiosException.MaxBodyLength(config, request, replacementLength, maxBody);
+                }
+            }
 
             // 阶段 3：取连接 —— 注入 Handler 时固定用它，默认实例按 origin 租（连接复用 + 并发上限）。
             var (httpClient, leased) = await LeaseClientAsync(request, ctx, budget).ConfigureAwait(false);
@@ -200,6 +237,17 @@ public sealed partial class AxiosClient
 
             // 槽位在所有失败路径上都归还；流式成功路径已把它转交给正文流（slot = null）。
             slot?.Dispose();
+
+            // 副本只释放自己：正文仍归模板（重试还要用），钩子换掉的正文随副本释放。
+            if (hookedRequest is not null)
+            {
+                if (ReferenceEquals(hookedRequest.Content, templateContent))
+                {
+                    hookedRequest.Content = null;
+                }
+
+                hookedRequest.Dispose();
+            }
         }
     }
 

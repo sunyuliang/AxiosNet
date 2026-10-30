@@ -37,7 +37,7 @@ internal static class FormBodyEncoder
         // 正文是已转义的 ASCII 串，编码只影响转义映射。
         var body = BuildBody(pairs);
 
-        var content = new ByteArrayContent(Encoding.ASCII.GetBytes(body));
+        var content = RequestCompression.WrapBytes(Encoding.ASCII.GetBytes(body), config);
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }

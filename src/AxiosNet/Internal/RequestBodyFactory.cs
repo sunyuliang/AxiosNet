@@ -54,6 +54,12 @@ internal static class RequestBodyFactory
                 + "（它的 charset 会驱动正文编码），或去掉请求头里的 charset。", config);
         }
 
+        // 请求体压缩只覆盖库自己缓冲出来的正文：流式 / 自带内容没有可压缩的完整字节。
+        if (data is not null && RequestCompression.IsEnabled(config))
+        {
+            EnsureCompressible(data, mediaType, config);
+        }
+
         // multipart + 原始内容：没有 boundary 无法解析。
         if (data is not null and not HttpContent
             && IsRawContent(data)
@@ -141,22 +147,31 @@ internal static class RequestBodyFactory
     private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
     {
         // 用 ByteArrayContent 保证携带 Content-Length。
-        var content = new ByteArrayContent(encoding.GetBytes(text));
+        var content = RequestCompression.WrapBytes(encoding.GetBytes(text), config);
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }
 
     private static HttpContent CreateBinary(byte[] bytes, string mediaType, AxiosConfig config)
     {
-        var content = new ByteArrayContent(bytes);
+        var content = RequestCompression.WrapBytes(bytes, config);
         RequestContentType.Set(content, mediaType, config);
         return content;
     }
 
-    /// <summary>零拷贝发送 <see cref="ReadOnlyMemory{T}"/>。</summary>
+    /// <summary>零拷贝发送 <see cref="ReadOnlyMemory{T}"/>；开启请求体压缩时先压成字节。</summary>
     private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType, AxiosConfig config)
     {
-        var content = new ReadOnlyMemoryContent(memory);
+        HttpContent content;
+        if (RequestCompression.IsEnabled(config))
+        {
+            content = RequestCompression.WrapBytes(memory.ToArray(), config);
+        }
+        else
+        {
+            content = new ReadOnlyMemoryContent(memory);
+        }
+
         RequestContentType.Set(content, mediaType, config);
         return content;
     }
@@ -224,6 +239,36 @@ internal static class RequestBodyFactory
                 $"Content-Type 声明 charset={declared.WebName}，但请求体实际按 {bodyEncoding.WebName} 编码："
                 + "两者不一致会让服务端按头解出乱码。请让序列器自报 / 写入与正文一致的 charset，"
                 + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.RequestEncoding。", config);
+        }
+    }
+
+    /// <summary>开启请求体压缩时，拒绝没有完整字节可压的正文形态。</summary>
+    private static void EnsureCompressible(object data, string mediaType, AxiosConfig config)
+    {
+        const string Hint = "请先压缩好再传入，或改用对象 / byte[] 让库压缩，或去掉 RequestCompression。";
+
+        if (data is Stream)
+        {
+            throw AxiosException.InvalidOption(
+                "RequestCompression 不压缩 Stream 正文：流式正文没有完整长度，压缩需要先缓冲整个内容。" + Hint, config);
+        }
+
+        if (data is IAsyncEnumerable<byte[]> or IAsyncEnumerable<ReadOnlyMemory<byte>>)
+        {
+            throw AxiosException.InvalidOption(
+                "RequestCompression 不压缩流式正文（IAsyncEnumerable 字节块）：内容按块写出、长度未知。" + Hint, config);
+        }
+
+        if (data is HttpContent)
+        {
+            throw AxiosException.InvalidOption(
+                "RequestCompression 不作用于调用方传入的 HttpContent：压缩与 Content-Encoding 由该内容自己决定。" + Hint, config);
+        }
+
+        if (MediaTypes.Is(mediaType, MultipartMediaType))
+        {
+            throw AxiosException.InvalidOption(
+                "RequestCompression 不压缩 multipart 正文：部件里可能含流式文件。" + Hint, config);
         }
     }
 

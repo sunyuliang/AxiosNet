@@ -610,6 +610,12 @@ internal static class ResponseReader
         string? mediaType,
         bool lenient)
     {
+        // 0) 调用方不要正文（接口声明返回 Task）：请求照发，正文不解析、不分配。
+        if (dataType == typeof(void))
+        {
+            return null;
+        }
+
         // 1) 显式 responseType 优先：arraybuffer 直接给原始字节。
         if (config.ResponseType == ResponseType.ArrayBuffer)
         {

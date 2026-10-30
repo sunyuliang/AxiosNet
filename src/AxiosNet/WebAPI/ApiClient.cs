@@ -188,14 +188,45 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             || (Axios.Defaults.HasHeaders && Axios.Defaults.Headers.Has("Authorization"));
 
     /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>。</summary>
-    internal async Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
+    internal Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
+        object request,
+        AxiosConfig config,
+        CancellationToken cancellationToken)
+        => GuardAsync(request, cancellationToken, Axios.RequestAsync<TResponse>(config));
+
+    /// <summary>发送请求并交付非泛型响应（正文按 <see cref="System.Text.Json.JsonElement"/>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
+    internal Task<AxiosResponse> SendUntypedAsync(
+        object request,
+        AxiosConfig config,
+        CancellationToken cancellationToken)
+        => GuardAsync(request, cancellationToken, Axios.SendInternalAsync(config, dataType: null, target: null));
+
+    /// <summary>只完成请求、不读正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
+    internal async Task SendWithoutBodyAsync(
         object request,
         AxiosConfig config,
         CancellationToken cancellationToken)
     {
+        var response = await GuardAsync(request, cancellationToken, Axios.SendInternalAsync(config, typeof(void), target: null))
+            .ConfigureAwait(false);
+
+        // 显式把 responseType 配成 Stream 时正文归我们：Task 方法的调用方拿不到这个响应对象。
+        // 短路响应（Request 为 null）的 Data 归调用方，不能释放。
+        if (response.Request is not null)
+        {
+            (response.Data as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；网络 / 超时 / 取消不经过工厂。</summary>
+    private async Task<TResult> GuardAsync<TResult>(
+        object request,
+        CancellationToken cancellationToken,
+        Task<TResult> response)
+    {
         try
         {
-            return await Axios.RequestAsync<TResponse>(config).ConfigureAwait(false);
+            return await response.ConfigureAwait(false);
         }
         catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
         {

@@ -104,6 +104,7 @@ public sealed class UsersService(IUserApi api)
 
 - 代理在**首次解析时创建**并按单例复用（DispatchProxy 生成类型的成本只付一次）
 - 容器缺 `ApiClient` / 未注册对应站点时，解析抛 `InvalidOperationException`，消息直接给出缺哪一步
+- **一个接口只能绑一个站点**：`AddApiInterface<IUserApi>()` 之后再用另一个 name 注册（或反过来）在**注册期**抛 `InvalidOperationException`，而不是让第二条被 `TryAddSingleton` 静默丢弃、请求悄悄打到先注册的站点。同一站点重复注册保持幂等；两个站点要共用同一组方法时定义派生接口（`interface IUserApiForB : IUserApi`）再注册到另一个站点（继承来的方法同样被代理）
 - 依赖 Reflection.Emit，**仅 JIT**：Native AOT 下解析即抛 `PlatformNotSupportedException`
 
 ### 容器授权：IAuthorizationProvider 单例自动装配
@@ -223,6 +224,7 @@ public sealed class UsersService(IUserApi api)
 
 - The proxy is created on **first resolution** and reused as a singleton (DispatchProxy type generation is paid once)
 - If the container has no `ApiClient` or the named site is missing, resolution throws `InvalidOperationException` with the missing step spelled out
+- **One interface, one site**: registering `AddApiInterface<IUserApi>()` and then another name (or the other way round) throws `InvalidOperationException` **at registration time**, instead of letting the second `TryAddSingleton` be dropped and requests silently hitting the first site. Repeating the same site is idempotent; to share one method set across two sites, declare a derived interface (`interface IUserApiForB : IUserApi`) and register it against the other site (inherited methods are proxied too)
 - Relies on Reflection.Emit, so it is **JIT-only**: resolution throws `PlatformNotSupportedException` under Native AOT
 
 ### Authorization from the container

@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1627%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1687%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.5%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -26,8 +26,8 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 分组 | 章节 |
 | --- | --- |
-| 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) |
-| 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
+| 上手 | [安装](#安装) · [快速上手](#快速上手) · [支持什么](#支持什么) · [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) |
+| 请求 | [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性 | [重试](#重试) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [尝试管线](#尝试管线) · [短路响应](#短路响应) |
 | 基础设施 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
@@ -135,7 +135,8 @@ string url = http.GetUri(c =>
 | 统一错误模型 | 所有失败都是 `AxiosException`，带稳定 `Code` | `catch (AxiosException ex) { ex.Code }` |
 | 拦截器 | 请求 / 响应双向，可异步 | `client.Interceptors.Request.Use(...)` |
 | 数据转换 | axios 同构的两条 transform 链 | `c.TransformRequest.Add(...)` |
-| 序列化可替换 | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` |
+| 序列化可替换 | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` / `client.ContentSerializers` |
+| 请求体压缩 | gzip / deflate / br，压缩后自动写 `Content-Encoding` | `c.RequestCompression = AxiosCompression.Gzip` |
 | 可观测性 | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
 
 **连接与工程化**
@@ -171,6 +172,31 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 - **`Params` / `Data` 按「有没有赋值过」合并，不按是否为 `null`**：不碰这两项 = 继承实例默认值；显式写 `c.Params = null` / `c.Data = null` = 摘掉实例默认值（与 `Headers.Delete` 用「删除」表达摘头同一个道理）。所以 `PostAsync(url)` 这种不传 `data` 的调用仍会带上 `Defaults.Data`，要发空正文得显式写 `Data = null`。
 - **一个站点一个实例，不要按请求新建**：每个实例自建一条连接池，`Axios.Create` / `new AxiosClient` 各建一套 Handler；按请求新建等于退化成 `new HttpClient()` 那个经典坑——长连接不复用，连接与句柄持续增长。要换默认值就换实例，要共享连接就共享池（见[连接池](#连接池)）；DI 场景直接用 `AddAxiosClient` 注册单例。
 - 实例用 `using`（或交给 DI 容器持有）收尾，连接池与 Handler 随之释放；在途请求不会被打断，只是不再接受新请求。
+
+### 回放 `response.Config`
+
+`AxiosResponse.Config`（以及 `AxiosException.Config`）是**那一次请求的生效配置**：实例默认值、末尾 `configure`、请求拦截器都已经合进去。把它交回 `RequestAsync` / 收 `AxiosConfig` 的重载，会当作「按请求项」重新合并到**当前实例**的默认值上：
+
+```csharp
+var first = await a.GetAsync("items/1");            // a 的默认值 + 本次请求项
+var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + first 的按请求项
+```
+
+**属于实例的项不跟着回放**——永远取当前实例的值，在那个对象上重写也无效：
+
+| 项 | 回放时的取值 |
+| --- | --- |
+| `BaseAddress` | 当前实例的默认值 |
+| `CancellationToken` | 当前实例的默认值（要换令牌，用快捷方法的 `cancellationToken:` 参数） |
+| `Connection.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `PoolOptions` / `MaxRedirects` | 当前实例的默认值（上一次的按请求 `Auth` 不会被带走） |
+| `Limits.MaxConcurrentRequests` / `Limits.MaxQueueLength` | 当前实例的默认值 |
+| `Serialization.ContentSerializers` | 当前实例的注册表（来源实例登记的媒体类型不会带过来） |
+| `ShortCircuit` | 不生效（短路响应只属于那一次调用） |
+
+其余按请求项照搬：`Url` / `Method` / `Headers` / `Params` / `Data` / `ContentType` / `RequestCompression` / `Timeout` / `TotalTimeout` / `ResponseType` / 重试 / 熔断 / 对冲 / 备用端点 / 遥测 / 序列化其余项 / `Limits` 其余项 / `Connection.HttpVersion` / `VersionPolicy` / transform 链（作为追加段，与实例默认段按引用去重）。
+
+- 「实例来源」只针对**库产出的配置**：`response.Config`、它的 `Clone()` 副本、快捷方法内部组装的生效配置。自己 `new AxiosConfig { BaseAddress = ... }` 提交的配置不在此列，写什么就用什么。
+- 要换主机 / 换令牌再发一次：换实例（`Axios.Create(c => c.BaseAddress = ...)`）或自己写 `new AxiosConfig { Url = ..., Method = ... }`；只想在当前实例上补改几项，用 `RequestAsync(c => ...)` 这类 Action 重载（它在当前实例默认值的副本上修改）。
 
 ## 请求
 
@@ -236,6 +262,22 @@ await http.DeleteAsync("users/1", new { reason = "duplicated" });
 ```
 
 常用常量：`AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml`；也可直接写带参字符串：`"multipart/form-data; boundary=----axios-net"`。
+
+### 请求体压缩
+
+`RequestCompression`（`Serialization` 之外的单次 / 实例项，默认 `null` = 不压缩）让库把正文压好再发，并自动写 `Content-Encoding`：
+
+```csharp
+await http.PostAsync("users", new { name = "bob" }, c => c.RequestCompression = AxiosCompression.Gzip);
+
+var client = new AxiosClient(new AxiosConfig { RequestCompression = AxiosCompression.Brotli });   // 实例默认
+await client.PostAsync(url, data, c => c.RequestCompression = AxiosCompression.None);             // 单次关掉
+```
+
+- 算法：`Gzip` / `Deflate` / `Brotli`（`br`），压缩级别固定 `Fastest`——HTTP 的瓶颈通常在网络，省 CPU 比压到最小更划算。
+- 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`Limits.MaxBodyLength` 也按压缩后字节数校验。
+- 拒绝（`ERR_BAD_OPTION_VALUE`）：`Stream` 与流式正文（没有完整长度可压，要压缩请先压好再传）、调用方自带的 `HttpContent`（压缩与编码归内容自己）、multipart（部件里可能含流式文件）、以及同时手写 `Content-Encoding` 头（与 `RequestCompression` 二选一）。
+- 服务端必须自己按 `Content-Encoding` 解压请求体（ASP.NET Core 等框架默认不解压请求体）；对端不支持时不要开启。
 
 ### 表单与文件上传
 
@@ -427,6 +469,34 @@ await http.PostAsync("upload", payload, c =>
 - 负值一律 `ERR_BAD_OPTION_VALUE`；`MaxRate = 0` 等于不限速。
 - `MaxRate` 的计时从**实际传输首字节**起算：拿到响应到开始读之间的空档（线程排队、业务先做别的事）不算已消耗预算，晚读不会让限速变松。
 
+### 发送前钩子（签名 / 最终请求）
+
+需要在**真正发出之前**改写最终请求（签名、时间戳、幂等键）时，用 `OnSendingRequest`：
+
+```csharp
+await client.PostAsync<OrderResult>("orders", order, c =>
+{
+    c.Callbacks.OnSendingRequest = async (request, config, ct) =>
+    {
+        // request.Content 已是按 Data 序列化好的最终字节
+        var body = request.Content is null
+            ? Array.Empty<byte>()
+            : await request.Content.ReadAsByteArrayAsync(ct);
+
+        request.Headers.TryAddWithoutValidation(
+            "X-Signature", Sign(request.Method.Method, request.RequestUri!.PathAndQuery, body));
+    };
+});
+```
+
+- 触发时点：URL 已合并、正文已序列化、请求头已写入，**取连接与发送之前**；拿到的 `HttpRequestMessage` 就是这条请求真正使用的对象。
+- 每次尝试各触发一次：重试 / 换端点 / 对冲的每条分支都重新触发，所以时间戳、nonce、幂等键不会在重试里重复。
+- 改写只作用于本次发送：库在触发前给本次尝试复制一份请求消息（正文共享），第一次尝试写进头里的内容不会被后续尝试复制叠加。
+- 读正文的代价：已缓冲的正文（JSON / 表单 / `byte[]` / `string`）直接取字节；流式请求体（`IAsyncEnumerable<byte[]>`、不可 seek 的 `Stream`）会被读走，包了进度 / 限速的内容会再序列化一遍 —— 签名这类场景请只对已缓冲的正文下手，或只签请求头。
+- 抛异常即中断请求（`ERR_BAD_REQUEST`，原异常在 `Cause`），此时不占连接、请求没有发出；钩子里抛出的取消 / 超时按本次尝试归属（`ERR_CANCELED` / `ECONNABORTED`）。
+- 钩子换掉正文同样受 `Limits.MaxBodyLength` 约束：换上的内容长度已知且超限时按 `ERR_BAD_REQUEST` 拒绝（长度未知的正文同上面 `Limits` 所述，不拦截）。
+- 按请求设置会整体覆盖实例默认，与其余 `Callbacks` 项一致。
+
 ### 原始响应字节
 
 需要在**反序列化之前**拿到响应正文（解密、验签、留档审计）时，用 `OnRawResponse`：
@@ -516,6 +586,20 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_INVALID_URL` | URL 非法、相对地址但没有 `BaseAddress`、非 http(s) scheme |
 | `ERR_BAD_OPTION_VALUE` | 选项取值非法（按请求写实例级选项、multipart 头体矛盾、`Params` 是标量、重试 / 熔断配置越界等） |
 
+分支判断优先用 `ex.ErrorCode`（枚举，`switch` 能穷举）或 `ex.Code`（与 axios 对齐的字符串），不要解析消息文本：
+
+```csharp
+switch (ex.ErrorCode)
+{
+    case AxiosErrorCode.ConnAborted: /* 超时：同类请求可以再试一次 */ break;
+    case AxiosErrorCode.BadRequest:  /* 4xx：请求本身有问题，重发没用 */ break;
+    case AxiosErrorCode.Canceled:    return;
+    default: throw;
+}
+```
+
+`ErrorCode` 与 `Code` 一一对应；`Code` 不是内置常量（例如派生类写入的自定义码）时取 `AxiosErrorCode.Unknown`，此时仍以 `Code` 为准。
+
 自定义合法状态码（默认 2xx）：
 
 ```csharp
@@ -604,7 +688,17 @@ await http.PostAsync("orders", order);
 // 方式 B：按 Content-Type 自动选（同一应用混用多种格式）
 AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 await http.PostAsync("orders", order, c => c.ContentType = AxiosContentType.Xml);
+
+// 方式 C：只给这个实例登记（推荐：多个站点 / 测试之间互不干扰）
+http.ContentSerializers.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 ```
+
+**优先级**（后者优先）：内置 JSON → 全局注册表 `AxiosContent.Register` → 全局 `AxiosContent.Serializer` → 实例 `client.ContentSerializers` → 显式 `c.Serialization.ContentSerializer`。
+
+- 实例注册表是每客户端一份的 `ContentSerializerRegistry`（查表规则与全局表一致：精确匹配 → `text/xml` 等别名 → 结构化后缀 `+xml`），登记不影响其它实例和全局表；测试里改全局表会污染同进程的其它用例，需要隔离就用实例表。
+- 按请求替换整张表：`c => c.Serialization.ContentSerializers = new ContentSerializerRegistry()`，本次请求只认这张新表，不回流到实例。
+- 表对象是共享的：按请求拿到的 `c.Serialization.ContentSerializers` 就是实例那张表，直接 `.Register(...)` 会改到实例，要只在本次请求生效请 new 一张表再赋值；同一个 `AxiosConfig` 交给多个客户端、或 `Defaults.Clone()` 时也共享同一张表。
+- 注册表属实例级：回放 `response.Config` 时注册表取目标实例的，来源实例的登记不会跟着走。
 
 **自定义格式**：实现 `IContentSerializer`（文本格式两个方法；二进制格式再加字节通道 `SerializeToBytes` / `Deserialize(ReadOnlyMemory<byte>)`；可选 `MediaType` 自报媒体类型）。
 
@@ -852,6 +946,7 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 | --- | --- |
 | 改 URL / 头 / 请求体、注入短路（一次请求一次） | 请求拦截器 |
 | 在序列化前加工要发的 `Data` | `transformRequest` |
+| 在发送前改写最终请求消息（签名、时间戳、幂等键，每次尝试） | `c.Callbacks.OnSendingRequest` |
 | 在反序列化前拿原始响应字节（每次尝试） | `c.Callbacks.OnRawResponse` |
 | 在反序列化后加工回来的 `Data`（每次尝试） | `transformResponse` |
 | 加工最终响应、把异常兜成响应 | 响应拦截器 |
@@ -1157,7 +1252,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 - 按请求微调：继承 `ApiRequest<T>` 覆写 `Configure(config)`，或 `RequestAsync(request, config => ...)`。
 - 模型定义非法（缺路由、占位符未绑定、多个 Body…）首次调用抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateModels(typeof(A), ...)` 或 `ValidateModels(assembly)`（返回全部错误消息，不抛）。
 - 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；`IAuthorizationProvider` 是扩展点，内置 `BearerAuthorizationProvider`。
-- 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。
+- 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
 - 其它：`client.UrlParameterFormatter` 接管 `[Path]` / `[Query]` 文本形态；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
 
 ## 接口级声明
@@ -1198,7 +1293,8 @@ Task<AxiosResponse<UploadResult>> UploadAsync(
 Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
 ```
 
-- 每个方法必须标注且只标注一个路由特性；返回类型必须是 `Task<AxiosResponse<T>>`（不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`）。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法。
+- 每个方法必须标注且只标注一个路由特性。返回类型有四种：`Task<AxiosResponse<T>>`（完整响应）/ `Task<AxiosResponse>`（正文按 `JsonElement` 原样交付）/ `Task<T>`（只交付 `Data`）/ `Task`（只完成请求，不解析正文——非 JSON 正文不会变成解析错误）。不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法（裸 `Task<IAsyncEnumerable<T>>` 缺少响应元数据与释放归属，启动期校验即报错）。
+- 四种形态的失败口径一致：非 2xx 抛 `AxiosException`，配置了 `ErrorFactory` 时照常替换/包装；用 `Task` 形态时 `ErrorFactory` 仍能拿到响应（只是正文被丢弃）。
 - `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。
 - 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛）。
@@ -1247,6 +1343,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 - 生命周期归容器：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端。
 - 多站点用 `IApiClientResolver.Get(name)` / `TryGet` / `Names`；.NET 8+ 也可用键名服务（`AddKeyedSingleton` + `[FromKeyedServices]`）。
 - 接口级声明可直接注册：`services.AddApiInterface<IUserApi>()`（取未命名 `ApiClient`）或 `AddApiInterface<IUserApi>("a")`（取命名站点）；代理按单例复用，仅在 JIT 下可用。
+- 一个接口只能绑一个站点：换站点再注册一次（含未命名 ↔ 命名）在注册期抛 `InvalidOperationException`，不会静默丢掉第二条；两个站点共用方法时定义派生接口再注册到另一个站点。
 
 ## 配置速查
 
@@ -1261,6 +1358,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `RemoveHeaders` | 空 | 要摘掉的实例默认头 |
 | `Params` | `null` | 对象 / 字典 / 集合 / 已编码串 |
 | `ContentType` | `application/json` | 决定 `Data` 的编码方式 |
+| `RequestCompression` | `null`（不压缩） | 请求体压缩：`Gzip` / `Deflate` / `Brotli`，`None` 覆盖实例默认 |
 | `Data` | `null` | 请求体 |
 | `Timeout` | `Zero`（不超时） | 单次尝试的预算（建连 + 响应头 + 正文） |
 | `TotalTimeout` | `null`（不设） | 整条请求的总预算：跨重试 / 端点 / 对冲共享，并与 `Timeout` 取小 |
@@ -1272,13 +1370,13 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 九个子对象（首次访问才创建）：
 
-**`Serialization`** — `JsonSerializerOptions`（Web 风格）/ `ContentSerializer`（`null` = 内置 JSON）/ `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat`（`Brackets`）
+**`Serialization`** — `JsonSerializerOptions`（Web 风格）/ `ContentSerializer`（`null` = 内置 JSON）/ `ContentSerializers`（实例注册表 `ContentSerializerRegistry`，构造时必有）/ `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat`（`Brackets`）
 
 **`Connection`** — `Auth`（`new AxiosAuth(user, pass)`）/ `MaxRedirects`（5，`0` 不跟随，仅实例级）/ `WithCredentials`（仅实例级）/ `Proxy` / `Credentials` / `PoolOptions`（仅实例级）/ `HttpVersion`（`null` = 2.0）/ `VersionPolicy`（`null` = `OrLower`）
 
 **`Limits`** — `MaxContentLength` / `MaxBodyLength` / `MaxRate`（均 `null` = 不限）/ `MaxConcurrentRequests` / `MaxQueueLength`（`null`，仅实例级）/ `QueueTimeout`（`null` 一直等）/ `MaxStreamFrameLength`（`null` = 8 MB，1–64 MB）
 
-**`Callbacks`** — `ValidateStatus`（`Func<int,bool>`，默认 2xx）/ `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse`
+**`Callbacks`** — `ValidateStatus`（`Func<int,bool>`，默认 2xx）/ `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnSendingRequest` / `OnRawResponse`
 
 **`Retry`** — `Policy`（`null` = 不重试）/ `OnRetry`
 
@@ -1391,9 +1489,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1568 | `net8.0` / `net6.0` | 3136 |
-| `AxiosNet.DependencyInjection.Tests` | 59 | `net8.0` / `net6.0` | 118 |
-| **合计** | **1627** | | **3254** |
+| `AxiosNet.Tests`（核心 + 声明式） | 1624 | `net8.0` / `net6.0` | 3248 |
+| `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
+| **合计** | **1687** | | **3374** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、遥测、声明式绑定、接口级代理与 DI 注册。
 

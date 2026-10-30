@@ -104,7 +104,7 @@ public interface IMultipleBodyApi
 public interface IWrongReturnApi
 {
     [Get("x")]
-    Task<Person> GetAsync();
+    ValueTask<AxiosResponse<Person>> GetAsync();
 }
 
 public interface IStreamingApi

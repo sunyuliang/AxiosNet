@@ -207,6 +207,14 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool ContentTypeSet { get; private set; }
 
+    /// <summary>
+    /// 请求体压缩算法（默认 <c>null</c> = 不压缩；<see cref="AxiosCompression.None"/> 用于按请求关掉实例默认的压缩）：
+    /// 作用于按字节缓冲出来的正文（文本 / 二进制 / 表单），压缩后自动补 <c>Content-Encoding</c>。
+    /// 流式正文（<see cref="Stream"/>、<c>IAsyncEnumerable&lt;byte[]&gt;</c>）、调用方自带的 <see cref="HttpContent"/>
+    /// 与 multipart 正文不压缩（会直接报 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// </summary>
+    public AxiosCompression? RequestCompression { get; set; }
+
     private object? _data;
 
     /// <summary>
@@ -400,6 +408,7 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>深拷贝（Headers / transform 链 / Params / Data 的字典容器独立；其余引用成员按引用共享）。</summary>
+    /// <remarks>克隆一份生效配置（如 <see cref="AxiosResponse.Config"/>）后，它仍是「库产出的配置」：回放时实例级项取自目标实例，改 <c>BaseAddress</c> 之类不会生效。</remarks>
     public AxiosConfig Clone()
     {
         var clone = (AxiosConfig)MemberwiseClone();

@@ -77,42 +77,52 @@ public sealed class ApiErrorContext
     }
 }
 
-/// <summary>内置的强类型错误异常：携带反序列化后的错误体与原始 <see cref="AxiosException"/>。</summary>
+/// <summary>
+/// 内置的强类型错误异常：携带反序列化后的错误体与原始 <see cref="AxiosException"/>。
+/// 它本身也是 <see cref="AxiosException"/>，因此 <c>catch (AxiosException)</c> 与 <c>catch (ApiError&lt;T&gt;)</c> 都能接住。
+/// </summary>
 /// <typeparam name="TError">错误体模型（如 RFC 7807 的 ProblemDetails）。</typeparam>
-public sealed class ApiError<TError> : Exception
+public sealed class ApiError<TError> : AxiosException
 {
     /// <summary>按错误上下文构造异常（自定义工厂里也可用它 / 或自己继承 <see cref="Exception"/>）。</summary>
     /// <param name="error">已反序列化的错误体；解析失败时为 <c>null</c>。</param>
     /// <param name="context">错误上下文。</param>
     public ApiError(TError? error, ApiErrorContext context)
-        : base(context is null ? "API request failed" : context.Error.Message, context?.Error)
+        : base(
+            Ensure(context).Error.Message,
+            context.Error.Code,
+            context.Error.Config,
+            context.Error.Request,
+            context.Response,
+            context.Error)
     {
-        ArgumentNullException.ThrowIfNull(context);
-
         Error = error;
-        Status = context.Response.Status;
         StatusText = context.Response.StatusText;
         Response = context.Response;
         Original = context.Error;
+    }
+
+    // 基类构造参数里要先解引用 context，因此空值校验放在参数列表的第一个实参位置（实参从左到右求值）。
+    private static ApiErrorContext Ensure(ApiErrorContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context;
     }
 
     /// <summary>反序列化后的错误体；错误体缺失或无法解析时为 <c>null</c>。</summary>
     public TError? Error { get; }
 
     /// <summary>HTTP 状态码（等价于 <see cref="Response"/> 的 <c>Status</c>）。</summary>
-    public int Status { get; }
+    public new int Status => Response.Status;
 
     /// <summary>HTTP 状态原因的文本形式（如 <c>Bad Request</c>）。</summary>
     public string StatusText { get; }
 
     /// <summary>原始响应（头、正文原文、请求信息）。</summary>
-    public AxiosResponse Response { get; }
+    public new AxiosResponse Response { get; }
 
-    /// <summary>原始 <see cref="AxiosException"/>（<c>Code</c> / <c>Cause</c> 从它取）。</summary>
+    /// <summary>原始 <see cref="AxiosException"/>（与 <see cref="Exception.InnerException"/> 同一实例）。</summary>
     public AxiosException Original { get; }
-
-    /// <summary>错误码，与 <see cref="Original"/> 同一值（如 <c>ERR_BAD_REQUEST</c>）。</summary>
-    public string? Code => Original.Code;
 }
 
 /// <summary>内置错误工厂：把错误体读成 <typeparamref name="TError"/> 并抛出 <see cref="ApiError{TError}"/>。</summary>

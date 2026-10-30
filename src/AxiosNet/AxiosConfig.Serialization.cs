@@ -19,6 +19,14 @@ public sealed partial class AxiosConfig
         /// </summary>
         public IContentSerializer? ContentSerializer { get; set; }
 
+        /// <summary>
+        /// 按媒体类型登记的序列化器表（每个 <see cref="AxiosClient"/> 构造时保证有一份，见 <see cref="AxiosClient.ContentSerializers"/>）。
+        /// 优先级低于 <see cref="ContentSerializer"/>、高于全局 <see cref="AxiosContent.Serializer"/> 与全局注册表。
+        /// 属实例级：库产出的配置（如回放 <see cref="AxiosResponse.Config"/>）合并时不带走来源实例的登记。
+        /// 按请求拿到的是实例那张表本身（同一引用），直接 <c>Register</c> 会改到实例；只在本次请求生效请 new 一张表再赋值。
+        /// </summary>
+        public ContentSerializerRegistry? ContentSerializers { get; set; }
+
         /// <summary>请求体文本编码（string / 对象 / 表单），null 时使用 UTF-8；byte[] / Stream / <c>IAsyncEnumerable</c> 字节块原样透传。</summary>
         public Encoding? RequestEncoding { get; set; }
 
@@ -52,6 +60,7 @@ public sealed partial class AxiosConfig
         {
             JsonSerializerOptions = incoming.JsonSerializerOptions ?? JsonSerializerOptions;
             ContentSerializer = incoming.ContentSerializer ?? ContentSerializer;
+            ContentSerializers = incoming.ContentSerializers ?? ContentSerializers;
             RequestEncoding = incoming.RequestEncoding ?? RequestEncoding;
             ResponseEncoding = incoming.ResponseEncoding ?? ResponseEncoding;
             ParamsSerializer = incoming.ParamsSerializer ?? ParamsSerializer;

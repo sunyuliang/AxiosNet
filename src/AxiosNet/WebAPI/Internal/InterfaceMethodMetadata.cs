@@ -263,18 +263,23 @@ internal sealed class InterfaceMethodMetadata
 
         var plan = accumulator.Build(route.Method, route.Path, allowDefaultBody: !isMultipart);
 
-        if (!InterfaceDeclaration.TryGetResponseType(method, out var responseType))
+        var shape = InterfaceDeclaration.GetReturnShape(method, out var responseType);
+        if (shape == InterfaceDeclaration.ReturnShape.Unsupported)
         {
             throw new InvalidOperationException(
-                $"接口 {interfaceType.Name} 的 {method.Name} 返回类型是 {method.ReturnType.Name}：接口方法必须返回 Task<AxiosResponse<T>>。");
+                $"接口 {interfaceType.Name} 的 {method.Name} 返回类型是 {InterfaceDeclaration.DescribeReturnType(method.ReturnType)}："
+                + "接口方法必须返回 Task<AxiosResponse<T>> / Task<T> / Task<AxiosResponse> / Task。");
         }
 
-        var isStreaming = InterfaceDeclaration.IsStreamingResponse(responseType);
+        var isStreaming = shape == InterfaceDeclaration.ReturnShape.Response
+            && responseType is not null
+            && InterfaceDeclaration.IsStreamingResponse(responseType);
+
         var stream = method.GetCustomAttribute<StreamAttribute>(inherit: false);
         if (stream is not null && !isStreaming)
         {
             throw new InvalidOperationException(
-                $"接口 {interfaceType.Name} 的 {method.Name} 标注了 [Stream]，但返回类型是 Task<AxiosResponse<{responseType.Name}>>："
+                $"接口 {interfaceType.Name} 的 {method.Name} 标注了 [Stream]，但返回类型是 {InterfaceDeclaration.DescribeReturnType(method.ReturnType)}："
                 + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
         }
 
@@ -297,10 +302,8 @@ internal sealed class InterfaceMethodMetadata
             cancellationTokenIndex,
             isMultipart,
             [.. parts],
-            createRuntime
-                ? (isStreaming ? CreateStreamInvoker(responseType.GetGenericArguments()[0], streamFormat) : CreateInvoker(responseType))
-                : null,
-            createRuntime ? CreateFault(responseType) : null);
+            createRuntime ? CreateInvoker(shape, responseType, isStreaming, streamFormat) : null,
+            createRuntime ? CreateFault(shape, responseType) : null);
     }
 
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
@@ -389,10 +392,13 @@ internal sealed class InterfaceMethodMetadata
         return form.Count > 0 ? form : null;
     }
 
-    private async Task<AxiosResponse<T>> SendAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    /// <summary>调用前准备：组装本次配置、写入调用方令牌、跑授权。</summary>
+    private async Task<ApiInterfaceInvocation> PrepareAsync(
+        ApiClient client,
+        object?[] args,
+        AxiosConfig config,
+        CancellationToken cancellationToken)
     {
-        var config = BuildConfig(client, args);
-
         // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌
         if (cancellationToken.CanBeCanceled)
         {
@@ -403,7 +409,41 @@ internal sealed class InterfaceMethodMetadata
 
         await client.ApplyAuthorizationAsync(_authorization, invocation, config, cancellationToken).ConfigureAwait(false);
 
+        return invocation;
+    }
+
+    /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>：交付完整响应。</summary>
+    private async Task<AxiosResponse<T>> SendResponseAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    {
+        var config = BuildConfig(client, args);
+        var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
+
         return await client.SendAsync<T>(invocation, config, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary><c>Task&lt;AxiosResponse&gt;</c>：交付响应，正文按 JsonElement 原样给。</summary>
+    private async Task<AxiosResponse> SendUntypedAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    {
+        var config = BuildConfig(client, args);
+        var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
+
+        return await client.SendUntypedAsync(invocation, config, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
+    private async Task<T?> SendDataAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    {
+        var response = await SendResponseAsync<T>(client, args, cancellationToken).ConfigureAwait(false);
+        return response.Data;
+    }
+
+    /// <summary><c>Task</c>：只完成请求，正文丢弃。</summary>
+    private async Task SendVoidAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
+    {
+        var config = BuildConfig(client, args);
+        var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
+
+        await client.SendWithoutBodyAsync(invocation, config, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<AxiosResponse<IAsyncEnumerable<TItem>>> SendStreamAsync<TItem>(
@@ -421,6 +461,7 @@ internal sealed class InterfaceMethodMetadata
 
         var invocation = new ApiInterfaceInvocation(_interfaceType!, _methodName!, args);
 
+        // 流式发送内核自己跑授权，这里不再重复。
         return await client.SendStreamAsync<TItem>(invocation, _authorization, config, cancellationToken, format).ConfigureAwait(false);
     }
 
@@ -493,18 +534,50 @@ internal sealed class InterfaceMethodMetadata
     private static InvalidOperationException DuplicatePart(string owner, string name)
         => new($"{owner} 有多个 Part 绑定使用了同名 \"{name}\"：同名参数请合并为一项（集合值走 AxiosNet 的数组规则）。");
 
+    /// <summary>按返回形态选调用器：非泛型响应与 <c>Task</c> 直接闭包，其余泛型实例按正文类型特化。</summary>
+    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateInvoker(
+        InterfaceDeclaration.ReturnShape shape,
+        Type? responseType,
+        bool isStreaming,
+        AxiosStreamFormat streamFormat)
+        => shape switch
+        {
+            InterfaceDeclaration.ReturnShape.Response when responseType is null
+                => static (client, metadata, args, cancellationToken) => metadata.SendUntypedAsync(client, args, cancellationToken),
+            InterfaceDeclaration.ReturnShape.Response when isStreaming
+                => CreateStreamInvoker(responseType.GetGenericArguments()[0], streamFormat),
+            InterfaceDeclaration.ReturnShape.Response
+                => CreateResponseInvoker(responseType!),
+            InterfaceDeclaration.ReturnShape.Data
+                => CreateDataInvoker(responseType!),
+            _ => static (client, metadata, args, cancellationToken) => metadata.SendVoidAsync(client, args, cancellationToken),
+        };
+
+    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateResponseInvokerCore<T>()
+        => static (client, metadata, args, cancellationToken) => metadata.SendResponseAsync<T>(client, args, cancellationToken);
+
+    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateDataInvokerCore<T>()
+        => static (client, metadata, args, cancellationToken) => metadata.SendDataAsync<T>(client, args, cancellationToken);
+
     [UnconditionalSuppressMessage(
         "AotAnalysis",
         "IL3050",
         Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
-    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateInvoker(Type responseType)
+    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateResponseInvoker(Type responseType)
         => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
-            .GetMethod(nameof(CreateInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetMethod(nameof(CreateResponseInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
 
-    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateInvokerCore<T>()
-        => static (client, metadata, args, cancellationToken) => metadata.SendAsync<T>(client, args, cancellationToken);
+    [UnconditionalSuppressMessage(
+        "AotAnalysis",
+        "IL3050",
+        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+    private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateDataInvoker(Type responseType)
+        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
+            .GetMethod(nameof(CreateDataInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(responseType)
+            .Invoke(null, null)!;
 
     [UnconditionalSuppressMessage(
         "AotAnalysis",
@@ -521,16 +594,42 @@ internal sealed class InterfaceMethodMetadata
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateStreamInvokerCore<TItem>(AxiosStreamFormat format)
         => (client, metadata, args, cancellationToken) => metadata.SendStreamAsync<TItem>(client, args, cancellationToken, format);
 
+    /// <summary>绑定 / 发送阶段的异常封装成对应形态的 faulted Task（保持异步方法的异常时序）。</summary>
+    private static Func<Exception, object> CreateFault(InterfaceDeclaration.ReturnShape shape, Type? responseType)
+        => shape switch
+        {
+            InterfaceDeclaration.ReturnShape.Response when responseType is null
+                => static error => Task.FromException<AxiosResponse>(error),
+            InterfaceDeclaration.ReturnShape.Void
+                => static error => Task.FromException(error),
+            InterfaceDeclaration.ReturnShape.Data
+                => CreateDataFault(responseType!),
+            _ => CreateResponseFault(responseType!),
+        };
+
+    private static Func<Exception, object> CreateResponseFaultCore<T>()
+        => static error => Task.FromException<AxiosResponse<T>>(error);
+
+    private static Func<Exception, object> CreateDataFaultCore<T>()
+        => static error => Task.FromException<T>(error);
+
     [UnconditionalSuppressMessage(
         "AotAnalysis",
         "IL3050",
         Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
-    private static Func<Exception, object> CreateFault(Type responseType)
+    private static Func<Exception, object> CreateResponseFault(Type responseType)
         => (Func<Exception, object>)typeof(InterfaceMethodMetadata)
-            .GetMethod(nameof(CreateFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetMethod(nameof(CreateResponseFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
 
-    private static Func<Exception, object> CreateFaultCore<T>()
-        => static error => Task.FromException<AxiosResponse<T>>(error);
+    [UnconditionalSuppressMessage(
+        "AotAnalysis",
+        "IL3050",
+        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+    private static Func<Exception, object> CreateDataFault(Type responseType)
+        => (Func<Exception, object>)typeof(InterfaceMethodMetadata)
+            .GetMethod(nameof(CreateDataFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(responseType)
+            .Invoke(null, null)!;
 }

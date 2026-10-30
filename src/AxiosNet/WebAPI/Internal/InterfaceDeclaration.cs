@@ -118,27 +118,77 @@ internal static class InterfaceDeclaration
         return false;
     }
 
-    /// <summary>解析 <c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c> 的 <c>T</c>。</summary>
-    public static bool TryGetResponseType(MethodInfo method, out Type responseType)
+    /// <summary>接口方法的返回形态：决定调用产物与异常封装。</summary>
+    public enum ReturnShape
+    {
+        /// <summary>不支持（同步返回 / <c>ValueTask</c> / 其它泛型）。</summary>
+        Unsupported = 0,
+
+        /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>（<c>Task&lt;AxiosResponse&gt;</c> 即正文类型为 <c>null</c>）。</summary>
+        Response,
+
+        /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
+        Data,
+
+        /// <summary><c>Task</c>：只完成请求，正文丢弃。</summary>
+        Void
+    }
+
+    /// <summary>解析返回形态；<paramref name="responseType"/> 是正文类型（<c>Void</c> 时为 <c>void</c>，非泛型响应为 <c>null</c>）。</summary>
+    public static ReturnShape GetReturnShape(MethodInfo method, out Type? responseType)
     {
         var returnType = method.ReturnType;
-        if (returnType.IsGenericType && returnType.GetGenericTypeDefinition() == typeof(Task<>))
+        responseType = null;
+
+        if (!returnType.IsGenericType)
         {
-            var response = returnType.GetGenericArguments()[0];
-            if (response.IsGenericType && response.GetGenericTypeDefinition() == typeof(AxiosResponse<>))
-            {
-                responseType = response.GetGenericArguments()[0];
-                return true;
-            }
+            return returnType == typeof(Task) ? ReturnShape.Void : ReturnShape.Unsupported;
         }
 
-        responseType = typeof(void);
-        return false;
+        if (returnType.GetGenericTypeDefinition() != typeof(Task<>))
+        {
+            return ReturnShape.Unsupported;
+        }
+
+        var inner = returnType.GetGenericArguments()[0];
+
+        // 非泛型 AxiosResponse：正文按 JsonElement 原样交付。
+        if (inner == typeof(AxiosResponse))
+        {
+            return ReturnShape.Response;
+        }
+
+        if (inner.IsGenericType && inner.GetGenericTypeDefinition() == typeof(AxiosResponse<>))
+        {
+            responseType = inner.GetGenericArguments()[0];
+            return ReturnShape.Response;
+        }
+
+        responseType = inner;
+        return ReturnShape.Data;
     }
 
     /// <summary>接口级流式响应：返回 <c>Task&lt;AxiosResponse&lt;IAsyncEnumerable&lt;T&gt;&gt;&gt;</c> 时正文按帧交付。</summary>
     public static bool IsStreamingResponse(Type responseType)
         => responseType.IsGenericType && responseType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>);
+
+    /// <summary>返回类型的可读形态（<c>ValueTask&lt;AxiosResponse&lt;User&gt;&gt;</c>），用于错误消息。</summary>
+    public static string DescribeReturnType(Type type)
+    {
+        if (!type.IsGenericType)
+        {
+            return type.Name;
+        }
+
+        var name = type.Name;
+        var arity = name.IndexOf('`');
+        if (arity >= 0)
+        {
+            name = name[..arity];
+        }
+
+        return $"{name}<{string.Join(", ", type.GetGenericArguments().Select(DescribeReturnType))}>";
+    }
 
     /// <summary>DispatchProxy 交回的 <see cref="MethodInfo"/> 可能声明在代理类型上（继承接口场景），解析回接口方法。</summary>
     public static MethodInfo ResolveMethod(
@@ -209,24 +259,25 @@ internal static class InterfaceDeclaration
             errors.Add($"{display} 有多个路由特性（{names}）：一个方法只能声明一个。");
         }
 
-        var hasResponseType = TryGetResponseType(method, out var responseType);
-        if (!hasResponseType)
+        var shape = GetReturnShape(method, out var responseType);
+        if (shape == ReturnShape.Unsupported)
         {
-            errors.Add($"{display} 的返回类型是 {method.ReturnType.Name}：接口方法必须返回 Task<AxiosResponse<T>>（接口级声明不支持同步返回 / ValueTask）。");
+            errors.Add($"{display} 的返回类型是 {DescribeReturnType(method.ReturnType)}："
+                + "接口方法必须返回 Task<AxiosResponse<T>> / Task<T> / Task<AxiosResponse> / Task（不支持同步返回 / ValueTask）。");
+        }
+        else if (shape == ReturnShape.Data && IsStreamingResponse(responseType!))
+        {
+            errors.Add($"{display} 返回 {DescribeReturnType(method.ReturnType)}："
+                + "流式正文按帧交付需要响应元数据，请声明 Task<AxiosResponse<IAsyncEnumerable<T>>>。");
         }
 
         // [Stream] 只用于流式方法；帧格式值必须落在枚举内。
         var stream = method.GetCustomAttribute<StreamAttribute>(inherit: false);
         if (stream is not null)
         {
-            if (!hasResponseType)
+            if (shape != ReturnShape.Response || responseType is null || !IsStreamingResponse(responseType))
             {
-                errors.Add($"{display} 标注了 [Stream]，但返回类型不是 Task<AxiosResponse<T>>："
-                    + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
-            }
-            else if (!IsStreamingResponse(responseType))
-            {
-                errors.Add($"{display} 标注了 [Stream]，但返回类型是 Task<AxiosResponse<{responseType.Name}>>："
+                errors.Add($"{display} 标注了 [Stream]，但返回类型是 {DescribeReturnType(method.ReturnType)}："
                     + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
             }
             else if (!Enum.IsDefined(typeof(AxiosStreamFormat), stream.Format))
