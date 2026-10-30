@@ -2,6 +2,7 @@ using System.Collections;
 using System.Dynamic;
 using System.Linq.Expressions;
 using System.Reflection;
+using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet;
 
@@ -19,14 +20,6 @@ namespace AxiosNet;
 /// </remarks>
 public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<string, object?>
 {
-    private static readonly FieldInfo s_shapeField = typeof(AxiosDynamic).GetField(nameof(_shape), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-    private static readonly FieldInfo s_valuesField = typeof(AxiosDynamic).GetField(nameof(_values), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-    private static readonly MethodInfo s_getValue = typeof(AxiosDynamic).GetMethod(nameof(GetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-    private static readonly MethodInfo s_setValue = typeof(AxiosDynamic).GetMethod(nameof(SetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
     /// <summary>写锁：写入串行化，读不加锁。</summary>
     private readonly object _gate = new();
 
@@ -197,7 +190,34 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(Expression parameter) => new Meta(parameter, this);
+    DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(Expression parameter)
+    {
+        // DLR 需要 Expression.Compile（运行时代码生成）：Native AOT 下直接拒绝，索引 / 字典接口不受影响。
+        if (!RuntimeSupport.IsDynamicCodeSupported)
+        {
+            throw new PlatformNotSupportedException(
+                "AxiosDynamic 的 dynamic 成员语法需要运行时代码生成，Native AOT 下不可用："
+                + "请改用 data[\"name\"] 或 data.TryGetValue(\"name\", out var value)（索引访问与 IDictionary 接口在 AOT 下可用）。");
+        }
+
+        return new Meta(parameter, this);
+    }
+
+    /// <summary>DLR 绑定用到的私有成员句柄：放在嵌套类里，只在 dynamic 语法首次绑定（JIT）时初始化。</summary>
+    private static class Dlr
+    {
+        internal static readonly FieldInfo ShapeField =
+            typeof(AxiosDynamic).GetField(nameof(_shape), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        internal static readonly FieldInfo ValuesField =
+            typeof(AxiosDynamic).GetField(nameof(_values), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        internal static readonly MethodInfo GetValueMethod =
+            typeof(AxiosDynamic).GetMethod(nameof(GetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        internal static readonly MethodInfo SetValueMethod =
+            typeof(AxiosDynamic).GetMethod(nameof(SetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
+    }
 
     /// <summary>慢路径取值（索引访问、shape 不匹配时使用）。</summary>
     private object? GetValue(string name)
@@ -367,10 +387,10 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             // 名字 → 槽位在绑定期解析成常量；shape 是缓存键的一部分，同形状的实例共享规则。
             var restrictions = BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic))
                 .Merge(BindingRestrictions.GetExpressionRestriction(
-                    Expression.ReferenceEqual(Expression.Field(self, s_shapeField), Expression.Constant(shape))));
+                    Expression.ReferenceEqual(Expression.Field(self, Dlr.ShapeField), Expression.Constant(shape))));
 
             Expression body = shape.Slots.TryGetValue(binder.Name, out var slot)
-                ? Expression.ArrayIndex(Expression.Field(self, s_valuesField), Expression.Constant(slot))
+                ? Expression.ArrayIndex(Expression.Field(self, Dlr.ValuesField), Expression.Constant(slot))
                 : Expression.Constant(null, typeof(object));
 
             return new DynamicMetaObject(body, restrictions);
@@ -383,7 +403,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             var body = Expression.Block(
                 new[] { assigned },
                 Expression.Assign(assigned, Expression.Convert(value.Expression, typeof(object))),
-                Expression.Call(self, s_setValue, Expression.Constant(binder.Name), assigned),
+                Expression.Call(self, Dlr.SetValueMethod, Expression.Constant(binder.Name), assigned),
                 assigned);
 
             return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
@@ -396,7 +416,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
                 return binder.FallbackGetIndex(this, indexes);
             }
 
-            var body = Expression.Call(Expression.Convert(Expression, typeof(AxiosDynamic)), s_getValue, Expression.Convert(indexes[0].Expression, typeof(string)));
+            var body = Expression.Call(Expression.Convert(Expression, typeof(AxiosDynamic)), Dlr.GetValueMethod, Expression.Convert(indexes[0].Expression, typeof(string)));
 
             return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
         }
@@ -413,7 +433,7 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             var body = Expression.Block(
                 new[] { assigned },
                 Expression.Assign(assigned, Expression.Convert(value.Expression, typeof(object))),
-                Expression.Call(self, s_setValue, Expression.Convert(indexes[0].Expression, typeof(string)), assigned),
+                Expression.Call(self, Dlr.SetValueMethod, Expression.Convert(indexes[0].Expression, typeof(string)), assigned),
                 assigned);
 
             return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));

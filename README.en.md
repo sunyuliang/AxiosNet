@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1899%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1957%2F1953%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.8%25_(branch_89.1%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1681,7 +1681,9 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
-Not available under AOT: `dynamic` responses and runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and interface declarations via `Create<T>()` (`DispatchProxy` relies on Reflection.Emit and throws `PlatformNotSupportedException` at call time; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`).
+Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosMetadata.RegisterRequestModel(typeof(T), ...)` API can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver`; `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
+
+Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and interface declarations via `Create<T>()` (`DispatchProxy` relies on Reflection.Emit and throws `PlatformNotSupportedException` at call time; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`).
 
 ## Build and test
 
@@ -1693,13 +1695,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1836 | `net8.0` / `net6.0` | 3672 |
+| `AxiosNet.Tests` (core + declarative) | 1894 / 1890 | `net8.0` / `net6.0` | 3784 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1899** | | **3798** |
+| **Total** | **1957 / 1953** | | **3910** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
-Line coverage **92.7%**, branch coverage **89.1%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
+Line coverage **92.8%**, branch coverage **89.1%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash

@@ -129,38 +129,35 @@ internal sealed class BindingAccumulator
     }
 
     /// <summary>按声明顺序解析静态头：无冒号 = 摘除同名头，有冒号 = 固定值。</summary>
-    public void AddStaticHeaders(IEnumerable<HeadersAttribute> declarations)
+    public void AddStaticHeaders(IEnumerable<string> declarations)
     {
-        foreach (var attribute in declarations)
+        foreach (var declaration in declarations)
         {
-            foreach (var declaration in attribute.Headers)
+            if (declaration is null)
             {
-                if (declaration is null)
-                {
-                    continue;
-                }
-
-                var separator = declaration.IndexOf(':');
-                if (separator < 0)
-                {
-                    var removalName = declaration.Trim();
-                    if (removalName.Length == 0)
-                    {
-                        throw new InvalidOperationException($"{_owner} 的 [Headers] 含空白声明：无法作为「删除头」的名字。");
-                    }
-
-                    _staticHeaders.Add((removalName, null));
-                    continue;
-                }
-
-                var name = declaration[..separator].Trim();
-                if (name.Length == 0)
-                {
-                    throw new InvalidOperationException($"{_owner} 的 [Headers] 声明 \"{declaration}\" 缺少头名。");
-                }
-
-                _staticHeaders.Add((name, declaration[(separator + 1)..].Trim()));
+                continue;
             }
+
+            var separator = declaration.IndexOf(':');
+            if (separator < 0)
+            {
+                var removalName = declaration.Trim();
+                if (removalName.Length == 0)
+                {
+                    throw new InvalidOperationException($"{_owner} 的 [Headers] 含空白声明：无法作为「删除头」的名字。");
+                }
+
+                _staticHeaders.Add((removalName, null));
+                continue;
+            }
+
+            var name = declaration[..separator].Trim();
+            if (name.Length == 0)
+            {
+                throw new InvalidOperationException($"{_owner} 的 [Headers] 声明 \"{declaration}\" 缺少头名。");
+            }
+
+            _staticHeaders.Add((name, declaration[(separator + 1)..].Trim()));
         }
     }
 
@@ -289,7 +286,7 @@ internal sealed class BindingAccumulator
         => string.IsNullOrWhiteSpace(explicitName) ? fallback : explicitName.Trim();
 
     /// <summary>路径占位符：字母/下划线开头，字母/数字/下划线组成。</summary>
-    private static readonly Regex PathTokenRegex = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
+    private static readonly Regex PathTokenRegex = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.CultureInvariant);
 }
 
 /// <summary>授权声明解析：方法级优先，其次按「更具体的一层优先」的类型链查找，两个特性同标一层属二义性。</summary>

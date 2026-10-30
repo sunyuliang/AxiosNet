@@ -108,6 +108,220 @@ internal sealed class InterfaceMethodMetadata
         MethodInfo method)
         => BuildCore(interfaceType, method, createRuntime: false);
 
+    /// <summary>
+    /// 按声明构建方法契约（生成器 / 手工注册的路径）：不反射参数、不创建泛型调用器，
+    /// 因此 Native AOT 下可用；调用器由生成代理在 P2 直接调用 <c>Send*Async</c> 桥接方法。
+    /// </summary>
+    internal static InterfaceMethodMetadata FromDeclaration(
+        InterfaceDeclarationData owner,
+        InterfaceMethodDeclaration declaration)
+    {
+        try
+        {
+            return BuildCore(owner, declaration);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
+        {
+            return new InterfaceMethodMetadata(ex.Message);
+        }
+    }
+
+    /// <summary>契约已构建但存在声明错误时抛出（启动期校验 / 首次创建代理用）。</summary>
+    public void EnsureValid()
+    {
+        if (_buildError is not null)
+        {
+            throw new InvalidOperationException(_buildError);
+        }
+    }
+
+    /// <summary>声明路径的契约构建：只做归一化、绑定与授权，语义与反射路径逐项对齐。</summary>
+    private static InterfaceMethodMetadata BuildCore(
+        InterfaceDeclarationData owner,
+        InterfaceMethodDeclaration declaration)
+    {
+        if (owner.Error is { } ownerError)
+        {
+            throw new InvalidOperationException(ownerError);
+        }
+
+        if (declaration.Error is { } declarationError)
+        {
+            throw new InvalidOperationException(declarationError);
+        }
+
+        var interfaceType = owner.InterfaceType;
+        var methodName = declaration.Name;
+        if (string.IsNullOrWhiteSpace(declaration.MethodName) || string.IsNullOrWhiteSpace(declaration.Path))
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 必须且只能标注一个路由特性（[Get] / [Post] / ...）。");
+        }
+
+        var method = DeclarationNormalization.HttpMethodFrom(declaration.MethodName);
+        var path = DeclarationNormalization.Path(declaration.Path);
+        var ownerText = $"接口 {interfaceType.Name}.{methodName}";
+        var accumulator = new BindingAccumulator(ownerText, "参数");
+
+        // 接口级声明在前、方法级在后（同名后者覆盖），与反射路径一致。
+        accumulator.AddStaticHeaders(owner.StaticHeaders);
+        accumulator.AddStaticHeaders(declaration.StaticHeaders);
+
+        var isMultipart = declaration.Multipart;
+        var parts = new List<PartBinding>();
+        var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
+        var cancellationTokenIndex = declaration.CancellationTokenIndex;
+
+        foreach (var parameter in declaration.Parameters)
+        {
+            if (parameter.ValueType == typeof(CancellationToken))
+            {
+                // 反射路径按参数类型跳过取消令牌（其上的绑定特性一律忽略）；声明路径保持同一语义，
+                // 生成器可以统一声明全部参数，再由 CancellationToken(index) 标注位置。
+                if (cancellationTokenIndex >= 0 && cancellationTokenIndex != parameter.Index)
+                {
+                    throw new InvalidOperationException($"接口 {interfaceType.Name} 的 {methodName} 声明了多个 CancellationToken 参数：最多一个。");
+                }
+
+                cancellationTokenIndex = parameter.Index;
+                continue;
+            }
+
+            if (parameter.Ignore)
+            {
+                if (parameter.HasAnyBinding)
+                {
+                    throw new InvalidOperationException(
+                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
+                        + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
+                }
+
+                continue;
+            }
+
+            var source = new ArgumentValueSource(
+                parameter.Index,
+                parameter.Name,
+                parameter.ValueType,
+                parameter.Description ?? $"{interfaceType.Name}.{methodName}.{parameter.Name}");
+
+            if (parameter.Path)
+            {
+                accumulator.AddPath(source, parameter.PathName ?? string.Empty);
+            }
+
+            if (parameter.Header)
+            {
+                accumulator.AddHeader(source, parameter.HeaderName ?? string.Empty);
+            }
+
+            if (parameter.HeaderCollection)
+            {
+                accumulator.AddHeaderCollection(source);
+            }
+
+            if (parameter.Part)
+            {
+                if (!isMultipart)
+                {
+                    throw new InvalidOperationException(
+                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 标注了 [Part]，但方法没有 [Multipart]：请在方法上声明 [Multipart]。");
+                }
+
+                var explicitName = DeclarationNormalization.OptionalPartValue(parameter.PartName, source.Description!, nameof(PartAttribute.Name));
+                var partName = explicitName ?? parameter.Name;
+                if (!seenPartNames.Add(partName))
+                {
+                    throw DuplicatePart(ownerText, partName);
+                }
+
+                parts.Add(new PartBinding(
+                    partName,
+                    source,
+                    explicitName is not null,
+                    DeclarationNormalization.OptionalPartValue(parameter.PartFileName, source.Description!, nameof(PartAttribute.FileName)),
+                    DeclarationNormalization.OptionalPartValue(parameter.PartContentType, source.Description!, nameof(PartAttribute.ContentType))));
+            }
+
+            if (parameter.Body)
+            {
+                accumulator.AddBody(source);
+            }
+
+            if (!parameter.HasAnyBinding)
+            {
+                if (isMultipart)
+                {
+                    if (!seenPartNames.Add(parameter.Name))
+                    {
+                        throw DuplicatePart(ownerText, parameter.Name);
+                    }
+
+                    parts.Add(new PartBinding(parameter.Name, source, false, null, null));
+                    continue;
+                }
+
+                accumulator.AddUnannotated(source);
+            }
+            else if (parameter.Query)
+            {
+                accumulator.AddQuery(source, parameter.QueryName ?? string.Empty);
+            }
+        }
+
+        if (isMultipart && accumulator.HasBody)
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
+                + "multipart 方法的请求体由全部参数装配，两者互斥。");
+        }
+
+        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart);
+
+        var shape = declaration.ReturnShape;
+        if (shape == InterfaceReturnShape.Unsupported)
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 返回类型不受支持："
+                + "接口方法必须返回 Task<AxiosResponse<T>> / Task<T> / Task<AxiosResponse> / Task。");
+        }
+
+        var isStreaming = shape == InterfaceReturnShape.Response
+            && declaration.ResponseType is not null
+            && InterfaceDeclaration.IsStreamingResponse(declaration.ResponseType);
+
+        if (declaration.HasStreamAttribute && !isStreaming)
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 标注了 [Stream]，但返回类型不是 Task<AxiosResponse<IAsyncEnumerable<T>>>："
+                + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
+        }
+
+        if (isStreaming && !Enum.IsDefined(typeof(AxiosStreamFormat), declaration.StreamFormat))
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 的 [Stream] 帧格式值 {(int)declaration.StreamFormat} 无效：请使用 AxiosStreamFormat 的已定义值。");
+        }
+
+        // 方法级声明压过接口级；两层都未声明时继承实例默认授权。
+        var authorization = declaration.AllowAnonymous || declaration.AuthorizeScheme is not null
+            ? DeclarationNormalization.Authorization(declaration.AllowAnonymous, declaration.AuthorizeScheme, ownerText)
+            : DeclarationNormalization.Authorization(owner.AllowAnonymous, owner.AuthorizeScheme, $"接口 {interfaceType.Name}");
+
+        return new InterfaceMethodMetadata(
+            interfaceType,
+            methodName,
+            method,
+            path,
+            plan,
+            authorization,
+            cancellationTokenIndex,
+            isMultipart,
+            [.. parts],
+            invoker: null,
+            fault: null);
+    }
+
     private static InterfaceMethodMetadata Build(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method)
@@ -143,7 +357,7 @@ internal sealed class InterfaceMethodMetadata
         // 方法级 [Headers] 后加入：同名项覆盖接口级声明。
         if (method.GetCustomAttribute<HeadersAttribute>(inherit: false) is { } methodHeaders)
         {
-            accumulator.AddStaticHeaders([methodHeaders]);
+            accumulator.AddStaticHeaders(methodHeaders.Headers);
         }
 
         // multipart：方法声明 [Multipart] 时，参数自身即表单
@@ -509,7 +723,7 @@ internal sealed class InterfaceMethodMetadata
     }
 
     /// <summary>声明级静态头：基接口在前、派生接口在后（同名后者覆盖）。</summary>
-    private static IEnumerable<HeadersAttribute> EnumerateStaticHeaders(
+    private static IEnumerable<string> EnumerateStaticHeaders(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType)
     {
         var chain = GetInterfaceChain(interfaceType);
@@ -518,7 +732,10 @@ internal sealed class InterfaceMethodMetadata
             var attribute = chain[i].GetCustomAttribute<HeadersAttribute>(inherit: false);
             if (attribute is not null)
             {
-                yield return attribute;
+                foreach (var declaration in attribute.Headers)
+                {
+                    yield return declaration;
+                }
             }
         }
     }

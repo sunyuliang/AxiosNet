@@ -1,18 +1,20 @@
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
-using System.Text.Json;
 using AxiosNet.Internal;
+using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）。校验失败同样进入缓存，每次调用都抛同一份错误。</summary>
-internal sealed partial class RequestModelMetadata
+internal sealed class RequestModelMetadata
 {
+    private const DynamicallyAccessedMemberTypes ModelMembers =
+        DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
+
     private static readonly ConcurrentDictionary<Type, RequestModelMetadata> Cache = new();
 
     private readonly string? _buildError;
+    private readonly Type? _missingMetadataType;
     private readonly string _pathTemplate;
     private readonly BindingPlan _plan;
 
@@ -30,6 +32,13 @@ internal sealed partial class RequestModelMetadata
         _plan = BindingPlan.Empty;
     }
 
+    private RequestModelMetadata(Type missingMetadataType)
+    {
+        _missingMetadataType = missingMetadataType;
+        _pathTemplate = string.Empty;
+        _plan = BindingPlan.Empty;
+    }
+
     /// <summary>本次请求的 HTTP 方法（来自路由特性；仅构建错误的缓存实例上为占位值，<see cref="Get"/> 会先抛错）。</summary>
     public HttpMethod Method { get; } = null!;
 
@@ -43,12 +52,18 @@ internal sealed partial class RequestModelMetadata
     internal PartBinding[] PartBindings { get; init; } = [];
 
     /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
-    /// <param name="requestType">请求模型类型；标注要求裁剪器保留其公开属性（绑定与取值都靠反射）。</param>
+    /// <param name="requestType">请求模型类型；标注要求 JIT 回退路径保留公开属性（生成路径不依赖反射）。</param>
     public static RequestModelMetadata Get(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
+        [DynamicallyAccessedMembers(ModelMembers)] Type requestType)
     {
         // 用捕获的 requestType（带标注）而不是工厂参数：缓存字典的 Type 键本身不携带裁剪标注。
         var metadata = Cache.GetOrAdd(requestType, _ => Build(requestType));
+
+        if (metadata._missingMetadataType is { } missingType)
+        {
+            // 每次新建异常：同一条缓存可被并发请求共享，异常实例不能跨线程同时抛出。
+            throw AxiosAotMetadataException.MissingRequestModel(missingType);
+        }
 
         if (metadata._buildError is not null)
         {
@@ -57,6 +72,13 @@ internal sealed partial class RequestModelMetadata
 
         return metadata;
     }
+
+    /// <summary>注册新声明后摘掉该类型的旧缓存：反射构建的结果不能压过之后的显式注册。</summary>
+    /// <param name="requestType">被注册的请求模型类型。</param>
+    internal static void Invalidate(Type requestType) => Cache.TryRemove(requestType, out _);
+
+    /// <summary>测试钩子：切换动态代码能力后清空全部缓存（JIT 构建的元数据与 AOT 结论不能混用）。</summary>
+    internal static void InvalidateAll() => Cache.Clear();
 
     /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
     /// <param name="request">请求模型实例。</param>
@@ -120,14 +142,24 @@ internal sealed partial class RequestModelMetadata
     /// <summary>应用类级 <see cref="HeadersAttribute"/> 声明：值写入头，只有名字的声明摘除同名头。</summary>
     public void ApplyStaticHeaders(AxiosConfig config) => _plan.ApplyStaticHeaders(config);
 
-    // 构建：反射只发生在这里，之后全部是数组遍历
+    // 构建：声明优先（生成器 / 手工注册）→ JIT 反射 → AOT 显式失败
 
     private static RequestModelMetadata Build(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
+        [DynamicallyAccessedMembers(ModelMembers)] Type requestType)
     {
         try
         {
-            return BuildCore(requestType);
+            if (GeneratedMetadataRegistry.TryGetRequestModel(requestType, out var declaration))
+            {
+                return BuildCore(declaration);
+            }
+
+            if (!RuntimeSupport.IsDynamicCodeSupported)
+            {
+                return new RequestModelMetadata(requestType);
+            }
+
+            return BuildCore(RequestModelDeclarationReader.Read(requestType));
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
         {
@@ -137,43 +169,42 @@ internal sealed partial class RequestModelMetadata
     }
 
     /// <summary>构建契约：路由 → 类级静态头 → 属性绑定（multipart 部件）→ 默认 Body 推断 → 授权。</summary>
-    private static RequestModelMetadata BuildCore(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
+    private static RequestModelMetadata BuildCore(RequestModelDeclaration declaration)
     {
-        var route = requestType.GetCustomAttribute<HttpApiAttribute>(inherit: false) ?? throw new InvalidOperationException($"请求模型 {requestType.Name} 缺少路由特性：请在类上标注 [Get(\"...\")] / [Post(\"...\")] 等 HttpApiAttribute 子类。");
+        var modelName = declaration.ModelType.Name;
 
-        var accumulator = new BindingAccumulator($"请求模型 {requestType.Name}", "属性");
+        if (declaration.Error is { } registrationError)
+        {
+            throw new InvalidOperationException(registrationError);
+        }
+
+        if (string.IsNullOrWhiteSpace(declaration.MethodName) || string.IsNullOrWhiteSpace(declaration.Path))
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {modelName} 缺少路由特性：请在类上标注 [Get(\"...\")] / [Post(\"...\")] 等 HttpApiAttribute 子类。");
+        }
+
+        var method = DeclarationNormalization.HttpMethodFrom(declaration.MethodName);
+        var path = DeclarationNormalization.Path(declaration.Path);
+        var owner = $"请求模型 {modelName}";
+
+        var accumulator = new BindingAccumulator(owner, "属性");
 
         // multipart 部件绑定：模型声明 [Multipart] 时，模型自身即表单
         var parts = new List<PartBinding>();
         var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
+        var isMultipart = declaration.Multipart;
 
-        var isMultipart = requestType.GetCustomAttribute<MultipartAttribute>() is not null;
+        accumulator.AddStaticHeaders(declaration.StaticHeaders);
 
-        accumulator.AddStaticHeaders(EnumerateStaticHeaderAttributes(requestType));
-
-        foreach (var property in EnumerateBindableProperties(requestType))
+        foreach (var member in declaration.Members)
         {
-            var path = property.GetCustomAttribute<PathAttribute>();
-            var query = property.GetCustomAttribute<QueryAttribute>();
-            var header = property.GetCustomAttribute<HeaderAttribute>();
-            var isHeaderCollection = property.GetCustomAttribute<HeaderCollectionAttribute>() is not null;
-            var part = property.GetCustomAttribute<PartAttribute>();
-            var isBody = property.GetCustomAttribute<BodyAttribute>() is not null;
-            var ignore = property.GetCustomAttribute<ApiIgnoreAttribute>() is not null;
-
-            var kinds = (path is not null ? 1 : 0) + (query is not null ? 1 : 0)
-                + (header is not null ? 1 : 0) + (isHeaderCollection ? 1 : 0)
-                + (part is not null ? 1 : 0) + (isBody ? 1 : 0);
-
-            if (ignore)
+            if (member.Ignore)
             {
-                // [ApiIgnore] 在 override 属性上会继承基类的参数特性，只有本属性自己声明的才算冲突。
-                var ownKinds = CountOwnParameterAttributes(property);
-                if (ownKinds > 0)
+                if (member.HasAnyBinding)
                 {
                     throw new InvalidOperationException(
-                        $"属性 {requestType.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
+                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
@@ -181,56 +212,74 @@ internal sealed partial class RequestModelMetadata
                 continue;
             }
 
+            if (member.GetValue is null)
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {modelName}.{member.Name} 缺少取值实现：生成元数据不完整，请检查源生成器版本与包是否匹配。");
+            }
+
             // 同一属性可同时绑定多处（路径 + 头 + 查询 + 请求体），按各处的 null 规则分别应用。
-            var source = new PropertyValueSource(property);
+            var source = new DelegateValueSource(
+                member.Name,
+                member.ValueType,
+                member.GetValue,
+                member.Description ?? $"{modelName}.{member.Name}");
 
-            if (path is not null)
+            if (member.Path)
             {
-                accumulator.AddPath(source, path.Name);
+                accumulator.AddPath(source, member.PathName ?? string.Empty);
             }
 
-            if (header is not null)
+            if (member.Header)
             {
-                accumulator.AddHeader(source, header.Name);
+                accumulator.AddHeader(source, member.HeaderName ?? string.Empty);
             }
 
-            if (isHeaderCollection)
+            if (member.HeaderCollection)
             {
                 accumulator.AddHeaderCollection(source);
             }
 
-            if (part is not null)
+            if (member.Part)
             {
                 if (!isMultipart)
                 {
-                    throw new InvalidOperationException($"属性 {requestType.Name}.{property.Name} 标注了 [Part]，但模型没有 [Multipart]：请在类上声明 [Multipart]。");
+                    throw new InvalidOperationException(
+                        $"属性 {modelName}.{member.Name} 标注了 [Part]，但模型没有 [Multipart]：请在类上声明 [Multipart]。");
                 }
 
-                var explicitName = CleanPartValue(part.Name, requestType, property, nameof(PartAttribute.Name));
+                var display = $"{owner}.{member.Name}";
+                var explicitName = DeclarationNormalization.OptionalPartValue(member.PartName, display, nameof(PartAttribute.Name));
+
                 // 默认名走 [JsonPropertyName] / 属性名，与 builder 展平嵌套对象时的命名规则一致
-                var name = explicitName ?? BodyFields.ResolveFieldName(property);
+                var name = explicitName ?? member.FieldName;
                 if (!seenPartNames.Add(name))
                 {
-                    throw DuplicateBinding(requestType, name, "Part");
+                    throw DuplicateBinding(declaration.ModelType, name, "Part");
                 }
 
-                parts.Add(new PartBinding(name, source, explicitName is not null, CleanPartValue(part.FileName, requestType, property, nameof(PartAttribute.FileName)), CleanPartValue(part.ContentType, requestType, property, nameof(PartAttribute.ContentType))));
+                parts.Add(new PartBinding(
+                    name,
+                    source,
+                    explicitName is not null,
+                    DeclarationNormalization.OptionalPartValue(member.PartFileName, display, nameof(PartAttribute.FileName)),
+                    DeclarationNormalization.OptionalPartValue(member.PartContentType, display, nameof(PartAttribute.ContentType))));
             }
 
-            if (isBody)
+            if (member.Body)
             {
                 accumulator.AddBody(source);
             }
 
-            if (kinds == 0)
+            if (!member.HasAnyBinding)
             {
                 if (isMultipart)
                 {
                     // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认 Body / Query 判定
-                    var partName = BodyFields.ResolveFieldName(property);
+                    var partName = member.FieldName;
                     if (!seenPartNames.Add(partName))
                     {
-                        throw DuplicateBinding(requestType, partName, "Part");
+                        throw DuplicateBinding(declaration.ModelType, partName, "Part");
                     }
 
                     parts.Add(new PartBinding(partName, source, false, null, null));
@@ -240,10 +289,10 @@ internal sealed partial class RequestModelMetadata
                 // 无标注 → 默认 Query（名字回退属性名）
                 accumulator.AddUnannotated(source);
             }
-            else if (query is not null)
+            else if (member.Query)
             {
                 // 已有其他绑定的属性再显式 [Query]：追加一处查询绑定
-                accumulator.AddQuery(source, query.Name);
+                accumulator.AddQuery(source, member.QueryName ?? string.Empty);
             }
         }
 
@@ -251,85 +300,19 @@ internal sealed partial class RequestModelMetadata
         if (isMultipart && accumulator.HasBody)
         {
             throw new InvalidOperationException(
-                $"请求模型 {requestType.Name} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
+                $"请求模型 {modelName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
                 + "multipart 模型的请求体由全部属性装配，两者互斥。");
         }
 
-        var plan = accumulator.Build(route.Method, route.Path, allowDefaultBody: !isMultipart);
+        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart);
 
-        return new RequestModelMetadata(route.Method, route.Path, plan)
+        return new RequestModelMetadata(method, path, plan)
         {
-            Authorization = BuildAuthorization(requestType),
+            Authorization = DeclarationNormalization.Authorization(declaration.AllowAnonymous, declaration.AuthorizeScheme, owner),
             IsMultipart = isMultipart,
             PartBindings = [.. parts]
         };
     }
-
-    /// <summary>清理 [Part] 的可选字符串声明；显式空白（而非省略）视为构建错误。</summary>
-    private static string? CleanPartValue(string? value, Type requestType, PropertyInfo property, string member)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        var trimmed = value.Trim();
-        if (trimmed.Length == 0)
-        {
-            throw new InvalidOperationException($"请求模型 {requestType.Name}.{property.Name} 的 [Part].{member} 不能为空白：要省略请直接不设置。");
-        }
-
-        return trimmed;
-    }
-
-    /// <summary>取最近一层的授权声明（派生类优先于基类）；两个特性同标一层属二义性。</summary>
-    private static ApiAuthorization BuildAuthorization(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
-        => ApiAuthorizationBuilder.Build(BuildInheritanceChain(requestType), "请求模型");
-
-    /// <summary>类级静态头：基类在前、派生类在后（同名后者覆盖）。</summary>
-    private static IEnumerable<HeadersAttribute> EnumerateStaticHeaderAttributes(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
-    {
-        var chain = BuildInheritanceChain(requestType);
-        for (var i = chain.Count - 1; i >= 0; i--)
-        {
-            var attribute = chain[i].GetCustomAttribute<HeadersAttribute>(inherit: false);
-            if (attribute is not null)
-            {
-                yield return attribute;
-            }
-        }
-    }
-
-    /// <summary>类型自身在前的继承链（不包含 <see cref="object"/>）。</summary>
-    private static List<Type> BuildInheritanceChain(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
-    {
-        var chain = new List<Type>();
-        for (var type = requestType; type is not null && type != typeof(object); type = type.BaseType)
-        {
-            chain.Add(type);
-        }
-
-        return chain;
-    }
-
-    /// <summary>公共可读实例属性（跳过索引器），按声明顺序遍历。</summary>
-    private static IEnumerable<PropertyInfo> EnumerateBindableProperties(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
-        => requestType
-            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.CanRead && p.GetIndexParameters().Length == 0);
-
-    /// <summary>本属性自身（不含基类继承）声明了几个参数特性。</summary>
-    private static int CountOwnParameterAttributes(PropertyInfo property)
-        => (property.GetCustomAttribute<PathAttribute>(inherit: false) is not null ? 1 : 0)
-            + (property.GetCustomAttribute<QueryAttribute>(inherit: false) is not null ? 1 : 0)
-            + (property.GetCustomAttribute<HeaderAttribute>(inherit: false) is not null ? 1 : 0)
-            + (property.GetCustomAttribute<HeaderCollectionAttribute>(inherit: false) is not null ? 1 : 0)
-            + (property.GetCustomAttribute<PartAttribute>(inherit: false) is not null ? 1 : 0)
-            + (property.GetCustomAttribute<BodyAttribute>(inherit: false) is not null ? 1 : 0);
 
     private static InvalidOperationException DuplicateBinding(Type requestType, string name, string kind)
         => new($"请求模型 {requestType.Name} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个属性（集合值走 AxiosNet 的数组规则）。");

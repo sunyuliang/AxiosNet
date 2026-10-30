@@ -5,6 +5,7 @@ using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
 using AxiosNet.Internal;
+using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Serialization;
 
@@ -45,8 +46,21 @@ public sealed class XmlContentSerializer : IContentSerializer
     public string? MediaType => AxiosContentType.Xml;
 
     /// <inheritdoc />
+    [RequiresUnreferencedCode("XmlSerializer 依赖运行时反射读取类型成员；Native AOT / 裁剪下请注入自定义 IContentSerializer。")]
+#if NET8_0_OR_GREATER
+    [RequiresDynamicCode("XmlSerializer 在运行时生成序列化程序集；Native AOT 下请注入自定义 IContentSerializer。")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3051",
+        Justification = "IContentSerializer 接口方法不带 RUC/RCD（其余实现是 AOT 安全的）；本实现已在方法体内按运行时能力守卫。")]
+#endif
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2046",
+        Justification = "IContentSerializer 接口方法不带 RUC（其余实现是裁剪安全的）；本实现已在方法体内按运行时能力守卫。")]
     public string Serialize(object? value, Type type, AxiosConfig config)
     {
+        EnsureSupported();
         if (value is null)
         {
             throw new ArgumentNullException(nameof(value), "XmlSerializer 无法序列化 null 根对象。");
@@ -69,8 +83,22 @@ public sealed class XmlContentSerializer : IContentSerializer
     }
 
     /// <inheritdoc />
+    [RequiresUnreferencedCode("XmlSerializer 依赖运行时反射读取类型成员；Native AOT / 裁剪下请注入自定义 IContentSerializer。")]
+#if NET8_0_OR_GREATER
+    [RequiresDynamicCode("XmlSerializer 在运行时生成序列化程序集；Native AOT 下请注入自定义 IContentSerializer。")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3051",
+        Justification = "IContentSerializer 接口方法不带 RUC/RCD（其余实现是 AOT 安全的）；本实现已在方法体内按运行时能力守卫。")]
+#endif
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2046",
+        Justification = "IContentSerializer 接口方法不带 RUC（其余实现是裁剪安全的）；本实现已在方法体内按运行时能力守卫。")]
     public object? Deserialize(string text, Type type, AxiosConfig config)
     {
+        EnsureSupported();
+
         // 禁用 DTD 与外部解析。
         var settings = new XmlReaderSettings
         {
@@ -80,6 +108,17 @@ public sealed class XmlContentSerializer : IContentSerializer
 
         using var reader = XmlReader.Create(new StringReader(text), settings);
         return For(type).Deserialize(reader);
+    }
+
+    /// <summary>AOT / 裁剪下把「序列化器不工作」提前成一条可读错误，而不是运行期随机失败。</summary>
+    private static void EnsureSupported()
+    {
+        if (!RuntimeSupport.IsDynamicCodeSupported)
+        {
+            throw new PlatformNotSupportedException(
+                "XmlContentSerializer 依赖 XmlSerializer 的运行时反射与代码生成，Native AOT 下不可用："
+                + "请注入自定义 IContentSerializer（例如 JSON / Protobuf），或改用支持动态代码的运行时。");
+        }
     }
 
     /// <summary>按类型缓存 <see cref="XmlSerializer"/> 实例（可并发复用）。</summary>
