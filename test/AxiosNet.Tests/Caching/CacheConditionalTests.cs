@@ -99,19 +99,23 @@ public sealed class CacheConditionalTests
                 ? new TestResponse(304, Headers: Headers(("ETag", "\"v1\"")))
                 : TestJson.Response(new Person("ada", 36), headers: Headers(("ETag", "\"v1\""))));
 
+        // 过期时刻由用例控制：内置存储配 50 ms 时，第三次请求要落在「续期后 50 ms 内」才算命中，
+        // runner 一次 GC / 线程池停顿就能把窗口耗光（CI 上真实发生过），这里不赌墙钟。
+        var store = new ManualExpiryStore();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
         });
 
         await client.GetAsync<Person>(server.Url + "x");
-        await Task.Delay(150);
+        store.Expired = true;
 
         var revalidated = await client.GetAsync<Person>(server.Url + "x");
         var hit = await client.GetAsync<Person>(server.Url + "x");
 
-        // 304 之后的落库把存活时长续上了：第三次直接命中，不再发请求。
+        // 304 之后的落库把条目重新写成新鲜：第三次直接命中，不再发请求。
         Assert.Equal(2, server.Received.Count);
+        Assert.Equal(2, store.Writes);
         Assert.NotNull(revalidated.Request);
         Assert.Null(hit.Request);
         Assert.Equal("ada", hit.Data!.Name);
@@ -342,6 +346,47 @@ public sealed class CacheConditionalTests
             }
 
             return Task.FromResult(response);
+        }
+    }
+
+    /// <summary>
+    /// 过期时刻由用例控制的存储：「<c>SetAsync</c> 即视为重新变新鲜」，续期用例因此不必依赖墙钟窗口。
+    /// 同时实现 <see cref="IAxiosCacheRevalidationStore"/>，过期条目照样能拿去做条件请求。
+    /// </summary>
+    private sealed class ManualExpiryStore : IAxiosCacheStore, IAxiosCacheRevalidationStore
+    {
+        private AxiosShortCircuit? _entry;
+
+        /// <summary><c>true</c> = 条目已过期：普通查询拿不到，条件请求仍可取。</summary>
+        public bool Expired { get; set; }
+
+        /// <summary>落库次数（首次 200 一次，304 续期再一次）。</summary>
+        public int Writes { get; private set; }
+
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => new(Expired ? null : _entry);
+
+        public ValueTask<AxiosShortCircuit?> GetRevalidationAsync(string key, CancellationToken cancellationToken)
+            => new(_entry);
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+        {
+            _entry = entry;
+            Expired = false;
+            Writes++;
+            return default;
+        }
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
+        {
+            _entry = null;
+            return new ValueTask<bool>(true);
+        }
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken)
+        {
+            _entry = null;
+            return default;
         }
     }
 
