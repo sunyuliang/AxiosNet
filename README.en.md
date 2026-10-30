@@ -1277,6 +1277,32 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 - Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
 - Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
 
+### Token management
+
+`IAccessTokenProvider` is only a "fetch a token per request" callback. When you want caching and automatic refresh, use the built-in `AccessTokenManager`: it decides **when to refresh and keeps concurrent refreshes to one**, while the HTTP call that actually exchanges a token stays yours (the library never calls a token endpoint for you).
+
+```csharp
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
+{
+    RefreshAsync = RefreshAsync,                        // falls back to AcquireAsync when omitted
+    RefreshAhead = TimeSpan.FromSeconds(30),            // 1 minute by default
+    RefreshTimeout = TimeSpan.FromSeconds(10)           // 30 seconds by default
+});
+
+using var client = new ApiClient("https://api.example.com/") { AccessTokenProvider = tokens };
+
+// Both callbacks return the token plus its expiry (ExpiresAt = null means "never expires")
+static ValueTask<AccessToken> AcquireAsync(CancellationToken ct) { ... }
+static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
+```
+
+- **Cache hits are free**: a token outside the refresh window is returned without touching a callback.
+- **One refresh in flight**: concurrent callers share the same refresh; failures are not cached, so the next call retries.
+- **Refreshes ignore caller cancellation**: one client disconnecting neither fails the other waiters nor wastes a refresh (the refresh itself is bounded by `RefreshTimeout`, which throws `TimeoutException`).
+- **Refresh-ahead is clamped**: the effective lead is min(`RefreshAhead`, half the token lifetime), so short-lived tokens are not refreshed the moment they arrive.
+- **Forced refresh after 401**: `tokens.Invalidate(staleToken)` drops the current token (passing the stale value avoids discarding a token another request just refreshed); the next call must refresh.
+- Register `IAccessTokenProvider` in the container and every `ApiClient` picks it up (see [dependency injection](#dependency-injection)).
+
 ## Interface declarations
 
 When writing a request model per endpoint is too much, hand the interface to `client.Create<T>()`: routes live on methods, binding attributes on parameters, and `DispatchProxy` generates the implementation at runtime. Binding semantics are the **same kernel** as request models (path-template validation, duplicate detection, default body inference, scalar guard, static headers and authorization all identical).

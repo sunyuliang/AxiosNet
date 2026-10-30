@@ -1275,6 +1275,32 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
 - 其它：`client.UrlParameterFormatter` 接管 `[Path]` / `[Query]` 文本形态；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
 
+### 令牌管理
+
+`IAccessTokenProvider` 只是「每次请求取一次令牌」的回调。需要缓存与自动刷新时，用内置的 `AccessTokenManager`：它负责**何时刷新、并发刷新只发一次**，而「怎么换令牌」的 HTTP 调用仍由你给（库不替你调 token 端点）。
+
+```csharp
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
+{
+    RefreshAsync = RefreshAsync,                        // 省略时回落到 AcquireAsync
+    RefreshAhead = TimeSpan.FromSeconds(30),            // 默认 1 分钟
+    RefreshTimeout = TimeSpan.FromSeconds(10)           // 默认 30 秒
+});
+
+using var client = new ApiClient("https://api.example.com/") { AccessTokenProvider = tokens };
+
+// 两个回调都返回令牌与过期时间（ExpiresAt 为 null 表示不过期）
+static ValueTask<AccessToken> AcquireAsync(CancellationToken ct) { ... }
+static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
+```
+
+- **缓存命中零等待**：令牌未进入刷新窗口时直接返回，不碰回调。
+- **并发刷新单飞**：同一时刻只有一个刷新在飞，其余请求等同一个结果；刷新失败不缓存，下一次取令牌会重试。
+- **刷新不跟随调用方取消**：一个请求断开不会让同批等待者一起失败，也不会白刷一次（刷新自身受 `RefreshTimeout` 约束，超时抛 `TimeoutException`）。
+- **提前量自动收敛**：实际提前量 = min(`RefreshAhead`, 令牌寿命的一半)，短寿命令牌不会「刚拿到就该刷」。
+- **401 后强制刷新**：`tokens.Invalidate(staleToken)` 作废当前令牌（带旧令牌值可避免并发下把别人刚刷新的新令牌也作废），下一次取令牌必然刷新。
+- 容器里注册 `IAccessTokenProvider` 即可自动挂到每个 `ApiClient`（见[依赖注入](#依赖注入)）。
+
 ## 接口级声明
 
 不想为每个端点写请求模型时，可直接把接口交给 `client.Create<T>()`：路由写在方法上、绑定特性写在参数上，运行时由 `DispatchProxy` 生成代理。绑定语义与请求模型**同一套内核**（路径模板校验、重名检测、默认 Body 推断、标量护栏、静态头、授权全部一致）。

@@ -4,7 +4,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
 /// 4. 授权：<c>[AllowAnonymous]</c> / <c>[Authorize]</c> 声明 + <see cref="IAccessTokenProvider"/> 取令牌
-/// （拼头交给库），并与完全自定义的 <see cref="IAuthorizationProvider"/> 叠加对比。
+/// （拼头交给库）、<see cref="AccessTokenManager"/> 的缓存与刷新，以及与完全自定义的 <see cref="IAuthorizationProvider"/> 叠加对比。
 /// </summary>
 public sealed class AuthorizationExample : IExample
 {
@@ -19,7 +19,7 @@ public sealed class AuthorizationExample : IExample
 
     public int Number => 4;
 
-    public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方（对比自定义 IAuthorizationProvider）";
+    public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方 / AccessTokenManager（对比自定义 IAuthorizationProvider）";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -78,6 +78,19 @@ public sealed class AuthorizationExample : IExample
 
         var same = await fixedClient.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  固定令牌写法 -> {same.Status} {same.Data!.User}");
+
+        // 6) 令牌管理器：缓存 + 到期前刷新 + 并发刷新单飞；取令牌的 HTTP 调用仍由调用方提供
+        var acquires = 0;
+        using var managed = new AccessTokenManager(new AccessTokenOptions(_ =>
+        {
+            Interlocked.Increment(ref acquires);
+            return ValueTask.FromResult(new AccessToken(DemoApiServer.DemoToken, DateTimeOffset.UtcNow.AddMinutes(5)));
+        }));
+
+        using var managedClient = new ApiClient(context.BaseUrl) { AccessTokenProvider = managed };
+        await managedClient.RequestAsync(new SecureProfileRequest());
+        await managedClient.RequestAsync(new SecureProfileRequest());
+        Console.WriteLine($"  令牌管理器：两次请求只取令牌 {acquires} 次（未进刷新窗口时直接走缓存）");
     }
 
     private static string Header(System.Net.Http.HttpRequestMessage? request, string name)
