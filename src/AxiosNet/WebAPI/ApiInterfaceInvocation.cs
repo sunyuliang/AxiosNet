@@ -18,4 +18,7 @@ public sealed class ApiInterfaceInvocation
 
     /// <summary>调用实参（含 <see cref="CancellationToken"/> 位置上的值），只读视图。</summary>
     public IReadOnlyList<object?> Arguments { get; }
+
+    /// <summary>本次请求的 <c>Authorization</c> 头是否由 <see cref="ApiClient.AccessTokenProvider"/> 写入（401 重放的判定依据）。</summary>
+    internal bool TokenManaged { get; set; }
 }

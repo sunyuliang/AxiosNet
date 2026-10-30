@@ -55,6 +55,13 @@ public sealed class SecureProfileRequest : IApiRequest<SecureProfile>
     public string Device { get; set; } = "sample-console";
 }
 
+/// <summary>GET /api/secure/rotating：服务端把第一个令牌判为过期，用来演示 401 后刷新并重放。</summary>
+[Get("api/secure/rotating")]
+[Authorize]
+public sealed class RotatingProfileRequest : IApiRequest<SecureProfile>
+{
+}
+
 /// <summary>DELETE /api/users/{id}：方法由路由特性决定。</summary>
 [HttpApi("delete", "api/users/{id}")]
 public sealed class DeleteUserRequest : IApiRequest<DeleteResult>

@@ -91,6 +91,15 @@ public sealed class AuthorizationExample : IExample
         await managedClient.RequestAsync(new SecureProfileRequest());
         await managedClient.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  令牌管理器：两次请求只取令牌 {acquires} 次（未进刷新窗口时直接走缓存）");
+
+        // 7) 401 重放：服务端把第一个令牌判为过期，客户端刷新令牌后自动重放一次
+        var rotateCalls = 0;
+        using var rotating = new AccessTokenManager(new AccessTokenOptions(_ =>
+            ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref rotateCalls)))));
+        using var rotatingClient = new ApiClient(context.BaseUrl) { AccessTokenProvider = rotating };
+
+        var rotated = await rotatingClient.RequestAsync(new RotatingProfileRequest());
+        Console.WriteLine($"  401 重放 -> {rotated.Status} {rotated.Data!.IssuedBy}（取令牌 {rotateCalls} 次，只重放一次）");
     }
 
     private static string Header(System.Net.Http.HttpRequestMessage? request, string name)

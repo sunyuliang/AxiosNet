@@ -35,3 +35,13 @@ public interface IAccessTokenProvider
     /// <summary>取本次请求的访问令牌；<c>null</c> / 空白表示不写 <c>Authorization</c> 头。</summary>
     ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// 可作废令牌的提供方：401 之后由库调用，让下一次 <see cref="IAccessTokenProvider.GetTokenAsync"/> 必然拿到新令牌。
+/// 不实现本接口的提供方也能用 401 重放，但只能靠「再取一次值是否变化」判断是否值得重放。内置实现见 <see cref="AccessTokenManager"/>。
+/// </summary>
+public interface IAccessTokenRefresher
+{
+    /// <summary>作废当前令牌；<paramref name="staleToken"/> 非 <c>null</c> 时只在它仍是当前令牌时作废（并发下不误伤刚刷新的新令牌）。</summary>
+    void Invalidate(string? staleToken = null);
+}

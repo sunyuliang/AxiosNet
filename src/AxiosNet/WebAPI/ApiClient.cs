@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using AxiosNet.Internal;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
@@ -22,6 +23,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
     /// <summary>URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本（路径段仍会被 URL 转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。</summary>
     public Func<object, string?>? UrlParameterFormatter { get; set; }
+
+    /// <summary>
+    /// 收到 401 时用新令牌重放一次，默认开启（只在 <see cref="AccessTokenProvider"/> 真的写了 <c>Authorization</c> 头时生效）。
+    /// 关掉后 401 直接按错误模型抛出。正文不可重放（流 / 流式请求体 / multipart）时一律不重放。
+    /// </summary>
+    public bool RetryOnUnauthorized { get; set; } = true;
 
     /// <summary>HTTP 状态码错误的异常工厂：非 null 时，状态码不合法的请求先交给它构造异常；返回 <c>null</c> 表示仍抛原始 <see cref="AxiosException"/>。内置实现见 <see cref="ApiErrorFactory{TError}"/>。</summary>
     public IApiErrorFactory? ErrorFactory { get; set; }
@@ -77,9 +84,9 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var metadata = RequestModelMetadata.Get(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
+        var tokenManaged = await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
 
-        return await SendAsync<TResponse>(request, config, cancellationToken).ConfigureAwait(false);
+        return await SendAsync<TResponse>(request, config, tokenManaged, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。可用于日志与签名；返回实际发送形态（已转义）。</summary>
@@ -154,7 +161,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 跳过；<see cref="AccessTokenProvider"/> 先写头，<see cref="Authorization"/> 最后执行（可覆盖前者）。</summary>
-    internal async ValueTask ApplyAuthorizationAsync(
+    /// <returns><c>Authorization</c> 头是否由 <see cref="AccessTokenProvider"/> 写入（401 重放的判定依据）。</returns>
+    internal async ValueTask<bool> ApplyAuthorizationAsync(
         ApiAuthorization authorization,
         object request,
         AxiosConfig config,
@@ -162,7 +170,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
         if (authorization.Mode == ApiAuthorizationMode.Anonymous)
         {
-            return;
+            return false;
         }
 
         var context = new ApiAuthContext(request, config);
@@ -173,6 +181,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             if (!string.IsNullOrWhiteSpace(token))
             {
                 config.Headers.Set("Authorization", authorization.Scheme + " " + token);
+
+                // 自定义授权提供方随后可能覆盖这个头：那种情况不归令牌提供方管，401 也不重放。
+                if (Authorization is null)
+                {
+                    return true;
+                }
             }
         }
 
@@ -180,6 +194,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         {
             await Authorization.ApplyAsync(context, cancellationToken).ConfigureAwait(false);
         }
+
+        return false;
     }
 
     /// <summary>模型或实例默认值里是否已经写了 <c>Authorization</c> 头（显式配置优先于令牌提供方）。</summary>
@@ -191,23 +207,26 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     internal Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
         object request,
         AxiosConfig config,
+        bool tokenManaged,
         CancellationToken cancellationToken)
-        => GuardAsync(request, cancellationToken, Axios.RequestAsync<TResponse>(config));
+        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.RequestAsync<TResponse>(config)));
 
     /// <summary>发送请求并交付非泛型响应（正文按 <see cref="System.Text.Json.JsonElement"/>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
     internal Task<AxiosResponse> SendUntypedAsync(
         object request,
         AxiosConfig config,
+        bool tokenManaged,
         CancellationToken cancellationToken)
-        => GuardAsync(request, cancellationToken, Axios.SendInternalAsync(config, dataType: null, target: null));
+        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.SendInternalAsync(config, dataType: null, target: null)));
 
     /// <summary>只完成请求、不读正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
     internal async Task SendWithoutBodyAsync(
         object request,
         AxiosConfig config,
+        bool tokenManaged,
         CancellationToken cancellationToken)
     {
-        var response = await GuardAsync(request, cancellationToken, Axios.SendInternalAsync(config, typeof(void), target: null))
+        var response = await GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.SendInternalAsync(config, typeof(void), target: null)))
             .ConfigureAwait(false);
 
         // 显式把 responseType 配成 Stream 时正文归我们：Task 方法的调用方拿不到这个响应对象。
@@ -218,15 +237,106 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
+    /// <summary>发送一次；401 且本次令牌由提供方写入时，刷新令牌后重放一次（重放同样只有一次）。</summary>
+    private async Task<TResult> SendWithAuthRetryAsync<TResult>(
+        object request,
+        AxiosConfig config,
+        bool tokenManaged,
+        CancellationToken cancellationToken,
+        Func<Task<TResult>> send)
+    {
+        try
+        {
+            return await send().ConfigureAwait(false);
+        }
+        catch (AxiosException error) when (CanReplayForAuth(error, config, tokenManaged))
+        {
+            // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
+            if (error.Config?.IdempotencyOrNull is { Enabled: true, GeneratedKey: { } key })
+            {
+                config.Idempotency.Key = key;
+            }
+
+            if (!await ReauthorizeAsync(request, config, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            return await send().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>这次 401 值不值得重放：开关、令牌归属、状态码、正文可重放四项都满足。</summary>
+    private bool CanReplayForAuth(AxiosException error, AxiosConfig config, bool tokenManaged)
+        => RetryOnUnauthorized
+            && tokenManaged
+            && AccessTokenProvider is not null
+            && error.Status == 401
+            && IsReplayableBody(config);
+
+    /// <summary>401 后重新取令牌并写回头；返回 <c>false</c> 表示没拿到新令牌（重放没有意义）。</summary>
+    private async ValueTask<bool> ReauthorizeAsync(object request, AxiosConfig config, CancellationToken cancellationToken)
+    {
+        var previous = config.Headers.Get("Authorization");
+        var scheme = ResolveScheme(previous);
+        var staleToken = previous is not null && previous.Length > scheme.Length + 1
+            ? previous[(scheme.Length + 1)..]
+            : null;
+
+        // 让管理器把当前令牌判为失效，下一次取令牌必然刷新。
+        (AccessTokenProvider as IAccessTokenRefresher)?.Invalidate(staleToken);
+
+        config.Headers.Delete("Authorization");
+
+        var token = await AccessTokenProvider!.GetTokenAsync(new ApiAuthContext(request, config), cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        // 已含空格的令牌视为「scheme + 参数」完整形态，原样发送（与 BearerAuthorizationProvider 一致）。
+        var value = token.Contains(' ') ? token : scheme + " " + token;
+        config.Headers.Set("Authorization", value);
+
+        return !string.Equals(value, previous, StringComparison.Ordinal);
+    }
+
+    /// <summary>从已有的 <c>Authorization</c> 头取 scheme；拿不到时按 <c>Bearer</c>。</summary>
+    private static string ResolveScheme(string? authorization)
+    {
+        if (authorization is not null)
+        {
+            var separator = authorization.IndexOf(' ');
+            if (separator > 0)
+            {
+                return authorization[..separator];
+            }
+        }
+
+        return "Bearer";
+    }
+
+    /// <summary>正文能否原样再发一次：流必须可 seek，流式正文与 multipart 一律按不可重放。</summary>
+    private static bool IsReplayableBody(AxiosConfig config)
+        => config.Data switch
+        {
+            null => true,
+            Stream stream => stream.CanSeek,
+            IAsyncEnumerable<byte[]> => false,
+            IAsyncEnumerable<ReadOnlyMemory<byte>> => false,
+            HttpContent content => content is not StreamContent and not AsyncEnumerableBodyContent,
+            DeclaredForm => false,
+            _ => true,
+        };
     /// <summary>「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；网络 / 超时 / 取消不经过工厂。</summary>
     private async Task<TResult> GuardAsync<TResult>(
         object request,
         CancellationToken cancellationToken,
-        Task<TResult> response)
+        Func<Task<TResult>> send)
     {
         try
         {
-            return await response.ConfigureAwait(false);
+            return await send().ConfigureAwait(false);
         }
         catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
         {

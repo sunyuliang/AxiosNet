@@ -20,7 +20,7 @@ namespace AxiosNet.WebAPI;
 /// using var client = new ApiClient(baseAddress) { AccessTokenProvider = tokens };
 /// </code>
 /// </example>
-public sealed class AccessTokenManager : IAccessTokenProvider, IDisposable
+public sealed class AccessTokenManager : IAccessTokenProvider, IAccessTokenRefresher, IDisposable
 {
     private readonly AccessTokenOptions _options;
     private readonly Func<DateTimeOffset> _clock;

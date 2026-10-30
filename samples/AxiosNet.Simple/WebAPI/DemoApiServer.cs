@@ -220,6 +220,14 @@ public sealed class DemoApiServer : IDisposable
                     ? (200, JsonSerializer.Serialize(new SecureProfile("alice", "AxiosNet.Simple.WebAPI.DemoApiServer", headers.GetValueOrDefault("x-device", "unknown"))), null)
                     : (401, """{"error":"missing or invalid bearer token"}""", null);
 
+            // 令牌轮换演示：第一个令牌（tok-1）被判为过期，刷新后的 tok-N 才被接受。
+            case "GET" when path == "/api/secure/rotating":
+                return headers.TryGetValue("authorization", out var rotated)
+                    && rotated.StartsWith("Bearer tok-", StringComparison.Ordinal)
+                    && rotated != "Bearer tok-1"
+                    ? (200, JsonSerializer.Serialize(new SecureProfile("alice", "rotated-token", "sample-console")), null)
+                    : (401, """{"error":"token expired"}""", null);
+
             case "POST" when path == "/api/signed/echo":
                 return SignedEcho(headers, body);
 
