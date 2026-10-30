@@ -1,4 +1,5 @@
 ﻿
+using AxiosNet.Cache;
 using AxiosNet.Circuit;
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
@@ -342,6 +343,122 @@ public sealed class TelemetryTests
         var refused = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.RetryBudgetExhaustedInstrumentName));
         Assert.Equal(1d, refused.Value);
         Assert.Empty(refused.Tags);
+    }
+
+    [Fact]
+    public async Task Metrics_Cache_ReportsHitsMissesAndStores()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var path = UniquePath("cache-metrics");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions()) });
+
+        await client.GetAsync(server.Url + path);
+        await client.GetAsync(server.Url + path);
+
+        var miss = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.CacheMissesInstrumentName));
+        Assert.Equal(1d, miss.Value);
+        Assert.Empty(miss.Tags);
+
+        var hit = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.CacheHitsInstrumentName));
+        Assert.Equal(1d, hit.Value);
+        Assert.Empty(hit.Tags);
+
+        var stored = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.CacheStoresInstrumentName));
+        Assert.Equal(1d, stored.Value);
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheStoreFailuresInstrumentName));
+    }
+
+    [Fact]
+    public async Task Metrics_Cache_FollowersCountAsHits()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new { ok = true });
+        });
+
+        var path = UniquePath("cache-followers");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions()) });
+
+        var requests = Enumerable.Range(0, 5)
+            .Select(_ => client.GetAsync(server.Url + path))
+            .ToArray();
+
+        // 等 1 个领导者真正发出，再等其余 4 个都挂到同一次飞行上。
+        await WaitUntilAsync(() => server.Received.Count == 1);
+        await Task.Delay(150);
+        release.SetResult(true);
+        await Task.WhenAll(requests);
+
+        // 命中率口径：4 个跟随者拿到共享结果算命中，只有领导者算一次未命中、落库一次。
+        Assert.Equal(4d, probe.MeasurementsOf(AxiosTelemetry.CacheHitsInstrumentName).Sum(m => m.Value));
+        Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheMissesInstrumentName).Sum(m => m.Value));
+        Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheStoresInstrumentName).Sum(m => m.Value));
+    }
+
+    [Fact]
+    public async Task Metrics_Cache_NoStoreRequestsCountAsNeither()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var path = UniquePath("cache-nostore");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions { FreshnessMode = CacheFreshnessMode.Intersection })
+        });
+
+        // 请求自己否决缓存：既不查也不写，命中率两边都不计。
+        await client.GetAsync(server.Url + path, c => c.Headers.Set("Cache-Control", "no-store"));
+        await client.GetAsync(server.Url + path, c => c.Headers.Set("Cache-Control", "no-store"));
+
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheHitsInstrumentName));
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheMissesInstrumentName));
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheStoresInstrumentName));
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheStoreFailuresInstrumentName));
+    }
+
+    [Fact]
+    public async Task Metrics_Cache_StoreTimeoutCountsAsFailure()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var path = UniquePath("cache-store-timeout");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = new HangingStore(),
+                StoreTimeout = TimeSpan.FromMilliseconds(50)
+            })
+        });
+
+        // 写超时按「这次没缓存」：响应照常交付，指标记在失败里，不算一次成功落库。
+        await client.GetAsync(server.Url + path);
+
+        Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheMissesInstrumentName).Sum(m => m.Value));
+        Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheStoreFailuresInstrumentName).Sum(m => m.Value));
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheStoresInstrumentName));
+    }
+
+    /// <summary>写入永远不完成的存储：验证写超时归入落库失败。</summary>
+    private sealed class HangingStore : AxiosNet.Cache.IAxiosCacheStore
+    {
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => new((AxiosShortCircuit?)null);
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+            => new(new TaskCompletionSource<bool>().Task);
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
+            => new(false);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken) => default;
     }
 
     [Fact]
@@ -764,7 +881,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(13, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(17, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -828,6 +945,23 @@ public sealed class TelemetryTests
         var circuitState = Assert.IsType<ObservableGauge<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CircuitStateInstrumentName));
         Assert.Equal("{circuit}", circuitState.Unit);
+
+        // 缓存四件套：命中率 = hits / (hits + misses)；落库失败单列，别混进命中率
+        var cacheHits = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheHitsInstrumentName));
+        Assert.Equal("{request}", cacheHits.Unit);
+
+        var cacheMisses = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheMissesInstrumentName));
+        Assert.Equal("{request}", cacheMisses.Unit);
+
+        var cacheStores = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheStoresInstrumentName));
+        Assert.Equal("{entry}", cacheStores.Unit);
+
+        var cacheStoreFailures = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheStoreFailuresInstrumentName));
+        Assert.Equal("{entry}", cacheStoreFailures.Unit);
     }
 
     // 存活池数是进程级水位（无标签）：只钉方向——自己这批池被算进去、释放后掉下来；

@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1790%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1876%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1171,6 +1171,8 @@ var cache = new AxiosCache(new AxiosCacheOptions
     TimeToLive = TimeSpan.FromSeconds(30),   // 默认 30 秒
     SingleFlight = true,                     // 默认 true
     MaxEntries = 1024,                       // 默认 1024
+    MaxBytes = 64L * 1024 * 1024,            // 默认 64 MB，0 = 不限制
+    StoreTimeout = TimeSpan.FromSeconds(2),  // 默认 2 秒，null = 不限时（只约束自建存储）
     FreshnessMode = CacheFreshnessMode.Configured  // 默认：只信 TimeToLive；另有 Server / Intersection
 });
 
@@ -1187,26 +1189,41 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `SingleFlight` | `true` | 同键并发只发一次 |
 | `Store` | `null` | 条目存储，`null` = 内置 `MemoryCacheStore`；接 Redis / 共享缓存时换成自己的 `IAxiosCacheStore` |
 | `MaxEntries` | 1024 | 内置内存存储的条目上限：满了先清过期条目，仍满就不再收新条目（自建 `Store` 时本项不生效） |
+| `MaxBytes` | 64 MB | 内置内存存储的近似字节上限（正文 + 头长度估算，`0` = 不限制）：和条目满同一口径，放不下就不收新条目（自建 `Store` 时本项不生效） |
+| `StoreTimeout` | 2 秒 | 单次落库超时：存储挂起时按「这次没缓存」处理，不把响应一起拖住（`null` / 非正数 = 不限时；只约束自建存储） |
 | `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
-| `ShouldCache` | 默认口径 | 哪些请求参与缓存，默认为 `AxiosCache.IsCacheable`（GET / HEAD、无短路响应、非流式、无请求体），可在此基础上组合 |
+| `ShouldCache` | 默认口径 | 哪些请求参与缓存，默认为 `AxiosCache.IsCacheable`（GET / HEAD、无短路响应、非流式、无请求体、非范围请求），可在此基础上组合 |
 
 **键 = 方法 + 绝对 URL（+ 凭据摘要）**：凭据（`Authorization` 头或 `Connection.Auth`）参与键，且只以 64 位摘要进键——同一实例上不同用户的同名接口不会串用同一条缓存。用 Cookie 或自定义头区分身份、或要按租户 / 语言分区时，给 `KeySelector`。
 
 **存的是原始正文字节**，命中时按本次调用的 `ResponseType` 与泛型参数重新解析：同一份字节喂给 `GetAsync<User>` 与 `GetAsync<string>` 各得该有的形态。
 
-只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库；空正文同样算原始字节（HEAD / 204 本就没有正文，缓存的是头）。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。
+只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库；空正文同样算原始字节（HEAD / 204 本就没有正文，缓存的是头）。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。范围请求（带 `Range` 头）默认不参与缓存，206 / 带 `Content-Range` 的响应也不落库——键只有方法 + URL，分段正文会被后续普通 GET 当成整份内容交付。
+
+**流式请求不参与缓存**：`ResponseType = Stream` 的请求默认连查询都不做（调用方要的是流，命中会把整份正文缓冲进内存）；已落库的条目仍可被普通调用命中。要让流式请求也查缓存，用 `ShouldCache` 放行 —— 但请确认这正是你要的所有权语义。
 
 **三种取值方式**（`FreshnessMode`）：
 
 | 模式 | 落库判定 | 生效 TTL |
 | --- | --- | --- |
-| `Configured`（默认） | 只走客户端闸门，忽略 `no-store`；**落库前不解析响应头**（存储读策略的 HTTP 字段时才按需解析） | `TimeToLive` |
-| `Server` | `no-store` / `no-cache` / 已过期或非法的 `Expires` 不落库；**没有声明任何新鲜期也不落库** | 服务器剩余新鲜期，不受 `TimeToLive` 上限约束 |
-| `Intersection` | 同上（服务器否决优先） | `min(TimeToLive, 剩余新鲜期)`；无新鲜期时用 `TimeToLive` |
+| `Configured`（默认） | 只走客户端闸门，忽略请求与响应的 HTTP 指令；**落库前不解析响应头**（存储读策略的 HTTP 字段时才按需解析） | `TimeToLive` |
+| `Server` | `no-store` / `no-cache` / `Vary: *` / 已过期或非法的 `Expires` 不落库；**没有声明任何新鲜期也不落库** | 服务器剩余新鲜期（`min` 上请求的 `max-age`），不受 `TimeToLive` 上限约束 |
+| `Intersection` | 同上（服务器与请求侧否决都优先） | `min(TimeToLive, 剩余新鲜期, 请求的 max-age)`；无新鲜期时用 `TimeToLive` |
 
-剩余新鲜期 = `max-age`（没有则 `Expires - Date`）减去龄期（`Age` 头与「收到时刻 − `Date`」的较大值）。两种解析模式都不做 `Last-Modified` 启发式估算。
+剩余新鲜期 = `max-age`（没有则 `Expires - Date`）减去龄期（`Age` 头与「收到时刻 − `Date`」的较大值）。`max-age` 出现但值非法或为负时按零（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理），此时 `Expires` 不再兜底。两种解析模式都不做 `Last-Modified` 启发式估算。
 
-库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`），也没有条件请求（`ETag` / 304 复用）与 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
+`Server` / `Intersection` 同时解析**请求**侧的 `Cache-Control` / `Pragma`，与响应侧取交集：
+
+| 请求指令 | 查缓存 | 落库 |
+| --- | --- | --- |
+| `no-store` | 跳过 | 不落库 |
+| `no-cache`（或旧式 `Pragma: no-cache`） | 跳过（每次都真实发送） | 仍可落库（库不做条件请求，无法「先验证再复用」） |
+| `max-age=0`（含非法或负数值，按零处理） | 跳过 | 不落库 |
+| `max-age=N`（正数） | 照常 | 落库 TTL 不超过 N |
+
+`Configured` 是「强制按配置执行」：请求与响应的 HTTP 指令都不参与取舍。
+
+库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`；`Vary: *` 在解析模式下不落库），也没有条件请求（`ETag` / 304 复用）与 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
 
 | | 短路响应 | 响应缓存 |
 | --- | --- | --- |
@@ -1218,13 +1235,15 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 - **命中不发请求**：不占并发闸门、不产生遥测 span 与在途计数，`response.Request` 为 `null`（与短路响应同一处可辨痕迹）。
 - **单飞的失败是共享的**：领导者抛错，等待者拿到同一个错误（同一个只读的 `AxiosException` 实例，`Response` 也是那一份）；但领导者被**它自己的调用方**取消时不算失败——等待者各自补发一次。
 - **等待者可以被取消**：`CancellationToken` 取消只放弃等待，不会取消那次共享的发送（`ERR_CANCELED`）。
-- **响应头按首值存**：短路响应的头字典是单值的，多值头（`Set-Cookie`）只留第一条。
+- **等待受总预算约束**：跟随者的等待不超过剩余 `TotalTimeout`，到点按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会挂在原地等一个慢领导者。
+- **查询同样吃总预算**：缓存读取也受剩余 `TotalTimeout` 约束，存储挂起（自建存储不可用 / 网络分区）时按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会把请求挂在查缓存上；调用方取消按 `ERR_CANCELED` 报出，存储自己抛的取消按「没命中」处理。实现 `IAxiosCacheStore.GetAsync` 时应当尊重传入的令牌。
+- **响应头按首值存**：短路响应的头字典是单值的；`Set-Cookie` / `Set-Cookie2` 不进缓存——会话态只属于那一次响应，命中回放等于把它塞给下一次请求。
 - **键不含请求体**：默认口径只缓存无正文的 GET / HEAD；用 `ShouldCache` 放行带正文的方法时，必须在 `KeySelector` 里把正文特征算进键，否则不同正文会串用同一条缓存。
 - **策略挂在实例上**：一个 `AxiosCache` 就是一份策略；要按接口区分存活时长或键规则，建多个实例分别挂。
 - **强制清除**：`cache.ClearAsync()` 清空全部条目，`cache.RemoveAsync(key)` 摘掉单条（键由 `cache.KeyFor(config, uri)` 得到）；已发出的请求不受影响，完成后照常落库。
 - **自定义存储收到完整策略**：`IAxiosCacheStore` 新增带 `AxiosCacheEntryPolicy` 的 `SetAsync` 重载（生效 / 配置 TTL、HTTP 新鲜期、龄期、解析后的 `Cache-Control`、`Date` / `Expires` / `Vary`）。默认实现转发到旧签名，已经写好的存储不用改；要按 `private` 拒写共享缓存、按 `Vary` 分区、或用 `stale-while-revalidate` 延长可服务窗口时覆写它即可。`Configured` 模式下落库前不解析响应头，这些 HTTP 字段在存储读取时才按需解析；只读 TTL 的存储没有任何解析开销。
 - **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
-- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发。
+- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发；读取挂起超出剩余 `TotalTimeout` 则按 `ECONNABORTED` 报出（见上）。
 - 回放 `response.Config` 会带着同一个缓存对象（它是共享状态，不是「那次请求的结果」）。
 
 ## 连接池
@@ -1406,10 +1425,15 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.pool.active_leases` | `ObservableGauge<long>` | `{lease}` | 无 |
 | `axiosnet.client.pool.active_pools` | `ObservableGauge<long>` | `{pool}` | 无 |
 | `axiosnet.client.pool.shared_pools` | `ObservableGauge<long>` | `{pool}` | 无 |
+| `axiosnet.client.cache.hits` | `Counter<long>` | `{request}` | 无 |
+| `axiosnet.client.cache.misses` | `Counter<long>` | `{request}` | 无 |
+| `axiosnet.client.cache.stores` | `Counter<long>` | `{entry}` | 无 |
+| `axiosnet.client.cache.store_failures` | `Counter<long>` | `{entry}` | 无 |
 
+- 缓存命中率 = `cache.hits / (cache.hits + cache.misses)`（跟随者拿到共享结果计命中；请求侧 `no-cache` / `no-store` 绕开查询的请求两边都不计）；`cache.store_failures` 单独看，别混进命中率。
 - 指标只用低基数标签；URL 路径只进 span。**池指标不带 host / port**：网关 / 爬虫 / 多租户场景下一个 host 一条时间序列会把后端打爆；要定位到具体 origin 看 span 的 `server.address` / `server.port` 与 `axiosnet.pool.endpoint.reused`。
 - `axiosnet.retry.reason` 取值有界：有状态码统一报 `status`（具体码在 `error.type`），否则是库错误码（`ECONNABORTED` / `ERR_NETWORK` …）——「该调策略（429）」和「该修下游（5xx）」在面板上直接分得开。
-- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key），`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数——都不带 host。
+- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key），`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数，缓存四件套（`cache.hits` / `misses` / `stores` / `store_failures`）也不带标签——都不带 host。
 - `request.duration` 是逻辑请求耗时（含重试与退避）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Telemetry.Enabled` 影响。
 - `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
@@ -1624,9 +1648,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1727 | `net8.0` / `net6.0` | 3454 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1813 | `net8.0` / `net6.0` | 3626 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1790** | | **3580** |
+| **合计** | **1876** | | **3752** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 

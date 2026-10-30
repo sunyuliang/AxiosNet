@@ -3,7 +3,7 @@ using AxiosNet.Cache;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>36. 响应缓存：命中不发请求、到期自动失效、同键并发只发一次、按服务器新鲜期失效。</summary>
+/// <summary>36. 响应缓存：命中不发请求、到期自动失效、同键并发只发一次、按服务器新鲜期失效、请求侧指令。</summary>
 public sealed class CacheExample : IExample
 {
     /// <summary>缓存与客户端都跨运行复用：每次运行先把条目清空，结果可复现。</summary>
@@ -13,7 +13,7 @@ public sealed class CacheExample : IExample
 
     public int Number => 36;
 
-    public string Title => "响应缓存：命中不发请求 / 到期失效 / 同键并发只发一次 / 跟随服务器新鲜期";
+    public string Title => "响应缓存：命中不发请求 / 到期失效 / 同键并发只发一次 / 跟随服务器新鲜期 / 请求侧指令";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -72,7 +72,45 @@ public sealed class CacheExample : IExample
             + $"Server {serverNoStore.First} -> {serverNoStore.Second}（每次重发）");
         Console.WriteLine($"  Server + 没声明新鲜期（/cache/counter）: served {serverNoHeaders.First} -> {serverNoHeaders.Second}（不落库）");
 
-        Console.WriteLine("  说明: Configured 是默认值；只缓存 2xx 与拿到原始字节的响应；流式响应、非 GET / HEAD 默认不入缓存");
+        // 8) 请求侧指令：调用方能单方面收紧或绕开缓存（只在 Server / Intersection 下解析，Configured 一律忽略）
+        var directiveUrl = $"{context.BaseUrl}cache/ttl?max-age=60";
+
+        using var noCacheClient = NewIntersectionClient();
+        var n1 = await FetchServedAsync(noCacheClient, directiveUrl);
+        var n2 = await FetchServedAsync(noCacheClient, directiveUrl);
+        var bypass1 = await FetchServedAsync(noCacheClient, directiveUrl, "no-cache");
+        var bypass2 = await FetchServedAsync(noCacheClient, directiveUrl, "no-cache");
+        var n3 = await FetchServedAsync(noCacheClient, directiveUrl);
+        Console.WriteLine($"  no-cache: {n1} -> {n2}（命中），带 no-cache 两次 {bypass1} -> {bypass2}（都绕开查询、但照常刷新落库），之后 {n3}（命中刷新后的条目）");
+
+        using var noStoreClient = NewIntersectionClient();
+        var s1 = await FetchServedAsync(noStoreClient, directiveUrl, "no-store");
+        var s2 = await FetchServedAsync(noStoreClient, directiveUrl, "no-store");
+        var s3 = await FetchServedAsync(noStoreClient, directiveUrl);
+        var s4 = await FetchServedAsync(noStoreClient, directiveUrl);
+        Console.WriteLine($"  no-store: {s1} -> {s2}（既不查也不写，每次都发），恢复默认后 {s3} -> {s4}（先发一次再命中）");
+
+        Console.WriteLine("  说明: Configured 是默认值（忽略请求与响应两侧的 HTTP 缓存指令）；只缓存 2xx 与拿到原始字节的响应；"
+            + "Range 请求、206 部分响应、Vary: * 都不入缓存；流式响应、非 GET / HEAD 默认不入缓存");
+    }
+
+    /// <summary>Intersection 模式客户端：配置 TTL 10s，与服务端新鲜期取交集。</summary>
+    private static AxiosClient NewIntersectionClient() => new(new AxiosConfig
+    {
+        Cache = new AxiosCache(new AxiosCacheOptions
+        {
+            TimeToLive = TimeSpan.FromSeconds(10),
+            FreshnessMode = CacheFreshnessMode.Intersection
+        })
+    });
+
+    /// <summary>取一次并读出服务端的 served 计数；<paramref name="cacheControl"/> 非空时给这次请求带上 Cache-Control。</summary>
+    private static async Task<int> FetchServedAsync(AxiosClient client, string url, string? cacheControl = null)
+    {
+        var response = cacheControl is null
+            ? await client.GetAsync<Dictionary<string, int>>(url)
+            : await client.GetAsync<Dictionary<string, int>>(url, c => c.Headers.Set("Cache-Control", cacheControl));
+        return response.Data!["served"];
     }
 
     /// <summary>用指定模式连取两次（隔 <paramref name="delayMs"/> 毫秒），返回两次响应里的 served 计数。</summary>

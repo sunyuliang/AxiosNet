@@ -10,7 +10,8 @@ namespace AxiosNet.Cache;
 /// <remarks>
 /// 只做解析，不做取舍：库自己按 <see cref="AxiosCacheOptions.FreshnessMode"/> 使用其中一部分，
 /// 其余（<c>private</c> / <c>s-maxage</c> / <c>stale-*</c> / 扩展指令）原样交给 <see cref="IAxiosCacheStore"/>，自建存储可以按自己的策略用。
-/// 数字指令按秒解析，非法或负数的值按「未出现」处理（<c>null</c>）。
+/// 数字指令按秒解析，其中 <c>max-age</c> / <c>s-maxage</c> 非法或负数按零（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理），
+/// <c>stale-*</c> 非法或负数按「未出现」处理（<c>null</c>）。
 /// </remarks>
 public sealed class CacheControlDirectives
 {
@@ -45,10 +46,10 @@ public sealed class CacheControlDirectives
     /// <summary><c>no-transform</c>：中间层不得改写正文。</summary>
     public bool NoTransform { get; internal init; }
 
-    /// <summary><c>max-age</c>：新鲜期（秒）。</summary>
+    /// <summary><c>max-age</c>：新鲜期（秒）；出现但值非法或为负时为零。</summary>
     public TimeSpan? MaxAge { get; internal init; }
 
-    /// <summary><c>s-maxage</c>：共享缓存的新鲜期。库按私有缓存解释，不采用它。</summary>
+    /// <summary><c>s-maxage</c>：共享缓存的新鲜期。库按私有缓存解释，不采用它；出现但值非法或为负时为零。</summary>
     public TimeSpan? SharedMaxAge { get; internal init; }
 
     /// <summary><c>stale-while-revalidate</c>：过期后仍可先交旧内容、同时后台验证的窗口。</summary>
@@ -64,6 +65,10 @@ public sealed class CacheControlDirectives
     private CacheControlDirectives()
     {
     }
+
+    /// <summary>解析单个头值（请求侧只有一个 <c>Cache-Control</c>）；<c>null</c> / 空白视为没带这个头。</summary>
+    internal static CacheControlDirectives ParseValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? Empty : Parse(new[] { value });
 
     /// <summary>解析一组 <c>Cache-Control</c> 头值；<c>null</c> / 空白视为没带这个头。</summary>
     internal static CacheControlDirectives Parse(IEnumerable<string>? values)
@@ -128,11 +133,13 @@ public sealed class CacheControlDirectives
                     case "no-transform":
                         noTransform = true;
                         break;
+                    // 无效的新鲜期按零（RFC 9111 §4.2.1）：请求侧演变成绕开缓存，响应侧演变成不落库。
+                    // 重复出现时非法值不覆盖前面解析出的合法值（有合法新鲜期信息就不算无效）。
                     case "max-age":
-                        maxAge = ParseSeconds(argument) ?? maxAge;
+                        maxAge = ParseSeconds(argument) ?? maxAge ?? TimeSpan.Zero;
                         break;
                     case "s-maxage":
-                        sharedMaxAge = ParseSeconds(argument) ?? sharedMaxAge;
+                        sharedMaxAge = ParseSeconds(argument) ?? sharedMaxAge ?? TimeSpan.Zero;
                         break;
                     case "stale-while-revalidate":
                         staleWhileRevalidate = ParseSeconds(argument) ?? staleWhileRevalidate;

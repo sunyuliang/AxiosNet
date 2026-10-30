@@ -33,6 +33,8 @@ public sealed partial class AxiosClient
         AxiosCache? cache = null;
         string? cacheKey = null;
         AxiosCacheFlight? flight = null;
+        CacheRequestDirectives cacheDirectives = CacheRequestDirectives.None;
+        var cacheMissed = false;
 
         try
         {
@@ -59,6 +61,9 @@ public sealed partial class AxiosClient
 
             var gate = ResolveConcurrencyGate(config);
 
+            // 总预算换成绝对时间戳：各分支共享同一截止点（跟随者等缓存结果同样受它约束）。
+            var deadlineTimestamp = TotalTimeoutBudget.Start(config, entryTimestamp);
+
             // 阶段 5：编码 —— transformRequest → URL / 协议 → 正文 / 请求头。
             ApplyRequestTransforms(config);
             var plan = BuildRequestPlan(config);
@@ -69,36 +74,55 @@ public sealed partial class AxiosClient
                 cache = configuredCache;
                 cacheKey = configuredCache.KeyFor(config, plan.Uri);
 
-                if (await configuredCache.TryGetAsync(cacheKey, config.CancellationToken).ConfigureAwait(false) is { } cachedReply)
-                {
-                    return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
-                }
+                // 请求侧的 Cache-Control / Pragma：只有非 Configured 模式才解析（Configured 是「强制按配置执行」）。
+                cacheDirectives = configuredCache.ReadRequestDirectives(config);
 
-                if (configuredCache.SingleFlight)
+                // 请求要求绕开缓存（no-store / no-cache / max-age=0）：不查、不参与单飞，但仍会尝试落库。
+                if (!cacheDirectives.SkipLookup)
                 {
-                    flight = configuredCache.Join(cacheKey);
-
-                    if (!flight.IsLeader)
+                    if (await configuredCache.TryGetAsync(cacheKey, config, deadlineTimestamp).ConfigureAwait(false) is { } cachedReply)
                     {
-                        try
-                        {
-                            var sharedReply = await AwaitFlightAsync(flight, config).ConfigureAwait(false);
+                        AxiosTelemetry.CacheHit(config);
+                        return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
+                    }
 
-                            if (sharedReply is not null)
-                            {
-                                return await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
-                            }
-                        }
-                        finally
+                    cacheMissed = true;
+
+                    if (configuredCache.SingleFlight)
+                    {
+                        flight = configuredCache.Join(cacheKey);
+
+                        if (!flight.IsLeader)
                         {
-                            // 跟随者不落库，也不参与「领导者失败」的广播。
-                            flight = null;
+                            try
+                            {
+                                var sharedReply = await AwaitFlightAsync(flight, config, deadlineTimestamp).ConfigureAwait(false);
+
+                                if (sharedReply is not null)
+                                {
+                                    // 跟随者拿到领导者的结果：这次请求同样没发出。
+                                    AxiosTelemetry.CacheHit(config);
+                                    cacheMissed = false;
+                                    return await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
+                                }
+                            }
+                            finally
+                            {
+                                // 跟随者不落库，也不参与「领导者失败」的广播。
+                                flight = null;
+                            }
                         }
                     }
                 }
 
-                // 由管线决定要不要留原始字节：只有真的会尝试落库的请求才留。
-                config.CacheCaptureRawBody = true;
+                // 查过但没有、且这次真要发出去：计一次未命中（绕开缓存的请求不计，命中率口径才干净）。
+                if (cacheMissed)
+                {
+                    AxiosTelemetry.CacheMiss(config);
+                }
+
+                // 由管线决定要不要留原始字节：请求侧已否决落库（no-store / max-age=0）时不必为缓存复制正文。
+                config.CacheCaptureRawBody = cacheDirectives.CanStore;
             }
 
             // 遥测起点必须在 URL 拼好之后，且只数真的进入发送阶段的请求。
@@ -112,9 +136,6 @@ public sealed partial class AxiosClient
             }
 
             var template = CreateRequestMessage(config, plan, telemetryActivity);
-
-            // 总预算换成绝对时间戳：各分支共享同一截止点。
-            var deadlineTimestamp = TotalTimeoutBudget.Start(config, entryTimestamp);
 
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try
@@ -145,7 +166,7 @@ public sealed partial class AxiosClient
                 // 关掉单飞时 flight 为 null，这里只落库（否则缓存永远没有条目）。
                 if (cache is not null && cacheKey is not null)
                 {
-                    await StoreAsync(cache, cacheKey, flight, result).ConfigureAwait(false);
+                    await StoreAsync(cache, cacheKey, flight, config, cacheDirectives, result).ConfigureAwait(false);
                     flight = null;
                 }
 

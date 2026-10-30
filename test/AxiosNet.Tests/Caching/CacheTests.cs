@@ -300,13 +300,13 @@ public sealed class CacheTests
         Assert.Null(policy.CacheControl.Extensions["foo"]);
         Assert.Equal("baz", policy.CacheControl.Extensions["bar"]);
 
-        // 非法或负数的数字指令按「未出现」处理。
+        // 非法或负数的 max-age / s-maxage 按零（RFC 9111 §4.2.1：无效的新鲜期信息按已过期处理）。
         var invalid = NewCache().CreateEntryPolicy(
             Headers(("Cache-Control", "max-age=abc, s-maxage=-1")),
             DateTimeOffset.UtcNow)!;
 
-        Assert.Null(invalid.CacheControl.MaxAge);
-        Assert.Null(invalid.CacheControl.SharedMaxAge);
+        Assert.Equal(TimeSpan.Zero, invalid.CacheControl.MaxAge);
+        Assert.Equal(TimeSpan.Zero, invalid.CacheControl.SharedMaxAge);
     }
 
     [Fact]
@@ -328,6 +328,122 @@ public sealed class CacheTests
             DateTimeOffset.UtcNow)!;
 
         Assert.Equal(new[] { "Accept-Language", "Accept-Encoding", "*" }, policy.Vary);
+    }
+
+    [Theory]
+    [InlineData(CacheFreshnessMode.Server)]
+    [InlineData(CacheFreshnessMode.Intersection)]
+    public void RequestNoStore_RejectsTheEntry(CacheFreshnessMode mode)
+    {
+        var policy = NewCache(o => o.FreshnessMode = mode).CreateEntryPolicy(
+            Headers(("Cache-Control", "max-age=60")),
+            DateTimeOffset.UtcNow,
+            new CacheRequestDirectives(noStore: true, noCache: false, maxAge: null));
+
+        Assert.Null(policy);
+    }
+
+    [Theory]
+    [InlineData(CacheFreshnessMode.Server)]
+    [InlineData(CacheFreshnessMode.Intersection)]
+    public void RequestNoCache_StillStores(CacheFreshnessMode mode)
+    {
+        // no-cache 只要求「复用前先验证」，库不做条件请求，所以查询被跳过，但响应仍可落库。
+        var policy = NewCache(o => o.FreshnessMode = mode).CreateEntryPolicy(
+            Headers(("Cache-Control", "max-age=60")),
+            DateTimeOffset.UtcNow,
+            new CacheRequestDirectives(noStore: false, noCache: true, maxAge: null));
+
+        Assert.NotNull(policy);
+    }
+
+    [Fact]
+    public void RequestMaxAgeZero_RejectsTheEntry()
+    {
+        Assert.Null(NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection).CreateEntryPolicy(
+            Headers(),
+            DateTimeOffset.UtcNow,
+            new CacheRequestDirectives(noStore: false, noCache: false, maxAge: TimeSpan.Zero)));
+    }
+
+    [Fact]
+    public void RequestMaxAge_CapsTheEntryTtl()
+    {
+        var policy = NewCache(o =>
+        {
+            o.FreshnessMode = CacheFreshnessMode.Intersection;
+            o.TimeToLive = TimeSpan.FromMinutes(5);
+        }).CreateEntryPolicy(
+            Headers(("Cache-Control", "max-age=600")),
+            DateTimeOffset.UtcNow,
+            new CacheRequestDirectives(noStore: false, noCache: false, maxAge: TimeSpan.FromSeconds(10)));
+
+        Assert.Equal(TimeSpan.FromSeconds(10), policy!.TimeToLive);
+        Assert.Equal(TimeSpan.FromMinutes(5), policy.ConfiguredTimeToLive);
+    }
+
+    [Fact]
+    public void ConfiguredMode_IgnoresRequestDirectives()
+    {
+        // 强制按配置执行：请求说 no-store / max-age=0 也照常落库。
+        var policy = NewCache().CreateEntryPolicy(
+            Headers(),
+            DateTimeOffset.UtcNow,
+            new CacheRequestDirectives(noStore: true, noCache: true, maxAge: TimeSpan.Zero));
+
+        Assert.NotNull(policy);
+        Assert.Equal(TimeSpan.FromSeconds(30), policy!.TimeToLive);
+    }
+
+    [Theory]
+    [InlineData(CacheFreshnessMode.Server)]
+    [InlineData(CacheFreshnessMode.Intersection)]
+    public void VaryStar_IsNotStored(CacheFreshnessMode mode)
+    {
+        // Vary: * 表示任何维度都可能影响内容：键只有方法 + URL，落库会串内容。
+        Assert.Null(NewCache(o => o.FreshnessMode = mode).CreateEntryPolicy(
+            Headers(("Cache-Control", "max-age=60"), ("Vary", "Accept-Encoding, *")),
+            DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void ConfiguredMode_StoresVaryStar()
+    {
+        // 强制按配置执行：Vary 不参与取舍，信息仍随策略交给存储。
+        var policy = NewCache().CreateEntryPolicy(Headers(("Vary", "*")), DateTimeOffset.UtcNow)!;
+
+        Assert.Equal(new[] { "*" }, policy.Vary);
+    }
+
+    [Fact]
+    public void ReadRequestDirectives_IsNeutralInConfiguredMode()
+    {
+        var config = new AxiosConfig { Method = HttpMethod.Get };
+        config.Headers.Set("Cache-Control", "no-store, no-cache, max-age=0");
+
+        var ignored = NewCache().ReadRequestDirectives(config);
+        Assert.False(ignored.SkipLookup);
+        Assert.True(ignored.CanStore);
+
+        var parsed = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection).ReadRequestDirectives(config);
+        Assert.True(parsed.NoStore);
+        Assert.True(parsed.NoCache);
+        Assert.Equal(TimeSpan.Zero, parsed.MaxAge);
+        Assert.True(parsed.SkipLookup);
+        Assert.False(parsed.CanStore);
+    }
+
+    [Fact]
+    public void PragmaNoCache_IsHonored_WhenCacheControlIsAbsent()
+    {
+        var config = new AxiosConfig { Method = HttpMethod.Get };
+        config.Headers.Set("Pragma", "no-cache");
+
+        var directives = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection).ReadRequestDirectives(config);
+
+        Assert.True(directives.NoCache);
+        Assert.True(directives.SkipLookup);
+        Assert.True(directives.CanStore);
     }
 
     [Fact]
@@ -405,6 +521,157 @@ public sealed class CacheTests
         await client.GetAsync(server.Url + "x");
 
         Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task RequestNoCache_SkipsTheLookup_ButStillStores()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+        });
+
+        // no-cache：每次都绕过查询直接发，但响应仍会落库（可被后续不带指令的请求命中）。
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Cache-Control", "no-cache"));
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Cache-Control", "no-cache"));
+        Assert.Equal(2, server.Received.Count);
+
+        var hit = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Null(hit.Request);
+        Assert.Equal("ada", hit.Data?.Name);
+    }
+
+    [Fact]
+    public async Task RequestPragmaNoCache_SkipsTheLookup()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+        });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Pragma", "no-cache"));
+
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task RequestNoStore_SkipsTheLookup_AndIsNotStored()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+        });
+
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Cache-Control", "no-store"));
+
+        // no-store 没有落库：后面不带指令的请求必须真发；它落库后第三次才命中。
+        var second = await client.GetAsync<Person>(server.Url + "x");
+        var third = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.NotNull(second.Request);
+        Assert.Null(third.Request);
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task ConfiguredMode_IgnoresRequestNoStore_EndToEnd()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Cache-Control", "no-store"));
+        var hit = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.Null(hit.Request);
+    }
+
+    [Fact]
+    public async Task RequestMaxAge_CapsTheStoredTtl_EndToEnd()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Cache-Control"] = "max-age=600" }));
+
+        var store = new RecordingStore();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = store,
+                FreshnessMode = CacheFreshnessMode.Intersection
+            })
+        });
+
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Cache-Control", "max-age=15"));
+
+        // 服务器愿意给 600 秒，客户端只接受 15 秒：落库 TTL 取客户端声明的上限。
+        var policy = Assert.Single(store.Policies);
+        Assert.Equal(TimeSpan.FromSeconds(15), policy.TimeToLive);
+    }
+
+    [Fact]
+    public async Task RangeRequests_AreNotCached()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Range", "bytes=0-3"));
+        await client.GetAsync(server.Url + "x", config => config.Headers.Set("Range", "bytes=0-3"));
+
+        // 键只有方法 + URL，扣不住 Range：范围请求不参与缓存，免得 206 分段正文被后续整份 GET 拿走。
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public void RangeRequests_AreNotCacheable_ByTheBuiltInRule()
+    {
+        var config = new AxiosConfig { Method = HttpMethod.Get };
+        config.Headers.Set("Range", "bytes=0-3");
+
+        Assert.False(AxiosCache.IsCacheable(config));
+    }
+
+    [Fact]
+    public async Task PartialContent_IsNotStored()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            statusCode: 206,
+            headers: new Dictionary<string, string> { ["Content-Range"] = "bytes 0-3/10" }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        await client.GetAsync(server.Url + "x");
+        await client.GetAsync(server.Url + "x");
+
+        // 206 / Content-Range 是某段区间的内容：落库后普通 GET 会把它当整份正文交付。
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
+    public async Task SetCookie_IsNotReplayedOnHit()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Set-Cookie"] = "sid=secret; Path=/" }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var first = await client.GetAsync<Person>(server.Url + "x");
+        var hit = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.Equal("sid=secret; Path=/", first.GetHeader("Set-Cookie"));
+
+        // 会话 cookie 属于「这一次连接」：命中回放等于把别人的会话塞进下一次请求。
+        Assert.Null(hit.GetHeader("Set-Cookie"));
     }
 
     [Fact]
@@ -865,6 +1132,100 @@ public sealed class CacheTests
         Assert.NotNull(await store.GetAsync("a", CancellationToken.None));
     }
 
+    [Fact]
+    public async Task MaxBytes_StopsAcceptingEntriesLargerThanTheBudget()
+    {
+        var store = new MemoryCacheStore(maxEntries: 10, maxBytes: 32);
+
+        await store.SetAsync("big", Entry(new string('x', 100)), TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        // 和条目满同一口径：放不下就不收（让已有条目自然过期）。
+        Assert.Equal(0, store.Count);
+        Assert.Equal(0, store.ApproximateBytes);
+    }
+
+    [Fact]
+    public async Task ApproximateBytes_TracksWritesRemovalsAndClear()
+    {
+        var store = new MemoryCacheStore(maxEntries: 10, maxBytes: 0);
+
+        await store.SetAsync("a", Entry("hello"), TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(5, store.ApproximateBytes);
+
+        // 覆盖已有键：按新尺寸重新记账，不累加旧尺寸。
+        await store.SetAsync("a", Entry("hi"), TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(2, store.ApproximateBytes);
+
+        Assert.True(await store.RemoveAsync("a", CancellationToken.None));
+        Assert.Equal(0, store.ApproximateBytes);
+
+        await store.SetAsync("b", Entry("x"), TimeSpan.FromMinutes(1), CancellationToken.None);
+        await store.ClearAsync(CancellationToken.None);
+        Assert.Equal(0, store.ApproximateBytes);
+    }
+
+    [Fact]
+    public async Task ExpiredEntry_IsRemovedOnRead_AndRefundsItsSize()
+    {
+        var store = new MemoryCacheStore(maxEntries: 10, maxBytes: 0);
+
+        await store.SetAsync("a", Entry("hello"), TimeSpan.FromMilliseconds(1), CancellationToken.None);
+        await Task.Delay(50);
+
+        Assert.Null(await store.GetAsync("a", CancellationToken.None));
+        Assert.Equal(0, store.Count);
+        Assert.Equal(0, store.ApproximateBytes);
+    }
+
+    [Fact]
+    public async Task ConcurrentSetAndRemove_KeepTheByteAccountingConsistent()
+    {
+        // 覆盖写会按「新尺寸 - 旧尺寸」记差；摘除若不在同一把锁里，旧尺寸可能被退两次，计量会漂到负数。
+        var store = new MemoryCacheStore(maxEntries: 64, maxBytes: 0);
+        var entry = new AxiosShortCircuit { Status = 200, Body = new byte[256] };
+
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+        var workers = Enumerable.Range(0, 4).Select(seed => Task.Run(async () =>
+        {
+            var random = new Random(seed * 37 + 11);
+            while (!stop.IsCancellationRequested)
+            {
+                var key = "k" + random.Next(8);
+                await store.SetAsync(key, entry, TimeSpan.FromMinutes(1), CancellationToken.None);
+                await store.RemoveAsync(key, CancellationToken.None);
+            }
+        }));
+
+        await Task.WhenAll(workers);
+        for (var i = 0; i < 8; i++)
+        {
+            await store.RemoveAsync("k" + i, CancellationToken.None);
+        }
+
+        Assert.Equal(0, store.Count);
+        Assert.Equal(0, store.ApproximateBytes);
+    }
+
+    [Fact]
+    public async Task NoStoreRequest_DoesNotCaptureTheRawBody()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+        });
+
+        // 请求自己说了 no-store：响应不可能落库，管线不该为缓存多复制一份正文。
+        var noStore = await client.GetAsync<Person>(
+            server.Url + "x",
+            config => config.Headers.Set("Cache-Control", "no-store"));
+
+        var plain = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.False(noStore.Config!.CacheCaptureRawBody);
+        Assert.True(plain.Config!.CacheCaptureRawBody);
+    }
+
     private static AxiosShortCircuit Entry(string body)
         => new() { Status = 200, ContentType = "text/plain", Body = Encoding.UTF8.GetBytes(body) };
 
@@ -1031,6 +1392,74 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task FollowerWait_IsBoundedByTotalTimeout()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new Person("ada", 36));
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var leader = client.GetAsync<Person>(server.Url + "x");
+        await WaitUntilAsync(() => server.Received.Count == 1);
+
+        // 领导者慢，跟随者的总预算先到：不能挂在原地无限等，按统一错误模型报「总预算耗尽」。
+        var follower = client.GetAsync<Person>(
+            server.Url + "x",
+            config => config.TotalTimeout = TimeSpan.FromMilliseconds(100));
+
+        var error = await Assert.ThrowsAsync<AxiosException>(() => follower);
+        Assert.True(error.IsTotalTimeoutExceeded);
+        Assert.Equal(AxiosException.ErrConnAborted, error.Code);
+
+        release.SetResult(true);
+        await leader;
+    }
+
+    [Fact]
+    public async Task BoundedFollower_SendsItsOwn_WhenLeaderFailsWithCancellation()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await release.Task;
+            return TestJson.Response(new Person("ada", 36));
+        });
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var thrown = 0;
+        client.Interceptors.Response.Use(response =>
+        {
+            // 领导者那次响应上抛一个未经翻译的取消（用户拦截器的典型写法）。
+            if (Interlocked.Exchange(ref thrown, 1) == 0)
+            {
+                throw new OperationCanceledException();
+            }
+
+            return response;
+        });
+
+        var leader = client.GetAsync<Person>(server.Url + "x");
+        await WaitUntilAsync(() => server.Received.Count == 1);
+
+        // 跟随者有总预算：等待被领导者失败唤醒时，不能把「领导者取消」误报成本次请求的总预算耗尽。
+        var follower = client.GetAsync<Person>(
+            server.Url + "x",
+            config => config.TotalTimeout = TimeSpan.FromSeconds(1));
+        await Task.Delay(150);
+
+        release.SetResult(true);
+        await Assert.ThrowsAnyAsync<Exception>(() => leader);
+
+        var response = await follower;
+        Assert.Equal("ada", response.Data?.Name);
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    [Fact]
     public async Task DeclarativeClient_HitsTheSameCache()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
@@ -1107,10 +1536,34 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task StoreTimeout_DoesNotHoldTheResponse()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = new HangingStore(),
+                StoreTimeout = TimeSpan.FromMilliseconds(50)
+            })
+        });
+
+        var started = DateTime.UtcNow;
+        var response = await client.GetAsync<Person>(server.Url + "x");
+        var elapsed = DateTime.UtcNow - started;
+
+        // 存储挂起只按「这次没缓存」处理：响应照常交付，不被落库拖住。
+        Assert.Equal("ada", response.Data?.Name);
+        Assert.True(elapsed < TimeSpan.FromSeconds(2), $"落库超时没有生效：{elapsed}");
+    }
+
+    [Fact]
     public async Task Options_RejectNonPositiveValues()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new AxiosCache(new AxiosCacheOptions { TimeToLive = TimeSpan.Zero }));
         Assert.Throws<ArgumentOutOfRangeException>(() => new AxiosCache(new AxiosCacheOptions { MaxEntries = 0 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AxiosCache(new AxiosCacheOptions { MaxBytes = -1 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AxiosCache(new AxiosCacheOptions { StoreTimeout = TimeSpan.FromMilliseconds(-1) }));
     }
 
     [Fact]
@@ -1226,6 +1679,25 @@ public sealed class CacheTests
             => _inner.RemoveAsync(key, cancellationToken);
 
         public ValueTask ClearAsync(CancellationToken cancellationToken) => _inner.ClearAsync(cancellationToken);
+    }
+
+    /// <summary>写入永远不完成的存储：验证 <see cref="AxiosCacheOptions.StoreTimeout"/> 不会拖住响应。</summary>
+    private sealed class HangingStore : IAxiosCacheStore
+    {
+        private readonly TaskCompletionSource<bool> _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => new((AxiosShortCircuit?)null);
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+            => new();
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
+            => new(_never.Task);
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken) => new(false);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken) => default;
     }
 
     private static Dictionary<string, IEnumerable<string>> Headers(params (string Name, string Value)[] pairs)

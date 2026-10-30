@@ -87,6 +87,18 @@ public static class AxiosTelemetry
     /// <summary>指标名：命名共享池表里的条目数（ObservableGauge），即 <see cref="Pooling.HttpConnectionPool"/> 的 <c>SharedCount</c>。</summary>
     public const string SharedPoolsInstrumentName = "axiosnet.client.pool.shared_pools";
 
+    /// <summary>指标名：缓存命中数（Counter，无标签），含从存储命中与单飞跟随者拿到共享结果。</summary>
+    public const string CacheHitsInstrumentName = "axiosnet.client.cache.hits";
+
+    /// <summary>指标名：缓存未命中数（Counter，无标签）。</summary>
+    public const string CacheMissesInstrumentName = "axiosnet.client.cache.misses";
+
+    /// <summary>指标名：落库写入完成数（Counter，无标签）；内置存储容量满时静默不收，这次写入仍算完成。</summary>
+    public const string CacheStoresInstrumentName = "axiosnet.client.cache.stores";
+
+    /// <summary>指标名：落库失败数（Counter，无标签）：存储抛错或写超时。</summary>
+    public const string CacheStoreFailuresInstrumentName = "axiosnet.client.cache.store_failures";
+
     // 驱逐原因：指标标签的取值，属对外契约（后端按它分面板）。
     internal const string EvictionReasonIdle = "idle";
     internal const string EvictionReasonCapacity = "capacity";
@@ -148,6 +160,14 @@ public static class AxiosTelemetry
 
     private static readonly Counter<long> PoolEndpointsEvicted;
 
+    private static readonly Counter<long> CacheHits;
+
+    private static readonly Counter<long> CacheMisses;
+
+    private static readonly Counter<long> CacheStores;
+
+    private static readonly Counter<long> CacheStoreFailures;
+
     /// <summary>在途请求数（全进程）。</summary>
     private static long _activeRequests;
 
@@ -199,6 +219,12 @@ public static class AxiosTelemetry
 
         // 条目数是 int（字典 Count），统一抬成 long：与其余水位的观测类型一致。
         meter.CreateObservableGauge(SharedPoolsInstrumentName, () => (long)Pooling.HttpConnectionPool.SharedCount, unit: "{pool}", description: "命名共享池表（HttpConnectionPool.GetOrCreate）里的条目数。");
+
+        // 缓存四件套：命中率 = hits / (hits + misses)，stalls 与失败分开看。
+        CacheHits = meter.CreateCounter<long>(CacheHitsInstrumentName, unit: "{request}", description: "从缓存交付的请求数（含单飞跟随者拿到的共享结果），请求未发出。");
+        CacheMisses = meter.CreateCounter<long>(CacheMissesInstrumentName, unit: "{request}", description: "缓存未命中的请求数（随后会真实发送）。");
+        CacheStores = meter.CreateCounter<long>(CacheStoresInstrumentName, unit: "{entry}", description: "写入缓存完成的条目数（容量满时内置存储静默不收，这次写入仍算完成）。");
+        CacheStoreFailures = meter.CreateCounter<long>(CacheStoreFailuresInstrumentName, unit: "{entry}", description: "落库失败的次数（存储抛错 / 写超时），这次请求本身不受影响。");
     }
 
     /// <summary>单调时钟时间戳（配合 <see cref="ElapsedSeconds"/> 算耗时，不受系统时间调整影响）。</summary>
@@ -630,6 +656,38 @@ public static class AxiosTelemetry
             }
 
             RetryBudgetExhausted.Add(1);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>缓存命中：直接交付存储里的条目，或单飞跟随者拿到了领导者的结果（这次请求都没发出）。</summary>
+    internal static void CacheHit(AxiosConfig? config) => AddCacheCount(CacheHits, config);
+
+    /// <summary>缓存未命中：查了存储但没有可用条目（随后会真实发送）。</summary>
+    internal static void CacheMiss(AxiosConfig? config) => AddCacheCount(CacheMisses, config);
+
+    /// <summary>落库写入完成一条缓存条目（容量满时内置存储静默不收，仍由这里计数）。</summary>
+    internal static void CacheStored(AxiosConfig? config) => AddCacheCount(CacheStores, config);
+
+    /// <summary>
+    /// 落库失败（存储抛错 / 写超时）：只影响命中率，这次请求的响应照常交付。
+    /// </summary>
+    internal static void CacheStoreFailed(AxiosConfig? config) => AddCacheCount(CacheStoreFailures, config);
+
+    private static void AddCacheCount(Counter<long> counter, AxiosConfig? config)
+    {
+        try
+        {
+            // 缓存观测不在主路径的开关分支内，必须自己判一次。
+            if (!IsEnabled(config) || !counter.Enabled)
+            {
+                return;
+            }
+
+            // 无标签计数：单参数重载不构造 TagList，也不分配标签数组。
+            counter.Add(1);
         }
         catch
         {

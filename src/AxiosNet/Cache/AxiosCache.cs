@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Cache;
 
@@ -16,8 +17,11 @@ public sealed class AxiosCacheOptions
     /// </summary>
     /// <remarks>
     /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 会解析响应的
-    /// <c>Cache-Control</c>（<c>max-age</c>）与 <c>Expires</c> / <c>Date</c> / <c>Age</c>，见枚举各项说明。
-    /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c>、条件请求（ETag 复用）不在库的取舍范围，
+    /// <c>Cache-Control</c>（<c>max-age</c>）与 <c>Expires</c> / <c>Date</c> / <c>Age</c>，同时解析<b>请求</b>的
+    /// <c>Cache-Control</c> / <c>Pragma</c>，两者取交集：请求 <c>no-store</c> 不读也不写、<c>no-cache</c> / <c>max-age=0</c>
+    /// 跳过查询（仍可落库）、请求 <c>max-age</c> 作为落库 TTL 的上限、响应 <c>Vary: *</c> 不落库。
+    /// <c>Configured</c> 是「强制按配置执行」，两侧的 HTTP 指令都不参与取舍。
+    /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c> 分区、条件请求（ETag 复用）不在库的取舍范围，
     /// 但这些信息都会随 <see cref="AxiosCacheEntryPolicy"/> 交给自建存储，由存储决定要不要用。
     /// </remarks>
     public CacheFreshnessMode FreshnessMode { get; set; }
@@ -31,6 +35,24 @@ public sealed class AxiosCacheOptions
 
     /// <summary>内置内存存储的条目上限，默认 1024；自建 <see cref="Store"/> 时本项不生效（上限归存储自己管）。</summary>
     public int MaxEntries { get; set; } = 1024;
+
+    /// <summary>
+    /// 内置内存存储的近似字节上限，默认 64 MB；<c>0</c> = 不限制。自建 <see cref="Store"/> 时本项不生效。
+    /// </summary>
+    /// <remarks>
+    /// 按「正文长度 + 头名 / 头值长度」估算（UTF-16 计），不是精确的托管堆占用；只用来兜住「1024 条大响应」这类失控。
+    /// 超限与条目满同一口径：先清过期项，仍放不下就不收新条目（已存在的键照常覆盖）。
+    /// </remarks>
+    public long MaxBytes { get; set; } = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// 单次落库的超时，默认 2 秒；<c>null</c> 或非正数 = 不限时。
+    /// </summary>
+    /// <remarks>
+    /// 只约束自建存储（Redis 之类）的写入：存储挂起时不能把响应一起拖住，超时按「这次没缓存」处理。
+    /// 内置 <see cref="MemoryCacheStore"/> 是同步写入，不受影响。
+    /// </remarks>
+    public TimeSpan? StoreTimeout { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>键选择器（参数是本次生效配置与最终 URL），默认 <see cref="AxiosCache.CreateKey"/>。</summary>
     /// <remarks>需要按租户 / 用户 / 语言区分缓存时在这里拼进键；返回空白视为配置错误。</remarks>
@@ -80,8 +102,24 @@ public sealed class AxiosCache
                 "TimeToLive 必须大于零：零会让每个条目刚存进去就过期。");
         }
 
-        // MaxEntries 只在用内置存储时才校验：自建存储的条目上限归它自己管。
-        _store = _options.Store ?? new MemoryCacheStore(_options.MaxEntries);
+        if (_options.StoreTimeout is { } storeTimeout && storeTimeout < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(AxiosCacheOptions.StoreTimeout),
+                storeTimeout,
+                "StoreTimeout 不能为负：不限时请设为 null。");
+        }
+
+        // 容量两项只在用内置存储时才校验：自建存储的上限归它自己管。
+        if (_options.Store is null && _options.MaxBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(AxiosCacheOptions.MaxBytes),
+                _options.MaxBytes,
+                "MaxBytes 不能为负：不限制请设为 0。");
+        }
+
+        _store = _options.Store ?? new MemoryCacheStore(_options.MaxEntries, _options.MaxBytes);
     }
 
     /// <summary>这份缓存的策略。</summary>
@@ -158,7 +196,11 @@ public sealed class AxiosCache
         }
     }
 
-    /// <summary>默认的缓存准入口径：GET / HEAD、没有短路响应、不是流式、没有请求体。</summary>
+    /// <summary>默认的缓存准入口径：GET / HEAD、没有短路响应、不是流式、没有请求体、不是范围请求。</summary>
+    /// <remarks>
+    /// 键只有方法 + URL，扣不住 <c>Range</c>：范围请求若参与缓存，206 的分段正文会被后续普通 GET 拿去当整份内容。
+    /// 需要按 Range 分片缓存时用 <see cref="AxiosCacheOptions.ShouldCache"/> 放行，并在 <see cref="AxiosCacheOptions.KeySelector"/> 里把范围算进键。
+    /// </remarks>
     public static bool IsCacheable(AxiosConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -166,21 +208,46 @@ public sealed class AxiosCache
         return config.ShortCircuit is null
             && config.Data is null
             && config.ResponseType != ResponseType.Stream
-            && (IsMethod(config.Method, "GET") || IsMethod(config.Method, "HEAD"));
+            && (IsMethod(config.Method, "GET") || IsMethod(config.Method, "HEAD"))
+            && !(config.HasHeaders && config.Headers.Has("Range"));
+    }
+
+    /// <summary>
+    /// 读取本次<b>请求</b>的缓存指令。只有 <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/>
+    /// 才解析：<see cref="CacheFreshnessMode.Configured"/> 是「强制按配置执行」，请求头不参与取舍。
+    /// </summary>
+    internal CacheRequestDirectives ReadRequestDirectives(AxiosConfig config)
+    {
+        if (_options.FreshnessMode == CacheFreshnessMode.Configured || !config.HasHeaders)
+        {
+            return CacheRequestDirectives.None;
+        }
+
+        var cacheControl = CacheControlDirectives.ParseValue(config.Headers.Get("Cache-Control"));
+
+        // 旧式 Pragma 只在没有 Cache-Control 时生效（RFC 9111 §5.4）。
+        var pragmaNoCache = cacheControl.Raw is null
+            && string.Equals(config.Headers.Get("Pragma")?.Trim(), "no-cache", StringComparison.OrdinalIgnoreCase);
+
+        return new CacheRequestDirectives(
+            cacheControl.NoStore,
+            cacheControl.NoCache || pragmaNoCache,
+            cacheControl.MaxAge);
     }
 
     private static bool IsMethod(HttpMethod method, string expected)
         => string.Equals(method.Method, expected, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// 按响应头算一条写入策略；返回 <c>null</c> 表示 HTTP 语义要求「不落库」（只有
+    /// 按响应头与请求指令算一条写入策略；返回 <c>null</c> 表示 HTTP 语义要求「不落库」（只有
     /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 时才会发生）。
     /// <see cref="CacheFreshnessMode.Configured"/> 一个头都不解析：TTL 就是配置值，HTTP 信息留给
     /// <see cref="AxiosCacheEntryPolicy"/> 在被读取时按需解析。
     /// </summary>
     internal AxiosCacheEntryPolicy? CreateEntryPolicy(
         IReadOnlyDictionary<string, IEnumerable<string>> headers,
-        DateTimeOffset receivedAt)
+        DateTimeOffset receivedAt,
+        CacheRequestDirectives request = default)
     {
         var mode = _options.FreshnessMode;
 
@@ -190,8 +257,20 @@ public sealed class AxiosCache
                 _options.TimeToLive, _options.TimeToLive, mode, headers, receivedAt, http: null);
         }
 
+        // 请求侧否决：no-store / max-age=0 不落库；no-cache 只跳过查询，仍可落库。
+        if (!request.CanStore)
+        {
+            return null;
+        }
+
         var http = ReadHttpCacheInfo(headers, receivedAt);
         var remaining = http.Remaining;
+
+        // Vary: * 表示任何维度都可能影响内容，键覆盖不住，落库只会把别人的内容交付出去。
+        if (ContainsVaryStar(http.Vary))
+        {
+            return null;
+        }
 
         // 服务器否决优先：no-store / no-cache / 新鲜期已用尽，两种解析方式都不落库。
         if (http.CacheControl.NoStore || http.CacheControl.NoCache || remaining == TimeSpan.Zero)
@@ -218,8 +297,27 @@ public sealed class AxiosCache
                 : _options.TimeToLive;
         }
 
+        // 请求的 max-age 是客户端声明「只接受这么新的内容」：落库 TTL 同样不能超过它。
+        if (request.MaxAge is { } requested && requested < timeToLive)
+        {
+            timeToLive = requested;
+        }
+
         return new AxiosCacheEntryPolicy(
             timeToLive, _options.TimeToLive, mode, headers: null, receivedAt, http);
+    }
+
+    private static bool ContainsVaryStar(IReadOnlyList<string> vary)
+    {
+        foreach (var field in vary)
+        {
+            if (field == "*")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>解析响应头里与缓存相关的全部信息；只有解析模式或按需读取策略的存储才会走到这里。</summary>
@@ -318,16 +416,57 @@ public sealed class AxiosCache
         return fields ?? (IReadOnlyList<string>)Array.Empty<string>();
     }
 
-    /// <summary>读一条；存储报错按「没命中」处理（缓存不可用不该让请求失败），但调用方取消要照常抛。</summary>
-    internal async ValueTask<AxiosShortCircuit?> TryGetAsync(string key, CancellationToken cancellationToken)
+    /// <summary>
+    /// 读一条；存储报错按「没命中」处理（缓存不可用不该让请求失败），但调用方取消要照常抛统一错误。
+    /// 读取时长受剩余总预算约束：存储挂起时不能让请求挂在查询上。
+    /// </summary>
+    internal async ValueTask<AxiosShortCircuit?> TryGetAsync(string key, AxiosConfig config, long deadlineTimestamp)
     {
+        var cancellationToken = config.CancellationToken;
+        var remaining = TotalTimeoutBudget.Remaining(deadlineTimestamp);
+
+        // 总预算已经花完：没余量再等存储，按统一错误模型报出来（与「没能发出尝试」同一口径）。
+        if (TotalTimeoutBudget.IsExhausted(remaining))
+        {
+            throw AxiosException.TotalTimeoutExceeded(
+                config, request: null, attempt: 1, budget: config.TotalTimeout);
+        }
+
+        Task<AxiosShortCircuit?>? read = null;
+
         try
         {
-            return await _store.GetAsync(key, cancellationToken).ConfigureAwait(false);
+            var pending = _store.GetAsync(key, cancellationToken);
+
+            // 同步完成的存储（内置内存存储）不付出 Task 转换与计时器的成本。
+            if (pending.IsCompleted)
+            {
+                return await pending.ConfigureAwait(false);
+            }
+
+            read = pending.AsTask();
+
+            return remaining is { } left
+                ? await read.WaitAsync(Timeouts.Clamp(left)).ConfigureAwait(false)
+                : await read.ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (TimeoutException ex)
         {
-            throw;
+            // 存储挂起超出剩余总预算：放弃这次读取，但要观察它的失败，免得 GC 报「未观察的任务异常」。
+            Observe(read);
+            throw AxiosException.TotalTimeoutExceeded(
+                config, request: null, attempt: 1, budget: config.TotalTimeout, ex);
+        }
+        catch (OperationCanceledException ex)
+        {
+            // 调用方取消 → 统一错误模型（对外只暴露 ERR_CANCELED）。
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw AxiosException.Canceled(config, null, ex);
+            }
+
+            // 存储自己取消（调用方没取消）：缓存不可用，按没命中处理。
+            return null;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -335,13 +474,49 @@ public sealed class AxiosCache
         }
     }
 
-    /// <summary>写一条；失败只是这次不入缓存。写不跟随调用方的取消（结果已经拿到了，不该因为超时被丢掉）。</summary>
+    private static void Observe(Task? task)
+        => task?.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+
+    /// <summary>
+    /// 写一条；失败只是这次不入缓存。写不跟随调用方的取消（结果已经拿到了，不该因为超时被丢掉），
+    /// 但受 <see cref="AxiosCacheOptions.StoreTimeout"/> 约束：存储挂起时按「这次没缓存」处理。
+    /// </summary>
     internal async ValueTask<bool> TrySetAsync(string key, AxiosShortCircuit reply, AxiosCacheEntryPolicy policy)
     {
         try
         {
-            await _store.SetAsync(key, reply, policy, CancellationToken.None).ConfigureAwait(false);
-            return true;
+            var pending = _store.SetAsync(key, reply, policy, CancellationToken.None);
+
+            // 同步完成的存储（内置内存存储）不付出 Task 转换与计时器的成本。
+            if (pending.IsCompleted)
+            {
+                await pending.ConfigureAwait(false);
+                return true;
+            }
+
+            var task = pending.AsTask();
+
+            if (_options.StoreTimeout is not { } timeout || timeout <= TimeSpan.Zero)
+            {
+                await task.ConfigureAwait(false);
+                return true;
+            }
+
+            try
+            {
+                await task.WaitAsync(timeout).ConfigureAwait(false);
+                return true;
+            }
+            catch (TimeoutException)
+            {
+                // 超时按「这次没缓存」处理；底层写入继续跑，但要观察它的失败，免得 GC 报「未观察的任务异常」。
+                Observe(task);
+                return false;
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

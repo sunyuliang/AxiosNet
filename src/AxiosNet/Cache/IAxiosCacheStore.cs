@@ -7,6 +7,7 @@ namespace AxiosNet.Cache;
 /// <remarks>
 /// <see cref="AxiosShortCircuit"/> 是自描述的（状态码 / 头 / 原始字节），可以直接序列化成任何后端的一条记录。
 /// 存储出错不应让请求失败：取失败按「没命中」处理，写失败只是这次不入缓存 —— 由 <see cref="AxiosCache"/> 兜住。
+/// 例外是读取挂起超出本次请求的剩余 <c>TotalTimeout</c>：按「总预算耗尽」报出，不会无限期等存储。
 /// </remarks>
 /// <example>
 /// <code>
@@ -16,6 +17,10 @@ namespace AxiosNet.Cache;
 public interface IAxiosCacheStore
 {
     /// <summary>取一条；没有、已过期或已失效都返回 <c>null</c>。</summary>
+    /// <remarks>
+    /// 读取受本次请求的剩余 <c>TotalTimeout</c> 约束：实现应当尊重 <paramref name="cancellationToken"/>，
+    /// 挂起不返回会被库按「总预算耗尽」放弃（并观察后续失败）。
+    /// </remarks>
     ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken);
 
     /// <summary>存一条；<paramref name="timeToLive"/> 是这条应有的存活时长，由存储自己决定怎么实现。</summary>

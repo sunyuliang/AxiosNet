@@ -316,15 +316,19 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return "Bearer";
     }
 
-    /// <summary>正文能否原样再发一次：流必须可 seek，流式正文与 multipart 一律按不可重放。</summary>
+    /// <summary>
+    /// 正文能否原样再发一次：只有「数据本身」能重新生成正文的才行。
+    /// Stream / HttpContent 随第一次请求的消息一起被释放（模板在管线收尾时 Dispose），
+    /// 流式正文与 multipart 的流部件也拿不到第二份，一律按不可重放。
+    /// </summary>
     private static bool IsReplayableBody(AxiosConfig config)
         => config.Data switch
         {
             null => true,
-            Stream stream => stream.CanSeek,
+            Stream => false,
             IAsyncEnumerable<byte[]> => false,
             IAsyncEnumerable<ReadOnlyMemory<byte>> => false,
-            HttpContent content => content is not StreamContent and not AsyncEnumerableBodyContent,
+            HttpContent => false,
             DeclaredForm => false,
             _ => true,
         };

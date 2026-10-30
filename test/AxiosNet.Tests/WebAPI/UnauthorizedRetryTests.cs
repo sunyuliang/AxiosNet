@@ -132,6 +132,22 @@ public sealed class UnauthorizedRetryTests
     }
 
     [Fact]
+    public async Task SeekableStreamBody_DoesNotReplay()
+    {
+        // 可 seek 也没用：正文随第一次请求的消息一起被释放，重放只会拿到已释放的流。
+        await using var server = TestHttpServer.Start(_ =>
+            TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+
+        using var tokens = new AccessTokenManager(new AccessTokenOptions(_ => ValueTask.FromResult(new AccessToken("tok"))));
+        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var body = new MemoryStream(new byte[] { 1, 2, 3 });
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new StreamBodyRequest { Payload = body }));
+
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
     public async Task IdempotencyKey_IsPreservedAcrossTheReplay()
     {
         await using var server = SecureServer("Bearer tok-2");

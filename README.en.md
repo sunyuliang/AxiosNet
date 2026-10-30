@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1790%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1876%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1172,6 +1172,8 @@ var cache = new AxiosCache(new AxiosCacheOptions
     TimeToLive = TimeSpan.FromSeconds(30),   // 30s by default
     SingleFlight = true,                     // true by default
     MaxEntries = 1024,                       // 1024 by default
+    MaxBytes = 64L * 1024 * 1024,            // 64 MB by default, 0 = unlimited
+    StoreTimeout = TimeSpan.FromSeconds(2),  // 2s by default, null = no limit (custom stores only)
     FreshnessMode = CacheFreshnessMode.Configured  // default: trust TimeToLive only; Server / Intersection also available
 });
 
@@ -1188,26 +1190,41 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | `SingleFlight` | `true` | Send once for concurrent requests with the same key |
 | `Store` | `null` | Entry storage; `null` = the built-in `MemoryCacheStore`. Implement `IAxiosCacheStore` for Redis or a shared cache |
 | `MaxEntries` | 1024 | Entry cap of the built-in store: expired entries are purged first, then new entries are refused (ignored when `Store` is set) |
+| `MaxBytes` | 64 MB | Approximate byte cap of the built-in store (body + header lengths, `0` = unlimited): same policy as the entry cap — an entry that does not fit is not accepted (ignored when `Store` is set) |
+| `StoreTimeout` | 2s | Per-write timeout: a hanging store is treated as "not cached this time" instead of holding the response (`null` / non-positive = no limit; custom stores only) |
 | `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
-| `ShouldCache` | built-in rule | Which requests take part; defaults to `AxiosCache.IsCacheable` (GET / HEAD, no short circuit, not streaming, no body), and can be composed on top of it |
+| `ShouldCache` | built-in rule | Which requests take part; defaults to `AxiosCache.IsCacheable` (GET / HEAD, no short circuit, not streaming, no body, not a range request), and can be composed on top of it |
 
 **Key = method + absolute URL (+ credential digest)**: credentials (`Authorization` header or `Connection.Auth`) are part of the key, and only as a 64-bit digest — two users hitting the same endpoint on one instance never share an entry. Use `KeySelector` when identity lives in cookies or a custom header, or when you want per-tenant / per-language partitions.
 
 **What is stored is the raw body bytes**, re-parsed per call with the current `ResponseType` and generic argument: the same bytes feed `GetAsync<User>` and `GetAsync<string>` and each gets the shape it asked for.
 
-An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. An empty body counts as raw bytes too (HEAD / 204 have no body — the headers are what gets cached). Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected.
+An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. An empty body counts as raw bytes too (HEAD / 204 have no body — the headers are what gets cached). Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected. Range requests (a `Range` header) do not take part by default, and 206 / `Content-Range` responses are never stored — the key is only method + URL, so a partial body would be delivered as the whole document to a later plain GET.
+
+**Streaming requests stay out of the cache**: a request with `ResponseType = Stream` skips even the lookup by default (the caller asked for a stream; a hit would buffer the whole body into memory). Entries already stored remain reachable from plain calls. Let `ShouldCache` admit streaming requests if that is really the ownership model you want.
 
 **Three ways to pick the lifetime** (`FreshnessMode`):
 
 | Mode | Store decision | Effective TTL |
 | --- | --- | --- |
-| `Configured` (default) | Client gate only; `no-store` is ignored; **headers are not parsed before storing** (parsed on demand only when the store reads the policy's HTTP fields) | `TimeToLive` |
-| `Server` | `no-store` / `no-cache` / past or invalid `Expires` are not stored; **neither is a response that declares no freshness at all** | Server's remaining freshness, **not** capped by `TimeToLive` |
-| `Intersection` | Same as above (the server veto wins) | `min(TimeToLive, remaining freshness)`; falls back to `TimeToLive` when no freshness is declared |
+| `Configured` (default) | Client gate only; request and response HTTP directives are ignored; **headers are not parsed before storing** (parsed on demand only when the store reads the policy's HTTP fields) | `TimeToLive` |
+| `Server` | `no-store` / `no-cache` / `Vary: *` / past or invalid `Expires` are not stored; **neither is a response that declares no freshness at all** | Server's remaining freshness (request `max-age` caps it), **not** capped by `TimeToLive` |
+| `Intersection` | Same as above (both server and request vetoes win) | `min(TimeToLive, remaining freshness, request max-age)`; falls back to `TimeToLive` when no freshness is declared |
 
-Remaining freshness = `max-age` (or `Expires - Date` when absent) minus the current age (the larger of the `Age` header and "received at − `Date`"). Neither mode attempts a `Last-Modified` heuristic.
+Remaining freshness = `max-age` (or `Expires - Date` when absent) minus the current age (the larger of the `Age` header and "received at − `Date`"). A `max-age` that is present but invalid or negative counts as zero (RFC 9111 §4.2.1: invalid freshness information is treated as stale) — `Expires` does not rescue it. Neither mode attempts a `Last-Modified` heuristic.
 
-The library interprets responses as a **private cache**: `private` / `public` do not change the decision, `s-maxage` is not used, `Vary` does not take part in the key (use `KeySelector` for partitioning), and there is no conditional revalidation (`ETag` / 304 reuse) or `stale-*` serving. None of that information is lost — it is all handed to the store in `AxiosCacheEntryPolicy`.
+`Server` / `Intersection` also parse the **request's** `Cache-Control` / `Pragma` and intersect them with the response side:
+
+| Request directive | Lookup | Store |
+| --- | --- | --- |
+| `no-store` | skipped | not stored |
+| `no-cache` (or legacy `Pragma: no-cache`) | skipped (every call is really sent) | still stored (the library does no conditional revalidation) |
+| `max-age=0` (invalid or negative values count as zero) | skipped | not stored |
+| `max-age=N` (positive) | as usual | stored TTL capped at N |
+
+`Configured` means "execute the configuration": neither request nor response HTTP directives take part.
+
+The library interprets responses as a **private cache**: `private` / `public` do not change the decision, `s-maxage` is not used, `Vary` does not take part in the key (use `KeySelector` for partitioning; `Vary: *` is not stored in the parsing modes), and there is no conditional revalidation (`ETag` / 304 reuse) or `stale-*` serving. None of that information is lost — it is all handed to the store in `AxiosCacheEntryPolicy`.
 
 | | Short circuit | Response cache |
 | --- | --- | --- |
@@ -1219,13 +1236,15 @@ The library interprets responses as a **private cache**: `private` / `public` do
 - **A hit sends nothing**: no concurrency slot, no telemetry span, no in-flight gauge, and `response.Request` is `null` (the same visible trace as a short circuit).
 - **Single flight shares failures**: when the leader throws, waiters get the same error (one read-only `AxiosException` instance, `Response` included). But a leader cancelled by **its own caller** does not count as a failure — each waiter sends its own request instead.
 - **Waiters stay cancellable**: cancelling `CancellationToken` gives up the wait only and never cancels the shared send (`ERR_CANCELED`).
-- **Headers keep their first value**: the short-circuit header dictionary is single-valued, so multi-value headers (`Set-Cookie`) keep only the first.
+- **Waiting is bounded by the total budget**: a follower waits at most the remaining `TotalTimeout` and then fails with `ECONNABORTED` (`IsTotalTimeoutExceeded`) instead of hanging on a slow leader.
+- **Lookups count against that budget too**: a cache read is bounded by the remaining `TotalTimeout`, so a hanging store (unreachable custom store, network partition) fails with `ECONNABORTED` (`IsTotalTimeoutExceeded`) instead of parking the request; caller cancellation surfaces as `ERR_CANCELED`, and a cancellation thrown by the store itself counts as a miss. Implementations of `IAxiosCacheStore.GetAsync` should honour the token they receive.
+- **Headers keep their first value**: the short-circuit header dictionary is single-valued; `Set-Cookie` / `Set-Cookie2` are never stored — session state belongs to that one response, and replaying it on a hit would hand it to the next request.
 - **The key does not include the body**: by default only bodiless GET / HEAD requests are cached; if `ShouldCache` lets a method with a body through, fold a body fingerprint into `KeySelector`, otherwise different bodies share one entry.
 - **Policy lives on the instance**: one `AxiosCache` is one policy; create several and attach them separately when endpoints need different lifetimes or keys.
 - **Force clearing**: `cache.ClearAsync()` drops every entry and `cache.RemoveAsync(key)` drops one (compute the key with `cache.KeyFor(config, uri)`); requests already in flight are unaffected and still store on completion.
 - **Custom stores receive the full policy**: `IAxiosCacheStore` has a new `SetAsync` overload that takes an `AxiosCacheEntryPolicy` (effective / configured TTL, HTTP freshness, age, parsed `Cache-Control`, `Date` / `Expires` / `Vary`). Its default implementation forwards to the old signature, so existing stores need no change; override it to reject `private` responses from a shared cache, partition by `Vary`, or extend the servable window with `stale-while-revalidate`. In `Configured` mode nothing is parsed before storing: those HTTP fields are parsed on demand the first time the store reads them, so a store that only uses the TTL pays nothing.
 - **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `MemoryCacheStore` live there; `AxiosShortCircuit` stays in `AxiosNet` (it is not cache-specific — mocks and replays use it too).
-- **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend). The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries. A failing store only means "not cached this time" — requests still go out.
+- **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend). The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries. A failing store only means "not cached this time" — requests still go out; a read that hangs past the remaining `TotalTimeout` fails with `ECONNABORTED` instead (see above).
 - Replaying `response.Config` carries the same cache object along (it is shared state, not "the result of that request").
 
 ## Connection pool
@@ -1408,10 +1427,15 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.pool.active_leases` | `ObservableGauge<long>` | `{lease}` | none |
 | `axiosnet.client.pool.active_pools` | `ObservableGauge<long>` | `{pool}` | none |
 | `axiosnet.client.pool.shared_pools` | `ObservableGauge<long>` | `{pool}` | none |
+| `axiosnet.client.cache.hits` | `Counter<long>` | `{request}` | none |
+| `axiosnet.client.cache.misses` | `Counter<long>` | `{request}` | none |
+| `axiosnet.client.cache.stores` | `Counter<long>` | `{entry}` | none |
+| `axiosnet.client.cache.store_failures` | `Counter<long>` | `{entry}` | none |
 
+- Cache hit rate = `cache.hits / (cache.hits + cache.misses)` (a follower that receives the shared reply counts as a hit; requests that skip the lookup because of `no-cache` / `no-store` count as neither); watch `cache.store_failures` on its own, don't fold it into the hit rate.
 - Metrics only carry low-cardinality tags; URL paths live in spans only. **Pool metrics carry no host / port**: for gateways, crawlers and multi-tenant SaaS one series per host blows up the backend; use the span (`server.address` / `server.port` / `axiosnet.pool.endpoint.reused`) to find the origin.
 - `axiosnet.retry.reason` has a bounded value set: `status` whenever there is a status code (the exact code is in `error.type`), otherwise the library error code (`ECONNABORTED` / `ERR_NETWORK` …) — so "tune the policy (429)" and "fix the downstream (5xx)" are separable on a dashboard.
-- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key), and `retry.budget_exhausted` counts retries denied by the shared budget — none carries a host.
+- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key), and `retry.budget_exhausted` counts retries denied by the shared budget — the four cache counters (`cache.hits` / `misses` / `stores` / `store_failures`) carry no tags either; none of these carries a host.
 - `request.duration` is the logical request duration (including retries and backoff); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
 - Pool metrics describe the pool as a resource and are unaffected by `Telemetry.Enabled`.
 - `pool.active_pools` counts live pools (+1 on creation, -1 on `Dispose`) and `pool.shared_pools` counts entries in the named registry: a rising `active_pools` means some code keeps building pools — typically a client per request.
@@ -1626,9 +1650,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1727 | `net8.0` / `net6.0` | 3454 |
+| `AxiosNet.Tests` (core + declarative) | 1813 | `net8.0` / `net6.0` | 3626 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1790** | | **3580** |
+| **Total** | **1876** | | **3752** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
