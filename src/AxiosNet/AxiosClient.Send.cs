@@ -1,5 +1,6 @@
 ﻿using System.Buffers;
 using System.Diagnostics;
+using System.Net;
 using System.Runtime.ExceptionServices;
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
@@ -179,6 +180,20 @@ public sealed partial class AxiosClient
 
             // 阶段 4：发送 —— 只到响应头，正文留给读取阶段。
             var responseMessage = await SendRequestAsync(httpClient, request, ctx, budget).ConfigureAwait(false);
+
+            // 条件请求的 304：正文在缓存里 —— 用 304 的响应头更新那条再装配响应，不读 304 的空正文。
+            if (ctx.Config.RevalidationEntry is not null
+                && responseMessage.StatusCode == HttpStatusCode.NotModified)
+            {
+                try
+                {
+                    return CompleteNotModified(responseMessage, request, ctx);
+                }
+                finally
+                {
+                    responseMessage.Dispose();
+                }
+            }
 
             // 阶段 5：读取 —— 状态码接受性只判一次，它同时决定宽松解析与是否抛错。
             var (response, statusAccepted) = await ReadResponseAsync(responseMessage, request, ctx, budget).ConfigureAwait(false);

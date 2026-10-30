@@ -73,7 +73,12 @@ internal static class SampleMenu
             }
             failed |= await RunItemAsync(choice, items[choice - 1]);
             Console.WriteLine($"{items[choice - 1].Name}执行完毕、按任意键继续");
-            Console.ReadKey();
+
+            // 输入被重定向（管道 / CI 批量跑示例）时没有键盘可读，直接继续。
+            if (!Console.IsInputRedirected)
+            {
+                Console.ReadKey();
+            }
         }
 
         return failed;

@@ -307,6 +307,132 @@ public sealed class CircuitBreakerTests
     }
 
     [Fact]
+    public void HungProbe_IsReopenedAfterProbeTimeout()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            ProbeTimeout = TimeSpan.FromMilliseconds(200)
+        };
+        var host = "hung-probe.example.com";
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host), ticket: 0);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 冷却结束：这次是探测，结果永远不会回来
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 名额被卡死的探测占住：超时之前照旧拒绝
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        Thread.Sleep(500);
+
+        // 超时后整轮作废、重新打开：下一次请求按冷却被拒，而不是永远卡在半开
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        // 重新冷却后还能探测（没有永久失去恢复能力）
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+    }
+
+    [Fact]
+    public void ProbeWatchdog_CanBeDisabled()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            ProbeTimeout = null
+        };
+        var host = "no-watchdog.example.com";
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host), ticket: 0);
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        Thread.Sleep(500);
+
+        // 关掉看门狗：探测一直不回，半开态就一直等它（旧行为）
+        Assert.False(breaker.ShouldAllow(ContextFor(host)));
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+    }
+
+    [Fact]
+    public async Task HalfOpen_HungProbe_RecoversAfterWatchdogReopens()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(async request =>
+        {
+            if (request.Path == "/slow")
+            {
+                await Task.Delay(2000);
+                return TestJson.Response(new { ok = true });
+            }
+
+            return Interlocked.Increment(ref calls) == 1
+                ? TestJson.Response(new { error = "boom" }, statusCode: 500)
+                : TestJson.Response(new { ok = true });
+        });
+
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            RecoverySuccesses = 1,
+            ProbeTimeout = TimeSpan.FromMilliseconds(300)
+        };
+
+        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        var host = HostOf(server);
+
+        // A：真失败 → 打开
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "fail"));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        // 冷却结束：B 作为探测发出，但服务端挂住不回（请求本身没配超时）
+        await Task.Delay(500);
+        var slow = client.GetAsync(server.Url + "slow");
+        var waitForSend = Stopwatch.StartNew();
+        while (waitForSend.Elapsed < TimeSpan.FromSeconds(5) && !server.Received.Any(r => r.Path == "/slow"))
+        {
+            await Task.Delay(5);
+        }
+
+        Assert.Equal(AxiosCircuitState.HalfOpen, breaker.GetState(host));
+
+        // 探测超过看门狗时长：整轮作废，C 不会发出，而是按「刚重新打开」被拒
+        await Task.Delay(600);
+        var rejected = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "ok"));
+        Assert.Equal(AxiosException.ErrCircuitOpen, rejected.Code);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+        Assert.True(rejected.RetryAfter > TimeSpan.Zero);
+        Assert.Equal(2, server.Received.Count);
+
+        // B 迟到的成功属于上一轮：不改台账
+        var late = await slow;
+        Assert.Equal(200, late.Status);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        // 重新冷却后还能探测并恢复
+        await Task.Delay(500);
+        var recovered = await client.GetAsync(server.Url + "ok");
+        Assert.Equal(200, recovered.Status);
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+    }
+
+    [Fact]
     public void StaleTicket_FromPreviousRound_CannotReopenOrFreeASlot()
     {
         var breaker = new CircuitBreaker
@@ -721,6 +847,21 @@ public sealed class CircuitBreakerTests
         Assert.Empty(server.Received);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task InvalidProbeTimeout_IsRejectedBeforeSending(int milliseconds)
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var breaker = new CircuitBreaker { ProbeTimeout = TimeSpan.FromMilliseconds(milliseconds) };
+        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+
+        var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
+        Assert.Equal(AxiosException.ErrBadOptionValue, failed.Code);
+        Assert.Empty(server.Received);
+    }
+
     // ------------------------------------------------------------------
     // 维度隔离与自定义维度
     // ------------------------------------------------------------------
@@ -785,6 +926,37 @@ public sealed class CircuitBreakerTests
 
         // 面向任意 host（多租户 / 动态域名）时状态表不能无限长：满员后淘汰「无账可记」的条目
         Assert.True(breaker.TrackedHostCount <= 2, $"TrackedHostCount = {breaker.TrackedHostCount}");
+    }
+
+    [Fact]
+    public void MaxTrackedHosts_IsHard_NewDimensionBypassesWhenFull()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = TimeSpan.FromHours(1),
+            MaxTrackedHosts = 2
+        };
+
+        // 两个维度全部打进熔断：没有可淘汰的条目。
+        foreach (var host in new[] { "a.example", "b.example" })
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(FailedContext(host));
+        }
+
+        Assert.Equal(2, breaker.TrackedHostCount);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState("a.example"));
+
+        // 第三个维度：仍然放行（保护失效总好过无界增长），但不登记、不记账。
+        Assert.True(breaker.ShouldAllow(ContextFor("c.example")));
+        breaker.Record(FailedContext("c.example"));
+
+        Assert.Equal(2, breaker.TrackedHostCount);
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState("c.example"));
+
+        // 已跟踪维度不受影响：a 依旧熔断（新维度没把它挤掉，也没被它带坏）。
+        Assert.False(breaker.ShouldAllow(ContextFor("a.example")));
     }
 
     [Fact]
@@ -906,7 +1078,7 @@ public sealed class CircuitBreakerTests
             }
         };
 
-        // 新 host 触发 Evict；上限是软上限：没有可删的条目时宁可超限，也不丢正在熔断的账。
+        // 新 host 触发 Evict；上限是硬上限：没有可删的条目时新维度不登记、按闭合态直通。
         breaker.ShouldAllow(new AxiosCircuitContext("new-0", uri));
 
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState("down"));

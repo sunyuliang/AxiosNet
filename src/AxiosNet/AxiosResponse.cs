@@ -78,6 +78,9 @@ public class AxiosResponse
     /// <summary>响应正文字节数（只有非流式响应有值），供遥测写进 span。</summary>
     internal long? BodyBytes { get; set; }
 
+    /// <summary>这次响应是条件请求的 304 合并出来的（正文来自缓存），供遥测与日志区分「未命中」。</summary>
+    internal bool CacheRevalidated { get; set; }
+
     /// <summary>响应正文的原始字节（只有非流式响应有值）：只在启用缓存时保留，落库后由管线清空。</summary>
     internal byte[]? RawBody { get; set; }
 

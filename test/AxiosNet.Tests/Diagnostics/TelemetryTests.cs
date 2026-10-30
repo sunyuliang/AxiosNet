@@ -128,6 +128,23 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task Span_OnHttpError_CarriesProtocolAndResponseBodySize()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
+        var path = UniquePath("failed-span-body");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient();
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
+
+        // 4xx / 5xx 也是「收到了响应」：协议版本与正文大小照样有，失败 span 不能只留状态码。
+        var span = Assert.Single(probe.Spans);
+        var response = Assert.IsType<AxiosResponse>(ex.Response);
+        Assert.Equal(response.ProtocolVersion!.Major == 2 ? "2" : "1.1", span.GetTagItem(TagProtocolVersion));
+        Assert.Equal(response.BodyBytes, Assert.IsType<long>(span.GetTagItem(TagResponseBodySize)));
+    }
+
+    [Fact]
     public async Task Span_OnNetworkError_RecordsErrorCodeAndExceptionEvent()
     {
         var port = ClosedPort();
@@ -444,6 +461,71 @@ public sealed class TelemetryTests
         Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheMissesInstrumentName).Sum(m => m.Value));
         Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheStoreFailuresInstrumentName).Sum(m => m.Value));
         Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheStoresInstrumentName));
+    }
+
+    [Fact]
+    public async Task Metrics_Cache_RevalidationsCountTheNotModifiedPath()
+    {
+        await using var server = TestHttpServer.Start(request =>
+        {
+            if (request.Headers.ContainsKey("If-None-Match"))
+            {
+                return new TestResponse(304, Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ETag"] = "\"v1\""
+                });
+            }
+
+            return TestJson.Response(new Person("ada", 36), headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ETag"] = "\"v1\""
+            });
+        });
+
+        var path = UniquePath("cache-revalidation");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = new AlwaysStaleStore() })
+        });
+
+        await client.GetAsync<Person>(server.Url + path);
+        var revalidated = await client.GetAsync<Person>(server.Url + path);
+
+        // 第二次真的发出去了（带校验器），但正文来自缓存：按未命中计入命中率，另外单独计一次复用。
+        Assert.Equal(2, server.Received.Count);
+        Assert.NotNull(revalidated.Request);
+        Assert.Equal("ada", revalidated.Data!.Name);
+
+        Assert.Equal(1d, probe.MeasurementsOf(AxiosTelemetry.CacheRevalidationsInstrumentName).Sum(m => m.Value));
+        Assert.Equal(2d, probe.MeasurementsOf(AxiosTelemetry.CacheMissesInstrumentName).Sum(m => m.Value));
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheHitsInstrumentName));
+
+        // span 上单独打标，面板能把「304 复用」从「完整下载」里分出来。
+        var span = Assert.Single(probe.Spans, s => Equals(s.GetTagItem(TagStatusCode), 200)
+            && s.GetTagItem("axiosnet.cache.revalidated") is "true");
+        Assert.Equal("/" + path, span.GetTagItem(TagPath));
+    }
+
+    /// <summary>永远「不新鲜」的存储：读不命中，但旧条目还在，能供条件请求复用。</summary>
+    private sealed class AlwaysStaleStore : IAxiosCacheStore, IAxiosCacheRevalidationStore
+    {
+        private readonly MemoryCacheStore _inner = new();
+
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => new((AxiosShortCircuit?)null);
+
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+            => _inner.SetAsync(key, entry, timeToLive, cancellationToken);
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
+            => _inner.RemoveAsync(key, cancellationToken);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken)
+            => _inner.ClearAsync(cancellationToken);
+
+        public ValueTask<AxiosShortCircuit?> GetRevalidationAsync(string key, CancellationToken cancellationToken)
+            => _inner.GetRevalidationAsync(key, cancellationToken);
     }
 
     /// <summary>写入永远不完成的存储：验证写超时归入落库失败。</summary>
@@ -795,7 +877,12 @@ public sealed class TelemetryTests
         // 一次逻辑请求 = 一个 span：重试次数记在 span 上，而不是再开一个 span
         var span = Assert.Single(probe.Spans);
         Assert.Equal(2, span.GetTagItem(TagResendCount));
-        Assert.Equal(2, span.Events.Count(e => e.Name == "retry"));
+        var retrySpanEvents = span.Events.Where(e => e.Name == "retry").ToArray();
+        Assert.Equal(2, retrySpanEvents.Length);
+
+        // 事件自带主机标签（与 span / 指标同一份逻辑地址）：只看事件的消费方不必回头拼 span 标签。
+        Assert.Equal("127.0.0.1", retrySpanEvents[0].Tags.First(tag => tag.Key == TagServerAddress).Value);
+        Assert.Equal(server.Port, retrySpanEvents[0].Tags.First(tag => tag.Key == TagServerPort).Value);
 
         // 指标：每次「决定重试」计 1（两条测量，各 1 次）
         var retries = probe.MeasurementsOf(AxiosTelemetry.RetriesInstrumentName);
@@ -881,7 +968,7 @@ public sealed class TelemetryTests
         };
         listener.Start();
 
-        Assert.Equal(17, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
+        Assert.Equal(19, instruments.Count);  // 指标数量也是契约：新增一个就要同步双版 README
 
         // Meter 版本跟程序集走：后端据此区分「同一个源的不同版本」
         var assemblyVersion = typeof(AxiosTelemetry).Assembly.GetName().Version?.ToString();
@@ -946,7 +1033,13 @@ public sealed class TelemetryTests
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CircuitStateInstrumentName));
         Assert.Equal("{circuit}", circuitState.Unit);
 
-        // 缓存四件套：命中率 = hits / (hits + misses)；落库失败单列，别混进命中率
+        // 跟踪表满员后的直通次数：MaxTrackedHosts 调小或地址维度失控时会在面板上冒头
+        var circuitUntracked = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CircuitUntrackedInstrumentName));
+        Assert.Equal("{host}", circuitUntracked.Unit);
+
+        // 缓存五件套：命中率 = hits / (hits + misses)；落库失败单列，别混进命中率；
+        // 条件请求命中 304 单列，它既不是命中（请求发出去了）也不是未命中（正文来自缓存）。
         var cacheHits = Assert.IsType<Counter<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheHitsInstrumentName));
         Assert.Equal("{request}", cacheHits.Unit);
@@ -962,6 +1055,10 @@ public sealed class TelemetryTests
         var cacheStoreFailures = Assert.IsType<Counter<long>>(
             Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheStoreFailuresInstrumentName));
         Assert.Equal("{entry}", cacheStoreFailures.Unit);
+
+        var cacheRevalidations = Assert.IsType<Counter<long>>(
+            Assert.Single(instruments, instrument => instrument.Name == AxiosTelemetry.CacheRevalidationsInstrumentName));
+        Assert.Equal("{request}", cacheRevalidations.Unit);
     }
 
     // 存活池数是进程级水位（无标签）：只钉方向——自己这批池被算进去、释放后掉下来；
@@ -1132,6 +1229,39 @@ public sealed class TelemetryTests
         // ② 两者量的是同一段：trace 与指标对同一次请求给出不一致的耗时，是最难排查的那类「数据不对」
         Assert.True(
             Math.Abs(duration.Value - span.Duration.TotalSeconds) < 0.05,
+            $"指标 {duration.Value:0.000}s 与 span {span.Duration.TotalSeconds:0.000}s 口径不一致。");
+    }
+
+    [Fact]
+    public async Task SpanAndDuration_IncludeCacheStoreWait()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var path = UniquePath("store-wait");
+        using var probe = new TelemetryProbe(server.Port, path);
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = new SlowSetStore(TimeSpan.FromMilliseconds(300)),
+                StoreTimeout = TimeSpan.FromSeconds(5)
+            })
+        });
+
+        var stopwatch = Stopwatch.StartNew();
+        await client.GetAsync(server.Url + path);
+        stopwatch.Stop();
+
+        var span = Assert.Single(probe.Spans);
+        var duration = Assert.Single(probe.MeasurementsOf(AxiosTelemetry.RequestDurationInstrumentName));
+
+        // 落库在返回之前完成：调用方等的就是这段。span 与直方图都必须覆盖它，
+        // 否则慢存储会被指标藏起来（span 有、直方图没有，两套数据还会互相打架）。
+        Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(250), $"请求总耗时 {stopwatch.ElapsedMilliseconds}ms 没有等到落库。");
+        Assert.True(span.Duration >= TimeSpan.FromMilliseconds(250), $"span {span.Duration.TotalMilliseconds:0}ms 没有覆盖落库等待。");
+        Assert.True(duration.Value >= 0.25, $"metric {duration.Value:0.000}s 没有覆盖落库等待。");
+        Assert.True(
+            Math.Abs(duration.Value - span.Duration.TotalSeconds) < 0.1,
             $"指标 {duration.Value:0.000}s 与 span {span.Duration.TotalSeconds:0.000}s 口径不一致。");
     }
 
@@ -1440,6 +1570,20 @@ public sealed class TelemetryTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    /// <summary>落库要等一会儿的存储：用来验证耗时口径是否覆盖缓存写入。</summary>
+    private sealed class SlowSetStore(TimeSpan delay) : IAxiosCacheStore
+    {
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => new((AxiosShortCircuit?)null);
+
+        public async ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+            => await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken) => new(false);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken) => default;
     }
 
     /// <summary>

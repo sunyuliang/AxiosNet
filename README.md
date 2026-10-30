@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1876%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1899%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -270,7 +270,7 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 | 备用端点 | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | 尝试管线 | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | 短路响应 | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
-| 响应缓存 | 按 URL 与身份缓存 2xx 响应，命中不发请求；同键并发只发一次 | `client.Defaults.Cache = new AxiosCache(...)` |
+| 响应缓存 | 按 URL 与身份缓存 2xx 响应，命中不发请求；同键并发只发一次；过期条目走 `ETag` / 304 条件复用 | `client.Defaults.Cache = new AxiosCache(...)` |
 
 **数据与错误**
 
@@ -314,6 +314,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 - **`Params` / `Data` 按「有没有赋值过」合并，不按是否为 `null`**：不碰这两项 = 继承实例默认值；显式写 `c.Params = null` / `c.Data = null` = 摘掉实例默认值（与 `Headers.Delete` 用「删除」表达摘头同一个道理）。所以 `PostAsync(url)` 这种不传 `data` 的调用仍会带上 `Defaults.Data`，要发空正文得显式写 `Data = null`。
 - **一个站点一个实例，不要按请求新建**：每个实例自建一条连接池，`Axios.Create` / `new AxiosClient` 各建一套 Handler；按请求新建等于退化成 `new HttpClient()` 那个经典坑——长连接不复用，连接与句柄持续增长。要换默认值就换实例，要共享连接就共享池（见[连接池](#连接池)）；DI 场景直接用 `AddAxiosClient` 注册单例。
 - 实例用 `using`（或交给 DI 容器持有）收尾，连接池与 Handler 随之释放；在途请求不会被打断，只是不再接受新请求。
+- **静态门面可以重置**：`Axios.Reset()` 释放全局默认实例，下次访问 `Axios.Defaults` / `Axios.Interceptors` 或发请求时按全新配置重建。在途请求不受影响（释放不打断它们），旧的默认值与拦截器一并丢弃——典型场景是测试之间隔离全局状态，或默认实例被误释放后恢复（释放过的实例对所有请求恒抛 `ERR_CANCELED`）。
 
 ### 回放 `response.Config`
 
@@ -901,7 +902,7 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 
 - `Timeout` 是**每次尝试**的预算（3 次重试 × 10s 最坏 40s）；要「整条请求」的上界用 `TotalTimeout`，也可以在调用方用 `CancellationToken`。
 - 拦截器、`transformRequest`、正文序列化只跑一次；响应拦截器看到最终结果。
-- 正文必须可重放：可 seek 的流每次重试前自动拨回起点；不可 seek 的流、`StreamContent`（含 multipart 部件）与流式请求体（`IAsyncEnumerable`）在开启重试 / 备用端点时直接抛 `ERR_BAD_OPTION_VALUE`。长度未知的自定义 `HttpContent` 同样拒绝（`JsonContent` 例外：它每次序列化都从持有的值重新写）。
+- 正文必须可重放：可 seek 的流每次重试前自动拨回起点；不可 seek 的流、`StreamContent`（含 multipart 部件）与流式请求体（`IAsyncEnumerable`）在开启重试 / 备用端点时直接抛 `ERR_BAD_OPTION_VALUE`。调用方自带的 `HttpContent` 按**白名单**放行：`ByteArrayContent`（含 `StringContent` / `FormUrlEncodedContent`）、`ReadOnlyMemoryContent`、`JsonContent`（每次从持有的值重新序列化），以及全部部件都可重放的 `MultipartContent`；其余自定义内容一律在**发送前**拒绝 —— 「长度已知」不等于「可重放」，一次性流包一层自定义内容照样只发得出一次。
 - 自定义策略：实现 `IAxiosRetryPolicy`（`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`），`ctx` 提供 `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`。策略被同一实例的并发请求共享，必须线程安全（推荐无状态；需要跨请求共享状态时自行同步，内置的 `RetryBudgetPolicy` 就是这样）。
 
 ### 全局重试预算（`RetryBudgetPolicy`）
@@ -944,6 +945,7 @@ var breaker = new CircuitBreaker
     FailureRateThreshold = 0.5,                 // 窗口内一半失败就打开
     BreakDuration = TimeSpan.FromSeconds(30),   // 冷却 30 秒后放探测请求
     HalfOpenAttempts = 1,                       // 慢启动起点：半开态先放 1 个在途
+    ProbeTimeout = TimeSpan.FromSeconds(30),    // 探测 30 秒不回报就整轮作废、重新打开
     RecoverySuccesses = 3                       // 连续 3 次探测成功才全量放开
 };
 
@@ -975,11 +977,12 @@ breaker.Reset();                                                 // 运维手工
 - **按 host 计数**：默认维度 `host:port`（`uri.Authority`）；`KeySelector` 可改成 `ctx => ctx.Uri.Host` 或按路由前缀隔离租户。
 - **打开条件取「或」**：连续失败达 `FailureThreshold`，或窗口（`WindowSize`）内失败数 ≥ `ceil(样本数 × FailureRateThreshold)` 且样本数达 `MinimumSamples`。`WindowSize = 0` 表示只看连续失败；`MinimumSamples` 大于 `WindowSize` 会在发请求前报 `ERR_BAD_OPTION_VALUE`（那种配法永远触发不了）。
 - **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷。`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。熔断打开前就已放行、冷却结束之后才回报的迟到结果按代次丢弃：它属于上一轮，不会把刚进入的半开打回打开，也不会替这一轮归还探测名额。
+- **卡死的探测不会永久占住名额**：半开态的探测在 `ProbeTimeout`（默认 30 秒，`null` 关闭）内没有回报就视为卡死——整轮半开作废、重新打开并重新冷却，迟到的结果按代次丢弃。请求本身没配 `Timeout` 时，一个挂住的探测原本会让该维度永远停在半开；探测自身的超时预算更长时把本项调大（非正值报 `ERR_BAD_OPTION_VALUE`）。
 - 被拒请求**不发出**：不建连、不占租约，直接抛 `ERR_CIRCUIT_OPEN`，`AxiosException.RetryAfter` 给建议等待。
 - 与重试同时开：闸门在**每次尝试之前**，熔断打开后重试的下一轮会被立刻拦下；`ERR_CIRCUIT_OPEN` 本身不重试。
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
 - **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
-- 状态表有上限（`MaxTrackedHosts`，默认 512，软上限）：满员只淘汰「丢了不改变判定」的维度——正在熔断 / 半开的条目不会被丢，闭合态里优先丢窗口中没有失败样本的那条（连续失败数可能已被一次成功清零，但失败率台账仍然有效，丢掉等于把这条维度重置成全新维度）。
+- 状态表有上限（`MaxTrackedHosts`，默认 512，**硬上限**）：满员时先淘汰「丢了不改变判定」的维度（闭合态里优先丢窗口中没有失败样本的那条；连续失败数可能已被一次成功清零，但失败率台账仍然有效）；仍放不下就**不再登记**新维度，新维度按闭合态直通（不参与熔断判定、不记账），已有维度的判定不受影响——熔断保护失效总好过状态表无界增长。未登记的次数见 `circuit.untracked_host` 指标。
 - 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。用装饰器包住内置 `CircuitBreaker` 时拿不到准入票（接口上没有票号），迟到结果会按旧口径记账 —— 与 `RetryBudgetPolicy` 被装饰器包住时认不出退费同类的保守偏差。
 
 ## 并发对冲
@@ -1187,10 +1190,11 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `TimeToLive` | 30 秒 | 条目存活时长，必须大于零 |
 | `FreshnessMode` | `Configured` | 缓存时长怎么来：`Configured` 只信配置 TTL；`Server` 只信服务器；`Intersection` 取交集（见下） |
 | `SingleFlight` | `true` | 同键并发只发一次 |
+| `ConditionalRequests` | `true` | 过期条目带 `ETag` / `Last-Modified` 时发条件请求，304 直接复用缓存的正文（见下） |
 | `Store` | `null` | 条目存储，`null` = 内置 `MemoryCacheStore`；接 Redis / 共享缓存时换成自己的 `IAxiosCacheStore` |
 | `MaxEntries` | 1024 | 内置内存存储的条目上限：满了先清过期条目，仍满就不再收新条目（自建 `Store` 时本项不生效） |
 | `MaxBytes` | 64 MB | 内置内存存储的近似字节上限（正文 + 头长度估算，`0` = 不限制）：和条目满同一口径，放不下就不收新条目（自建 `Store` 时本项不生效） |
-| `StoreTimeout` | 2 秒 | 单次落库超时：存储挂起时按「这次没缓存」处理，不把响应一起拖住（`null` / 非正数 = 不限时；只约束自建存储） |
+| `StoreTimeout` | 2 秒 | 单次落库超时：存储挂起时按「这次没缓存」处理，不把响应一起拖住（`null` / 非正数 = 不限时；只约束自建存储；实际等待还被剩余 `TotalTimeout` 封顶） |
 | `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
 | `ShouldCache` | 默认口径 | 哪些请求参与缓存，默认为 `AxiosCache.IsCacheable`（GET / HEAD、无短路响应、非流式、无请求体、非范围请求），可在此基础上组合 |
 
@@ -1217,13 +1221,22 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | 请求指令 | 查缓存 | 落库 |
 | --- | --- | --- |
 | `no-store` | 跳过 | 不落库 |
-| `no-cache`（或旧式 `Pragma: no-cache`） | 跳过（每次都真实发送） | 仍可落库（库不做条件请求，无法「先验证再复用」） |
+| `no-cache`（或旧式 `Pragma: no-cache`） | 跳过新鲜查询，但拿旧条目发条件请求（304 直接复用正文） | 仍可落库 |
 | `max-age=0`（含非法或负数值，按零处理） | 跳过 | 不落库 |
 | `max-age=N`（正数） | 照常 | 落库 TTL 不超过 N |
 
 `Configured` 是「强制按配置执行」：请求与响应的 HTTP 指令都不参与取舍。
 
-库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`；`Vary: *` 在解析模式下不落库），也没有条件请求（`ETag` / 304 复用）与 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
+**条件请求（`ETag` / 304 复用）**默认开启（`ConditionalRequests = true`）：新鲜条目命中照旧不发请求；只有「新鲜条目没有、但存储里还留着一条带校验器的旧条目」时，把校验器写成条件头再发一次——
+
+- **`ETag` 优先**，写成 `If-None-Match`；没有 `ETag` 才用 `Last-Modified` 写 `If-Modified-Since`；两者都没有就照常完整请求。
+- **304 的交付语义**：状态码与正文取缓存里的那一份，响应头按 304 更新（`Content-Length` / `Transfer-Encoding` / `Content-Range` 不覆盖——304 没有正文；`Set-Cookie` 这类可重复的头按多条原样交付，不折叠），随后按新的响应头**重新落库续上 TTL**（这次请求本身允许落库时），下一次调用直接命中。`response.Request` 不为 `null`（与「命中没发请求」区分）。
+- **调用方自己写了条件头时以调用方为准**：库既不覆盖它，也不接管由此得到的 304（那仍是一次普通的非 2xx 响应，按 `ValidateStatus` 处理）。
+- **存储要配合**：`MemoryCacheStore` 会保留带校验器的过期条目（不带校验器的过期条目照旧在读到时摘除并退还字节配额）。自建存储实现 `IAxiosCacheRevalidationStore.GetRevalidationAsync` 即可参与；只实现基础 `IAxiosCacheStore` 的存储拿不出旧条目，退化成每次完整下载，请求本身不受影响。
+- **请求指令照常生效**：`no-store` 不读不写；`no-cache` / `max-age=0` 不发新鲜查询，但会拿旧条目做条件请求（RFC 9111 §5.2.1.4），304 时仍交付缓存的正文。
+- **遥测**：304 复用记 `cache.revalidations`（无标签）并在 span 上打 `axiosnet.cache.revalidated=true`；它按未命中计入命中率（请求确实发出去了），单独看这条才知道省了多少带宽。
+
+库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`；`Vary: *` 在解析模式下不落库）。过期条目带校验器时会发条件请求（`ETag` → `If-None-Match`，否则 `Last-Modified` → `If-Modified-Since`），304 用缓存的正文交付（见下）；不支持 `stale-while-revalidate` 之类的 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
 
 | | 短路响应 | 响应缓存 |
 | --- | --- | --- |
@@ -1237,12 +1250,13 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 - **等待者可以被取消**：`CancellationToken` 取消只放弃等待，不会取消那次共享的发送（`ERR_CANCELED`）。
 - **等待受总预算约束**：跟随者的等待不超过剩余 `TotalTimeout`，到点按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会挂在原地等一个慢领导者。
 - **查询同样吃总预算**：缓存读取也受剩余 `TotalTimeout` 约束，存储挂起（自建存储不可用 / 网络分区）时按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会把请求挂在查缓存上；调用方取消按 `ERR_CANCELED` 报出，存储自己抛的取消按「没命中」处理。实现 `IAxiosCacheStore.GetAsync` 时应当尊重传入的令牌。
+- **落库同样吃总预算**：写入受 `StoreTimeout` 与剩余 `TotalTimeout` 中较短者约束，超出就按「这次没缓存」处理（跟随者各自补发），不会把已经拿到的响应拖过预算；落库前预算就已耗尽时连正文副本都不复制。
 - **响应头按首值存**：短路响应的头字典是单值的；`Set-Cookie` / `Set-Cookie2` 不进缓存——会话态只属于那一次响应，命中回放等于把它塞给下一次请求。
 - **键不含请求体**：默认口径只缓存无正文的 GET / HEAD；用 `ShouldCache` 放行带正文的方法时，必须在 `KeySelector` 里把正文特征算进键，否则不同正文会串用同一条缓存。
 - **策略挂在实例上**：一个 `AxiosCache` 就是一份策略；要按接口区分存活时长或键规则，建多个实例分别挂。
 - **强制清除**：`cache.ClearAsync()` 清空全部条目，`cache.RemoveAsync(key)` 摘掉单条（键由 `cache.KeyFor(config, uri)` 得到）；已发出的请求不受影响，完成后照常落库。
 - **自定义存储收到完整策略**：`IAxiosCacheStore` 新增带 `AxiosCacheEntryPolicy` 的 `SetAsync` 重载（生效 / 配置 TTL、HTTP 新鲜期、龄期、解析后的 `Cache-Control`、`Date` / `Expires` / `Vary`）。默认实现转发到旧签名，已经写好的存储不用改；要按 `private` 拒写共享缓存、按 `Vary` 分区、或用 `stale-while-revalidate` 延长可服务窗口时覆写它即可。`Configured` 模式下落库前不解析响应头，这些 HTTP 字段在存储读取时才按需解析；只读 TTL 的存储没有任何解析开销。
-- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
+- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `IAxiosCacheRevalidationStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
 - **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发；读取挂起超出剩余 `TotalTimeout` 则按 `ECONNABORTED` 报出（见上）。
 - 回放 `response.Config` 会带着同一个缓存对象（它是共享状态，不是「那次请求的结果」）。
 
@@ -1404,8 +1418,9 @@ builder.Services.AddOpenTelemetry()
 | `http.request.resend_count` | 已重试次数 |
 | `error.type` / `axiosnet.error.code` | 状态码 → 错误码 → 异常类型名；以及库错误码 |
 | `axiosnet.pool.endpoint.reused` | 是否命中池里已有 origin 节点（`false` = 顺手新建） |
+| `axiosnet.cache.revalidated` | 这次响应由条件请求的 304 合并出来（正文来自缓存） |
 
-- 4xx / 5xx 即使被 `validateStatus` 接受也标 `Error`；失败另记一条 `exception` 事件；每次决定重试加一条 `retry` 事件（带 `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`）。
+- 4xx / 5xx 即使被 `validateStatus` 接受也标 `Error`；失败另记一条 `exception` 事件；每次决定重试加一条 `retry` 事件（带 `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`，以及 `server.address` / `server.port` —— 与 span / 指标同一份逻辑地址，事件自带是为了只看事件的消费方不必回头拼 span 标签；换端点 / 对冲分支实际连的主机不在标签里，要看那条分支的尝试事件 —— 需把 `Attempt.Audit` 放进管线）。失败但收到了响应（4xx / 5xx）时照常写 `http.response.status_code` / `network.protocol.version` / `http.response.body.size`。
 - `ResponseType.Stream` 的 span 在拿到响应头时结束，耗时等于首包时间。
 
 **Metrics**（源名 `AxiosNet`）：
@@ -1419,6 +1434,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.gate.queue_depth` | `ObservableGauge<long>` | `{request}` | 无 |
 | `axiosnet.client.gate.rejections` | `Counter<long>` | `{request}` | `axiosnet.gate.reason`（`queue_timeout` / `queue_full`） |
 | `axiosnet.client.circuit.state` | `ObservableGauge<long>` | `{circuit}` | `axiosnet.circuit.state`（`closed` / `open` / `half_open`） |
+| `axiosnet.client.circuit.untracked_host` | `Counter<long>` | `{host}` | 无 |
 | `axiosnet.client.pool.leases` | `Counter<long>` | `{lease}` | `axiosnet.pool.endpoint.reused` |
 | `axiosnet.client.pool.endpoints.created` | `Counter<long>` | `{endpoint}` | 无 |
 | `axiosnet.client.pool.endpoints.evicted` | `Counter<long>` | `{endpoint}` | `axiosnet.pool.eviction.reason` |
@@ -1429,12 +1445,13 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.cache.misses` | `Counter<long>` | `{request}` | 无 |
 | `axiosnet.client.cache.stores` | `Counter<long>` | `{entry}` | 无 |
 | `axiosnet.client.cache.store_failures` | `Counter<long>` | `{entry}` | 无 |
+| `axiosnet.client.cache.revalidations` | `Counter<long>` | `{request}` | 无 |
 
-- 缓存命中率 = `cache.hits / (cache.hits + cache.misses)`（跟随者拿到共享结果计命中；请求侧 `no-cache` / `no-store` 绕开查询的请求两边都不计）；`cache.store_failures` 单独看，别混进命中率。
+- 缓存命中率 = `cache.hits / (cache.hits + cache.misses)`（跟随者拿到共享结果计命中；请求侧 `no-cache` / `no-store` 绕开新鲜查询的请求两边都不计，`no-cache` 走成条件请求时只计入 `cache.revalidations`；条件请求拿到 304 计一次未命中）；`cache.store_failures` 单独看，别混进命中率。
 - 指标只用低基数标签；URL 路径只进 span。**池指标不带 host / port**：网关 / 爬虫 / 多租户场景下一个 host 一条时间序列会把后端打爆；要定位到具体 origin 看 span 的 `server.address` / `server.port` 与 `axiosnet.pool.endpoint.reused`。
 - `axiosnet.retry.reason` 取值有界：有状态码统一报 `status`（具体码在 `error.type`），否则是库错误码（`ECONNABORTED` / `ERR_NETWORK` …）——「该调策略（429）」和「该修下游（5xx）」在面板上直接分得开。
-- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key），`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数，缓存四件套（`cache.hits` / `misses` / `stores` / `store_failures`）也不带标签——都不带 host。
-- `request.duration` 是逻辑请求耗时（含重试与退避）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
+- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key），`circuit.untracked_host` 是「状态表满员后按闭合态直通」的次数，`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数，缓存五件套（`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`）也不带标签——都不带 host。
+- `request.duration` 是逻辑请求耗时（含重试、退避与缓存落库等待）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Telemetry.Enabled` 影响。
 - `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
 
@@ -1648,9 +1665,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1813 | `net8.0` / `net6.0` | 3626 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1836 | `net8.0` / `net6.0` | 3672 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1876** | | **3752** |
+| **合计** | **1899** | | **3798** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
 
@@ -1674,7 +1691,7 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 | `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
 | `Governance/` | 并发闸门、进度回调与限速 |
 | `Resilience/` | 重试策略与计时、总预算（`TotalTimeout`）、熔断状态机、短路响应 |
-| `Caching/` | 响应缓存与单飞、`IAxiosCacheStore` 契约与自建存储、键规则与身份隔离、命中路径 |
+| `Caching/` | 响应缓存与单飞、条件请求（`ETag` / 304）与 `IAxiosCacheRevalidationStore`、`IAxiosCacheStore` 契约与自建存储、键规则与身份隔离、命中路径 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
 | `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse`、尝试管线（内置顺序、插入位置、重排校验）、并发对冲、备用端点 |
 | `Connectivity/` | 连接池（含命名共享池）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |

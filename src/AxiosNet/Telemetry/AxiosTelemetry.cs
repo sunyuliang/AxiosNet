@@ -69,6 +69,9 @@ public static class AxiosTelemetry
     /// <summary>指标名：熔断器各状态的维度数（ObservableGauge），带 <c>axiosnet.circuit.state</c> 标签。</summary>
     public const string CircuitStateInstrumentName = "axiosnet.client.circuit.state";
 
+    /// <summary>指标名：因跟踪表已满而未登记熔断状态的维度数（Counter，无标签）。</summary>
+    public const string CircuitUntrackedInstrumentName = "axiosnet.client.circuit.untracked_host";
+
     /// <summary>指标名：租约次数（Counter），带 <c>axiosnet.pool.endpoint.reused</c> 标签（<c>true</c> / <c>false</c>）；<b>不带 host</b>，见 <see cref="RecordLease"/>。</summary>
     public const string PoolLeasesInstrumentName = "axiosnet.client.pool.leases";
 
@@ -96,8 +99,11 @@ public static class AxiosTelemetry
     /// <summary>指标名：落库写入完成数（Counter，无标签）；内置存储容量满时静默不收，这次写入仍算完成。</summary>
     public const string CacheStoresInstrumentName = "axiosnet.client.cache.stores";
 
-    /// <summary>指标名：落库失败数（Counter，无标签）：存储抛错或写超时。</summary>
+    /// <summary>指标名：落库失败数（Counter，无标签）：存储抛错、写超时或总预算已耗尽。</summary>
     public const string CacheStoreFailuresInstrumentName = "axiosnet.client.cache.store_failures";
+
+    /// <summary>指标名：条件请求拿到 304 的次数（Counter，无标签）：正文来自缓存，请求确实发出去了。</summary>
+    public const string CacheRevalidationsInstrumentName = "axiosnet.client.cache.revalidations";
 
     // 驱逐原因：指标标签的取值，属对外契约（后端按它分面板）。
     internal const string EvictionReasonIdle = "idle";
@@ -128,6 +134,7 @@ public static class AxiosTelemetry
     private const string TagRetryReason = "axiosnet.retry.reason";
     private const string TagCircuitState = "axiosnet.circuit.state";
     private const string TagGateReason = "axiosnet.gate.reason";
+    private const string TagCacheRevalidated = "axiosnet.cache.revalidated";
 
     // 重试原因：低基数取值。有状态码就统一报 "status"（具体状态码在 error.type 里），否则用库错误码。
     internal const string RetryReasonStatus = "status";
@@ -168,6 +175,10 @@ public static class AxiosTelemetry
 
     private static readonly Counter<long> CacheStoreFailures;
 
+    private static readonly Counter<long> CacheRevalidations;
+
+    private static readonly Counter<long> CircuitUntracked;
+
     /// <summary>在途请求数（全进程）。</summary>
     private static long _activeRequests;
 
@@ -205,6 +216,9 @@ public static class AxiosTelemetry
         // 按 state 报维度数，不带 host（低基数）。
         meter.CreateObservableGauge(CircuitStateInstrumentName, ObserveCircuitStates, unit: "{circuit}", description: "熔断器跟踪的维度数，按 axiosnet.circuit.state（closed / open / half_open）分组；每个维度 = 一个熔断器实例上的一个 key（默认 host:port）。");
 
+        // 满员后新维度不再登记（按闭合态直通）：这条涨起来说明 MaxTrackedHosts 需要调大，或地址维度在失控。
+        CircuitUntracked = meter.CreateCounter<long>(CircuitUntrackedInstrumentName, unit: "{host}", description: "因 MaxTrackedHosts 已满而未登记熔断状态、按闭合态直通的维度访问次数（无标签）。");
+
         PoolLeases = meter.CreateCounter<long>(PoolLeasesInstrumentName, unit: "{lease}", description: "成功租用 origin 节点的次数；axiosnet.pool.endpoint.reused=false 表示本次新建了节点。");
 
         PoolEndpointsCreated = meter.CreateCounter<long>(PoolEndpointsCreatedInstrumentName, unit: "{endpoint}", description: "新建的 origin 节点数（Handler + HttpClient），即节点未命中的次数。");
@@ -224,7 +238,8 @@ public static class AxiosTelemetry
         CacheHits = meter.CreateCounter<long>(CacheHitsInstrumentName, unit: "{request}", description: "从缓存交付的请求数（含单飞跟随者拿到的共享结果），请求未发出。");
         CacheMisses = meter.CreateCounter<long>(CacheMissesInstrumentName, unit: "{request}", description: "缓存未命中的请求数（随后会真实发送）。");
         CacheStores = meter.CreateCounter<long>(CacheStoresInstrumentName, unit: "{entry}", description: "写入缓存完成的条目数（容量满时内置存储静默不收，这次写入仍算完成）。");
-        CacheStoreFailures = meter.CreateCounter<long>(CacheStoreFailuresInstrumentName, unit: "{entry}", description: "落库失败的次数（存储抛错 / 写超时），这次请求本身不受影响。");
+        CacheStoreFailures = meter.CreateCounter<long>(CacheStoreFailuresInstrumentName, unit: "{entry}", description: "落库失败的次数（存储抛错 / 写超时 / 总预算耗尽），这次请求本身不受影响。");
+        CacheRevalidations = meter.CreateCounter<long>(CacheRevalidationsInstrumentName, unit: "{request}", description: "条件请求拿到 304 的次数：正文来自缓存，请求确实发出去了。命中率仍按 hits / (hits + misses) 算。");
     }
 
     /// <summary>单调时钟时间戳（配合 <see cref="ElapsedSeconds"/> 算耗时，不受系统时间调整影响）。</summary>
@@ -360,6 +375,15 @@ public static class AxiosTelemetry
         yield return new Measurement<long>(closed, new KeyValuePair<string, object?>(TagCircuitState, CircuitStateClosed));
         yield return new Measurement<long>(open, new KeyValuePair<string, object?>(TagCircuitState, CircuitStateOpen));
         yield return new Measurement<long>(halfOpen, new KeyValuePair<string, object?>(TagCircuitState, CircuitStateHalfOpen));
+    }
+
+    /// <summary>熔断跟踪表已满、本次请求按闭合态直通（该维度不记账）：计数 +1。</summary>
+    internal static void CircuitUntrackedHost()
+    {
+        if (CircuitUntracked.Enabled)
+        {
+            CircuitUntracked.Add(1);
+        }
     }
 
     /// <summary>请求已成型（拦截器与 transformRequest 跑完）：开 span 并发出 <see cref="RequestStartEventName"/>；无监听者时返回 <c>null</c>。</summary>
@@ -514,6 +538,20 @@ public static class AxiosTelemetry
                     activity.SetTag(TagStatusCode, status);
                 }
 
+                // 失败也可能是「收到了响应但不被接受」（4xx / 5xx）：协议版本与正文大小照样有，不能丢。
+                if (axiosException?.Response is { } failedResponse)
+                {
+                    if (failedResponse.ProtocolVersion is { } protocolVersion)
+                    {
+                        activity.SetTag(TagProtocolVersion, ProtocolVersionTag(protocolVersion));
+                    }
+
+                    if (failedResponse.BodyBytes is long bodyBytes)
+                    {
+                        activity.SetTag(TagResponseBodySize, bodyBytes);
+                    }
+                }
+
                 activity.SetTag(TagErrorType, errorType);
 
                 // 有状态码时 error.type 取状态码，库错误码另写 axiosnet.error.code。
@@ -626,7 +664,11 @@ public static class AxiosTelemetry
                         { "axiosnet.retry.delay_ms", context.Delay.TotalMilliseconds },
                         { "axiosnet.retry.reason", retryReason },
                         { TagStatusCode, context.StatusCode },
-                        { TagErrorType, errorType }
+                        { TagErrorType, errorType },
+                        // 与 span / 指标同一份逻辑地址（重试层拿不到换端点 / 对冲分支实际连的主机）：
+                        // 事件自带主机标签，只看事件的消费方不必回头去拼 span 标签。
+                        { TagServerAddress, HostOf(uri) },
+                        { TagServerPort, uri.Port }
                     }));
             }
 
@@ -675,6 +717,28 @@ public static class AxiosTelemetry
     /// 落库失败（存储抛错 / 写超时）：只影响命中率，这次请求的响应照常交付。
     /// </summary>
     internal static void CacheStoreFailed(AxiosConfig? config) => AddCacheCount(CacheStoreFailures, config);
+
+    /// <summary>
+    /// 条件请求拿到 304：正文来自缓存、请求确实发出去了。计数 +1，并在当前 span 上写
+    /// <c>axiosnet.cache.revalidated=true</c>（状态码 / 正文大小按交付给调用方的那一份记）。
+    /// </summary>
+    internal static void CacheRevalidated(AxiosConfig? config, Activity? activity)
+    {
+        AddCacheCount(CacheRevalidations, config);
+
+        if (activity is null)
+        {
+            return;
+        }
+
+        try
+        {
+            activity.SetTag(TagCacheRevalidated, "true");
+        }
+        catch
+        {
+        }
+    }
 
     private static void AddCacheCount(Counter<long> counter, AxiosConfig? config)
     {

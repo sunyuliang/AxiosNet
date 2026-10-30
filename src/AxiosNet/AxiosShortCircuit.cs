@@ -39,6 +39,12 @@ public sealed class AxiosShortCircuit
     /// <summary>其余响应头（大小写不敏感，单值）：调用方的 transformResponse 与 <c>response.GetHeader</c> 都能读到。</summary>
     public IDictionary<string, string>? Headers { get; set; }
 
+    /// <summary>
+    /// 内部：多值响应头（304 合并用，优先于 <see cref="Headers"/>）。<c>Set-Cookie</c> 不能按逗号折叠，
+    /// 单值字典装不下，走这里原样交给响应。
+    /// </summary>
+    internal IReadOnlyDictionary<string, IEnumerable<string>>? MultiValueHeaders { get; set; }
+
     /// <summary>响应正文字节（原始未解码），与 <see cref="Data"/> 互斥；交付时按本次调用的 responseType 与泛型参数重新处理。</summary>
     public byte[]? Body { get; set; }
 

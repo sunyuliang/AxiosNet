@@ -13,6 +13,7 @@ namespace AxiosNet.Tests.Client;
 /// <summary>
 /// 静态门面 `Axios`：默认配置、拦截器、快捷方法、共享连接池。
 /// </summary>
+[Collection(FacadeCollection.Name)]
 public sealed class AxiosFacadeTests
 {
     [Fact]
@@ -215,6 +216,59 @@ public sealed class AxiosFacadeTests
         {
             Axios.Interceptors.Request.Eject(requestId);
             Axios.Interceptors.Response.Eject(responseId);
+        }
+    }
+
+    [Fact]
+    public async Task Reset_RecreatesDefaultClientAndDropsConfig()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+
+        var before = Axios.DefaultClient;
+        before.Defaults.BaseAddress = "https://before.example/";
+
+        try
+        {
+            Axios.Reset();
+
+            var after = Axios.DefaultClient;
+            Assert.NotSame(before, after);
+            Assert.NotSame(before.Defaults, after.Defaults);
+            Assert.Null(after.Defaults.BaseAddress);
+
+            // 新实例能正常发请求：重置不是「换个空壳」，连接池等资源也一并重建。
+            var response = await Axios.GetAsync<Person>(server.Url + "after-reset");
+            Assert.Equal(200, response.Status);
+        }
+        finally
+        {
+            // 别把改动过的全局状态留给后续用例。
+            Axios.Reset();
+        }
+    }
+
+    [Fact]
+    public async Task Reset_RecoversFromDisposedDefaultClient()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        Axios.Reset();
+        Axios.DefaultClient.Dispose();
+
+        // 释放过的实例对所有请求恒抛 ERR_CANCELED：这是「重置」要解决的僵局。
+        var dead = await Assert.ThrowsAsync<AxiosException>(() => Axios.GetAsync(server.Url + "dead"));
+        Assert.Equal(AxiosException.ErrCanceled, dead.Code);
+
+        try
+        {
+            Axios.Reset();
+
+            var response = await Axios.GetAsync(server.Url + "alive");
+            Assert.Equal(200, response.Status);
+        }
+        finally
+        {
+            Axios.Reset();
         }
     }
 

@@ -28,7 +28,7 @@ public sealed class CacheControlDirectives
     /// <summary><c>no-store</c>：任何缓存都不得保存这条响应。</summary>
     public bool NoStore { get; internal init; }
 
-    /// <summary><c>no-cache</c>：可以保存，但每次复用前都必须向源服务器验证（库目前不做条件请求，故与 <c>no-store</c> 同样不落库）。</summary>
+    /// <summary><c>no-cache</c>：可以保存，但每次复用前都必须向源服务器验证（库只在「查不到新鲜条目」时走条件请求，命中即直接交付，故解析模式下与 <c>no-store</c> 同样不落库）。</summary>
     public bool NoCache { get; internal init; }
 
     /// <summary><c>private</c>：只允许私有缓存保存。进程内存储天然是私有的；接共享存储时可据此拒绝落库。</summary>

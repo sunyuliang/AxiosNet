@@ -19,15 +19,27 @@ public sealed class AxiosCacheOptions
     /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 会解析响应的
     /// <c>Cache-Control</c>（<c>max-age</c>）与 <c>Expires</c> / <c>Date</c> / <c>Age</c>，同时解析<b>请求</b>的
     /// <c>Cache-Control</c> / <c>Pragma</c>，两者取交集：请求 <c>no-store</c> 不读也不写、<c>no-cache</c> / <c>max-age=0</c>
-    /// 跳过查询（仍可落库）、请求 <c>max-age</c> 作为落库 TTL 的上限、响应 <c>Vary: *</c> 不落库。
+    /// 跳过新鲜查询（仍可落库；开启 <see cref="ConditionalRequests"/> 时还会拿旧条目做条件请求）、
+    /// 请求 <c>max-age</c> 作为落库 TTL 的上限、响应 <c>Vary: *</c> 不落库。
     /// <c>Configured</c> 是「强制按配置执行」，两侧的 HTTP 指令都不参与取舍。
-    /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c> 分区、条件请求（ETag 复用）不在库的取舍范围，
+    /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c> 分区、<c>stale-*</c> 服务不在库的取舍范围，
     /// 但这些信息都会随 <see cref="AxiosCacheEntryPolicy"/> 交给自建存储，由存储决定要不要用。
     /// </remarks>
     public CacheFreshnessMode FreshnessMode { get; set; }
 
     /// <summary>同键并发只发一次（单飞），默认 <c>true</c>；关掉后每个请求各自发送，只共享已落库的条目。</summary>
     public bool SingleFlight { get; set; } = true;
+
+    /// <summary>
+    /// 条件请求（<c>ETag</c> / <c>Last-Modified</c> 复用），默认开启：新鲜条目没命中时，若存储里还留着带校验器的旧条目，
+    /// 就发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，服务端回 <c>304 Not Modified</c> 时直接交付库里的正文，
+    /// 只刷新响应头与存活时长。
+    /// </summary>
+    /// <remarks>
+    /// 只有实现 <see cref="IAxiosCacheRevalidationStore"/> 的存储（内置 <see cref="MemoryCacheStore"/>）才有旧条目可取；
+    /// 调用方自己写了条件头时以调用方为准，库不覆盖、也不接管 304。
+    /// </remarks>
+    public bool ConditionalRequests { get; set; } = true;
 
     /// <summary>条目存储，<c>null</c> = 内置 <see cref="MemoryCacheStore"/>；接 Redis / 共享缓存时换成自己的实现。</summary>
     /// <remarks>只在构造 <see cref="AxiosCache"/> 时读取一次（换存储请新建一个缓存实例），故为 <c>init</c>。</remarks>
@@ -50,6 +62,7 @@ public sealed class AxiosCacheOptions
     /// </summary>
     /// <remarks>
     /// 只约束自建存储（Redis 之类）的写入：存储挂起时不能把响应一起拖住，超时按「这次没缓存」处理。
+    /// 实际等待还受本次请求剩余 <see cref="AxiosConfig.TotalTimeout"/> 封顶（两者取较短的一个），预算花完就不落库。
     /// 内置 <see cref="MemoryCacheStore"/> 是同步写入，不受影响。
     /// </remarks>
     public TimeSpan? StoreTimeout { get; set; } = TimeSpan.FromSeconds(2);
@@ -76,7 +89,10 @@ public sealed class AxiosCacheOptions
 /// 缓存的是<b>原始正文字节</b>，命中时按本次调用的 responseType 与泛型参数重新解析，所以 <c>GetAsync&lt;User&gt;</c> 与
 /// <c>GetAsync&lt;string&gt;</c> 命中同一条目各自得到该有的形态。
 /// 只存 2xx 且拿到原始字节的响应；流式响应、响应拦截器换了响应对象、存储读写失败都不影响这次请求。
-/// 命中不发请求，因此不占并发闸门、不产生遥测 span 与在途计数，<see cref="AxiosResponse.Request"/> 为 <c>null</c>。
+/// 条目过期后，若响应带 <c>ETag</c> / <c>Last-Modified</c> 且存储实现了 <see cref="IAxiosCacheRevalidationStore"/>，
+/// 库会发条件请求：服务端回 <c>304</c> 时直接交付库里的正文（见 <see cref="AxiosCacheOptions.ConditionalRequests"/>）。
+/// 命中不发请求，因此不占并发闸门、不产生遥测 span 与在途计数，<see cref="AxiosResponse.Request"/> 为 <c>null</c>；
+/// 条件请求的 304 确实发出了一次请求，<see cref="AxiosResponse.Request"/> 不为 <c>null</c>。
 /// </remarks>
 /// <example>
 /// <code>
@@ -88,6 +104,7 @@ public sealed class AxiosCache
     private readonly ConcurrentDictionary<string, AxiosCacheFlight> _flights = new(StringComparer.Ordinal);
     private readonly AxiosCacheOptions _options;
     private readonly IAxiosCacheStore _store;
+    private readonly IAxiosCacheRevalidationStore? _revalidationStore;
 
     /// <summary>构造一份缓存策略；<paramref name="options"/> 为 <c>null</c> 时全用默认值。</summary>
     public AxiosCache(AxiosCacheOptions? options = null)
@@ -120,6 +137,7 @@ public sealed class AxiosCache
         }
 
         _store = _options.Store ?? new MemoryCacheStore(_options.MaxEntries, _options.MaxBytes);
+        _revalidationStore = _store as IAxiosCacheRevalidationStore;
     }
 
     /// <summary>这份缓存的策略。</summary>
@@ -130,6 +148,9 @@ public sealed class AxiosCache
 
     /// <summary>同键并发是否只发一次。</summary>
     internal bool SingleFlight => _options.SingleFlight;
+
+    /// <summary>是否发条件请求（旧条目由存储的 <see cref="IAxiosCacheRevalidationStore"/> 提供）。</summary>
+    internal bool ConditionalRequests => _options.ConditionalRequests;
 
     /// <summary>清空全部条目（在飞的请求不受影响，它们完成后照常落库）。</summary>
     public ValueTask ClearAsync(CancellationToken cancellationToken = default) => _store.ClearAsync(cancellationToken);
@@ -420,7 +441,23 @@ public sealed class AxiosCache
     /// 读一条；存储报错按「没命中」处理（缓存不可用不该让请求失败），但调用方取消要照常抛统一错误。
     /// 读取时长受剩余总预算约束：存储挂起时不能让请求挂在查询上。
     /// </summary>
-    internal async ValueTask<AxiosShortCircuit?> TryGetAsync(string key, AxiosConfig config, long deadlineTimestamp)
+    internal ValueTask<AxiosShortCircuit?> TryGetAsync(string key, AxiosConfig config, long deadlineTimestamp)
+        => TryGetCoreAsync(key, config, deadlineTimestamp, revalidation: false);
+
+    /// <summary>
+    /// 取一条可供条件请求复用的旧条目；存储不支持（没实现 <see cref="IAxiosCacheRevalidationStore"/>）时直接返回 <c>null</c>。
+    /// 预算与取消口径与 <see cref="TryGetAsync"/> 一致。
+    /// </summary>
+    internal ValueTask<AxiosShortCircuit?> TryGetRevalidationAsync(string key, AxiosConfig config, long deadlineTimestamp)
+        => _revalidationStore is not null
+            ? TryGetCoreAsync(key, config, deadlineTimestamp, revalidation: true)
+            : new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
+
+    private async ValueTask<AxiosShortCircuit?> TryGetCoreAsync(
+        string key,
+        AxiosConfig config,
+        long deadlineTimestamp,
+        bool revalidation)
     {
         var cancellationToken = config.CancellationToken;
         var remaining = TotalTimeoutBudget.Remaining(deadlineTimestamp);
@@ -436,7 +473,10 @@ public sealed class AxiosCache
 
         try
         {
-            var pending = _store.GetAsync(key, cancellationToken);
+            // 只有 revalidation 为 true 时才会走到 _revalidationStore（见 TryGetRevalidationAsync 的判定）。
+            var pending = revalidation
+                ? _revalidationStore!.GetRevalidationAsync(key, cancellationToken)
+                : _store.GetAsync(key, cancellationToken);
 
             // 同步完成的存储（内置内存存储）不付出 Task 转换与计时器的成本。
             if (pending.IsCompleted)
@@ -483,9 +523,17 @@ public sealed class AxiosCache
 
     /// <summary>
     /// 写一条；失败只是这次不入缓存。写不跟随调用方的取消（结果已经拿到了，不该因为超时被丢掉），
-    /// 但受 <see cref="AxiosCacheOptions.StoreTimeout"/> 约束：存储挂起时按「这次没缓存」处理。
+    /// 但受 <see cref="AxiosCacheOptions.StoreTimeout"/> 与剩余总预算约束：存储挂起超过两者中较短的一个时按「这次没缓存」处理。
     /// </summary>
-    internal async ValueTask<bool> TrySetAsync(string key, AxiosShortCircuit reply, AxiosCacheEntryPolicy policy)
+    /// <param name="key">缓存键。</param>
+    /// <param name="reply">要写入的条目。</param>
+    /// <param name="policy">已判定的新鲜期策略。</param>
+    /// <param name="budgetRemaining">本次请求剩余的总预算（<see cref="AxiosConfig.TotalTimeout"/>）；<c>null</c> 表示没有总预算。</param>
+    internal async ValueTask<bool> TrySetAsync(
+        string key,
+        AxiosShortCircuit reply,
+        AxiosCacheEntryPolicy policy,
+        TimeSpan? budgetRemaining = null)
     {
         try
         {
@@ -500,7 +548,24 @@ public sealed class AxiosCache
 
             var task = pending.AsTask();
 
-            if (_options.StoreTimeout is not { } timeout || timeout <= TimeSpan.Zero)
+            var timeout = _options.StoreTimeout is { } configured && configured > TimeSpan.Zero
+                ? configured
+                : (TimeSpan?)null;
+
+            if (budgetRemaining is { } left)
+            {
+                // 预算已经花完：不再等存储，按「这次没缓存」处理。
+                if (TotalTimeoutBudget.IsExhausted(left))
+                {
+                    Observe(task);
+                    return false;
+                }
+
+                // 两者取短：写入既不能超过存储自己的预算，也不能超过本次请求的总预算。
+                timeout = timeout is { } current && current < left ? current : left;
+            }
+
+            if (timeout is not { } wait)
             {
                 await task.ConfigureAwait(false);
                 return true;
@@ -508,7 +573,7 @@ public sealed class AxiosCache
 
             try
             {
-                await task.WaitAsync(timeout).ConfigureAwait(false);
+                await task.WaitAsync(Timeouts.Clamp(wait)).ConfigureAwait(false);
                 return true;
             }
             catch (TimeoutException)

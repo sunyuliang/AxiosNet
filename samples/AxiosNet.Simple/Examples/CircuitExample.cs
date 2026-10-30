@@ -24,6 +24,7 @@ public sealed class CircuitExample : IExample
             FailureRateThreshold = 0.5,                 // 其中一半失败也开
             BreakDuration = TimeSpan.FromMilliseconds(500),
             HalfOpenAttempts = 1,                       // 慢启动起点：先放 1 个在途探测
+            ProbeTimeout = TimeSpan.FromSeconds(30),    // 探测 30 秒不回报就整轮作废、重新打开
             RecoverySuccesses = 2                       // 连续 2 次探测成功才全量放开
         };
 

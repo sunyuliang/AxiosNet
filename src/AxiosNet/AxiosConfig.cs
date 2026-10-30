@@ -256,6 +256,12 @@ public sealed partial class AxiosConfig
     /// <summary>本次请求是否要留原始响应字节：缓存阶段决定，响应读取据此决定留不留（不留时字节读完即弃）。</summary>
     internal bool CacheCaptureRawBody { get; set; }
 
+    /// <summary>
+    /// 本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，
+    /// 终端收到 <c>304 Not Modified</c> 时用它合并出完整响应。只属于这一次请求，<see cref="Clone"/> 不复制。
+    /// </summary>
+    internal AxiosShortCircuit? RevalidationEntry { get; set; }
+
     private TimeSpan _timeout;
 
     /// <summary>
@@ -463,6 +469,9 @@ public sealed partial class AxiosConfig
 
         // 「要不要留原始字节」属于那一次请求的缓存判定，克隆出来的是新请求的输入。
         clone.CacheCaptureRawBody = false;
+
+        // 条件请求复用的旧条目只属于那一次请求：克隆是「新请求的输入」，不能带着旧条目走。
+        clone.RevalidationEntry = null;
 
         // 已生成的幂等键属于某一次发送：克隆是「新请求的输入」，不能带着旧键走。
         if (clone._idempotency is not null)

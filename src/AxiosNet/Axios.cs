@@ -10,10 +10,46 @@ namespace AxiosNet;
 /// </summary>
 public static class Axios
 {
-    private static readonly Lazy<AxiosClient> DefaultClientHolder = new(() => new AxiosClient());
+    private static readonly object DefaultClientLock = new();
+    private static AxiosClient? _defaultClient;
 
     /// <summary>全局默认实例（对应 axios.defaults / axios.interceptors 所在实例）。</summary>
-    public static AxiosClient DefaultClient => DefaultClientHolder.Value;
+    public static AxiosClient DefaultClient
+    {
+        get
+        {
+            var client = Volatile.Read(ref _defaultClient);
+            if (client is not null)
+            {
+                return client;
+            }
+
+            lock (DefaultClientLock)
+            {
+                return _defaultClient ??= new AxiosClient();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 重置全局默认实例：释放当前实例，下次访问 <see cref="DefaultClient"/> 时按全新配置重建。
+    /// </summary>
+    /// <remarks>
+    /// 在途请求不受影响（<see cref="AxiosClient.Dispose"/> 不打断它们，资源等最后一个请求结束再释放）；
+    /// 重置后新请求走新实例，旧的 <see cref="AxiosConfig"/> / <see cref="AxiosInterceptors"/> 一并丢弃。
+    /// 典型场景：测试之间隔离全局状态，或默认实例被误释放后恢复（释放过的实例对所有请求恒抛 <c>ERR_CANCELED</c>）。
+    /// </remarks>
+    public static void Reset()
+    {
+        AxiosClient? previous;
+        lock (DefaultClientLock)
+        {
+            previous = _defaultClient;
+            _defaultClient = null;
+        }
+
+        previous?.Dispose();
+    }
 
     /// <summary>对应 axios.defaults。</summary>
     public static AxiosConfig Defaults => DefaultClient.Defaults;

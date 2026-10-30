@@ -234,12 +234,12 @@ public sealed class StreamingRequestBodyTests
             client.PostAsync(server.Url + "x", new UnknownLengthContent(Hello)));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Contains("长度未知", ex.Message);
+        Assert.Contains("自定义 HttpContent", ex.Message);
         Assert.Empty(server.Received);
     }
 
     [Fact]
-    public async Task Retry_WithKnownLengthCustomContent_IsAllowed()
+    public async Task Retry_WithKnownLengthCustomContent_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
@@ -247,10 +247,14 @@ public sealed class StreamingRequestBodyTests
             Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
         });
 
-        await client.PostAsync(server.Url + "x", new FixedLengthContent(Hello));
+        // 长度已知不代表可重放：一次性流包装成自定义内容后，重发只会发出空正文或直接报错。
+        // 与其让第二次尝试报出误导性的网络错误，不如在发送前按配置错误拒绝。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.PostAsync(server.Url + "x", new FixedLengthContent(Hello)));
 
-        var request = Assert.Single(server.Received);
-        Assert.Equal("hello ", Encoding.UTF8.GetString(request.Body));
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("自定义 HttpContent", ex.Message);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -366,7 +370,7 @@ public sealed class StreamingRequestBodyTests
         }
     }
 
-    /// <summary>长度可确定的普通自定义内容：重试不应误伤。</summary>
+    /// <summary>长度已知的一次性内容：长度不能说明可重放，重试时同样必须拒绝。</summary>
     private sealed class FixedLengthContent(byte[] payload) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)

@@ -348,7 +348,7 @@ public sealed class CacheTests
     [InlineData(CacheFreshnessMode.Intersection)]
     public void RequestNoCache_StillStores(CacheFreshnessMode mode)
     {
-        // no-cache 只要求「复用前先验证」，库不做条件请求，所以查询被跳过，但响应仍可落库。
+        // no-cache 只要求「复用前先验证」：查询被跳过（改走条件请求重新验证），响应仍可落库。
         var policy = NewCache(o => o.FreshnessMode = mode).CreateEntryPolicy(
             Headers(("Cache-Control", "max-age=60")),
             DateTimeOffset.UtcNow,

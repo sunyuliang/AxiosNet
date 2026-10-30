@@ -553,7 +553,36 @@ internal static class ResponseReader
 
         try
         {
-            if (reply.Headers is { Count: > 0 } source)
+            // 多值头（304 合并）优先：Set-Cookie 之类不能折叠的头只能按多值原样交付。
+            if (reply.MultiValueHeaders is { Count: > 0 } multi)
+            {
+                foreach (var header in multi)
+                {
+                    if (string.IsNullOrEmpty(header.Key))
+                    {
+                        continue;
+                    }
+
+                    var name = AxiosHeaders.ValidateHeaderName(header.Key);
+                    var values = new List<string>(2);
+                    foreach (var value in header.Value)
+                    {
+                        if (value is null)
+                        {
+                            continue;
+                        }
+
+                        AxiosHeaders.ValidateHeaderValue(name, value);
+                        values.Add(value);
+                    }
+
+                    if (values.Count > 0)
+                    {
+                        headers[name] = values;
+                    }
+                }
+            }
+            else if (reply.Headers is { Count: > 0 } source)
             {
                 foreach (var header in source)
                 {

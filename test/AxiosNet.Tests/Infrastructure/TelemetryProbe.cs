@@ -37,11 +37,13 @@ internal sealed class TelemetryProbe : IDisposable
         AxiosTelemetry.GateQueueDepthInstrumentName,
         AxiosTelemetry.GateRejectionsInstrumentName,
         AxiosTelemetry.CircuitStateInstrumentName,
+        AxiosTelemetry.CircuitUntrackedInstrumentName,
         AxiosTelemetry.RetryBudgetExhaustedInstrumentName,
         AxiosTelemetry.CacheHitsInstrumentName,
         AxiosTelemetry.CacheMissesInstrumentName,
         AxiosTelemetry.CacheStoresInstrumentName,
-        AxiosTelemetry.CacheStoreFailuresInstrumentName
+        AxiosTelemetry.CacheStoreFailuresInstrumentName,
+        AxiosTelemetry.CacheRevalidationsInstrumentName
     };
 
     private readonly string _marker;

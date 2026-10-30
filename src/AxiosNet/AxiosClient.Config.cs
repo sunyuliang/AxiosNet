@@ -1,3 +1,4 @@
+using AxiosNet.Cache;
 using AxiosNet.Internal;
 
 namespace AxiosNet;
@@ -377,6 +378,49 @@ public sealed partial class AxiosClient
     private static bool IsLengthHeaderMatching(string headerValue, long actual)
         => long.TryParse(headerValue.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
             && parsed == actual;
+
+    /// <summary>
+    /// 条件请求头：旧条目的 <c>ETag</c> 写成 <c>If-None-Match</c>（更强的校验器），没有才用 <c>Last-Modified</c> 写 <c>If-Modified-Since</c>。
+    /// </summary>
+    /// <remarks>
+    /// 写在请求消息上而不是配置头里：配置头会随 <see cref="AxiosResponse.Config"/> 回放给下一条请求，条件头不该跟着走。
+    /// 两个校验器都写不进去时清掉 <see cref="AxiosConfig.RevalidationEntry"/>，终端就不会把召回的 304 当成本库的条件请求结果。
+    /// </remarks>
+    private static void ApplyConditionalHeaders(HttpRequestMessage request, AxiosConfig config)
+    {
+        if (config.RevalidationEntry is not { } entry)
+        {
+            return;
+        }
+
+        if (TryAddConditionalHeader(request, "If-None-Match", CacheValidators.Find(entry, CacheValidators.ETag))
+            || TryAddConditionalHeader(request, "If-Modified-Since", CacheValidators.Find(entry, CacheValidators.LastModified)))
+        {
+            return;
+        }
+
+        config.RevalidationEntry = null;
+    }
+
+    private static bool TryAddConditionalHeader(HttpRequestMessage request, string name, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        try
+        {
+            // 存储可能来自共享后端：值同样挡 C0 注入。
+            AxiosHeaders.ValidateHeaderValue(name, value);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        return request.Headers.TryAddWithoutValidation(name, value);
+    }
 
     /// <summary>把幂等键写进请求模板：模板只建一次，重试 / 换端点 / 对冲复制时随头沿用同一个键。</summary>
     private static void ApplyIdempotencyKey(HttpRequestMessage request, AxiosConfig config)

@@ -19,7 +19,10 @@ internal readonly struct CacheRequestDirectives
     /// <summary><c>no-store</c>：本次请求不许读缓存，也不许落库。</summary>
     internal bool NoStore { get; }
 
-    /// <summary><c>no-cache</c>（或旧式 <c>Pragma: no-cache</c>）：不许直接复用已落库的条目；库没有条件请求，故按「跳过查询」处理，响应仍可落库。</summary>
+    /// <summary>
+    /// <c>no-cache</c>（或旧式 <c>Pragma: no-cache</c>）：不许直接复用已落库的条目；
+    /// 开启条件请求时仍会拿旧条目去源服务器验证，否则按「跳过查询」处理。响应仍可落库。
+    /// </summary>
     internal bool NoCache { get; }
 
     /// <summary>

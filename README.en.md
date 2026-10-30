@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1876%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1899%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.7%25_(branch_89.1%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -270,7 +270,7 @@ Four groups of capabilities; details in the linked sections.
 | Backup endpoints | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | Attempt pipeline | One attempt = a composable middleware chain, pluggable and reorderable | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | Short circuit | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
-| Response cache | Cache 2xx responses by URL and identity; a hit sends nothing, concurrent requests share one send | `client.Defaults.Cache = new AxiosCache(...)` |
+| Response cache | Cache 2xx responses by URL and identity; a hit sends nothing, concurrent requests share one send; stale entries revalidate via `ETag` / 304 | `client.Defaults.Cache = new AxiosCache(...)` |
 
 **Data and errors**
 
@@ -314,6 +314,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 - **`Params` / `Data` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Data = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Data`; write `Data = null` to send an empty body.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
 - Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
+- **The static facade can be reset**: `Axios.Reset()` disposes the global default instance, and the next access to `Axios.Defaults` / `Axios.Interceptors` or the next request rebuilds it from scratch. In-flight requests are unaffected (disposal does not abort them), and the old defaults and interceptors are dropped — useful to isolate global state between tests, or to recover after the default instance was disposed by mistake (a disposed instance throws `ERR_CANCELED` for every request).
 
 ### Replaying `response.Config`
 
@@ -901,7 +902,7 @@ Other members: `Delay` / `BackoffFactor` / `MaxDelay` / `Jitter` (`true` by defa
 
 - `Timeout` is **per attempt** (3 retries × 10s = 40s worst case); use `TotalTimeout` for a whole-request upper bound (or a `CancellationToken` from the caller).
 - Interceptors, `transformRequest` and body serialization run once; response interceptors see the final result.
-- The body must be replayable: seekable streams are rewound before each attempt; non-seekable streams, `StreamContent` (including multipart parts) and streaming bodies (`IAsyncEnumerable`) throw `ERR_BAD_OPTION_VALUE` as soon as retries or backup endpoints are enabled. Custom `HttpContent` with an unknown length is rejected too (`JsonContent` is exempt: it re-serializes from its value on every send).
+- The body must be replayable: seekable streams are rewound before each attempt; non-seekable streams, `StreamContent` (including multipart parts) and streaming bodies (`IAsyncEnumerable`) throw `ERR_BAD_OPTION_VALUE` as soon as retries or backup endpoints are enabled. Caller-supplied `HttpContent` goes through a **whitelist**: `ByteArrayContent` (including `StringContent` / `FormUrlEncodedContent`), `ReadOnlyMemoryContent`, `JsonContent` (re-serialized from its value on every send), and a `MultipartContent` whose parts are all replayable; every other custom content is rejected **before sending** — "length known" does not mean "replayable", since a one-shot stream wrapped in a custom content still sends only once.
 - Custom policies: implement `IAxiosRetryPolicy` (`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`); `ctx` exposes `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`. Policies are shared by concurrent requests on the same instance, so they must be thread-safe (stateless is easiest; implementations with shared state, like the built-in `RetryBudgetPolicy`, synchronize themselves).
 
 ### Global retry budget (`RetryBudgetPolicy`)
@@ -944,6 +945,7 @@ var breaker = new CircuitBreaker
     FailureRateThreshold = 0.5,                 // half the window failing is enough to open
     BreakDuration = TimeSpan.FromSeconds(30),   // cool down 30s, then let probes through
     HalfOpenAttempts = 1,                       // slow-start baseline: one probe in flight
+    ProbeTimeout = TimeSpan.FromSeconds(30),    // a probe silent for 30s voids the round and reopens
     RecoverySuccesses = 3                       // three consecutive probe successes to fully recover
 };
 
@@ -975,10 +977,11 @@ Failure accounting matches the retry gate (**cancels and 4xx never count**):
 - **Counted per host**: the default key is `host:port` (`uri.Authority`); `KeySelector` can switch to `ctx => ctx.Uri.Host` or isolate tenants by route prefix.
 - **Opening is an OR**: consecutive failures reach `FailureThreshold`, or the window (`WindowSize`) holds at least `ceil(samples × FailureRateThreshold)` failures with at least `MinimumSamples` samples. `WindowSize = 0` disables the rate rule; a `MinimumSamples` larger than `WindowSize` fails with `ERR_BAD_OPTION_VALUE` before anything is sent (that configuration can never trip).
 - **Slow-start recovery**: while half-open, the in-flight probe allowance is `HalfOpenAttempts + consecutive successes`, and only `RecoverySuccesses` successes close the circuit. The default ramps 1 → 2 → 3 so a just-recovered downstream is not hit with full load. `RecoverySuccesses = 0` (or 1) degrades to "a single successful probe closes it". A failed probe resets the progress and reopens immediately; ignored results (4xx / cancellation / a budget that ran out before the send) only return the probe slot without touching the progress, and only a probe that actually held a slot advances it. A late result — admitted before the circuit opened but reported after the cooldown ended — is discarded by generation: it belongs to the previous round and can neither reopen the fresh half-open round nor return another probe's slot.
+- **A hung probe never holds the slot forever**: a half-open probe that reports nothing within `ProbeTimeout` (30s by default, `null` disables) is treated as hung — the whole half-open round is voided, the circuit reopens and restarts its cooldown, and late results are discarded by generation. Without a request `Timeout`, a single stuck probe would otherwise leave that dimension half-open forever; raise this value when the probe's own timeout budget is longer (non-positive values fail with `ERR_BAD_OPTION_VALUE`).
 - Rejected requests are **never sent**: no connection, no pool lease, just `ERR_CIRCUIT_OPEN` with `AxiosException.RetryAfter` describing the suggested wait.
 - With retries enabled: the gate sits **before each attempt**, so once open the next attempt in the retry loop is cut immediately; `ERR_CIRCUIT_OPEN` itself is never retried.
 - Each attempt is recorded: 3 retries + the first failure = 4 entries — hitting four 5xx in a row really is a down downstream.
-- The state table has a soft cap (`MaxTrackedHosts`, 512 by default): when full it only evicts entries whose loss changes no decision (closed, or open with an expired cooldown); **open / half-open entries are never dropped**, and among closed entries it prefers one whose window holds no failure samples (the consecutive-failure count may have been reset by a success, but the failure-rate ledger is still valid — dropping it would reset that dimension to a brand-new one).
+- The state table has a hard cap (`MaxTrackedHosts`, 512 by default): when full it first evicts entries whose loss changes no decision (closed entries, preferring one whose window holds no failure samples — the consecutive-failure count may have been reset by a success, but the failure-rate ledger is still valid); if it still cannot make room, **new dimensions are not tracked at all** and pass through in closed state (no circuit decision, no accounting), while existing dimensions keep working — losing protection beats an unbounded state table. Bypassed dimensions are counted by the `circuit.untracked_host` metric.
 - Custom policies: implement `IAxiosCircuitPolicy` (`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`); `ctx` exposes `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`. Policies **are stateful** and shared concurrently, so you own thread safety. Wrapping the built-in `CircuitBreaker` in a decorator loses the admission ticket (the interface carries none), so late results are recorded the old way — the same conservative bias as `RetryBudgetPolicy` losing refunds under a decorator.
 
 ## Concurrent hedging
@@ -1188,10 +1191,11 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | `TimeToLive` | 30s | Entry lifetime, must be greater than zero |
 | `FreshnessMode` | `Configured` | Where the lifetime comes from: `Configured` trusts your TTL; `Server` trusts the response; `Intersection` takes the smaller of the two |
 | `SingleFlight` | `true` | Send once for concurrent requests with the same key |
+| `ConditionalRequests` | `true` | Revalidate stale entries with `ETag` / `Last-Modified`; a 304 serves the cached body (see below) |
 | `Store` | `null` | Entry storage; `null` = the built-in `MemoryCacheStore`. Implement `IAxiosCacheStore` for Redis or a shared cache |
 | `MaxEntries` | 1024 | Entry cap of the built-in store: expired entries are purged first, then new entries are refused (ignored when `Store` is set) |
 | `MaxBytes` | 64 MB | Approximate byte cap of the built-in store (body + header lengths, `0` = unlimited): same policy as the entry cap — an entry that does not fit is not accepted (ignored when `Store` is set) |
-| `StoreTimeout` | 2s | Per-write timeout: a hanging store is treated as "not cached this time" instead of holding the response (`null` / non-positive = no limit; custom stores only) |
+| `StoreTimeout` | 2s | Per-write timeout: a hanging store is treated as "not cached this time" instead of holding the response (`null` / non-positive = no limit; custom stores only; the wait is also capped by the remaining `TotalTimeout`) |
 | `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
 | `ShouldCache` | built-in rule | Which requests take part; defaults to `AxiosCache.IsCacheable` (GET / HEAD, no short circuit, not streaming, no body, not a range request), and can be composed on top of it |
 
@@ -1218,13 +1222,22 @@ Remaining freshness = `max-age` (or `Expires - Date` when absent) minus the curr
 | Request directive | Lookup | Store |
 | --- | --- | --- |
 | `no-store` | skipped | not stored |
-| `no-cache` (or legacy `Pragma: no-cache`) | skipped (every call is really sent) | still stored (the library does no conditional revalidation) |
+| `no-cache` (or legacy `Pragma: no-cache`) | skips the fresh lookup but revalidates with the stale entry (a 304 serves the cached body) | still stored |
 | `max-age=0` (invalid or negative values count as zero) | skipped | not stored |
 | `max-age=N` (positive) | as usual | stored TTL capped at N |
 
 `Configured` means "execute the configuration": neither request nor response HTTP directives take part.
 
-The library interprets responses as a **private cache**: `private` / `public` do not change the decision, `s-maxage` is not used, `Vary` does not take part in the key (use `KeySelector` for partitioning; `Vary: *` is not stored in the parsing modes), and there is no conditional revalidation (`ETag` / 304 reuse) or `stale-*` serving. None of that information is lost — it is all handed to the store in `AxiosCacheEntryPolicy`.
+**Conditional requests (`ETag` / 304 reuse)** are on by default (`ConditionalRequests = true`): a fresh hit still sends nothing; only when there is no fresh entry but the store still holds a stale one with validators is the validator written into a conditional header and the request sent once more:
+
+- **`ETag` wins**, sent as `If-None-Match`; only without an `ETag` is `Last-Modified` sent as `If-Modified-Since`; with neither, the request is a full one as usual.
+- **What a 304 delivers**: status and body come from the cached entry, headers are merged from the 304 (except `Content-Length` / `Transfer-Encoding` / `Content-Range` — a 304 has no body; repeatable headers such as `Set-Cookie` are exposed as separate values instead of being folded), and the entry is **stored again with a refreshed TTL** (when this request is allowed to store at all), so the next call hits without sending. `response.Request` is not `null` (which tells it apart from "hit, nothing sent").
+- **Caller-supplied conditional headers win**: the library neither overrides them nor takes over the resulting 304 (that stays an ordinary non-2xx response for `ValidateStatus`).
+- **The store has to cooperate**: `MemoryCacheStore` retains stale entries that carry validators (stale entries without validators are still removed on read and their byte quota refunded). A custom store implements `IAxiosCacheRevalidationStore.GetRevalidationAsync` to join in; a store that only implements `IAxiosCacheStore` cannot hand back the old entry and falls back to full downloads — the request itself is unaffected.
+- **Request directives still apply**: `no-store` neither reads nor writes; `no-cache` / `max-age=0` skip the fresh lookup but revalidate with the stale entry (RFC 9111 §5.2.1.4) and still deliver the cached body on a 304.
+- **Telemetry**: a 304 reuse increments `cache.revalidations` (untagged) and sets `axiosnet.cache.revalidated=true` on the span; it counts as a miss for the hit rate (the request really went out), and this counter is what shows how much bandwidth was saved.
+
+The library interprets responses as a **private cache**: `private` / `public` do not change the decision, `s-maxage` is not used, `Vary` does not take part in the key (use `KeySelector` for partitioning; `Vary: *` is not stored in the parsing modes). A stale entry that carries validators is revalidated with a conditional request (`ETag` → `If-None-Match`, otherwise `Last-Modified` → `If-Modified-Since`) and a 304 serves the cached body (see below); there is no `stale-*` serving such as `stale-while-revalidate`. None of that information is lost — it is all handed to the store in `AxiosCacheEntryPolicy`.
 
 | | Short circuit | Response cache |
 | --- | --- | --- |
@@ -1238,12 +1251,13 @@ The library interprets responses as a **private cache**: `private` / `public` do
 - **Waiters stay cancellable**: cancelling `CancellationToken` gives up the wait only and never cancels the shared send (`ERR_CANCELED`).
 - **Waiting is bounded by the total budget**: a follower waits at most the remaining `TotalTimeout` and then fails with `ECONNABORTED` (`IsTotalTimeoutExceeded`) instead of hanging on a slow leader.
 - **Lookups count against that budget too**: a cache read is bounded by the remaining `TotalTimeout`, so a hanging store (unreachable custom store, network partition) fails with `ECONNABORTED` (`IsTotalTimeoutExceeded`) instead of parking the request; caller cancellation surfaces as `ERR_CANCELED`, and a cancellation thrown by the store itself counts as a miss. Implementations of `IAxiosCacheStore.GetAsync` should honour the token they receive.
+- **Writes count against it as well**: a store write is bounded by whichever is shorter, `StoreTimeout` or the remaining `TotalTimeout`; running past it means "not cached this time" (followers send their own request) and never holds an already-received response past the budget. If the budget is gone before storing, even the body copy is skipped.
 - **Headers keep their first value**: the short-circuit header dictionary is single-valued; `Set-Cookie` / `Set-Cookie2` are never stored — session state belongs to that one response, and replaying it on a hit would hand it to the next request.
 - **The key does not include the body**: by default only bodiless GET / HEAD requests are cached; if `ShouldCache` lets a method with a body through, fold a body fingerprint into `KeySelector`, otherwise different bodies share one entry.
 - **Policy lives on the instance**: one `AxiosCache` is one policy; create several and attach them separately when endpoints need different lifetimes or keys.
 - **Force clearing**: `cache.ClearAsync()` drops every entry and `cache.RemoveAsync(key)` drops one (compute the key with `cache.KeyFor(config, uri)`); requests already in flight are unaffected and still store on completion.
 - **Custom stores receive the full policy**: `IAxiosCacheStore` has a new `SetAsync` overload that takes an `AxiosCacheEntryPolicy` (effective / configured TTL, HTTP freshness, age, parsed `Cache-Control`, `Date` / `Expires` / `Vary`). Its default implementation forwards to the old signature, so existing stores need no change; override it to reject `private` responses from a shared cache, partition by `Vary`, or extend the servable window with `stale-while-revalidate`. In `Configured` mode nothing is parsed before storing: those HTTP fields are parsed on demand the first time the store reads them, so a store that only uses the TTL pays nothing.
-- **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `MemoryCacheStore` live there; `AxiosShortCircuit` stays in `AxiosNet` (it is not cache-specific — mocks and replays use it too).
+- **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `IAxiosCacheRevalidationStore` / `MemoryCacheStore` live there; `AxiosShortCircuit` stays in `AxiosNet` (it is not cache-specific — mocks and replays use it too).
 - **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend). The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries. A failing store only means "not cached this time" — requests still go out; a read that hangs past the remaining `TotalTimeout` fails with `ECONNABORTED` instead (see above).
 - Replaying `response.Config` carries the same cache object along (it is shared state, not "the result of that request").
 
@@ -1406,8 +1420,9 @@ builder.Services.AddOpenTelemetry()
 | `http.request.resend_count` | Number of retries so far |
 | `error.type` / `axiosnet.error.code` | Status code → library error code → exception type name; plus the library code |
 | `axiosnet.pool.endpoint.reused` | Whether an existing origin node was reused (`false` = created on the fly, usually slower) |
+| `axiosnet.cache.revalidated` | This response was merged from a conditional request's 304 (the body comes from the cache) |
 
-- 4xx / 5xx are marked `Error` even when accepted by `validateStatus`; failures also record an `exception` event; every retry decision adds a `retry` event (with `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`).
+- 4xx / 5xx are marked `Error` even when accepted by `validateStatus`; failures also record an `exception` event; every retry decision adds a `retry` event (with `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`, plus `server.address` / `server.port` — the same logical address as the span and metrics; the event carries it so event-only consumers do not have to join back to span tags. The host a failover endpoint or hedge branch actually connected to is not in these tags; look at that branch's attempt event — add `Attempt.Audit` to the pipeline for those). A failure that did receive a response (4xx / 5xx) still records `http.response.status_code` / `network.protocol.version` / `http.response.body.size`.
 - For `ResponseType.Stream` the span ends when headers arrive, so its duration is time-to-first-byte.
 
 **Metrics** (source `AxiosNet`):
@@ -1421,6 +1436,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.gate.queue_depth` | `ObservableGauge<long>` | `{request}` | none |
 | `axiosnet.client.gate.rejections` | `Counter<long>` | `{request}` | `axiosnet.gate.reason` (`queue_timeout` / `queue_full`) |
 | `axiosnet.client.circuit.state` | `ObservableGauge<long>` | `{circuit}` | `axiosnet.circuit.state` (`closed` / `open` / `half_open`) |
+| `axiosnet.client.circuit.untracked_host` | `Counter<long>` | `{host}` | none |
 | `axiosnet.client.pool.leases` | `Counter<long>` | `{lease}` | `axiosnet.pool.endpoint.reused` |
 | `axiosnet.client.pool.endpoints.created` | `Counter<long>` | `{endpoint}` | none |
 | `axiosnet.client.pool.endpoints.evicted` | `Counter<long>` | `{endpoint}` | `axiosnet.pool.eviction.reason` |
@@ -1431,12 +1447,13 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.cache.misses` | `Counter<long>` | `{request}` | none |
 | `axiosnet.client.cache.stores` | `Counter<long>` | `{entry}` | none |
 | `axiosnet.client.cache.store_failures` | `Counter<long>` | `{entry}` | none |
+| `axiosnet.client.cache.revalidations` | `Counter<long>` | `{request}` | none |
 
-- Cache hit rate = `cache.hits / (cache.hits + cache.misses)` (a follower that receives the shared reply counts as a hit; requests that skip the lookup because of `no-cache` / `no-store` count as neither); watch `cache.store_failures` on its own, don't fold it into the hit rate.
+- Cache hit rate = `cache.hits / (cache.hits + cache.misses)` (a follower that receives the shared reply counts as a hit; requests that skip the fresh lookup because of `no-cache` / `no-store` count as neither — a `no-cache` request that turns into a conditional request only counts as `cache.revalidations`; a conditional request answered with 304 counts as a miss); watch `cache.store_failures` on its own, don't fold it into the hit rate.
 - Metrics only carry low-cardinality tags; URL paths live in spans only. **Pool metrics carry no host / port**: for gateways, crawlers and multi-tenant SaaS one series per host blows up the backend; use the span (`server.address` / `server.port` / `axiosnet.pool.endpoint.reused`) to find the origin.
 - `axiosnet.retry.reason` has a bounded value set: `status` whenever there is a status code (the exact code is in `error.type`), otherwise the library error code (`ECONNABORTED` / `ERR_NETWORK` …) — so "tune the policy (429)" and "fix the downstream (5xx)" are separable on a dashboard.
-- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key), and `retry.budget_exhausted` counts retries denied by the shared budget — the four cache counters (`cache.hits` / `misses` / `stores` / `store_failures`) carry no tags either; none of these carries a host.
-- `request.duration` is the logical request duration (including retries and backoff); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
+- `gate.queue_depth` is the number of requests currently waiting for a slot (process-wide), `gate.rejections` counts entrance rejections (queue timeout / queue full), `circuit.state` is "how many circuit dimensions are in each state" (breaker instance × key), `circuit.untracked_host` counts dimensions that bypassed the full state table in closed state, and `retry.budget_exhausted` counts retries denied by the shared budget — the five cache counters (`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`) carry no tags either; none of these carries a host.
+- `request.duration` is the logical request duration (including retries, backoff and the cache store write); `active_requests` drops when the request ends (headers for streaming), while `active_leases` waits for the body stream — use the latter to see how much concurrency a long download holds.
 - Pool metrics describe the pool as a resource and are unaffected by `Telemetry.Enabled`.
 - `pool.active_pools` counts live pools (+1 on creation, -1 on `Dispose`) and `pool.shared_pools` counts entries in the named registry: a rising `active_pools` means some code keeps building pools — typically a client per request.
 
@@ -1650,9 +1667,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1813 | `net8.0` / `net6.0` | 3626 |
+| `AxiosNet.Tests` (core + declarative) | 1836 | `net8.0` / `net6.0` | 3672 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1876** | | **3752** |
+| **Total** | **1899** | | **3798** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
 
@@ -1676,7 +1693,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
 | `Governance/` | Concurrency gate, progress callbacks and rate limiting |
 | `Resilience/` | Retry policies and timing, whole-request budget (`TotalTimeout`), circuit-breaker state machine, short circuits |
-| `Caching/` | Response cache and single flight, the `IAxiosCacheStore` contract and custom stores, key rules and identity isolation, the hit path |
+| `Caching/` | Response cache and single flight, conditional requests (`ETag` / 304) and `IAxiosCacheRevalidationStore`, the `IAxiosCacheStore` contract and custom stores, key rules and identity isolation, the hit path |
 | `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
 | `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation), concurrent hedging, backup endpoints |
 | `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |

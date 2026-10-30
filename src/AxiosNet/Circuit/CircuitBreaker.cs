@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using AxiosNet.Telemetry;
 
 namespace AxiosNet.Circuit;
 
@@ -99,7 +100,21 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// <summary>半开态初始允许同时进行的探测请求数（也是慢启动的起点），默认 1。</summary>
     public int HalfOpenAttempts { get; set; } = 1;
 
-    /// <summary>最多跟踪多少个维度（host），默认 512；满员时只淘汰不影响判定的条目。</summary>
+    /// <summary>
+    /// 半开态一次探测最长占用名额的时长，默认 30 秒；<c>null</c> = 不设看门狗。
+    /// </summary>
+    /// <remarks>
+    /// 探测在此时长内没有回报就视为卡死：整轮半开探测作废（重新打开、重新冷却），
+    /// 迟到的结果凭过期票被丢弃。没有这条上限时，一个挂住的探测（请求没配超时）会
+    /// 永久占着名额，该维度再也无法恢复。探测自身的超时预算更长时应把本项调大。
+    /// </remarks>
+    public TimeSpan? ProbeTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// 最多跟踪多少个维度（host），默认 512。<b>硬上限</b>：满员时先淘汰不影响判定的条目，
+    /// 仍然放不下就不再登记新维度 —— 新维度按闭合态直通（不参与熔断判定，也不记账），
+    /// 已跟踪维度的判定不受影响。熔断保护失效总好过状态表无界增长。
+    /// </summary>
     public int MaxTrackedHosts { get; set; } = 512;
 
     /// <summary>
@@ -168,6 +183,15 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     internal bool ShouldAllow(AxiosCircuitContext context, out long ticket)
     {
         var host = GetOrCreate(KeyOf(context));
+
+        // 跟踪表到硬上限且没有可淘汰条目：本次按闭合态直通，不参与熔断（也不记这一维度的账）。
+        if (host is null)
+        {
+            AxiosTelemetry.CircuitUntrackedHost();
+            ticket = 0;
+            return true;
+        }
+
         var transition = default(AxiosCircuitTransition);
         bool allowed;
 
@@ -194,12 +218,23 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                     goto case AxiosCircuitState.HalfOpen;
 
                 case AxiosCircuitState.HalfOpen:
+                    // 探测卡死：整轮作废并重新打开。没有这一步，一个挂住不回的探测会永久占着名额。
+                    if (IsProbeExpired(host))
+                    {
+                        host.ProbesInFlight = 0;
+                        host.ProbeSuccesses = 0;
+                        transition = Reopen(host);
+                        allowed = false;
+                        break;
+                    }
+
                     // 慢启动：允许的在途探测数随连续成功递增，凑满 RecoverySuccesses 次成功转闭合。
                     allowed = host.ProbesInFlight < HalfOpenAttempts + host.ProbeSuccesses;
                     if (allowed)
                     {
-                        // 名额在这里领走，随后那次 Record 负责归还。
+                        // 名额在这里领走，随后那次 Record 负责归还；计时从这里重新开始。
                         host.ProbesInFlight++;
+                        host.ProbeStartedAt = Stopwatch.GetTimestamp();
                     }
 
                     break;
@@ -386,7 +421,8 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <summary>取（或新建）某个维度的状态；新建前先确认没有超出跟踪上限。</summary>
-    private HostState GetOrCreate(string key)
+    /// <returns>跟踪表已满且没有可淘汰条目时返回 <c>null</c>（该维度本次不跟踪）。</returns>
+    private HostState? GetOrCreate(string key)
     {
         if (_hosts.TryGetValue(key, out var existing))
         {
@@ -394,9 +430,16 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
 
         // 上限只在新建这条冷路径上检查：命中已有维度不受影响。
-        if (_hosts.Count >= (MaxTrackedHosts > 0 ? MaxTrackedHosts : 1))
+        var max = MaxTrackedHosts > 0 ? MaxTrackedHosts : 1;
+        if (_hosts.Count >= max)
         {
             Evict();
+
+            // 淘汰无可下手：硬上限生效，不再登记新维度（并发下可能短暂略超，随后自愈）。
+            if (_hosts.Count >= max)
+            {
+                return null;
+            }
         }
 
         // TryAdd 而不是 GetOrAdd：要在「真的登记成功」时才 +1，竞态落选不能重复计数。
@@ -542,6 +585,12 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
     private bool IsCooledDown(HostState host) => Elapsed(host.OpenedAt) >= BreakDuration;
 
+    /// <summary>半开态在途探测是否已超出 <see cref="ProbeTimeout"/>（没有在途探测时不算过期）。</summary>
+    private bool IsProbeExpired(HostState host)
+        => ProbeTimeout is { } timeout
+           && host.ProbesInFlight > 0
+           && Elapsed(host.ProbeStartedAt) >= timeout;
+
     private static AxiosCircuitTransition MoveTo(HostState host, AxiosCircuitState next)
     {
         var previous = host.State;
@@ -606,6 +655,9 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
         /// <summary>半开态下已放行、尚未回报结果的探测数。</summary>
         public int ProbesInFlight;
+
+        /// <summary>最近一次半开探测放行的时刻（<see cref="Stopwatch.GetTimestamp"/>），供 <see cref="ProbeTimeout"/> 判过期。</summary>
+        public long ProbeStartedAt;
 
         /// <summary>
         /// 当前代次：每次状态迁移 +1。放行时把代次作为准入票发给调用方，迟到的结果凭旧票被丢弃。

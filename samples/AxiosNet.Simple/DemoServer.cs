@@ -230,6 +230,22 @@ public sealed class DemoServer : IDisposable
                     $"Cache-Control: {cacheControl}\r\n");
             }
 
+            case "GET" when path == "/cache/etag":
+            {
+                // 条件请求演示：带匹配的 If-None-Match 就回 304（没有正文），否则回 200 + ETag。
+                // max-age=1 让条目很快变旧，客户端才会拿校验器重新验证。
+                if (headers.TryGetValue("if-none-match", out var noneMatch) && noneMatch == "\"v1\"")
+                {
+                    return (304, Array.Empty<byte>(), "application/json; charset=utf-8", null, null,
+                        "ETag: \"v1\"\r\nCache-Control: public, max-age=1\r\n");
+                }
+
+                return Json(
+                    200,
+                    $"{{\"served\":{Interlocked.Increment(ref _cacheHits)}}}",
+                    "ETag: \"v1\"\r\nCache-Control: public, max-age=1\r\n");
+            }
+
             case "GET" when path == "/users/1/pascal":
                 // PascalCase 契约：属性名保持原样，用于演示自定义 JSON 序列化器
                 return Json(200, """

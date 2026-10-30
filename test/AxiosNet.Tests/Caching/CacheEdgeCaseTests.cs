@@ -344,6 +344,38 @@ public sealed class CacheEdgeCaseTests
     }
 
     // ---------------------------------------------------------------
+    // 存储写入：总预算
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task StoreWrite_IsBoundedByTotalTimeout()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            TotalTimeout = TimeSpan.FromMilliseconds(200),
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                Store = new SlowSetStore(TimeSpan.FromSeconds(5)),
+                StoreTimeout = TimeSpan.FromSeconds(5)
+            })
+        });
+        var url = server.Url + "slow-store-set";
+
+        var stopwatch = Stopwatch.StartNew();
+        var response = await client.GetAsync<Person>(url).WaitAsync(TimeSpan.FromSeconds(5));
+        stopwatch.Stop();
+
+        // 写入受剩余总预算约束：存储比 StoreTimeout 还慢时也不能把响应拖过预算。
+        Assert.Equal("ada", response.Data!.Name);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"落库拖住了响应：{stopwatch.Elapsed}。");
+
+        // 这次没落库：下一次仍旧发请求。
+        await client.GetAsync<Person>(url).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, server.Received.Count);
+    }
+
+    // ---------------------------------------------------------------
     // 其他特性交互
     // ---------------------------------------------------------------
 
@@ -405,6 +437,19 @@ public sealed class CacheEdgeCaseTests
 
         public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
             => default;
+
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken) => new(false);
+
+        public ValueTask ClearAsync(CancellationToken cancellationToken) => default;
+    }
+
+    private sealed class SlowSetStore(TimeSpan delay) : IAxiosCacheStore
+    {
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+            => new((AxiosShortCircuit?)null);
+
+        public async ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+            => await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
 
         public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken) => new(false);
 

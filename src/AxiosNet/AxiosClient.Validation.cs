@@ -298,6 +298,14 @@ public sealed partial class AxiosClient
                     config);
             }
 
+            if (breaker.ProbeTimeout is { } probeTimeout && probeTimeout <= TimeSpan.Zero)
+            {
+                throw AxiosException.InvalidOption(
+                    $"半开探测超时 ProbeTimeout 必须 > 0（当前 {probeTimeout}）："
+                    + "不想要看门狗请设为 null，否则探测刚放行就会被判定为卡死。",
+                    config);
+            }
+
             if (breaker.WindowSize < 0)
             {
                 throw AxiosException.InvalidOption(

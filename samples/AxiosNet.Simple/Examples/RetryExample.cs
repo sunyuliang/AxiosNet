@@ -76,7 +76,39 @@ public sealed class RetryExample : IExample
         var custom = await customClient.GetAsync($"{context.BaseUrl}flaky?fail=1&tag={tag}-custom");
         Console.WriteLine($"  自定义策略（只重试 503）: status={custom.Status}");
 
+        // 5) 正文可重放：调用方自带的 HttpContent 按白名单放行；其余自定义内容在发送前就拒绝，
+        //    而不是等到第二次发送才发现「流已被消费、只发出空正文」。
+        using var replayClient = new AxiosClient(new AxiosConfig
+        {
+            Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
+        });
+
+        var replayable = await replayClient.PostAsync($"{context.BaseUrl}echo", new StringContent("hello"));
+        Console.WriteLine($"  白名单内（StringContent）: status={replayable.Status}");
+
+        try
+        {
+            await replayClient.PostAsync($"{context.BaseUrl}echo", new OneShotContent());
+        }
+        catch (AxiosException ex)
+        {
+            Console.WriteLine($"  自定义 HttpContent: code={ex.Code}（发送前拒绝，避免重发时只发出空正文）");
+        }
+
         Console.WriteLine("  说明: Timeout 是「每次尝试」的预算；正文只序列化一次并原样重发，进度跨次累计");
+    }
+
+    /// <summary>一次性正文：库认不出可重放形态，重试 / 换端点开启时会在发送前拒绝。</summary>
+    private sealed class OneShotContent : HttpContent
+    {
+        protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
+            => await stream.WriteAsync("hello"u8.ToArray()).ConfigureAwait(false);
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 5;
+            return true;
+        }
     }
 
     /// <summary>只对指定状态码重试的自定义策略（演示 <see cref="IAxiosRetryPolicy"/> 的接入方式）。</summary>

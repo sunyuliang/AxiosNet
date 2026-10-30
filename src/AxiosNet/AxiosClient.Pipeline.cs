@@ -123,6 +123,22 @@ public sealed partial class AxiosClient
 
                 // 由管线决定要不要留原始字节：请求侧已否决落库（no-store / max-age=0）时不必为缓存复制正文。
                 config.CacheCaptureRawBody = cacheDirectives.CanStore;
+
+                // 条件请求：新鲜条目没命中时，拿一条带校验器的旧条目，把校验器写成条件头再发。
+                // no-store 不读缓存；调用方自己写了条件头时以调用方为准（不覆盖、也不接管 304）。
+                if (configuredCache.ConditionalRequests
+                    && !cacheDirectives.NoStore
+                    && !HasCallerConditionalHeaders(config))
+                {
+                    var revalidation = await configuredCache
+                        .TryGetRevalidationAsync(cacheKey, config, deadlineTimestamp)
+                        .ConfigureAwait(false);
+
+                    if (revalidation is not null && CacheValidators.HasAny(revalidation))
+                    {
+                        config.RevalidationEntry = revalidation;
+                    }
+                }
             }
 
             // 遥测起点必须在 URL 拼好之后，且只数真的进入发送阶段的请求。
@@ -156,18 +172,26 @@ public sealed partial class AxiosClient
                     streamOwner.Dispose();
                 }
 
-                if (telemetryEnabled)
+                // 条件请求的 304：请求确实发出去了（已按未命中计入命中率），正文来自缓存 —— 单独计数，
+                // 面板才看得出「省了多少带宽」。
+                if (result.CacheRevalidated)
                 {
-                    // 必须在 template.Dispose()（外层 finally）之前：之后正文头不可读。
-                    AxiosTelemetry.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryActivity);
+                    AxiosTelemetry.CacheRevalidated(config, telemetryActivity);
                 }
 
                 // 落库 + 放行跟随者：两者都要在返回之前完成，跟随者读的就是这份结果。
                 // 关掉单飞时 flight 为 null，这里只落库（否则缓存永远没有条目）。
                 if (cache is not null && cacheKey is not null)
                 {
-                    await StoreAsync(cache, cacheKey, flight, config, cacheDirectives, result).ConfigureAwait(false);
+                    await StoreAsync(cache, cacheKey, flight, config, cacheDirectives, result, deadlineTimestamp).ConfigureAwait(false);
                     flight = null;
+                }
+
+                if (telemetryEnabled)
+                {
+                    // 放在落库之后：span 与耗时直方图都覆盖「调用方拿到结果」的完整等待时间（存储慢也算进去）。
+                    // 仍必须在 template.Dispose()（外层 finally）之前：之后正文头不可读。
+                    AxiosTelemetry.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryActivity);
                 }
 
                 return result;
@@ -196,6 +220,13 @@ public sealed partial class AxiosClient
         }
         finally
         {
+            // 条件请求的旧条目只属于这一次发送：留在 response.Config 上会拖着整段缓存正文，
+            // 重放这份配置还会带上已经过时的 If-None-Match（与条件头不写进配置头同一理由）。
+            if (config is not null)
+            {
+                config.RevalidationEntry = null;
+            }
+
             if (telemetryEnabled)
             {
                 AxiosTelemetry.ExitRequest();
@@ -390,6 +421,7 @@ public sealed partial class AxiosClient
             }
 
             ApplyHeaders(template, config);
+            ApplyConditionalHeaders(template, config);
             ApplyIdempotencyKey(template, config);
             return template;
         }

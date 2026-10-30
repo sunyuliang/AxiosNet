@@ -9,9 +9,11 @@ namespace AxiosNet.Cache;
 /// 每个条目自带到期时刻，读的时候顺手摘掉过期项；要收新键时先判容量（条目数与近似字节数都要放得下），
 /// 满了先清过期项，仍放不下就不再接收**新**键（已存在的键照常覆盖，存活时长随之续期；
 /// 不做随机淘汰 —— 命中率不会因为「刚好轮到你」而抖动，行为也可测）。
+/// 带校验器（<c>ETag</c> / <c>Last-Modified</c>）的过期条目不摘：它们留给条件请求复用，
+/// 由 <see cref="GetRevalidationAsync"/> 取走，直到被覆盖、被容量压力清掉或 <see cref="ClearAsync"/>。
 /// 进程重启即清空；要跨进程共享请自己实现 <see cref="IAxiosCacheStore"/>。
 /// </remarks>
-public sealed class MemoryCacheStore : IAxiosCacheStore
+public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidationStore
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private readonly object _writeLock = new();
@@ -60,6 +62,12 @@ public sealed class MemoryCacheStore : IAxiosCacheStore
                 return new ValueTask<AxiosShortCircuit?>(entry.Reply);
             }
 
+            // 带校验器的过期条目留着给条件请求复用：这里只是「不命中」，不能摘。
+            if (CacheValidators.HasAny(entry.Reply))
+            {
+                return new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
+            }
+
             // 过期顺手摘掉，不必等淘汰；只摘「刚读到的那一条」，不误删并发覆盖进来的新条目。
             // 摘除与退账必须在写锁里：否则 SetCore 会先读到这条旧尺寸，两边各退一次，计量越跑越负。
             lock (_writeLock)
@@ -73,6 +81,12 @@ public sealed class MemoryCacheStore : IAxiosCacheStore
 
         return new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
     }
+
+    /// <inheritdoc />
+    public ValueTask<AxiosShortCircuit?> GetRevalidationAsync(string key, CancellationToken cancellationToken)
+        => _entries.TryGetValue(key, out var entry) && CacheValidators.HasAny(entry.Reply)
+            ? new ValueTask<AxiosShortCircuit?>(entry.Reply)
+            : new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
 
     /// <inheritdoc />
     public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)

@@ -3,7 +3,7 @@ using AxiosNet.Cache;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>36. 响应缓存：命中不发请求、到期自动失效、同键并发只发一次、按服务器新鲜期失效、请求侧指令。</summary>
+/// <summary>36. 响应缓存：命中不发请求、到期自动失效、同键并发只发一次、按服务器新鲜期失效、请求侧指令、ETag 条件复用。</summary>
 public sealed class CacheExample : IExample
 {
     /// <summary>缓存与客户端都跨运行复用：每次运行先把条目清空，结果可复现。</summary>
@@ -13,7 +13,7 @@ public sealed class CacheExample : IExample
 
     public int Number => 36;
 
-    public string Title => "响应缓存：命中不发请求 / 到期失效 / 同键并发只发一次 / 跟随服务器新鲜期 / 请求侧指令";
+    public string Title => "响应缓存：命中不发请求 / 到期失效 / 同键并发只发一次 / 跟随服务器新鲜期 / 请求侧指令 / ETag 条件复用";
 
     public async Task RunAsync(ExampleContext context)
     {
@@ -90,8 +90,28 @@ public sealed class CacheExample : IExample
         var s4 = await FetchServedAsync(noStoreClient, directiveUrl);
         Console.WriteLine($"  no-store: {s1} -> {s2}（既不查也不写，每次都发），恢复默认后 {s3} -> {s4}（先发一次再命中）");
 
+        // 9) 条件请求：条目过期但带 ETag 时，客户端发 If-None-Match；服务端回 304，正文直接从缓存交付
+        using var etagClient = new AxiosClient(new AxiosConfig
+        {
+            Cache = new AxiosCache(new AxiosCacheOptions
+            {
+                TimeToLive = TimeSpan.FromSeconds(10),
+                FreshnessMode = CacheFreshnessMode.Server
+            })
+        });
+        var etagUrl = $"{context.BaseUrl}cache/etag";
+        var etagFirst = await etagClient.GetAsync<Dictionary<string, int>>(etagUrl);
+        await Task.Delay(1200);   // 服务端声明 max-age=1，条目已过期
+        var etagRevalidated = await etagClient.GetAsync<Dictionary<string, int>>(etagUrl);
+        var etagHit = await etagClient.GetAsync<Dictionary<string, int>>(etagUrl);
+        Console.WriteLine($"  条件请求: 首次 served = {etagFirst.Data!["served"]}；过期后重新验证 -> served = {etagRevalidated.Data!["served"]}"
+            + $"（状态 {(int)etagRevalidated.Status}，Request {(etagRevalidated.Request is null ? "null（未发送）" : "已发出，304 复用缓存正文")}）；"
+            + $"紧接着再取 Request = {(etagHit.Request is null ? "null（命中：304 已续上 TTL）" : "有请求消息")}");
+
         Console.WriteLine("  说明: Configured 是默认值（忽略请求与响应两侧的 HTTP 缓存指令）；只缓存 2xx 与拿到原始字节的响应；"
             + "Range 请求、206 部分响应、Vary: * 都不入缓存；流式响应、非 GET / HEAD 默认不入缓存");
+        Console.WriteLine("  条件请求默认开启（ConditionalRequests = true）：ETag 优先，否则 Last-Modified；"
+            + "调用方自己写条件头时以调用方为准（库不接管那次 304）");
     }
 
     /// <summary>Intersection 模式客户端：配置 TTL 10s，与服务端新鲜期取交集。</summary>
