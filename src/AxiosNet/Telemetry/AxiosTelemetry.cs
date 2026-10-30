@@ -92,6 +92,7 @@ public static class AxiosTelemetry
     internal const string EvictionReasonCapacity = "capacity";
     internal const string EvictionReasonManual = "manual";
     internal const string EvictionReasonClear = "clear";
+    internal const string EvictionReasonCookies = "cookies";
     internal const string EvictionReasonDispose = "dispose";
 
     // 标签名一律取 OpenTelemetry HTTP 语义约定的标准名（v1.27）：后端 / Collector 无需额外映射。

@@ -33,7 +33,7 @@ internal sealed class PooledEndpoint : IDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>
-    /// 池已 Dispose：本节点在最后一条租约归还时自行销毁。
+    /// 节点已被池提前摘除（池 Dispose 或 <see cref="HttpConnectionPool.ClearCookies"/>）：最后一条租约归还时自行销毁。
     /// 标记在锁内、锁外都会写，读发生在 <see cref="Release"/> 的锁内。
     /// </summary>
     public bool DisposeWhenIdle

@@ -903,6 +903,159 @@ public sealed class ConnectionPoolTests
         Assert.True(options.Clone().UseCookies);
     }
 
+    [Fact]
+    public void Cookies_ExposesPoolContainer_OnlyWhenEnabled()
+    {
+        using var disabled = new AxiosClient();
+        Assert.Null(disabled.Pool!.Cookies);
+
+        using var enabled = new AxiosClient(poolOptions: new ConnectionPoolOptions { UseCookies = true });
+        Assert.NotNull(enabled.Pool!.Cookies);
+    }
+
+    [Fact]
+    public async Task Cookies_SeededBeforeFirstRequest_IsSent()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions { UseCookies = true });
+
+        client.Pool!.Cookies!.Add(new Uri(server.Url), new Cookie("token", "seeded"));
+
+        await client.GetAsync(server.Url + "data");
+
+        Assert.Equal("token=seeded", server.Received[0].Headers["cookie"]);
+    }
+
+    [Fact]
+    public async Task ClearCookies_LogsOutSession()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("{}"),
+            Headers: new Dictionary<string, string> { ["Set-Cookie"] = "session=abc; Path=/" }));
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions { UseCookies = true });
+
+        await client.GetAsync(server.Url + "login");
+        await client.GetAsync(server.Url + "me");
+        Assert.Contains("session=abc", server.Received[1].Headers["cookie"]);
+
+        var before = client.Pool!.Cookies;
+        client.Pool.ClearCookies();
+
+        Assert.NotSame(before, client.Pool.Cookies);
+        Assert.Equal(0, client.Pool.Cookies!.Count);
+
+        await client.GetAsync(server.Url + "me-after-logout");
+        Assert.False(server.Received[2].Headers.ContainsKey("cookie"));
+    }
+
+    [Fact]
+    public void ClearCookies_WithoutContainer_IsNoOp()
+    {
+        using var client = new AxiosClient();
+        Assert.Null(client.Pool!.Cookies);
+
+        client.Pool.ClearCookies();
+
+        Assert.Null(client.Pool.Cookies);
+    }
+
+    [Fact]
+    public async Task ClearCookies_RecreatesEndpointsWithFreshContainer()
+    {
+        var containers = new ConcurrentBag<CookieContainer?>();
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("{}"),
+            Headers: new Dictionary<string, string> { ["Set-Cookie"] = "session=abc; Path=/" }));
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            UseCookies = true,
+            HandlerFactory = ctx =>
+            {
+                containers.Add(ctx.CookieContainer);
+                return ctx.CreateDefaultHandler();
+            }
+        });
+
+        await client.GetAsync(server.Url + "login");
+        var oldContainer = Assert.Single(containers);
+
+        client.Pool!.ClearCookies();
+
+        Assert.Equal(0, client.Pool.Cookies!.Count);
+        Assert.NotSame(oldContainer, client.Pool.Cookies);
+
+        await client.GetAsync(server.Url + "next");
+
+        // 自定义 Handler 也按新容器重建；旧容器被摘掉后不再有请求使用。
+        Assert.False(server.Received[1].Headers.ContainsKey("cookie"));
+        Assert.Equal(2, containers.Count);
+        Assert.Equal(1, oldContainer!.Count);
+    }
+
+    [Fact]
+    public async Task ClearCookies_DoesNotInterruptInFlightRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: Encoding.UTF8.GetBytes("{}"),
+            BodyDelay: TimeSpan.FromMilliseconds(300)));
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions { UseCookies = true });
+
+        var inflight = client.GetAsync(server.Url + "slow");
+
+        var waited = 0;
+        while (server.Received.Count == 0 && waited++ < 200)
+        {
+            await Task.Delay(10);
+        }
+
+        client.Pool!.ClearCookies();
+
+        var response = await inflight;
+        Assert.Equal(200, response.Status);
+    }
+
+    [Fact]
+    public async Task ClearCookies_DuringEndpointCreation_PublishesOnlyFreshContainer()
+    {
+        using var factoryCalled = new SemaphoreSlim(0);
+        using var releaseFirstCall = new ManualResetEventSlim(false);
+        var containers = new ConcurrentBag<CookieContainer?>();
+
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            UseCookies = true,
+            HandlerFactory = ctx =>
+            {
+                containers.Add(ctx.CookieContainer);
+                factoryCalled.Release();
+
+                // 第一次创建卡住，让 ClearCookies 在「容器已取快照、节点尚未发布」之间插进来。
+                if (!releaseFirstCall.IsSet)
+                {
+                    releaseFirstCall.Wait(TimeSpan.FromSeconds(5));
+                }
+
+                return ctx.CreateDefaultHandler();
+            }
+        });
+
+        // 工厂会阻塞首个调用，请求必须跑在别的线程上（否则同步阻塞的是调用 GetAsync 的测试线程）。
+        var request = Task.Run(() => client.GetAsync(server.Url + "first"));
+        await factoryCalled.WaitAsync(TimeSpan.FromSeconds(5));
+
+        client.Pool!.ClearCookies();
+        releaseFirstCall.Set();
+
+        var response = await request;
+
+        // 旧容器创建的那次尝试必须作废，重试后只剩新容器生效。
+        Assert.Equal(200, response.Status);
+        Assert.Equal(2, containers.Count);
+        Assert.Contains(containers, c => ReferenceEquals(c, client.Pool.Cookies));
+        Assert.False(server.Received[0].Headers.ContainsKey("cookie"));
+    }
+
     // ------------------------------------------------------------------
     // 池选项：Timeout.InfiniteTimeSpan 表示「不限」
     // ------------------------------------------------------------------

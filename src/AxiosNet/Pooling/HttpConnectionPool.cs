@@ -19,7 +19,8 @@ public sealed class HttpConnectionPool : IDisposable
 
     private readonly ConcurrentDictionary<OriginKey, PooledEndpoint> _endpoints = new();
     private readonly ConnectionPoolOptions _options;
-    private readonly CookieContainer? _cookies;
+    private readonly object _cookieSync = new();
+    private CookieContainer? _cookies;
     private readonly Timer? _evictionTimer;
     private long _totalLeases;
     private int _disposed;
@@ -284,6 +285,48 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>池实际生效的选项（副本；修改它不会影响池）。</summary>
     public ConnectionPoolOptions Options => _options.Clone();
 
+    /// <summary>
+    /// 池当前使用的 Cookie 容器：<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空，否则为 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// 整个池共用这一份容器（按域 / 路径隔离，不按业务身份隔离），线程安全，可在请求进行中读写。
+    /// 典型用途：启动时预置 cookie、排查某个 cookie 为什么没发出去；登出请用 <see cref="ClearCookies"/>
+    /// （容器没有删除 API，只能整体替换，替换后这里读到的引用会变）。
+    /// 开启容器后请求上的 <c>Cookie</c> 头与容器内容<em>合并</em>发送而不是覆盖；
+    /// <see cref="Clear"/> 与 <see cref="Dispose"/> 都不会清空容器。
+    /// </remarks>
+    public CookieContainer? Cookies => Volatile.Read(ref _cookies);
+
+    /// <summary>
+    /// 清空池级 Cookie（登出）：换一份空容器并优雅回收现有 origin 节点，后续请求用新容器重建连接。
+    /// </summary>
+    /// <remarks>
+    /// 只对开启 <see cref="ConnectionPoolOptions.UseCookies"/> 的池有效，未开启时无操作。
+    /// <see cref="CookieContainer"/> 没有删除 API，所以实现上是整体换容器 + 回收节点（自定义 Handler 也会按新容器重新创建）。
+    /// 不打断在途请求——它们可能仍带着旧 cookie 完成，节点在最后一条租约归还后销毁；
+    /// 之前从 <see cref="Cookies"/> 拿到的引用随之失效，请重新读取。
+    /// </remarks>
+    public void ClearCookies()
+    {
+        if (Volatile.Read(ref _cookies) is null)
+        {
+            return;
+        }
+
+        // 与节点的「发布到字典」互斥：保证不会出现用旧容器创建、却在换容器之后才发布的节点。
+        lock (_cookieSync)
+        {
+            if (Volatile.Read(ref _cookies) is null)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _cookies, new CookieContainer());
+        }
+
+        RetireAllEndpoints(AxiosTelemetry.EvictionReasonCookies);
+    }
+
     /// <summary>池实际生效的选项（不克隆，仅限库内只读使用）。</summary>
     internal ConnectionPoolOptions EffectiveOptions => _options;
 
@@ -315,9 +358,22 @@ public sealed class HttpConnectionPool : IDisposable
             {
                 EnsureCapacity(origin, config);
 
-                // 竞态下 GetOrAdd 只创建一次，落选的新建节点直接释放。
-                var created = new PooledEndpoint(this, origin, _options, _cookies);
-                endpoint = _endpoints.GetOrAdd(origin, created);
+                // 创建 Handler 可能较慢（自定义工厂），放在锁外；发布前在锁内复核容器没被 ClearCookies 换掉。
+                var cookies = Volatile.Read(ref _cookies);
+                var created = new PooledEndpoint(this, origin, _options, cookies);
+                lock (_cookieSync)
+                {
+                    if (!ReferenceEquals(cookies, Volatile.Read(ref _cookies)))
+                    {
+                        // 用旧容器创建的节点作废（尚未发布、没有租约），重试时按新容器重建。
+                        created.Dispose();
+                        continue;
+                    }
+
+                    // 竞态下 GetOrAdd 只创建一次，落选的新建节点直接释放。
+                    endpoint = _endpoints.GetOrAdd(origin, created);
+                }
+
                 if (!ReferenceEquals(created, endpoint))
                 {
                     created.Dispose();
@@ -526,6 +582,43 @@ public sealed class HttpConnectionPool : IDisposable
         catch
         {
             // 后台清理不应抛出未观察异常
+        }
+    }
+
+    /// <summary>
+    /// 摘除全部 origin 节点：空闲的立即释放，仍有租约的等最后一条租约归还时自行销毁（不打断在途）。
+    /// </summary>
+    private void RetireAllEndpoints(string reason)
+    {
+        foreach (var pair in _endpoints)
+        {
+            var endpoint = pair.Value;
+            var releaseNow = false;
+
+            lock (endpoint.SyncRoot)
+            {
+                if (endpoint.IsDisposed || !_endpoints.TryRemove(pair))
+                {
+                    continue;
+                }
+
+                if (endpoint.ActiveLeases == 0 && endpoint.MarkDisposed())
+                {
+                    releaseNow = true;
+                }
+                else
+                {
+                    endpoint.DisposeWhenIdle = true;
+                }
+            }
+
+            // 关闭 Handler 会断开该 origin 的全部连接、可能耗时，必须放在锁外。
+            if (releaseNow)
+            {
+                endpoint.ReleaseResources();
+            }
+
+            AxiosTelemetry.RecordEndpointEvicted(reason);
         }
     }
 

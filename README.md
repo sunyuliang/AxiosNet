@@ -1054,7 +1054,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan`（不发）/ 20 秒 | h2 keep-alive ping 的间隔与等 ACK 的上限；默认与 `SocketsHttpHandler` 一致（关闭），设正值即打开。h1 无影响 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | 何时 ping：`WithActiveRequests`（有在途请求时）/ `Always`（空闲也维持）|
 | `MaxEndpointCount` | 1024 | origin 节点上限，满了先驱逐最久未用的空闲节点；若全部在途（无可驱逐），新建节点抛 `ERR_POOL_EXHAUSTED`（请求未发出，可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试） |
-| `UseCookies` | `false` | 打开后整个池共用一份 `CookieContainer` |
+| `UseCookies` | `false` | 打开后整个池共用一份 `CookieContainer`，可通过 `pool.Cookies` 读写（未开启时为 `null`），登出用 `pool.ClearCookies()` |
 | `Proxy` / `Credentials` | `null` | 不设代理时**不使用**系统 / 环境代理；要走系统代理请设 `HttpClient.DefaultProxy` |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | 证书校验、TLS 版本、客户端证书 |
 | `HandlerFactory` | `null` | 每个 origin 创建 Handler 时调用，见[自定义 Handler](#自定义-handler) |
@@ -1063,7 +1063,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 - DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；需要自定义建连（拨到 UDS / 本机传输 / 自管 DNS）时直接设 `ConnectionPoolOptions.ConnectCallback`。
 - `ConnectCallback` 与 `MaxResponseHeadersLength` 只作用于库默认 Handler：`HandlerFactory` 里用 `ctx.CreateDefaultHandler()` 建内层 Handler 会带过去，完全自建 Handler 则需自行映射。
 - **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。它对付的是「静默掐断」——AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多；低频高价值调用（webhook 回调、定时任务）可以配 `Always` 连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）——这也是它默认关闭的原因。
-- **`UseCookies` 是池级共享，不按业务身份隔离**：整个池共用一份 `CookieContainer`，隔离维度只有域 / 路径。多租户、爬虫、按用户切身份的进程打开它会让不同身份串 cookie —— 请按租户各建一条池，或用请求头自己管 `Cookie`。
+- **`UseCookies` 是池级共享，不按业务身份隔离**：整个池共用一份 `CookieContainer`，隔离维度只有域 / 路径。多租户、爬虫、按用户切身份的进程打开它会让不同身份串 cookie —— 请按租户各建一条池，或用请求头自己管 `Cookie`。容器可用 `pool.Cookies` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去；登出用 `pool.ClearCookies()`（`CookieContainer` 没有删除 API，实现上是换一份空容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie）。注意开启容器后请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。
 - **Trailers 目前不读取**：chunked 响应的尾部头（校验和、配额）停留在 `HttpResponseMessage.TrailingHeaders`，没有暴露到 `AxiosResponse`。需要时用 `HandlerFactory` 包一层在正文读完后取，或直接注入自定义 Handler。
 - **代理是池级的，同一个 origin 只能有一条代理**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP 就按代理各建一条池（`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`），每个出口一条池、客户端之间不共享 —— 隔离维度是「池」，不是「请求」。
 - **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
