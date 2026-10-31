@@ -1666,6 +1666,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **零配置**：不需要 `TrimmerRootAssembly`，也不需要手写注册；
 - **两条路径同一份声明**：生成器只写事实（路由 / 成员 / 绑定 / 授权），校验与绑定计划仍由运行时共享构建器完成，JIT 与 AOT 的行为、错误文本一致；
 - **运行时不再反射模型 / 接口**：请求模型把成员取值写成直接 getter 委托；接口代理只做「取参 → 调用共享绑定实现」，不 `MakeGenericMethod`；AOT 下未命中注册表会抛 `AxiosAotMetadataException`（带修复指引），不会静默丢字段；
+- **JIT 专用的反射实现整段被裁掉**：接口声明 / 请求模型 / 自定义字典 / 对象形状的反射读取器与 `DispatchProxy` 回退，只写在 `RuntimeFeature.IsDynamicCodeSupported` 为 true 的分支里；ILC 折成常量 `false` 后整段不可达，连同它们的类型一起被裁剪，包消费方发布时不会为「只在 JIT 下用得到」的代码付体积；
 - **接口代理的生成位置**：非泛型接口在声明处生成；闭合泛型接口（`IRepo<User>`）在 `Create<T>()` / `AddApiInterface<T>()` / `ValidateInterfaces(typeof(...))` 调用点生成，开放泛型声明本身（含外层类型为开放泛型的嵌套接口）只提示 `AXA011`（同一编译里已有闭合调用点时不报）。被引用程序集已经为同一接口生成过代理时，使用方按生成的类名识别并直接复用对方注册，不重复生成（重复注册会在启动期抛错）；只有被引用程序集没启用生成器时，使用方才在调用点生成；
 - **回退路径**：没有生成元数据时 JIT 回退 `DispatchProxy`；Native AOT 下没有回退，直接抛 `AxiosAotMetadataException`；
 - **前提**：消费方需 C# 9 及以上（`[ModuleInitializer]`）；生成器本身是 `netstandard2.0`，随包分发（按 Roslyn 4.0.1 编译，.NET SDK 6.0.100 / VS 2022 17.0 及以上的编译器均可加载）；

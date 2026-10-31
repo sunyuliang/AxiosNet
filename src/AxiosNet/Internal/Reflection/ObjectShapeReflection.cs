@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
@@ -6,29 +5,11 @@ using AxiosNet.WebAPI.Internal;
 namespace AxiosNet.Internal.Reflection;
 
 /// <summary>
-/// 反射版对象形状：JIT 下按公共可读属性构建并缓存（AOT 从不写入）。
+/// 反射版对象形状：按公共可读属性构建（缓存归 <see cref="ShapeCache"/>，本类只负责构建）。
 /// 与生成形状的口径必须逐项一致：只收 public 读访问器、跳过索引器与无法装箱的类型。
 /// </summary>
 internal static class ObjectShapeReflection
 {
-    private static readonly ConcurrentDictionary<Type, ObjectShape> Cache = new();
-
-    /// <summary>取（必要时构建并缓存）反射形状。</summary>
-    public static ObjectShape Get(Type type) => Cache.GetOrAdd(type, Create);
-
-    /// <summary>显式注册压过旧的反射缓存（同一类型的热路径第一次读取前完成）。</summary>
-    public static void Invalidate(Type type) => Cache.TryRemove(type, out _);
-
-    public static void InvalidateAll() => Cache.Clear();
-
-    /// <summary>ref struct / 指针：无法装箱成 object，形状里一律跳过（与生成器口径一致）。</summary>
-    internal static bool IsUnboxable(Type type)
-        => type.IsByRefLike || type.IsPointer
-#if NET7_0_OR_GREATER
-            || type.IsFunctionPointer
-#endif
-        ;
-
     /// <summary>按公共可读属性构造形状（<c>AxiosMetadata.RegisterShape&lt;T&gt;()</c> 的兜底实现）。</summary>
     internal static ObjectShape FromReflection<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>()
@@ -37,8 +18,8 @@ internal static class ObjectShapeReflection
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
-        Justification = "只由 ShapeCache.Get / TryGet 在 JIT 下调用，或由 RegisterShape<T> 的 DynamicallyAccessedMembers 标注覆盖；AOT 下反射分支不可达。")]
-    private static ObjectShape Create(Type type)
+        Justification = "只由 ShapeCache 的 JIT 分支调用，或由 RegisterShape<T> 的 DynamicallyAccessedMembers 标注覆盖；AOT 下反射分支不可达。")]
+    internal static ObjectShape Create(Type type)
     {
         var members = new List<ShapeMember>();
         foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
@@ -66,4 +47,12 @@ internal static class ObjectShapeReflection
 
         return new ObjectShape(type, [.. members]);
     }
+
+    /// <summary>ref struct / 指针：无法装箱成 object，形状里一律跳过（与生成器口径一致）。</summary>
+    private static bool IsUnboxable(Type type)
+        => type.IsByRefLike || type.IsPointer
+#if NET7_0_OR_GREATER
+            || type.IsFunctionPointer
+#endif
+        ;
 }

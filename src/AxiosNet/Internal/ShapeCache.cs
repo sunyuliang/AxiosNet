@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using AxiosNet.Internal.Reflection;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
@@ -11,6 +13,9 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class ShapeCache
 {
+    /// <summary>反射构建的形状（AOT 下从不写入：填充它的分支被裁掉了）。</summary>
+    private static readonly ConcurrentDictionary<Type, ObjectShape> Cache = new();
+
     /// <summary>
     /// 取类型形状；<paramref name="fieldPath"/> 是展平到当前位置的字段名（只用于 AOT 缺失时的错误定位）。
     /// 形状声明损坏（注册期 configure 抛错）时抛出 <see cref="InvalidOperationException"/>。
@@ -22,12 +27,13 @@ internal static class ShapeCache
             return Validate(registered);
         }
 
-        if (!RuntimeSupport.IsDynamicCodeSupported)
+        // 条件里必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后，这段反射实现才不可达并被裁掉。
+        if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
-            throw AxiosAotMetadataException.MissingShape(type, fieldPath);
+            return Validate(GetOrAdd(type));
         }
 
-        return Validate(ObjectShapeReflection.Get(type));
+        throw AxiosAotMetadataException.MissingShape(type, fieldPath);
     }
 
     /// <summary>
@@ -42,20 +48,22 @@ internal static class ShapeCache
             return shape is not null;
         }
 
-        if (!RuntimeSupport.IsDynamicCodeSupported)
+        if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
-            shape = null;
-            return false;
+            shape = GetOrAdd(type);
+            return true;
         }
 
-        shape = ObjectShapeReflection.Get(type);
-        return true;
+        shape = null;
+        return false;
     }
 
     /// <summary>显式注册压过旧的反射缓存（同一类型的热路径第一次读取前完成）。</summary>
-    public static void Invalidate(Type type) => ObjectShapeReflection.Invalidate(type);
+    public static void Invalidate(Type type) => Cache.TryRemove(type, out _);
 
-    public static void InvalidateAll() => ObjectShapeReflection.InvalidateAll();
+    public static void InvalidateAll() => Cache.Clear();
+
+    private static ObjectShape GetOrAdd(Type type) => Cache.GetOrAdd(type, static t => ObjectShapeReflection.Create(t));
 
     private static ObjectShape Validate(ObjectShape shape)
         => shape.Error is null ? shape : throw new InvalidOperationException(shape.Error);

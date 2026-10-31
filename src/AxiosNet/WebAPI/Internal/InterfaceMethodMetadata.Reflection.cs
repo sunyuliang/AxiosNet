@@ -7,7 +7,7 @@ namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
 /// 接口方法的反射路径：读接口方法特性（<see cref="InterfaceDeclarationReader"/>）、按返回类型特化泛型调用器。
-/// 只在 <see cref="RuntimeSupport.IsDynamicCodeSupported"/> 为 true 时可达；生成代理不经过这里。
+/// 只在 JIT 下（动态代码可用时）可达；生成代理不经过这里。
 /// </summary>
 internal sealed partial class InterfaceMethodMetadata
 {

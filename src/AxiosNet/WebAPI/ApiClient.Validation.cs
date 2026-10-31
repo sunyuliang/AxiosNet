@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
 
@@ -56,7 +57,7 @@ public sealed partial class ApiClient
     /// </summary>
     private static void EnsureAssemblyScanSupported()
     {
-        if (RuntimeSupport.IsDynamicCodeSupported)
+        if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
             return;
         }
@@ -110,15 +111,18 @@ public sealed partial class ApiClient
             }
             else
             {
-                if (!RuntimeSupport.IsDynamicCodeSupported)
+                // 守卫条件必须直接写 intrinsic：ILC 折成常量 false 后，这段反射判定才不可达并被裁掉。
+                if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
+                {
+                    if (!ImplementsApiRequest(type))
+                    {
+                        errors.Add(NotARequestModel(type));
+                        continue;
+                    }
+                }
+                else
                 {
                     errors.Add(AxiosAotMetadataException.MissingRequestModel(type).Message);
-                    continue;
-                }
-
-                if (!ImplementsApiRequest(type))
-                {
-                    errors.Add(NotARequestModel(type));
                     continue;
                 }
             }

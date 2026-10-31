@@ -8,7 +8,7 @@ namespace AxiosNet.WebAPI.Internal.Reflection;
 
 /// <summary>
 /// JIT 反射读取器：把请求模型上的特性读成 <see cref="RequestModelDeclaration"/>。
-/// 只在 <see cref="RuntimeSupport.IsDynamicCodeSupported"/> 为 true 时调用；AOT 下必须由生成器提供同一份声明。
+/// 只在 JIT 下（动态代码可用时）调用；AOT 下必须由生成器提供同一份声明。
 /// </summary>
 internal static class RequestModelDeclarationReader
 {

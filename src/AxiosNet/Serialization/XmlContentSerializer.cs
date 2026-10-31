@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
@@ -113,7 +114,7 @@ public sealed class XmlContentSerializer : IContentSerializer
     /// <summary>AOT / 裁剪下把「序列化器不工作」提前成一条可读错误，而不是运行期随机失败。</summary>
     private static void EnsureSupported()
     {
-        if (!RuntimeSupport.IsDynamicCodeSupported)
+        if (RuntimeSupport.ForceNoDynamicCode || !RuntimeFeature.IsDynamicCodeSupported)
         {
             throw new PlatformNotSupportedException(
                 "XmlContentSerializer 依赖 XmlSerializer 的运行时反射与代码生成，Native AOT 下不可用："

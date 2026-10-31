@@ -38,15 +38,9 @@ public sealed partial class ApiClient
             return (T)entry.Factory(this);
         }
 
-        // 测试钩子先短路：它会让下面的守卫退化成「普通分支」，AOT 分析器/ILC 就不再按常量折叠。
-        if (RuntimeSupport.ForceNoDynamicCode)
-        {
-            throw AxiosAotMetadataException.MissingInterface(typeof(T));
-        }
-
-        // 守卫条件必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 在 Native AOT 下把它折成常量 false，
-        // 整段 DispatchProxy 回退随之不可达、被裁掉（否则包消费方发布时会收到 BCL 内部的 IL3050）。
-        if (RuntimeFeature.IsDynamicCodeSupported)
+        // 守卫条件必须直接写 intrinsic：ILC 在 Native AOT 下把它折成常量 false，整段 DispatchProxy 回退
+        // 随之不可达、被裁掉（否则包消费方发布时会收到 BCL 内部的 IL3050）。
+        if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
             InterfaceDeclaration.EnsureValid(typeof(T));
             return ApiInterfaceProxy.Create<T>(this);
@@ -77,13 +71,8 @@ public sealed partial class ApiClient
             return entry.Factory(this);
         }
 
-        // 与泛型重载同一条守卫：测试钩子先短路，纯 intrinsic 条件交给 ILC 折叠。
-        if (RuntimeSupport.ForceNoDynamicCode)
-        {
-            throw AxiosAotMetadataException.MissingInterface(interfaceType);
-        }
-
-        if (RuntimeFeature.IsDynamicCodeSupported)
+        // 与泛型重载同一条守卫。
+        if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
             InterfaceDeclaration.EnsureValid(interfaceType);
             return ApiInterfaceProxy.Create(interfaceType, this);

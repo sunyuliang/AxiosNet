@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using AxiosNet.WebAPI.Internal.Reflection;
 using AxiosNet.WebAPI.Metadata;
@@ -35,7 +36,8 @@ internal static class QueryMap
             || dictionary is IDictionary<string, object?>
             || dictionary is IReadOnlyDictionary<string, object?>
             || TryGetAccessor(dictionary, out _)
-            || (RuntimeSupport.IsDynamicCodeSupported
+            || (!RuntimeSupport.ForceNoDynamicCode
+                && RuntimeFeature.IsDynamicCodeSupported
                 && MapTypes.GetOrAdd(dictionary.GetType(), static type => IsMapType(type)));
 
     /// <summary>
@@ -152,18 +154,19 @@ internal static class QueryMap
                     break;
                 }
 
-                if (!RuntimeSupport.IsDynamicCodeSupported)
+                // 条件里必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后，这段反射实现才不可达并被裁掉。
+                if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
                 {
-                    throw AxiosAotMetadataException.MissingMap(type);
+                    // 只实现 IReadOnlyDictionary<string,T> 的自定义字典：按 KeyValuePair 读取（反射回退）
+                    foreach (var entry in QueryMapReflection.EnumeratePairs(dictionary))
+                    {
+                        yield return entry;
+                    }
+
+                    break;
                 }
 
-                // 只实现 IReadOnlyDictionary<string,T> 的自定义字典：按 KeyValuePair 读取（反射回退）
-                foreach (var entry in QueryMapReflection.EnumeratePairs(dictionary))
-                {
-                    yield return entry;
-                }
-
-                break;
+                throw AxiosAotMetadataException.MissingMap(type);
             }
         }
     }

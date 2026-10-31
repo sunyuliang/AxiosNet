@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using AxiosNet.Internal;
 using AxiosNet.WebAPI.Internal.Reflection;
 using AxiosNet.WebAPI.Metadata;
@@ -155,12 +156,13 @@ internal sealed class RequestModelMetadata
                 return BuildCore(declaration);
             }
 
-            if (!RuntimeSupport.IsDynamicCodeSupported)
+            // 条件里必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后，这段反射实现才不可达并被裁掉。
+            if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
             {
-                return new RequestModelMetadata(requestType);
+                return BuildCore(RequestModelDeclarationReader.Read(requestType));
             }
 
-            return BuildCore(RequestModelDeclarationReader.Read(requestType));
+            return new RequestModelMetadata(requestType);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
         {

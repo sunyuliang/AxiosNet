@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Internal.Reflection;
 using AxiosNet.WebAPI.Metadata;
@@ -17,7 +18,7 @@ public sealed partial class ApiClient
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
-        Justification = "反射回退只在 RuntimeSupport.IsDynamicCodeSupported 为 true 时可达；AOT 下未注册的接口直接报告缺少元数据，不反射。"
+        Justification = "反射回退只在 JIT 下（动态代码可用时）可达；AOT 下未注册的接口直接报告缺少元数据，不反射。"
             + "PublishTrimmed（非 AOT）下需调用方 root 接口类型。")]
     [UnconditionalSuppressMessage(
         "Trimming",
@@ -61,13 +62,14 @@ public sealed partial class ApiClient
                 continue;
             }
 
-            if (!RuntimeSupport.IsDynamicCodeSupported)
+            // 守卫条件必须直接写 intrinsic：ILC 折成常量 false 后，这段反射校验才不可达并被裁掉。
+            if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
             {
-                errors.Add(AxiosAotMetadataException.MissingInterface(interfaceType).Message);
+                errors.AddRange(InterfaceDeclaration.Validate(interfaceType));
                 continue;
             }
 
-            errors.AddRange(InterfaceDeclaration.Validate(interfaceType));
+            errors.Add(AxiosAotMetadataException.MissingInterface(interfaceType).Message);
         }
 
         return errors;

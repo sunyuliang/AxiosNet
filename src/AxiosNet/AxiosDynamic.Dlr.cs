@@ -1,6 +1,7 @@
 using System.Dynamic;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet;
@@ -14,14 +15,15 @@ public sealed partial class AxiosDynamic
     DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(Expression parameter)
     {
         // DLR 需要 Expression.Compile（运行时代码生成）：Native AOT 下直接拒绝，索引 / 字典接口不受影响。
-        if (!RuntimeSupport.IsDynamicCodeSupported)
+        // 守卫条件必须直接写 intrinsic，AOT 下绑定器才整段不可达、连同表达式编译一起被裁掉。
+        if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
         {
-            throw new PlatformNotSupportedException(
-                "AxiosDynamic 的 dynamic 成员语法需要运行时代码生成，Native AOT 下不可用："
-                + "请改用 data[\"name\"] 或 data.TryGetValue(\"name\", out var value)（索引访问与 IDictionary 接口在 AOT 下可用）。");
+            return new Meta(parameter, this);
         }
 
-        return new Meta(parameter, this);
+        throw new PlatformNotSupportedException(
+            "AxiosDynamic 的 dynamic 成员语法需要运行时代码生成，Native AOT 下不可用："
+            + "请改用 data[\"name\"] 或 data.TryGetValue(\"name\", out var value)（索引访问与 IDictionary 接口在 AOT 下可用）。");
     }
 
     /// <summary>DLR 绑定用到的私有成员句柄：放在嵌套类里，只在 dynamic 语法首次绑定（JIT）时初始化。</summary>

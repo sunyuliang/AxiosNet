@@ -7,7 +7,7 @@ namespace AxiosNet.WebAPI.Internal.Reflection;
 
 /// <summary>
 /// 自定义字典的反射回退：只实现 <c>IReadOnlyDictionary&lt;string,T&gt;</c> 的字典按 <c>KeyValuePair</c> 的 Key / Value 读取。
-/// 只在 <see cref="RuntimeSupport.IsDynamicCodeSupported"/> 为 true 时可达；AOT 下由生成器或手工注册提供访问器。
+/// 只在 JIT 下（动态代码可用时）可达；AOT 下由生成器或手工注册提供访问器。
 /// </summary>
 internal static class QueryMapReflection
 {
