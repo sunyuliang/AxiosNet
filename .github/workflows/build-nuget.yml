@@ -158,10 +158,16 @@ jobs:
           set -euo pipefail
           exe="samples/AxiosNet.Aot/bin/Release/net8.0/${{ matrix.rid }}/publish/AxiosNet.Aot"
           [ -f "$exe" ] || exe="$exe.exe"
+          start="$(date +%s)"
           output="$("$exe")"
+          elapsed=$(( $(date +%s) - start ))
           printf '%s\n' "$output"
           # 示例逐项打印场景结果；少于 11 行说明有场景提前退出
           [ "$(printf '%s\n' "$output" | wc -l)" -ge 11 ]
+          # 体积预算 9 MiB（基线 8.1 MB）：超了说明又有反射依赖被拉回来，或程序集被整体 root 了
+          size="$(wc -c < "$exe")"
+          echo "体积 $((size / 1024)) KB / 启动加运行 ${elapsed} s"
+          [ "$size" -le $((9 * 1024 * 1024)) ]
 
       - name: 包消费 smoke（只引用 NuGet 包）
         # 与示例互补：示例用 ProjectReference，看不到「包内分析器是否生效」「包内 dll 的 AOT 标注是否正确」。

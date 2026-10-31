@@ -788,9 +788,9 @@ internal sealed class InterfaceMethodMetadata
         => static (client, metadata, args, cancellationToken) => metadata.SendDataAsync<T>(client, args, cancellationToken);
 
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
-        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+        Justification = "只在反射路径创建泛型调用器：Get(Type, MethodInfo) 仅由 ApiClient.Create 在 RuntimeFeature.IsDynamicCodeSupported 为 true 时调用，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateResponseInvoker(Type responseType)
         => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
             .GetMethod(nameof(CreateResponseInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
@@ -798,9 +798,9 @@ internal sealed class InterfaceMethodMetadata
             .Invoke(null, null)!;
 
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
-        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+        Justification = "只在反射路径创建泛型调用器：Get(Type, MethodInfo) 仅由 ApiClient.Create 在 RuntimeFeature.IsDynamicCodeSupported 为 true 时调用，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateDataInvoker(Type responseType)
         => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
             .GetMethod(nameof(CreateDataInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
@@ -808,9 +808,9 @@ internal sealed class InterfaceMethodMetadata
             .Invoke(null, null)!;
 
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
-        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+        Justification = "只在反射路径创建泛型调用器：Get(Type, MethodInfo) 仅由 ApiClient.Create 在 RuntimeFeature.IsDynamicCodeSupported 为 true 时调用，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateStreamInvoker(
         Type frameType,
         AxiosStreamFormat format)
@@ -842,9 +842,9 @@ internal sealed class InterfaceMethodMetadata
         => static error => Task.FromException<T>(error);
 
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
-        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+        Justification = "只在反射路径创建泛型调用器：Get(Type, MethodInfo) 仅由 ApiClient.Create 在 RuntimeFeature.IsDynamicCodeSupported 为 true 时调用，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<Exception, object> CreateResponseFault(Type responseType)
         => (Func<Exception, object>)typeof(InterfaceMethodMetadata)
             .GetMethod(nameof(CreateResponseFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!
@@ -852,9 +852,9 @@ internal sealed class InterfaceMethodMetadata
             .Invoke(null, null)!;
 
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
-        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+        Justification = "只在反射路径创建泛型调用器：Get(Type, MethodInfo) 仅由 ApiClient.Create 在 RuntimeFeature.IsDynamicCodeSupported 为 true 时调用，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<Exception, object> CreateDataFault(Type responseType)
         => (Func<Exception, object>)typeof(InterfaceMethodMetadata)
             .GetMethod(nameof(CreateDataFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!

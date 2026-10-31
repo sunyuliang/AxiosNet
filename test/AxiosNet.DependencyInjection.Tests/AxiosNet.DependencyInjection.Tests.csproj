@@ -16,6 +16,8 @@
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
     <!-- DI 容器实现（ServiceCollection / ServiceProvider）：扩展本身只依赖抽象包，测试需要容器实现 -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.0" />
+    <!-- 生成器用例直接驱动 CSharpGeneratorDriver；Roslyn 包在生成器工程里是 PrivateAssets，不会传递过来 -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.1.0" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
@@ -27,6 +29,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" />
+    <!-- 生成器只作普通引用供 CSharpGeneratorDriver 驱动：本测试项目里有大量「故意非法」的模型样例，
+         把分析器挂到本工程上会把那些用例的诊断变成编译错误。 -->
+    <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj" />
   </ItemGroup>
 
   <!-- 复用主库/WebAPI 测试的基建（编译进本程序集，internal 成员同样可见） -->

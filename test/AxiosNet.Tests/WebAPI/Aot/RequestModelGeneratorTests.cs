@@ -462,12 +462,15 @@ public sealed class RequestModelGeneratorTests
 
     private static (GeneratorDriverRunResult Result, ImmutableArray<Diagnostic> Diagnostics, Compilation Output) RunGenerator(
         string source,
-        IReadOnlyDictionary<string, string>? options = null)
+        IReadOnlyDictionary<string, string>? options = null,
+        string? assemblyName = null)
     {
         var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
         var tree = CSharpSyntaxTree.ParseText(source, parseOptions);
         var compilation = CSharpCompilation.Create(
-            "AxiosNet.GeneratorTests." + Guid.NewGuid().ToString("N"),
+            // 默认随机：用例之间互不干扰（注册表按程序集隔离）；快照用例必须给固定名——
+            // 生成的 ValidateAll 类名里带程序集名，随机名会让基线每次都不一样。
+            assemblyName ?? "AxiosNet.GeneratorTests." + Guid.NewGuid().ToString("N"),
             [tree],
             References,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
@@ -482,6 +485,100 @@ public sealed class RequestModelGeneratorTests
     }
 
     private static string UniqueNamespace() => "AxiosNet.GeneratedTests.G" + Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// 生成器快照：把一次编译产出的全部源码逐字节钉住。生成代码是对外契约（用户会读它、发布说明会引用它），
+    /// 改动就该出现在 diff 里，而不是悄悄变了没人发现。
+    /// 更新基线：<c>AXIOS_UPDATE_SNAPSHOTS=1 dotnet test --filter GeneratedSources_MatchSnapshot</c>
+    /// </summary>
+    [Fact]
+    public void GeneratedSources_MatchSnapshot()
+    {
+        var (result, diagnostics, _) = RunGenerator(
+            SnapshotModels.Replace("__NS__", "AxiosNet.SnapshotProbe"),
+            assemblyName: "AxiosNet.SnapshotProbe");
+        Assert.Empty(diagnostics);
+
+        var actual = SnapshotText(result);
+        var path = SnapshotPath();
+        if (Environment.GetEnvironmentVariable("AXIOS_UPDATE_SNAPSHOTS") == "1")
+        {
+            // CI 上禁止重写基线：否则快照用例永远通过，等于没装这道闸。
+            Assert.True(
+                string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")),
+                "CI 环境请勿用 AXIOS_UPDATE_SNAPSHOTS 重写快照基线。");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, actual);
+            return;
+        }
+
+        Assert.True(File.Exists(path), $"缺少快照基线 {path}：用 AXIOS_UPDATE_SNAPSHOTS=1 重新生成。");
+        Assert.Equal(File.ReadAllText(path).Replace("\r\n", "\n"), actual);
+    }
+
+    private static string SnapshotText(GeneratorDriverRunResult result)
+    {
+        var builder = new StringBuilder();
+        foreach (var source in result.Results.Single().GeneratedSources.OrderBy(static s => s.HintName, StringComparer.Ordinal))
+        {
+            builder.Append("//// ").Append(source.HintName).Append('\n');
+            builder.Append(source.SourceText.ToString().TrimEnd()).Append('\n').Append('\n');
+        }
+
+        // 统一成 LF：基线文件在 Windows 上会被 core.autocrlf 转成 CRLF，比对前两边都得归一，
+        // 否则用例只在「谁的换行恰好一致」时通过。
+        return builder.ToString().Replace("\r\n", "\n");
+    }
+
+    private static string SnapshotPath()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AxiosNet.sln")))
+            {
+                return Path.Combine(directory.FullName, "test", "AxiosNet.Tests", "WebAPI", "Aot", "Snapshots", "GeneratedSources.snap.txt");
+            }
+        }
+
+        throw new InvalidOperationException("找不到仓库根（AxiosNet.sln），无法定位快照基线。");
+    }
+
+    /// <summary>快照输入：一份模型 + 一个接口，覆盖路径 / 查询 / 头 / 正文与两种返回形态。</summary>
+    private const string SnapshotModels = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using AxiosNet.WebAPI;
+
+        namespace __NS__
+        {
+            public sealed class SnapshotItem
+            {
+                public string Name { get; set; } = string.Empty;
+            }
+
+            [Get("items/{id}")]
+            public sealed class SnapshotRequest : IApiRequest<SnapshotItem>
+            {
+                [Path]
+                public int Id { get; set; }
+
+                [Query("q")]
+                public string? Search { get; set; }
+
+                [Header("X-Token")]
+                public string? Token { get; set; }
+            }
+
+            public interface ISnapshotApi
+            {
+                [Get("items/{id}")]
+                Task<AxiosResponse<SnapshotItem>> GetAsync([Path] int id, CancellationToken cancellationToken);
+
+                [Post("items")]
+                Task<SnapshotItem?> CreateAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+            }
+        }
+        """;
 
     /// <summary>造 N 个互不相同的请求模型，用于验证校验入口的分批拼接。</summary>
     private static string BuildManyModels(string ns, int count)

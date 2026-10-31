@@ -7,15 +7,40 @@ namespace AxiosNet.WebAPI.Internal;
 /// 生成元数据注册表：写时复制 + <c>Volatile.Read</c>，读路径无锁、无分配。
 /// 注册只发生在模块初始化 / 启动期；注册后不再修改字典本身（替换整个实例）。
 /// 同一类型重复注册属编程错误，直接抛出（生成器与手工注册不应同时声明同一类型）。
+/// 可选冻结：<see cref="Freeze"/> 之后任何注册都抛错，把「启动后才冒出来的元数据」变成可定位的失败，
+/// 而不是运行到某次请求才出现的行为差异。
 /// </summary>
 internal static class GeneratedMetadataRegistry
 {
     private static readonly object Gate = new();
 
+    private static volatile bool _frozen;
+
     private static Dictionary<Type, RequestModelDeclaration> _requestModels = new();
     private static Dictionary<Type, InterfaceEntry> _interfaces = new();
     private static Dictionary<Type, ObjectShape> _shapes = new();
     private static Dictionary<Type, MapAccessor> _maps = new();
+
+    /// <summary>注册表是否已冻结（冻结只影响写入，读路径不变）。</summary>
+    internal static bool IsFrozen => _frozen;
+
+    /// <summary>冻结注册表：此后任何注册都抛 <see cref="InvalidOperationException"/>。可重复调用。</summary>
+    internal static void Freeze()
+    {
+        lock (Gate)
+        {
+            _frozen = true;
+        }
+    }
+
+    /// <summary>测试钩子：冻结是进程级状态，用例之间必须复位，否则后续注册会全部失败。</summary>
+    internal static void UnfreezeForTests()
+    {
+        lock (Gate)
+        {
+            _frozen = false;
+        }
+    }
 
     internal static bool TryGetRequestModel(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RequestModelDeclaration? declaration)
         => Volatile.Read(ref _requestModels).TryGetValue(type, out declaration);
@@ -40,6 +65,8 @@ internal static class GeneratedMetadataRegistry
                 throw new InvalidOperationException(
                     $"请求模型 {Describe(declaration.ModelType)} 的元数据已注册：源生成器与手工 AxiosMetadata.RegisterRequestModel 不能同时声明同一类型。");
             }
+
+            ThrowIfFrozen(declaration.ModelType, "请求模型");
 
             var next = new Dictionary<Type, RequestModelDeclaration>(current) { [declaration.ModelType] = declaration };
             Volatile.Write(ref _requestModels, next);
@@ -79,6 +106,9 @@ internal static class GeneratedMetadataRegistry
                     $"接口 {Describe(declaration.InterfaceType)} 的元数据已注册：源生成器与手工 AxiosMetadata.RegisterInterface 不能同时声明同一类型。");
             }
 
+            // 冻结只禁止真正的写入：上面的等价重复注册是空操作，放行。
+            ThrowIfFrozen(declaration.InterfaceType, "接口");
+
             var next = new Dictionary<Type, InterfaceEntry>(current)
             {
                 [declaration.InterfaceType] = new InterfaceEntry(declaration, factory)
@@ -112,6 +142,8 @@ internal static class GeneratedMetadataRegistry
                     $"类型 {Describe(shape.Type)} 的对象形状已注册：[AxiosShape] 与手工 AxiosMetadata.RegisterShape 不能同时声明同一类型。");
             }
 
+            ThrowIfFrozen(shape.Type, "对象形状");
+
             var next = new Dictionary<Type, ObjectShape>(current) { [shape.Type] = shape };
             Volatile.Write(ref _shapes, next);
 
@@ -144,6 +176,8 @@ internal static class GeneratedMetadataRegistry
                     $"类型 {Describe(accessor.Type)} 的映射访问器已注册：源生成器与手工 AxiosMetadata.RegisterMap 不能同时声明同一类型。");
             }
 
+            ThrowIfFrozen(accessor.Type, "映射访问器");
+
             var next = new Dictionary<Type, MapAccessor>(current) { [accessor.Type] = accessor };
             Volatile.Write(ref _maps, next);
 
@@ -153,6 +187,23 @@ internal static class GeneratedMetadataRegistry
     }
 
     private static string Describe(Type type) => type.FullName ?? type.Name;
+
+    /// <summary>
+    /// 冻结后拒绝写入。消息必须能自证现场：说清楚是哪个类型、哪个程序集在冻结之后才来注册——
+    /// 最常见的成因是「启动时冻结，之后才加载带生成元数据的程序集」。
+    /// </summary>
+    private static void ThrowIfFrozen(Type target, string kind)
+    {
+        if (!_frozen)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"{kind} {Describe(target)} 的元数据在注册表冻结后才注册（程序集 {target.Assembly.GetName().Name}）："
+            + "AxiosMetadata.Freeze() 之后不允许再写入元数据。"
+            + "请把 Freeze() 移到所有程序集加载与手工注册完成之后，或去掉 Freeze()——它是可选加固，不调用也完全可用。");
+    }
 }
 
 /// <summary>接口注册项：声明 + 代理工厂；方法元数据在首次创建代理时按索引构建并缓存。</summary>

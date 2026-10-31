@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2014%2F2005%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.0%25_(branch_87.4%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-2024%2F2015%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.6%25_(branch_87.2%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1724,6 +1724,8 @@ Missing metadata under AOT never silently drops fields; it throws an exception w
 
 Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, assembly scanning (`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` rely on reflection enumeration and throw `PlatformNotSupportedException` under AOT; use the generated `AxiosNet.Generated.AxiosNetValidation_<AssemblyName>.ValidateAll()`, which covers every request model and interface the generator produced metadata for in this assembly, or call `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)` by type), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only). The generated class name replaces every non-identifier character of the assembly name with `_` (`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`), and the class is emitted only when the assembly has at least one emittable model / interface. Anonymous objects as params / form values need no extra configuration: the generator bakes a sample for their structure (see "Object shapes" above).
 
+Container registration and freezing are both optional hardening. When `AxiosNet.DependencyInjection` is referenced, the generator additionally emits `AxiosNetGeneratedDependencyInjection.AddAxiosGeneratedApiInterfaces(services[, siteName])`, which registers every routed interface in the assembly as a singleton: it calls the public `AddApiInterface<T>()` one type at a time, so site-conflict detection, named sites and singleton semantics stay the same single implementation — the difference is that types are bound at compile time, so renaming an interface breaks the build instead of quietly leaving a service unregistered at runtime. To lock metadata down at the end of startup, call the hidden `AxiosMetadata.Freeze()`: any real write afterwards (a later-loaded assembly's module initializer, a manual registration) throws with the type and assembly named, while equivalent duplicate registrations stay no-ops. Not calling it changes nothing.
+
 ## Build and test
 
 ```bash
@@ -1734,13 +1736,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1951 / 1942 | `net8.0` / `net6.0` | 3893 |
-| `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **2014 / 2005** | | **4019** |
+| `AxiosNet.Tests` (core + declarative) | 1958 / 1949 | `net8.0` / `net6.0` | 3907 |
+| `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
+| **Total** | **2024 / 2015** | | **4039** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
-Line coverage **92.0%**, branch coverage **87.4%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
+Line coverage **91.6%**, branch coverage **87.2%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement — that is why both numbers are slightly lower than the previous release.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1765,6 +1767,12 @@ bash eng/aot-package-smoke.sh
 ```
 
 `eng/aot-package-smoke.sh` first asserts the nupkg carries `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` and `buildTransitive/AxiosNet.props`, then publishes and runs a throwaway project that references nothing but the package. This covers what the sample cannot: the sample uses a `ProjectReference`, so it never proves the packaged analyzer actually loads or that the packaged dll's AOT annotations hold up. The script packs under a unique version every run — NuGet will not re-extract a package whose version it already has, which would silently keep re-testing the previous build.
+
+Size and startup are part of the budget: both the sample and the package smoke assert the published binary stays at or below 9 MiB (currently 8.1 MB). Exceeding it usually means one of two things — a reflection dependency crept back in, or the assembly is being rooted wholesale again (`TrimmerRootAssembly` / the generator is not actually running). Startup plus a full run is gated at 10 s, which only catches order-of-magnitude regressions and is not a performance verdict; use `test/AxiosNet.Benchmarks` for that.
+
+The generated code has a snapshot baseline too (`test/AxiosNet.Tests/WebAPI/Aot/Snapshots/GeneratedSources.snap.txt`): any change in generator output shows up as a diff in that file — regenerate with `AXIOS_UPDATE_SNAPSHOTS=1` and review it line by line.
+
+Known cost: an interface proxy still allocates one argument array per call, because the arguments are handed to the shared binder (`IValueSource.GetValue(object target)` reads them by position); the generator bakes declarations only and never duplicates the binding logic. Truly zero-allocation would require inlining the binding plan per method, which copies the validation and binding rules N times and conflicts with the single-build-entry design, so it is not done. What the proxy layer can avoid — the per-call read-only wrapper — is now created on demand.
 
 ### Test suite organised by feature
 

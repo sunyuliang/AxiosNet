@@ -74,7 +74,7 @@ internal static class PropertyAccessor
     }
 
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
         Justification = "仅在 RuntimeFeature.IsDynamicCodeSupported 为 true 时调用；AOT 走反射回退分支。")]
     private static Func<object, object?> CreateGetter(PropertyInfo property)

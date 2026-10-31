@@ -495,4 +495,38 @@ public sealed class AllocationTests
     private sealed class JsonItem
     {
     }
+
+    /// <summary>
+    /// 接口调用的实参视图必须按需创建：每次接口调用都会 new 一个 <see cref="ApiInterfaceInvocation"/>，
+    /// 若在构造里就做 <c>Array.AsReadOnly</c>，等于每次请求白送一个只读包装（绝大多数请求没人读 Arguments）。
+    /// </summary>
+    [Fact]
+    public void InterfaceInvocation_CreatesArgumentsViewOnlyWhenRead()
+    {
+        var args = new object?[] { "alice", 30 };
+
+        // 只构造、不读 Arguments：应当只有一个对象本身（x64 上 4 个引用字段 + 对象头 = 48 B）。
+        var withoutView = AverageBytes(20_000, () => _ = new ApiInterfaceInvocation(typeof(AllocationTests), "Call", args));
+        var withView = AverageBytes(20_000, () => _ = new ApiInterfaceInvocation(typeof(AllocationTests), "Call", args).Arguments);
+
+        Assert.True(
+            withoutView < 64,
+            $"构造 ApiInterfaceInvocation 平均分配 {withoutView} B——只该有一个对象，读视图不应跟着分配。");
+
+        Assert.True(
+            withView > withoutView,
+            $"读 Arguments 应额外分配只读包装：不读 {withoutView} B / 读 {withView} B——差值消失说明视图又在构造里做了。");
+    }
+
+    [Fact]
+    public void InterfaceInvocation_ArgumentsViewIsCachedAndStable()
+    {
+        var args = new object?[] { "alice", 30 };
+        var invocation = new ApiInterfaceInvocation(typeof(AllocationTests), "Call", args);
+
+        Assert.Same(invocation.Arguments, invocation.Arguments);
+        Assert.Equal(2, invocation.Arguments.Count);
+        Assert.Same(args[0], invocation.Arguments[0]);
+        Assert.Equal(30, invocation.Arguments[1]);
+    }
 }

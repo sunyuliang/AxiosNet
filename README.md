@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2014%2F2005%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.0%25_(branch_87.4%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-2024%2F2015%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.6%25_(branch_87.2%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1722,6 +1722,8 @@ AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异�
 
 AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、程序集扫描（`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` 依赖反射枚举，AOT 下抛 `PlatformNotSupportedException`；改用生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`，它覆盖本程序集里源生成器生成过元数据的全部请求模型与接口，或按类型调用 `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT）。生成的类名把程序集名里的非标识符字符换成 `_`（`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`）；本程序集没有任何可生成的模型 / 接口时不会生成该类。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
 
+容器注册与冻结都是可选加固。引用了 `AxiosNet.DependencyInjection` 时，生成器会额外产出 `AxiosNetGeneratedDependencyInjection.AddAxiosGeneratedApiInterfaces(services[, siteName])`，把本程序集里声明过路由的接口逐个按单例注册：它逐条调用公开的 `AddApiInterface<T>()`，站点冲突 / 命名站点 / 单例语义与手写完全同一份实现，区别是类型在编译期绑定——接口改名会让它编译失败，而不是运行时少注册一个服务。启动末尾想锁死元数据可调用隐藏 API `AxiosMetadata.Freeze()`：之后任何真正写入（新程序集的模块初始化器、手工注册）都会抛错并指出类型与程序集；等价重复注册仍是空操作。不调用它完全不影响使用。
+
 ## 构建与测试
 
 ```bash
@@ -1732,13 +1734,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1951 / 1942 | `net8.0` / `net6.0` | 3893 |
-| `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **2014 / 2005** | | **4019** |
+| `AxiosNet.Tests`（核心 + 声明式） | 1958 / 1949 | `net8.0` / `net6.0` | 3907 |
+| `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
+| **合计** | **2024 / 2015** | | **4039** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
-行覆盖率 **92.0%**、分支覆盖率 **87.4%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
+行覆盖率 **91.6%**、分支覆盖率 **87.2%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内，这也是这两项比上一版略低的原因）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1763,6 +1765,12 @@ bash eng/aot-package-smoke.sh
 ```
 
 `eng/aot-package-smoke.sh` 先断言 nupkg 里带 `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` 与 `buildTransitive/AxiosNet.props`，再把包装进一个只引用它的临时项目发布运行。它补的是示例覆盖不到的一环——示例用 `ProjectReference`，看不到「包内分析器是否真的生效」和「包内 dll 的 AOT 标注是否自洽」；脚本每次用唯一版本号打包，避免 NuGet 复用全局缓存里的旧 dll（版本不变时它不会重新解包，等于一直在验证上一次的包）。
+
+体积与启动都在预算内才算过：示例与包 smoke 都断言发布产物 ≤ 9 MiB（当前 8.1 MB），超了基本只有两种原因——又引入了反射依赖把代码拉回来，或者程序集被整体 root（`TrimmerRootAssembly` / 生成器没生效）。启动 + 完整跑完用 10 s 拦网，只拦数量级退化，不当性能结论；性能对比看 `test/AxiosNet.Benchmarks`。
+
+生成代码本身也有快照基线（`test/AxiosNet.Tests/WebAPI/Aot/Snapshots/GeneratedSources.snap.txt`）：生成器输出一变，diff 就直接落在基线文件上；用 `AXIOS_UPDATE_SNAPSHOTS=1` 重生成并逐行审阅。
+
+已知代价：接口代理每次调用仍有 1 次实参数组分配——实参要交给共享绑定（`IValueSource.GetValue(object target)` 按位置取值），生成器只烘焙声明、不复刻绑定逻辑。要真做到零分配得把绑定计划按方法内联，那等于把校验与绑定规则复制成 N 份，与「单一构建入口」冲突，因此不做；代理层能省的（每次调用的只读包装）已经改成按需创建。
 
 ### 用例按功能分类
 

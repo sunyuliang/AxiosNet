@@ -218,12 +218,31 @@ if [ ! -f "$BIN" ]; then
 fi
 
 echo "== 5/5 运行发布的二进制 =="
+# 秒级即可：这条只拦「数量级」的退化（比如元数据构建被挪到请求路径上），
+# 毫秒级对比交给 test/AxiosNet.Benchmarks，这里不做性能结论。
+START="$(date +%s)"
 OUTPUT="$("$BIN")"
+ELAPSED=$(( $(date +%s) - START ))
 echo "   $OUTPUT"
+echo "   启动 + 完整跑完：${ELAPSED} s"
 case "$OUTPUT" in
     *"package-smoke ok"*) ;;
     *) echo "smoke 输出不符合预期" >&2; exit 1 ;;
 esac
 
+# 尺寸预算：以 8.1 MB 为基线，上限 9 MiB。超了基本只有两种原因——新引入了反射依赖把代码拉回来了，
+# 或者无意中 root 了整个程序集（TrimmerRootAssembly / 生成器没生效）。
 SIZE="$(wc -c < "$BIN")"
-echo "全部通过：$BIN（$((SIZE / 1024)) KB）"
+BUDGET=$((9 * 1024 * 1024))
+echo "产物体积：$((SIZE / 1024)) KB（预算 $((BUDGET / 1024)) KB）"
+if [ "$SIZE" -gt "$BUDGET" ]; then
+    echo "超出体积预算：$(($SIZE - $BUDGET)) 字节。检查是否又有 TrimmerRootAssembly，或生成器是否真的生效。" >&2
+    exit 1
+fi
+
+if [ "$ELAPSED" -gt 10 ]; then
+    echo "启动 + 运行耗时 ${ELAPSED} s，超出 10 s 拦网阈值——疑似退化。" >&2
+    exit 1
+fi
+
+echo "全部通过：$BIN（$((SIZE / 1024)) KB / ${ELAPSED} s）"
