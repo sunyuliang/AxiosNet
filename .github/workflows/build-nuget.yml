@@ -105,6 +105,69 @@ jobs:
               --logger "console;verbosity=normal"
           done
 
+  aot:
+    name: native aot (${{ matrix.rid }})
+    # AOT 的失败是平台 / 工具链相关的（链接器、系统库、ILC 版本），win 与 linux 都要跑一遍。
+    # 两个项目引用形态都覆盖：示例走 ProjectReference，包 smoke 走真正的 NuGet 引用。
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 安装 Linux AOT 依赖
+        # ILC 在 Linux 上要链原生对象：clang + zlib 头文件。runner 镜像通常自带，显式装一遍免得版本换代后挂得莫名。
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: 还原依赖
+        # 带 --runtime：publish 用 --no-restore 时，资产文件必须已经含该 RID 的运行时包，否则 NETSDK1047。
+        run: dotnet restore samples/AxiosNet.Aot/AxiosNet.Aot.csproj --runtime ${{ matrix.rid }}
+
+      - name: 发布 AOT 示例（IL2026 / IL3050 视为错误）
+        # 示例不再 root 整个程序集：能不能通过完全取决于源生成器烘焙的元数据。
+        run: >
+          dotnet publish samples/AxiosNet.Aot/AxiosNet.Aot.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --no-restore
+          -p:TrimmerSingleWarn=false
+          -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+
+      - name: 运行 AOT 示例
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="samples/AxiosNet.Aot/bin/Release/net8.0/${{ matrix.rid }}/publish/AxiosNet.Aot"
+          [ -f "$exe" ] || exe="$exe.exe"
+          output="$("$exe")"
+          printf '%s\n' "$output"
+          # 示例逐项打印场景结果；少于 11 行说明有场景提前退出
+          [ "$(printf '%s\n' "$output" | wc -l)" -ge 11 ]
+
+      - name: 包消费 smoke（只引用 NuGet 包）
+        # 与示例互补：示例用 ProjectReference，看不到「包内分析器是否生效」「包内 dll 的 AOT 标注是否正确」。
+        shell: bash
+        run: bash eng/aot-package-smoke.sh
+
   publish:
     name: pack & push
     # 只有 tag 推送才发布；普通 push / PR 由上面的 build-test 覆盖

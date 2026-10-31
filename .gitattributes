@@ -61,3 +61,9 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+###############################################################################
+# Shell scripts must keep LF on checkout: CI runs them through bash on Windows,
+# where core.autocrlf would otherwise turn "set -euo pipefail" into "pipefail\r".
+###############################################################################
+*.sh text eol=lf

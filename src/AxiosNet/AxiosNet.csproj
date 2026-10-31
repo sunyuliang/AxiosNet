@@ -2,7 +2,9 @@
 
   <PropertyGroup>
     <!-- 双目标：net6.0 是运行基线（.NET 6 / 7 消费方取 lib/net6.0），net8.0 是分析基线（.NET 8+ 取 lib/net8.0）。
-         源码同一份，只有一处 #if NET8_0_OR_GREATER：枚举取值改用按底层类型返回的重载（AOT 安全）。
+         源码同一份；NET8_0_OR_GREATER 条件编译只出现在「net6 没有该 API / 特性」的位置，共 4 处：
+         枚举取值改用按底层类型返回的重载（ReflectionCache）、System.Text.Json 的 GetTypeInfo 路径、
+         XmlSerializer 两个实现的 RequiresDynamicCode 与 IL3051 标注（net6 没有 AOT 分析器，标注无意义）。
          运行时行为不随 TFM 变化——两者都绑定到消费方运行时自带的 BCL；
          多出 net8.0 目标的实际收益是 net7+ 才可用的分析器：AOT 分析器在 net6.0 目标上被 SDK 直接拒绝（NETSDK1210）。
          不使用 netstandard：连接池依赖 SocketsHttpHandler，netstandard2.0 里没有该类型。 -->

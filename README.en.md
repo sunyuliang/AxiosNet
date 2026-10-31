@@ -1718,6 +1718,8 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
+Do not drop `JsonSerializerDefaults.Web`: a bare `new JsonSerializerOptions()` switches property names to their declared casing, so request and response fields change shape, and the `JsonSourceGenerationOptions` on your context will not put camelCase back (`AxiosJson.Options` defaults to Web).
+
 Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models and interfaces throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` APIs can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver` (anonymous types cannot be listed in `[JsonSerializable]`, so the message points at named types or params / form instead); `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
 
 Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, assembly scanning (`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` rely on reflection enumeration and throw `PlatformNotSupportedException` under AOT; use the generated `AxiosNet.Generated.AxiosNetValidation_<AssemblyName>.ValidateAll()`, which covers every request model and interface the generator produced metadata for in this assembly, or call `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)` by type), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only). The generated class name replaces every non-identifier character of the assembly name with `_` (`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`), and the class is emitted only when the assembly has at least one emittable model / interface. Anonymous objects as params / form values need no extra configuration: the generator bakes a sample for their structure (see "Object shapes" above).
@@ -1747,6 +1749,22 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 ```
 
 A plain `dotnet test` still runs everything, excluded classes included.
+
+### Native AOT verification
+
+A separate `aot` CI job (`win-x64` / `linux-x64` matrix) treats `IL2026` / `IL3050` / `IL3051` as errors, so "publish succeeded" means both trimming and AOT analysis are warning-free:
+
+```bash
+# Sample: the app no longer roots the whole assembly — passing depends entirely on generated metadata
+dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn=false \
+  -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+./samples/AxiosNet.Aot/bin/Release/net8.0/linux-x64/publish/AxiosNet.Aot
+
+# Package consumer: pack → throwaway project that only references the package → publish → run
+bash eng/aot-package-smoke.sh
+```
+
+`eng/aot-package-smoke.sh` first asserts the nupkg carries `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` and `buildTransitive/AxiosNet.props`, then publishes and runs a throwaway project that references nothing but the package. This covers what the sample cannot: the sample uses a `ProjectReference`, so it never proves the packaged analyzer actually loads or that the packaged dll's AOT annotations hold up. The script packs under a unique version every run — NuGet will not re-extract a package whose version it already has, which would silently keep re-testing the previous build.
 
 ### Test suite organised by feature
 
@@ -1840,6 +1858,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
 ├─ samples/                           # Simple (50 items) / DI / Aot
+├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/

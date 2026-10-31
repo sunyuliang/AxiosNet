@@ -1716,6 +1716,8 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
+`JsonSerializerDefaults.Web` 不能省：换成裸 `new JsonSerializerOptions()` 会把 camelCase 换成属性原名，请求 / 响应字段名跟着变，而源生成上下文里的 `JsonSourceGenerationOptions` 不会替你补回来（`AxiosJson.Options` 的默认值就是 Web）。
+
 AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型 / 接口缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`（匿名类型无法写入 `[JsonSerializable]`，消息会直接建议改用命名类型或 params / 表单）；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
 
 AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、程序集扫描（`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` 依赖反射枚举，AOT 下抛 `PlatformNotSupportedException`；改用生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`，它覆盖本程序集里源生成器生成过元数据的全部请求模型与接口，或按类型调用 `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT）。生成的类名把程序集名里的非标识符字符换成 `_`（`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`）；本程序集没有任何可生成的模型 / 接口时不会生成该类。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
@@ -1745,6 +1747,22 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 ```
 
 普通 `dotnet test` 仍然全跑（含被排除的这几类）。
+
+### Native AOT 验证
+
+CI 另有一组 `aot` 任务（`win-x64` / `linux-x64` 矩阵），把 `IL2026` / `IL3050` / `IL3051` 直接当错误，因此「发布成功」等于「裁剪与 AOT 分析都是 0 警告」：
+
+```bash
+# 示例：不再 root 整个程序集，能否通过完全取决于源生成器烘焙的元数据
+dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn=false \
+  -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+./samples/AxiosNet.Aot/bin/Release/net8.0/linux-x64/publish/AxiosNet.Aot
+
+# 包消费：pack → 只引用包的临时项目 → AOT 发布 → 运行
+bash eng/aot-package-smoke.sh
+```
+
+`eng/aot-package-smoke.sh` 先断言 nupkg 里带 `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` 与 `buildTransitive/AxiosNet.props`，再把包装进一个只引用它的临时项目发布运行。它补的是示例覆盖不到的一环——示例用 `ProjectReference`，看不到「包内分析器是否真的生效」和「包内 dll 的 AOT 标注是否自洽」；脚本每次用唯一版本号打包，避免 NuGet 复用全局缓存里的旧 dll（版本不变时它不会重新解包，等于一直在验证上一次的包）。
 
 ### 用例按功能分类
 
@@ -1838,6 +1856,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
 ├─ samples/                           # Simple（50 项）/ DI / Aot
+├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/

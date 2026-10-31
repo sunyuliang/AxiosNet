@@ -36,10 +36,12 @@ internal class ApiInterfaceProxy : DispatchProxy
     internal static T Create<T>(ApiClient client) where T : class
         => (T)Create(typeof(T), client);
 
+    // category 必须是 "AOT"（IL3050 的实际类别）；写成别的名字时 Roslyn 放行、ILC 阶段仍会重新报，
+    // 包消费方（NuGet 引用）发布时就会看到这条不属于它代码的警告。
     [UnconditionalSuppressMessage(
-        "AotAnalysis",
+        "AOT",
         "IL3050",
-        Justification = "接口级声明在 Create 时已要求 RuntimeFeature.IsDynamicCodeSupported（JIT）；Native AOT 下直接拒绝。")]
+        Justification = "DispatchProxy 依赖 Reflection.Emit：只有 ApiClient.Create 在动态代码可用（JIT）时才会调到这里，Native AOT 下不可达。")]
     internal static object Create(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         ApiClient client)
