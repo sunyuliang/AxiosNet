@@ -155,7 +155,70 @@ public sealed class ConnectionPoolOptions
     /// 自定义 Handler 工厂：每个 origin 节点创建时调用一次（节点被驱逐 / 重建后会再次调用），
     /// 必须返回非 null 的独立实例，由池负责释放。
     /// </summary>
+    /// <remarks>命名传输档可以在 <see cref="ConnectionTransportOptions.HandlerFactory"/> 上覆盖它。</remarks>
     public Func<PooledHandlerContext, HttpMessageHandler>? HandlerFactory { get; set; }
+
+    /// <summary>命名传输档：档名 → 出口设置。默认（空档）用本类上的 Proxy / Credentials / TLS 等字段。</summary>
+    private Dictionary<string, ConnectionTransportOptions>? _transports;
+
+    /// <summary>
+    /// 已登记的命名传输档（只读视图；档名区分大小写）。默认档不在其中 —— 它的设置就是本类上的那些字段。
+    /// </summary>
+    public IReadOnlyDictionary<string, ConnectionTransportOptions> Transports
+        => _transports ?? EmptyTransports;
+
+    // 包一层只读集合：直接交出可变字典会被强转回 Dictionary 改内容。
+    private static readonly IReadOnlyDictionary<string, ConnectionTransportOptions> EmptyTransports =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, ConnectionTransportOptions>(
+            new Dictionary<string, ConnectionTransportOptions>(StringComparer.Ordinal));
+
+    /// <summary>
+    /// 登记一条命名传输档：同一个池里可以并存多条出口（不同代理 / 不同客户端证书 / 不同 Cookie 会话），
+    /// 由 <see cref="AxiosConfig.ConnectionSettings.Transport"/> 按请求选择。
+    /// </summary>
+    /// <param name="name">档名（区分大小写，不能为空或空白；空串保留给默认档）。</param>
+    /// <param name="transport">该档的出口设置（保存副本，之后改传入的对象不影响已登记的档）。</param>
+    /// <returns>本实例，便于链式登记。</returns>
+    /// <exception cref="ArgumentException">档名为空 / 空白，或同名档已登记。</exception>
+    public ConnectionPoolOptions AddTransport(string name, ConnectionTransportOptions transport)
+    {
+        ArgumentNullException.ThrowIfNull(transport);
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("传输档名不能为空或空白（默认档请直接改 ConnectionPoolOptions 上的字段）。", nameof(name));
+        }
+
+        _transports ??= new Dictionary<string, ConnectionTransportOptions>(StringComparer.Ordinal);
+
+        if (!_transports.TryAdd(name, transport.Clone()))
+        {
+            throw new ArgumentException($"传输档 '{name}' 已登记：同一个池上不允许同名档（要改配置请在 AddTransport 之前改）。", nameof(name));
+        }
+
+        return this;
+    }
+
+    /// <summary>按档名取设置；<c>null</c> / 空串返回 <c>null</c>（默认档），未登记的名字同样返回 <c>null</c>（由池在租用时报错）。</summary>
+    internal ConnectionTransportOptions? FindTransport(string? name)
+        => string.IsNullOrEmpty(name) || _transports is null || !_transports.TryGetValue(name, out var transport)
+            ? null
+            : transport;
+
+    /// <summary>
+    /// 把本类上的出口字段投影成默认档：池内部用它统一「默认档」与「命名档」的处理路径。
+    /// </summary>
+    internal ConnectionTransportOptions ProjectDefaultTransport() => new()
+    {
+        Proxy = Proxy,
+        Credentials = Credentials,
+        ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
+        EnabledSslProtocols = EnabledSslProtocols,
+        ConfigureSslOptions = ConfigureSslOptions,
+        ConnectCallback = ConnectCallback,
+        HandlerFactory = HandlerFactory,
+        UseCookies = UseCookies
+    };
 
     /// <summary>
     /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本）。
@@ -189,6 +252,24 @@ public sealed class ConnectionPoolOptions
         ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
         EnabledSslProtocols = EnabledSslProtocols,
         ConfigureSslOptions = ConfigureSslOptions,
-        HandlerFactory = HandlerFactory
+        HandlerFactory = HandlerFactory,
+        _transports = CloneTransports(_transports)
     };
+
+    private static Dictionary<string, ConnectionTransportOptions>? CloneTransports(
+        Dictionary<string, ConnectionTransportOptions>? source)
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        var copy = new Dictionary<string, ConnectionTransportOptions>(source.Count, StringComparer.Ordinal);
+        foreach (var pair in source)
+        {
+            copy[pair.Key] = pair.Value.Clone();
+        }
+
+        return copy;
+    }
 }

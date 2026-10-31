@@ -8,11 +8,11 @@ namespace AxiosNet.Pipeline;
 
 /// <summary>
 /// 内置尝试中间件的具名入口：<see cref="Retry"/> → <see cref="Failover"/> → <see cref="Circuit"/> →
-/// <see cref="Hedging"/> → <see cref="Gate"/>（顺序即默认链序），另有可选的 <see cref="Audit"/>。
+/// <see cref="Hedging"/> → <see cref="Gate"/> → <see cref="Audit"/>（顺序即默认链序）。
 /// </summary>
 /// <remarks>
-/// 前五项恒在链上，要摘掉得显式 <see cref="AxiosAttemptPipeline.Remove"/> 或整体 <see cref="AxiosAttemptPipeline.Create"/>；
-/// <see cref="Audit"/> 是可选内置项，要显式 <c>Append</c> 才生效。
+/// 六项恒在默认链上，要摘掉得显式 <see cref="AxiosAttemptPipeline.Remove"/> 或整体 <see cref="AxiosAttemptPipeline.Create"/>；
+/// <see cref="Audit"/> 未订阅 <c>AxiosNet.Attempt</c> 事件时只做一次开关判定，不建状态机。
 /// 是否真的干活由中间件按本次请求的生效配置决定（没配策略 / 端点 / 分支数就交给下一环）。
 /// </remarks>
 public static partial class Attempt

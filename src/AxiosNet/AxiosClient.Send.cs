@@ -272,9 +272,17 @@ public sealed partial class AxiosClient
         AxiosAttemptContext ctx,
         AttemptBudget budget)
     {
-        // 注入 Handler：固定 HttpClient，没有租约要归还。
+        // 注入 Handler：固定 HttpClient，没有租约要归还。传输档属于连接层的选择，Handler 模式下无从生效。
         if (_customClient is { } custom)
         {
+            if (!string.IsNullOrEmpty(ctx.Config.TransportOrNull))
+            {
+                throw AxiosException.InvalidOption(
+                    $"注入自定义 Handler 时不走连接池，Connection.Transport（'{ctx.Config.TransportOrNull}'）无法生效："
+                    + "需要多出口请改用 ConnectionPoolOptions.AddTransport 配合池，或在 Handler 自己里选路。",
+                    ctx.Config);
+            }
+
             return (custom, null);
         }
 

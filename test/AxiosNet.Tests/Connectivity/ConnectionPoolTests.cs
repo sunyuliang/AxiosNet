@@ -482,7 +482,7 @@ public sealed class ConnectionPoolTests
         var configured = TimeSpan.FromMinutes(10);
         var options = new ConnectionPoolOptions { PooledConnectionLifetime = configured };
 
-        using var handler = DefaultHandlerFactory.Create(options);
+        using var handler = DefaultHandlerFactory.Create(options, options.ProjectDefaultTransport());
 
         Assert.InRange(handler.PooledConnectionLifetime, TimeSpan.FromMinutes(9), TimeSpan.FromMinutes(11));
 

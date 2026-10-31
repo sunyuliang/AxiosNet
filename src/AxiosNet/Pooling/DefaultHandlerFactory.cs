@@ -4,13 +4,21 @@ using System.Security.Authentication;
 
 namespace AxiosNet.Pooling;
 
-/// <summary>按 <see cref="ConnectionPoolOptions"/> 构建库默认的 <see cref="SocketsHttpHandler"/>。</summary>
+/// <summary>按 <see cref="ConnectionPoolOptions"/> 与一条传输档构建库默认的 <see cref="SocketsHttpHandler"/>。</summary>
 internal static class DefaultHandlerFactory
 {
-    /// <summary>按选项构建一个 <see cref="SocketsHttpHandler"/>；需要 Cookie 但未给容器时新建一个。</summary>
+    /// <summary>
+    /// 按选项构建一个 <see cref="SocketsHttpHandler"/>；需要 Cookie 但未给容器时新建一个。
+    /// 池级策略（连接数、生命周期、压缩、重定向、HTTP/2、ping）取 <paramref name="o"/>，
+    /// 出口设置（代理、凭据、TLS、建连回调）取 <paramref name="transport"/>。
+    /// </summary>
     /// <param name="o">池选项。</param>
-    /// <param name="cookieContainer">池共享的 Cookie 容器（<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空）。</param>
-    public static SocketsHttpHandler Create(ConnectionPoolOptions o, CookieContainer? cookieContainer = null)
+    /// <param name="transport">本次节点所属传输档（默认档由池从池选项投影得到）。</param>
+    /// <param name="cookieContainer">该档该 origin 的 Cookie 容器（档打开 <see cref="ConnectionTransportOptions.UseCookies"/> 时非空）。</param>
+    public static SocketsHttpHandler Create(
+        ConnectionPoolOptions o,
+        ConnectionTransportOptions transport,
+        CookieContainer? cookieContainer = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -18,7 +26,7 @@ internal static class DefaultHandlerFactory
             PooledConnectionLifetime = JitterLifetime(o.PooledConnectionLifetime),
             PooledConnectionIdleTimeout = o.PooledConnectionIdleTimeout,
             ConnectTimeout = o.ConnectTimeout,
-            ConnectCallback = o.ConnectCallback,
+            ConnectCallback = transport.ConnectCallback,
             MaxResponseHeadersLength = o.MaxResponseHeadersLength,
             AllowAutoRedirect = o.AllowAutoRedirect,
             MaxAutomaticRedirections = o.MaxAutomaticRedirections,
@@ -33,29 +41,29 @@ internal static class DefaultHandlerFactory
             KeepAlivePingDelay = o.KeepAlivePingDelay,
             KeepAlivePingTimeout = o.KeepAlivePingTimeout,
             KeepAlivePingPolicy = o.KeepAlivePingPolicy,
-            UseCookies = o.UseCookies,
-            UseProxy = o.Proxy is not null,
-            Proxy = o.Proxy,
-            Credentials = o.Credentials
+            UseCookies = transport.UseCookies,
+            UseProxy = transport.Proxy is not null,
+            Proxy = transport.Proxy,
+            Credentials = transport.Credentials
         };
 
-        if (o.UseCookies)
+        if (transport.UseCookies)
         {
             handler.CookieContainer = cookieContainer ?? new CookieContainer();
         }
 
-        if (o.ServerCertificateCustomValidationCallback is not null
-            || o.EnabledSslProtocols is not null
-            || o.ConfigureSslOptions is not null)
+        if (transport.ServerCertificateCustomValidationCallback is not null
+            || transport.EnabledSslProtocols is not null
+            || transport.ConfigureSslOptions is not null)
         {
             handler.SslOptions = new SslClientAuthenticationOptions
             {
-                RemoteCertificateValidationCallback = o.ServerCertificateCustomValidationCallback,
-                EnabledSslProtocols = o.EnabledSslProtocols ?? SslProtocols.None
+                RemoteCertificateValidationCallback = transport.ServerCertificateCustomValidationCallback,
+                EnabledSslProtocols = transport.EnabledSslProtocols ?? SslProtocols.None
             };
 
-            // 扩展入口放最后：回调内的赋值是最终值
-            o.ConfigureSslOptions?.Invoke(handler.SslOptions);
+            // 扩展入口放最后：回调内的赋值是最终值（客户端证书也在这里挂）。
+            transport.ConfigureSslOptions?.Invoke(handler.SslOptions);
         }
 
         return handler;

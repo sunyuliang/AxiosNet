@@ -1,5 +1,6 @@
 ﻿using AxiosNet.Circuit;
 using AxiosNet.Internal;
+using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 using AxiosNet.Retry;
 
@@ -279,6 +280,24 @@ public sealed partial class AxiosClient
             }
         }
 
+        // 备用端点健康记忆的取值范围。
+        if (config.FailoverOrNull is { } failoverHealth)
+        {
+            if (failoverHealth.FailureThreshold < 0)
+            {
+                throw AxiosException.InvalidOption(
+                    $"备用端点健康阈值 Failover.FailureThreshold 不能为负（当前 {failoverHealth.FailureThreshold}）："
+                    + "0 表示关闭健康记忆，不记忆请设为 0 或把 Cooldown 设为 TimeSpan.Zero。", config);
+            }
+
+            if (failoverHealth.Cooldown < TimeSpan.Zero || failoverHealth.MaxCooldown < TimeSpan.Zero)
+            {
+                throw AxiosException.InvalidOption(
+                    $"备用端点冷却时长不能为负（Cooldown = {failoverHealth.Cooldown}，MaxCooldown = {failoverHealth.MaxCooldown}）："
+                    + "关闭健康记忆请把 Cooldown 设为 TimeSpan.Zero。", config);
+            }
+        }
+
         // 熔断策略的取值范围。
         if (config.CircuitOrNull?.Policy is CircuitBreaker breaker)
         {
@@ -360,6 +379,29 @@ public sealed partial class AxiosClient
                     config);
             }
         }
+    }
+
+    /// <summary>
+    /// 解析本实例的备用端点健康表：只有「配有端点 + 健康记忆开启」时才需要，
+    /// 首次用到时创建（CAS 保证并发下只有一份，避免各请求各记一套）。
+    /// </summary>
+    private FailoverHealth? ResolveFailoverHealth(AxiosConfig config)
+    {
+        if (config.FailoverOrNull is not { Endpoints.Count: > 0 } failover
+            || failover.FailureThreshold <= 0
+            || failover.Cooldown <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        var existing = Volatile.Read(ref _failoverHealth);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var created = new FailoverHealth();
+        return Interlocked.CompareExchange(ref _failoverHealth, created, null) ?? created;
     }
 
     /// <summary>解析（必要时懒创建）本实例的并发闸门：容量在创建时固定，本次生效上限与已建闸门不一致就报错；本次没要求上限时沿用已有闸门（没有则不建），排队上限只有显式写过（*Set）才参与比较。</summary>
@@ -489,7 +531,9 @@ public sealed partial class AxiosClient
         }
 
         var requestedValue = config.ConnectionOrNull?.WithCredentials ?? false;
-        var effective = _pool!.EffectiveOptions.UseCookies;
+
+        // 生效值按本次请求选中的传输档判：每个档各有自己的 Cookie 容器（命名档不继承默认档的 WithCredentials）。
+        var effective = _pool!.GetCookies(config.TransportOrNull) is not null;
 
         if (requestedValue == effective)
         {

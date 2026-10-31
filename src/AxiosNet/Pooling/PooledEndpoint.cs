@@ -56,12 +56,13 @@ internal sealed class PooledEndpoint : IDisposable
         HttpConnectionPool owner,
         OriginKey key,
         ConnectionPoolOptions options,
+        ConnectionTransportOptions transport,
         CookieContainer? cookieContainer)
     {
         _owner = owner;
         Key = key;
         Origin = key.ToString();
-        Handler = CreateHandler(Origin, options, cookieContainer);
+        Handler = CreateHandler(Origin, key, options, transport, cookieContainer);
         Client = new HttpClient(Handler, disposeHandler: false)
         {
             // 超时由 AxiosClient 按请求统一控制。
@@ -71,21 +72,33 @@ internal sealed class PooledEndpoint : IDisposable
 
     private static HttpMessageHandler CreateHandler(
         string origin,
+        OriginKey key,
         ConnectionPoolOptions options,
+        ConnectionTransportOptions transport,
         CookieContainer? cookieContainer)
     {
-        if (options.HandlerFactory is null)
+        // 命名档的工厂优先：同一条池里不同出口可以各自接管传输层。
+        var factory = transport.HandlerFactory ?? options.HandlerFactory;
+        if (factory is null)
         {
-            return DefaultHandlerFactory.Create(options, cookieContainer);
+            return DefaultHandlerFactory.Create(options, transport, cookieContainer);
         }
 
         // 传副本而不是池持有的 options：工厂改了它也不能回流到池。
-        var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options.Clone(), cookieContainer);
-        var handler = options.HandlerFactory(context);
+        var context = new PooledHandlerContext(
+            origin,
+            new Uri(key.BaseAddress + "/"),
+            key.Profile,
+            options.Clone(),
+            transport.Clone(),
+            cookieContainer);
+
+        var handler = factory(context);
 
         if (handler is null)
         {
-            throw new InvalidOperationException($"ConnectionPoolOptions.HandlerFactory 对 origin '{origin}' 返回了 null，必须返回一个可用的 HttpMessageHandler。");
+            throw new InvalidOperationException(
+                $"HandlerFactory 对 '{origin}' 返回了 null，必须返回一个可用的 HttpMessageHandler。");
         }
 
         return handler;

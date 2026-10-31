@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2039%2F2032%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-2057%2F2050%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -30,7 +30,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Requests and responses | [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) · [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience and governance | [Retries](#retries) · [Global retry budget](#global-retry-budget-retrybudgetpolicy) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
-| Transport and observability | [Connection pool](#connection-pool) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
+| Transport and observability | [Connection pool](#connection-pool) · [Transport profiles](#transport-profiles) · [HTTP versions](#http-versions) · [Custom handlers](#custom-handlers) · [Observability](#observability) |
 | Engineering | [Dependency injection](#dependency-injection) · [Configuration reference](#configuration-reference) · [axios comparison](#axios-comparison) · [Samples](#samples) · [Runtime and AOT](#runtime-and-aot) · [Build and test](#build-and-test) · [Benchmarks](#benchmarks) · [Project layout](#project-layout) · [License](#license) |
 
 Pick your entry point:
@@ -254,7 +254,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [Retries](#retries) | Exponential backoff / jitter / `Retry-After` / idempotency gate / global retry budget | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | [Circuit breaker](#circuit-breaker) | Per-host Closed/Open/HalfOpen state machine: rolling-window failure rate plus a consecutive-failure rule, with slow-start recovery | `c.Circuit.Policy = new CircuitBreaker()` |
 | [Concurrent hedging](#concurrent-hedging) | Fire several copies of one request, first success wins | `c.Hedging.MaxHedges = 1` |
-| [Backup endpoints](#backup-endpoints) | Resend against a mirror when the current endpoint is unusable | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
+| [Backup endpoints](#backup-endpoints) | Resend against a mirror when the current endpoint is unusable; failing endpoints cool down across requests so a dead primary is not hit first on every request | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | [Idempotency keys](#idempotency-keys) | One key per logical request, shared by retries / endpoints / hedges | `c.Idempotency.Enabled = true` |
 | [Attempt pipeline](#attempt-pipeline) | One attempt = a composable middleware chain, pluggable and reorderable | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | [Short circuit](#short-circuit) | Deliver a response without sending (cache / mock / replay) | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
@@ -1031,7 +1031,7 @@ The first send goes out immediately; every `Delay` another branch follows. **The
 
 ## Backup endpoints
 
-When the current endpoint is unusable, resend the same request against the next one; order is priority:
+When the current endpoint is unusable, resend the same request against the next one; order is priority (cooling endpoints move to the end):
 
 ```csharp
 var client = Axios.Create(c => c.Failover.Endpoints = new[]
@@ -1057,7 +1057,8 @@ An endpoint supplies the **origin and path prefix**; the request's own path and 
 | Config / programming errors, cancellation | No |
 
 - **An exhausted budget does not fail over**: it is the same boundary as [the circuit breaker's failure rules](#circuit-breaker) — when `TotalTimeout` runs out before the send, another endpoint cannot extend it and would only walk the whole pipeline once more (burning a breaker decision and a gate entry, then failing again at the exact same place). Timeouts **after** the request was sent still fail over: that is a downstream that might be replaced by a working one.
-- **Every retry restarts from the first endpoint**: the endpoint list lives inside retries, so one round must exhaust all endpoints before the first failure reaches the retry layer.
+- **Endpoint health is remembered across requests**: an endpoint that fails `FailureThreshold` times in a row (default 2) cools down (`Cooldown`, default 30s, doubling per extra failure up to `MaxCooldown` 5 min). While cooling it is no longer the first hop, so a dead primary is not paid for on every request. Only failures that another downstream could fix count (same list as above); 4xx / cancellation / config errors neither add nor subtract. When the cooldown expires it rejoins automatically, and **when every endpoint is cooling they are still tried in the original order** — the table only decides the order, it never blocks a request. Set `FailureThreshold = 0` or `Cooldown = TimeSpan.Zero` to turn it off.
+- **Every retry walks the endpoint order again**: the endpoint list lives inside retries, so one round must exhaust all endpoints before the first failure reaches the retry layer; health only changes the order within that round, never the "all must be tried" rule.
 - **Failing over recomputes `Host`**: a `Host` header the caller set explicitly is dropped on retarget and recomputed from the destination — keeping it would make the mirror route by the primary's virtual host (`HttpClient` honours `Headers.Host`, which wins over the URI authority). For a per-endpoint `Host`, write an attempt middleware that sets it from `ctx.Uri` (`config.Headers` is only applied to the template).
 - **Endpoints must be unique**: two endpoints that resolve to the same base URL (a trailing slash makes no difference) throw `ERR_BAD_OPTION_VALUE` before anything is sent — it would only hit one address twice with the same request.
 - **An endpoint that resolves to the current URL is skipped**: when it shares the request's origin and carries **no path prefix** (typically a bare `https://backup.example.com`), failing over would just resend in place, so it is skipped and the next endpoint is tried.
@@ -1091,12 +1092,12 @@ await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a"
 
 ## Attempt pipeline
 
-One attempt (a single send) is modelled as a composable middleware chain. The default chain is **retry → failover → circuit breaker → hedging → gate → send**, so a per-attempt capability (observation, auditing) is one middleware away instead of another branch inside the client.
+One attempt (a single send) is modelled as a composable middleware chain. The default chain is **retry → failover → circuit breaker → hedging → gate → audit → send**, so a per-attempt capability is one middleware away instead of another branch inside the client.
 
 ```csharp
 using AxiosNet.Pipeline;
 
-// A per-attempt probe: Append lands innermost (after the gate, before the send),
+// A per-attempt probe: Append lands innermost (after the audit, before the send),
 // so it runs N+1 times when the request is retried N times.
 var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
 {
@@ -1117,6 +1118,7 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 - **`AxiosAttemptContext` is a read-only struct**: `Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`, derivable only through `WithXxx`. It is a struct, not a class, because the chain is compiled once at construction (zero allocation per attempt) and concurrent middleware need to copy the context per branch.
 - **Two independent counters**: retries advance `AttemptNumber`, failover advances `EndpointIndex` (`0` = the request's own URL). Failover does not advance the attempt number, so one attempt number can carry several attempt events.
 - **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through. That is what lets the chain be frozen at construction instead of rebuilt per request.
+- **Auditing is on by default**: `Attempt.Audit` is the sixth link (after the gate, before the terminal), so subscribing to `AxiosNet.Attempt` gives you every attempt's duration / status / error code; with no subscriber it only evaluates the switch and builds no state machine. It is already on the chain — `Append(Attempt.Audit)` is rejected as a duplicate built-in.
 - **Order is the contract**: retry sits outermost, so failover, the breaker, hedging and the gate run again on every attempt; failover sits outside the breaker, so each endpoint gets its own breaker accounting; the breaker sits outside hedging, so a whole branch group records once; the breaker sits before the gate, so a rejected request never occupies a slot.
 - **Reorder and remove**: `AxiosAttemptPipeline.Create(...)` lists the whole chain explicitly (first = outermost); `Remove(Attempt.Gate)` drops one. The pipeline is immutable — every edit returns a new instance. Duplicating a built-in throws.
 - **There is no "put it outermost" API**: that position runs once per request and is exactly what response interceptors already do. `InsertBefore(Attempt.Retry, ...)` refuses explicitly and points at `client.Interceptors.Response`, which additionally offers `OnRejected`, runtime add/remove, and short-circuit coverage.
@@ -1349,7 +1351,7 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan` (off) / 20 s | h2 keep-alive ping interval and ACK timeout; off by default to match `SocketsHttpHandler`, set a positive value to enable. No effect on h1 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | When to ping: `WithActiveRequests` / `Always` (keeps idle connections alive) |
 | `MaxEndpointCount` | 1024 | Origin node cap; evicts the least recently used idle node; if all are in use, creating a new node throws `ERR_POOL_EXHAUSTED` (request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry) |
-| `UseCookies` | `false` | When on, the whole pool shares one `CookieContainer`, readable/writable via `pool.Cookies` (`null` when off); use `pool.ClearCookies()` to log out |
+| `UseCookies` | `false` | The default profile gets one `CookieContainer`, readable/writable via `pool.Cookies` (`null` when off); log out with `pool.ClearCookies()`. Named transport profiles each get their own, see [Transport profiles](#transport-profiles) |
 | `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` | `300` / `20` / `4096` | Cookie container limits (total / per domain / per cookie size); overflow evicts the oldest and oversized cookies are dropped — only active when `UseCookies` is on |
 | `Proxy` / `Credentials` | `null` | With no proxy set, system / env proxies are **not** used; set `HttpClient.DefaultProxy` if you want them |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | Certificate validation, TLS versions, client certificates |
@@ -1359,11 +1361,54 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 - How fast DNS changes converge is governed by `PooledConnectionLifetime`; for custom connects (UDS / in-process transport / custom DNS) set `ConnectionPoolOptions.ConnectCallback` directly.
 - `ConnectCallback` and `MaxResponseHeadersLength` apply to the library's default handler only: building the inner handler with `ctx.CreateDefaultHandler()` inside a `HandlerFactory` carries them over; a fully hand-built handler must map them itself.
 - **h2 keep-alive**: a ping every 30s by default (only while requests are in flight). It targets *silent* connection reaping — AWS ALB drops idle connections after 60s, NAT tables after 30–120s, and the client believes the connection is still pooled; the next request hits a closed one, costing either a fresh TLS handshake or a `GOAWAY` / stream reset on h2 (seen as sporadic `ERR_NETWORK`). The cost is a 17-byte frame; for low-frequency, high-value calls (webhooks, scheduled jobs) prefer `Always`. Note that `SocketsHttpHandler` defaults to **no** pings while this library enables them: behind a proxy or middlebox that does not answer `PING`, connections get torn down and re-established (more `ERR_NETWORK`), so turn it off there with `Timeout.InfiniteTimeSpan`.
-- **`UseCookies` is pool-wide and not identity-scoped**: the whole pool shares one `CookieContainer`, isolated by domain / path only. Multi-tenant processes, crawlers or anything switching identities will leak cookies across them — build one pool per tenant, or manage the `Cookie` header yourself. The container is directly accessible via `pool.Cookies` (thread-safe) for seeding cookies at startup or diagnosing why a cookie was not sent; log out with `pool.ClearCookies()` (`CookieContainer` has no delete API, so this swaps in an empty container and retires existing origin endpoints, which rebuilds connections on the next request; in-flight requests are not interrupted and may still carry the old cookie). With the container enabled, a request-level `Cookie` header is **merged** with container contents and cannot override a same-named cookie; neither `Clear()` nor `Dispose()` empties the container. On a named shared pool, `ClearCookies()` affects every client sharing that pool; container limits default to 300 total / 20 per domain / 4096 bytes per cookie, overflowing entries are silently evicted oldest-first — tune with `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize`.
+- **`UseCookies` is scoped by domain / path only, not by identity**: the default profile has one container and each named transport profile has its own (see [Transport profiles](#transport-profiles)). Multi-tenant processes, crawlers or anything switching identities should give each identity a profile, otherwise they leak cookies across each other. The container is directly accessible via `pool.Cookies` / `pool.GetCookies("profile")` (thread-safe) for seeding cookies at startup or diagnosing why a cookie was not sent; log out with `pool.ClearCookies()` (`CookieContainer` has no delete API, so this swaps in empty containers for **all profiles** and retires existing origin endpoints, which rebuilds connections on the next request; in-flight requests are not interrupted and may still carry the old cookie). With the container enabled, a request-level `Cookie` header is **merged** with container contents and cannot override a same-named cookie; neither `Clear()` nor `Dispose()` empties the container. On a named shared pool, `ClearCookies()` affects every client sharing that pool; container limits default to 300 total / 20 per domain / 4096 bytes per cookie, overflowing entries are silently evicted oldest-first — tune with `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize`.
 - **Trailers are not read today**: chunked trailing headers (checksums, quotas) stay on `HttpResponseMessage.TrailingHeaders` and are not exposed on `AxiosResponse`. Wrap the handler with `HandlerFactory` to read them after the body, or inject a custom handler.
-- **The proxy is pool-level; one origin cannot have two proxies**: `Proxy` lives on the handler instance, so setting it per request throws `ERR_BAD_OPTION_VALUE`. For several egress IPs build one pool per proxy (`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`) and do not share clients across egresses — the isolation unit is the pool, not the request.
+- **Proxy / credentials are a single pool-level set by default**: `Proxy` lives on the handler instance, so changing it per request throws `ERR_BAD_OPTION_VALUE`. For several egress IPs or per-tenant sessions, attach several egresses to one pool with [transport profiles](#transport-profiles) instead of building a pool per egress.
 - **Named shared pools** (usage 4) cover "several clients want to reuse connections without passing a pool object around". The key is supplied by the caller — there is **no options fingerprint**: reference members such as `HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / the certificate callbacks have no reliable structural equality, so two "identical looking" configurations throw instead of silently sharing one pool. Three rules: the same name returns the same pool; `options` only apply on first creation (passing a **different** configuration later throws `ERR_BAD_OPTION_VALUE` rather than being silently ignored); pools in the registry are owned by nobody — disposing a client does not close them, `Release(key)` does.
 - To see whether pools are being built too often, watch `axiosnet.client.pool.active_pools` (live pools) and `.shared_pools` (named registry entries).
+
+### Transport profiles
+
+Attach several egresses (proxy / credentials / client certificate / cookie session) to one pool and let each request pick one:
+
+```csharp
+using AxiosNet.Pooling;
+
+// Default profile: the Proxy / Credentials / TLS fields on ConnectionPoolOptions
+var pool = new HttpConnectionPool(new ConnectionPoolOptions
+{
+    MaxConnectionsPerServer = 64
+})
+.AddTransport("egress-a", new ConnectionTransportOptions
+{
+    Proxy = proxyA,
+    UseCookies = true                                  // this profile's own cookie session
+})
+.AddTransport("egress-b", new ConnectionTransportOptions
+{
+    Proxy = proxyB,
+    ConfigureSslOptions = ssl => ssl.ClientCertificates = tenantBCerts   // this profile's own mTLS certificate
+});
+
+using var client = new AxiosClient(pool: pool);
+
+await client.GetAsync("orders", c => c.Connection.Transport = "egress-a");
+await client.GetAsync("orders", c => c.Connection.Transport = "egress-b");   // same origin, other egress
+
+// Or pin it on the instance defaults; a single request can go back with null
+using var tenantClient = new AxiosClient(
+    new AxiosConfig { BaseAddress = "https://api.example.com/", Connection = { Transport = "egress-a" } },
+    pool: pool);
+```
+
+- **A profile does not inherit the default profile's transport fields**: `Proxy` / `Credentials` / certificate callbacks / `ConnectCallback` / `HandlerFactory` / `UseCookies` are one set. To keep using the default proxy on a named profile, assign the same `IWebProxy` instance to it (shared by reference, zero cost).
+- **Pool-level policy is not split per profile**: connection limit, connection lifetime, idle eviction, decompression, redirects, HTTP/2 and pings still come from `ConnectionPoolOptions` — they describe *how to use a connection*, not *where it comes from*. The limit itself applies **per handler**, and each profile gets its own handler, so N profiles can reach `N × MaxConnectionsPerServer` connections in total (split the budget yourself if you need one shared ceiling).
+- **One node per profile per origin**: its own handler, its own TCP connections, its own cookie container (`pool.GetCookies("name")`). So `MaxEndpointCount` counts **origin × profile**, and `GetStatistics().Endpoints[i].Transport` tells you which node belongs to which profile.
+- **An unregistered profile fails loudly**: `c.Connection.Transport = "missing"` throws `ERR_BAD_OPTION_VALUE` before anything is sent (the message lists registered profiles). Silently falling back to the default profile would turn "I thought this went through the dedicated line" into a security incident.
+- **Profiles are inert with an injected handler**: that path has no pool, so a non-empty profile name also throws `ERR_BAD_OPTION_VALUE`; use a pool with `AddTransport`, or route inside your own handler.
+- **A profile's own `HandlerFactory` wins over the pool-level one**: the factory sees `ctx.Profile` / `ctx.Transport` and can return a different transport per profile; `ctx.CreateDefaultHandler()` automatically carries that profile's egress settings.
+- **Named shared pools compare the profile table**: a second `GetOrCreate` on the same key with a different name set or different reference members throws `ERR_BAD_OPTION_VALUE` (same rule as the other options).
+- Metrics are not tagged by profile (`pool.*` stays low-cardinality): use the span's `server.address` / the endpoint index in attempt events, or `GetStatistics()`.
 
 ### HTTP versions
 
@@ -1453,7 +1498,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.pool.endpoint.reused` | Whether an existing origin node was reused (`false` = created on the fly, usually slower) |
 | `axiosnet.cache.revalidated` | This response was merged from a conditional request's 304 (the body comes from the cache) |
 
-- 4xx / 5xx are marked `Error` even when accepted by `validateStatus`; failures also record an `exception` event; every retry decision adds a `retry` event (with `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`, plus `server.address` / `server.port` — the same logical address as the span and metrics; the event carries it so event-only consumers do not have to join back to span tags. The host a failover endpoint or hedge branch actually connected to is not in these tags; look at that branch's attempt event — add `Attempt.Audit` to the pipeline for those). A failure that did receive a response (4xx / 5xx) still records `http.response.status_code` / `network.protocol.version` / `http.response.body.size`.
+- 4xx / 5xx are marked `Error` even when accepted by `validateStatus`; failures also record an `exception` event; every retry decision adds a `retry` event (with `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`, plus `server.address` / `server.port` — the same logical address as the span and metrics; the event carries it so event-only consumers do not have to join back to span tags. The host a failover endpoint or hedge branch actually connected to is not in these tags; look at that branch's attempt event — `Attempt.Audit` is on the default chain, just subscribe to `AxiosNet.Attempt*`). A failure that did receive a response (4xx / 5xx) still records `http.response.status_code` / `network.protocol.version` / `http.response.body.size`.
 - For `ResponseType.Stream` the span ends when headers arrive, so its duration is time-to-first-byte.
 
 **Metrics** (source `AxiosNet`):
@@ -1490,10 +1535,12 @@ builder.Services.AddOpenTelemetry()
 
 **Events** (`DiagnosticListener` named `AxiosNet.DiagnosticListener`): `AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`, with public payload types (`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`).
 
-**Attempt auditing** (`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`, payload `AxiosAttemptEvent`) only exists when `Attempt.Audit` is on the chain:
+**Attempt auditing** (`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`, payload `AxiosAttemptEvent`) is **on by default** (`Attempt.Audit` is the sixth link of the default chain, after the gate and before the terminal) — just subscribe:
 
 ```csharp
-var pipeline = AxiosAttemptPipeline.Default.Append(Attempt.Audit);   // after the gate, before the send
+// The default chain already contains Attempt.Audit; a custom chain must list it explicitly
+var pipeline = AxiosAttemptPipeline.Create(
+    Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate, Attempt.Audit);
 using var client = Axios.Create(pipeline: pipeline);
 ```
 
@@ -1580,13 +1627,13 @@ Ten sub-objects (created lazily on first access):
 | Sub-object | Key members (default / notes) |
 | --- | --- |
 | `Serialization` | `JsonSerializerOptions` (web style) / `ContentSerializer` (`null` = built-in JSON) / `ContentSerializers` (instance registry, always present on a client) / `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat` (`Brackets`) |
-| `Connection` | `Auth` (`new AxiosAuth(user, pass)`) / `MaxRedirects` (5, `0` disables, instance-level) / `WithCredentials` (instance-level) / `Proxy` / `Credentials` / `PoolOptions` (instance-level) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`) |
+| `Connection` | `Auth` (`new AxiosAuth(user, pass)`) / `MaxRedirects` (5, `0` disables, instance-level) / `WithCredentials` (instance-level) / `Proxy` / `Credentials` / `PoolOptions` (instance-level) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`) / `Transport` (`null` = default profile, see [Transport profiles](#transport-profiles)) |
 | `Limits` | `MaxContentLength` / `MaxBodyLength` / `MaxRate` (all `null` = unlimited) / `MaxConcurrentRequests` / `MaxQueueLength` (`null`, instance-level) / `QueueTimeout` (`null` = wait) / `MaxStreamFrameLength` (`null` = 8 MB, 1–64 MB) |
 | `Callbacks` | `ValidateStatus` (`Func<int,bool>`, 2xx by default) / `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnSendingRequest` / `OnRawResponse` |
 | `Retry` | `Policy` (`null` = no retries) / `OnRetry` |
 | `Circuit` | `Policy` (`null` = no breaker) / `OnRejected` |
 | `Hedging` | `MaxHedges` (`0` = off, max 16) / `Delay` (80ms; branch n starts at `n × Delay`, and `Delay × MaxHedges` must stay within the timer range) / `HedgeNonIdempotentMethods` (`false`) |
-| `Failover` | `Endpoints` (`null` = no failover; ordered absolute `http`/`https` URLs, path prefix allowed, no query or fragment, no duplicates) |
+| `Failover` | `Endpoints` (`null` = no failover; ordered absolute `http`/`https` URLs, path prefix allowed, no query or fragment, no duplicates) / `FailureThreshold` (2, `0` disables health memory) / `Cooldown` (30s) / `MaxCooldown` (5 min) |
 | `Idempotency` | `Enabled` (`false`) / `HeaderName` (`Idempotency-Key`) / `Key` (`null` = generated) / `KeyFactory` (`null` = `Guid` in `N` format) |
 | `Telemetry` | `Enabled` (`null` = on) / `CaptureUrl` (`null` = capture, without the query string) / `CaptureQuery` (`null` = omit the query string) |
 
@@ -1635,7 +1682,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **50 items**:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **51 items**:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1742,13 +1789,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1973 / 1966 | `net8.0` / `net6.0` | 3939 |
+| `AxiosNet.Tests` (core + declarative) | 1991 / 1984 | `net8.0` / `net6.0` | 3975 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **Total** | **2039 / 2032** | | **4071** |
+| **Total** | **2057 / 2050** | | **4107** |
 
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
+Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling, transport profiles and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints and endpoint health memory, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
-Line coverage **91.7%**, branch coverage **87.3%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement — that is why both numbers are slightly lower than the previous release.
+Line coverage **91.7%**, branch coverage **87.2%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement — that is why both numbers are slightly lower than the previous release.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1792,8 +1839,8 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Resilience/` | Retry policies and timing, whole-request budget (`TotalTimeout`), circuit-breaker state machine, short circuits |
 | `Caching/` | Response cache and single flight, conditional requests (`ETag` / 304) and `IAxiosCacheRevalidationStore`, the `IAxiosCacheStore` contract and custom stores, key rules and identity isolation, the hit path |
 | `Serialization/` | `IContentSerializer` contract and registry, JSON defaults |
-| `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation), concurrent hedging, backup endpoints |
-| `Connectivity/` | Connection pool (incl. named shared pools), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
+| `Pipelines/` | Request / response interceptors, `transformRequest` / `transformResponse`, attempt pipeline (built-in order, insertion position, reorder validation), concurrent hedging, backup endpoints and endpoint health memory |
+| `Connectivity/` | Connection pool (incl. named shared pools and named transport profiles), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry, attempt audit events |
 | `Errors/` | Error model, error codes, `ToJson` snapshot |
 | `Regression/` | Allocation guards (isolated collection + precise counting; `AllocationTests` uses process-wide averages, `AllocationSweepTests` uses thread-local minima over several windows — when the measured path completes synchronously the true value is a constant and noise only adds), concurrent throughput |
@@ -1876,7 +1923,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (50 items) / DI / Aot
+├─ samples/                           # Simple (51 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")

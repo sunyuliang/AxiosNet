@@ -19,11 +19,24 @@ public sealed class HttpConnectionPool : IDisposable
 
     private readonly ConcurrentDictionary<OriginKey, PooledEndpoint> _endpoints = new();
     private readonly ConnectionPoolOptions _options;
+
+    /// <summary>命名传输档（构造期定型，之后只读）。</summary>
+    private readonly Dictionary<string, ConnectionTransportOptions> _transports;
+
+    /// <summary>默认档的出口设置：由池选项上的 Proxy / Credentials / TLS 等字段投影而来。</summary>
+    private readonly ConnectionTransportOptions _defaultTransport;
+
     private readonly object _cookieSync = new();
-    private CookieContainer? _cookies;
+
+    /// <summary>档名 → Cookie 容器（只有打开 UseCookies 的档才有条目；默认档名为空串）。</summary>
+    private readonly ConcurrentDictionary<string, CookieContainer> _cookies = new(StringComparer.Ordinal);
+
     private readonly Timer? _evictionTimer;
     private long _totalLeases;
     private int _disposed;
+
+    /// <summary>默认传输档的档名（空串）。</summary>
+    internal const string DefaultProfile = "";
 
     /// <summary>按选项建池（内部保存副本）；不传时用默认选项。选项非法时抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     public HttpConnectionPool(ConnectionPoolOptions? options = null)
@@ -32,8 +45,27 @@ public sealed class HttpConnectionPool : IDisposable
         _options = (options ?? new ConnectionPoolOptions()).Clone();
         ValidateOptions(_options);
 
-        // 整个池共用一个 Cookie 容器。
-        _cookies = _options.UseCookies ? CreateCookieContainer(_options) : null;
+        _transports = new Dictionary<string, ConnectionTransportOptions>(StringComparer.Ordinal);
+        foreach (var pair in _options.Transports)
+        {
+            _transports[pair.Key] = pair.Value.Clone();
+        }
+
+        _defaultTransport = _options.ProjectDefaultTransport();
+
+        // Cookie 容器按「档」隔离：默认档一份，每个打开 UseCookies 的命名档各一份。
+        if (_defaultTransport.UseCookies)
+        {
+            _cookies[DefaultProfile] = CreateCookieContainer(_options);
+        }
+
+        foreach (var pair in _transports)
+        {
+            if (pair.Value.UseCookies)
+            {
+                _cookies[pair.Key] = CreateCookieContainer(_options);
+            }
+        }
 
         if (_options.IdleHandlerLifetime > TimeSpan.Zero && _options.EvictionInterval > TimeSpan.Zero)
         {
@@ -305,35 +337,80 @@ public sealed class HttpConnectionPool : IDisposable
            && ReferenceEquals(a.Credentials, b.Credentials)
            && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
            && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
+           && ReferenceEquals(a.HandlerFactory, b.HandlerFactory)
+           && SameTransports(a.Transports, b.Transports);
+
+    /// <summary>
+    /// 传输档表是否等价：档名集合相同，且每个档的字段逐项相等（引用成员按同一实例）。
+    /// </summary>
+    private static bool SameTransports(
+        IReadOnlyDictionary<string, ConnectionTransportOptions> a,
+        IReadOnlyDictionary<string, ConnectionTransportOptions> b)
+    {
+        if (a.Count != b.Count)
+        {
+            return false;
+        }
+
+        foreach (var pair in a)
+        {
+            if (!b.TryGetValue(pair.Key, out var other) || !SameTransport(pair.Value, other))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SameTransport(ConnectionTransportOptions a, ConnectionTransportOptions b)
+        => a.UseCookies == b.UseCookies
+           && a.EnabledSslProtocols == b.EnabledSslProtocols
+           && ReferenceEquals(a.Proxy, b.Proxy)
+           && ReferenceEquals(a.Credentials, b.Credentials)
+           && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
+           && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
+           && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
            && ReferenceEquals(a.HandlerFactory, b.HandlerFactory);
 
     /// <summary>池实际生效的选项（副本；修改它不会影响池）。</summary>
     public ConnectionPoolOptions Options => _options.Clone();
 
     /// <summary>
-    /// 池当前使用的 Cookie 容器：<see cref="ConnectionPoolOptions.UseCookies"/> 打开时非空，否则为 <c>null</c>。
+    /// 默认档当前使用的 Cookie 容器：默认档打开 <see cref="ConnectionTransportOptions.UseCookies"/> 时非空，否则为 <c>null</c>。
     /// </summary>
     /// <remarks>
-    /// 整个池共用这一份容器（按域 / 路径隔离，不按业务身份隔离），线程安全，可在请求进行中读写。
-    /// 典型用途：启动时预置 cookie、排查某个 cookie 为什么没发出去；登出请用 <see cref="ClearCookies"/>
+    /// 每个传输档各有一份容器（按域 / 路径隔离，不按业务身份隔离），线程安全，可在请求进行中读写。
+    /// 命名档的容器用 <see cref="GetCookies(string)"/> 取。
+    /// 典型用途：启动时预置 cookie、排查某个 cookie 为什么没发出去；登出请用 <see cref="ClearCookies()"/>
     /// （容器没有删除 API，只能整体替换，替换后这里读到的引用会变）。
     /// 开启容器后请求上的 <c>Cookie</c> 头与容器内容<em>合并</em>发送而不是覆盖；
     /// <see cref="Clear"/> 与 <see cref="Dispose"/> 都不会清空容器。
     /// </remarks>
-    public CookieContainer? Cookies => Volatile.Read(ref _cookies);
+    public CookieContainer? Cookies => GetCookies(DefaultProfile);
 
     /// <summary>
-    /// 清空池级 Cookie（登出）：换一份空容器并优雅回收现有 origin 节点，后续请求用新容器重建连接。
+    /// 取某个传输档的 Cookie 容器：未打开 <c>UseCookies</c> 或档名未登记时返回 <c>null</c>。
+    /// </summary>
+    /// <param name="transport">传输档名；<c>null</c> / 空串表示默认档。</param>
+    public CookieContainer? GetCookies(string? transport)
+    {
+        var profile = transport ?? DefaultProfile;
+        return _cookies.TryGetValue(profile, out var container) ? container : null;
+    }
+
+    /// <summary>
+    /// 清空<b>所有档</b>的 Cookie（登出）：换新的空容器并优雅回收现有 origin 节点，后续请求用新容器重建连接。
     /// </summary>
     /// <remarks>
-    /// 只对开启 <see cref="ConnectionPoolOptions.UseCookies"/> 的池有效，未开启时无操作。
+    /// 只对打开 <see cref="ConnectionTransportOptions.UseCookies"/> 的档有效，一个都没开时无操作。
     /// <see cref="CookieContainer"/> 没有删除 API，所以实现上是整体换容器 + 回收节点（自定义 Handler 也会按新容器重新创建）。
     /// 不打断在途请求——它们可能仍带着旧 cookie 完成，节点在最后一条租约归还后销毁；
-    /// 之前从 <see cref="Cookies"/> 拿到的引用随之失效，请重新读取。
+    /// 之前从 <see cref="Cookies"/> / <see cref="GetCookies"/> 拿到的引用随之失效，请重新读取。
     /// </remarks>
     public void ClearCookies()
     {
-        if (Volatile.Read(ref _cookies) is null)
+        if (_cookies.IsEmpty)
         {
             return;
         }
@@ -341,12 +418,16 @@ public sealed class HttpConnectionPool : IDisposable
         // 与节点的「发布到字典」互斥：保证不会出现用旧容器创建、却在换容器之后才发布的节点。
         lock (_cookieSync)
         {
-            if (Volatile.Read(ref _cookies) is null)
+            if (_cookies.IsEmpty)
             {
                 return;
             }
 
-            Volatile.Write(ref _cookies, CreateCookieContainer(_options));
+            foreach (var profile in _cookies.Keys)
+            {
+                // 只替换仍然开着的档：ClearCookies 期间不会新增档（档表构造期定型）。
+                _cookies[profile] = CreateCookieContainer(_options);
+            }
         }
 
         RetireAllEndpoints(AxiosTelemetry.EvictionReasonCookies);
@@ -381,7 +462,8 @@ public sealed class HttpConnectionPool : IDisposable
             throw new InvalidOperationException("Connection pool requires an absolute request URI.");
         }
 
-        var origin = BuildOrigin(requestUri);
+        var profile = ResolveProfile(config);
+        var origin = BuildOrigin(requestUri, profile);
 
         while (true)
         {
@@ -394,11 +476,12 @@ public sealed class HttpConnectionPool : IDisposable
                 EnsureCapacity(origin, config);
 
                 // 创建 Handler 可能较慢（自定义工厂），放在锁外；发布前在锁内复核容器没被 ClearCookies 换掉。
-                var cookies = Volatile.Read(ref _cookies);
-                var created = new PooledEndpoint(this, origin, _options, cookies);
+                var transport = profile.Length == 0 ? _defaultTransport : _transports[profile];
+                var cookies = GetCookies(profile);
+                var created = new PooledEndpoint(this, origin, _options, transport, cookies);
                 lock (_cookieSync)
                 {
-                    if (!ReferenceEquals(cookies, Volatile.Read(ref _cookies)))
+                    if (!ReferenceEquals(cookies, GetCookies(profile)))
                     {
                         // 用旧容器创建的节点作废（尚未发布、没有租约），重试时按新容器重建。
                         created.Dispose();
@@ -681,7 +764,7 @@ public sealed class HttpConnectionPool : IDisposable
                 var e = p.Value;
                 lock (e.SyncRoot)
                 {
-                    return new EndpointStatistics(e.Origin, e.ActiveLeases, e.LastUsedUtc, e.IsDisposed);
+                    return new EndpointStatistics(e.Origin, e.ActiveLeases, e.LastUsedUtc, e.IsDisposed, e.Key.Profile);
                 }
             })
             .ToArray();
@@ -691,10 +774,35 @@ public sealed class HttpConnectionPool : IDisposable
     }
 
     /// <summary>
-    /// 生成 origin 池 key（scheme / host / port；主机名取 IDNA 形式，IPv6 回退 <see cref="Uri.Host"/>）。
+    /// 生成池节点 key（scheme / host / port + 传输档；主机名取 IDNA 形式，IPv6 回退 <see cref="Uri.Host"/>）。
     /// </summary>
-    private static OriginKey BuildOrigin(Uri uri)
-        => new(uri.Scheme, uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost, uri.Port);
+    private static OriginKey BuildOrigin(Uri uri, string profile)
+        => new(uri.Scheme, uri.HostNameType == UriHostNameType.IPv6 ? uri.Host : uri.IdnHost, uri.Port, profile);
+
+    /// <summary>
+    /// 解析本次请求要用的传输档：未指定 = 默认档；指定了但池上没有登记 → <c>ERR_BAD_OPTION_VALUE</c>
+    /// （静默回落默认档会把「以为走了专线」变成安全事故）。
+    /// </summary>
+    private string ResolveProfile(AxiosConfig? config)
+    {
+        var requested = config?.TransportOrNull;
+
+        if (string.IsNullOrEmpty(requested))
+        {
+            return DefaultProfile;
+        }
+
+        if (!_transports.ContainsKey(requested))
+        {
+            throw AxiosException.InvalidOption(
+                $"传输档 '{requested}' 未在该连接池上登记：请用 ConnectionPoolOptions.AddTransport(\"{requested}\", ...) 登记，"
+                + "或按请求不设 Connection.Transport 走默认档。已登记的档："
+                + (_transports.Count == 0 ? "（无）" : string.Join(", ", _transports.Keys)) + "。",
+                config);
+        }
+
+        return requested;
+    }
 
     /// <summary>优雅关闭：空闲节点立即释放，仍有租约的节点等最后一条租约归还时回收。</summary>
     public void Dispose()
@@ -740,14 +848,15 @@ public sealed class HttpConnectionPool : IDisposable
     }
 }
 
-/// <summary>origin 池 key：scheme / host / port 三段直接比较。</summary>
+/// <summary>池节点 key：scheme / host / port 三段加传输档名（默认档为空串）。</summary>
 internal readonly struct OriginKey : IEquatable<OriginKey>
 {
-    public OriginKey(string scheme, string host, int port)
+    public OriginKey(string scheme, string host, int port, string profile)
     {
         Scheme = scheme;
         Host = host;
         Port = port;
+        Profile = profile;
     }
 
     public string Scheme { get; }
@@ -756,14 +865,23 @@ internal readonly struct OriginKey : IEquatable<OriginKey>
 
     public int Port { get; }
 
+    /// <summary>传输档名；空串 = 默认档（用 <see cref="ConnectionPoolOptions"/> 上的出口设置）。</summary>
+    public string Profile { get; }
+
+    /// <summary>默认档的 origin 文本（<c>scheme://host:port</c>），可直接拼成 Uri。</summary>
+    public string BaseAddress => $"{Scheme}://{Host}:{Port}";
+
     public bool Equals(OriginKey other)
         => Port == other.Port
             && string.Equals(Scheme, other.Scheme, StringComparison.Ordinal)
-            && string.Equals(Host, other.Host, StringComparison.Ordinal);
+            && string.Equals(Host, other.Host, StringComparison.Ordinal)
+            && string.Equals(Profile, other.Profile, StringComparison.Ordinal);
 
     public override bool Equals(object? obj) => obj is OriginKey other && Equals(other);
 
-    public override int GetHashCode() => HashCode.Combine(Scheme, Host, Port);
+    public override int GetHashCode() => HashCode.Combine(Scheme, Host, Port, Profile);
 
-    public override string ToString() => $"{Scheme}://{Host}:{Port}";
+    /// <summary>默认档输出 <c>scheme://host:port</c>；命名档追加 <c>#档名</c>（统计与诊断用）。</summary>
+    public override string ToString()
+        => Profile.Length == 0 ? BaseAddress : $"{BaseAddress}#{Profile}";
 }

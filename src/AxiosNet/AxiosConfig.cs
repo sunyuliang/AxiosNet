@@ -95,6 +95,9 @@ public sealed partial class AxiosConfig
 
     internal ConnectionSettings? ConnectionOrNull => _connection;
 
+    /// <summary>本次请求选中的传输档名（<c>null</c> / 空串 = 默认档）；不懒创建连接组。</summary>
+    internal string? TransportOrNull => _connection?.Transport;
+
     internal LimitSettings? LimitsOrNull => _limits;
 
     internal CallbackSettings? CallbacksOrNull => _callbacks;

@@ -4,7 +4,7 @@ namespace AxiosNet.Pipeline;
 
 /// <summary>
 /// 「一次尝试」的中间件链：<b>不可变</b>，每个编辑方法都返回新实例。
-/// 默认链是 <c>[Retry, Failover, Circuit, Hedging, Gate]</c>，索引 0 最外层、末位最内层；
+/// 默认链是 <c>[Retry, Failover, Circuit, Hedging, Gate, Audit]</c>，索引 0 最外层、末位最内层；
 /// 真正的发送（终端）恒在最内层，不在列表里，也换不掉。
 /// </summary>
 /// <remarks>
@@ -29,12 +29,17 @@ public sealed class AxiosAttemptPipeline
     }
 
     /// <summary>
-    /// 默认链：<c>[Retry, Failover, Circuit, Hedging, Gate]</c>。顺序是契约：重试在最外层，每次尝试都会重过一遍
-    /// 备用端点、熔断、对冲与闸门；备用端点与熔断都在对冲之外，闸门在对冲之内。
+    /// 默认链：<c>[Retry, Failover, Circuit, Hedging, Gate, Audit]</c>。顺序是契约：重试在最外层，每次尝试都会重过一遍
+    /// 备用端点、熔断、对冲与闸门；备用端点与熔断都在对冲之外，闸门在对冲之内，审计紧贴终端。
     /// 换成别的顺序会换掉这些语义。
     /// </summary>
+    /// <remarks>
+    /// 审计（<see cref="Attempt.Audit"/>）在默认链上，因此「每次尝试怎么走的」默认可见；
+    /// 没有订阅 <c>AxiosNet.Attempt</c> 事件时它只做一次开关判定，不建状态机、不分配。
+    /// 它已在链上，再 <c>Append(Attempt.Audit)</c> 会作为重复内置项被拒绝。
+    /// </remarks>
     public static AxiosAttemptPipeline Default { get; } =
-        new(new[] { Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate });
+        new(new[] { Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate, Attempt.Audit });
 
     /// <summary>链上的中间件，索引 0 最外层（只读视图，改不了）。</summary>
     public IReadOnlyList<AxiosAttemptMiddleware> Middleware => _view;

@@ -44,10 +44,22 @@ public static partial class Attempt
 
         Exception? firstFailure = null;
 
-        // 第 0 轮是原始端点，之后依次是端点表里的备用端点。
-        for (var round = 0; round <= endpoints.Count; round++)
+        // 健康记忆：关掉时（阈值 0 / 冷却 0）不读也不写，行为与「每次从第一个端点开始」一致。
+        var health = ctx.FailoverHealth;
+        var usesHealth = health is not null && failover.FailureThreshold > 0 && failover.Cooldown > TimeSpan.Zero;
+
+        var order = usesHealth ? BuildOrder(template.RequestUri!, endpoints, health!) : null;
+
+        // 只有「真的发送过」才需要拨回正文：被跳过的端点没读过流。
+        var attempted = 0;
+
+        // 第 0 轮是原始端点，之后依次是端点表里的备用端点；order 非空时按健康顺序走。
+        for (var step = 0; step <= endpoints.Count; step++)
         {
-            if (round > 0)
+            var round = order is null ? step : order[step];
+            var key = usesHealth ? EndpointKey(template.RequestUri!, endpoints, round) : null;
+
+            if (attempted > 0)
             {
                 // 同一份正文再发一次：先把读指针拨回起点。
                 bodyRewind?.Rewind(ctx.Config);
@@ -81,7 +93,17 @@ public static partial class Attempt
 
             try
             {
-                return await next(request, attemptCtx).ConfigureAwait(false);
+                attempted++;
+
+                var result = await next(request, attemptCtx).ConfigureAwait(false);
+
+                // 端点给出成功响应：立刻解除冷却（4xx 由下面的 catch 处理，同样算健康证据）。
+                if (key is not null)
+                {
+                    health!.RecordSuccess(key);
+                }
+
+                return result;
             }
             catch (Exception ex) when (IsGateRejection(ex) && firstFailure is { } realFailure)
             {
@@ -93,8 +115,19 @@ public static partial class Attempt
             }
             catch (Exception ex) when (CanFailover(ex, ctx.ExternalToken))
             {
-                // 这个端点用不了：记下第一条失败，继续下一个端点。
+                // 这个端点用不了：记一笔失败（到阈值后进入冷却），继续下一个端点。
+                if (key is not null)
+                {
+                    health!.RecordFailure(key, failover.FailureThreshold, failover.Cooldown, failover.MaxCooldown);
+                }
+
                 firstFailure ??= ex;
+            }
+            catch (AxiosException ex) when (key is not null && IsHealthyEvidence(ex))
+            {
+                // 4xx 说明端点本身是活的：清掉它的失败记录，然后把错误照常交给外层（不换端点）。
+                health!.RecordSuccess(key);
+                throw;
             }
             finally
             {
@@ -110,6 +143,63 @@ public static partial class Attempt
         // 所有端点都失败：交回重试（它决定要不要再来一轮），没有重试就是调用方看到的错误。
         throw firstFailure!;
     }
+
+    /// <summary>
+    /// 轮次顺序：健康的端点按原顺序在前，冷却中的端点按原顺序退到末尾。
+    /// 全部健康时返回 <c>null</c>（按原顺序走，稳态零分配）。
+    /// </summary>
+    private static int[]? BuildOrder(Uri requestUri, IReadOnlyList<Uri> endpoints, FailoverHealth health)
+    {
+        var total = endpoints.Count + 1;
+        var anyCooling = false;
+        for (var round = 0; round < total; round++)
+        {
+            if (!health.IsAvailable(EndpointKey(requestUri, endpoints, round)))
+            {
+                anyCooling = true;
+                break;
+            }
+        }
+
+        if (!anyCooling)
+        {
+            return null;
+        }
+
+        var order = new int[total];
+        var at = 0;
+
+        for (var round = 0; round < total; round++)
+        {
+            if (health.IsAvailable(EndpointKey(requestUri, endpoints, round)))
+            {
+                order[at++] = round;
+            }
+        }
+
+        for (var round = 0; round < total; round++)
+        {
+            if (!health.IsAvailable(EndpointKey(requestUri, endpoints, round)))
+            {
+                order[at++] = round;
+            }
+        }
+
+        return order;
+    }
+
+    /// <summary>
+    /// 健康表的记账键：<c>0</c> 用请求的 origin（同一后端的业务路径不算区别），
+    /// 备用端点用它的 base URL（可以带路径前缀，不同前缀可能是不同后端）。
+    /// </summary>
+    private static string EndpointKey(Uri requestUri, IReadOnlyList<Uri> endpoints, int round)
+        => round == 0
+            ? requestUri.GetLeftPart(UriPartial.Authority)
+            : endpoints[round - 1].GetLeftPart(UriPartial.Path).TrimEnd('/');
+
+    /// <summary>4xx 是「端点活着、拒绝了这个请求」：可以清健康记录，但不该换端点。</summary>
+    private static bool IsHealthyEvidence(AxiosException exception)
+        => exception.Status is >= 400 and < 500;
 
     /// <summary>
     /// 换端点判据：只换「换一个下游就能解决」的故障。取消、配置 / 编程错误、闸门拒绝（排队超时 / 队列满）、

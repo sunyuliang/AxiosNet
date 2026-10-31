@@ -9,11 +9,13 @@ public static partial class Attempt
     /// <see cref="AxiosTelemetry.AttemptFailedEventName"/>（载荷 <see cref="AxiosAttemptEvent"/>）。
     /// </summary>
     /// <remarks>
-    /// 不在默认链上：用 <c>AxiosAttemptPipeline.Default.Append(Attempt.Audit)</c> 放到闸门之后、终端之前。
-    /// 只覆盖真正到达终端的尝试 —— 熔断拒绝、闸门排队超时与短路响应都不产生尝试事件。
+    /// <b>已在默认链上</b>（<see cref="AxiosAttemptPipeline.Default"/> 的末位，闸门之后、终端之前），
+    /// 订阅 <c>AxiosNet.Attempt</c> 就能拿到每次尝试的耗时、状态码与错误；未订阅时只做一次开关判定。
+    /// 它只覆盖真正到达终端的尝试 —— 熔断拒绝、闸门排队超时与短路响应都不产生尝试事件。
     /// 对冲的每条分支、备用端点的每个端点各一条事件（尝试号相同；同一端点下的对冲分支各项序号都相同，
     /// 事件里没有可区分它们的字段）；被胜出者取消的败者不发失败事件。
-    /// 按推荐位置放置时，计时从进入终端前到终端返回，不含闸门排队与退避等待，流式响应只到响应头。
+    /// 计时从进入终端前到终端返回，不含闸门排队与退避等待，流式响应只到响应头。
+    /// 已是默认链成员：再 <c>Append(Attempt.Audit)</c> 会被当作重复内置项拒绝；自定义链用 <see cref="AxiosAttemptPipeline.Create"/> 时显式列出即可。
     /// </remarks>
     public static AxiosAttemptMiddleware Audit { get; } = next =>
     {

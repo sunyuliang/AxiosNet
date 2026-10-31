@@ -31,17 +31,25 @@ public sealed class AttemptPipelineTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Default_IsRetryThenFailoverThenCircuitThenHedgingThenGate()
+    public void Default_IsRetryThenFailoverThenCircuitThenHedgingThenGateThenAudit()
     {
         // 顺序是契约：重试在最外层（每次尝试重过一遍备用端点 / 熔断 / 对冲 / 闸门），
         // 备用端点与熔断都在对冲之外（每个端点各得一组对冲分支、整组分支只记一笔熔断），
-        // 闸门在对冲之内（被拒的请求不占槽位，每条分支各占一个）。
-        Assert.Equal(5, AxiosAttemptPipeline.Default.Middleware.Count);
+        // 闸门在对冲之内（被拒的请求不占槽位，每条分支各占一个），审计紧贴终端（只看到真正发出的尝试）。
+        Assert.Equal(6, AxiosAttemptPipeline.Default.Middleware.Count);
         Assert.Same(Attempt.Retry, AxiosAttemptPipeline.Default.Middleware[0]);
         Assert.Same(Attempt.Failover, AxiosAttemptPipeline.Default.Middleware[1]);
         Assert.Same(Attempt.Circuit, AxiosAttemptPipeline.Default.Middleware[2]);
         Assert.Same(Attempt.Hedging, AxiosAttemptPipeline.Default.Middleware[3]);
         Assert.Same(Attempt.Gate, AxiosAttemptPipeline.Default.Middleware[4]);
+        Assert.Same(Attempt.Audit, AxiosAttemptPipeline.Default.Middleware[5]);
+    }
+
+    [Fact]
+    public void Default_RejectsAppendingAuditAgain()
+    {
+        // 审计已在默认链上：再 Append 会变成每次尝试发两条事件，作为重复内置项拒绝。
+        Assert.Throws<ArgumentException>(() => AxiosAttemptPipeline.Default.Append(Attempt.Audit));
     }
 
     [Fact]
@@ -372,7 +380,7 @@ public sealed class AttemptPipelineTests
     {
         var pipeline = AxiosAttemptPipeline.Default.InsertAfter(Attempt.Retry, Probe(new ConcurrentQueue<string>(), "x"));
 
-        Assert.Equal(6, pipeline.Middleware.Count);
+        Assert.Equal(7, pipeline.Middleware.Count);
         Assert.Same(Attempt.Retry, pipeline.Middleware[0]);
         Assert.Same(Attempt.Failover, pipeline.Middleware[2]);
     }
@@ -405,11 +413,11 @@ public sealed class AttemptPipelineTests
     {
         var pipeline = AxiosAttemptPipeline.Default.Remove(Attempt.Gate);
 
-        Assert.Equal(4, pipeline.Middleware.Count);
+        Assert.Equal(5, pipeline.Middleware.Count);
         Assert.DoesNotContain(Attempt.Gate, pipeline.Middleware);
 
         // 原链不受影响：不可变，每次编辑都返回新实例
-        Assert.Equal(5, AxiosAttemptPipeline.Default.Middleware.Count);
+        Assert.Equal(6, AxiosAttemptPipeline.Default.Middleware.Count);
     }
 
     [Fact]

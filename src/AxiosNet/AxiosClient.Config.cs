@@ -193,7 +193,7 @@ public sealed partial class AxiosClient
 
         var perCallConnection = perCall.ConnectionOrNull;
 
-        // HttpVersion / VersionPolicy 属按请求项，库产出的配置同样合并。
+        // HttpVersion / VersionPolicy / Transport 属按请求项，库产出的配置同样合并。
         if (perCallConnection is not null)
         {
             if (perCallConnection.HttpVersion is { } httpVersion)
@@ -204,6 +204,12 @@ public sealed partial class AxiosClient
             if (perCallConnection.VersionPolicy is { } versionPolicy)
             {
                 merged.Connection.VersionPolicy = versionPolicy;
+            }
+
+            // 显式写 null 表示本次回到默认档。
+            if (perCallConnection.TransportSet)
+            {
+                merged.Connection.Transport = perCallConnection.Transport;
             }
         }
 

@@ -30,6 +30,12 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private ConcurrencyGate? _gate;
 
     /// <summary>
+    /// 备用端点的健康记忆：跨请求共享，主端点持续不可用时不必每条请求都先撞它一次。
+    /// 惰性创建（没配备用端点就不会分配）。
+    /// </summary>
+    private FailoverHealth? _failoverHealth;
+
+    /// <summary>
     /// 对应 axios instance.defaults。连接级选项（WithCredentials / MaxRedirects / Proxy / Credentials / PoolOptions）
     /// 构造时已固化，改后不生效；MaxConcurrentRequests 的闸门在首个受限请求时创建，此后改会抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>

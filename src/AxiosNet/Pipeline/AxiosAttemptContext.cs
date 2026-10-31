@@ -28,7 +28,8 @@ public readonly struct AxiosAttemptContext
         AxiosConfig.FailoverSettings? failover,
         ConcurrencyGate? gate,
         IDisposable? slot,
-        long deadlineTimestamp)
+        long deadlineTimestamp,
+        FailoverHealth? failoverHealth)
     {
         Config = config;
         Uri = uri;
@@ -46,9 +47,13 @@ public readonly struct AxiosAttemptContext
         _gate = gate;
         Slot = slot;
         _deadlineTimestamp = deadlineTimestamp;
+        _failoverHealth = failoverHealth;
     }
 
     private readonly ConcurrencyGate? _gate;
+
+    /// <summary>备用端点健康表（客户端级共享状态；注入自定义 Handler 时同样存在，只是没有连接池可换）。</summary>
+    private readonly FailoverHealth? _failoverHealth;
 
     /// <summary>总预算的绝对时间戳（<see cref="TotalTimeoutBudget.None"/> = 没设），一次请求只算一次。</summary>
     private readonly long _deadlineTimestamp;
@@ -63,7 +68,8 @@ public readonly struct AxiosAttemptContext
         Type? dataType,
         AxiosResponse? target,
         ConcurrencyGate? gate,
-        long deadlineTimestamp)
+        long deadlineTimestamp,
+        FailoverHealth? failoverHealth)
     {
         var retry = config.RetryOrNull;
         var externalToken = config.CancellationToken;
@@ -84,7 +90,8 @@ public readonly struct AxiosAttemptContext
             config.FailoverOrNull,
             gate,
             null,
-            deadlineTimestamp);
+            deadlineTimestamp,
+            failoverHealth);
     }
 
     /// <summary>本次请求的生效配置（合并 + 拦截器之后的最终形态）。</summary>
@@ -138,6 +145,9 @@ public readonly struct AxiosAttemptContext
     /// <summary>并发闸门：<c>null</c> = 本次不限并发。</summary>
     internal ConcurrencyGate? Gate => _gate;
 
+    /// <summary>备用端点的健康表（客户端级共享，跨请求记忆；<c>null</c> 表示不记忆）。</summary>
+    internal FailoverHealth? FailoverHealth => _failoverHealth;
+
     /// <summary>
     /// 本次尝试已占到的并发槽位：由闸门中间件填入，终端负责在失败路径归还、
     /// 在流式成功路径接管（转交给 <see cref="AxiosAttemptResult.StreamOwner"/>）。
@@ -151,12 +161,12 @@ public readonly struct AxiosAttemptContext
     /// <summary>派生：换一个尝试序号（重试中间件推进尝试时用）。</summary>
     public AxiosAttemptContext WithAttemptNumber(int attemptNumber)
         => new(Config, Uri, attemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,
-            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp);
+            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp, _failoverHealth);
 
     /// <summary>派生：换本次尝试的令牌（对冲给每条分支单独设令牌时用）。</summary>
     public AxiosAttemptContext WithAttemptToken(CancellationToken attemptToken)
         => new(Config, Uri, AttemptNumber, EndpointIndex, attemptToken, ExternalToken, DataType, Target, StreamResponse,
-            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp);
+            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp, _failoverHealth);
 
     /// <summary>
     /// 派生：换本次尝试的生效配置（对冲给每条分支一份隔离副本时用），子设置一并从新配置取。
@@ -164,7 +174,7 @@ public readonly struct AxiosAttemptContext
     /// </summary>
     internal AxiosAttemptContext WithConfig(AxiosConfig config)
         => new(config, Uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,
-            config.RetryOrNull, config.CircuitOrNull, config.HedgingOrNull, config.FailoverOrNull, _gate, Slot, _deadlineTimestamp);
+            config.RetryOrNull, config.CircuitOrNull, config.HedgingOrNull, config.FailoverOrNull, _gate, Slot, _deadlineTimestamp, _failoverHealth);
 
     /// <summary>
     /// 派生：摘掉调用方预造的响应对象（对冲给每条分支一份自己的响应时用）—— 预造对象只有一个实例，
@@ -172,7 +182,7 @@ public readonly struct AxiosAttemptContext
     /// </summary>
     internal AxiosAttemptContext WithoutTarget()
         => new(Config, Uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, null, StreamResponse,
-            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp);
+            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp, _failoverHealth);
 
     /// <summary>
     /// 派生：换目标 URL（备用端点中间件切镜像时用）。
@@ -183,7 +193,7 @@ public readonly struct AxiosAttemptContext
     {
         ArgumentNullException.ThrowIfNull(uri);
         return new(Config, uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,
-            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp);
+            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp, _failoverHealth);
     }
 
     /// <summary>派生：换端点序号（备用端点中间件切到第 n 个备用端点时用，配合 <see cref="WithUri"/>）。</summary>
@@ -196,7 +206,7 @@ public readonly struct AxiosAttemptContext
         }
 
         return new(Config, Uri, AttemptNumber, endpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,
-            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp);
+            Retry, Circuit, Hedging, Failover, _gate, Slot, _deadlineTimestamp, _failoverHealth);
     }
 
     /// <summary>
@@ -205,5 +215,5 @@ public readonly struct AxiosAttemptContext
     /// </summary>
     public AxiosAttemptContext WithSlot(IDisposable? slot)
         => new(Config, Uri, AttemptNumber, EndpointIndex, AttemptToken, ExternalToken, DataType, Target, StreamResponse,
-            Retry, Circuit, Hedging, Failover, _gate, slot, _deadlineTimestamp);
+            Retry, Circuit, Hedging, Failover, _gate, slot, _deadlineTimestamp, _failoverHealth);
 }

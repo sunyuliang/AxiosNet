@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2039%2F2032%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-2057%2F2050%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -30,7 +30,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 请求与响应 | [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) · [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [发送前钩子](#发送前钩子签名--最终请求) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性与治理 | [重试](#重试) · [全局重试预算](#全局重试预算retrybudgetpolicy) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) · [响应缓存](#响应缓存) |
-| 连接与观测 | [连接池](#连接池) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
+| 连接与观测 | [连接池](#连接池) · [传输档](#传输档) · [HTTP 版本](#http-版本) · [自定义 Handler](#自定义-handler) · [可观测性](#可观测性) |
 | 工程化 | [依赖注入](#依赖注入) · [配置速查](#配置速查) · [与 axios 对照](#与-axios-对照) · [示例项目](#示例项目) · [运行时与 AOT](#运行时与-aot) · [构建与测试](#构建与测试) · [性能基准](#性能基准) · [项目结构](#项目结构) · [License](#license) |
 
 按目标选入口：
@@ -254,7 +254,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 | [弹性重试](#重试) | 指数退避 / 抖动 / `Retry-After` / 幂等门禁 / 全局重试预算 | `c.Retry.Policy = RetryPolicy.Exponential(...)` |
 | [熔断](#熔断) | 按 origin（默认 `host:port`）计数的 Closed/Open/HalfOpen 状态机：滚动窗口失败率 + 连续失败两条打开规则，恢复期慢启动 | `c.Circuit.Policy = new CircuitBreaker()` |
 | [并发对冲](#并发对冲) | 同一份请求并发多条分支，先成功的胜出 | `c.Hedging.MaxHedges = 1` |
-| [备用端点](#备用端点) | 当前端点用不了时换镜像重发 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
+| [备用端点](#备用端点) | 当前端点用不了时换镜像重发；失败端点在客户端内跨请求冷却，主端点挂掉时不再每条请求都先撞它 | `c.Failover.Endpoints = new[] { new Uri("https://mirror") }` |
 | [幂等键](#幂等键) | 一个逻辑请求一个键，重试 / 换端点 / 对冲共用 | `c.Idempotency.Enabled = true` |
 | [尝试管线](#尝试管线) | 一次尝试 = 可组合中间件链，可插可重排 | `Axios.Create(..., pipeline: AxiosAttemptPipeline.Default.Append(...))` |
 | [短路响应](#短路响应) | 不发请求，直接交付响应（缓存 / mock / 回放） | `c.ShortCircuit = new AxiosShortCircuit { ... }` |
@@ -276,6 +276,7 @@ Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cance
 | 能力 | 一句话 | 怎么做 |
 | --- | --- | --- |
 | [连接池](#连接池) | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 或 `HttpConnectionPool.GetOrCreate("key")` 可共享 |
+| [传输档](#传输档) | 一条池多条出口：按请求选代理 / 凭据 / 客户端证书 / Cookie 会话，各档连接与会话互不干扰 | `ConnectionPoolOptions.AddTransport("egress-a", ...)` + `c.Connection.Transport` |
 | [HTTP 版本](#http-版本) | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Connection.HttpVersion` |
 | [自定义 Handler](#自定义-handler) | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
 | [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
@@ -1032,7 +1033,7 @@ await client.GetAsync("orders", c => c.Hedging.MaxHedges = 0);
 
 ## 备用端点
 
-当前端点「用不了」时换下一个端点重发同一份请求，顺序即优先级：
+当前端点「用不了」时换下一个端点重发同一份请求，顺序即优先级（冷却中的端点自动退到末尾）：
 
 ```csharp
 var client = Axios.Create(c => c.Failover.Endpoints = new[]
@@ -1058,7 +1059,8 @@ await client.GetAsync("health", c => c.Failover.Endpoints = null);
 | 配置 / 编程错误、取消 | 不换 |
 
 - **预算耗尽不换端点**：与[熔断的失败口径](#熔断)同一条边界 —— `TotalTimeout` 在发出前就耗尽时，换端点既不能让预算变长，又要在备用端点白走一遍管线（占一次熔断判定与闸门入口，然后必然在同一处立刻失败）。已经发出去之后的超时照常换端点，那才是「换个下游可能就好」。
-- **每次重试都从第一个端点重新开始**：端点表在重试之内，一轮换完所有端点才把第一条失败交给重试。
+- **端点健康状态跨请求记忆**：同一个端点连续失败达 `FailureThreshold`（默认 2）后进入冷却（`Cooldown`，默认 30 秒，按失败次数翻倍、封顶 `MaxCooldown` 5 分钟）。冷却期内它不再作为首跳，主端点持续不可用时不必每条请求都先白撞一次。只有「换一个下游可能好」的故障计失败（与上表同源），4xx / 取消 / 配置错误既不加也不减；冷却到期自动重新参与，**所有端点都在冷却时仍按原顺序逐个试**——健康表只决定先后，不会把请求挡住。设 `FailureThreshold = 0` 或 `Cooldown = TimeSpan.Zero` 关闭。
+- **每次重试都会重新过一遍端点顺序**：端点表在重试之内，一轮换完所有端点才把第一条失败交给重试；健康记忆只影响这一轮的先后，不影响「都试过才算失败」。
 - **换端点会重算 `Host`**：调用方显式设过的 `Host` 头在换端点时丢掉，由目标地址重新算 —— 留着会让镜像按原端点的虚拟主机路由（`HttpClient` 只认 `Headers.Host`，它优先于 URI authority）。要按端点用不同的 `Host`，请写尝试中间件按 `ctx.Uri` 设置（`config.Headers` 只应用在模板上）。
 - **端点表不能重复**：两个端点拼出同一个 base URL（尾斜杠不算区别）会在发请求前抛 `ERR_BAD_OPTION_VALUE` —— 那只是把同一份请求对同一个地址多打一遍。
 - **端点拼出来就是当前地址时跳过**：端点与请求同 origin 且**不带路径前缀**（典型是只写 `https://backup.example.com`）时，换过去等于原地重发，直接跳过继续下一个端点。
@@ -1092,12 +1094,12 @@ await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a"
 
 ## 尝试管线
 
-「一次尝试」（单次发送）被抽象成可组合的中间件链，默认链是 **重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送**。新增每次尝试的能力（观测、审计）插一个中间件即可，不必再往客户端里加分支。
+「一次尝试」（单次发送）被抽象成可组合的中间件链，默认链是 **重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 审计 → 发送**。新增每次尝试的能力插一个中间件即可，不必再往客户端里加分支。
 
 ```csharp
 using AxiosNet.Pipeline;
 
-// 插一个「每次尝试」的探针：Append 落在最内层（闸门之后、发送之前），重试 N 次就调用 N+1 次
+// 插一个「每次尝试」的探针：Append 落在最内层（审计之后、发送之前），重试 N 次就调用 N+1 次
 var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
 {
     var clock = Stopwatch.StartNew();
@@ -1117,6 +1119,7 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 - **上下文 `AxiosAttemptContext` 是只读结构体**：`Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`，只能用 `WithXxx` 派生副本。它是结构体而不是类，因为中间件链构造期编译一次、每次尝试零分配，且并发类中间件需要按分支拷贝上下文。
 - **两个编号分开走**：`AttemptNumber` 由重试推进，`EndpointIndex` 由备用端点推进（`0` = 请求自己的地址）。换端点不推进尝试号，所以同一个尝试号下可能有多条尝试事件。
 - **中间件恒在链上，是否干活由它自己看 `ctx.Config` 决定**：没配重试策略时重试中间件就是纯直通。链因此可以在构造时固化，不必每次请求重建。
+- **审计默认在链上**：`Attempt.Audit` 是默认链第 6 项（闸门之后、终端之前），订阅 `AxiosNet.Attempt` 就能拿到每次尝试的耗时 / 状态码 / 错误码，不订阅时只做一次开关判定、不建状态机。它已在链上，再 `Append(Attempt.Audit)` 会被当作重复内置项拒绝。
 - **顺序是契约**：重试在最外层，于是每次尝试都会重过一遍备用端点、熔断、对冲与闸门；备用端点在熔断之外，于是每个端点各自过熔断；熔断在对冲之外，于是整组分支只记一笔；熔断排在闸门之前，被拒的请求不占槽位。
 - **重排与摘除**：`AxiosAttemptPipeline.Create(...)` 显式列出全部中间件（第一个最外层），`Remove(Attempt.Gate)` 摘掉某项；不可变，每次编辑返回新实例。内置项重复出现会报错。
 - **不提供「放到最外层」的入口**：那个位置每次请求只调用一次，与响应拦截器完全同构。`InsertBefore(Attempt.Retry, ...)` 会明确拒绝并指向 `client.Interceptors.Response`——它还有 `OnRejected`、运行时增删、覆盖短路三个额外好处。
@@ -1293,7 +1296,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 
 ## 连接池
 
-`AxiosClient` 默认自建一条按 `scheme://host:port` 隔离的连接池（`HttpConnectionPool`）：每个 origin 一个调优过的 `SocketsHttpHandler`，请求共享 TCP 长连接。
+`AxiosClient` 默认自建一条按 `scheme://host:port`（以及传输档，见[传输档](#传输档)）隔离的连接池（`HttpConnectionPool`）：每个 origin 一个调优过的 `SocketsHttpHandler`，请求共享 TCP 长连接。
 
 > **不要按请求建客户端**（原因见[客户端](#客户端)）：一个站点一个实例；多个客户端要共享连接，就显式传同一条池（下面的用法 2），DI 里用 `AddAxiosClient` 注册单例。
 >
@@ -1347,7 +1350,7 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 | `KeepAlivePingDelay` / `KeepAlivePingTimeout` | `InfiniteTimeSpan`（不发）/ 20 秒 | h2 keep-alive ping 的间隔与等 ACK 的上限；默认与 `SocketsHttpHandler` 一致（关闭），设正值即打开。h1 无影响 |
 | `KeepAlivePingPolicy` | `WithActiveRequests` | 何时 ping：`WithActiveRequests`（有在途请求时）/ `Always`（空闲也维持）|
 | `MaxEndpointCount` | 1024 | origin 节点上限，满了先驱逐最久未用的空闲节点；若全部在途（无可驱逐），新建节点抛 `ERR_POOL_EXHAUSTED`（请求未发出，可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试） |
-| `UseCookies` | `false` | 打开后整个池共用一份 `CookieContainer`，可通过 `pool.Cookies` 读写（未开启时为 `null`），登出用 `pool.ClearCookies()` |
+| `UseCookies` | `false` | 默认档打开后有一份 `CookieContainer`，可通过 `pool.Cookies` 读写（未开启时为 `null`），登出用 `pool.ClearCookies()`；命名传输档各自一份，见[传输档](#传输档) |
 | `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` | `300` / `20` / `4096` | Cookie 容器容量（总条数 / 单域名条数 / 单条字节数），超出按容器规则淘汰最早的、超长 cookie 直接丢弃；仅 `UseCookies` 打开时生效 |
 | `Proxy` / `Credentials` | `null` | 不设代理时**不使用**系统 / 环境代理；要走系统代理请设 `HttpClient.DefaultProxy` |
 | `ServerCertificateCustomValidationCallback` / `EnabledSslProtocols` / `ConfigureSslOptions` | `null` | 证书校验、TLS 版本、客户端证书 |
@@ -1357,11 +1360,54 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 - DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；需要自定义建连（拨到 UDS / 本机传输 / 自管 DNS）时直接设 `ConnectionPoolOptions.ConnectCallback`。
 - `ConnectCallback` 与 `MaxResponseHeadersLength` 只作用于库默认 Handler：`HandlerFactory` 里用 `ctx.CreateDefaultHandler()` 建内层 Handler 会带过去，完全自建 Handler 则需自行映射。
 - **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。它对付的是「静默掐断」——AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多；低频高价值调用（webhook 回调、定时任务）可以配 `Always` 连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）——这也是它默认关闭的原因。
-- **`UseCookies` 是池级共享，不按业务身份隔离**：整个池共用一份 `CookieContainer`，隔离维度只有域 / 路径。多租户、爬虫、按用户切身份的进程打开它会让不同身份串 cookie —— 请按租户各建一条池，或用请求头自己管 `Cookie`。容器可用 `pool.Cookies` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去；登出用 `pool.ClearCookies()`（`CookieContainer` 没有删除 API，实现上是换一份空容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie）。注意开启容器后请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。命名共享池上调用 `ClearCookies()` 会影响所有共用该池的客户端；容器容量默认 300 条 / 单域 20 条 / 单条 4096 字节，超出会静默淘汰最早的，可用 `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` 调整。
+- **`UseCookies` 只按域 / 路径隔离，不按业务身份隔离**：默认档一份容器，命名传输档各一份（见[传输档](#传输档)）。多租户、爬虫、按用户切身份的进程请给每个身份一条档，否则不同身份会串 cookie。容器可用 `pool.Cookies` / `pool.GetCookies("档名")` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去；登出用 `pool.ClearCookies()`（会换掉**所有档**的容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie）。注意开启容器后请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。命名共享池上调用 `ClearCookies()` 会影响所有共用该池的客户端；容器容量默认 300 条 / 单域 20 条 / 单条 4096 字节，超出会静默淘汰最早的，可用 `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` 调整。
 - **Trailers 目前不读取**：chunked 响应的尾部头（校验和、配额）停留在 `HttpResponseMessage.TrailingHeaders`，没有暴露到 `AxiosResponse`。需要时用 `HandlerFactory` 包一层在正文读完后取，或直接注入自定义 Handler。
-- **代理是池级的，同一个 origin 只能有一条代理**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP 就按代理各建一条池（`HttpConnectionPool.GetOrCreate("egress-us", new ConnectionPoolOptions { Proxy = ... })`），每个出口一条池、客户端之间不共享 —— 隔离维度是「池」，不是「请求」。
+- **代理 / 凭据默认是池级单份**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP / 多租户会话，用下面的[传输档](#传输档)在同一条池里挂多套出口，而不是每个出口各建一条池。
 - **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
 - 想知道「池是不是被建太多了」看指标 `axiosnet.client.pool.active_pools`（存活池数）与 `.shared_pools`（命名池条目数）。
+
+### 传输档
+
+同一个池里挂多套出口（代理 / 凭据 / 客户端证书 / Cookie 会话），由请求自己选一套：
+
+```csharp
+using AxiosNet.Pooling;
+
+// 默认档：ConnectionPoolOptions 上的 Proxy / Credentials / TLS 字段
+var pool = new HttpConnectionPool(new ConnectionPoolOptions
+{
+    MaxConnectionsPerServer = 64
+})
+.AddTransport("egress-a", new ConnectionTransportOptions
+{
+    Proxy = proxyA,
+    UseCookies = true                                  // 该档自己的 Cookie 会话
+})
+.AddTransport("egress-b", new ConnectionTransportOptions
+{
+    Proxy = proxyB,
+    ConfigureSslOptions = ssl => ssl.ClientCertificates = tenantBCerts   // 该档自己的 mTLS 证书
+});
+
+using var client = new AxiosClient(pool: pool);
+
+await client.GetAsync("orders", c => c.Connection.Transport = "egress-a");
+await client.GetAsync("orders", c => c.Connection.Transport = "egress-b");   // 同一个 origin，另一条出口
+
+// 也可以固定在实例默认值上，单次请求写 null 回到默认档
+using var tenantClient = new AxiosClient(
+    new AxiosConfig { BaseAddress = "https://api.example.com/", Connection = { Transport = "egress-a" } },
+    pool: pool);
+```
+
+- **档不继承默认档的传输字段**：`Proxy` / `Credentials` / 证书回调 / `ConnectCallback` / `HandlerFactory` / `UseCookies` 都是一整套。想在某个档上继续用默认档的代理，把同一个 `IWebProxy` 实例赋给它（按引用共享，零成本）。
+- **池级策略不按档拆**：连接数上限、连接生命周期、空闲驱逐、压缩、重定向、HTTP/2 与 ping 仍由 `ConnectionPoolOptions` 统一决定 —— 它们描述的是「怎么用连接」，不是「从哪出去」。但上限是**按 Handler 生效**的：每个档一套 Handler，所以 N 个档的实际连接总量上限是 `N × MaxConnectionsPerServer`（想要「整池共用一份预算」得自己按档分摊）。
+- **每档每 origin 一个独立节点**：独立的 Handler、独立的 TCP 连接、独立的 Cookie 容器（`pool.GetCookies("档名")` 取）。所以 `MaxEndpointCount` 的计数维度是 **origin × 档**，`GetStatistics().Endpoints[i].Transport` 能看出每个节点属于哪一档。
+- **未登记的档直接报错**：`c.Connection.Transport = "missing"` 在发出前抛 `ERR_BAD_OPTION_VALUE`（消息里列出已登记的档）—— 静默回落默认档会把「以为走了专线」变成安全事故。
+- **注入自定义 Handler 时档无效**：那条路径不走连接池，写非空档名同样报 `ERR_BAD_OPTION_VALUE`；需要多出口请用池 + `AddTransport`，或在 Handler 里自己选路。
+- **档自己的 `HandlerFactory` 优先于池级**：工厂通过 `ctx.Profile` / `ctx.Transport` 拿到本档，可以按档返回不同传输实现；`ctx.CreateDefaultHandler()` 会自动带上本档的出口设置。
+- **命名共享池会比较档表**：同一 key 上第二次 `GetOrCreate` 传了不同的档名集合或不同的引用成员，抛 `ERR_BAD_OPTION_VALUE`（与其它选项同一口径）。
+- 指标不按档打标签（`pool.*` 保持低基数）：要区分出口用 span 的 `server.address` / 审计事件的端点序号，或 `GetStatistics()`。
 
 ### HTTP 版本
 
@@ -1451,7 +1497,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.pool.endpoint.reused` | 是否命中池里已有 origin 节点（`false` = 顺手新建） |
 | `axiosnet.cache.revalidated` | 这次响应由条件请求的 304 合并出来（正文来自缓存） |
 
-- 4xx / 5xx 即使被 `validateStatus` 接受也标 `Error`；失败另记一条 `exception` 事件；每次决定重试加一条 `retry` 事件（带 `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`，以及 `server.address` / `server.port` —— 与 span / 指标同一份逻辑地址，事件自带是为了只看事件的消费方不必回头拼 span 标签；换端点 / 对冲分支实际连的主机不在标签里，要看那条分支的尝试事件 —— 需把 `Attempt.Audit` 放进管线）。失败但收到了响应（4xx / 5xx）时照常写 `http.response.status_code` / `network.protocol.version` / `http.response.body.size`。
+- 4xx / 5xx 即使被 `validateStatus` 接受也标 `Error`；失败另记一条 `exception` 事件；每次决定重试加一条 `retry` 事件（带 `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`，以及 `server.address` / `server.port` —— 与 span / 指标同一份逻辑地址，事件自带是为了只看事件的消费方不必回头拼 span 标签；换端点 / 对冲分支实际连的主机不在标签里，要看那条分支的尝试事件 —— `Attempt.Audit` 默认就在链上，订阅 `AxiosNet.Attempt*` 即可）。失败但收到了响应（4xx / 5xx）时照常写 `http.response.status_code` / `network.protocol.version` / `http.response.body.size`。
 - `ResponseType.Stream` 的 span 在拿到响应头时结束，耗时等于首包时间。
 
 **Metrics**（源名 `AxiosNet`）：
@@ -1488,16 +1534,19 @@ builder.Services.AddOpenTelemetry()
 
 **Events**（`DiagnosticListener` 名 `AxiosNet.DiagnosticListener`）：`AxiosNet.RequestStart` / `RequestStop` / `RequestFailed` / `Retry`，载荷是公开类型（`AxiosRequestStartEvent` / `StopEvent` / `FailedEvent` / `AxiosRetryContext`）。
 
-**尝试审计**（`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`，载荷 `AxiosAttemptEvent`）要显式装上 `Attempt.Audit` 才有：
+**尝试审计**（`AxiosNet.AttemptStop` / `AxiosNet.AttemptFailed`，载荷 `AxiosAttemptEvent`）**默认就在链上**（`Attempt.Audit` 是默认链第 6 项，闸门之后、终端之前），订阅即可：
 
 ```csharp
-var pipeline = AxiosAttemptPipeline.Default.Append(Attempt.Audit);   // 落在闸门之后、发送之前
+// 默认链已包含 Attempt.Audit；自定义链时显式列出它
+var pipeline = AxiosAttemptPipeline.Create(
+    Attempt.Retry, Attempt.Failover, Attempt.Circuit, Attempt.Hedging, Attempt.Gate, Attempt.Audit);
 using var client = Axios.Create(pipeline: pipeline);
 ```
 
 - 覆盖**真正到达发送的尝试**：熔断拒绝、闸门排队超时、短路响应都不产生尝试事件（审计在它们之内）。
 - 事件条数是「**端点 × 分支**」：换端点每换一个一条（`AttemptNumber` 不变，靠 `EndpointIndex` 区分），对冲每条分支一条；被胜出者取消的败者不发失败事件（那是清理，不是下游故障），在胜者出现之前就真实失败的败者照常发。
 - 没人订阅时零成本直通：不建状态机、不取时间戳。
+- 再 `Append(Attempt.Audit)` 会作为重复内置项被拒绝（每次尝试发两条事件只会污染口径）。
 
 **按请求关闭或裁剪**：
 
@@ -1578,13 +1627,13 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | 子对象 | 关键成员（默认值 / 说明） |
 | --- | --- |
 | `Serialization` | `JsonSerializerOptions`（Web 风格）/ `ContentSerializer`（`null` = 内置 JSON）/ `ContentSerializers`（实例注册表，构造时必有）/ `RequestEncoding` / `ResponseEncoding` / `ParamsSerializer` / `FormFieldNameSelector` / `CollectionFormat`（`Brackets`） |
-| `Connection` | `Auth`（`new AxiosAuth(user, pass)`）/ `MaxRedirects`（5，`0` 不跟随，仅实例级）/ `WithCredentials`（仅实例级）/ `Proxy` / `Credentials` / `PoolOptions`（仅实例级）/ `HttpVersion`（`null` = 2.0）/ `VersionPolicy`（`null` = `OrLower`） |
+| `Connection` | `Auth`（`new AxiosAuth(user, pass)`）/ `MaxRedirects`（5，`0` 不跟随，仅实例级）/ `WithCredentials`（仅实例级）/ `Proxy` / `Credentials` / `PoolOptions`（仅实例级）/ `HttpVersion`（`null` = 2.0）/ `VersionPolicy`（`null` = `OrLower`）/ `Transport`（`null` = 默认档，见[传输档](#传输档)） |
 | `Limits` | `MaxContentLength` / `MaxBodyLength` / `MaxRate`（均 `null` = 不限）/ `MaxConcurrentRequests` / `MaxQueueLength`（`null`，仅实例级）/ `QueueTimeout`（`null` 一直等）/ `MaxStreamFrameLength`（`null` = 8 MB，1–64 MB） |
 | `Callbacks` | `ValidateStatus`（`Func<int,bool>`，默认 2xx）/ `TimeoutMessage` / `OnUploadProgress` / `OnDownloadProgress` / `OnSendingRequest` / `OnRawResponse` |
 | `Retry` | `Policy`（`null` = 不重试）/ `OnRetry` |
 | `Circuit` | `Policy`（`null` = 不熔断）/ `OnRejected` |
 | `Hedging` | `MaxHedges`（`0` = 不对冲，上限 16）/ `Delay`（80ms，第 n 条分支起跑于 `n × Delay`，`Delay × MaxHedges` 不得超过计时器范围）/ `HedgeNonIdempotentMethods`（`false`） |
-| `Failover` | `Endpoints`（`null` = 不换端点；有序的绝对 `http`/`https` 地址，可带路径前缀，不能带 query / fragment，不能重复） |
+| `Failover` | `Endpoints`（`null` = 不换端点；有序的绝对 `http`/`https` 地址，可带路径前缀，不能带 query / fragment，不能重复）/ `FailureThreshold`（2，`0` 关闭健康记忆）/ `Cooldown`（30 秒）/ `MaxCooldown`（5 分钟） |
 | `Idempotency` | `Enabled`（`false`）/ `HeaderName`（`Idempotency-Key`）/ `Key`（`null` = 自动生成）/ `KeyFactory`（`null` = `Guid` 的 `N` 格式） |
 | `Telemetry` | `Enabled`（`null` = 开启）/ `CaptureUrl`（`null` = 记录，不含查询串）/ `CaptureQuery`（`null` = 不记查询串） |
 
@@ -1633,7 +1682,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **50 项**：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **51 项**：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1740,13 +1789,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1973 / 1966 | `net8.0` / `net6.0` | 3939 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1991 / 1984 | `net8.0` / `net6.0` | 3975 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **合计** | **2039 / 2032** | | **4071** |
+| **合计** | **2057 / 2050** | | **4107** |
 
-测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
+测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
-行覆盖率 **91.7%**、分支覆盖率 **87.3%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内，这也是这两项比上一版略低的原因）。
+行覆盖率 **91.7%**、分支覆盖率 **87.2%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内，这也是这两项比上一版略低的原因）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1790,8 +1839,8 @@ bash eng/aot-package-smoke.sh
 | `Resilience/` | 重试策略与计时、总预算（`TotalTimeout`）、熔断状态机、短路响应 |
 | `Caching/` | 响应缓存与单飞、条件请求（`ETag` / 304）与 `IAxiosCacheRevalidationStore`、`IAxiosCacheStore` 契约与自建存储、键规则与身份隔离、命中路径 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |
-| `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse`、尝试管线（内置顺序、插入位置、重排校验）、并发对冲、备用端点 |
-| `Connectivity/` | 连接池（含命名共享池）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
+| `Pipelines/` | 请求 / 响应拦截器、`transformRequest` / `transformResponse`、尝试管线（内置顺序、插入位置、重排校验）、并发对冲、备用端点与端点健康记忆 |
+| `Connectivity/` | 连接池（含命名共享池、命名传输档）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener 三路遥测、尝试审计事件 |
 | `Errors/` | 错误模型、错误码、`ToJson` 快照 |
 | `Regression/` | 分配护栏（独占集合 + 精确计数；`AllocationTests` 走进程级均值，`AllocationSweepTests` 走线程级多窗最小值——被测路径同步完成时真实值是个定值，噪声只会往上加）、并发吞吐 |
@@ -1862,7 +1911,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs（顶层公共类型）
 │  │  ├─ Cache/                       # AxiosCache（响应缓存 + 单飞）/ IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
-│  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 备用端点 / 熔断 / 对冲 / 闸门 + 可选审计
+│  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 备用端点 / 熔断 / 对冲 / 闸门 / 审计
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy
 │  │  ├─ Circuit/                     # IAxiosCircuitPolicy / CircuitBreaker
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML 实现
@@ -1874,7 +1923,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（50 项）/ DI / Aot
+├─ samples/                           # Simple（51 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）

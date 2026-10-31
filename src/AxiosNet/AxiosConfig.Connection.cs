@@ -28,6 +28,30 @@ public sealed partial class AxiosConfig
         /// </summary>
         public HttpVersionPolicy? VersionPolicy { get; set; }
 
+        private string? _transport;
+
+        /// <summary>
+        /// 传输档名（默认 <c>null</c> / 空串 = 默认档）：选择连接池上由
+        /// <see cref="ConnectionPoolOptions.AddTransport"/> 登记的一套出口设置（代理 / 凭据 / 客户端证书 / Cookie 会话）。
+        /// </summary>
+        /// <remarks>
+        /// <para>按请求项：单次请求可以走另一条出口，不需要新建客户端或连接池。</para>
+        /// <para>档必须已在池上登记，否则请求发出前抛 <c>ERR_BAD_OPTION_VALUE</c>（不静默回落默认档）。</para>
+        /// <para>直接注入自定义 <see cref="HttpMessageHandler"/> 时不走连接池，本项无效：此时传非空档名会报错。</para>
+        /// </remarks>
+        public string? Transport
+        {
+            get => _transport;
+            set
+            {
+                _transport = value;
+                TransportSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过（含显式赋 <c>null</c>），用于合并配置时区分「未设置」与「显式回到默认档」。</summary>
+        internal bool TransportSet { get; set; }
+
         private AxiosAuth? _auth;
 
         /// <summary>对应 axios auth（HTTP Basic）。</summary>

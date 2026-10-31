@@ -634,7 +634,7 @@ public sealed class FailoverTests
         };
 
         var handler = Attempt.Failover(next);
-        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null, deadlineTimestamp: TotalTimeoutBudget.None);
+        var ctx = AxiosAttemptContext.From(config, template.RequestUri!, dataType: null, target: null, gate: null, deadlineTimestamp: TotalTimeoutBudget.None, failoverHealth: null);
 
         var exception = await Assert.ThrowsAsync<AxiosException>(async () => await handler(template, ctx));
 
@@ -725,6 +725,120 @@ public sealed class FailoverTests
         {
             // 本策略只统计放行次数，不判故障。
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 端点健康记忆：跨请求复用「这个端点刚才不行」的结论
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Failover_SkipsPrimaryWhileItIsCoolingDown()
+    {
+        await using var primary = TestHttpServer.Start(_ => new TestResponse(500, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Failover = new()
+            {
+                Endpoints = new[] { new Uri(mirror.Url) },
+                FailureThreshold = 1,
+                Cooldown = TimeSpan.FromSeconds(30)
+            }
+        });
+
+        // 第一次：主端点 500 → 记一次失败（阈值 1 立刻冷却）→ 换镜像。
+        var first = await client.GetAsync("x");
+        Assert.Equal(200, first.Status);
+        Assert.Single(primary.Received);
+        Assert.Single(mirror.Received);
+
+        // 第二次：主端点还在冷却 → 直接走镜像，不再为它白付一次 5xx 往返。
+        var second = await client.GetAsync("x");
+        Assert.Equal(200, second.Status);
+        Assert.Single(primary.Received);
+        Assert.Equal(2, mirror.Received.Count);
+    }
+
+    // 冷却到期重新信任这条走单元层（FailoverHealthTests）：它只取决于单调时钟，
+    // 用真实时间等冷却到期会让「冷却 50ms」比一次失败往返还短，全量跑时必然随机失败。
+
+    [Fact]
+    public async Task Failover_HealthMemoryCanBeDisabled()
+    {
+        await using var primary = TestHttpServer.Start(_ => new TestResponse(500, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Failover = new()
+            {
+                Endpoints = new[] { new Uri(mirror.Url) },
+
+                // 阈值 0 = 关闭健康记忆：行为回到「每次请求都从第一个端点开始」。
+                FailureThreshold = 0,
+                Cooldown = TimeSpan.FromSeconds(30)
+            }
+        });
+
+        await client.GetAsync("x");
+        await client.GetAsync("x");
+
+        Assert.Equal(2, primary.Received.Count);
+    }
+
+    [Fact]
+    public async Task Failover_TriesEveryEndpointEvenWhenAllAreCooling()
+    {
+        await using var primary = TestHttpServer.Start(_ => new TestResponse(500, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ => new TestResponse(500, Body: Array.Empty<byte>()));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Failover = new()
+            {
+                Endpoints = new[] { new Uri(mirror.Url) },
+                FailureThreshold = 1,
+                Cooldown = TimeSpan.FromSeconds(30)
+            }
+        });
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+        Assert.Single(primary.Received);
+        Assert.Single(mirror.Received);
+
+        // 两个端点都在冷却：仍然按原顺序逐个试（健康表只决定先后，不会把请求挡住）。
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+        Assert.Equal(2, primary.Received.Count);
+        Assert.Equal(2, mirror.Received.Count);
+    }
+
+    [Fact]
+    public async Task Failover_4xxDoesNotPutEndpointIntoCooldown()
+    {
+        await using var primary = TestHttpServer.Start(_ => new TestResponse(400, Body: Array.Empty<byte>()));
+        await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = primary.Url,
+            Failover = new()
+            {
+                Endpoints = new[] { new Uri(mirror.Url) },
+                FailureThreshold = 1,
+                Cooldown = TimeSpan.FromSeconds(30)
+            }
+        });
+
+        // 4xx 不换端点，也不该被当成「端点坏了」：连续两次都要打主端点。
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        Assert.Equal(2, primary.Received.Count);
+        Assert.Empty(mirror.Received);
     }
 
     /// <summary>等测试服务器真的收到请求（异步启动的并发请求无法靠固定等待断言）。</summary>
