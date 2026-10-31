@@ -3,19 +3,19 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
-using AxiosNet.WebAPI.Reflection;
-using AxiosNet.WebAPI.Metadata;
+using AxiosNet.Metadata;
+using AxiosNet.Reflection;
 
-namespace AxiosNet.WebAPI.Internal;
+namespace AxiosNet.Internal;
 
-/// <summary>字符串键字典的识别与枚举：供查询参数平铺与 <see cref="HeaderCollectionAttribute"/> 共用。</summary>
+/// <summary>字符串键字典的识别与枚举：查询参数平铺（以及声明式 API 的头集合参数）共用。</summary>
 internal static class QueryMap
 {
     /// <summary>是否为字符串键字典（<c>IDictionary</c> 或 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>）。</summary>
     public static bool IsMapType(Type type)
         => typeof(IDictionary).IsAssignableFrom(type) || FindStringKeyedPair(type, valueType: null) is not null;
 
-    /// <summary>是否为「字符串键 + 字符串值」字典（<see cref="HeaderCollectionAttribute"/> 的要求）。</summary>
+    /// <summary>是否为「字符串键 + 字符串值」字典（声明式 API 的头集合参数要求）。</summary>
     public static bool IsStringMapType(Type type)
         => FindStringKeyedPair(type, typeof(string)) is not null;
 
@@ -70,7 +70,7 @@ internal static class QueryMap
         // 生成器按「声明类型」注册：声明是基类、运行时是派生实例时沿基类链命中（访问器委托对派生实例同样有效）。
         for (var current = type; current is not null; current = current.BaseType)
         {
-            if (GeneratedMetadataRegistry.TryGetMap(current, out var accessor))
+            if (ShapeRegistry.TryGetMap(current, out var accessor))
             {
                 return accessor;
             }
@@ -79,7 +79,7 @@ internal static class QueryMap
         // 自身已在基类链里查过，这里只查接口（含基类继承下来的接口）。
         foreach (var contract in EnumerateSelfAndInterfaces(type))
         {
-            if (contract != type && GeneratedMetadataRegistry.TryGetMap(contract, out var accessor))
+            if (contract != type && ShapeRegistry.TryGetMap(contract, out var accessor))
             {
                 return accessor;
             }

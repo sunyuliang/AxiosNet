@@ -12,7 +12,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace AxiosNet.SourceGen
 {
     /// <summary>
-    /// 请求模型源生成器：编译期为每个带路由特性的请求模型烘焙一份声明，经 <c>AxiosMetadata.RegisterRequestModel</c>
+    /// 请求模型源生成器：编译期为每个带路由特性的请求模型烘焙一份声明，经 <c>AxiosApiMetadata.RegisterRequestModel</c>
     /// 写入运行时注册表。声明里只有事实（路由 / 静态头 / 成员 / 绑定 / 授权），校验仍由运行时共享构建器完成。
     /// 接口代理（真实代理类 + <c>RegisterInterface</c>）见 <c>RequestModelGenerator.Interfaces.cs</c>。
     /// </summary>

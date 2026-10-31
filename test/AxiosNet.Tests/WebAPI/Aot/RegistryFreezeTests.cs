@@ -1,7 +1,9 @@
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.Tests.Infrastructure;
-using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
+using AxiosNet.WebAPI;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 
@@ -20,14 +22,14 @@ public sealed class RegistryFreezeTests
             AxiosMetadata.Freeze();
 
             var error = Assert.Throws<InvalidOperationException>(
-                () => AxiosMetadata.RegisterRequestModel(typeof(FreezeProbeRequest), static builder => builder.Route(HttpMethod.Get, "freeze")));
+                () => AxiosApiMetadata.RegisterRequestModel(typeof(FreezeProbeRequest), static builder => builder.Route(HttpMethod.Get, "freeze")));
 
             Assert.Contains("冻结", error.Message, StringComparison.Ordinal);
             Assert.Contains(typeof(FreezeProbeRequest).FullName!, error.Message, StringComparison.Ordinal);
         }
         finally
         {
-            GeneratedMetadataRegistry.UnfreezeForTests();
+            ShapeRegistry.UnfreezeForTests();
         }
     }
 
@@ -41,7 +43,7 @@ public sealed class RegistryFreezeTests
             // 四种注册各用独立类型：若与别的用例复用同一类型，重复注册会先命中「已注册」，
             // 断言仍然过，但测的就不是冻结了。
             Assert.Throws<InvalidOperationException>(
-                () => AxiosMetadata.RegisterInterface(typeof(IFreezeProbeOtherApi), static _ => new object(), static _ => { }));
+                () => AxiosApiMetadata.RegisterInterface(typeof(IFreezeProbeOtherApi), static _ => new object(), static _ => { }));
             Assert.Throws<InvalidOperationException>(
                 () => AxiosMetadata.RegisterShape(typeof(FreezeProbeOtherShape), static _ => { }));
             Assert.Throws<InvalidOperationException>(
@@ -49,7 +51,7 @@ public sealed class RegistryFreezeTests
         }
         finally
         {
-            GeneratedMetadataRegistry.UnfreezeForTests();
+            ShapeRegistry.UnfreezeForTests();
         }
     }
 
@@ -57,16 +59,16 @@ public sealed class RegistryFreezeTests
     public void Freeze_AllowsEquivalentGeneratedDuplicate()
     {
         // 冻结只禁止写入：两个互不引用的程序集各自生成同一接口的代理时，第二份是空操作，不该炸。
-        AxiosMetadata.RegisterGeneratedInterface(typeof(IFreezeProbeApi), static _ => new object(), static _ => { });
+        AxiosApiMetadata.RegisterGeneratedInterface(typeof(IFreezeProbeApi), static _ => new object(), static _ => { });
 
         try
         {
             AxiosMetadata.Freeze();
-            AxiosMetadata.RegisterGeneratedInterface(typeof(IFreezeProbeApi), static _ => new object(), static _ => { });
+            AxiosApiMetadata.RegisterGeneratedInterface(typeof(IFreezeProbeApi), static _ => new object(), static _ => { });
         }
         finally
         {
-            GeneratedMetadataRegistry.UnfreezeForTests();
+            ShapeRegistry.UnfreezeForTests();
         }
     }
 
@@ -78,15 +80,15 @@ public sealed class RegistryFreezeTests
             AxiosMetadata.Freeze();
             AxiosMetadata.Freeze();
 
-            Assert.True(GeneratedMetadataRegistry.IsFrozen);
+            Assert.True(ShapeRegistry.IsFrozen);
             Assert.False(GeneratedMetadataRegistry.TryGetRequestModel(typeof(FreezeProbeRequest), out _));
         }
         finally
         {
-            GeneratedMetadataRegistry.UnfreezeForTests();
+            ShapeRegistry.UnfreezeForTests();
         }
 
-        Assert.False(GeneratedMetadataRegistry.IsFrozen);
+        Assert.False(ShapeRegistry.IsFrozen);
     }
 }
 

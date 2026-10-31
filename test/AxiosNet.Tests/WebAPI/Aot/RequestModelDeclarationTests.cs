@@ -14,7 +14,7 @@ public sealed class RequestModelDeclarationTests
 {
     static RequestModelDeclarationTests()
     {
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredMultipartRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredMultipartRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/multipart/{id}")
             .StaticHeaders("X-Model: yes")
             .Multipart()
@@ -26,33 +26,33 @@ public sealed class RequestModelDeclarationTests
                 .FieldName("note")
                 .Unannotated());
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredDefaultBodyRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredDefaultBodyRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/orders")
             .ImplementsApiRequest()
             .Member(nameof(DeclaredDefaultBodyRequest.Payload), typeof(Person), static target => ((DeclaredDefaultBodyRequest)target).Payload)
                 .Unannotated());
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredAuthorizeRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredAuthorizeRequest), static builder => builder
             .Route("get", "declared/auth")
             .Authorize("Basic"));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredAnonymousRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredAnonymousRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/anonymous")
             .Anonymous());
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredHeadersRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredHeadersRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/headers")
             .StaticHeaders("X-Static: yes", "X-Removed")
             .Member(nameof(DeclaredHeadersRequest.Token), typeof(string), static target => ((DeclaredHeadersRequest)target).Token)
                 .Header("X-Static"));
 
         // 非法声明：注册只记录错误，首次构建元数据时才抛。
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredPartWithoutMultipartRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredPartWithoutMultipartRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/part")
             .Member(nameof(DeclaredPartWithoutMultipartRequest.File), typeof(Stream), static target => ((DeclaredPartWithoutMultipartRequest)target).File)
                 .Part());
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredDuplicatePartRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredDuplicatePartRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/dup-part")
             .Multipart()
             .Member("First", typeof(string), static _ => null)
@@ -60,46 +60,46 @@ public sealed class RequestModelDeclarationTests
             .Member("Second", typeof(string), static _ => null)
                 .Part("same"));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredMultipartBodyRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredMultipartBodyRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/multipart-body")
             .Multipart()
             .Member("Payload", typeof(Person), static _ => null)
                 .Body());
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredBlankRouteRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredBlankRouteRequest), static builder => builder
             .Route(" ", " ")
             .StaticHeaders());
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredBlankSchemeRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredBlankSchemeRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/blank-scheme")
             .Authorize(" "));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredAuthorizationConflictRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredAuthorizationConflictRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/auth-conflict")
             .Anonymous()
             .Authorize("Bearer"));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredBlankPartNameRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredBlankPartNameRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/blank-part")
             .Multipart()
             .Member("File", typeof(Stream), static _ => null)
                 .Part(" "));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredBlankPartContentTypeRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredBlankPartContentTypeRequest), static builder => builder
             .Route(HttpMethod.Post, "declared/blank-part-content")
             .Multipart()
             .Member("File", typeof(Stream), static _ => null)
                 .Part("file", "a.bin", " "));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredBlankStaticHeaderRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredBlankStaticHeaderRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/blank-header")
             .StaticHeaders(" "));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredBadStaticHeaderRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredBadStaticHeaderRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/bad-header")
             .StaticHeaders(": value"));
 
-        AxiosMetadata.RegisterRequestModel(typeof(DeclaredDuplicatePathRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(DeclaredDuplicatePathRequest), static builder => builder
             .Route(HttpMethod.Get, "declared/dup/{id}")
             .Member("First", typeof(int), static _ => null)
                 .Path("id")

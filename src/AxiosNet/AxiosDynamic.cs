@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Dynamic;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet;
 

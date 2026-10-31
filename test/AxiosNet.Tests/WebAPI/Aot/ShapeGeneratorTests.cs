@@ -2,17 +2,19 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
-using System.Text;
 using System.Text.RegularExpressions;
-using AxiosNet;
+using System.Text;
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.SourceGen;
 using AxiosNet.Tests.Infrastructure;
-using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
-using Microsoft.CodeAnalysis;
+using AxiosNet.WebAPI;
+using AxiosNet;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 
@@ -42,7 +44,7 @@ public sealed class ShapeGeneratorTests
         var assembly = LoadEmitted(output);
 
         var filters = assembly.GetType(ns + ".Filters", throwOnError: true)!;
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(filters, out var shape));
+        Assert.True(ShapeRegistry.TryGetShape(filters, out var shape));
         Assert.Equal(
             new[] { "Query", "Secret", "Optional", "Page", "Address" },
             shape!.Members.Select(static member => member.Name));
@@ -53,20 +55,20 @@ public sealed class ShapeGeneratorTests
         Assert.Equal("Address", shape.Members[4].FieldName);
 
         var address = assembly.GetType(ns + ".Address", throwOnError: true)!;
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(address, out var addressShape));
+        Assert.True(ShapeRegistry.TryGetShape(address, out var addressShape));
         Assert.Equal("city_name", addressShape!.Members[0].FieldName);
 
         // 自定义只读字典：只生成枚举访问器（params 平铺），不注册 POCO 形状。
         var headerBag = assembly.GetType(ns + ".HeaderBag", throwOnError: true)!;
-        Assert.True(GeneratedMetadataRegistry.TryGetMap(headerBag, out var map));
+        Assert.True(ShapeRegistry.TryGetMap(headerBag, out var map));
         var bag = CreateInstance(assembly, ns + ".HeaderBag");
         Assert.Equal(
             new[] { new KeyValuePair<string, object?>("a", "1"), new KeyValuePair<string, object?>("b", "two") },
             map!.Enumerate(bag));
-        Assert.False(GeneratedMetadataRegistry.TryGetShape(headerBag, out _));
+        Assert.False(ShapeRegistry.TryGetShape(headerBag, out _));
 
         // 只经 object 传递的类型不应被数据流分析误收集。
-        Assert.False(GeneratedMetadataRegistry.TryGetShape(assembly.GetType(ns + ".Unseeded", throwOnError: true)!, out _));
+        Assert.False(ShapeRegistry.TryGetShape(assembly.GetType(ns + ".Unseeded", throwOnError: true)!, out _));
     }
 
     [Fact]
@@ -324,7 +326,7 @@ public sealed class ShapeGeneratorTests
         Assert.Empty(reflected.Diagnostics);
 
         var generatedAssembly = LoadEmitted(generated.Output);
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(generatedAssembly.GetType(ns + ".Model", throwOnError: true)!, out var shape));
+        Assert.True(ShapeRegistry.TryGetShape(generatedAssembly.GetType(ns + ".Model", throwOnError: true)!, out var shape));
         Assert.Equal("Visible", Assert.Single(shape!.Members).Name);
         var generatedUrl = InvokeString(generatedAssembly, "Query");
 
@@ -430,7 +432,7 @@ public sealed class ShapeGeneratorTests
         var item = assembly.GetType(ns + ".Item", throwOnError: true)!;
 
         // Dictionary<,> 同时实现非泛型 IDictionary（运行期直达），但值类型自己的形状仍要生成。
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(item, out _));
+        Assert.True(ShapeRegistry.TryGetShape(item, out _));
 
         var jit = InvokeString(assembly, "Query");
         Assert.Contains("a[Id]=1", jit);
@@ -543,11 +545,11 @@ public sealed class ShapeGeneratorTests
 
         // 声明为接口类型时生成器按接口注册访问器：具体类型查不到，只能沿接口命中（AOT 的关键路径）。
         var intBag = assembly.GetType(ns + ".IntBag", throwOnError: true)!;
-        Assert.False(GeneratedMetadataRegistry.TryGetMap(intBag, out _));
-        Assert.True(GeneratedMetadataRegistry.TryGetMap(typeof(IReadOnlyDictionary<string, int>), out _));
+        Assert.False(ShapeRegistry.TryGetMap(intBag, out _));
+        Assert.True(ShapeRegistry.TryGetMap(typeof(IReadOnlyDictionary<string, int>), out _));
 
         var formBag = assembly.GetType(ns + ".FormBag", throwOnError: true)!;
-        Assert.True(GeneratedMetadataRegistry.TryGetMap(formBag, out _));
+        Assert.True(ShapeRegistry.TryGetMap(formBag, out _));
         Assert.EndsWith("?c=3&d=4", InvokeString(assembly, "RawMapQuery"));
 
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

@@ -6,7 +6,6 @@ using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
 using AxiosNet.Internal;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Serialization;
 

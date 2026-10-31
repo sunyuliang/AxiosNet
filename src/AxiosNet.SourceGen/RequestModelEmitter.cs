@@ -20,7 +20,7 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("        [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]");
             builder.AppendLine("        internal static void Register()");
             builder.AppendLine("        {");
-            builder.AppendLine("            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterRequestModel(");
+            builder.AppendLine("            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterRequestModel(");
             builder.Append("                typeof(").Append(model.FullTypeName).AppendLine("),");
             builder.AppendLine("                static b =>");
             builder.AppendLine("                {");

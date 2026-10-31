@@ -1,4 +1,4 @@
-namespace AxiosNet.WebAPI.Metadata;
+namespace AxiosNet.Metadata;
 
 /// <summary>
 /// Native AOT 下缺少生成元数据时抛出：说明缺的是哪类元数据、哪个类型，以及三种修复方式。
@@ -9,7 +9,7 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     private const string RepairHint =
         "修复方式（任选其一）："
         + "（1）启用 AxiosNet 源生成器（默认随包启用，确认项目未设置 <AxiosNetSourceGen>false</AxiosNetSourceGen>）；"
-        + "（2）在启动期调用 AxiosMetadata.RegisterRequestModel / RegisterInterface / RegisterShape 手工注册（或对形状类型调用 RegisterShape<T>() 并加 DynamicallyAccessedMembers 标注，匿名形状用 RegisterShapeFromSample）；"
+        + "（2）在启动期调用 AxiosApiMetadata.RegisterRequestModel / RegisterInterface / RegisterShape 手工注册（或对形状类型调用 RegisterShape<T>() 并加 DynamicallyAccessedMembers 标注，匿名形状用 RegisterShapeFromSample）；"
         + "（3）改用支持动态代码（JIT）的运行时。";
 
     private AxiosAotMetadataException(string message)
@@ -25,7 +25,7 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     internal static AxiosAotMetadataException MissingInterface(Type type)
         => new($"接口 {Describe(type)} 缺少生成元数据：当前运行时不支持动态代码（Native AOT），无法通过 DispatchProxy 生成代理。"
             + "请确认接口声明在启用 AxiosNet 源生成器的程序集里（闭合泛型接口还需在调用点 Create<T>() / AddApiInterface<T>() 出现），"
-            + "或用 AxiosMetadata.RegisterInterface 手工注册。" + RepairHint);
+            + "或用 AxiosApiMetadata.RegisterInterface 手工注册。" + RepairHint);
 
     /// <summary>params / 表单 / multipart 展平缺少对象的形状元数据。</summary>
     /// <param name="type">展平时的运行时类型（派生类型需要自己的形状，不会退回基类布局）。</param>

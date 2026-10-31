@@ -3,14 +3,16 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using System.Text;
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.SourceGen;
-using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
-using AxiosNet.WebAPI.Reflection;
 using AxiosNet.WebAPI.Metadata;
-using Microsoft.CodeAnalysis;
+using AxiosNet.WebAPI.Reflection;
+using AxiosNet.WebAPI;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 
@@ -623,7 +625,7 @@ public sealed class RequestModelGeneratorTests
 
         // 关键字属性名必须以 @ 前缀写进取值委托：拿实例真读一遍才证明绑定到的是那个属性。
         var weirdType = assembly.GetType(ns + ".Weird", throwOnError: true)!;
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(weirdType, out var shape));
+        Assert.True(ShapeRegistry.TryGetShape(weirdType, out var shape));
         var instance = Activator.CreateInstance(weirdType)!;
         var values = shape!.Members.ToDictionary(
             static member => member.Name,

@@ -3,7 +3,7 @@ using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI.Metadata;
 
-/// <summary>接口声明构建器：由源生成器或 <see cref="AxiosMetadata.RegisterInterface"/> 使用。</summary>
+/// <summary>接口声明构建器：由源生成器或 <see cref="AxiosApiMetadata.RegisterInterface"/> 使用。</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class InterfaceBuilder
 {

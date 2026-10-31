@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using AxiosNet.WebAPI.Metadata;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.Reflection;
 

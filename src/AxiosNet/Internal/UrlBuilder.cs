@@ -1,10 +1,9 @@
-using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections;
 using System.Diagnostics.CodeAnalysis;
-using System.Text;
 using System.Text.Json;
-using AxiosNet.WebAPI.Internal;
-using AxiosNet.WebAPI.Metadata;
+using System.Text;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal;
 

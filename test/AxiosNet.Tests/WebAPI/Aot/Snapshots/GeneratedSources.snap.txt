@@ -8,9 +8,9 @@ namespace AxiosNet.Generated
     internal sealed class __AxiosProxy_AxiosNet_SnapshotProbe_ISnapshotApi_a27d46f2 : global::AxiosNet.SnapshotProbe.ISnapshotApi
     {
         private static readonly global::AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime __method0 =
-            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 0, "GetAsync");
+            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 0, "GetAsync");
         private static readonly global::AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime __method1 =
-            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 1, "CreateAsync");
+            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi), 1, "CreateAsync");
 
         private readonly global::AxiosNet.WebAPI.ApiClient _client;
 
@@ -32,7 +32,7 @@ namespace AxiosNet.Generated
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
         internal static void Register()
         {
-            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterGeneratedInterface(
+            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterGeneratedInterface(
                 typeof(global::AxiosNet.SnapshotProbe.ISnapshotApi),
                 static client => (object)new __AxiosProxy_AxiosNet_SnapshotProbe_ISnapshotApi_a27d46f2(client),
                 static b =>
@@ -66,7 +66,7 @@ namespace AxiosNet.Generated
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
         internal static void Register()
         {
-            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterRequestModel(
+            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterRequestModel(
                 typeof(global::AxiosNet.SnapshotProbe.SnapshotRequest),
                 static b =>
                 {
@@ -104,7 +104,7 @@ namespace AxiosNet.Generated
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
         internal static void Register()
         {
-            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample(
+            global::AxiosNet.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample(
                 default(global::AxiosNet.SnapshotProbe.SnapshotItem),
                 static b =>
                 {
@@ -126,7 +126,7 @@ namespace AxiosNet.Generated
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
         internal static void Register()
         {
-            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample(
+            global::AxiosNet.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample(
                 default(global::AxiosNet.SnapshotProbe.SnapshotRequest),
                 static b =>
                 {

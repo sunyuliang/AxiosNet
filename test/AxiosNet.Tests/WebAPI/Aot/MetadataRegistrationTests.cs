@@ -1,4 +1,6 @@
 using System.Text.Json.Serialization;
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
@@ -28,12 +30,12 @@ public sealed class MetadataRegistrationTests
         AxiosMetadata.RegisterShape(typeof(BrokenShapeSample), static _ => throw new InvalidOperationException("形状声明损坏"));
 
         // 配置期抛错的请求模型：注册不抛，错误随声明进入首次构建。
-        AxiosMetadata.RegisterRequestModel(typeof(BrokenRequestModelSample), static _ => throw new InvalidOperationException("请求模型声明损坏"));
+        AxiosApiMetadata.RegisterRequestModel(typeof(BrokenRequestModelSample), static _ => throw new InvalidOperationException("请求模型声明损坏"));
 
         // 自定义只读字典的枚举访问器。
         AxiosMetadata.RegisterMap(typeof(ReadOnlyMapSample), static target => ((ReadOnlyMapSample)target).Enumerate());
 
-        AxiosMetadata.RegisterInterface(
+        AxiosApiMetadata.RegisterInterface(
             typeof(IRegisteredApi),
             static _ => throw new NotSupportedException("代理工厂不属于本用例的测试范围"),
             static builder => builder
@@ -44,7 +46,7 @@ public sealed class MetadataRegistrationTests
                     .ReturnsData(typeof(object)));
 
         // 方法声明缺路径绑定：注册不抛，Validate 时一次性暴露。
-        AxiosMetadata.RegisterInterface(
+        AxiosApiMetadata.RegisterInterface(
             typeof(IBrokenApi),
             static _ => throw new NotSupportedException("代理工厂不属于本用例的测试范围"),
             static builder => builder
@@ -55,7 +57,7 @@ public sealed class MetadataRegistrationTests
     [Fact]
     public void ReflectionShape_UsesJsonPropertyNameAndJsonIgnore()
     {
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(typeof(ShapeSample), out var shape));
+        Assert.True(ShapeRegistry.TryGetShape(typeof(ShapeSample), out var shape));
         Assert.NotNull(shape);
         Assert.Null(shape!.Error);
         Assert.Equal(["Name", "FullName", "Secret"], shape.Members.Select(static member => member.Name));
@@ -67,7 +69,7 @@ public sealed class MetadataRegistrationTests
     [Fact]
     public void GeneratedShape_KeepsBakedFieldNamesAndIgnores()
     {
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(typeof(BakedShapeSample), out var shape));
+        Assert.True(ShapeRegistry.TryGetShape(typeof(BakedShapeSample), out var shape));
         Assert.NotNull(shape);
         Assert.Equal("id", shape!.Members[0].FieldName);
         Assert.Equal(42, shape.Members[0].GetValue(new BakedShapeSample { Id = 42 }));
@@ -77,7 +79,7 @@ public sealed class MetadataRegistrationTests
     [Fact]
     public void ShapeConfigurationError_IsDeferredToRegistryLookup()
     {
-        Assert.True(GeneratedMetadataRegistry.TryGetShape(typeof(BrokenShapeSample), out var shape));
+        Assert.True(ShapeRegistry.TryGetShape(typeof(BrokenShapeSample), out var shape));
         Assert.Equal("形状声明损坏", shape!.Error);
         Assert.Empty(shape.Members);
     }
@@ -102,7 +104,7 @@ public sealed class MetadataRegistrationTests
     [Fact]
     public void MapAccessor_IsRegisteredAndEnumeratesPairs()
     {
-        Assert.True(GeneratedMetadataRegistry.TryGetMap(typeof(ReadOnlyMapSample), out var accessor));
+        Assert.True(ShapeRegistry.TryGetMap(typeof(ReadOnlyMapSample), out var accessor));
         var pairs = accessor!.Enumerate(new ReadOnlyMapSample()).ToArray();
 
         Assert.Equal(["a", "b"], pairs.Select(static pair => pair.Key));

@@ -26,7 +26,7 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("        {");
             if (shape.RegisterShape)
             {
-                builder.AppendLine("            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample(");
+                builder.AppendLine("            global::AxiosNet.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample(");
                 builder.Append("                ")
                     .Append(shape.SampleExpression ?? "default(" + shape.TypeExpression + ")")
                     .AppendLine(",");
@@ -50,7 +50,7 @@ namespace AxiosNet.SourceGen
 
             if (shape.MapInterfaceExpression is { } mapInterface)
             {
-                builder.AppendLine("            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterGeneratedMap(");
+                builder.AppendLine("            global::AxiosNet.Metadata.AxiosMetadata.RegisterGeneratedMap(");
                 builder.Append("                typeof(").Append(shape.TypeExpression).AppendLine("),");
                 builder.Append("                static d => Enumerate((").Append(shape.TypeExpression).AppendLine(")d));");
             }

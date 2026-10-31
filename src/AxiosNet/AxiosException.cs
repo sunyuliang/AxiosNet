@@ -2,7 +2,7 @@ namespace AxiosNet;
 
 /// <summary>
 /// 对应 axios 的 AxiosError：携带 code / config / request / response，错误码与 axios 对齐。
-/// 库抛出的都是本类型；<c>catch (AxiosException)</c> 能接住包括 <see cref="AxiosNet.WebAPI.ApiError{TError}"/> 在内的全部请求错误。
+/// 库抛出的都是本类型；<c>catch (AxiosException)</c> 能接住包括 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c> 在内的全部请求错误。
 /// </summary>
 public class AxiosException : Exception
 {
@@ -89,7 +89,7 @@ public class AxiosException : Exception
     internal bool TimedOutOnTotalBudget { get; private init; }
 
     /// <summary>
-    /// 供派生类型（如 <see cref="AxiosNet.WebAPI.ApiError{TError}"/>）构造异常；调用方应当读取库抛出的实例，而不是自己创建。
+    /// 供派生类型（如 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c>）构造异常；调用方应当读取库抛出的实例，而不是自己创建。
     /// <paramref name="code"/> 决定 <see cref="ErrorCode"/>，取值请用 <see cref="ErrBadRequest"/> 等常量。
     /// </summary>
     protected AxiosException(

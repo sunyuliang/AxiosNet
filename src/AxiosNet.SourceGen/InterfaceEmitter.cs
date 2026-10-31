@@ -45,7 +45,7 @@ namespace AxiosNet.SourceGen
             foreach (var method in model.Methods)
             {
                 builder.Append("        private static readonly ").Append(Runtime).Append(" __method").Append(method.Index).AppendLine(" =");
-                builder.Append("            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.GetInterfaceMethod(typeof(")
+                builder.Append("            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(typeof(")
                     .Append(model.InterfaceTypeExpression)
                     .Append("), ")
                     .Append(method.Index)
@@ -166,7 +166,7 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("        [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]");
             builder.AppendLine("        internal static void Register()");
             builder.AppendLine("        {");
-            builder.AppendLine("            global::AxiosNet.WebAPI.Metadata.AxiosMetadata.RegisterGeneratedInterface(");
+            builder.AppendLine("            global::AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterGeneratedInterface(");
             builder.Append("                typeof(").Append(model.InterfaceTypeExpression).AppendLine("),");
             builder.Append("                static client => (object)new ").Append(model.ClassName).AppendLine("(client),");
             builder.AppendLine("                static b =>");

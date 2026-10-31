@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using AxiosNet.WebAPI.Internal;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Reflection;
 

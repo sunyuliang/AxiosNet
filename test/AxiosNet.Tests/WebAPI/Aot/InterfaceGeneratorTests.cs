@@ -3,15 +3,16 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using System.Text;
+using AxiosNet.Metadata;
 using AxiosNet.SourceGen;
 using AxiosNet.Tests.Infrastructure;
-using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
-using AxiosNet.WebAPI.Reflection;
 using AxiosNet.WebAPI.Metadata;
-using Microsoft.CodeAnalysis;
+using AxiosNet.WebAPI.Reflection;
+using AxiosNet.WebAPI;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 
@@ -521,7 +522,7 @@ public sealed class InterfaceGeneratorTests
     [Fact]
     public void UnregisteredInterface_MissingMetadataThrowsAotException()
     {
-        var error = Assert.Throws<AxiosAotMetadataException>(() => AxiosMetadata.GetInterfaceMethod(typeof(IUnregisteredApi), 0));
+        var error = Assert.Throws<AxiosAotMetadataException>(() => AxiosApiMetadata.GetInterfaceMethod(typeof(IUnregisteredApi), 0));
 
         Assert.Contains("Native AOT", error.Message);
         Assert.Contains("RegisterInterface", error.Message);

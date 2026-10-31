@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
 

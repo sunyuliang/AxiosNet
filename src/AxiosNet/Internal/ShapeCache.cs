@@ -1,9 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using AxiosNet.Metadata;
 using AxiosNet.Reflection;
-using AxiosNet.WebAPI.Internal;
-using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.Internal;
 
@@ -22,7 +21,7 @@ internal static class ShapeCache
     /// </summary>
     public static ObjectShape Get(Type type, string? fieldPath = null)
     {
-        if (GeneratedMetadataRegistry.TryGetShape(type, out var registered))
+        if (ShapeRegistry.TryGetShape(type, out var registered))
         {
             return Validate(registered);
         }
@@ -42,7 +41,7 @@ internal static class ShapeCache
     /// </summary>
     public static bool TryGet(Type type, [NotNullWhen(true)] out ObjectShape? shape)
     {
-        if (GeneratedMetadataRegistry.TryGetShape(type, out var registered))
+        if (ShapeRegistry.TryGetShape(type, out var registered))
         {
             shape = registered.Error is null ? registered : null;
             return shape is not null;

@@ -1,7 +1,7 @@
 using System.ComponentModel;
-using AxiosNet.WebAPI.Internal;
+using AxiosNet.Internal;
 
-namespace AxiosNet.WebAPI.Metadata;
+namespace AxiosNet.Metadata;
 
 /// <summary>对象形状构建器：params / 表单 / multipart 展平使用的成员清单（生成期烘焙或手工注册）。</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]

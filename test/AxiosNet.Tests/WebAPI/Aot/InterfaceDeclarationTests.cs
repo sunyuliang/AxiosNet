@@ -14,7 +14,7 @@ public sealed class InterfaceDeclarationTests
 {
     static InterfaceDeclarationTests()
     {
-        AxiosMetadata.RegisterInterface(typeof(IDeclaredBindingApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDeclaredBindingApi), CreateProxy, static builder => builder
             .StaticHeaders("X-Api: v1")
             .Method(nameof(IDeclaredBindingApi.GetAsync), HttpMethod.Get, "decl/items/{id}")
                 .StaticHeaders("X-Method: yes")
@@ -34,7 +34,7 @@ public sealed class InterfaceDeclarationTests
             .Method(nameof(IDeclaredBindingApi.PingAsync), HttpMethod.Head, "decl/ping")
                 .ReturnsData(typeof(object)));
 
-        AxiosMetadata.RegisterInterface(typeof(IDeclaredMultipartApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDeclaredMultipartApi), CreateProxy, static builder => builder
             .Method(nameof(IDeclaredMultipartApi.UploadAsync), HttpMethod.Post, "decl/upload/{id}")
                 .Multipart()
                 .Parameter(0, "id", typeof(int))
@@ -45,20 +45,20 @@ public sealed class InterfaceDeclarationTests
                     .Unannotated()
                 .ReturnsData(typeof(Person)));
 
-        AxiosMetadata.RegisterInterface(typeof(IDeclaredStreamApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDeclaredStreamApi), CreateProxy, static builder => builder
             .Method(nameof(IDeclaredStreamApi.StreamAsync), HttpMethod.Get, "decl/stream")
                 .Stream(AxiosStreamFormat.ServerSentEvents)
                 .ReturnsResponse(typeof(IAsyncEnumerable<Person>)));
 
         // 接口级授权被方法级 [AllowAnonymous] 覆盖。
-        AxiosMetadata.RegisterInterface(typeof(IDeclaredAuthorizeApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDeclaredAuthorizeApi), CreateProxy, static builder => builder
             .Authorize("Basic")
             .Method(nameof(IDeclaredAuthorizeApi.GetAsync), HttpMethod.Get, "decl/auth")
                 .Anonymous()
                 .ReturnsVoid());
 
         // 取消令牌参数即使被统一声明并标注绑定特性也按类型跳过（与反射路径一致）。
-        AxiosMetadata.RegisterInterface(typeof(IDeclaredCancellationTokenApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDeclaredCancellationTokenApi), CreateProxy, static builder => builder
             .Method(nameof(IDeclaredCancellationTokenApi.GetAsync), HttpMethod.Get, "decl/ct/{id}")
                 .Parameter(0, "id", typeof(int))
                     .Path("id")
@@ -68,23 +68,23 @@ public sealed class InterfaceDeclarationTests
                 .ReturnsVoid());
 
         // 非法声明：注册只记录，Validate 时抛。
-        AxiosMetadata.RegisterInterface(typeof(IConfigureErrorApi), CreateProxy, static builder =>
+        AxiosApiMetadata.RegisterInterface(typeof(IConfigureErrorApi), CreateProxy, static builder =>
         {
             builder.Method(nameof(IConfigureErrorApi.GetAsync), HttpMethod.Get, "decl/owner-error");
             throw new InvalidOperationException("接口声明损坏");
         });
 
-        AxiosMetadata.RegisterInterface(typeof(IBlankMethodApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IBlankMethodApi), CreateProxy, static builder => builder
             .Method(nameof(IBlankMethodApi.GetAsync), " ", "decl/blank")
                 .ReturnsVoid());
 
-        AxiosMetadata.RegisterInterface(typeof(IPartWithoutMultipartApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IPartWithoutMultipartApi), CreateProxy, static builder => builder
             .Method(nameof(IPartWithoutMultipartApi.GetAsync), HttpMethod.Post, "decl/part")
                 .Parameter(0, "file", typeof(Stream))
                     .Part()
                 .ReturnsVoid());
 
-        AxiosMetadata.RegisterInterface(typeof(IDuplicatePartApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDuplicatePartApi), CreateProxy, static builder => builder
             .Method(nameof(IDuplicatePartApi.GetAsync), HttpMethod.Post, "decl/dup-part")
                 .Multipart()
                 .Parameter(0, "first", typeof(string))
@@ -93,47 +93,47 @@ public sealed class InterfaceDeclarationTests
                     .Part("same")
                 .ReturnsVoid());
 
-        AxiosMetadata.RegisterInterface(typeof(IMultipartBodyConflictApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IMultipartBodyConflictApi), CreateProxy, static builder => builder
             .Method(nameof(IMultipartBodyConflictApi.GetAsync), HttpMethod.Post, "decl/multipart-body")
                 .Multipart()
                 .Parameter(0, "payload", typeof(Person))
                     .Body()
                 .ReturnsVoid());
 
-        AxiosMetadata.RegisterInterface(typeof(IUnsupportedReturnApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IUnsupportedReturnApi), CreateProxy, static builder => builder
             .Method(nameof(IUnsupportedReturnApi.GetAsync), HttpMethod.Get, "decl/unsupported"));
 
-        AxiosMetadata.RegisterInterface(typeof(IStreamWithoutStreamingApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IStreamWithoutStreamingApi), CreateProxy, static builder => builder
             .Method(nameof(IStreamWithoutStreamingApi.GetAsync), HttpMethod.Get, "decl/stream-plain")
                 .Stream()
                 .ReturnsData(typeof(Person)));
 
-        AxiosMetadata.RegisterInterface(typeof(IInvalidStreamFormatApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IInvalidStreamFormatApi), CreateProxy, static builder => builder
             .Method(nameof(IInvalidStreamFormatApi.GetAsync), HttpMethod.Get, "decl/bad-format")
                 .Stream((AxiosStreamFormat)99)
                 .ReturnsResponse(typeof(IAsyncEnumerable<Person>)));
 
-        AxiosMetadata.RegisterInterface(typeof(IBadStaticHeaderApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IBadStaticHeaderApi), CreateProxy, static builder => builder
             .StaticHeaders(" ")
             .Method(nameof(IBadStaticHeaderApi.GetAsync), HttpMethod.Get, "decl/bad-header")
                 .ReturnsVoid());
 
-        AxiosMetadata.RegisterInterface(typeof(IBadHeaderCollectionApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IBadHeaderCollectionApi), CreateProxy, static builder => builder
             .Method(nameof(IBadHeaderCollectionApi.GetAsync), HttpMethod.Get, "decl/bad-collection")
                 .Parameter(0, "count", typeof(int))
                     .HeaderCollection()
                 .ReturnsVoid());
 
-        AxiosMetadata.RegisterInterface(typeof(IDuplicateRegistrationApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDuplicateRegistrationApi), CreateProxy, static builder => builder
             .Method(nameof(IDuplicateRegistrationApi.GetAsync), HttpMethod.Get, "decl/duplicate")
                 .ReturnsVoid());
 
         // 接口级错误但没有声明任何方法：Validate 仍要抛出（不能被空方法表吞掉）。
-        AxiosMetadata.RegisterInterface(typeof(IConfigureErrorEmptyApi), CreateProxy, static _ =>
+        AxiosApiMetadata.RegisterInterface(typeof(IConfigureErrorEmptyApi), CreateProxy, static _ =>
             throw new InvalidOperationException("接口声明损坏"));
 
         // 两个取消令牌参数：与反射路径一样按类型识别并拒绝。
-        AxiosMetadata.RegisterInterface(typeof(IDuplicateCancellationTokenApi), CreateProxy, static builder => builder
+        AxiosApiMetadata.RegisterInterface(typeof(IDuplicateCancellationTokenApi), CreateProxy, static builder => builder
             .Method(nameof(IDuplicateCancellationTokenApi.GetAsync), HttpMethod.Get, "decl/ct-dup")
                 .Parameter(0, "first", typeof(CancellationToken))
                     .Unannotated()
@@ -217,7 +217,7 @@ public sealed class InterfaceDeclarationTests
     public void DuplicateInterfaceRegistration_Throws()
     {
         var error = Assert.Throws<InvalidOperationException>(
-            () => AxiosMetadata.RegisterInterface(typeof(IDuplicateRegistrationApi), CreateProxy, static _ => { }));
+            () => AxiosApiMetadata.RegisterInterface(typeof(IDuplicateRegistrationApi), CreateProxy, static _ => { }));
 
         Assert.Contains("接口", error.Message);
         Assert.Contains("元数据已注册", error.Message);

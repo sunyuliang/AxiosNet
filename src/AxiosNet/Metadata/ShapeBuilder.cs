@@ -1,7 +1,7 @@
 using System.ComponentModel;
-using AxiosNet.WebAPI.Internal;
+using AxiosNet.Internal;
 
-namespace AxiosNet.WebAPI.Metadata;
+namespace AxiosNet.Metadata;
 
 /// <summary>
 /// 对象形状构建器（泛型版）：生成代码用 <c>default(T)</c> 或匿名对象样本推断 <typeparamref name="T"/>，

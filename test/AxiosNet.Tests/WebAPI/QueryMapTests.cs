@@ -1,5 +1,5 @@
 using System.Collections;
-using AxiosNet.WebAPI.Internal;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Tests.WebAPI;
 

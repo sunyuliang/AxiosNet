@@ -1,7 +1,9 @@
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.Tests.Infrastructure;
-using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
+using AxiosNet.WebAPI;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 
@@ -15,7 +17,7 @@ public sealed class MetadataRegistryTests
     static MetadataRegistryTests()
     {
         // 与 RegisteredGetRequest 同形（仅没有手工注册），用于生成 / 反射两条路径的对照。
-        AxiosMetadata.RegisterRequestModel(typeof(RegisteredGetRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(RegisteredGetRequest), static builder => builder
             .Route(HttpMethod.Get, "orders/{id}")
             .StaticHeaders("X-Static: yes")
             .Member(nameof(RegisteredGetRequest.Id), typeof(int), static target => ((RegisteredGetRequest)target).Id)
@@ -86,11 +88,11 @@ public sealed class MetadataRegistryTests
     [Fact]
     public void DuplicateRegistration_Throws_InsteadOfSilentlyOverwriting()
     {
-        AxiosMetadata.RegisterRequestModel(
+        AxiosApiMetadata.RegisterRequestModel(
             typeof(DuplicateRegistrationRequest),
             static builder => builder.Route(HttpMethod.Get, "aot/duplicate"));
 
-        var error = Assert.Throws<InvalidOperationException>(() => AxiosMetadata.RegisterRequestModel(
+        var error = Assert.Throws<InvalidOperationException>(() => AxiosApiMetadata.RegisterRequestModel(
             typeof(DuplicateRegistrationRequest),
             static builder => builder.Route(HttpMethod.Get, "aot/duplicate")));
 
@@ -101,7 +103,7 @@ public sealed class MetadataRegistryTests
     public void RegistrationError_IsDeferredToFirstUse()
     {
         // 绑定名与路径模板对不上：注册本身不抛，首次构建绑定计划时报错（与反射路径的时序一致）。
-        AxiosMetadata.RegisterRequestModel(typeof(BrokenRegistrationRequest), static builder => builder
+        AxiosApiMetadata.RegisterRequestModel(typeof(BrokenRegistrationRequest), static builder => builder
             .Route(HttpMethod.Get, "aot/broken/{id}")
             .Member("Other", typeof(int), static target => ((BrokenRegistrationRequest)target).Other)
                 .Query());

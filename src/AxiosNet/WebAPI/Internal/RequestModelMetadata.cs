@@ -2,8 +2,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using AxiosNet.Internal;
-using AxiosNet.WebAPI.Reflection;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Metadata;
+using AxiosNet.WebAPI.Reflection;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -14,6 +15,12 @@ internal sealed class RequestModelMetadata
         DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
 
     private static readonly ConcurrentDictionary<Type, RequestModelMetadata> Cache = new();
+
+    static RequestModelMetadata()
+    {
+        // 能力切换（测试钩子）要同时丢掉这里按能力缓存的构建结果。
+        RuntimeSupport.CapabilityChanged += InvalidateAll;
+    }
 
     private readonly string? _buildError;
     private readonly Type? _missingMetadataType;

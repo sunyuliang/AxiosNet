@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Internal;
 

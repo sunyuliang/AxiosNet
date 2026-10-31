@@ -17,22 +17,22 @@ public sealed class ValidationApiAotTests
 {
     static ValidationApiAotTests()
     {
-        AxiosMetadata.RegisterRequestModel(
+        AxiosApiMetadata.RegisterRequestModel(
             typeof(ValidatedRegisteredRequest),
             static builder => builder
                 .Route(HttpMethod.Get, "items")
                 .ImplementsApiRequest());
 
-        AxiosMetadata.RegisterRequestModel(
+        AxiosApiMetadata.RegisterRequestModel(
             typeof(ValidatedBrokenRequest),
             static builder => builder.ImplementsApiRequest());
 
         // 有路由、也注册了声明，但没实现 IApiRequest<TResponse>：声明路径不能因为「注册过」就放过它。
-        AxiosMetadata.RegisterRequestModel(
+        AxiosApiMetadata.RegisterRequestModel(
             typeof(ValidatedNonApiRequest),
             static builder => builder.Route(HttpMethod.Get, "items"));
 
-        AxiosMetadata.RegisterInterface(
+        AxiosApiMetadata.RegisterInterface(
             typeof(IValidatedApi),
             static _ => throw new NotSupportedException("代理工厂不属于本用例的测试范围"),
             static builder => builder
@@ -43,7 +43,7 @@ public sealed class ValidationApiAotTests
                 .ReturnsResponse(typeof(object)));
 
         // 两个方法都缺 {id} 绑定：校验应聚合全部方法错误，而不是只报第一条。
-        AxiosMetadata.RegisterInterface(
+        AxiosApiMetadata.RegisterInterface(
             typeof(IBrokenMethodsApi),
             static _ => throw new NotSupportedException("代理工厂不属于本用例的测试范围"),
             static builder => builder

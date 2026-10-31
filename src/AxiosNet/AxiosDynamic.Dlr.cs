@@ -2,7 +2,7 @@ using System.Dynamic;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using AxiosNet.WebAPI.Internal;
+using AxiosNet.Internal;
 
 namespace AxiosNet;
 
