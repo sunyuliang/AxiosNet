@@ -1,7 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal;
+namespace AxiosNet.WebAPI.Internal.Reflection;
 
 /// <summary>
 /// 接口代理：DispatchProxy 拦截全部接口方法，转交给 <see cref="InterfaceMethodMetadata"/>。

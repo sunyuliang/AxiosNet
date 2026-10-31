@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using AxiosNet.WebAPI.Internal;
+using AxiosNet.WebAPI.Internal.Reflection;
 using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.WebAPI;

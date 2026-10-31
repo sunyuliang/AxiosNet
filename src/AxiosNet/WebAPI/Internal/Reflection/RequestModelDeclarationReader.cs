@@ -1,8 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.Internal;
+using AxiosNet.Internal.Reflection;
+using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal;
+namespace AxiosNet.WebAPI.Internal.Reflection;
 
 /// <summary>
 /// JIT 反射读取器：把请求模型上的特性读成 <see cref="RequestModelDeclaration"/>。
@@ -74,9 +76,16 @@ internal static class RequestModelDeclarationReader
             declaration.Members.Add(member);
         }
 
-        var authorization = ApiAuthorizationBuilder.Build(chain, "请求模型");
-        declaration.AllowAnonymous = authorization.Mode == ApiAuthorizationMode.Anonymous;
-        declaration.AuthorizeScheme = authorization.Mode == ApiAuthorizationMode.Required ? authorization.Scheme : null;
+        // 类级授权：链上第一个声明了授权的类型胜出（派生类压过基类）。
+        foreach (var type in chain)
+        {
+            if (type != typeof(object) && AuthorizationDeclaration.TryRead(type, out var allowAnonymous, out var scheme))
+            {
+                declaration.AllowAnonymous = allowAnonymous;
+                declaration.AuthorizeScheme = scheme;
+                break;
+            }
+        }
 
         return declaration;
     }

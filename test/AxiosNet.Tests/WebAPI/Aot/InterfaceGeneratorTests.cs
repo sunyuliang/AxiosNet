@@ -7,6 +7,7 @@ using AxiosNet.SourceGen;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
+using AxiosNet.WebAPI.Internal.Reflection;
 using AxiosNet.WebAPI.Metadata;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;

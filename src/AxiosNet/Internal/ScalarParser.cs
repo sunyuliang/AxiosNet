@@ -176,7 +176,7 @@ internal static class ScalarParser
     /// <summary>flags 枚举的组合值是否只由已定义位构成（<c>"Read,Write"</c> 合法、<c>"999"</c> 不合法）；非 flags 枚举返回 <c>false</c>。</summary>
     private static bool IsFlagsCombination(Type enumType, object parsed)
     {
-        if (ReflectionCache.GetFlagMask(enumType) is not { } mask)
+        if (TypeFacts.GetFlagMask(enumType) is not { } mask)
         {
             return false;
         }

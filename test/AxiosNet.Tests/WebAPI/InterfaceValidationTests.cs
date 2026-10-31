@@ -1,6 +1,7 @@
 ﻿using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
+using AxiosNet.WebAPI.Internal.Reflection;
 
 namespace AxiosNet.Tests.WebAPI;
 

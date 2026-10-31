@@ -126,7 +126,7 @@ internal static class RequestBodyFactory
         }
 
         // 其余 IAsyncEnumerable<T> 不能当正文，直接拦下。
-        if (ReflectionCache.IsAsyncEnumerable(data.GetType()))
+        if (TypeFacts.IsAsyncEnumerable(data.GetType()))
         {
             throw AxiosException.InvalidOption(
                 $"data 是 {data.GetType().Name}（IAsyncEnumerable），但请求体只支持按字节块流式发送："

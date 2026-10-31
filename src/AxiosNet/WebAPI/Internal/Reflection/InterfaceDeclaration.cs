@@ -1,18 +1,25 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal;
+namespace AxiosNet.WebAPI.Internal.Reflection;
 
 /// <summary>
-/// 接口级声明的静态校验：接口形状、路由特性、返回类型、参数绑定特性。
+/// 接口级声明的反射读取与静态校验：接口形状、路由特性、返回类型、参数绑定特性。
 /// <see cref="ApiClient.Create{T}"/> 与 <see cref="ApiClient.ValidateInterfaces(Type[])"/> 共用这一份规则。
 /// </summary>
 internal static class InterfaceDeclaration
 {
+    /// <summary>接口级校验要读属性 / 事件，按最宽的要求标注。</summary>
     private const DynamicallyAccessedMemberTypes InterfaceMembers =
         DynamicallyAccessedMemberTypes.PublicMethods
         | DynamicallyAccessedMemberTypes.PublicProperties
         | DynamicallyAccessedMemberTypes.PublicEvents
+        | DynamicallyAccessedMemberTypes.Interfaces;
+
+    /// <summary>只读方法与方法特性（含基接口图）时的要求。</summary>
+    private const DynamicallyAccessedMemberTypes InterfaceMethods =
+        DynamicallyAccessedMemberTypes.PublicMethods
         | DynamicallyAccessedMemberTypes.Interfaces;
 
     /// <summary>校验一个接口声明的全部方法，返回全部错误（按方法顺序聚合）。</summary>
@@ -76,7 +83,7 @@ internal static class InterfaceDeclaration
         "Trimming",
         "IL2075",
         Justification = "基接口类型来自已标注的接口图；调用方负责 root 接口及其基接口。")]
-    public static IReadOnlyList<MethodInfo> CollectMethods([DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType)
+    public static IReadOnlyList<MethodInfo> CollectMethods([DynamicallyAccessedMembers(InterfaceMethods)] Type interfaceType)
     {
         var seen = new HashSet<MethodInfo>();
         var result = new List<MethodInfo>();
@@ -104,8 +111,39 @@ internal static class InterfaceDeclaration
         return result;
     }
 
+    /// <summary>
+    /// 接口链：自身在前，其余按「依赖的接口数量」降序（派生接口依赖更多，必然排在它继承的接口之前）；
+    /// 同层再按全限定名排序，使顺序不再依赖 <see cref="Type.GetInterfaces"/> 的未定义返回顺序——
+    /// 生成器侧用同一条规则，两条路径才能选中同一层。
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "基接口类型来自已标注的接口图；调用方负责 root 接口及其基接口。")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "基接口类型来自已标注的接口图；调用方负责 root 接口及其基接口。")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2075",
+        Justification = "基接口类型来自已标注的接口图；调用方负责 root 接口及其基接口。")]
+    public static List<Type> CollectInterfaceChain([DynamicallyAccessedMembers(InterfaceMethods)] Type interfaceType)
+    {
+        var inherited = interfaceType.GetInterfaces();
+        var chain = new List<Type>(inherited.Length + 1) { interfaceType };
+        foreach (var baseInterface in inherited
+            .OrderByDescending(static type => type.GetInterfaces().Length)
+            .ThenBy(static type => GetChainSortKey(type), StringComparer.Ordinal))
+        {
+            chain.Add(baseInterface);
+        }
+
+        return chain;
+    }
+
     /// <summary>接口是否至少有一个方法标注了路由特性（用于程序集扫描时跳过普通接口）。</summary>
-    public static bool HasRoute([DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType)
+    public static bool HasRoute([DynamicallyAccessedMembers(InterfaceMethods)] Type interfaceType)
     {
         foreach (var method in CollectMethods(interfaceType))
         {
@@ -118,36 +156,20 @@ internal static class InterfaceDeclaration
         return false;
     }
 
-    /// <summary>接口方法的返回形态：决定调用产物与异常封装。</summary>
-    public enum ReturnShape
-    {
-        /// <summary>不支持（同步返回 / <c>ValueTask</c> / 其它泛型）。</summary>
-        Unsupported = 0,
-
-        /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>（<c>Task&lt;AxiosResponse&gt;</c> 即正文类型为 <c>null</c>）。</summary>
-        Response,
-
-        /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
-        Data,
-
-        /// <summary><c>Task</c>：只完成请求，正文丢弃。</summary>
-        Void
-    }
-
     /// <summary>解析返回形态；<paramref name="responseType"/> 是正文类型（<c>Void</c> 与非泛型响应均为 <c>null</c>）。</summary>
-    public static ReturnShape GetReturnShape(MethodInfo method, out Type? responseType)
+    public static InterfaceReturnShape GetReturnShape(MethodInfo method, out Type? responseType)
     {
         var returnType = method.ReturnType;
         responseType = null;
 
         if (!returnType.IsGenericType)
         {
-            return returnType == typeof(Task) ? ReturnShape.Void : ReturnShape.Unsupported;
+            return returnType == typeof(Task) ? InterfaceReturnShape.Void : InterfaceReturnShape.Unsupported;
         }
 
         if (returnType.GetGenericTypeDefinition() != typeof(Task<>))
         {
-            return ReturnShape.Unsupported;
+            return InterfaceReturnShape.Unsupported;
         }
 
         var inner = returnType.GetGenericArguments()[0];
@@ -155,39 +177,17 @@ internal static class InterfaceDeclaration
         // 非泛型 AxiosResponse：正文按 JsonElement 原样交付。
         if (inner == typeof(AxiosResponse))
         {
-            return ReturnShape.Response;
+            return InterfaceReturnShape.Response;
         }
 
         if (inner.IsGenericType && inner.GetGenericTypeDefinition() == typeof(AxiosResponse<>))
         {
             responseType = inner.GetGenericArguments()[0];
-            return ReturnShape.Response;
+            return InterfaceReturnShape.Response;
         }
 
         responseType = inner;
-        return ReturnShape.Data;
-    }
-
-    /// <summary>接口级流式响应：返回 <c>Task&lt;AxiosResponse&lt;IAsyncEnumerable&lt;T&gt;&gt;&gt;</c> 时正文按帧交付。</summary>
-    public static bool IsStreamingResponse(Type responseType)
-        => responseType.IsGenericType && responseType.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>);
-
-    /// <summary>返回类型的可读形态（<c>ValueTask&lt;AxiosResponse&lt;User&gt;&gt;</c>），用于错误消息。</summary>
-    public static string DescribeReturnType(Type type)
-    {
-        if (!type.IsGenericType)
-        {
-            return type.Name;
-        }
-
-        var name = type.Name;
-        var arity = name.IndexOf('`');
-        if (arity >= 0)
-        {
-            name = name[..arity];
-        }
-
-        return $"{name}<{string.Join(", ", type.GetGenericArguments().Select(DescribeReturnType))}>";
+        return InterfaceReturnShape.Data;
     }
 
     /// <summary>DispatchProxy 交回的 <see cref="MethodInfo"/> 可能声明在代理类型上（继承接口场景），解析回接口方法。</summary>
@@ -209,26 +209,6 @@ internal static class InterfaceDeclaration
         }
 
         return method;
-    }
-
-    private static bool SameSignature(MethodInfo left, MethodInfo right)
-    {
-        var leftParameters = left.GetParameters();
-        var rightParameters = right.GetParameters();
-        if (leftParameters.Length != rightParameters.Length)
-        {
-            return false;
-        }
-
-        for (var i = 0; i < leftParameters.Length; i++)
-        {
-            if (leftParameters[i].ParameterType != rightParameters[i].ParameterType)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>校验单个接口方法：静态 / 泛型 / 路由 / 返回形态 / [Stream] / 参数形态，最后把绑定层错误一并聚合。</summary>
@@ -261,14 +241,14 @@ internal static class InterfaceDeclaration
         }
 
         var shape = GetReturnShape(method, out var responseType);
-        if (shape == ReturnShape.Unsupported)
+        if (shape == InterfaceReturnShape.Unsupported)
         {
-            errors.Add($"{display} 的返回类型是 {DescribeReturnType(method.ReturnType)}："
+            errors.Add($"{display} 的返回类型是 {ReturnTypeShape.Describe(method.ReturnType)}："
                 + "接口方法必须返回 Task<AxiosResponse<T>> / Task<T> / Task<AxiosResponse> / Task（不支持同步返回 / ValueTask）。");
         }
-        else if (shape == ReturnShape.Data && IsStreamingResponse(responseType!))
+        else if (shape == InterfaceReturnShape.Data && ReturnTypeShape.IsStreaming(responseType!))
         {
-            errors.Add($"{display} 返回 {DescribeReturnType(method.ReturnType)}："
+            errors.Add($"{display} 返回 {ReturnTypeShape.Describe(method.ReturnType)}："
                 + "流式正文按帧交付需要响应元数据，请声明 Task<AxiosResponse<IAsyncEnumerable<T>>>。");
         }
 
@@ -276,9 +256,9 @@ internal static class InterfaceDeclaration
         var stream = method.GetCustomAttribute<StreamAttribute>(inherit: false);
         if (stream is not null)
         {
-            if (shape != ReturnShape.Response || responseType is null || !IsStreamingResponse(responseType))
+            if (shape != InterfaceReturnShape.Response || responseType is null || !ReturnTypeShape.IsStreaming(responseType))
             {
-                errors.Add($"{display} 标注了 [Stream]，但返回类型是 {DescribeReturnType(method.ReturnType)}："
+                errors.Add($"{display} 标注了 [Stream]，但返回类型是 {ReturnTypeShape.Describe(method.ReturnType)}："
                     + "[Stream] 只用于返回 Task<AxiosResponse<IAsyncEnumerable<T>>> 的方法。");
             }
             else if (!Enum.IsDefined(typeof(AxiosStreamFormat), stream.Format))
@@ -350,6 +330,49 @@ internal static class InterfaceDeclaration
         }
 
         return errors;
+    }
+
+    /// <summary>接口链同层排序键：定义元数据名 + 各类型实参的元数据名（与生成器的 <c>GetChainSortKey</c> 同规则）。</summary>
+    private static string GetChainSortKey(Type type)
+    {
+        if (!type.IsGenericType)
+        {
+            return type.FullName ?? type.Name;
+        }
+
+        var definition = type.GetGenericTypeDefinition();
+        return (definition.FullName ?? definition.Name) + "|" + string.Join("|", type.GetGenericArguments().Select(GetChainArgumentName));
+    }
+
+    private static string GetChainArgumentName(Type type)
+    {
+        if (type.IsArray)
+        {
+            return GetChainArgumentName(type.GetElementType()!) + "[]";
+        }
+
+        var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
+        return definition.FullName ?? definition.Name;
+    }
+
+    private static bool SameSignature(MethodInfo left, MethodInfo right)
+    {
+        var leftParameters = left.GetParameters();
+        var rightParameters = right.GetParameters();
+        if (leftParameters.Length != rightParameters.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < leftParameters.Length; i++)
+        {
+            if (leftParameters[i].ParameterType != rightParameters[i].ParameterType)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string TrimAttributeSuffix(string name)

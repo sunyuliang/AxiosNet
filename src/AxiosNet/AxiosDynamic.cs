@@ -1,7 +1,5 @@
 using System.Collections;
 using System.Dynamic;
-using System.Linq.Expressions;
-using System.Reflection;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet;
@@ -18,7 +16,7 @@ namespace AxiosNet;
 /// 读无锁、写串行；枚举取键快照、值实时读取，枚举期间被删除的键值为 <c>null</c>。
 /// 动态成员优先于 CLR 成员：<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段。
 /// </remarks>
-public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<string, object?>
+public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<string, object?>
 {
     /// <summary>写锁：写入串行化，读不加锁。</summary>
     private readonly object _gate = new();
@@ -190,35 +188,6 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(Expression parameter)
-    {
-        // DLR 需要 Expression.Compile（运行时代码生成）：Native AOT 下直接拒绝，索引 / 字典接口不受影响。
-        if (!RuntimeSupport.IsDynamicCodeSupported)
-        {
-            throw new PlatformNotSupportedException(
-                "AxiosDynamic 的 dynamic 成员语法需要运行时代码生成，Native AOT 下不可用："
-                + "请改用 data[\"name\"] 或 data.TryGetValue(\"name\", out var value)（索引访问与 IDictionary 接口在 AOT 下可用）。");
-        }
-
-        return new Meta(parameter, this);
-    }
-
-    /// <summary>DLR 绑定用到的私有成员句柄：放在嵌套类里，只在 dynamic 语法首次绑定（JIT）时初始化。</summary>
-    private static class Dlr
-    {
-        internal static readonly FieldInfo ShapeField =
-            typeof(AxiosDynamic).GetField(nameof(_shape), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-        internal static readonly FieldInfo ValuesField =
-            typeof(AxiosDynamic).GetField(nameof(_values), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-        internal static readonly MethodInfo GetValueMethod =
-            typeof(AxiosDynamic).GetMethod(nameof(GetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-        internal static readonly MethodInfo SetValueMethod =
-            typeof(AxiosDynamic).GetMethod(nameof(SetValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
-    }
-
     /// <summary>慢路径取值（索引访问、shape 不匹配时使用）。</summary>
     private object? GetValue(string name)
     {
@@ -368,75 +337,6 @@ public sealed class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<strin
             var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal);
             slots.Remove(name);
             return new Shape(slots, NextSlot, cacheable);
-        }
-    }
-
-    /// <summary>DLR 绑定：把成员名解析成常量槽位，并用 shape 引用做校验。</summary>
-    private sealed class Meta : DynamicMetaObject
-    {
-        public Meta(Expression expression, AxiosDynamic value)
-            : base(expression, BindingRestrictions.Empty, value)
-        {
-        }
-
-        public override DynamicMetaObject BindGetMember(GetMemberBinder binder)
-        {
-            var self = Expression.Convert(Expression, typeof(AxiosDynamic));
-            var shape = ((AxiosDynamic)Value!)._shape; // 绑定必然拿到实例本身，Value 不会为 null
-
-            // 名字 → 槽位在绑定期解析成常量；shape 是缓存键的一部分，同形状的实例共享规则。
-            var restrictions = BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic))
-                .Merge(BindingRestrictions.GetExpressionRestriction(
-                    Expression.ReferenceEqual(Expression.Field(self, Dlr.ShapeField), Expression.Constant(shape))));
-
-            Expression body = shape.Slots.TryGetValue(binder.Name, out var slot)
-                ? Expression.ArrayIndex(Expression.Field(self, Dlr.ValuesField), Expression.Constant(slot))
-                : Expression.Constant(null, typeof(object));
-
-            return new DynamicMetaObject(body, restrictions);
-        }
-
-        public override DynamicMetaObject BindSetMember(SetMemberBinder binder, DynamicMetaObject value)
-        {
-            var self = Expression.Convert(Expression, typeof(AxiosDynamic));
-            var assigned = Expression.Variable(typeof(object), "value");
-            var body = Expression.Block(
-                new[] { assigned },
-                Expression.Assign(assigned, Expression.Convert(value.Expression, typeof(object))),
-                Expression.Call(self, Dlr.SetValueMethod, Expression.Constant(binder.Name), assigned),
-                assigned);
-
-            return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
-        }
-
-        public override DynamicMetaObject BindGetIndex(GetIndexBinder binder, DynamicMetaObject[] indexes)
-        {
-            if (indexes.Length != 1)
-            {
-                return binder.FallbackGetIndex(this, indexes);
-            }
-
-            var body = Expression.Call(Expression.Convert(Expression, typeof(AxiosDynamic)), Dlr.GetValueMethod, Expression.Convert(indexes[0].Expression, typeof(string)));
-
-            return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
-        }
-
-        public override DynamicMetaObject BindSetIndex(SetIndexBinder binder, DynamicMetaObject[] indexes, DynamicMetaObject value)
-        {
-            if (indexes.Length != 1)
-            {
-                return binder.FallbackSetIndex(this, indexes, value);
-            }
-
-            var self = Expression.Convert(Expression, typeof(AxiosDynamic));
-            var assigned = Expression.Variable(typeof(object), "value");
-            var body = Expression.Block(
-                new[] { assigned },
-                Expression.Assign(assigned, Expression.Convert(value.Expression, typeof(object))),
-                Expression.Call(self, Dlr.SetValueMethod, Expression.Convert(indexes[0].Expression, typeof(string)), assigned),
-                assigned);
-
-            return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
         }
     }
 }

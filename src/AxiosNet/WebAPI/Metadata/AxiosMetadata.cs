@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using AxiosNet.Internal.Reflection;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI.Metadata;
@@ -169,7 +170,7 @@ public static class AxiosMetadata
     /// <typeparam name="T">参与展平的类型。</typeparam>
     public static void RegisterShape<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>()
-        => GeneratedMetadataRegistry.RegisterShape(ObjectShapeBuilder.FromReflection<T>());
+        => GeneratedMetadataRegistry.RegisterShape(ObjectShapeReflection.FromReflection<T>());
 
     /// <summary>
     /// 生成代码专用的形状注册入口：<paramref name="sample"/> 只用于推断 <typeparamref name="T"/>

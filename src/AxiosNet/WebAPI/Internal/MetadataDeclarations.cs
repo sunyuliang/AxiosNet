@@ -127,6 +127,9 @@ internal sealed class InterfaceMethodDeclaration
     /// <summary>正文类型；<see cref="InterfaceReturnShape.Void"/> 与非泛型响应为 null。</summary>
     public Type? ResponseType { get; set; }
 
+    /// <summary>返回类型的展示文本（如 <c>Task&lt;AxiosResponse&lt;User&gt;&gt;</c>），只用于错误消息；反射路径填，生成路径留空。</summary>
+    public string? ReturnTypeText { get; set; }
+
     /// <summary>[Stream] 是否出现；出现时 <see cref="StreamFormat"/> 为声明值。</summary>
     public bool HasStreamAttribute { get; set; }
 
@@ -171,22 +174,6 @@ internal sealed class InterfaceParameterDeclaration
     public string? PartContentType { get; set; }
 
     public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
-}
-
-/// <summary>接口方法返回形态（与 <see cref="InterfaceDeclaration.ReturnShape"/> 对齐的声明版本）。</summary>
-internal enum InterfaceReturnShape
-{
-    /// <summary>不支持（同步返回 / ValueTask / 其它泛型）。</summary>
-    Unsupported = 0,
-
-    /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>（非泛型响应时 <see cref="InterfaceMethodDeclaration.ResponseType"/> 为 null）。</summary>
-    Response,
-
-    /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
-    Data,
-
-    /// <summary><c>Task</c>：只完成请求。</summary>
-    Void
 }
 
 /// <summary>对象形状：params / 表单 / multipart 展平所需的属性清单（生成期烘焙或反射产出）。</summary>

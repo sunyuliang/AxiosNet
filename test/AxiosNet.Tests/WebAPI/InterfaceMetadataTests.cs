@@ -1,6 +1,7 @@
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
+using AxiosNet.WebAPI.Internal.Reflection;
 
 namespace AxiosNet.Tests.WebAPI;
 
@@ -38,6 +39,17 @@ public sealed class InterfaceMetadataTests
     }
 
     [Fact]
+    public void Get_MissingRoute_IsReportedBeforeDuplicateCancellationToken()
+    {
+        // 错误优先级与声明校验一致：路由缺失 / 重复先报，参数形态在后
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => GetMetadata<IRouteLessDoubleCancellationTokenApi>());
+
+        Assert.Contains("必须且只能标注一个路由特性", exception.Message);
+        Assert.DoesNotContain("多个 CancellationToken", exception.Message);
+    }
+
+    [Fact]
     public void Get_ApiIgnoreWithBinding_ReportsAmbiguity()
     {
         var exception = Assert.Throws<InvalidOperationException>(() => GetMetadata<IIgnoredBoundParameterApi>());
@@ -51,6 +63,8 @@ public sealed class InterfaceMetadataTests
     {
         var exception = Assert.Throws<InvalidOperationException>(() => GetMetadata<IWrongReturnApi>());
 
+        // 反射路径能拿到返回类型本体，消息必须把它点出来
+        Assert.Contains("返回类型是 ValueTask<AxiosResponse<Person>>", exception.Message);
         Assert.Contains("必须返回 Task<AxiosResponse<T>>", exception.Message);
     }
 
@@ -59,6 +73,7 @@ public sealed class InterfaceMetadataTests
     {
         var exception = Assert.Throws<InvalidOperationException>(() => GetMetadata<IStreamOnPlainPayloadApi>());
 
+        Assert.Contains("标注了 [Stream]，但返回类型是 Task<AxiosResponse<Person>>", exception.Message);
         Assert.Contains("IAsyncEnumerable", exception.Message);
     }
 
@@ -105,4 +120,10 @@ public interface IDiamondApi : IDiamondLeftApi, IDiamondRightApi
 {
     [Get("items")]
     Task<AxiosResponse<Person>> GetAsync([Query] int page);
+}
+
+/// <summary>两个取消令牌且没有路由特性：确认「路由缺失」优先于「取消令牌重复」。</summary>
+public interface IRouteLessDoubleCancellationTokenApi
+{
+    Task<AxiosResponse<Person>> GetAsync(CancellationToken first, CancellationToken second);
 }
