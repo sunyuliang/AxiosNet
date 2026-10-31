@@ -89,6 +89,7 @@ public sealed class RequestModelGeneratorTests
     {
         var ns = UniqueNamespace();
         var (result, diagnostics, output) = RunGenerator(DiagnosticsModels.Replace("__NS__", ns));
+        DiagnosticCatalogTests.AssertNoUnrenderedPlaceholders(diagnostics);
 
         var messagesById = diagnostics
             .GroupBy(static diagnostic => diagnostic.Id)
@@ -484,7 +485,155 @@ public sealed class RequestModelGeneratorTests
         return (driver.GetRunResult(), diagnostics, output);
     }
 
+    /// <summary>
+    /// 增量管线的意义是「编辑别处时不重算」：模型 / 形状 / 接口全部用 record + <see cref="EquatableArray{T}"/> 就是为了这个。
+    /// 这里在同一编译上追加一个与生成无关的类型，再跑一遍，断言没有任何源码被重新生成。
+    /// 接口管线曾经返回 <c>ImmutableArray</c>（按底层数组引用比较），导致每次编辑都判成「已修改」、增量缓存整体失效。
+    /// 回归时的表现是 Roslyn 4.1 的跟踪设施抛 <c>InvalidOperationException: Unexpected value '(Cached, Modified)'</c>。
+    /// </summary>
+    [Fact]
+    public void IncrementalPipeline_ReusesEverySourceWhenUnrelatedCodeChanges()
+    {
+        var ns = UniqueNamespace();
+        var source = """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using AxiosNet;
+            using AxiosNet.WebAPI;
+
+            namespace __NS__;
+
+            [AxiosShape]
+            public sealed class Item
+            {
+                public string Name { get; set; } = string.Empty;
+            }
+
+            [Get("items")]
+            public sealed class ListRequest : IApiRequest<Item>
+            {
+                [Query]
+                public string Q { get; set; } = string.Empty;
+            }
+
+            public interface IApi
+            {
+                [Get("items/{id}")]
+                Task<string> GetAsync(int id, CancellationToken ct);
+            }
+            """.Replace("__NS__", ns);
+
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+        var tree = CSharpSyntaxTree.ParseText(source, parseOptions);
+        var compilation = CSharpCompilation.Create(
+            "AxiosNet.IncrementalTests." + Guid.NewGuid().ToString("N"),
+            [tree],
+            References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new RequestModelGenerator().AsSourceGenerator()],
+            parseOptions: parseOptions,
+            optionsProvider: new TestOptionsProvider(NoOptions),
+            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+
+        driver = driver.RunGenerators(compilation);
+        var firstRun = driver.GetRunResult().Results.Single();
+        Assert.True(
+            firstRun.GeneratedSources.Length >= 4,
+            "首次运行至少要产出模型 / 形状 / 接口 / 校验四份源码，否则下面的「全部命中缓存」没有意义："
+            + string.Join("、", firstRun.GeneratedSources.Select(static source => source.HintName)));
+
+        var unrelated = CSharpSyntaxTree.ParseText("public sealed class Unrelated { public int X { get; set; } }", parseOptions);
+        driver = driver.RunGenerators(compilation.AddSyntaxTrees(unrelated));
+
+        Assert.True(
+            driver.GetRunResult().Results.Single().TrackedSteps.TryGetValue("SourceOutput", out var outputs),
+            "增量步骤里没有 SourceOutput（Roslyn 版本变化？），这条护栏需要跟着更新。");
+
+        var rerun = outputs
+            .SelectMany(static step => step.Outputs)
+            .Where(static output => output.Reason is not (IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged))
+            .Select(static output => output.Reason.ToString())
+            .Distinct()
+            .ToList();
+
+        Assert.True(rerun.Count == 0, "无关编辑后仍有源码被重新生成：" + string.Join("、", rerun));
+    }
+
     private static string UniqueNamespace() => "AxiosNet.GeneratedTests.G" + Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// 声明里的字符串与成员名会原样写进生成代码：路由 / 头声明含引号反斜杠、属性名是关键字时，
+    /// 必须仍生成可编译代码，且运行时读回的字符串与声明逐字符相同（字面量转义不能只做到「能编译」）。
+    /// </summary>
+    [Fact]
+    public void PathologicalIdentifiersAndStrings_EmitCompilableCodeWithExactValues()
+    {
+        var ns = UniqueNamespace();
+        var source = """
+            using System.Text.Json.Serialization;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using AxiosNet;
+            using AxiosNet.WebAPI;
+
+            namespace __NS__;
+
+            public sealed class Weird
+            {
+                [JsonPropertyName("a\"b\\c\u00e9")]
+                public string Quoted { get; set; } = string.Empty;
+
+                public string @class { get; set; } = "c";
+
+                public string @record { get; set; } = "r";
+
+                public string @value { get; set; } = "v";
+            }
+
+            [Headers("X-Quote: a\"b")]
+            [Get("items/\"quoted\"/{id}")]
+            public sealed class WeirdRequest : IApiRequest<object>
+            {
+                [Path]
+                public int Id { get; set; }
+
+                [Query]
+                public Weird Data { get; set; } = new Weird();
+            }
+
+            public interface IWeirdApi
+            {
+                [Get("w")]
+                Task<string> FetchAsync(string @class, CancellationToken ct);
+            }
+            """.Replace("__NS__", ns);
+
+        var (result, diagnostics, output) = RunGenerator(source);
+        Assert.DoesNotContain(diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.NotEmpty(result.Results.Single().GeneratedSources);
+
+        var assembly = LoadEmitted(output);
+        var request = assembly.GetType(ns + ".WeirdRequest", throwOnError: true)!;
+        Assert.True(GeneratedMetadataRegistry.TryGetRequestModel(request, out var model));
+        Assert.Equal("items/\"quoted\"/{id}", model!.Path);
+        Assert.Equal("X-Quote: a\"b", model.StaticHeaders.Single());
+
+        // 关键字属性名必须以 @ 前缀写进取值委托：拿实例真读一遍才证明绑定到的是那个属性。
+        var weirdType = assembly.GetType(ns + ".Weird", throwOnError: true)!;
+        Assert.True(GeneratedMetadataRegistry.TryGetShape(weirdType, out var shape));
+        var instance = Activator.CreateInstance(weirdType)!;
+        var values = shape!.Members.ToDictionary(
+            static member => member.Name,
+            member => (string?)member.GetValue(instance),
+            StringComparer.Ordinal);
+
+        Assert.Equal("c", values["class"]);
+        Assert.Equal("r", values["record"]);
+        Assert.Equal("v", values["value"]);
+        Assert.Equal("a\"b\\c\u00e9", shape.Members.Single(static member => member.Name == "Quoted").FieldName);
+    }
 
     /// <summary>
     /// 生成器快照：把一次编译产出的全部源码逐字节钉住。生成代码是对外契约（用户会读它、发布说明会引用它），

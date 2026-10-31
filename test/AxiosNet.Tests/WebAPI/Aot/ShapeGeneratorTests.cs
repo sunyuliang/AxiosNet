@@ -578,6 +578,60 @@ public sealed class ShapeGeneratorTests
         }
     }
 
+    /// <summary>
+    /// 匿名对象先落到局部变量、再作为 <c>object</c> 实参传给 <c>PostFormAsync</c> 时，
+    /// 静态类型在调用点已经退化成 <c>object</c>；只有「匿名对象创建」这条发现规则能兜住它，
+    /// 所以这里锁定该规则不做上下文收窄（收窄会让这类写法在 AOT 下缺形状）。
+    /// </summary>
+    [Fact]
+    public async Task AnonymousObjectsPassedThroughLocals_AreDiscoveredSoAotFlatteningWorks()
+    {
+        var ns = UniqueNamespace();
+        var source = """
+            using System.Threading.Tasks;
+            using AxiosNet;
+
+            namespace __NS__;
+
+            public sealed class Address
+            {
+                public string City { get; set; } = string.Empty;
+            }
+
+            public static class Boot
+            {
+                public static Task Form(AxiosClient client)
+                {
+                    var data = new { name = "alice", address = new Address { City = "Paris" } };
+                    return client.PostFormAsync("anon", data, c => c.ContentType = AxiosContentType.FormUrlEncoded);
+                }
+            }
+            """.Replace("__NS__", ns);
+
+        var (result, diagnostics, output) = RunGenerator(source);
+        Assert.Empty(diagnostics);
+
+        var shapeSources = result.Results.Single().GeneratedSources
+            .Where(static source => source.HintName.Contains("Shape", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, shapeSources.Length);
+
+        var assembly = LoadEmitted(output);
+        var formBody = await InvokeFormForAsync(assembly, "Form");
+        Assert.Contains("name=alice", formBody);
+        Assert.Contains("address[City]=Paris", formBody);
+
+        RuntimeSupport.ForceNoDynamicCode = true;
+        try
+        {
+            Assert.Equal(formBody, await InvokeFormForAsync(assembly, "Form"));
+        }
+        finally
+        {
+            RuntimeSupport.ForceNoDynamicCode = false;
+        }
+    }
+
     [Fact]
     public void AnonymousObjectsOutsideAxiosCalls_DoNotReportInaccessibleShape()
     {
@@ -648,6 +702,8 @@ public sealed class ShapeGeneratorTests
                 }
             }
             """.Replace("__NS__", UniqueNamespace()));
+
+        DiagnosticCatalogTests.AssertNoUnrenderedPlaceholders(diagnostics);
 
         var warning = Assert.Single(diagnostics);
         Assert.Equal("AXA013", warning.Id);
@@ -743,6 +799,15 @@ public sealed class ShapeGeneratorTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
         await InvokeTaskAsync(assembly, "FormDerived", client, CreateDerived(assembly)).ConfigureAwait(false);
+        return Encoding.UTF8.GetString(server.Received.Single().Body);
+    }
+
+    /// <summary>调用生成程序集里「接收 <see cref="AxiosClient"/> 并提交表单」的方法，返回请求正文。</summary>
+    private static async Task<string> InvokeFormForAsync(Assembly assembly, string method)
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        await InvokeTaskAsync(assembly, method, client).ConfigureAwait(false);
         return Encoding.UTF8.GetString(server.Received.Single().Body);
     }
 

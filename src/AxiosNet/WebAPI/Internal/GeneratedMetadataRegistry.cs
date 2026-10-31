@@ -90,7 +90,6 @@ internal static class GeneratedMetadataRegistry
     {
         ArgumentNullException.ThrowIfNull(declaration);
         ArgumentNullException.ThrowIfNull(factory);
-        declaration.Factory = factory;
 
         lock (Gate)
         {

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -170,7 +171,7 @@ namespace AxiosNet.SourceGen
             if (routeAttributes.Count > 1)
             {
                 var names = string.Join("、", routeAttributes.Select(attribute => attribute.AttributeClass!.Name));
-                return Rejected(Diagnostics.MultipleRoutes, location, symbol.Name, names);
+                return Rejected(Diagnostics.RouteCountInvalid, location, "请求模型 " + symbol.Name, "标注了多个路由特性（" + names + "）");
             }
 
             var route = routeAttributes[0];
@@ -192,18 +193,18 @@ namespace AxiosNet.SourceGen
             else
             {
                 // 自定义 HttpApiAttribute 子类：只有运行期才能执行其构造器，生成器静态求不出路由。
-                return Rejected(Diagnostics.CustomRouteAttribute, route.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? location, symbol.Name, routeClass.Name);
+                return Rejected(Diagnostics.CustomRouteAttribute, route.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? location, "请求模型 " + symbol.Name, routeClass.Name);
             }
 
             if (string.IsNullOrWhiteSpace(routeMethod) || string.IsNullOrWhiteSpace(routePath))
             {
-                return Rejected(Diagnostics.RouteNotConstant, route.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? location, symbol.Name);
+                return Rejected(Diagnostics.RouteValueInvalid, route.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? location, "请求模型 " + symbol.Name);
             }
 
             var unsupportedReason = GetUnsupportedReason(symbol, compilation);
             if (unsupportedReason is not null)
             {
-                return Rejected(Diagnostics.UnsupportedType, location, symbol.Name, unsupportedReason);
+                return Rejected(Diagnostics.UnsupportedType, location, "请求模型 " + symbol.Name, unsupportedReason);
             }
 
             var members = ImmutableArray.CreateBuilder<RequestMemberInfo>();
@@ -230,7 +231,7 @@ namespace AxiosNet.SourceGen
 
                 if (unsupportedReason is not null)
                 {
-                    return Rejected(Diagnostics.UnsupportedType, location, symbol.Name, unsupportedReason);
+                    return Rejected(Diagnostics.UnsupportedType, location, "请求模型 " + symbol.Name, unsupportedReason);
                 }
 
                 members.Add(BuildMemberInfo(symbol, property, wellKnown, memberDiags));
@@ -393,7 +394,7 @@ namespace AxiosNet.SourceGen
                     // 两条声明都写进构建器：共享构建器抛出的错误文本与反射路径完全一致。
                     diagnostics.Add(new DiagnosticInfo(
                         Diagnostics.AuthorizationConflict,
-                        new EquatableArray<string>(ImmutableArray.Create(symbol.Name)),
+                        new EquatableArray<string>(ImmutableArray.Create("请求模型 " + symbol.Name)),
                         modelLocation));
                 }
 
@@ -910,7 +911,14 @@ namespace AxiosNet.SourceGen
 
         public INamedTypeSymbol? ApiInterfaceExtensions { get; }
 
-        public static WellKnownSymbols Resolve(Compilation compilation) => new WellKnownSymbols(compilation);
+        /// <summary>
+        /// 按编译缓存：每次 transform 都要查 25 个 well-known 类型，逐个查会随「带特性的类型数量」线性放大。
+        /// 值随键（编译实例）一起回收，不会跨编译泄漏。
+        /// </summary>
+        private static readonly ConditionalWeakTable<Compilation, WellKnownSymbols> ResolvedCache = new();
+
+        public static WellKnownSymbols Resolve(Compilation compilation)
+            => ResolvedCache.GetValue(compilation, static current => new WellKnownSymbols(current));
     }
 
     internal static class BuiltInRouteMethods

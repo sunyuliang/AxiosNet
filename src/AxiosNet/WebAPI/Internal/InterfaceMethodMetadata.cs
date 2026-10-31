@@ -69,7 +69,7 @@ internal sealed class InterfaceMethodMetadata
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2077",
-        Justification = "缓存键 ValueTuple 无法携带裁剪标注；接口类型已由 ApiClient.Create 的 RequiresUnreferencedCode 契约要求 root。")]
+        Justification = "缓存键 ValueTuple 无法携带裁剪标注；接口类型已由 ApiClient.Create 的 DynamicallyAccessedMembers 标注覆盖，具体类型由调用方负责 root。")]
     public static InterfaceMethodMetadata Get(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method)
@@ -696,8 +696,9 @@ internal sealed class InterfaceMethodMetadata
     }
 
     /// <summary>
-    /// 接口链：自身在前，其余按「依赖的接口数量」降序（派生接口依赖更多，必然排在它继承的接口之前）。
-    /// 单纯按反射遍历顺序会随菱形的分支交错而把基接口排到派生接口前面，导致同名静态头 / 最近授权选错层。
+    /// 接口链：自身在前，其余按「依赖的接口数量」降序（派生接口依赖更多，必然排在它继承的接口之前）；
+    /// 同层再按全限定名排序，使顺序不再依赖 <see cref="Type.GetInterfaces"/> 的未定义返回顺序——
+    /// 生成器侧用同一条规则，两条路径才能选中同一层。
     /// </summary>
     [UnconditionalSuppressMessage(
         "Trimming",
@@ -715,12 +716,41 @@ internal sealed class InterfaceMethodMetadata
     {
         var inherited = interfaceType.GetInterfaces();
         var chain = new List<Type>(inherited.Length + 1) { interfaceType };
-        foreach (var baseInterface in inherited.OrderByDescending(static type => type.GetInterfaces().Length))
+        foreach (var baseInterface in inherited
+            .OrderByDescending(static type => type.GetInterfaces().Length)
+            .ThenBy(static type => GetChainSortKey(type), StringComparer.Ordinal))
         {
             chain.Add(baseInterface);
         }
 
         return chain;
+    }
+
+    /// <summary>
+    /// 接口链同层排序键：定义元数据名 + 各类型实参的元数据名（与生成器的 <c>GetChainSortKey</c> 同规则）。
+    /// 不能直接用 <see cref="Type.FullName"/>：构造泛型接口的 FullName 带程序集限定的实参，
+    /// 与生成器的显示名在泛型接口上先后顺序不同。
+    /// </summary>
+    private static string GetChainSortKey(Type type)
+    {
+        if (!type.IsGenericType)
+        {
+            return type.FullName ?? type.Name;
+        }
+
+        var definition = type.GetGenericTypeDefinition();
+        return (definition.FullName ?? definition.Name) + "|" + string.Join("|", type.GetGenericArguments().Select(GetChainArgumentName));
+    }
+
+    private static string GetChainArgumentName(Type type)
+    {
+        if (type.IsArray)
+        {
+            return GetChainArgumentName(type.GetElementType()!) + "[]";
+        }
+
+        var definition = type.IsGenericType ? type.GetGenericTypeDefinition() : type;
+        return definition.FullName ?? definition.Name;
     }
 
     /// <summary>声明级静态头：基接口在前、派生接口在后（同名后者覆盖）。</summary>

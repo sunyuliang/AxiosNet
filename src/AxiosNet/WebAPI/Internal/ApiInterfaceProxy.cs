@@ -32,7 +32,7 @@ internal class ApiInterfaceProxy : DispatchProxy
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2087",
-        Justification = "公共入口 ApiClient.Create<T>() 已标注 RequiresUnreferencedCode；接口类型由调用方负责 root。")]
+        Justification = "接口类型来自 ApiClient.Create 的泛型参数，已由 DynamicallyAccessedMembers 标注接口成员；具体类型由调用方负责 root。")]
     internal static T Create<T>(ApiClient client) where T : class
         => (T)Create(typeof(T), client);
 

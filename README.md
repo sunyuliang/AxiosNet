@@ -1687,13 +1687,14 @@ dotnet run --project samples/AxiosNet.Simple
 | --- | --- | --- |
 | `AXA001` | Error | 接口含无法代理的成员：属性 / 事件 / 静态成员 |
 | `AXA002` | Error | 接口方法形态不支持：泛型方法、`ref` / `out` / `in`、ref struct / 指针参数、非 public 抽象成员、`CancellationToken` 附带绑定特性 |
-| `AXA003` | Error | 标了多个路由特性；路由方法 / 路径为空白或缺少路由 |
+| `AXA003` | Error | 必须且只能标注一个路由特性（模型与接口方法同一条）：标了多个，或接口方法没有路由 |
 | `AXA004` | Error | 接口方法返回形态不支持（同步返回 / `ValueTask` 等） |
 | `AXA005` | Error | 接口方法的 `[Stream]` 声明无效或帧格式值未定义 |
 | `AXA006` | Error | `[ApiIgnore]` 与 Path / Query / Header / HeaderCollection / Part / Body 同用 |
+| `AXA007` | Error | 路由特性存在但参数为空白或无法在编译期求值（与 `AXA003` 分开：修法不同） |
 | `AXA008` | Error | `[Authorize]` 与 `[AllowAnonymous]` 标在同一层（模型或接口 / 方法） |
-| `AXA009` | Error | 模型 / 接口无法生成：静态类 / 不可访问 / 泛型 / ref struct / file-local / 成员 getter 非 public / 类型不可见 |
-| `AXA010` | Warning | 使用了自定义 `HttpApiAttribute` 子类（已跳过生成） |
+| `AXA009` | Error | 模型 / 接口无法生成元数据：静态类 / 不可访问 / 泛型 / ref struct / file-local / 成员 getter 非 public / 类型不可见 |
+| `AXA010` | Warning | 模型 / 接口使用了自定义 `HttpApiAttribute` 子类（已跳过生成） |
 | `AXA011` | Warning | 开放泛型接口（含外层类型为开放泛型的嵌套接口）没有闭合调用点（AOT 下 `Create` 会显式失败） |
 | `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
 | `AXA013` | Warning | 形状类型的访问级别对生成代码不可见（已跳过形状；AOT 下展平到该类型会显式失败） |
@@ -1716,6 +1717,8 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
+`TypeInfoResolver` 是 .NET 7 才有的属性：`net6.0` 目标（被 .NET 6 / 7 应用引用）的 `JsonSerializerOptions` 上没有它，因此那份资产无法接入源生成元数据，AOT 下请改用自定义 `IContentSerializer`，或把目标框架提升到 `net8.0`。反射被关掉时两份资产报同一种 `NotSupportedException`，`net6.0` 的消息会额外点明这一点。
+
 `JsonSerializerDefaults.Web` 不能省：换成裸 `new JsonSerializerOptions()` 会把 camelCase 换成属性原名，请求 / 响应字段名跟着变，而源生成上下文里的 `JsonSourceGenerationOptions` 不会替你补回来（`AxiosJson.Options` 的默认值就是 Web）。
 
 AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型 / 接口缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`（匿名类型无法写入 `[JsonSerializable]`，消息会直接建议改用命名类型或 params / 表单）；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
@@ -1723,6 +1726,8 @@ AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异�
 AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、程序集扫描（`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` 依赖反射枚举，AOT 下抛 `PlatformNotSupportedException`；改用生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`，它覆盖本程序集里源生成器生成过元数据的全部请求模型与接口，或按类型调用 `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT）。生成的类名把程序集名里的非标识符字符换成 `_`（`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`）；本程序集没有任何可生成的模型 / 接口时不会生成该类。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
 
 容器注册与冻结都是可选加固。引用了 `AxiosNet.DependencyInjection` 时，生成器会额外产出 `AxiosNetGeneratedDependencyInjection.AddAxiosGeneratedApiInterfaces(services[, siteName])`，把本程序集里声明过路由的接口逐个按单例注册：它逐条调用公开的 `AddApiInterface<T>()`，站点冲突 / 命名站点 / 单例语义与手写完全同一份实现，区别是类型在编译期绑定——接口改名会让它编译失败，而不是运行时少注册一个服务。启动末尾想锁死元数据可调用隐藏 API `AxiosMetadata.Freeze()`：之后任何真正写入（新程序集的模块初始化器、手工注册）都会抛错并指出类型与程序集；等价重复注册仍是空操作。不调用它完全不影响使用。
+
+**已知限制**：等价重复注册「保留先注册的一份」是为「多个互不引用的程序集各为同一接口生成代理」设计的。在可卸载 `AssemblyLoadContext`（插件热重载）里，第二次注册会被静默丢弃，代理工厂仍指向先注册那次加载的程序集——重载插件时不要依赖注册表自动换新，改用独立的进程或卸载后重新进入新的 `AssemblyLoadContext` 边界。
 
 ## 构建与测试
 
@@ -1734,7 +1739,7 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1958 / 1949 | `net8.0` / `net6.0` | 3907 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1970 / 1963 | `net8.0` / `net6.0` | 3933 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | **合计** | **2024 / 2015** | | **4039** |
 

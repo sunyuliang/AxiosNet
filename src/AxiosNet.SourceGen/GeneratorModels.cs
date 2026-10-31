@@ -136,4 +136,13 @@ namespace AxiosNet.SourceGen
         EquatableArray<InterfaceMethodInfo> Methods,
         EquatableArray<DiagnosticInfo> Diagnostics,
         bool Emit);
+
+    /// <summary>
+    /// 一次语法候选展开出的接口模型。<c>ImmutableArray</c> 按底层数组引用比较，
+    /// 直接当管线值会让每次编辑都被判成「已修改」，增量缓存失效，所以外面套一层值相等记录。
+    /// </summary>
+    internal sealed record InterfaceBatchInfo(EquatableArray<InterfaceModelInfo> Models)
+    {
+        public static readonly InterfaceBatchInfo Empty = new(EquatableArray<InterfaceModelInfo>.Empty);
+    }
 }

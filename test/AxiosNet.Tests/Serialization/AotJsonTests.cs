@@ -125,7 +125,7 @@ public sealed class AotJsonTests
     {
         var config = ContextConfig();
 
-        // 快路径不能掩盖非法调用：null 传给非可空值类型，net6 的 legacy 路径同样抛 ArgumentNullException。
+        // 快路径不能掩盖非法调用：null 传给非可空值类型由库统一判定（两个目标框架同一种异常）。
         Assert.Throws<ArgumentNullException>(
             () => SystemTextJsonSerializer.Instance.Serialize(null, typeof(int), config));
     }

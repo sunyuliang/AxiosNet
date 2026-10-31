@@ -2,83 +2,15 @@ using Microsoft.CodeAnalysis;
 
 namespace AxiosNet.SourceGen
 {
-    /// <summary>AXA 诊断：把「生成器无法静态表达」的事实提前到编译期；其余声明合法性仍由运行时共享构建器校验。</summary>
+    /// <summary>
+    /// AXA 诊断：把「生成器无法静态表达」的事实提前到编译期；其余声明合法性仍由运行时共享构建器校验。
+    /// 一个编号只对应一个语义（模型侧与接口侧共用同一个 descriptor，位置信息由 <c>{0}</c> 参数传入），
+    /// 这样 <c>#pragma warning disable AXA00x</c> 关掉的正好是一类问题。
+    /// </summary>
     internal static class Diagnostics
     {
         private const string Category = "AxiosNet.SourceGen";
         private const string HelpLink = "https://github.com/sunyuliang/AxiosNet#native-aot";
-
-        public static readonly DiagnosticDescriptor MultipleRoutes = new DiagnosticDescriptor(
-            "AXA003",
-            "请求模型必须且只能标注一个路由特性",
-            "请求模型 {0} 标注了多个路由特性（{1}）：每份声明必须且只能标注一个 HttpApiAttribute 或其子类。",
-            Category,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor RouteNotConstant = new DiagnosticDescriptor(
-            "AXA003",
-            "路由特性参数无效",
-            "请求模型 {0} 的路由特性参数为空白或无法在编译期求值：请写成 [Get(\"...\")] / [HttpApi(\"GET\", \"...\")]。",
-            Category,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor IgnoreConflict = new DiagnosticDescriptor(
-            "AXA006",
-            "[ApiIgnore] 与参数特性同用",
-            "{0}",
-            Category,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor AuthorizationConflict = new DiagnosticDescriptor(
-            "AXA008",
-            "[Authorize] 与 [AllowAnonymous] 同层",
-            "请求模型 {0} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。",
-            Category,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor UnsupportedType = new DiagnosticDescriptor(
-            "AXA009",
-            "请求模型无法生成元数据",
-            "请求模型 {0} 无法生成元数据：{1}。请改用可访问的非泛型类型，或保留 JIT 反射路径（Native AOT 下必须能生成）。",
-            Category,
-            DiagnosticSeverity.Error,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor CustomRouteAttribute = new DiagnosticDescriptor(
-            "AXA010",
-            "自定义 HttpApiAttribute 子类无法静态求值",
-            "请求模型 {0} 使用了自定义路由特性 {1}：源生成器无法静态执行自定义构造器，已跳过生成。请改用 [HttpApi(\"METHOD\", \"path\")] 或内置的 [Get]/[Post] 等（JIT 下仍可走反射）。",
-            Category,
-            DiagnosticSeverity.Warning,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor ShapeTypeInaccessible = new DiagnosticDescriptor(
-            "AXA013",
-            "对象形状类型无法生成",
-            "类型 {0} 无法生成对象形状：{1}。Native AOT 下展平到该类型会显式失败；请改成生成代码可见的类型（public，或同一程序集内的 internal），或改用 JIT 反射。",
-            Category,
-            DiagnosticSeverity.Warning,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
-
-        public static readonly DiagnosticDescriptor GeneratorDisabledWithAot = new DiagnosticDescriptor(
-            "AXA012",
-            "AOT 项目关闭了 AxiosNet 源生成器",
-            "项目启用了 PublishAot 但 AxiosNetSourceGen=false：Native AOT 下请求模型 / 接口将缺少生成元数据。请删除该属性，或改用 JIT 运行。",
-            Category,
-            DiagnosticSeverity.Warning,
-            isEnabledByDefault: true,
-            helpLinkUri: HelpLink);
 
         public static readonly DiagnosticDescriptor InterfaceMemberNotSupported = new DiagnosticDescriptor(
             "AXA001",
@@ -98,10 +30,11 @@ namespace AxiosNet.SourceGen
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
 
-        public static readonly DiagnosticDescriptor InterfaceRouteInvalid = new DiagnosticDescriptor(
+        /// <summary>路由特性个数不对：模型 / 接口方法都走这一条（<c>{0}</c> 是定位串，<c>{1}</c> 是具体原因）。</summary>
+        public static readonly DiagnosticDescriptor RouteCountInvalid = new DiagnosticDescriptor(
             "AXA003",
-            "接口方法必须且只能标注一个路由特性",
-            "接口 {0} 的 {1} {2}：请在方法上标注一个 [Get(\"...\")] / [Post(\"...\")] 等 HttpApiAttribute 子类。",
+            "必须且只能标注一个路由特性",
+            "{0} {1}：每份声明必须且只能标注一个 HttpApiAttribute 或其子类（[Get] / [Post] / ...）。",
             Category,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,
@@ -125,38 +58,51 @@ namespace AxiosNet.SourceGen
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
 
-        public static readonly DiagnosticDescriptor InterfaceAuthorizationConflictAtType = new DiagnosticDescriptor(
-            "AXA008",
-            "[Authorize] 与 [AllowAnonymous] 同层",
-            "接口 {0} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。",
+        public static readonly DiagnosticDescriptor IgnoreConflict = new DiagnosticDescriptor(
+            "AXA006",
+            "[ApiIgnore] 与参数特性同用",
+            "{0}",
             Category,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
 
-        public static readonly DiagnosticDescriptor InterfaceAuthorizationConflict = new DiagnosticDescriptor(
-            "AXA008",
-            "[Authorize] 与 [AllowAnonymous] 同层",
-            "接口 {0} 的 {1} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。",
+        /// <summary>路由特性存在但参数为空 / 无法在编译期求值（与「个数不对」分开：修法不同）。</summary>
+        public static readonly DiagnosticDescriptor RouteValueInvalid = new DiagnosticDescriptor(
+            "AXA007",
+            "路由特性参数无效",
+            "{0} 的路由特性参数为空白或无法在编译期求值：请写成 [Get(\"...\")] / [HttpApi(\"GET\", \"...\")]。",
             Category,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
 
-        public static readonly DiagnosticDescriptor InterfaceUnsupportedType = new DiagnosticDescriptor(
+        /// <summary>授权与匿名互斥：模型、接口类型、接口方法三层共用（<c>{0}</c> 是完整定位串）。</summary>
+        public static readonly DiagnosticDescriptor AuthorizationConflict = new DiagnosticDescriptor(
+            "AXA008",
+            "[Authorize] 与 [AllowAnonymous] 同层",
+            "{0} 同时标注了 [Authorize] 与 [AllowAnonymous]：授权与匿名互斥。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        /// <summary>无法生成元数据：模型与接口共用（<c>{0}</c> 是定位串）。</summary>
+        public static readonly DiagnosticDescriptor UnsupportedType = new DiagnosticDescriptor(
             "AXA009",
-            "接口无法生成代理",
-            "接口 {0} 无法生成代理：{1}。",
+            "无法生成元数据",
+            "{0} 无法生成元数据：{1}。请改用可访问的非泛型类型，或保留 JIT 反射路径（Native AOT 下必须能生成）。",
             Category,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
 
-        public static readonly DiagnosticDescriptor InterfaceCustomRouteAttribute = new DiagnosticDescriptor(
+        /// <summary>自定义 HttpApiAttribute 子类无法静态求值：模型与接口共用（<c>{0}</c> 是定位串）。</summary>
+        public static readonly DiagnosticDescriptor CustomRouteAttribute = new DiagnosticDescriptor(
             "AXA010",
             "自定义 HttpApiAttribute 子类无法静态求值",
-            "接口 {0} 的 {1} 使用了自定义路由特性 {2}：源生成器无法静态执行自定义构造器，已跳过该接口的代理生成。"
-            + "请改用 [HttpApi(\"METHOD\", \"path\")] 或内置的 [Get]/[Post] 等（JIT 下仍可走 DispatchProxy）。",
+            "{0} 使用了自定义路由特性 {1}：源生成器无法静态执行自定义构造器，已跳过生成。"
+            + "请改用 [HttpApi(\"METHOD\", \"path\")] 或内置的 [Get]/[Post] 等（JIT 下仍可走反射）。",
             Category,
             DiagnosticSeverity.Warning,
             isEnabledByDefault: true,
@@ -167,6 +113,24 @@ namespace AxiosNet.SourceGen
             "开放泛型接口需要闭合调用点",
             "接口 {0} 是开放泛型，无法直接生成代理：请在使用方的调用点写成闭合类型（如 Create<{0}<T>>() / AddApiInterface<...>()）由该程序集生成；"
             + "Native AOT 下若没有任何闭合调用点，Create 时会显式失败。",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor GeneratorDisabledWithAot = new DiagnosticDescriptor(
+            "AXA012",
+            "AOT 项目关闭了 AxiosNet 源生成器",
+            "项目启用了 PublishAot 但 AxiosNetSourceGen=false：Native AOT 下请求模型 / 接口将缺少生成元数据。请删除该属性，或改用 JIT 运行。",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        public static readonly DiagnosticDescriptor ShapeTypeInaccessible = new DiagnosticDescriptor(
+            "AXA013",
+            "对象形状类型无法生成",
+            "类型 {0} 无法生成对象形状：{1}。Native AOT 下展平到该类型会显式失败；请改成生成代码可见的类型（public，或同一程序集内的 internal），或改用 JIT 反射。",
             Category,
             DiagnosticSeverity.Warning,
             isEnabledByDefault: true,

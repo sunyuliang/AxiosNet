@@ -1689,13 +1689,14 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | --- | --- | --- |
 | `AXA001` | Error | Interface member that cannot be proxied: property / event / static member |
 | `AXA002` | Error | Unsupported interface method shape: generic method, `ref` / `out` / `in`, ref struct / pointer parameter, non-public abstract member, `CancellationToken` with binding attributes |
-| `AXA003` | Error | Multiple route attributes; blank route method / path or a missing route |
+| `AXA003` | Error | Exactly one route attribute is required (models and interface methods share it): more than one, or an interface method without a route |
 | `AXA004` | Error | Unsupported interface method return shape (synchronous return / `ValueTask` etc.) |
 | `AXA005` | Error | Invalid `[Stream]` declaration on an interface method or an undefined frame format value |
 | `AXA006` | Error | `[ApiIgnore]` combined with Path / Query / Header / HeaderCollection / Part / Body |
+| `AXA007` | Error | Route attribute present but its arguments are blank or not compile-time constant (separate from `AXA003`: different fix) |
 | `AXA008` | Error | `[Authorize]` and `[AllowAnonymous]` on the same level (model, interface or method) |
-| `AXA009` | Error | Model / interface cannot be generated: static class / inaccessible / generic / ref struct / file-local / non-public member getter / invisible type |
-| `AXA010` | Warning | Custom `HttpApiAttribute` subclass used (generation skipped) |
+| `AXA009` | Error | Model / interface cannot generate metadata: static class / inaccessible / generic / ref struct / file-local / non-public member getter / invisible type |
+| `AXA010` | Warning | Model / interface uses a custom `HttpApiAttribute` subclass (generation skipped) |
 | `AXA011` | Warning | Open generic interface (including a nested interface whose outer type is open generic) without a closed call site (`Create` fails explicitly under AOT) |
 | `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
 | `AXA013` | Warning | Shape type is not accessible to generated code (shape skipped; flattening to it fails explicitly under AOT) |
@@ -1718,6 +1719,8 @@ var client = new AxiosClient(new AxiosConfig
 });
 ```
 
+`TypeInfoResolver` is a .NET 7+ property: the `net6.0` asset (taken by .NET 6 / 7 apps) has no such property on `JsonSerializerOptions`, so that asset cannot consume source-generated metadata — under AOT use a custom `IContentSerializer`, or move the target framework to `net8.0`. When reflection is switched off both assets throw the same `NotSupportedException`, and the `net6.0` message calls this out explicitly.
+
 Do not drop `JsonSerializerDefaults.Web`: a bare `new JsonSerializerOptions()` switches property names to their declared casing, so request and response fields change shape, and the `JsonSourceGenerationOptions` on your context will not put camelCase back (`AxiosJson.Options` defaults to Web).
 
 Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models and interfaces throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` APIs can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver` (anonymous types cannot be listed in `[JsonSerializable]`, so the message points at named types or params / form instead); `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
@@ -1725,6 +1728,8 @@ Missing metadata under AOT never silently drops fields; it throws an exception w
 Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, assembly scanning (`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` rely on reflection enumeration and throw `PlatformNotSupportedException` under AOT; use the generated `AxiosNet.Generated.AxiosNetValidation_<AssemblyName>.ValidateAll()`, which covers every request model and interface the generator produced metadata for in this assembly, or call `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)` by type), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only). The generated class name replaces every non-identifier character of the assembly name with `_` (`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`), and the class is emitted only when the assembly has at least one emittable model / interface. Anonymous objects as params / form values need no extra configuration: the generator bakes a sample for their structure (see "Object shapes" above).
 
 Container registration and freezing are both optional hardening. When `AxiosNet.DependencyInjection` is referenced, the generator additionally emits `AxiosNetGeneratedDependencyInjection.AddAxiosGeneratedApiInterfaces(services[, siteName])`, which registers every routed interface in the assembly as a singleton: it calls the public `AddApiInterface<T>()` one type at a time, so site-conflict detection, named sites and singleton semantics stay the same single implementation — the difference is that types are bound at compile time, so renaming an interface breaks the build instead of quietly leaving a service unregistered at runtime. To lock metadata down at the end of startup, call the hidden `AxiosMetadata.Freeze()`: any real write afterwards (a later-loaded assembly's module initializer, a manual registration) throws with the type and assembly named, while equivalent duplicate registrations stay no-ops. Not calling it changes nothing.
+
+**Known limitation**: keeping the first registration for equivalent duplicates is designed for "several mutually unreferenced assemblies each generate a proxy for the same interface". Inside a collectible `AssemblyLoadContext` (plugin hot reload), the second registration is silently dropped and the proxy factory still points at the assembly loaded by the first one — do not rely on the registry refreshing itself when a plugin is reloaded; use a separate process, or cross a fresh `AssemblyLoadContext` boundary after unloading.
 
 ## Build and test
 
@@ -1736,7 +1741,7 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1958 / 1949 | `net8.0` / `net6.0` | 3907 |
+| `AxiosNet.Tests` (core + declarative) | 1970 / 1963 | `net8.0` / `net6.0` | 3933 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | **Total** | **2024 / 2015** | | **4039** |
 

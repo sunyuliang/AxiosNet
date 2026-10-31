@@ -10,7 +10,7 @@ namespace AxiosNet.Serialization;
 /// <summary>
 /// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：用 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
 /// net8.0 目标显式走 <c>JsonSerializerOptions.GetTypeInfo</c>（AOT 下缺元数据时给出可读异常）；
-/// net6.0 没有该 API，只能走 Type 重载，Native AOT 下需由消费方提供源生成上下文。
+/// net6.0 没有该 API 也没有 <c>TypeInfoResolver</c>，只能走 Type 重载，反射被关掉时同样给出可读异常。
 /// </summary>
 public sealed class SystemTextJsonSerializer : IContentSerializer
 {
@@ -26,7 +26,22 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
     /// <inheritdoc />
     public string Serialize(object? value, Type type, AxiosConfig config)
-        => SerializeCore(value, type, AxiosJson.GetOptions(config));
+    {
+        // null 请求体与类型无关：不需要任何元数据，按 STJ 默认输出 null（否则空体会被误报为缺元数据）。
+        if (value is null)
+        {
+            // 但 null 传给非可空值类型仍是非法调用：判定放在两个目标框架共用的这里，
+            // 否则 net6.0 会由 STJ 的 Type 重载抛出 JsonException，与 net8.0 的异常类型不一致。
+            if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
+            {
+                throw new ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
+            }
+
+            return "null";
+        }
+
+        return SerializeCore(value, type, AxiosJson.GetOptions(config));
+    }
 
     /// <inheritdoc />
     public object? Deserialize(string json, Type type, AxiosConfig config)
@@ -62,18 +77,6 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 #if NET8_0_OR_GREATER
     private static string SerializeCore(object? value, Type type, JsonSerializerOptions options)
     {
-        // null 请求体与类型无关：不需要任何元数据，按 STJ 默认输出 null（否则空体会被误报为缺元数据）。
-        if (value is null)
-        {
-            // 但 null 传给非可空值类型仍是非法调用：STJ 会抛，net6 走 legacy 也抛，这里不能静默产出 "null"。
-            if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
-            {
-                throw new ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
-            }
-
-            return "null";
-        }
-
         // 没有 TypeInfoResolver 时保持旧的反射重载语义（含匿名类型）；AOT 下反射默认关闭，提前给出可读错误。
         if (options.TypeInfoResolver is null)
         {
@@ -176,38 +179,66 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     private static object? DeserializeUtf8Legacy(ReadOnlySpan<byte> utf8Json, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize(utf8Json, type, options);
 #else
-    // net6.0 没有 GetTypeInfo：AOT 下由消费方的 JsonSerializerContext 提供元数据。
+    // net6.0 的 STJ 既没有 GetTypeInfo 也没有 TypeInfoResolver（.NET 7 才引入），反射重载是唯一路径：
+    // 「反射是否被关掉」只能读与 .NET 8 属性同源的 AppContext 开关，据此给出与 net8.0 一致的可读错误。
+    private const string ReflectionSwitchName = "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault";
+
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
-        Justification = "net6.0 无 GetTypeInfo API；AOT 下由消费方通过 TypeInfoResolver 提供源生成上下文。")]
+        Justification = "net6.0 无 TypeInfoResolver，反射重载是唯一路径；反射被关掉时已在 EnsureReflectionMetadata 提前拒绝。")]
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
-        Justification = "同上：元数据由 TypeInfoResolver 提供，不依赖运行时代码生成。")]
+        Justification = "同上：仅在反射回退开启（JIT 或显式开启该开关）时可达，AOT 默认关闭时提前拒绝。")]
     private static string SerializeCore(object? value, Type type, JsonSerializerOptions options)
-        => JsonSerializer.Serialize(value, type, options);
+    {
+        EnsureReflectionMetadata(type);
+        return JsonSerializer.Serialize(value, type, options);
+    }
 
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
-        Justification = "net6.0 无 GetTypeInfo API；AOT 下由消费方通过 TypeInfoResolver 提供源生成上下文。")]
+        Justification = "net6.0 无 TypeInfoResolver，反射重载是唯一路径；反射被关掉时已在 EnsureReflectionMetadata 提前拒绝。")]
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
-        Justification = "同上：元数据由 TypeInfoResolver 提供，不依赖运行时代码生成。")]
+        Justification = "同上：仅在反射回退开启（JIT 或显式开启该开关）时可达，AOT 默认关闭时提前拒绝。")]
     private static object? DeserializeCore(string json, Type type, JsonSerializerOptions options)
-        => JsonSerializer.Deserialize(json, type, options);
+    {
+        EnsureReflectionMetadata(type);
+        return JsonSerializer.Deserialize(json, type, options);
+    }
 
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
-        Justification = "net6.0 无 GetTypeInfo API；AOT 下由消费方通过 TypeInfoResolver 提供源生成上下文。")]
+        Justification = "net6.0 无 TypeInfoResolver，反射重载是唯一路径；反射被关掉时已在 EnsureReflectionMetadata 提前拒绝。")]
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
-        Justification = "同上：元数据由 TypeInfoResolver 提供，不依赖运行时代码生成。")]
+        Justification = "同上：仅在反射回退开启（JIT 或显式开启该开关）时可达，AOT 默认关闭时提前拒绝。")]
     private static object? DeserializeUtf8Core(ReadOnlySpan<byte> utf8Json, Type type, JsonSerializerOptions options)
-        => JsonSerializer.Deserialize(utf8Json, type, options);
+    {
+        EnsureReflectionMetadata(type);
+        return JsonSerializer.Deserialize(utf8Json, type, options);
+    }
+
+    /// <summary>
+    /// 没有 resolver 时，反射是唯一路径：开关未设置视为开启（JIT 默认），关掉时按缺元数据拒绝。
+    /// </summary>
+    private static void EnsureReflectionMetadata(Type type)
+    {
+        if (!AppContext.TryGetSwitch(ReflectionSwitchName, out var enabled) || enabled)
+        {
+            return;
+        }
+
+        // 通用消息让调用方去设 TypeInfoResolver，而 net6.0 目标没有该属性：补一句这个目标上真正可做的选择。
+        throw new NotSupportedException(
+            AxiosAotMetadataException.MissingJsonPropertyInfo(type).Message
+            + "net6.0 目标没有 TypeInfoResolver API：请改用自定义 IContentSerializer，或把目标框架提升到 net8.0。");
+    }
 #endif
 }

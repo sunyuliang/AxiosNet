@@ -206,9 +206,11 @@ cat > "$PROJ/NuGet.config" <<XML
 XML
 
 echo "== 4/5 AOT 发布（$RID） =="
+# IL2xxx / IL3xxx 一组都当错误：本库大量依赖 DAM 与抑制，只拦 IL2026/IL3050/IL3051
+# 会让 IL2070/2072/2075/2087/2098 这类「标注丢失」悄悄溜过去。
 "$DOTNET" publish "$PROJ/SmokeApp.csproj" -c "$CONFIG" -r "$RID" --nologo \
     -p:TrimmerSingleWarn=false \
-    -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+    -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051%3BIL2070%3BIL2072%3BIL2075%3BIL2087%3BIL2098
 
 BIN="$PROJ/bin/$CONFIG/net8.0/$RID/publish/SmokeApp"
 [ -f "$BIN" ] || BIN="$BIN.exe"

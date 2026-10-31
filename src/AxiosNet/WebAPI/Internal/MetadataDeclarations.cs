@@ -80,12 +80,10 @@ internal sealed class RequestModelMemberDeclaration
     public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
 }
 
-/// <summary>接口级声明的声明数据（代理工厂 + 全部方法的声明）。</summary>
+/// <summary>接口级声明的声明数据（全部方法的声明 + 接口级授权 / 静态头）。</summary>
 internal sealed class InterfaceDeclarationData
 {
     public Type InterfaceType { get; init; } = null!;
-
-    public Func<ApiClient, object>? Factory { get; set; }
 
     public string? Error { get; set; }
 

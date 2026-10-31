@@ -2,6 +2,13 @@
 # 普通 push / PR 只做构建 + 测试（不发布），避免回归只能等到打 tag 才暴露。
 # 认证方式：NuGet Trusted Publishing（OIDC），不需要长期 API Key，也不需要 NUGET_API_KEY 密钥。
 #
+# 发布前置条件：build-test（双 TFM 全量用例）与 aot（win / linux 冒烟 + 包消费 smoke）都成功，
+# publish 才会启动；任一失败或取消，两个包都不会被推送——不会出现「发了一半」。
+#
+# 幂等：每次运行都先探测 nuget.org 上这个版本在不在，在库就只补缺失的符号，不在库才推一次。
+# 探测必须容忍摄入延迟——包推成功后公开索引（flat container）最长约 30 分钟才生效，这段窗口里
+# 404 不代表「没发布」，重跑撞上 409 也不代表出错。窗口按 30 分钟给，取不到只告警不判失败。
+#
 # 仓库同时维护两个 NuGet 包：AxiosNet（axios 风格 HTTP 客户端 + 内置声明式 API 客户端，
 # 命名空间 AxiosNet.WebAPI）与 AxiosNet.DependencyInjection（两者的 DI 单例注入扩展，依赖主包；
 # 主库自身零外部依赖）。
@@ -109,7 +116,9 @@ jobs:
     name: native aot (${{ matrix.rid }})
     # AOT 的失败是平台 / 工具链相关的（链接器、系统库、ILC 版本），win 与 linux 都要跑一遍。
     # 两个项目引用形态都覆盖：示例走 ProjectReference，包 smoke 走真正的 NuGet 引用。
+    # 依赖 build-test：单测先挂时不必再花几分钟跑 ILC。
     if: github.event_name != 'workflow_dispatch'
+    needs: build-test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -142,15 +151,17 @@ jobs:
         # 带 --runtime：publish 用 --no-restore 时，资产文件必须已经含该 RID 的运行时包，否则 NETSDK1047。
         run: dotnet restore samples/AxiosNet.Aot/AxiosNet.Aot.csproj --runtime ${{ matrix.rid }}
 
-      - name: 发布 AOT 示例（IL2026 / IL3050 视为错误）
+      - name: 发布 AOT 示例（IL2xxx / IL3xxx 视为错误）
         # 示例不再 root 整个程序集：能不能通过完全取决于源生成器烘焙的元数据。
+        # 除反射 / 动态代码（IL2026 / IL3050 / IL3051）外，把 DAM 相关的一组也当错误：
+        # 本库大量依赖 DynamicallyAccessedMembers + 抑制，这几条最容易只在包消费方发布时暴露。
         run: >
           dotnet publish samples/AxiosNet.Aot/AxiosNet.Aot.csproj
           --configuration Release
           --runtime ${{ matrix.rid }}
           --no-restore
           -p:TrimmerSingleWarn=false
-          -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+          -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051%3BIL2070%3BIL2072%3BIL2075%3BIL2087%3BIL2098
 
       - name: 运行 AOT 示例
         shell: bash
@@ -178,6 +189,9 @@ jobs:
     name: pack & push
     # 只有 tag 推送才发布；普通 push / PR 由上面的 build-test 覆盖
     if: startsWith(github.ref, 'refs/tags/v')
+    # 所有测试用例与 AOT 冒烟全过才允许发布：任一失败 / 取消，本 job 直接跳过。
+    # 两个前置 job 只在 workflow_dispatch 下被跳过，而 publish 只跑 tag，所以 tag 事件下两者必定真实执行。
+    needs: [build-test, aot]
     runs-on: ubuntu-latest
     # 必须与 nuget.org 策略里填的 Environment 完全一致（策略填了就必须匹配）
     environment: build-nuget
@@ -233,6 +247,27 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
           echo "解析出版本：$ver（来自 tag $tag，commit ${GITHUB_SHA:0:7}）"
+
+      - name: 发布前探测该版本是否已在库（只读）
+        id: preflight
+        shell: bash
+        # 每次运行都先回答「这个版本在 nuget.org 上到底有没有」：present = 已可拉取（后面只补符号），
+        # missing = 取不到。注意 missing 不等于「没发布」：摄入 / 索引最长滞后约 30 分钟，
+        # 刚发过的版本在同一窗口里也是 404，所以这里只记录，不据此跳过任何步骤。
+        run: |
+          set -uo pipefail
+          ID="$(basename "$PACKAGE_PROJECT" .csproj)"
+          ID_LC="${ID,,}"
+          VER="${{ steps.meta.outputs.version }}"
+          FLAT="https://api.nuget.org/v3-flatcontainer/${ID_LC}/${VER}/${ID_LC}.${VER}.nupkg"
+          code="$(curl -sL -o /dev/null -w '%{http_code}' --max-time 60 "$FLAT")"
+          if [ "$code" = "200" ]; then
+            echo "state=present" >> "$GITHUB_OUTPUT"
+            echo "$ID $VER 已在公开索引可拉取：后续只补推缺失的符号，不再推 nupkg"
+          else
+            echo "state=missing" >> "$GITHUB_OUTPUT"
+            echo "$ID $VER 暂不可拉取（HTTP $code）：可能是首次发布，也可能是刚发过、索引仍在生效（最长约 30 分钟）"
+          fi
 
       - name: 还原依赖
         run: |
@@ -312,14 +347,17 @@ jobs:
 
       - name: 发布到 nuget.org（幂等：按线上真实状态决定推什么）
         id: publish
+        # 每次运行都按「线上真实状态」决定动作，重跑任意次结果一致：已在库的版本不会被推第二次。
         # 为什么不是一个「确认未发布 → 推 → 推符号」的直线流程：
         #   · nuget.org 摄入是异步的。管理端后台（Manage Packages）立刻能看到记录，但公开索引
-        #     （flat container / registration / 搜索）要过一段时间，这段窗口里 flat container 是
-        #     404——**404 不等于「没发布」**，直线流程会误判成未发布、再推一次拿 409 然后失败。
+        #     （flat container / registration / 搜索）要过一段时间，最长约 30 分钟；这段窗口里
+        #     flat container 是 404——**404 不等于「没发布」**，直线流程会误判成未发布、
+        #     再推一次拿 409 然后失败。
         #   · 反过来，健康的重跑（nupkg 已在库、符号也齐）不该报错，缺符号时应该只补推符号。
         # 所以这里按「先推、用 409 反推真实状态、再核对二进制身份」的幂等状态机走：
         #   new      → 本次发布成功（推了 nupkg；snupkg 按需推）
-        #   existing → 版本已在库：先比对线上二进制与本次构建是否同一份，再决定是否补推符号
+        #   existing → 版本已在库：先比对线上二进制与本次构建是否同一份，再决定是否补推符号；
+        #              索引仍在 30 分钟窗口内取不到时只告警并跳过符号，不判失败
         # 关键判据都放在唯一权威端点上：包是否在库看 flat container，符号是否可用看符号服务器。
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
@@ -377,37 +415,43 @@ jobs:
           # 版本号不可变、先到先得。若线上是另一份构建（1.0.0/1.0.1 就是本地抢先发布），
           # 本次构建的产物永远进不去该版本，补推符号也只会挂上没人会请求的 GUID——那属于
           # 错误操作，必须响亮失败并让人递增版本号，而不是假装补推成功。
+          PUSH_SYM=1
           if [ "$STATE" = "existing" ]; then
-            for i in $(seq 1 18); do
+            # 索引滞后最长约 30 分钟：刚发过的版本在这段窗口里 flat container 仍是 404。
+            # 窗口按 30 分钟给（30 × 60s），短窗口会把「刚发完就重跑」判死。
+            for i in $(seq 1 30); do
               code="$(probe_pkg)"
               [ "$code" = "200" ] && break
-              echo "等待 $VER 在 flat container 可拉取（HTTP $code，$i/18），10s 后重试…"
-              sleep 10
+              echo "等待 $VER 在 flat container 可拉取（HTTP $code，$i/30，索引滞后最长约 30 分钟），60s 后重试…"
+              sleep 60
             done
             if [ "$code" != "200" ]; then
-              echo "::error::线上已存在 $VER（推送冲突），但 flat container 始终取不到（HTTP $code），无法核对二进制身份，本次不补推符号"
-              exit 1
+              # 取不到不等于发错：409 已经证明该版本在库里，只是公开索引还没跟上。
+              # 判失败等于惩罚「刚发完就重跑」，所以这里只告警并跳过符号补推，
+              # 由 verify-published 事后复核（它只读端点，不受发布窗口影响）。
+              echo "::warning::线上已存在 $VER（推送冲突），但 30 分钟内 flat container 始终取不到（HTTP $code）：索引仍在生效，本次跳过符号补推。稍后用 Actions → build-nuget → Run workflow（verify-published）复核。"
+              PUSH_SYM=0
+            else
+              curl -sL --max-time 180 -o /tmp/published.nupkg "$FLAT" || {
+                echo "::error::下载已发布的 nupkg 失败"
+                exit 1
+              }
+              REMOTE_ID="$(python3 .github/scripts/debug-id.py --nupkg /tmp/published.nupkg)" || {
+                echo "::error::无法从已发布的 nupkg 提取 PDB debug id"
+                exit 1
+              }
+              echo "线上 $VER 的 PDB debug id：$REMOTE_ID"
+              if [ "$REMOTE_ID" != "$LOCAL_ID" ]; then
+                echo "::error::线上 $VER 的二进制不是本次构建（线上 $REMOTE_ID ≠ 本地 $LOCAL_ID）"
+                echo "::error::版本号不可变：本次构建内容无法以该版本号发布，补推符号也对不上。请递增版本号重新发版，并确保发布方唯一（只从 CI 打 tag 发布）。"
+                exit 1
+              fi
+              echo "线上与本次构建是同一份二进制，可安全补推符号"
             fi
-            curl -sL --max-time 180 -o /tmp/published.nupkg "$FLAT" || {
-              echo "::error::下载已发布的 nupkg 失败"
-              exit 1
-            }
-            REMOTE_ID="$(python3 .github/scripts/debug-id.py --nupkg /tmp/published.nupkg)" || {
-              echo "::error::无法从已发布的 nupkg 提取 PDB debug id"
-              exit 1
-            }
-            echo "线上 $VER 的 PDB debug id：$REMOTE_ID"
-            if [ "$REMOTE_ID" != "$LOCAL_ID" ]; then
-              echo "::error::线上 $VER 的二进制不是本次构建（线上 $REMOTE_ID ≠ 本地 $LOCAL_ID）"
-              echo "::error::版本号不可变：本次构建内容无法以该版本号发布，补推符号也对不上。请递增版本号重新发版，并确保发布方唯一（只从 CI 打 tag 发布）。"
-              exit 1
-            fi
-            echo "线上与本次构建是同一份二进制，可安全补推符号"
           fi
 
           # ── 3. snupkg：缺才补推；已有副本在排队（409）不算失败 ───────────────
-          PUSH_SYM=1
-          if [ "$STATE" = "existing" ]; then
+          if [ "$STATE" = "existing" ] && [ "$PUSH_SYM" = "1" ]; then
             sym="$(probe_sym "$LOCAL_ID")"
             echo "符号服务器探测：HTTP $sym"
             if [ "$sym" = "200" ]; then
@@ -495,7 +539,7 @@ jobs:
             sleep 15
           done
           echo "ready=no" >> "$GITHUB_OUTPUT"
-          echo "::warning::发布已成功，但 ${VER} 在公开索引仍不可拉取（摄入/索引滞后）。这与发布结果无关，通常几分钟~数十分钟后自动生效，届时无需重跑；期间下游 restore 报 NU1101 属正常。若长时间不生效，去 nuget.org 管理端核对包状态。"
+          echo "::warning::发布已成功，但 ${VER} 在公开索引仍不可拉取（摄入/索引滞后）。这与发布结果无关，通常几分钟到约 30 分钟后自动生效，届时无需重跑；期间下游 restore 报 NU1101 属正常。若长时间不生效，去 nuget.org 管理端核对包状态。"
 
       - name: 写入运行摘要
         if: always()
@@ -506,6 +550,7 @@ jobs:
             echo ""
             echo "- tag: \`${{ github.ref_name }}\`"
             echo "- 预发布: \`${{ steps.meta.outputs.is_prerelease }}\`"
+            echo "- 发布前探测: \`${{ steps.preflight.outputs.state }}\`（present=运行开始时已可拉取；missing=当时取不到，可能是首次发布，也可能是索引仍在生效）"
             echo "- 发布状态: \`${{ steps.publish.outputs.state }}\`（new=本次发布，existing=版本已在库）"
             echo "- 符号包本次推送: \`${{ steps.publish.outputs.symbols_pushed }}\`（0=线上已就绪，跳过）"
             echo "- PDB debug id: \`${{ steps.publish.outputs.debug_id }}\`"

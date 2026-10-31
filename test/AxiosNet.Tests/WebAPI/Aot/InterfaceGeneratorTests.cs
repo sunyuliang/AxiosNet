@@ -127,6 +127,7 @@ public sealed class InterfaceGeneratorTests
     {
         var ns = UniqueNamespace();
         var (result, diagnostics, output) = RunGenerator(BrokenInterfaces.Replace("__NS__", ns));
+        DiagnosticCatalogTests.AssertNoUnrenderedPlaceholders(diagnostics);
 
         var messagesById = diagnostics
             .GroupBy(static diagnostic => diagnostic.Id)
@@ -141,7 +142,8 @@ public sealed class InterfaceGeneratorTests
         Assert.Contains(messagesById["AXA002"], static message => message.Contains("非 public 的抽象成员"));
         Assert.Contains(messagesById["AXA003"], static message => message.Contains("OtherAsync"));
         Assert.Contains(messagesById["AXA003"], static message => message.Contains("多个路由特性"));
-        Assert.Contains(messagesById["AXA003"], static message => message.Contains("空白"));
+        // 路由特性存在但参数为空走 AXA007：与「个数不对」修法不同，编号也分开。
+        Assert.Contains(messagesById["AXA007"], static message => message.Contains("空白"));
         Assert.Contains("void", messagesById["AXA004"].Single());
         Assert.Contains(messagesById["AXA005"], static message => message.Contains("只用于"));
         Assert.Contains(messagesById["AXA005"], static message => message.Contains("帧格式值 99"));
@@ -163,6 +165,68 @@ public sealed class InterfaceGeneratorTests
         var goodType = assembly.GetType(ns + ".IGoodApi", throwOnError: true)!;
         Assert.True(GeneratedMetadataRegistry.TryGetInterface(goodType, out var entry));
         entry!.Validate();
+    }
+
+    /// <summary>
+    /// 同层兄弟接口的排序键必须两条路径同规则：生成器拿 Roslyn 显示名、反射拿 <c>Type.FullName</c> 时，
+    /// 泛型接口（<c>IFoo&lt;string&gt;</c> 与 <c>IFooB</c>）的先后顺序相反（<c>&lt;</c> 与 <c>`</c> 码位相反），
+    /// 声明级静态头 / 最近授权因此在 JIT 与 AOT 上选中不同接口。
+    /// </summary>
+    [Fact]
+    public async Task InterfaceChainTieBreak_PicksSameInterfaceOnBothPaths()
+    {
+        var ns = UniqueNamespace();
+        var source = """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using AxiosNet;
+            using AxiosNet.WebAPI;
+
+            namespace __NS__;
+
+            [Headers("X-Order: alpha")]
+            public interface IFoo<T>
+            {
+                [Get("a")]
+                Task<string> A(CancellationToken ct);
+            }
+
+            [Headers("X-Order: beta")]
+            public interface IFooB
+            {
+                [Get("b")]
+                Task<string> B(CancellationToken ct);
+            }
+
+            public interface ICombined : IFoo<string>, IFooB
+            {
+            }
+            """.Replace("__NS__", ns);
+
+        // 生成代理（AOT 路径）与 DispatchProxy（JIT 反射路径）必须选中同一层。
+        var generated = await ReadStaticHeaderAsync(RunGenerator(source), ns);
+        var reflected = await ReadStaticHeaderAsync(
+            RunGenerator(source, new Dictionary<string, string> { ["build_property.AxiosNetSourceGen"] = "false" }),
+            ns);
+
+        Assert.Equal(reflected, generated);
+        Assert.Equal("beta", generated);
+    }
+
+    /// <summary>编译一次，经代理发一次 GET，返回请求上的 <c>X-Order</c>（由声明级静态头逐层覆盖决定）。</summary>
+    private static async Task<string> ReadStaticHeaderAsync(
+        (GeneratorDriverRunResult Result, ImmutableArray<Diagnostic> Diagnostics, Compilation Output) generated,
+        string ns)
+    {
+        Assert.DoesNotContain(generated.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+
+        var assembly = LoadEmitted(generated.Output);
+        var interfaceType = assembly.GetType(ns + ".ICombined", throwOnError: true)!;
+
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new ApiClient(server.Url);
+        await InvokeAsync(interfaceType, CreateProxy(client, interfaceType), "A", default(CancellationToken)).ConfigureAwait(false);
+        return server.Received.Single().Headers["X-Order"];
     }
 
     [Fact]

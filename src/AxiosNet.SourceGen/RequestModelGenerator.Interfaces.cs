@@ -24,13 +24,15 @@ namespace AxiosNet.SourceGen
                 .CreateSyntaxProvider(
                     predicate: static (node, _) => node is InterfaceDeclarationSyntax,
                     transform: static (ctx, ct) => TransformInterface(ctx, ct))
-                .SelectMany(static (models, _) => models);
+                .Where(static batch => batch is not null)
+                .Select(static (batch, _) => batch!)
+                .SelectMany(static (batch, _) => batch.Models);
 
             var callSites = context.SyntaxProvider
                 .CreateSyntaxProvider(
                     predicate: static (node, _) => IsCreateCallSite(node),
                     transform: static (ctx, ct) => TransformCallSite(ctx, ct))
-                .SelectMany(static (models, _) => models);
+                .SelectMany(static (batch, _) => batch.Models);
 
             var collectedDeclarations = declarations.Collect();
             var collectedCallSites = callSites.Collect();
@@ -96,7 +98,11 @@ namespace AxiosNet.SourceGen
             }
         }
 
-        private static ImmutableArray<InterfaceModelInfo> TransformInterface(
+        /// <summary>
+        /// 一次接口声明展开出的模型（0 或 1 个）。返回包装而不是 <c>ImmutableArray</c>：
+        /// <c>ImmutableArray</c> 按底层数组引用比较，当管线值会让每次编辑都被判成「已修改」，增量缓存直接失效。
+        /// </summary>
+        private static InterfaceBatchInfo? TransformInterface(
             GeneratorSyntaxContext context,
             System.Threading.CancellationToken cancellationToken)
         {
@@ -105,26 +111,22 @@ namespace AxiosNet.SourceGen
             var wellKnown = WellKnownSymbols.Resolve(compilation);
             if (wellKnown.HttpApi is null)
             {
-                return ImmutableArray<InterfaceModelInfo>.Empty;
+                return null;
             }
 
             if (context.SemanticModel.GetDeclaredSymbol(declaration, cancellationToken) is not INamedTypeSymbol symbol)
             {
-                return ImmutableArray<InterfaceModelInfo>.Empty;
+                return null;
             }
 
             if (!HasRouteMethod(symbol, wellKnown))
             {
                 // 没有路由特性的普通接口不生成任何东西。
-                return ImmutableArray<InterfaceModelInfo>.Empty;
+                return null;
             }
 
-            return ImmutableArray.Create(BuildInterfaceInfo(
-                symbol,
-                declaration.Identifier.GetLocation(),
-                wellKnown,
-                compilation,
-                fromCallSite: false));
+            return new InterfaceBatchInfo(ImmutableArray.Create(
+                BuildInterfaceInfo(symbol, declaration.Identifier.GetLocation(), wellKnown, compilation, fromCallSite: false)));
         }
 
         private static bool IsCreateCallSite(SyntaxNode node)
@@ -144,7 +146,7 @@ namespace AxiosNet.SourceGen
             return name is "Create" or "AddApiInterface" or "ValidateInterfaces";
         }
 
-        private static ImmutableArray<InterfaceModelInfo> TransformCallSite(
+        private static InterfaceBatchInfo TransformCallSite(
             GeneratorSyntaxContext context,
             System.Threading.CancellationToken cancellationToken)
         {
@@ -154,12 +156,12 @@ namespace AxiosNet.SourceGen
             var wellKnown = WellKnownSymbols.Resolve(compilation);
             if (wellKnown.HttpApi is null || wellKnown.ApiClient is null)
             {
-                return ImmutableArray<InterfaceModelInfo>.Empty;
+                return InterfaceBatchInfo.Empty;
             }
 
             if (semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol is not IMethodSymbol method)
             {
-                return ImmutableArray<InterfaceModelInfo>.Empty;
+                return InterfaceBatchInfo.Empty;
             }
 
             // 只认 AxiosNet 自己的入口：ApiClient.Create / ValidateInterfaces 与 DI 的 AddApiInterface。
@@ -169,7 +171,7 @@ namespace AxiosNet.SourceGen
 
             if (!isApiClient && !isInterfaceRegistration)
             {
-                return ImmutableArray<InterfaceModelInfo>.Empty;
+                return InterfaceBatchInfo.Empty;
             }
 
             var candidates = new List<ITypeSymbol>();
@@ -220,7 +222,7 @@ namespace AxiosNet.SourceGen
                 models.Add(BuildInterfaceInfo(named, location, wellKnown, compilation, fromCallSite: true));
             }
 
-            return models.ToImmutable();
+            return new InterfaceBatchInfo(models.ToImmutable());
         }
 
         private static InterfaceModelInfo BuildInterfaceInfo(
@@ -268,7 +270,7 @@ namespace AxiosNet.SourceGen
             var unsupported = GetInterfaceUnsupportedReason(symbol, compilation);
             if (unsupported is not null)
             {
-                return Rejected(Diagnostics.InterfaceUnsupportedType, symbol.Name, unsupported);
+                return Rejected(Diagnostics.UnsupportedType, "接口 " + symbol.Name, unsupported);
             }
 
             if (openGeneric)
@@ -318,8 +320,8 @@ namespace AxiosNet.SourceGen
             if (interfaceAuth.Conflict)
             {
                 diagnostics.Add(new DiagnosticInfo(
-                    Diagnostics.InterfaceAuthorizationConflictAtType,
-                    ToEquatable([symbol.Name]),
+                    Diagnostics.AuthorizationConflict,
+                    ToEquatable(["接口 " + symbol.Name]),
                     location));
             }
 
@@ -346,8 +348,8 @@ namespace AxiosNet.SourceGen
                     if (routes.Count == 0)
                     {
                         diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceRouteInvalid,
-                            ToEquatable([symbol.Name, methodDisplay, "缺少路由特性"]),
+                            Diagnostics.RouteCountInvalid,
+                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay, "缺少路由特性"]),
                             methodLocation));
                         blocked = true;
                         continue;
@@ -357,8 +359,8 @@ namespace AxiosNet.SourceGen
                     {
                         var names = string.Join("、", routes.Select(static route => route.AttributeClass!.Name));
                         diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceRouteInvalid,
-                            ToEquatable([symbol.Name, methodDisplay, $"标注了多个路由特性（{names}）"]),
+                            Diagnostics.RouteCountInvalid,
+                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay, $"标注了多个路由特性（{names}）"]),
                             methodLocation));
                         blocked = true;
                         continue;
@@ -367,8 +369,8 @@ namespace AxiosNet.SourceGen
                     if (!TryReadRoute(routes[0], wellKnown, out var routeMethod, out var routePath))
                     {
                         diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceCustomRouteAttribute,
-                            ToEquatable([symbol.Name, methodDisplay, routes[0].AttributeClass!.Name]),
+                            Diagnostics.CustomRouteAttribute,
+                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay, routes[0].AttributeClass!.Name]),
                             methodLocation));
                         blocked = true;
                         continue;
@@ -377,8 +379,8 @@ namespace AxiosNet.SourceGen
                     if (string.IsNullOrWhiteSpace(routeMethod) || string.IsNullOrWhiteSpace(routePath))
                     {
                         diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceRouteInvalid,
-                            ToEquatable([symbol.Name, methodDisplay, "的路由特性参数为空白或无法在编译期求值"]),
+                            Diagnostics.RouteValueInvalid,
+                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay]),
                             methodLocation));
                         blocked = true;
                         continue;
@@ -438,8 +440,8 @@ namespace AxiosNet.SourceGen
                     if (bodyType is not null && !IsTypeAccessible(bodyType, compilation.Assembly))
                     {
                         diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceUnsupportedType,
-                            ToEquatable([symbol.Name, $"返回类型 {bodyType.ToDisplayString()} 对生成代码不可见"]),
+                            Diagnostics.UnsupportedType,
+                            ToEquatable(["接口 " + symbol.Name, $"返回类型 {bodyType.ToDisplayString()} 对生成代码不可见"]),
                             methodLocation));
                         blocked = true;
                         continue;
@@ -476,8 +478,8 @@ namespace AxiosNet.SourceGen
                         if (!IsTypeAccessible(parameter.Type, compilation.Assembly))
                         {
                             diagnostics.Add(new DiagnosticInfo(
-                                Diagnostics.InterfaceUnsupportedType,
-                                ToEquatable([symbol.Name, $"参数类型 {parameter.Type.ToDisplayString()} 对生成代码不可见"]),
+                                Diagnostics.UnsupportedType,
+                                ToEquatable(["接口 " + symbol.Name, $"参数类型 {parameter.Type.ToDisplayString()} 对生成代码不可见"]),
                                 methodLocation));
                             parameterBlocked = true;
                             continue;
@@ -528,8 +530,8 @@ namespace AxiosNet.SourceGen
                     if (methodAuth.Conflict)
                     {
                         diagnostics.Add(new DiagnosticInfo(
-                            Diagnostics.InterfaceAuthorizationConflict,
-                            ToEquatable([symbol.Name, methodDisplay]),
+                            Diagnostics.AuthorizationConflict,
+                            ToEquatable(["接口 " + symbol.Name + " 的 " + methodDisplay]),
                             methodLocation));
                         blocked = true;
                     }
@@ -658,19 +660,40 @@ namespace AxiosNet.SourceGen
 
         /// <summary>
         /// 接口自身在前的接口链（与运行时 <c>GetInterfaceChain</c> 一致）：其余按「依赖的接口数量」降序，
-        /// 派生接口必然排在自己继承的接口之前，菱形的同名静态头 / 最近授权才能与反射路径选中同一层。
+        /// 同层再按元数据名排序（反射侧同规则）——同层顺序因此不再依赖各自的原始遍历顺序，
+        /// 菱形的同名静态头 / 最近授权才能在两条路径上选中同一层。
         /// </summary>
         private static List<INamedTypeSymbol> GetInterfaceChain(INamedTypeSymbol symbol)
         {
             var inherited = symbol.AllInterfaces;
             var chain = new List<INamedTypeSymbol>(inherited.Length + 1) { symbol };
-            foreach (var baseInterface in inherited.OrderByDescending(static type => type.AllInterfaces.Length))
+            foreach (var baseInterface in inherited
+                .OrderByDescending(static type => type.AllInterfaces.Length)
+                .ThenBy(static type => GetChainSortKey(type), StringComparer.Ordinal))
             {
                 chain.Add(baseInterface);
             }
 
             return chain;
         }
+
+        /// <summary>
+        /// 接口链同层排序键：定义元数据名 + 各类型实参的元数据名。
+        /// 两侧不能用各自的「显示名」比较——生成器的 <c>global::Ns.IFoo&lt;string&gt;</c> 与反射的
+        /// <c>Ns.IFoo`1[[...]]</c> 在泛型接口上先后顺序不同（<c>&lt;</c> 与 <c>`</c> 的码位相反）。
+        /// </summary>
+        private static string GetChainSortKey(INamedTypeSymbol type)
+            => type.TypeArguments.Length == 0
+                ? GetMetadataName(type.OriginalDefinition)
+                : GetMetadataName(type.OriginalDefinition) + "|" + string.Join("|", type.TypeArguments.Select(GetChainArgumentName));
+
+        private static string GetChainArgumentName(ITypeSymbol type)
+            => type switch
+            {
+                IArrayTypeSymbol array => GetChainArgumentName(array.ElementType) + "[]",
+                INamedTypeSymbol named => GetMetadataName(named.OriginalDefinition),
+                _ => type.Name
+            };
 
         private static IEnumerable<string> ReadHeaders(INamedTypeSymbol type, WellKnownSymbols wellKnown)
         {
