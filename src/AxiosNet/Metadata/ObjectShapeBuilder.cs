@@ -76,7 +76,7 @@ public sealed class ObjectShapeMemberBuilder
         return _owner;
     }
 
-    /// <summary>整体忽略（<c>[JsonIgnore(Always)]</c>）。</summary>
+    /// <summary>整体忽略（等价于 <c>[JsonIgnore(Condition = JsonIgnoreCondition.Always)]</c>）。</summary>
     public ObjectShapeBuilder Ignore()
     {
         _draft.Ignored = true;

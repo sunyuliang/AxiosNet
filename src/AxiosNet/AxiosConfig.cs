@@ -514,7 +514,7 @@ public sealed partial class AxiosConfig
     /// <remarks>字符串键字典按原类型 + 原 comparer 复制；其余 <see cref="IDictionary{TKey,TValue}"/> 退化成 <see cref="Dictionary{TKey,TValue}"/>（内容与顺序不变，运行时类型会变）。</remarks>
     private static object? IsolateMutableContainer(object? value)
     {
-        // 先挡掉 null。
+        // 必须在 switch 之前挡掉：null 落到 `_ => value` 分支会被当容器共享。
         if (value is null)
         {
             return null;

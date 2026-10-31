@@ -11,10 +11,10 @@ namespace AxiosNet.WebAPI;
 
 public sealed partial class ApiClient
 {
-    /// <summary>
-    /// 校验接口级声明，返回全部错误（空集合 = 合法）；不创建代理，可在启动时扫描后统一报告。
-    /// 生成器 / 手工注册过的接口走声明路径（Native AOT 下同样可用）；未注册的接口只在 JIT 下回退反射。
-    /// </summary>
+    /// <summary>校验接口级声明，返回全部错误（空集合 = 合法）；不创建代理，可在启动时扫描后统一报告。</summary>
+    /// <param name="interfaceTypes">待校验的接口类型；重复项跳过，<c>null</c> 元素记一条错误。</param>
+    /// <returns>全部错误消息，空集合表示全部合法。</returns>
+    /// <remarks>生成器 / 手工注册过的接口走声明路径（Native AOT 下同样可用）；未注册的接口只在 JIT 下回退反射。</remarks>
     // ILLink 不支持在 Type[] 上标注 DynamicallyAccessedMembers（IL2098），只能在实现处抑制：
     // JIT 回退会反射接口成员，PublishTrimmed 下调用方需自行 root 接口（AOT 下由源生成器提供元数据，不走反射）。
     [UnconditionalSuppressMessage(
@@ -78,6 +78,8 @@ public sealed partial class ApiClient
     }
 
     /// <summary>扫描程序集中标注了路由特性的接口并校验（普通接口自动跳过）。Native AOT 下不可用，改用生成的 ValidateAll 或按类型校验。</summary>
+    /// <param name="assembly">待扫描的程序集。</param>
+    /// <returns>全部错误消息，空集合表示全部合法。</returns>
     /// <exception cref="PlatformNotSupportedException">当前运行时禁用动态代码（Native AOT）：改用生成的 <c>ValidateAll()</c> 或按类型校验。</exception>
     [RequiresUnreferencedCode("程序集扫描通过反射枚举类型；裁剪时需 root 接口程序集。")]
     [UnconditionalSuppressMessage(

@@ -5,7 +5,7 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 运行期类型事实（按类型缓存）：flags 枚举的已定义位掩码、是否实现 <see cref="IAsyncEnumerable{T}"/>。
-/// 只读类型自身的元数据、不读特性，Native AOT 下同样可用。
+/// 只读类型自身的元数据（含 <see cref="FlagsAttribute"/> 判定），不依赖需要动态代码的反射能力，Native AOT 下同样可用。
 /// </summary>
 internal static class TypeFacts
 {

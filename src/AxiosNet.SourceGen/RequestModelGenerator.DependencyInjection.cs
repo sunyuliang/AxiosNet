@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis;
 namespace AxiosNet.SourceGen
 {
     /// <summary>
-    /// DI 生成扩展：为「声明过路由的接口」生成一个 <c>AddAxiosGeneratedApiInterfaces()</c> 扩展方法，
+    /// DI 生成扩展：为「声明过路由的接口」生成一组成员重载 <c>AddAxiosGeneratedApiInterfaces()</c>（无参 / 指定站点名），
     /// 让容器注册不必逐个手写 <c>AddApiInterface&lt;T&gt;()</c>。
     /// </summary>
     /// <remarks>
@@ -79,7 +79,7 @@ namespace AxiosNet.SourceGen
             context.AddSource("AxiosNet.GeneratedDependencyInjection.g.cs", InterfaceEmitter.EmitDependencyInjection(registrable));
         }
 
-        /// <summary>闭合泛型调用点生成的模型：<c>GenericDefinitionFullName</c> 是定义而不是自身全名。</summary>
+        /// <summary>是否为直接声明（而不是闭合泛型调用点生成的副本）：<c>GenericDefinitionFullName == FullTypeName</c> 时为 <c>true</c>。</summary>
         private static bool IsPlainDeclaration(InterfaceModelInfo model)
             => string.Equals(model.GenericDefinitionFullName, model.FullTypeName, StringComparison.Ordinal);
     }

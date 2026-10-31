@@ -68,7 +68,7 @@ public static class ApiInterfaceServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>注册期就拒绝非接口类型。</summary>
+    /// <summary>非接口的注册期失败：抛 <see cref="ArgumentException"/>，<c>paramName</c> 为 <c>TInterface</c>。</summary>
     private static void EnsureInterfaceType<TInterface>()
         where TInterface : class
     {

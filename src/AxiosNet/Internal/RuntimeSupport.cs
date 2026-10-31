@@ -2,10 +2,12 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 运行时能力探测：Native AOT 下动态代码（反射取属性、Reflection.Emit、XmlSerializer）不可用。
+/// </summary>
+/// <remarks>
 /// 判定条件一律在调用处直接写 <c>!RuntimeSupport.ForceNoDynamicCode &amp;&amp; RuntimeFeature.IsDynamicCodeSupported</c>：
 /// 只有 intrinsic 出现在守卫条件里，ILC 才会把它折成常量 false、把「支持」分支里的反射实现裁掉。
 /// 测试可临时把 <see cref="ForceNoDynamicCode"/> 置为 true，在 JIT 上复现 AOT 的失败路径。
-/// </summary>
+/// </remarks>
 internal static class RuntimeSupport
 {
     private static volatile bool _forceNoDynamicCode;

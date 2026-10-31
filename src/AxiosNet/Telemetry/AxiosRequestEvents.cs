@@ -120,7 +120,7 @@ public sealed class AxiosAttemptEvent
         Exception = exception;
     }
 
-    /// <summary>第几次尝试（从 1 开始；重试 N 次时最多 N+1 条）。</summary>
+    /// <summary>第几次尝试（从 1 开始）。换端点与对冲分支都不推进它，所以它只是尝试序号，不是事件条数。</summary>
     public int AttemptNumber { get; }
 
     /// <summary>

@@ -123,10 +123,10 @@ public readonly struct AxiosAttemptContext
     /// <summary>是否流式响应（<c>ResponseType == Stream</c>）。</summary>
     public bool StreamResponse { get; }
 
-    /// <summary>重试配置：<c>null</c> = 不重试（默认）。</summary>
+    /// <summary>重试配置：<c>null</c> = 不重试（默认）；设了但 <see cref="AxiosConfig.RetrySettings.Policy"/> 为 <c>null</c> 或 <c>MaxRetries &lt;= 0</c> 时同样不重试。</summary>
     public AxiosConfig.RetrySettings? Retry { get; }
 
-    /// <summary>熔断配置：<c>null</c> = 不熔断（默认）。</summary>
+    /// <summary>熔断配置：<c>null</c> = 不熔断（默认）；设了但 <see cref="AxiosConfig.CircuitSettings.Policy"/> 为 <c>null</c> 时同样不熔断。</summary>
     public AxiosConfig.CircuitSettings? Circuit { get; }
 
     /// <summary>对冲配置：<c>null</c> = 未配置（默认）；<see cref="AxiosConfig.HedgingSettings.MaxHedges"/> 为 0 时同样不对冲。</summary>

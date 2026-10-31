@@ -5,11 +5,14 @@ using AxiosNet.WebAPI.Internal;
 namespace AxiosNet.WebAPI.Metadata;
 
 /// <summary>
-/// 声明式 API 的元数据注册入口：源生成器（模块初始化器）与手工兜底都通过它把请求模型与接口声明写进注册表。
-/// 隐藏 API：应用代码通常不需要直接调用；在 Native AOT 下缺少生成元数据时可按 <see cref="AxiosAotMetadataException"/> 的提示手工注册。
-/// 注册只发生在启动期；同一类型重复注册直接抛错（生成器与手工声明不应同时存在）。
-/// 对象形状与字典映射的注册入口在 <see cref="AxiosMetadata"/>。
+/// 声明式 API 的元数据注册入口：源生成器与手工兜底都通过它把请求模型与接口声明写进注册表。隐藏 API。
 /// </summary>
+/// <remarks>
+/// 应用代码通常不需要直接调用；在 Native AOT 下缺少生成元数据时可按 <see cref="AxiosAotMetadataException"/> 的提示手工注册。
+/// 注册只发生在启动期：手工入口（<c>RegisterRequestModel</c> / <c>RegisterInterface</c>）对同一类型重复注册直接抛错，
+/// 生成器入口（<c>RegisterGeneratedInterface</c> 等）对等价重复保留先注册的一份。
+/// 对象形状与字典映射的注册入口在 <see cref="AxiosMetadata"/>。
+/// </remarks>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class AxiosApiMetadata
 {

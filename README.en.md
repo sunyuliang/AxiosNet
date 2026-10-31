@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2024%2F2015%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.6%25_(branch_87.2%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-2039%2F2032%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1744,11 +1744,11 @@ dotnet build AxiosNet.sln -c Release
 | --- | ---: | --- | ---: |
 | `AxiosNet.Tests` (core + declarative) | 1973 / 1966 | `net8.0` / `net6.0` | 3939 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **Total** | **2024 / 2015** | | **4039** |
+| **Total** | **2039 / 2032** | | **4071** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
-Line coverage **91.6%**, branch coverage **87.2%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement — that is why both numbers are slightly lower than the previous release.
+Line coverage **91.7%**, branch coverage **87.3%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement — that is why both numbers are slightly lower than the previous release.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1774,7 +1774,7 @@ bash eng/aot-package-smoke.sh
 
 `eng/aot-package-smoke.sh` first asserts the nupkg carries `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` and `buildTransitive/AxiosNet.props`, then publishes and runs a throwaway project that references nothing but the package. This covers what the sample cannot: the sample uses a `ProjectReference`, so it never proves the packaged analyzer actually loads or that the packaged dll's AOT annotations hold up. The script packs under a unique version every run — NuGet will not re-extract a package whose version it already has, which would silently keep re-testing the previous build.
 
-Size and startup are part of the budget: both the sample and the package smoke assert the published binary stays at or below 9 MiB (currently 8.1 MB). Exceeding it usually means one of two things — a reflection dependency crept back in, or the assembly is being rooted wholesale again (`TrimmerRootAssembly` / the generator is not actually running). Startup plus a full run is gated at 10 s, which only catches order-of-magnitude regressions and is not a performance verdict; use `test/AxiosNet.Benchmarks` for that.
+Size and startup are part of the budget: both the sample and the package smoke assert the published binary stays under budget — 9 MiB on win-x64 (currently 8.3 MiB for the sample, 8.1 MiB for the package smoke) and 11 MiB on linux-x64 (currently 10.2 MiB). The ~2 MiB platform gap is not a size regression: on Linux the OpenSSL, `System.Native`, compression and globalization shims are linked statically into the executable, while Windows uses system DLLs or pre-built `Aot.lib` files, so the budget is set per platform. Exceeding it usually means one of two things — a reflection dependency crept back in, or the assembly is being rooted wholesale again (`TrimmerRootAssembly` / the generator is not actually running). Startup plus a full run is gated at 10 s, which only catches order-of-magnitude regressions and is not a performance verdict; use `test/AxiosNet.Benchmarks` for that.
 
 The generated code has a snapshot baseline too (`test/AxiosNet.Tests/WebAPI/Aot/Snapshots/GeneratedSources.snap.txt`): any change in generator output shows up as a diff in that file — regenerate with `AXIOS_UPDATE_SNAPSHOTS=1` and review it line by line.
 
@@ -1860,8 +1860,9 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
 │  │  ├─ AxiosConfig*.cs              # configuration (top level + ten sub-objects)
 │  │  ├─ AxiosHeaders.cs              # request headers
-│  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosShortCircuit.cs
-│  │  ├─ Cache/                      # AxiosCache (response cache + single flight) / IAxiosCacheStore / MemoryCacheStore
+│  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
+│  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs (top-level public types)
+│  │  ├─ Cache/                       # AxiosCache (response cache + single flight) / IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / failover / breaker / hedging / gate + optional audit
 │  │  ├─ Retry/                       # IAxiosRetryPolicy / RetryPolicy / RetryBudgetPolicy

@@ -35,12 +35,15 @@ internal static class ShapeRegistry
         }
     }
 
+    /// <summary>按类型取已注册的形状（生成期烘焙或手工注册）；查不到只返回 <c>false</c>，不触发反射构建。</summary>
     internal static bool TryGetShape(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectShape? shape)
         => Volatile.Read(ref _shapes).TryGetValue(type, out shape);
 
+    /// <summary>按类型取已注册的字典访问器；查不到只返回 <c>false</c>，不触发反射构建。</summary>
     internal static bool TryGetMap(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MapAccessor? accessor)
         => Volatile.Read(ref _maps).TryGetValue(type, out accessor);
 
+    /// <summary>手工注册对象形状：同一类型重复注册、或注册表已冻结时抛 <see cref="InvalidOperationException"/>。</summary>
     internal static void RegisterShape(ObjectShape shape)
         => AddShape(shape, allowExisting: false);
 
@@ -48,6 +51,7 @@ internal static class ShapeRegistry
     internal static void RegisterGeneratedShape(ObjectShape shape)
         => AddShape(shape, allowExisting: true);
 
+    /// <summary>手工注册字典访问器：同一类型重复注册、或注册表已冻结时抛 <see cref="InvalidOperationException"/>。</summary>
     internal static void RegisterMap(MapAccessor accessor)
         => AddMap(accessor, allowExisting: false);
 
@@ -96,7 +100,7 @@ internal static class ShapeRegistry
             var next = new Dictionary<Type, ObjectShape>(current) { [shape.Type] = shape };
             Volatile.Write(ref _shapes, next);
 
-            // 与请求模型同理：显式注册必须压过 JIT 反射构建的旧缓存。
+            // 显式注册必须压过反射构建的旧缓存，否则同类型仍会读到旧形状。
             ShapeCache.Invalidate(shape.Type);
         }
     }

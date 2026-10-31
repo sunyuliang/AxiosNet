@@ -23,7 +23,6 @@ public static partial class Attempt
     {
         ArgumentNullException.ThrowIfNull(next);
 
-        // 不配对冲时纯直通。
         return (request, ctx) =>
             ctx.Hedging is { MaxHedges: > 0 } hedging && CanHedge(request, ctx, hedging)
                 ? HedgeAsync(next, request, ctx, hedging)
@@ -115,7 +114,6 @@ public static partial class Attempt
 
                 try
                 {
-                    // 第一个成功结果胜出：谁先返回用谁。
                     // Ensure 挡住中间件返回的 default 结果。
                     var winner = AxiosAttemptResult.Ensure(await completed.ConfigureAwait(false), ctx.Config);
 

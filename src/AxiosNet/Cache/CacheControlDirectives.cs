@@ -5,7 +5,7 @@ using System.Text;
 namespace AxiosNet.Cache;
 
 /// <summary>
-/// 解析后的 <c>Cache-Control</c> 响应指令（指令名大小写不敏感）。响应没带这个头时各项都是「未出现」。
+/// 解析后的 <c>Cache-Control</c> 指令（请求头与响应头共用；指令名大小写不敏感）。头不存在时各项都是「未出现」。
 /// </summary>
 /// <remarks>
 /// 只做解析，不做取舍：库自己按 <see cref="AxiosCacheOptions.FreshnessMode"/> 使用其中一部分，
@@ -15,14 +15,14 @@ namespace AxiosNet.Cache;
 /// </remarks>
 public sealed class CacheControlDirectives
 {
-    /// <summary>响应没有 <c>Cache-Control</c> 时共用的空实例（不可变，避免每次解析都新建）。</summary>
+    /// <summary>没有 <c>Cache-Control</c> 时共用的空实例（不可变，避免每次解析都新建）。</summary>
     internal static readonly CacheControlDirectives Empty = new()
     {
         Extensions = new ReadOnlyDictionary<string, string?>(
             new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase))
     };
 
-    /// <summary>响应的原始头值（多条按 <c>", "</c> 拼接）；没有这个头时为 <c>null</c>。</summary>
+    /// <summary>原始头值（多条按 <c>", "</c> 拼接）；没有这个头时为 <c>null</c>。</summary>
     public string? Raw { get; internal init; }
 
     /// <summary><c>no-store</c>：任何缓存都不得保存这条响应。</summary>

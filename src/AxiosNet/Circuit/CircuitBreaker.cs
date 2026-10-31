@@ -5,11 +5,13 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Circuit;
 
 /// <summary>
-/// <see cref="IAxiosCircuitPolicy"/> 的默认实现：按 host 维度的滚动窗口失败率 + 连续失败快速路径 + 半开慢启动恢复。
+/// <see cref="IAxiosCircuitPolicy"/> 的默认实现：按 origin 维度统计失败，滚动窗口失败率与连续失败两条规则取「或」，半开态慢启动恢复。
+/// </summary>
+/// <remarks>
 /// 状态机 Closed →（连续失败达 <see cref="FailureThreshold"/>，或窗口内失败率达 <see cref="FailureRateThreshold"/>）→ Open
 /// →（冷却 <see cref="BreakDuration"/>）→ HalfOpen →（连续 <see cref="RecoverySuccesses"/> 次探测成功）→ Closed；
-/// 期间任何探测失败立刻回 Open。维度默认 <c>uri.Authority</c>，可用 <see cref="KeySelector"/> 改写。
-/// </summary>
+/// 期间任何探测失败立刻回 Open。维度默认 <c>uri.Authority</c>（host:port），可用 <see cref="KeySelector"/> 改写。
+/// </remarks>
 /// <example>
 /// <code>
 /// // 5 次连续失败、或最近 20 次里失败率过半（至少 10 个样本）就熔断；
@@ -88,7 +90,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     public int MinimumSamples { get; set; } = 10;
 
     /// <summary>
-    /// 窗口内失败率达到多少就打开熔断，默认 <c>0.5</c>（必须落在 <c>(0, 1]</c>）。
+    /// 窗口内失败率达到多少就打开熔断，默认 <c>0.5</c>（必须落在 <c>(0, 1]</c>；<see cref="WindowSize"/> 为 0 时本项不校验、也不参与判定）。
     /// 实际阈值是 <c>ceil(样本数 × 本值)</c>：20 个样本、0.5 → 10 次失败即打开。
     /// </summary>
     public double FailureRateThreshold { get; set; } = 0.5;
@@ -120,11 +122,13 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     public TimeSpan? ProbeTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// 最多跟踪多少个维度（host），默认 512（必须 &gt;= 1，否则客户端校验报错）。<b>硬上限</b>：满员时优先淘汰窗口里
-    /// 没有失败样本的闭合维度，其次才是有失败台账的闭合维度与冷却早已过期的打开维度（正在熔断与半开探测中的不动）；
-    /// 仍然放不下就不再登记新维度 —— 新维度按闭合态直通（不参与熔断判定，也不记账），
-    /// 已跟踪维度的判定不受影响。熔断保护失效总好过状态表无界增长。
+    /// 最多跟踪多少个计数维度，默认 512（必须 &gt;= 1，否则客户端校验报错）；满员且无可淘汰项时新维度按闭合态直通、不记账。
     /// </summary>
+    /// <remarks>
+    /// <b>硬上限</b>：满员时优先淘汰窗口里没有失败样本的闭合维度，其次才是有失败台账的闭合维度与冷却早已过期的打开维度
+    /// （正在熔断与半开探测中的不动）；仍然放不下就不再登记新维度。已跟踪维度的判定不受影响——
+    /// 熔断保护失效总好过状态表无界增长。
+    /// </remarks>
     public int MaxTrackedHosts { get; set; } = 512;
 
     /// <summary>
@@ -216,7 +220,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                 case AxiosCircuitState.Open:
                     if (!IsCooledDown(host))
                     {
-                        // 冷却期未过：不放行。
+                        // 冷却期未过：不放行，也不消耗探测名额。
                         allowed = false;
                         break;
                     }

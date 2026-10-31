@@ -13,7 +13,7 @@ internal static class ReflectionCache
     /// <summary>表单 / multipart 的字段名（<c>[JsonPropertyName]</c> 优先，否则属性名）。</summary>
     private static readonly ConcurrentDictionary<PropertyInfo, string> FieldNames = new();
 
-    /// <summary>是否整体忽略（<c>[JsonIgnore(Always)]</c>）。</summary>
+    /// <summary>是否整体忽略（<c>[JsonIgnore(Condition = JsonIgnoreCondition.Always)]</c>）。</summary>
     private static readonly ConcurrentDictionary<PropertyInfo, bool> IgnoredProperties = new();
 
     /// <summary>表单 / multipart 字段名：<c>[JsonPropertyName]</c> 优先，否则属性名（按属性缓存）。</summary>

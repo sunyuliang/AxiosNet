@@ -3,11 +3,13 @@ using AxiosNet.Internal;
 namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
-/// 声明式 API 的生成元数据注册表：请求模型与接口代理。写时复制 + <c>Volatile.Read</c>，读路径无锁、无分配。
-/// 注册只发生在模块初始化 / 启动期；注册后不再修改字典本身（替换整个实例）。
+/// 声明式 API 的生成元数据注册表：请求模型与接口代理。
+/// </summary>
+/// <remarks>
+/// 写时复制 + <c>Volatile.Read</c>，读路径无锁、无分配；注册只发生在模块初始化 / 启动期，注册后不再修改字典本身（替换整个实例）。
 /// 同一类型重复注册属编程错误，直接抛出（生成器与手工注册不应同时声明同一类型）。
 /// 冻结开关归 <see cref="ShapeRegistry"/>（对象形状与字典映射也共用同一个进程级状态）。
-/// </summary>
+/// </remarks>
 internal static class GeneratedMetadataRegistry
 {
     private static readonly object Gate = new();
@@ -100,7 +102,7 @@ internal sealed class InterfaceEntry
 
     public Func<ApiClient, object> Factory { get; }
 
-    /// <summary>按声明顺序构建（并缓存）全部方法的绑定元数据；构建错误照旧在首次使用该夹具时抛出。</summary>
+    /// <summary>按声明顺序构建（并缓存）全部方法的绑定元数据；构建错误照旧在首次使用该方法的契约时抛出。</summary>
     public InterfaceMethodMetadata[] GetMethods()
     {
         var methods = Volatile.Read(ref _methods);

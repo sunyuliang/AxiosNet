@@ -13,9 +13,12 @@ namespace AxiosNet.SourceGen
 {
     /// <summary>
     /// 请求模型源生成器：编译期为每个带路由特性的请求模型烘焙一份声明，经 <c>AxiosApiMetadata.RegisterRequestModel</c>
-    /// 写入运行时注册表。声明里只有事实（路由 / 静态头 / 成员 / 绑定 / 授权），校验仍由运行时共享构建器完成。
-    /// 接口代理（真实代理类 + <c>RegisterInterface</c>）见 <c>RequestModelGenerator.Interfaces.cs</c>。
+    /// 写入运行时注册表。
     /// </summary>
+    /// <remarks>
+    /// 声明里只有事实（路由 / 静态头 / 成员 / 绑定 / 授权），校验仍由运行时共享构建器完成。
+    /// 接口代理（真实代理类 + <c>RegisterGeneratedInterface</c>，重复注册保留首份）见 <c>RequestModelGenerator.Interfaces.cs</c>。
+    /// </remarks>
     [Generator(LanguageNames.CSharp)]
     public sealed partial class RequestModelGenerator : IIncrementalGenerator
     {
@@ -912,7 +915,7 @@ namespace AxiosNet.SourceGen
         public INamedTypeSymbol? ApiInterfaceExtensions { get; }
 
         /// <summary>
-        /// 按编译缓存：每次 transform 都要查 25 个 well-known 类型，逐个查会随「带特性的类型数量」线性放大。
+        /// 按编译缓存：每次 transform 都要查二十余个 well-known 类型，逐个查会随「带特性的类型数量」线性放大。
         /// 值随键（编译实例）一起回收，不会跨编译泄漏。
         /// </summary>
         private static readonly ConditionalWeakTable<Compilation, WellKnownSymbols> ResolvedCache = new();

@@ -3,11 +3,13 @@ using AxiosNet.Pooling;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 流式响应的正文包装：把请求总超时延续到正文读取阶段，并统一正文阶段的取消 / IO 异常。
+/// 流式响应的正文包装：把本次尝试的剩余预算延续到正文读取阶段，并统一正文阶段的取消 / IO 异常。
+/// </summary>
+/// <remarks>
 /// 用剩余预算建 CTS 并与外部取消链接：超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>，
 /// 调用方自己的令牌取消则原样抛出。无条件包装（<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>），
 /// 令牌交给底层那一次 I/O；同步入口实现为对异步核心的阻塞等待。
-/// </summary>
+/// </remarks>
 internal sealed class TimeoutStream : DelegatingStream
 {
     private readonly AxiosConfig _config;

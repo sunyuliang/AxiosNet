@@ -187,7 +187,7 @@ public sealed class AccessTokenManager : IAccessTokenProvider, IAccessTokenRefre
         }
     }
 
-    /// <summary>提前量取 min(配置值, 寿命一半)：短寿命令牌不会一拿到就进入刷新窗口。</summary>
+    /// <summary>提前量取「配置值与寿命一半的较小者」：短寿命令牌不会一拿到就进入刷新窗口。</summary>
     private TimeSpan ResolveRefreshAhead(AccessToken token, DateTimeOffset fetchedAt)
     {
         if (token.ExpiresAt is not { } expiresAt)

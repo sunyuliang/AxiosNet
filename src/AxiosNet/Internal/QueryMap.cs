@@ -202,7 +202,7 @@ internal static class QueryMap
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
-        Justification = "字典类型由调用方运行时提供；AOT 下需由消费方 root 类型所在程序集（README「Native AOT / 裁剪」）。")]
+        Justification = "字典类型由调用方运行时提供；AOT 下需由消费方 root 类型所在程序集（README「运行时与 AOT」）。")]
     private static IEnumerable<Type> EnumerateSelfAndInterfaces(Type type)
     {
         yield return type;

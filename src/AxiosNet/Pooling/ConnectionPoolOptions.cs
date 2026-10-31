@@ -6,7 +6,7 @@ using System.Security.Authentication;
 namespace AxiosNet.Pooling;
 
 /// <summary>
-/// 连接池配置：单服务器最大连接数、连接生命周期、空闲回收等底层 Handler 选项。
+/// 连接池配置：每个 origin 的最大连接数、连接生命周期、空闲回收等底层 Handler 选项。
 /// 需要插入自己的 <see cref="DelegatingHandler"/>（日志/签名/重试）时用 <see cref="HandlerFactory"/>。
 /// </summary>
 public sealed class ConnectionPoolOptions
@@ -47,14 +47,15 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 某个 origin 的 Handler 空闲（无在途租约）多久后从池中驱逐并释放（默认 5 分钟）。
-    /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点立即可被驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示不按空闲时间驱逐
-    /// （容量压力 / 关闭池时仍可能被收回）。
+    /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点都算可驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示不按空闲时间驱逐
+    /// （容量压力 / 关闭池时仍可能被收回）。注意 <c>Zero</c> 与 <c>Infinite</c> 都会让后台定时扫描不启动（见 <see cref="EvictionInterval"/>），
+    /// 此时「可驱逐」只在容量压力或手动 <c>EvictIdleEndpoints()</c> 时生效。
     /// </summary>
     public TimeSpan IdleHandlerLifetime { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// 空闲 Handler 驱逐扫描间隔（默认 30 秒）；0 表示不启动后台定时扫描（<see cref="IdleHandlerLifetime"/> 为
-    /// <see cref="Timeout.InfiniteTimeSpan"/> 时同样不启动），此时仍可按容量压力驱逐或手动调 <c>EvictIdleEndpoints()</c>。
+    /// 空闲 Handler 驱逐扫描间隔（默认 30 秒）；<c>0</c> 表示不启动后台定时扫描（<see cref="IdleHandlerLifetime"/> 不大于 <see cref="TimeSpan.Zero"/> 时同样不启动），
+    /// 此时仍可按容量压力驱逐或手动调 <c>EvictIdleEndpoints()</c>。
     /// </summary>
     public TimeSpan EvictionInterval { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -93,11 +94,13 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 自动解压启用的算法集合（默认 <see cref="DecompressionMethods.All"/>，即 gzip / deflate / br 全开）。
+    /// </summary>
+    /// <remarks>
     /// 接受 <see cref="DecompressionMethods.GZip"/> / <see cref="DecompressionMethods.Deflate"/> / <see cref="DecompressionMethods.Brotli"/>
     /// 的任意组合，或 <see cref="DecompressionMethods.All"/>（BCL 里为 -1，等价于全开）；<see cref="DecompressionMethods.None"/>
     /// 表示一个都不解压，其余位在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
     /// 只在 <see cref="AutomaticDecompression"/> 为 true 时生效：客户端只宣告、也只解压这里列出的编码。
-    /// </summary>
+    /// </remarks>
     public DecompressionMethods Decompression { get; set; } = DecompressionMethods.All;
 
     /// <summary>HTTP/2 下是否允许同一 origin 打开多条连接（默认 true）；只用 HTTP/1.1 时无影响。</summary>
@@ -129,7 +132,7 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 池内 origin 节点数上限，默认 1024；0 或负数不限制（软上限：容量检查与插入非原子）。
-    /// 全部在途且没有可驱逐的空闲节点时，新建节点抛 <see cref="AxiosException.ErrPoolExhausted"/>（请求没有发出，默认不自动重发）。
+    /// 全部在途且没有可驱逐的空闲节点时，新建节点抛 <see cref="AxiosException"/>（<c>ERR_POOL_EXHAUSTED</c>，请求没有发出，默认不自动重发）。
     /// </summary>
     public int MaxEndpointCount { get; set; } = 1024;
 

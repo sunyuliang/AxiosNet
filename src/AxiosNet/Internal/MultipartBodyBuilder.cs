@@ -448,7 +448,7 @@ internal static class MultipartBodyBuilder
             throw new InvalidMultipartOptionException(
                 $"multipart 字段名包含非法字符（{invalid}）：'{name}'。"
                 + "Content-Disposition 的 name 是 quoted-string：双引号、反斜杠、CR/LF 与其它控制字符"
-                + "会破坏语法或让服务端拿到的键名错位。中文可以正常使用（按 RFC 2047 编码），"
+                + "会破坏语法或让服务端拿到的键名错位。中文可以正常使用（按 UTF-8 写进 quoted-string），"
                 + "请只去掉这些字符。");
         }
 

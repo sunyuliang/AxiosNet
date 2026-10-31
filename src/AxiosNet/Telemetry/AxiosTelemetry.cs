@@ -11,9 +11,11 @@ namespace AxiosNet.Telemetry;
 
 /// <summary>
 /// 库的观测点：链路（<see cref="ActivitySource"/>）、指标（<see cref="Meter"/>）与事件（<see cref="DiagnosticListener"/>）。
-/// 前两者共用「AxiosNet」这个名字，监听器名不同（见 <see cref="DiagnosticListenerName"/>）；
-/// 量的是请求成型到响应读完（含拦截器与重试），观测异常一律不影响请求结果。
 /// </summary>
+/// <remarks>
+/// 前两者共用「AxiosNet」这个名字，监听器名不同（见 <see cref="DiagnosticListenerName"/>）；
+/// 量的是 URL 拼好到响应读完（含响应拦截器与重试；请求拦截器与 URL 组装不在区间内），观测异常一律不影响请求结果。
+/// </remarks>
 public static class AxiosTelemetry
 {
     /// <summary>链路源名：OpenTelemetry 用 <c>AddSource("AxiosNet")</c> 订阅。</summary>
@@ -339,7 +341,7 @@ public static class AxiosTelemetry
 
         try
         {
-            // 重试时会再次调用：写过就不再覆盖。
+            // 重试 / 换端点时会再次调用：已经是 "true" 就保留（一条链路复用过滤节点）；新的 "false" 会覆盖，表示最近一次用的是新建节点。
             if (reused && activity.GetTagItem(TagEndpointReused) is not null)
             {
                 return;

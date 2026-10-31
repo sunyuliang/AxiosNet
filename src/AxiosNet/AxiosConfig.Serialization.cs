@@ -36,7 +36,7 @@ public sealed partial class AxiosConfig
         /// <summary>对应 axios paramsSerializer：自定义 query string 生成方式，返回不含前导 <c>?</c> 的查询串；null 时使用内置规则。</summary>
         public Func<object?, string>? ParamsSerializer { get; set; }
 
-        /// <summary>表单 / multipart 字段名生成规则：参数为（父级前缀, 键名），默认 <c>prefix[key]</c>；表单不走序列化器，这是字段命名的唯一入口。</summary>
+        /// <summary>表单 / multipart 字段名生成规则：参数为（父级前缀，键名），默认 <c>prefix[key]</c>；表单不走序列化器，这是字段命名的唯一入口。</summary>
         public Func<string?, string, string>? FormFieldNameSelector { get; set; }
 
         private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;

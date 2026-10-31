@@ -385,7 +385,7 @@ public sealed class HttpConnectionPool : IDisposable
 
         while (true)
         {
-            // 本次迭代是否真的新建并发布了节点。
+            // 只有 GetOrAdd 胜出才为 true：驱动 EndpointReused 标签与新建指标，别改成「找不到就算新建」。
             var createdNode = false;
 
             // 稳态只做一次哈希查找。

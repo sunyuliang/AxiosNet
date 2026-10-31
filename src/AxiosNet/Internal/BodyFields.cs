@@ -5,9 +5,11 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 请求体展平（表单 / multipart）共用的「值分类 + 字段命名」：哪些类型算标量、标量怎么取文本、嵌套字段名怎么拼。
-/// 命名只看 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 与
-/// <see cref="System.Text.Json.Serialization.JsonPropertyNameAttribute"/>，忽略看 <see cref="System.Text.Json.Serialization.JsonIgnoreAttribute"/>。
 /// </summary>
+/// <remarks>
+/// 字段名默认取 <see cref="ShapeMember.FieldName"/>（构建期已按 <c>[JsonPropertyName]</c> 定好），
+/// 可被 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖；成员是否忽略由 <see cref="ShapeMember.Ignored"/> 决定。
+/// </remarks>
 internal static class BodyFields
 {
     /// <summary>表单 / multipart 的标量判定，转调 <see cref="ScalarTypes.IsScalarType"/>（唯一权威清单）。</summary>

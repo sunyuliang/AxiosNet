@@ -15,12 +15,13 @@ public sealed partial class ApiClient
         CancellationToken cancellationToken = default)
         => RequestStreamAsync(request, AxiosStreamFormat.NewlineDelimitedJson, configure: null, cancellationToken);
 
-    /// <summary>
-    /// 以指定帧格式读取流式响应（NDJSON / SSE / JSON 数组）；三种格式共用同一层字节读取与单帧上限（默认 8 MB）。
-    /// 正文超时与响应头同一份预算（本次尝试的 <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.TotalTimeout"/> 压过）；
+    /// <summary>以指定帧格式（NDJSON / SSE / JSON 数组）逐帧读取流式响应。</summary>
+    /// <remarks>
+    /// 三种格式共用同一层字节读取与单帧上限（默认 8 MB）。正文超时与响应头同一份预算（本次尝试的
+    /// <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.TotalTimeout"/> 压过）：超出抛 <c>ECONNABORTED</c>；
     /// 不设超时时正文不限时，靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求响应是 UTF-8。
     /// 响应流只能枚举一次；帧解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。
-    /// </summary>
+    /// </remarks>
     /// <typeparam name="TItem">每个帧反序列化后的类型。</typeparam>
     /// <param name="request">请求模型实例。</param>
     /// <param name="format">帧格式。</param>
@@ -30,7 +31,7 @@ public sealed partial class ApiClient
         "Trimming",
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
-            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「Native AOT / 裁剪」）。")]
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
     public async Task<AxiosResponse<IAsyncEnumerable<TItem>>> RequestStreamAsync<TItem>(
         IApiRequest<TItem> request,
         AxiosStreamFormat format,

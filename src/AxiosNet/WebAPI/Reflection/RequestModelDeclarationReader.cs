@@ -152,7 +152,7 @@ internal static class RequestModelDeclarationReader
         return chain;
     }
 
-    /// <summary>公共可读实例属性（跳过索引器），按声明顺序遍历。</summary>
+    /// <summary>公共可读实例属性（跳过索引器）。顺序由反射返回，不保证与源码声明一致。</summary>
     private static IEnumerable<PropertyInfo> EnumerateBindableProperties(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type requestType)
         => requestType

@@ -65,7 +65,7 @@ public sealed class InterfaceBuilder
     }
 }
 
-/// <summary>接口方法构建器：绑定方法返回自身，返回形态 / <c>[Stream]</c> 声明返回接口构建器。</summary>
+/// <summary>接口方法构建器：绑定参数返回自身；<c>ReturnsResponse</c> / <c>ReturnsData</c> / <c>ReturnsVoid</c> 与 <c>[Stream]</c> 是方法声明的最后一笔，返回接口构建器。</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class InterfaceMethodBuilder
 {

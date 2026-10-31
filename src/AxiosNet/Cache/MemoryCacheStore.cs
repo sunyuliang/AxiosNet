@@ -119,7 +119,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
 
                 if (!HasRoom(size))
                 {
-                    // 满了就不收：让已有条目自然过期。
+                    // 不收新键、也不为它淘汰旧键：避免一条冷数据把命中率高的条目挤掉。
                     return default;
                 }
             }

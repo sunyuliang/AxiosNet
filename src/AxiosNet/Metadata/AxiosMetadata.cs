@@ -6,11 +6,14 @@ using AxiosNet.Reflection;
 namespace AxiosNet.Metadata;
 
 /// <summary>
-/// 对象形状与字典映射的注册入口：params / 表单 / multipart 展平要用它们，源生成器（模块初始化器）与手工兜底都走这里。
-/// 隐藏 API：应用代码通常不需要直接调用；在 Native AOT 下缺少生成元数据时可按 <see cref="AxiosAotMetadataException"/> 的提示手工注册。
-/// 注册只发生在启动期；同一类型重复注册直接抛错（生成器与手工声明不应同时存在）。
-/// 声明式 API 的请求模型 / 接口注册入口在 <c>AxiosNet.WebAPI.Metadata.AxiosApiMetadata</c>。
+/// 对象形状与字典映射的注册入口（params / 表单 / multipart 展平用），源生成器与手工兜底都走这里。隐藏 API。
 /// </summary>
+/// <remarks>
+/// 应用代码通常不需要直接调用；在 Native AOT 下缺少生成元数据时可按 <see cref="AxiosAotMetadataException"/> 的提示手工注册。
+/// 注册只发生在启动期：手工入口（<see cref="RegisterShape"/> / <see cref="RegisterMap"/>）对同一类型重复注册直接抛错，
+/// 生成器入口（<see cref="RegisterGeneratedShapeFromSample"/> 等）对等价重复保留先注册的一份。
+/// 声明式 API 的请求模型 / 接口注册入口在 <c>AxiosNet.WebAPI.Metadata.AxiosApiMetadata</c>。
+/// </remarks>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class AxiosMetadata
 {

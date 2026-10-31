@@ -19,7 +19,8 @@ public sealed partial class ApiClient
     /// 优先使用源生成器烘焙的真实代理类（JIT / Native AOT 同一路径）；只有接口没有生成元数据时才回退
     /// DispatchProxy（仅 JIT，且要求接口为 public）。
     /// 每个方法返回 <c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c> / <c>Task&lt;AxiosResponse&gt;</c> /
-    /// <c>Task&lt;T&gt;</c> / <c>Task</c> 之一（<c>T</c> 为 <c>IAsyncEnumerable&lt;U&gt;</c> 时按流式处理）。
+    /// <c>Task&lt;T&gt;</c> / <c>Task</c> 之一；返回 <c>Task&lt;AxiosResponse&lt;IAsyncEnumerable&lt;U&gt;&gt;&gt;</c> 时按流式处理
+    /// （<c>Task&lt;IAsyncEnumerable&lt;U&gt;&gt;</c> 这种形态不受支持，校验期直接拒绝）。
     /// 同步返回、<c>ValueTask</c>、泛型方法与 <c>ref</c> / <c>out</c> / <c>in</c> 参数在 Create 时直接拒绝（校验错误一次列全）。
     /// </remarks>
     public T Create<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods

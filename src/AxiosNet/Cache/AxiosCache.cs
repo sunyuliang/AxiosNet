@@ -64,7 +64,7 @@ public sealed class AxiosCacheOptions
     public long MaxBytes { get; set; } = 64L * 1024 * 1024;
 
     /// <summary>
-    /// 单次落库的超时，默认 2 秒；<c>null</c> 或非正数 = 不限时。
+    /// 单次写入缓存的超时，默认 2 秒；<c>null</c> 或 <see cref="TimeSpan.Zero"/> = 不限时（负值在构造时抛 <see cref="ArgumentOutOfRangeException"/>）。
     /// </summary>
     /// <remarks>
     /// 只约束自建存储（Redis 之类）的写入：存储挂起时不能把响应一起拖住，超时按「这次没缓存」处理。
@@ -108,7 +108,7 @@ public sealed class AxiosCacheOptions
 /// </example>
 public sealed class AxiosCache
 {
-    // 在飞登记：键 → 领导者那一轮。跟随者只是共享领导者的 Completion，完成 / 失败后按「键 + 实例」摘除。
+    // 在途登记：键 → 领导者那一轮。跟随者只是共享领导者的 Completion，完成 / 失败后按「键 + 实例」摘除。
     private readonly ConcurrentDictionary<string, AxiosCacheFlight> _flights = new(StringComparer.Ordinal);
     private readonly AxiosCacheOptions _options;
     private readonly IAxiosCacheStore _store;
@@ -164,7 +164,7 @@ public sealed class AxiosCache
     /// <summary>是否发条件请求（旧条目由存储的 <see cref="IAxiosCacheRevalidationStore"/> 提供）。</summary>
     internal bool ConditionalRequests => _options.ConditionalRequests;
 
-    /// <summary>清空全部条目（在飞的请求不受影响，它们完成后照常落库）。</summary>
+    /// <summary>清空全部条目（在途请求不受影响，它们完成后照常落库）。</summary>
     public ValueTask ClearAsync(CancellationToken cancellationToken = default) => _store.ClearAsync(cancellationToken);
 
     /// <summary>按 <paramref name="key"/> 摘掉一条；键可由 <see cref="KeyFor"/> 或 <see cref="CreateKey"/> 得到。</summary>
@@ -651,7 +651,7 @@ public sealed class AxiosCache
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 8));
 }
 
-/// <summary>一次在飞发送的登记：领导者发送完成后把结果交给跟随者。</summary>
+/// <summary>一次在途发送的登记：领导者发送完成后把结果交给跟随者。</summary>
 internal sealed class AxiosCacheFlight
 {
     private readonly TaskCompletionSource<AxiosShortCircuit?> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);

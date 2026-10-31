@@ -41,7 +41,8 @@ public class AxiosResponse
 
     /// <summary>
     /// 底层 HttpRequestMessage（对应 axios response.request）。
-    /// 请求结束后已被释放：<c>Method</c> / <c>RequestUri</c> / <c>Headers</c> 可读，读 <c>Content</c> 会抛 <see cref="ObjectDisposedException"/>。
+    /// 请求结束后已被释放：<c>Method</c> / <c>RequestUri</c> / <c>Headers</c> 仍可读；<c>Content</c> 不可依赖——
+    /// 重试分支会先把它置 <c>null</c> 再释放消息，读了只会得到 <c>null</c> 或已释放对象，别从它取正文。
     /// </summary>
     public HttpRequestMessage? Request { get; set; }
 

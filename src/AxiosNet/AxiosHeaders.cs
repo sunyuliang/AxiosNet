@@ -197,8 +197,12 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    /// <summary>清空：无条件发布空版本。</summary>
-    /// <remarks>盲写空单例，与并发 <see cref="Set(string, string?)"/> / <see cref="Delete"/> 可线性化。</remarks>
+    /// <summary>清空：非空时一次性发布空版本，已经为空则直接返回（不分配）。</summary>
+    /// <remarks>
+    /// 用 <c>Volatile.Write</c> 盲写空单例：整条路径没有「读-改-写」，不存在可丢的更新，与并发
+    /// <see cref="Set(string, string?)"/> / <see cref="Delete"/> 的任意交错都能线性化成「写方在 Clear 之前」或「之后」。
+    /// 前提是数组永不就地修改——否则这条推理不成立。
+    /// </remarks>
     public void Clear()
     {
         // 空版本没有内容可清，不发布也不分配。

@@ -61,6 +61,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>发送请求模型描述的请求，返回类型由请求模型的 <see cref="IApiRequest{TResponse}"/> 泛型确定。</summary>
+    /// <param name="request">请求模型实例（路径 / 查询 / 头 / 正文的取值来源）。</param>
+    /// <param name="cancellationToken">外部取消令牌。</param>
     /// <exception cref="InvalidOperationException">请求模型定义非法（缺路由特性、占位符未绑定、多个请求体等）。</exception>
     public Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
@@ -75,7 +77,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         "Trimming",
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
-            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「Native AOT / 裁剪」）。")]
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
     public async Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         Action<AxiosConfig>? configure,
@@ -92,11 +94,13 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。可用于日志与签名；返回实际发送形态（已转义）。</summary>
+    /// <param name="request">请求模型实例；<typeparamref name="TResponse"/> 只决定响应类型，不参与 URL。</param>
+    /// <returns>拼好并转义后的绝对 URL。</returns>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
         Justification = "请求模型的运行时类型无法静态标注：AOT 下由 AxiosNet 源生成器在编译期写入成员取值委托，注册表命中后不再反射；"
-            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「Native AOT / 裁剪」）。")]
+            + "未命中且无动态代码时抛 AxiosAotMetadataException，不会反射模型成员（README「运行时与 AOT」）。")]
     public string GetUri<TResponse>(IApiRequest<TResponse> request)
     {
         ArgumentNullException.ThrowIfNull(request);

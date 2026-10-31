@@ -22,7 +22,7 @@ public readonly struct AxiosProgressEvent
     /// <summary>完成比例 0~1；总长度未知时为 null。</summary>
     public double? Progress => Total is > 0 ? Math.Min(1d, (double)Loaded / Total.Value) : null;
 
-    /// <summary>瞬时平均速率（字节/秒）。</summary>
+    /// <summary>本轮平均速率（字节/秒）：本轮新增字节 ÷ 本轮耗时，不是瞬时值。</summary>
     public double? Rate { get; }
 
     /// <summary>按当前速率估算的剩余时间。</summary>

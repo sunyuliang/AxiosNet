@@ -17,7 +17,7 @@ namespace AxiosNet.Serialization;
 /// <code>
 /// AxiosContent.Serializer = XmlContentSerializer.Instance;                       // 全局显式注入
 /// AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);   // 或注册：按 Content-Type 自动匹配
-/// new AxiosClient(new AxiosConfig { ContentSerializer = XmlContentSerializer.Instance });  // 实例 / 单次
+/// new AxiosClient(new AxiosConfig { Serialization = { ContentSerializer = XmlContentSerializer.Instance } });  // 实例默认
 ///
 /// await http.PostAsync("orders", order);                 // 头自动是 application/xml
 /// var order = (await http.GetAsync&lt;Order&gt;("orders/1")).Data;

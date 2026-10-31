@@ -7,9 +7,11 @@ namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
 /// 把响应流切成帧、逐帧反序列化成 <typeparamref name="T"/>（NDJSON / SSE / JSON 数组）。
+/// </summary>
+/// <remarks>
 /// NDJSON / SSE 在字节层按 CR / LF 分帧，JSON 数组由 <see cref="Utf8JsonReader"/> 增量定位顶层元素的字节区间。
 /// 单帧上限默认 8 MB，可由 <see cref="AxiosConfig.LimitSettings.MaxStreamFrameLength"/> 调整；响应流只能读一次，重复枚举直接报错。
-/// </summary>
+/// </remarks>
 internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnumerator<T>
 {
     private const int ReadChunk = 8 * 1024;

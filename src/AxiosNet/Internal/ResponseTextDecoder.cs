@@ -143,7 +143,7 @@ internal static class ResponseTextDecoder
     /// <summary>按 BOM 识别编码：UTF-8 / UTF-32（BE、LE）/ UTF-16（BE、LE）；无 BOM 返回 <c>null</c>。</summary>
     internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)
     {
-        // 依次判 UTF-8、UTF-32、UTF-16 的 BOM。
+        // 顺序不能换：FF FE 00 00 是 UTF-32LE，若先判两字节的 FF FE 会把它误认成 UTF-16LE。
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             return Encoding.UTF8;

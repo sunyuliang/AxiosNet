@@ -7,11 +7,14 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Pipeline;
 
 /// <summary>
-/// 内置尝试中间件的具名入口：<see cref="Retry"/> / <see cref="Failover"/> / <see cref="Hedging"/> /
-/// <see cref="Circuit"/> / <see cref="Gate"/> 恒在默认链上（要摘掉得显式 <see cref="AxiosAttemptPipeline.Remove"/>
-/// 或整体 <see cref="AxiosAttemptPipeline.Create"/>），<see cref="Audit"/> 是可选内置项（要显式 `Append` 才生效）。
-/// 是否真的干活由中间件按本次请求的生效配置决定（没配策略 / 端点 / 分支数就交给下一环）。
+/// 内置尝试中间件的具名入口：<see cref="Retry"/> → <see cref="Failover"/> → <see cref="Circuit"/> →
+/// <see cref="Hedging"/> → <see cref="Gate"/>（顺序即默认链序），另有可选的 <see cref="Audit"/>。
 /// </summary>
+/// <remarks>
+/// 前五项恒在链上，要摘掉得显式 <see cref="AxiosAttemptPipeline.Remove"/> 或整体 <see cref="AxiosAttemptPipeline.Create"/>；
+/// <see cref="Audit"/> 是可选内置项，要显式 <c>Append</c> 才生效。
+/// 是否真的干活由中间件按本次请求的生效配置决定（没配策略 / 端点 / 分支数就交给下一环）。
+/// </remarks>
 public static partial class Attempt
 {
     /// <summary>
@@ -370,12 +373,12 @@ public static partial class Attempt
         return request;
     }
 
-    /// <summary>
-    /// 这次失败是不是「本次尝试被内部收掉」而不是真失败：调用方没取消，但本次尝试的令牌已被链接令牌取消。
+    /// <summary>这次失败是否「本次尝试被内部收掉」而非真失败：调用方没取消，但本次尝试的令牌已被链接令牌取消。</summary>
+    /// <remarks>
     /// 库内只有对冲会这么干（胜出后取消其余分支），所以这是「败者被清理」，不是下游故障 ——
     /// 对冲据此不记失败，审计据此不发 <c>AttemptFailed</c>（否则健康请求在监控里恒有一半失败）。
     /// 取消在库里的两种形态都要认（<see cref="OperationCanceledException"/> 与 <c>ERR_CANCELED</c>）。
-    /// </summary>
+    /// </remarks>
     internal static bool IsCleanupCancellation(Exception exception, in AxiosAttemptContext ctx)
         => !ctx.ExternalToken.IsCancellationRequested
            && (exception is OperationCanceledException

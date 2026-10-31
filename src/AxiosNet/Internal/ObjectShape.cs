@@ -10,8 +10,10 @@ internal sealed class ObjectShape
         Error = error;
     }
 
+    /// <summary>形状对应的 CLR 类型。</summary>
     public Type Type { get; }
 
+    /// <summary>参与展平的成员清单，顺序即输出顺序。</summary>
     public ShapeMember[] Members { get; }
 
     /// <summary>注册期无法完成的形状（例如 configure 抛错）；非 null 时在首次展平该类型时抛出。</summary>
@@ -52,8 +54,10 @@ internal readonly struct ShapeMember
     /// <summary>是否整体忽略（[JsonIgnore(Always)]）。</summary>
     public bool Ignored { get; }
 
+    /// <summary>成员值的声明类型（展平前）。</summary>
     public Type ValueType { get; }
 
+    /// <summary>从实例取成员值：生成期烘焙的强类型委托，或反射构造的委托。</summary>
     public Func<object, object?> GetValue { get; }
 }
 

@@ -2,8 +2,10 @@ namespace AxiosNet.WebAPI;
 
 /// <summary>
 /// 接口级流式响应的帧格式声明：只用于返回 <c>Task&lt;AxiosResponse&lt;IAsyncEnumerable&lt;T&gt;&gt;&gt;</c> 的方法。
-/// 省略时按 <see cref="AxiosStreamFormat.NewlineDelimitedJson"/>（NDJSON）读取；等价于类模型的 <c>RequestStreamAsync(..., format, ...)</c> 参数。
 /// </summary>
+/// <remarks>
+/// 省略时按 <see cref="AxiosStreamFormat.NewlineDelimitedJson"/>（NDJSON）读取；等价于类模型的 <c>RequestStreamAsync(..., format, ...)</c> 参数。
+/// </remarks>
 [AttributeUsage(AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public sealed class StreamAttribute : Attribute
 {

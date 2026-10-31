@@ -50,7 +50,10 @@ public readonly struct AxiosCircuitContext
     /// <summary>HTTP 状态码（有响应时可用），构造时的快照。</summary>
     public int? StatusCode { get; }
 
-    /// <summary>库内错误码（<c>ERR_NETWORK</c> / <c>ECONNABORTED</c> / <c>ERR_CIRCUIT_OPEN</c> 等）；非 <see cref="AxiosException"/> 时为 <c>null</c>。</summary>
+    /// <summary>
+    /// 库内错误码（<c>ERR_NETWORK</c> / <c>ECONNABORTED</c> / <c>ERR_BAD_RESPONSE</c> / <c>ERR_POOL_EXHAUSTED</c> 等）；
+    /// 非 <see cref="AxiosException"/> 时为 <c>null</c>。被熔断拒绝不会进 <see cref="IAxiosCircuitPolicy.Record"/>，所以不会是 <c>ERR_CIRCUIT_OPEN</c>。
+    /// </summary>
     public string? ErrorCode => (Exception as AxiosException)?.Code;
 
     /// <summary>请求方法。</summary>

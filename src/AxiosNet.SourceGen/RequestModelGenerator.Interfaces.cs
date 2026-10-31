@@ -659,7 +659,7 @@ namespace AxiosNet.SourceGen
         }
 
         /// <summary>
-        /// 接口自身在前的接口链（与运行时 <c>GetInterfaceChain</c> 一致）：其余按「依赖的接口数量」降序，
+        /// 接口自身在前的接口链（与运行时 <c>CollectInterfaceChain</c> 一致）：其余按「依赖的接口数量」降序，
         /// 同层再按元数据名排序（反射侧同规则）——同层顺序因此不再依赖各自的原始遍历顺序，
         /// 菱形的同名静态头 / 最近授权才能在两条路径上选中同一层。
         /// </summary>
@@ -877,7 +877,7 @@ namespace AxiosNet.SourceGen
                 return (false, null, false);
             }
 
-            // AuthorizeAttribute 的 scheme 默认 "Bearer"：省略实参时 AttributeData 可能给不出值，这里补上默认值。
+            // 防御性默认值：AuthorizeAttribute 的 scheme 构造参数本身有默认值 "Bearer"，这里只防 AttributeData 缺项，口径与模型侧一致。
             var scheme = authorize is null ? null : GetStringArgument(authorize, 0) ?? "Bearer";
             return (anonymous, scheme, anonymous && authorize is not null);
         }

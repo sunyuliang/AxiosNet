@@ -10,7 +10,7 @@ internal sealed class SynchronizedList<T> : IList<T>
 {
     private static readonly T[] Empty = Array.Empty<T>();
 
-    /// <summary>索引越界消息，措辞与 <see cref="List{T}"/> 保持一致。</summary>
+    /// <summary>索引越界消息（中文，语义与 <see cref="List{T}"/> 的同名错误一致）。</summary>
     private const string IndexOutOfRangeMessage = "索引超出范围：必须是非负数且小于集合大小。";
 
     /// <summary><see cref="Insert"/> 专用：允许插入到末尾，因此上界是「不大于」。</summary>
@@ -95,8 +95,11 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
     }
 
-    /// <summary>清空：无条件发布空版本。</summary>
-    /// <remarks>前提是数组永不就地修改：<see cref="Empty"/> 与快照数组都只读。</remarks>
+    /// <summary>清空：非空时一次性发布空版本，已经为空则直接返回（不分配）。</summary>
+    /// <remarks>
+    /// 用 <c>Volatile.Write</c> 盲写空单例，整条路径没有「读-改-写」，不存在可丢的更新。
+    /// 前提是数组永不就地修改：<see cref="Empty"/> 与快照数组都只读。
+    /// </remarks>
     public void Clear()
     {
         // 空版本没有内容可清，不发布也不分配。

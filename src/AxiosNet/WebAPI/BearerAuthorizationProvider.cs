@@ -2,8 +2,12 @@ namespace AxiosNet.WebAPI;
 
 /// <summary>
 /// 内置 Bearer 授权：把令牌写进 <c>Authorization</c> 头。
-/// 令牌已含空格（如 <c>Basic xxx</c>）视为带 scheme 原样发送，否则自动补 <c>Bearer </c> 前缀；需要缓存 / 刷新时请实现自定义 <see cref="IAuthorizationProvider"/>。
 /// </summary>
+/// <remarks>
+/// 令牌已含空格（如 <c>Basic xxx</c>）视为带 scheme 原样发送，否则自动补 <c>Bearer </c> 前缀。
+/// 需要缓存 / 自动刷新时用 <see cref="AccessTokenManager"/>（实现 <see cref="IAccessTokenProvider"/> 并在客户端注册）；
+/// 它会保留库的 401 重放能力，而自定义 <see cref="IAuthorizationProvider"/> 拿不到该能力。
+/// </remarks>
 public sealed class BearerAuthorizationProvider : IAuthorizationProvider
 {
     private const string Scheme = "Bearer ";

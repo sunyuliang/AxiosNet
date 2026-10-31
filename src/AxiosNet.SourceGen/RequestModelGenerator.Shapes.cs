@@ -11,7 +11,7 @@ namespace AxiosNet.SourceGen
 {
     /// <summary>
     /// 对象形状发现：从请求模型、接口参数、Axios 调用点、<c>[AxiosShape]</c> 与匿名对象创建出发，
-    /// 递归展开成「类型 → 公共可读属性清单」，并烘焙成 <c>AxiosMetadata.RegisterGeneratedShape</c> 调用。
+    /// 递归展开成「类型 → 公共可读属性清单」，并烘焙成 <c>AxiosMetadata.RegisterGeneratedShapeFromSample</c> 调用。
     /// 形状只描述事实（成员名 / 字段名 / 忽略标记 / 取值委托），展平语义仍由运行时决定。
     /// </summary>
     public sealed partial class RequestModelGenerator
@@ -669,7 +669,7 @@ namespace AxiosNet.SourceGen
 
             /// <summary>
             /// 构造与目标匿名类型「属性名 / 类型 / 顺序」完全一致的样本：匿名类型按结构同一，
-            /// 样本在 <c>RegisterGeneratedShape&lt;T&gt;(T sample, ...)</c> 里推断出目标类型。
+            /// 样本在 <c>RegisterGeneratedShapeFromSample&lt;T&gt;(T sample, ...)</c> 里推断出目标类型。
             /// </summary>
             private string? BuildSample(ITypeSymbol type)
             {
@@ -1018,7 +1018,7 @@ namespace AxiosNet.SourceGen
         {
             if (HasInterface(type, "System.Collections.IDictionary"))
             {
-                // 非泛型 IDictionary 通道由运行期直接枚举，无需生成。
+                // 与 AddSeed 的判定保持同一口径：非泛型 IDictionary 由运行期直接枚举。
                 return null;
             }
 

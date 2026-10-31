@@ -80,7 +80,7 @@ public sealed partial class ApiClient
         "Trimming",
         "IL2072",
         Justification = "类型由调用方以 typeof(T) 传入：AOT 下由 AxiosNet 源生成器提供元数据；未注册的类型按 AxiosAotMetadataException 报告，"
-            + "不会反射模型成员（README「Native AOT / 裁剪」）。PublishTrimmed（非 AOT）下需调用方 root 模型类型。")]
+            + "不会反射模型成员（README「运行时与 AOT」）。PublishTrimmed（非 AOT）下需调用方 root 模型类型。")]
     private static IReadOnlyList<string> ValidateCore(IEnumerable<Type> types)
     {
         var errors = new List<string>();

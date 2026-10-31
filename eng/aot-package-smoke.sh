@@ -68,10 +68,25 @@ NUPKG="$(ls "$FEED"/AxiosNet.*.nupkg | grep -v -i symbols | head -1)"
 echo "   $NUPKG"
 
 echo "== 2/5 断言包内带分析器与 props =="
+# 解释器必须真的能跑：Windows 上 python3 可能只是应用商店占位符（一启动就失败），
+# 用它跑断言会把「机器缺 python」伪装成「包缺文件」。
 PYTHON="${PYTHON:-}"
 if [ -z "$PYTHON" ]; then
-    if command -v python3 >/dev/null 2>&1; then PYTHON=python3; else PYTHON=python; fi
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import zipfile" >/dev/null 2>&1; then
+            PYTHON="$candidate"
+            break
+        fi
+    done
 fi
+if [ -z "$PYTHON" ]; then
+    echo "找不到可用的 python（python3 / python 都跑不了 import zipfile），无法断言包内容" >&2
+    exit 1
+fi
+# 断言里的提示语带中文（全角冒号 U+FF1A）：Windows runner 的 stdout 默认是英文代码页 cp1252，
+# print 出去会 UnicodeEncodeError——连「断言通过」都会把整步打成 exit 1。stdout 强制 UTF-8。
+export PYTHONIOENCODING=utf-8
+echo "   python：$("$PYTHON" -c 'import sys; print(sys.version.split()[0])' 2>/dev/null)"
 "$PYTHON" - "$NUPKG" <<'PY'
 import sys, zipfile
 
@@ -232,13 +247,19 @@ case "$OUTPUT" in
     *) echo "smoke 输出不符合预期" >&2; exit 1 ;;
 esac
 
-# 尺寸预算：以 8.1 MB 为基线，上限 9 MiB。超了基本只有两种原因——新引入了反射依赖把代码拉回来了，
+# 尺寸预算按平台分开：Linux 把 OpenSSL / System.Native / 压缩 / globalization 这些 shim 全部静态链进
+# 可执行文件，Windows 这些走系统 DLL 或预烘焙的 Aot.lib，同一份 IL 平台差约 2 MB。
+# 基线（net8、ILC 8.0.31、Release）：win-x64 8256 KB；linux-x64 与示例同量级（约 10.2 MB）。
+# 超预算基本只有两种原因——新引入了反射依赖把代码拉回来了，
 # 或者无意中 root 了整个程序集（TrimmerRootAssembly / 生成器没生效）。
+case "$RID" in
+    linux-*) BUDGET=$((11 * 1024 * 1024)) ;;
+    *)       BUDGET=$((9 * 1024 * 1024)) ;;
+esac
 SIZE="$(wc -c < "$BIN")"
-BUDGET=$((9 * 1024 * 1024))
-echo "产物体积：$((SIZE / 1024)) KB（预算 $((BUDGET / 1024)) KB）"
+echo "产物体积：$((SIZE / 1024)) KB（预算 $((BUDGET / 1024)) KB，RID=$RID）"
 if [ "$SIZE" -gt "$BUDGET" ]; then
-    echo "超出体积预算：$(($SIZE - $BUDGET)) 字节。检查是否又有 TrimmerRootAssembly，或生成器是否真的生效。" >&2
+    echo "超出体积预算：$(($SIZE - $BUDGET)) 字节（RID=$RID）。检查是否又有 TrimmerRootAssembly，或生成器是否真的生效。" >&2
     exit 1
 fi
 

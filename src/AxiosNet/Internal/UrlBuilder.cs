@@ -280,7 +280,7 @@ internal static class ParamsSerializer
                 }
             }
 
-            // 收尾：用单个 StringBuilder 一次拼出查询串。
+            // 容量一次算准再拼：避免 string.Join 的中间数组，也避免 StringBuilder 反复扩容。
             if (pairs.Count == 0)
             {
                 return string.Empty;
@@ -668,7 +668,7 @@ internal static class ParamsSerializer
     };
 
     private static bool IsScalar(object value)
-        // byte[] 在 query 里走 base64（可逆），不算「标量」参与 Path/Header 校验
+        // byte[] 也算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
         => value is byte[] || ScalarTypes.IsScalarType(value.GetType());
 
     /// <summary>标量 → 线上文本：bool 是 <c>true</c> / <c>false</c>，日期时间是 UTC 毫秒 ISO 8601。</summary>
@@ -679,7 +679,10 @@ internal static class ParamsSerializer
         _ => BodyFields.ScalarToString(value)
     };
 
-    // 同 axios 默认 encoder：encodeURIComponent，并把 %5B / %5D 还原成 [ ]
+    /// <summary>
+    /// 键名转义：同 axios 默认 encoder（<c>encodeURIComponent</c>），但把 <c>%5B</c> / <c>%5D</c> 还原成 <c>[</c> <c>]</c>，
+    /// 保持 <c>a[b]=v</c> 的可读形态。query 展平与形状预计算共用这一个入口。
+    /// </summary>
     internal static string EscapeKey(string key)
         => Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]");
 

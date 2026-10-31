@@ -6,14 +6,13 @@ namespace AxiosNet;
 /// <summary>
 /// dynamic 响应（<see cref="ResponseType.Dynamic"/>）的对象节点：支持 <c>data.name</c> / <c>data["name"]</c>，
 /// 缺省成员返回 <c>null</c>，运行期可增删属性。
-/// 同时实现 <see cref="IDictionary{TKey,TValue}"/>，可原样当 <c>Params</c> / 请求体发出，也会被 <c>System.Text.Json</c>
-/// 序列化成普通 JSON 对象。
 /// </summary>
 /// <remarks>
-/// 值映射：字符串/布尔原样，整数为 <see cref="long"/>，浮点为 <see cref="double"/>，JSON <c>null</c> 保持 <c>null</c>，
+/// 同时实现 <see cref="IDictionary{TKey,TValue}"/>，可原样当 <c>Params</c> / 请求体发出，也会被 <c>System.Text.Json</c> 序列化成普通 JSON 对象。
+/// <para>值映射：字符串/布尔原样，整数为 <see cref="long"/>，浮点为 <see cref="double"/>，JSON <c>null</c> 保持 <c>null</c>，
 /// 数组节点是 <c>List&lt;object?&gt;</c>。
 /// 读无锁、写串行；枚举取键快照、值实时读取，枚举期间被删除的键值为 <c>null</c>。
-/// 动态成员优先于 CLR 成员：<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段。
+/// 动态成员优先于 CLR 成员：<c>data.Count</c> 读的是 JSON 里名为 <c>Count</c> 的字段。</para>
 /// </remarks>
 public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictionary<string, object?>
 {

@@ -2,7 +2,7 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>体积、速率、在途并发闸门与流式分帧限制（<see cref="AxiosConfig.Limits"/>）。</summary>
+    /// <summary>体积、速率、在途并发上限与排队、流式分帧限制（<see cref="AxiosConfig.Limits"/>）。</summary>
     public sealed class LimitSettings
     {
         private long? _maxContentLength;
@@ -61,10 +61,12 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 在途请求并发上限（本 <see cref="AxiosClient"/> 实例范围内），<c>null</c>（默认）不限；正整数，<c>0</c> 与负数抛 <c>ERR_BAD_OPTION_VALUE</c>。
-        /// 实例级配置：闸门在首个受限请求时创建并固定，按请求写不同的值抛错；排队等待不计入
-        /// <see cref="AxiosConfig.Timeout"/>，但计入 <see cref="AxiosConfig.TotalTimeout"/>（见 <see cref="QueueTimeout"/>）。
         /// </summary>
-        /// <remarks>闸门是实例级的：在拦截器 / 回调里用同一实例发子请求会抢同一批槽位，请给 <see cref="QueueTimeout"/> 设上限。</remarks>
+        /// <remarks>
+        /// 实例级配置：闸门在首个受限请求时创建并固定，之后按请求写别的值抛错；排队等待不计入
+        /// <see cref="AxiosConfig.Timeout"/>，但计入 <see cref="AxiosConfig.TotalTimeout"/>（见 <see cref="QueueTimeout"/>）。
+        /// 闸门是实例级的：在拦截器 / 回调里用同一实例发子请求会抢同一批槽位，请给 <see cref="QueueTimeout"/> 设上限。
+        /// </remarks>
         public int? MaxConcurrentRequests
         {
             get => _maxConcurrentRequests;

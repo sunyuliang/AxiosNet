@@ -8,10 +8,13 @@ using AxiosNet.Reflection;
 namespace AxiosNet.Serialization;
 
 /// <summary>
-/// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：用 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
+/// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）。
+/// </summary>
+/// <remarks>
+/// 选项取 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
 /// net8.0 目标在配了 <c>TypeInfoResolver</c> 时走 <c>JsonSerializerOptions.GetTypeInfo</c>（AOT 元数据）；
 /// 没配时（以及 net6.0 目标，它没有该 API）回退反射重载，见 <see cref="AxiosNet.Reflection.JsonSerializerJit"/>。
-/// </summary>
+/// </remarks>
 public sealed class SystemTextJsonSerializer : IContentSerializer
 {
     /// <summary>无状态单例，可安全并发共享。</summary>

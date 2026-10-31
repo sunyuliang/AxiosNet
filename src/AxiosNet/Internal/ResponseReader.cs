@@ -8,7 +8,8 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 响应阶段：把 <see cref="System.Net.Http.HttpResponseMessage"/> 转成 <see cref="AxiosResponse"/>，
-/// 含响应头上下文、正文读取、responseType 与目标类型分派、序列化器选型。只读配置，不持有实例状态。
+/// 含响应头上下文、正文读取、responseType 与目标类型分派、序列化器选型。除把本次响应写回
+/// <see cref="AxiosConfig.Response"/> 外不改配置，也不持有实例状态。
 /// </summary>
 internal static class ResponseReader
 {
@@ -336,7 +337,7 @@ internal static class ResponseReader
         return response;
     }
 
-    /// <summary>是否需要把响应字节解码成文本：arraybuffer / stream / byte[] 只要字节，其余都要文本。</summary>
+    /// <summary>是否需要把响应字节解码成文本：arraybuffer / stream / byte[] 以及非文本媒体类型只要字节，其余都要文本。</summary>
     private static bool NeedsText(AxiosConfig config, Type? dataType, bool textual) => config.ResponseType switch
     {
         ResponseType.ArrayBuffer => false,
@@ -383,7 +384,7 @@ internal static class ResponseReader
     private static bool IsJsonStart(char c)
         => c is '{' or '[' or '"' or '-' or 't' or 'f' or 'n' || (c >= '0' && c <= '9');
 
-    /// <summary>未解码时的空白判定：只认 ASCII 空白（SP/HTAB/CR/LF），开头的 UTF-8 BOM 解码时会被剥掉、不参与判定。</summary>
+    /// <summary>未解码时的空白判定：只认 ASCII 空白（SP/HTAB/CR/LF）；开头若有 UTF-8 BOM 由本方法先跳过。</summary>
     private static bool IsBlankUtf8(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)

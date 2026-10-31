@@ -22,6 +22,7 @@ internal sealed class ConcurrencyGate
     /// </summary>
     internal static long QueueDepth => Volatile.Read(ref _queued);
 
+    /// <summary>创建闸门并在此时固定上限；<paramref name="maxQueueLength"/> 为 <c>null</c> 表示不限排队深度。</summary>
     public ConcurrencyGate(int maxConcurrency, int? maxQueueLength = null)
     {
         MaxConcurrency = maxConcurrency;
@@ -36,7 +37,7 @@ internal sealed class ConcurrencyGate
     public int? MaxQueueLength { get; }
 
     /// <summary>
-    /// 取一个在途槽位；返回的租约必须释放（<see cref="IDisposable.Dispose"/> 幂等）。
+    /// 取一个并发槽位；返回的租约必须释放（<see cref="IDisposable.Dispose"/> 幂等，重复归还是安全的）。
     /// 排队期间被取消抛 <c>ERR_CANCELED</c>；等待上限 <c>queueTimeout</c> 为 <c>null</c> 一直等、<c>Zero</c> 不排队。
     /// </summary>
     /// <param name="config">本次请求的生效配置（错误消息带出去）。</param>

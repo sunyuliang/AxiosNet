@@ -5,7 +5,7 @@ namespace AxiosNet.WebAPI.Internal;
 /// <summary>
 /// 接口方法的绑定元数据：路由、参数绑定计划、授权、返回类型特化后的调用器；缓存键包含被代理的接口。
 /// 本文件是两条路径共用的部分（契约字段 + 绑定成配置 + 发送）：契约构建见 <c>InterfaceMethodMetadata.Contract.cs</c>，
-/// 反射路径见 <c>Reflection/WebAPI/InterfaceMethodMetadataJit.cs</c>。
+/// 反射路径见 <c>WebAPI/Reflection/InterfaceMethodMetadataJit.cs</c>。
 /// </summary>
 internal sealed partial class InterfaceMethodMetadata
 {
@@ -235,7 +235,7 @@ internal sealed partial class InterfaceMethodMetadata
     }
 
     // 下面两个成员只由 JIT 反射路径调用（DispatchProxy 入口 / 挂泛型调用器）：
-    // 反射实现本身在 <c>Reflection/WebAPI/InterfaceMethodMetadataJit.cs</c>，这里只保留需要访问私有状态的薄壳。
+    // 反射实现本身在 <c>WebAPI/Reflection/InterfaceMethodMetadataJit.cs</c>，这里只保留需要访问私有状态的薄壳。
 
     /// <summary>DispatchProxy 的调用入口：绑定 / 发送阶段的异常一律包装成 faulted Task，保持异步方法的异常时序。</summary>
     internal object Invoke(ApiClient client, object?[]? args)

@@ -14,7 +14,8 @@ public sealed partial class AxiosClient
     {
         var merged = Defaults.Clone();
 
-        // 清掉「显式赋值过」标记。
+        // 克隆带过来的标记属于上一份配置，必须清掉，否则本次合并会把继承值与显式设置混为一谈。
+        // 只清 WithCredentials / MaxRedirects 两项：Proxy / Credentials 没有 *Set 标记，靠引用为空判断。
         merged.ClearInstanceOptionFlags();
 
         // 标记实例级选项来自本实例默认值。
@@ -296,7 +297,7 @@ public sealed partial class AxiosClient
         // 没有头就整段跳过（Headers 延迟创建）。
         if (config.HasHeaders)
         {
-            // 取当前版本的数组快照。
+            // 整段用同一版快照：并发 Set 换的是整个数组，逐次读字段会拿到撕裂的组合。
             var headers = config.Headers.Snapshot();
             foreach (var header in headers)
             {

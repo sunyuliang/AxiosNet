@@ -60,6 +60,7 @@ internal static class ShapeCache
     /// <summary>显式注册压过旧的反射缓存（同一类型的热路径第一次读取前完成）。</summary>
     public static void Invalidate(Type type) => Cache.TryRemove(type, out _);
 
+    /// <summary>清空反射构建的形状缓存（能力切换时调用，避免 AOT 与 JIT 的构建结论混用）。</summary>
     public static void InvalidateAll() => Cache.Clear();
 
     private static ObjectShape GetOrAdd(Type type) => Cache.GetOrAdd(type, static t => ObjectShapeReflection.Create(t));

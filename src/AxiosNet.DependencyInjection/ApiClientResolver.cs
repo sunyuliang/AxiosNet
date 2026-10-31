@@ -58,8 +58,8 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     private readonly object _gate = new();
 
     /// <summary>
-    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析），全局 <see cref="_gate"/> 只保护字典读写；
-    /// configure 里做跨站点同步等待可能互锁。
+    /// 每站点一把创建锁：首次解析在站点锁内完成（含用户 configure 与容器解析）；全局 <see cref="_gate"/> 只保护
+    /// <c>_clients</c> / <c>_owned</c> / <c>_disposed</c> 的读写，不执行用户代码。configure 里做跨站点同步等待可能互锁。
     /// </summary>
     private readonly ConcurrentDictionary<string, object> _siteGates = new(StringComparer.Ordinal);
     private int _disposed;
@@ -279,7 +279,7 @@ internal static class ApiClientFactory
         var client = new ApiClient(axiosClient);
         configure?.Invoke(client);
 
-        // 显式设置的 Authorization / AccessTokenProvider / ErrorFactory 优先；未设置时才从容器取单例
+        // 回填发生在 configure 之后，所以显式设置天然优先；未设置的才取容器里的单例。
         client.Authorization ??= services.GetService<IAuthorizationProvider>();
         client.AccessTokenProvider ??= services.GetService<IAccessTokenProvider>();
         client.ErrorFactory ??= services.GetService<IApiErrorFactory>();

@@ -6,9 +6,12 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace AxiosNet.WebAPI.DependencyInjection;
 
 /// <summary>
-/// 把 <see cref="ApiClient"/> 以单例形式注册进 .NET 依赖注入容器：带 <c>baseAddress</c> 的自建模式、
-/// 不带参数的门面模式（复用容器中的 <see cref="AxiosClient"/> 单例）、带 <c>name</c> 的命名模式。
+/// 把 <see cref="ApiClient"/> 与命名站点登记到 .NET 依赖注入容器。
 /// </summary>
+/// <remarks>
+/// 带 <c>baseAddress</c> 的自建模式、不带参数的包装模式（复用容器中的 <see cref="AxiosClient"/> 单例）都注册 <see cref="ApiClient"/> 单例；
+/// 带 <c>name</c> 的命名模式只登记站点定义，统一经 <see cref="IApiClientResolver"/> 取用。
+/// </remarks>
 public static class ApiClientServiceCollectionExtensions
 {
     /// <summary>

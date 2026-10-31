@@ -108,7 +108,7 @@ internal static class MultipartOwnership
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2072",
-        Justification = "multipart 值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
+        Justification = "multipart 值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「运行时与 AOT」）。")]
     private static void Walk(
         object? value,
         HashSet<object> visited,

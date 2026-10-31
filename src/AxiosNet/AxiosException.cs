@@ -2,8 +2,11 @@ namespace AxiosNet;
 
 /// <summary>
 /// 对应 axios 的 AxiosError：携带 code / config / request / response，错误码与 axios 对齐。
-/// 库抛出的都是本类型；<c>catch (AxiosException)</c> 能接住包括 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c> 在内的全部请求错误。
 /// </summary>
+/// <remarks>
+/// <b>请求失败</b>一律是本类型（含 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c>，<c>catch (AxiosException)</c> 全都接得住）；
+/// 调用方传参非法（头名不是合法 token、用户名含冒号、<c>ContentType</c> 为空白等）仍抛 BCL 的 <see cref="ArgumentException"/>。
+/// </remarks>
 public class AxiosException : Exception
 {
     /// <summary>HTTP 状态码非法且非 5xx（默认 validateStatus 下即 4xx），或请求阶段就失败（载荷序列化、上传 / 发送前回调）。</summary>
@@ -12,7 +15,7 @@ public class AxiosException : Exception
     /// <summary>服务端 5xx，或响应体无法按目标类型解析、超出 maxContentLength。</summary>
     public const string ErrBadResponse = "ERR_BAD_RESPONSE";
 
-    /// <summary>请求超时（对应 <see cref="AxiosConfig.Timeout"/>）。</summary>
+    /// <summary>请求超时（<see cref="AxiosConfig.Timeout"/>）；总预算 <see cref="AxiosConfig.TotalTimeout"/> 在本次尝试发出前耗尽时也用它，靠 <see cref="IsTotalTimeoutExceeded"/> 区分。</summary>
     public const string ErrConnAborted = "ECONNABORTED";
 
     /// <summary>网络层失败（连接被拒、DNS 失败等）。</summary>

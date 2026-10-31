@@ -6,13 +6,13 @@ namespace AxiosNet;
 
 /// <summary>
 /// 请求体 / 响应体的内容格式入口，内置 JSON（默认）与 XML 两个实现。
+/// </summary>
+/// <remarks>
 /// 选择优先级：单次请求 / 实例的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>
 /// → 实例注册表（<see cref="AxiosClient.ContentSerializers"/>）→ 全局 <see cref="Serializer"/>
 /// → 按媒体类型查 <see cref="Register"/> → 内置 JSON。
 /// 请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
-/// </summary>
-/// <remarks>
-/// 全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosClient.ContentSerializers"/>。
+/// <para>全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosClient.ContentSerializers"/>。</para>
 /// </remarks>
 public static class AxiosContent
 {

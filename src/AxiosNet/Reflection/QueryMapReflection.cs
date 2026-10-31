@@ -13,11 +13,11 @@ internal static class QueryMapReflection
 {
     private static readonly ConcurrentDictionary<Type, (PropertyInfo Key, PropertyInfo Value)> PairAccessors = new();
 
-    /// <summary>把字典按键值对枚举出来（键为 <c>null</c> 的项跳过）。</summary>
+    /// <summary>把字典按键值对枚举出来（键为 <c>null</c> 时按空串参与拼接，不跳过）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
-        Justification = "仅对自定义只读字典的键值对类型读取 Key/Value；AOT 下需由消费方 root 类型所在程序集（README「Native AOT / 裁剪」）。")]
+        Justification = "仅对自定义只读字典的键值对类型读取 Key/Value；AOT 下需由消费方 root 类型所在程序集（README「运行时与 AOT」）。")]
     public static IEnumerable<KeyValuePair<string, object?>> EnumeratePairs(object dictionary)
     {
         foreach (var item in (IEnumerable)dictionary)

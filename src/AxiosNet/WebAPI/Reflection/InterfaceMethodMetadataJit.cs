@@ -35,7 +35,7 @@ internal static class InterfaceMethodMetadataJit
         return metadata;
     }
 
-    /// <summary>只构建契约（不创建泛型调用器）：供启动期校验使用，Native AOT 下也可执行。</summary>
+    /// <summary>只构建契约、不特化泛型调用器：供启动期校验使用。调用方仍受 JIT 守卫限制——AOT 下不会走到这里。</summary>
     public static void Validate(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method)

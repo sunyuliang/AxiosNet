@@ -28,7 +28,8 @@ public interface IContentSerializer
     string? MediaType => null;
 
     /// <summary>
-    /// 把业务对象序列化为该格式的文本，由库按 <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> 编码成字节并补 charset。
+    /// 把业务对象序列化为该格式的文本。编码取 <c>ContentType</c> 声明的 charset → <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> → UTF-8；
+    /// charset 只在显式设置 <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> 时才写进请求头。
     /// 二进制格式请覆写 <see cref="SerializeToBytes"/>，本方法实现成抛 <see cref="NotSupportedException"/>。
     /// </summary>
     string Serialize(object? value, Type type, AxiosConfig config);

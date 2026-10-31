@@ -1,10 +1,12 @@
 namespace AxiosNet.WebAPI;
 
 /// <summary>
-/// 标记请求模型 / 接口 / 接口方法需要授权：客户端配了 <see cref="ApiClient.AccessTokenProvider"/> 时按 <see cref="Scheme"/> 拼出
-/// <c>Authorization: {scheme} {token}</c>，随后 <see cref="ApiClient.Authorization"/> 仍会执行。
-/// 未标注授权特性的声明只要客户端配了授权钩子也会执行；方法级声明压过接口 / 类上的声明；与 <see cref="AllowAnonymousAttribute"/> 同标一层属二义性。
+/// 标记请求模型 / 接口 / 接口方法需要授权：按 <see cref="Scheme"/> 与令牌拼出 <c>Authorization: {scheme} {token}</c>。
 /// </summary>
+/// <remarks>
+/// 客户端配了 <see cref="ApiClient.AccessTokenProvider"/> 时按 <see cref="Scheme"/> 写头，随后 <see cref="ApiClient.Authorization"/> 仍会执行。
+/// 未标注授权特性的声明只要客户端配了授权钩子也会执行；方法级声明压过接口 / 类上的声明；与 <see cref="AllowAnonymousAttribute"/> 同标一层属二义性。
+/// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class AuthorizeAttribute : Attribute
 {

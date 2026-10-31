@@ -3,15 +3,19 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把 <see cref="AxiosConfig.Data"/> 转成 <see cref="HttpContent"/>：正文格式由 <see cref="AxiosConfig.ContentType"/> 决定，
-/// 未显式设置时采用生效序列化器自报的 <see cref="IContentSerializer.MediaType"/>。
+/// 按 <see cref="AxiosConfig.Data"/> 的实际形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。
+/// </summary>
+/// <remarks>
+/// 生效 Content-Type 由 <see cref="AxiosConfig.ContentType"/> 决定，未显式设置时采用生效序列化器自报的
+/// <see cref="IContentSerializer.MediaType"/>。分派规则：
 /// <list type="bullet">
-/// <item>string / byte[] / Memory / ArraySegment / Stream / HttpContent：原样发送，只应用 Content-Type。</item>
-/// <item>IAsyncEnumerable&lt;byte[]&gt; / IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;：按块流式发送，长度未知。</item>
+/// <item><c>string</c> / <c>byte[]</c> / <c>Memory</c> / <c>ArraySegment</c> / <c>Stream</c>：原样发送，写入 Content-Type。</item>
+/// <item><see cref="HttpContent"/>：原样透传；只在内容自身没有 Content-Type 且配置显式设过时才补。</item>
+/// <item><c>IAsyncEnumerable&lt;byte[]&gt;</c> / <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c>：按块流式发送，长度未知。</item>
 /// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，不经过序列化器。</item>
 /// <item>结构化数据：json → 序列化器；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
 /// </list>
-/// </summary>
+/// </remarks>
 internal static class RequestBodyFactory
 {
     private const string MultipartMediaType = AxiosContentType.MultipartFormData;
@@ -240,7 +244,7 @@ internal static class RequestBodyFactory
         {
             throw AxiosException.InvalidOption(
                 $"Content-Type 声明 charset={declared.WebName}，但请求体实际按 {bodyEncoding.WebName} 编码："
-                + "两者不一致会让服务端按头解出乱码。请让序列器自报 / 写入与正文一致的 charset，"
+                + "两者不一致会让服务端按头解出乱码。请让序列化器自报 / 写入与正文一致的 charset，"
                 + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.RequestEncoding。", config);
         }
     }

@@ -3,10 +3,13 @@ using Microsoft.CodeAnalysis;
 namespace AxiosNet.SourceGen
 {
     /// <summary>
-    /// AXA 诊断：把「生成器无法静态表达」的事实提前到编译期；其余声明合法性仍由运行时共享构建器校验。
-    /// 一个编号只对应一个语义（模型侧与接口侧共用同一个 descriptor，位置信息由 <c>{0}</c> 参数传入），
-    /// 这样 <c>#pragma warning disable AXA00x</c> 关掉的正好是一类问题。
+    /// AXA 诊断：把「生成器无法静态表达」的事实提前到编译期。
     /// </summary>
+    /// <remarks>
+    /// 其余声明合法性仍由运行时共享构建器校验。一个编号只对应一个语义（模型侧与接口侧共用同一个 descriptor；
+    /// <c>{0}</c> 是定位串，源码位置由 <c>Diagnostic.Create</c> 的 Location 单独传入），
+    /// 这样 <c>#pragma warning disable AXA00x</c> 关掉的正好是一类问题。
+    /// </remarks>
     internal static class Diagnostics
     {
         private const string Category = "AxiosNet.SourceGen";
@@ -15,7 +18,7 @@ namespace AxiosNet.SourceGen
         public static readonly DiagnosticDescriptor InterfaceMemberNotSupported = new DiagnosticDescriptor(
             "AXA001",
             "接口含无法代理的成员",
-            "接口 {0} 的 {1} 无法代理：接口级声明只支持实例方法（不支持属性、事件与静态成员）。",
+            "接口 {0} 的 {1} 无法代理：接口级声明只支持实例方法（不支持属性、事件与 static abstract 成员；普通静态辅助方法不参与代理契约）。",
             Category,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,

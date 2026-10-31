@@ -34,6 +34,7 @@ internal sealed class PooledEndpoint : IDisposable
 
     private long _lastUsedTimestamp = Stopwatch.GetTimestamp();
 
+    /// <summary>节点是否已释放（池关闭、被驱逐，或最后一条租约归还后自行销毁）。</summary>
     public bool IsDisposed { get; private set; }
 
     /// <summary>
@@ -78,7 +79,7 @@ internal sealed class PooledEndpoint : IDisposable
             return DefaultHandlerFactory.Create(options, cookieContainer);
         }
 
-        // 给工厂一份选项快照。
+        // 传副本而不是池持有的 options：工厂改了它也不能回流到池。
         var context = new PooledHandlerContext(origin, new Uri(origin + "/"), options.Clone(), cookieContainer);
         var handler = options.HandlerFactory(context);
 
@@ -111,6 +112,7 @@ internal sealed class PooledEndpoint : IDisposable
         }
     }
 
+    /// <summary>归还一条租约（必须与成功的 <see cref="TryAcquire"/> 配对，重复归还会抛错）。</summary>
     public void Release()
     {
         var retire = false;

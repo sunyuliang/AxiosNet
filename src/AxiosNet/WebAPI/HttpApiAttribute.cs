@@ -3,10 +3,12 @@ using System.Net.Http;
 namespace AxiosNet.WebAPI;
 
 /// <summary>
-/// 路由声明：HTTP 方法 + 路径模板。请求模型标在类上、接口级声明标在接口方法上；每份声明必须且只能标注一个本特性或其子类。
+/// 路由声明：HTTP 方法 + 路径模板。请求模型标在类上、接口级声明标在接口方法上，每份声明必须且只能标注一个本特性或其子类。
+/// </summary>
+/// <remarks>
 /// 路径模板中的 <c>{name}</c> 占位符由 <see cref="PathAttribute"/> 属性 / 参数填充（值做 URL 转义）；模板可以是相对路径（合并实例 BaseAddress）或绝对 URL。
 /// 可直接传字符串方法名（归一化为大写），也可用内置子类；自定义谓词继承本类。
-/// </summary>
+/// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
 public class HttpApiAttribute : Attribute
 {

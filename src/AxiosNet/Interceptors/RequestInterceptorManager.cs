@@ -14,7 +14,7 @@ public sealed class RequestInterceptorManager
     private readonly List<RequestInterceptor> _interceptors = new();
     private int _nextId;
 
-    // 快照缓存：注册 / 弹出 / 清空时失效。
+    // 快照缓存：注册 / Eject / Clear 时失效。
     private RequestInterceptor[]? _snapshot;
 
     /// <summary>注册异步拦截器，返回拦截器 id（可用于 Eject）。</summary>
