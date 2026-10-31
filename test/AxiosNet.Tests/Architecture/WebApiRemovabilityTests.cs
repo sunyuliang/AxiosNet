@@ -9,7 +9,10 @@ namespace AxiosNet.Tests.Architecture;
 /// </summary>
 public class WebApiRemovabilityTests
 {
-    private static readonly Regex WebApiTypeReference = new(@"\bWebAPI\.(Internal|Metadata|Reflection)\b", RegexOptions.CultureInvariant);
+    // 只匹配命名空间前缀不够：① 核心文件写在 namespace AxiosNet.* 里时可直接写 WebAPI.ApiClient
+    // （父命名空间自动可见，无需 using）；② 块级命名空间里可以写 using WebAPI;（文件级 using 不行，
+    // 它按全局命名空间解析，所以这个洞只出现在 namespace { ... } 块内，同样是可编译的真引用）。
+    private static readonly Regex WebApiTypeReference = new(@"\bWebAPI\.[A-Za-z_]|\bWebAPI\s*;", RegexOptions.CultureInvariant);
 
     [Fact]
     public void CoreDoesNotReferenceTheWebApiExtension()

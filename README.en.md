@@ -1742,7 +1742,7 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1972 / 1965 | `net8.0` / `net6.0` | 3937 |
+| `AxiosNet.Tests` (core + declarative) | 1973 / 1966 | `net8.0` / `net6.0` | 3939 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | **Total** | **2024 / 2015** | | **4039** |
 
@@ -1870,7 +1870,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / statistics + handler injection
 │  │  ├─ Metadata/                    # metadata registration entry points (object shapes / dictionary maps / freeze) + shape builders
-│  │  ├─ WebAPI/                      # declarative API client (optional extension, removable as a whole; Internal/ = shared contract, Reflection/ = JIT-only)
+│  │  ├─ WebAPI/                      # declarative API client (optional extension, removable as a whole; Metadata/ = public registration entry points, Internal/ = shared contract, Reflection/ = JIT-only)
 │  │  ├─ Reflection/                  # object-shape and STJ reflection fallbacks (JIT-only, trimmed away entirely under AOT)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/

@@ -30,7 +30,7 @@ internal static class GeneratedMetadataRegistry
             if (current.ContainsKey(declaration.ModelType))
             {
                 throw new InvalidOperationException(
-                    $"请求模型 {ShapeRegistry.Describe(declaration.ModelType)} 的元数据已注册：源生成器与手工 AxiosMetadata.RegisterRequestModel 不能同时声明同一类型。");
+                    $"请求模型 {ShapeRegistry.Describe(declaration.ModelType)} 的元数据已注册：源生成器与手工 AxiosApiMetadata.RegisterRequestModel 不能同时声明同一类型。");
             }
 
             ShapeRegistry.ThrowIfFrozen(declaration.ModelType, "请求模型");
@@ -69,7 +69,7 @@ internal static class GeneratedMetadataRegistry
                 }
 
                 throw new InvalidOperationException(
-                    $"接口 {ShapeRegistry.Describe(declaration.InterfaceType)} 的元数据已注册：源生成器与手工 AxiosMetadata.RegisterInterface 不能同时声明同一类型。");
+                    $"接口 {ShapeRegistry.Describe(declaration.InterfaceType)} 的元数据已注册：源生成器与手工 AxiosApiMetadata.RegisterInterface 不能同时声明同一类型。");
             }
 
             // 冻结只禁止真正的写入：上面的等价重复注册是空操作，放行。

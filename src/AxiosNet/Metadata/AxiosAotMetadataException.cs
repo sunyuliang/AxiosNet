@@ -9,7 +9,8 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     private const string RepairHint =
         "修复方式（任选其一）："
         + "（1）启用 AxiosNet 源生成器（默认随包启用，确认项目未设置 <AxiosNetSourceGen>false</AxiosNetSourceGen>）；"
-        + "（2）在启动期调用 AxiosApiMetadata.RegisterRequestModel / RegisterInterface / RegisterShape 手工注册（或对形状类型调用 RegisterShape<T>() 并加 DynamicallyAccessedMembers 标注，匿名形状用 RegisterShapeFromSample）；"
+        + "（2）在启动期手工注册：请求模型 / 接口用 AxiosApiMetadata.RegisterRequestModel / RegisterInterface，"
+        + "对象形状与字典映射用 AxiosMetadata.RegisterShape / RegisterMap（形状类型也可用 RegisterShape<T>() 并加 DynamicallyAccessedMembers 标注，匿名形状用 RegisterShapeFromSample）；"
         + "（3）改用支持动态代码（JIT）的运行时。";
 
     private AxiosAotMetadataException(string message)

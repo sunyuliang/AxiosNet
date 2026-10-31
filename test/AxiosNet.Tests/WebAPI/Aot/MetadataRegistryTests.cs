@@ -115,6 +115,35 @@ public sealed class MetadataRegistryTests
         Assert.Contains("{id}", error.Message);
         Assert.Contains("没有", error.Message);
     }
+
+    /// <summary>
+    /// 能力切换必须丢掉「按能力构建并缓存」的结果：先在 JIT 下建好缓存，再切到 AOT，
+    /// 同一个类型必须改判成「缺元数据」，而不是把 JIT 的旧结论继续用下去。
+    /// </summary>
+    [Fact]
+    public void CapabilitySwitch_DropsRequestModelMetadataCachedUnderJit()
+    {
+        // 预热：反射路径构建并缓存。
+        var jit = RequestModelMetadata.Get(typeof(ReflectionGetRequest));
+        Assert.Equal("orders/3", jit.ResolveUrl(new ReflectionGetRequest { Id = 3 }, null));
+
+        RuntimeSupport.ForceNoDynamicCode = true;
+        try
+        {
+            // 缓存没被丢掉的话这里会原样返回上面那份 JIT 元数据，不抛错。
+            var error = Assert.Throws<AxiosAotMetadataException>(
+                () => RequestModelMetadata.Get(typeof(ReflectionGetRequest)));
+
+            Assert.Contains(nameof(ReflectionGetRequest), error.Message);
+        }
+        finally
+        {
+            RuntimeSupport.ForceNoDynamicCode = false;
+        }
+
+        // 切回来同样要重新构建，而不是留着「缺元数据」的结论。
+        Assert.NotNull(RequestModelMetadata.Get(typeof(ReflectionGetRequest)));
+    }
 }
 
 [Get("orders/{id}")]

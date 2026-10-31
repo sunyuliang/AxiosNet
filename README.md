@@ -1740,7 +1740,7 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1972 / 1965 | `net8.0` / `net6.0` | 3937 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1973 / 1966 | `net8.0` / `net6.0` | 3939 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | **合计** | **2024 / 2015** | | **4039** |
 
@@ -1868,7 +1868,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + 池选项 / 统计 + Handler 注入
 │  │  ├─ Metadata/                    # 生成元数据注册入口（对象形状 / 字典映射 / 冻结）+ 形状构建器
-│  │  ├─ WebAPI/                      # 声明式 API 客户端（可选扩展，可整体删除；Internal/ 共享契约，Reflection/ 仅 JIT）
+│  │  ├─ WebAPI/                      # 声明式 API 客户端（可选扩展，可整体删除；Metadata/ 公开注册入口，Internal/ 共享契约，Reflection/ 仅 JIT）
 │  │  ├─ Reflection/                  # 对象形状与 STJ 的反射回退（只在 JIT 下可达，AOT 镜像里整块裁掉）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
