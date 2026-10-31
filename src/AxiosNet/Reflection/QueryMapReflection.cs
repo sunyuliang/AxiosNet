@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
-namespace AxiosNet.WebAPI.Internal.Reflection;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// 自定义字典的反射回退：只实现 <c>IReadOnlyDictionary&lt;string,T&gt;</c> 的字典按 <c>KeyValuePair</c> 的 Key / Value 读取。

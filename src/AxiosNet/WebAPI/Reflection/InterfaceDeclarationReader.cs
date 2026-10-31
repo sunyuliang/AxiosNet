@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal.Reflection;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// JIT 反射读取器：把一个接口方法上的特性读成 <see cref="InterfaceMethodDeclaration"/>。

@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal.Reflection;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// 接口代理：DispatchProxy 拦截全部接口方法，转交给 <see cref="InterfaceMethodMetadata"/>。
@@ -55,7 +55,7 @@ internal class ApiInterfaceProxy : DispatchProxy
     }
 
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        => InterfaceMethodMetadata
+        => InterfaceMethodMetadataJit
             .Get(_interfaceType!, InterfaceDeclaration.ResolveMethod(_interfaceType!, targetMethod!))
             .Invoke(_client!, args);
 }

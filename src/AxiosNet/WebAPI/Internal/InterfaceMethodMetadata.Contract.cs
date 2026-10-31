@@ -1,8 +1,8 @@
 namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
-/// 接口方法的声明路径：从源生成器 / 手工注册烘焙的声明构建契约，不反射、不创建泛型调用器，
-/// 因此 Native AOT 下可用；调用由生成代理直接调 <c>Send*Async</c>。
+/// 接口方法的契约构建：把声明（源生成器 / 手工注册烘焙，或 JIT 反射读出的同一形状）归一化成路由、
+/// 绑定计划与授权。<see cref="BuildCore"/> 是两条路径唯一的一份绑定规则，<see cref="FromDeclaration"/> 是声明路径的入口。
 /// </summary>
 internal sealed partial class InterfaceMethodMetadata
 {
@@ -17,12 +17,12 @@ internal sealed partial class InterfaceMethodMetadata
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
         {
-            return new InterfaceMethodMetadata(ex.Message);
+            return FromError(ex.Message);
         }
     }
 
     /// <summary>声明路径的契约构建：只做归一化、绑定与授权。</summary>
-    private static InterfaceMethodMetadata BuildCore(
+    internal static InterfaceMethodMetadata BuildCore(
         InterfaceDeclarationData owner,
         InterfaceMethodDeclaration declaration)
     {

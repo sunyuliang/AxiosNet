@@ -1666,7 +1666,7 @@ dotnet run --project samples/AxiosNet.Simple
 - **零配置**：不需要 `TrimmerRootAssembly`，也不需要手写注册；
 - **两条路径同一份声明**：生成器只写事实（路由 / 成员 / 绑定 / 授权），校验与绑定计划仍由运行时共享构建器完成，JIT 与 AOT 的行为、错误文本一致；
 - **运行时不再反射模型 / 接口**：请求模型把成员取值写成直接 getter 委托；接口代理只做「取参 → 调用共享绑定实现」，不 `MakeGenericMethod`；AOT 下未命中注册表会抛 `AxiosAotMetadataException`（带修复指引），不会静默丢字段；
-- **JIT 专用的反射实现整段被裁掉**：接口声明 / 请求模型 / 自定义字典 / 对象形状的反射读取器与 `DispatchProxy` 回退，只写在 `RuntimeFeature.IsDynamicCodeSupported` 为 true 的分支里；ILC 折成常量 `false` 后整段不可达，连同它们的类型一起被裁剪，包消费方发布时不会为「只在 JIT 下用得到」的代码付体积；
+- **JIT 专用的反射实现整段被裁掉**：接口声明 / 请求模型 / 自定义字典 / 对象形状的反射读取器与 `DispatchProxy` 回退（集中在 `Reflection/` 与 `WebAPI/Reflection/`），只写在 `RuntimeFeature.IsDynamicCodeSupported` 为 true 的分支里；ILC 折成常量 `false` 后整段不可达，连同它们的类型一起被裁剪，包消费方发布时不会为「只在 JIT 下用得到」的代码付体积；
 - **接口代理的生成位置**：非泛型接口在声明处生成；闭合泛型接口（`IRepo<User>`）在 `Create<T>()` / `AddApiInterface<T>()` / `ValidateInterfaces(typeof(...))` 调用点生成，开放泛型声明本身（含外层类型为开放泛型的嵌套接口）只提示 `AXA011`（同一编译里已有闭合调用点时不报）。被引用程序集已经为同一接口生成过代理时，使用方按生成的类名识别并直接复用对方注册，不重复生成（重复注册会在启动期抛错）；只有被引用程序集没启用生成器时，使用方才在调用点生成；
 - **回退路径**：没有生成元数据时 JIT 回退 `DispatchProxy`；Native AOT 下没有回退，直接抛 `AxiosAotMetadataException`；
 - **前提**：消费方需 C# 9 及以上（`[ModuleInitializer]`）；生成器本身是 `netstandard2.0`，随包分发（按 Roslyn 4.0.1 编译，.NET SDK 6.0.100 / VS 2022 17.0 及以上的编译器均可加载）；
@@ -1740,7 +1740,7 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1970 / 1963 | `net8.0` / `net6.0` | 3933 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1971 / 1964 | `net8.0` / `net6.0` | 3935 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | **合计** | **2024 / 2015** | | **4039** |
 
@@ -1866,8 +1866,10 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML 实现
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + 池选项 / 统计 + Handler 注入
-│  │  ├─ WebAPI/                      # 声明式 API 客户端（模型式 / 接口式）
+│  │  ├─ WebAPI/                      # 声明式 API 客户端（模型式 / 接口式；Internal/ 共享契约，Reflection/ 仅 JIT）
+│  │  ├─ Reflection/                  # 对象形状与 STJ 的反射回退（只在 JIT 下可达，AOT 镜像里整块裁掉）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
+│  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
 ├─ samples/                           # Simple（50 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
@@ -1877,6 +1879,8 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet（单实现分项成本）
    └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```
+
+目录约定只有两条：领域目录（`WebAPI/`、`Serialization/`、`Internal/`）按功能分家；**只在 JIT 下可达的反射实现一律放进 `Reflection/` 目录**，且只有两处——根级 `Reflection/` 装跨领域共用的底层（对象形状反射、STJ 反射回退），`WebAPI/Reflection/` 装属于声明式 API 这个领域的反射读取与 `DispatchProxy` 回退。反过来也成立：不在 `Reflection/` 目录里的代码不直接碰反射。
 
 ## License
 

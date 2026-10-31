@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
-using AxiosNet.Internal.Reflection;
+using AxiosNet.Reflection;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
 

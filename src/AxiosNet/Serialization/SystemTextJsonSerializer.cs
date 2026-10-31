@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using AxiosNet.Internal;
+using AxiosNet.Reflection;
 using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.Serialization;
@@ -9,9 +10,9 @@ namespace AxiosNet.Serialization;
 /// <summary>
 /// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）：用 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
 /// net8.0 目标在配了 <c>TypeInfoResolver</c> 时走 <c>JsonSerializerOptions.GetTypeInfo</c>（AOT 元数据）；
-/// 没配时（以及 net6.0 目标，它没有该 API）回退反射重载，见 <c>SystemTextJsonSerializer.Reflection.cs</c>。
+/// 没配时（以及 net6.0 目标，它没有该 API）回退反射重载，见 <see cref="AxiosNet.Reflection.JsonSerializerJit"/>。
 /// </summary>
-public sealed partial class SystemTextJsonSerializer : IContentSerializer
+public sealed class SystemTextJsonSerializer : IContentSerializer
 {
     /// <summary>无状态单例，可安全并发共享。</summary>
     public static SystemTextJsonSerializer Instance { get; } = new();
@@ -82,8 +83,8 @@ public sealed partial class SystemTextJsonSerializer : IContentSerializer
             return JsonSerializer.Serialize(value, Resolve(options, type));
         }
 #endif
-        EnsureReflectionMetadata(type);
-        return SerializeLegacy(value, type, options);
+        JsonSerializerJit.EnsureReflectionMetadata(type);
+        return JsonSerializerJit.SerializeLegacy(value, type, options);
     }
 
     /// <summary>唯一的 AOT / 反射分叉：有 <c>TypeInfoResolver</c> 才是 AOT 元数据路径。</summary>
@@ -95,8 +96,8 @@ public sealed partial class SystemTextJsonSerializer : IContentSerializer
             return JsonSerializer.Deserialize(json, Resolve(options, type));
         }
 #endif
-        EnsureReflectionMetadata(type);
-        return DeserializeLegacy(json, type, options);
+        JsonSerializerJit.EnsureReflectionMetadata(type);
+        return JsonSerializerJit.DeserializeLegacy(json, type, options);
     }
 
     /// <summary>唯一的 AOT / 反射分叉：有 <c>TypeInfoResolver</c> 才是 AOT 元数据路径。</summary>
@@ -108,8 +109,8 @@ public sealed partial class SystemTextJsonSerializer : IContentSerializer
             return JsonSerializer.Deserialize(utf8Json, Resolve(options, type));
         }
 #endif
-        EnsureReflectionMetadata(type);
-        return DeserializeUtf8Legacy(utf8Json, type, options);
+        JsonSerializerJit.EnsureReflectionMetadata(type);
+        return JsonSerializerJit.DeserializeUtf8Legacy(utf8Json, type, options);
     }
 
 #if NET8_0_OR_GREATER

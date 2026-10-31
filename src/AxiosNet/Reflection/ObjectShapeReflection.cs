@@ -2,10 +2,10 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.Internal.Reflection;
+namespace AxiosNet.Reflection;
 
 /// <summary>
-/// 反射版对象形状：按公共可读属性构建（缓存归 <see cref="ShapeCache"/>，本类只负责构建）。
+/// 反射版对象形状：按公共可读属性构建（缓存归 <see cref="AxiosNet.Internal.ShapeCache"/>，本类只负责构建）。
 /// 与生成形状的口径必须逐项一致：只收 public 读访问器、跳过索引器与无法装箱的类型。
 /// </summary>
 internal static class ObjectShapeReflection

@@ -4,8 +4,8 @@ namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
 /// 接口方法的绑定元数据：路由、参数绑定计划、授权、返回类型特化后的调用器；缓存键包含被代理的接口。
-/// 本文件是两条路径共用的部分（契约字段 + 绑定成配置 + 发送）：声明路径见 <c>InterfaceMethodMetadata.Declaration.cs</c>，
-/// 反射路径见 <c>InterfaceMethodMetadata.Reflection.cs</c>。
+/// 本文件是两条路径共用的部分（契约字段 + 绑定成配置 + 发送）：契约构建见 <c>InterfaceMethodMetadata.Contract.cs</c>，
+/// 反射路径见 <c>Reflection/WebAPI/InterfaceMethodMetadataJit.cs</c>。
 /// </summary>
 internal sealed partial class InterfaceMethodMetadata
 {
@@ -60,6 +60,9 @@ internal sealed partial class InterfaceMethodMetadata
 
     /// <summary>声明错误（构建失败时的可读消息）；合法契约为 <c>null</c>。</summary>
     internal string? BuildError => _buildError;
+
+    /// <summary>构建失败时的占位元数据：只携带错误消息，首次使用（<see cref="EnsureValid"/> / <see cref="Invoke"/>）时抛出。</summary>
+    internal static InterfaceMethodMetadata FromError(string message) => new(message);
 
     /// <summary>契约已构建但存在声明错误时抛出（启动期校验 / 首次创建代理用）。</summary>
     public void EnsureValid()
@@ -230,6 +233,50 @@ internal sealed partial class InterfaceMethodMetadata
         // 流式发送内核自己跑授权，这里不再重复。
         return await client.SendStreamAsync<TItem>(invocation, _authorization, config, cancellationToken, format).ConfigureAwait(false);
     }
+
+    // 下面两个成员只由 JIT 反射路径调用（DispatchProxy 入口 / 挂泛型调用器）：
+    // 反射实现本身在 <c>Reflection/WebAPI/InterfaceMethodMetadataJit.cs</c>，这里只保留需要访问私有状态的薄壳。
+
+    /// <summary>DispatchProxy 的调用入口：绑定 / 发送阶段的异常一律包装成 faulted Task，保持异步方法的异常时序。</summary>
+    internal object Invoke(ApiClient client, object?[]? args)
+    {
+        if (_buildError is not null)
+        {
+            // 正常路径不可达；元数据被绕过时直接给出构建错误。
+            throw new InvalidOperationException(_buildError);
+        }
+
+        var actual = args ?? [];
+        try
+        {
+            var cancellationToken = _cancellationTokenIndex >= 0 && actual.Length > _cancellationTokenIndex
+                ? (CancellationToken)actual[_cancellationTokenIndex]!
+                : default;
+
+            return _invoker!(client, this, actual, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return _fault!(ex);
+        }
+    }
+
+    /// <summary>把泛型调用器挂到已构建的契约上（契约本身不变，只是多两个委托）。</summary>
+    internal InterfaceMethodMetadata WithRuntime(
+        Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> invoker,
+        Func<Exception, object> fault)
+        => new(
+            _interfaceType!,
+            _methodName!,
+            _method!,
+            _pathTemplate!,
+            _plan!,
+            _authorization,
+            _cancellationTokenIndex,
+            _isMultipart,
+            _partBindings,
+            invoker,
+            fault);
 
     private static InvalidOperationException DuplicatePart(string owner, string name)
         => new($"{owner} 有多个 Part 绑定使用了同名 \"{name}\"：同名参数请合并为一项（集合值走 AxiosNet 的数组规则）。");

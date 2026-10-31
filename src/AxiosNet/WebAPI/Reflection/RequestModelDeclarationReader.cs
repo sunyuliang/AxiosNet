@@ -1,10 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.Internal;
-using AxiosNet.Internal.Reflection;
+using AxiosNet.Reflection;
 using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal.Reflection;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// JIT 反射读取器：把请求模型上的特性读成 <see cref="RequestModelDeclaration"/>。

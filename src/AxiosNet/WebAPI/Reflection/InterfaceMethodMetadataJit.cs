@@ -1,15 +1,15 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using AxiosNet.WebAPI.Internal.Reflection;
+using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// 接口方法的反射路径：读接口方法特性（<see cref="InterfaceDeclarationReader"/>）、按返回类型特化泛型调用器。
-/// 只在 JIT 下（动态代码可用时）可达；生成代理不经过这里。
+/// 只在 JIT 下（动态代码可用时）可达；生成代理与声明注册都不经过这里。
 /// </summary>
-internal sealed partial class InterfaceMethodMetadata
+internal static class InterfaceMethodMetadataJit
 {
     private const DynamicallyAccessedMemberTypes InterfaceMembers =
         DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.Interfaces;
@@ -27,9 +27,9 @@ internal sealed partial class InterfaceMethodMetadata
     {
         var metadata = Cache.GetOrAdd((interfaceType, method), key => BuildReflection(key.Interface, key.Method, createRuntime: true));
 
-        if (metadata._buildError is not null)
+        if (metadata.BuildError is not null)
         {
-            throw new InvalidOperationException(metadata._buildError);
+            throw new InvalidOperationException(metadata.BuildError);
         }
 
         return metadata;
@@ -41,30 +41,6 @@ internal sealed partial class InterfaceMethodMetadata
         MethodInfo method)
         => BuildReflection(interfaceType, method, createRuntime: false).EnsureValid();
 
-    /// <summary>DispatchProxy 的调用入口：绑定 / 发送阶段的异常一律包装成 faulted Task，保持异步方法的异常时序。</summary>
-    public object Invoke(ApiClient client, object?[]? args)
-    {
-        if (_buildError is not null)
-        {
-            // 正常路径不可达；元数据被绕过时直接给出构建错误。
-            throw new InvalidOperationException(_buildError);
-        }
-
-        var actual = args ?? [];
-        try
-        {
-            var cancellationToken = _cancellationTokenIndex >= 0 && actual.Length > _cancellationTokenIndex
-                ? (CancellationToken)actual[_cancellationTokenIndex]!
-                : default;
-
-            return _invoker!(client, this, actual, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            return _fault!(ex);
-        }
-    }
-
     /// <summary>反射构建：读声明 → 走与生成路径同一份契约构建 → 需要时特化泛型调用器。</summary>
     private static InterfaceMethodMetadata BuildReflection(
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
@@ -74,7 +50,7 @@ internal sealed partial class InterfaceMethodMetadata
         try
         {
             var (owner, declaration) = InterfaceDeclarationReader.Read(interfaceType, method);
-            var metadata = BuildCore(owner, declaration);
+            var metadata = InterfaceMethodMetadata.BuildCore(owner, declaration);
             if (!createRuntime)
             {
                 return metadata;
@@ -92,26 +68,9 @@ internal sealed partial class InterfaceMethodMetadata
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
         {
-            return new InterfaceMethodMetadata(ex.Message);
+            return InterfaceMethodMetadata.FromError(ex.Message);
         }
     }
-
-    /// <summary>把泛型调用器挂到已构建的契约上（契约本身不变，只是多两个委托）。</summary>
-    private InterfaceMethodMetadata WithRuntime(
-        Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> invoker,
-        Func<Exception, object> fault)
-        => new(
-            _interfaceType!,
-            _methodName!,
-            _method!,
-            _pathTemplate!,
-            _plan!,
-            _authorization,
-            _cancellationTokenIndex,
-            _isMultipart,
-            _partBindings,
-            invoker,
-            fault);
 
     /// <summary>按返回形态选调用器：非泛型响应与 <c>Task</c> 直接闭包，其余泛型实例按正文类型特化。</summary>
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateInvoker(
@@ -143,7 +102,7 @@ internal sealed partial class InterfaceMethodMetadata
         "IL3050",
         Justification = "只在反射路径创建泛型调用器：BuildReflection 仅由 Get / Validate 调用，两者都在 RuntimeFeature.IsDynamicCodeSupported 为 true 时可达，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateResponseInvoker(Type responseType)
-        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
+        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadataJit)
             .GetMethod(nameof(CreateResponseInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
@@ -153,7 +112,7 @@ internal sealed partial class InterfaceMethodMetadata
         "IL3050",
         Justification = "只在反射路径创建泛型调用器：BuildReflection 仅由 Get / Validate 调用，两者都在 RuntimeFeature.IsDynamicCodeSupported 为 true 时可达，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateDataInvoker(Type responseType)
-        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
+        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadataJit)
             .GetMethod(nameof(CreateDataInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
@@ -165,7 +124,7 @@ internal sealed partial class InterfaceMethodMetadata
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateStreamInvoker(
         Type frameType,
         AxiosStreamFormat format)
-        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadata)
+        => (Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>)typeof(InterfaceMethodMetadataJit)
             .GetMethod(nameof(CreateStreamInvokerCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(frameType)
             .Invoke(null, [format])!;
@@ -197,7 +156,7 @@ internal sealed partial class InterfaceMethodMetadata
         "IL3050",
         Justification = "只在反射路径创建泛型调用器：BuildReflection 仅由 Get / Validate 调用，两者都在 RuntimeFeature.IsDynamicCodeSupported 为 true 时可达，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<Exception, object> CreateResponseFault(Type responseType)
-        => (Func<Exception, object>)typeof(InterfaceMethodMetadata)
+        => (Func<Exception, object>)typeof(InterfaceMethodMetadataJit)
             .GetMethod(nameof(CreateResponseFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
@@ -207,7 +166,7 @@ internal sealed partial class InterfaceMethodMetadata
         "IL3050",
         Justification = "只在反射路径创建泛型调用器：BuildReflection 仅由 Get / Validate 调用，两者都在 RuntimeFeature.IsDynamicCodeSupported 为 true 时可达，Native AOT 下不可达。生成代理不经过这里。")]
     private static Func<Exception, object> CreateDataFault(Type responseType)
-        => (Func<Exception, object>)typeof(InterfaceMethodMetadata)
+        => (Func<Exception, object>)typeof(InterfaceMethodMetadataJit)
             .GetMethod(nameof(CreateDataFaultCore), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;

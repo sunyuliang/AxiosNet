@@ -3,7 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace AxiosNet.Internal.Reflection;
+namespace AxiosNet.Reflection;
 
 /// <summary>
 /// 属性取值器：JIT 下把 getter 缓存成强类型委托，AOT 下退回反射取值。

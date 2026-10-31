@@ -2,13 +2,13 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using AxiosNet.WebAPI.Metadata;
 
-namespace AxiosNet.Serialization;
+namespace AxiosNet.Reflection;
 
 /// <summary>
-/// <see cref="SystemTextJsonSerializer"/> 的反射回退：没有 <c>TypeInfoResolver</c> 时 STJ 只能用反射重载，
+/// System.Text.Json 的反射回退：没有 <c>TypeInfoResolver</c> 时 STJ 只能用反射重载，
 /// 反射被关掉（Native AOT）时在这里给出可读错误而不是 STJ 内部的异常。
 /// </summary>
-public sealed partial class SystemTextJsonSerializer
+internal static class JsonSerializerJit
 {
     [UnconditionalSuppressMessage(
         "Trimming",
@@ -18,7 +18,7 @@ public sealed partial class SystemTextJsonSerializer
         "AOT",
         "IL3050",
         Justification = "同上：AOT 下反射被配置关闭，不会走到该重载。")]
-    private static string SerializeLegacy(object? value, Type type, JsonSerializerOptions options)
+    public static string SerializeLegacy(object? value, Type type, JsonSerializerOptions options)
         => JsonSerializer.Serialize(value, type, options);
 
     [UnconditionalSuppressMessage(
@@ -29,7 +29,7 @@ public sealed partial class SystemTextJsonSerializer
         "AOT",
         "IL3050",
         Justification = "同上：AOT 下反射被配置关闭，不会走到该重载。")]
-    private static object? DeserializeLegacy(string json, Type type, JsonSerializerOptions options)
+    public static object? DeserializeLegacy(string json, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize(json, type, options);
 
     [UnconditionalSuppressMessage(
@@ -40,12 +40,12 @@ public sealed partial class SystemTextJsonSerializer
         "AOT",
         "IL3050",
         Justification = "同上：AOT 下反射被配置关闭，不会走到该重载。")]
-    private static object? DeserializeUtf8Legacy(ReadOnlySpan<byte> utf8Json, Type type, JsonSerializerOptions options)
+    public static object? DeserializeUtf8Legacy(ReadOnlySpan<byte> utf8Json, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize(utf8Json, type, options);
 
 #if NET8_0_OR_GREATER
     /// <summary>没有 resolver 时，STJ 只在反射回退开启（JIT）时才能解析。</summary>
-    private static void EnsureReflectionMetadata(Type type)
+    public static void EnsureReflectionMetadata(Type type)
     {
         if (!JsonSerializer.IsReflectionEnabledByDefault)
         {
@@ -58,7 +58,7 @@ public sealed partial class SystemTextJsonSerializer
     private const string ReflectionSwitchName = "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault";
 
     /// <summary>没有 resolver 时，反射是唯一路径：开关未设置视为开启（JIT 默认），关掉时按缺元数据拒绝。</summary>
-    private static void EnsureReflectionMetadata(Type type)
+    public static void EnsureReflectionMetadata(Type type)
     {
         if (!AppContext.TryGetSwitch(ReflectionSwitchName, out var enabled) || enabled)
         {

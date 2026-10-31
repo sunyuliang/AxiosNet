@@ -1,7 +1,7 @@
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Internal;
-using AxiosNet.WebAPI.Internal.Reflection;
+using AxiosNet.WebAPI.Reflection;
 
 namespace AxiosNet.Tests.WebAPI;
 
@@ -96,7 +96,7 @@ public sealed class InterfaceMetadataTests
     {
         var method = typeof(T).GetMethods().Single();
 
-        return InterfaceMethodMetadata.Get(typeof(T), method);
+        return InterfaceMethodMetadataJit.Get(typeof(T), method);
     }
 }
 

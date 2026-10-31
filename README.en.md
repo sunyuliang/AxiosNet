@@ -1668,7 +1668,7 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 - **Zero configuration**: no `TrimmerRootAssembly`, no hand-written registration;
 - **One declaration for both paths**: the generator only writes facts (route / members / bindings / authorization); validation and the binding plan still run through the shared runtime builder, so JIT and AOT behave the same and produce the same error text;
 - **No runtime reflection over models or interfaces**: request models read members through direct getter delegates; interface proxies only "gather arguments → call the shared binding implementation" and never use `MakeGenericMethod`; under AOT a registry miss throws `AxiosAotMetadataException` (with repair guidance) instead of silently dropping fields;
-- **JIT-only reflection is trimmed away**: the reflection readers for interface declarations, request models, custom dictionaries and object shapes, plus the `DispatchProxy` fallback, live only inside branches guarded by `RuntimeFeature.IsDynamicCodeSupported`; ILC folds that to the constant `false`, so the whole block becomes unreachable and is trimmed together with its types — package consumers do not pay for code that only ever runs on the JIT;
+- **JIT-only reflection is trimmed away**: the reflection readers for interface declarations, request models, custom dictionaries and object shapes, plus the `DispatchProxy` fallback (collected in `Reflection/` and `WebAPI/Reflection/`), live only inside branches guarded by `RuntimeFeature.IsDynamicCodeSupported`; ILC folds that to the constant `false`, so the whole block becomes unreachable and is trimmed together with its types — package consumers do not pay for code that only ever runs on the JIT;
 - **Where interface proxies are emitted**: non-generic interfaces at their declaration; closed generic interfaces (`IRepo<User>`) at the `Create<T>()` / `AddApiInterface<T>()` / `ValidateInterfaces(typeof(...))` call site, while an open generic declaration itself (including a nested interface whose outer type is open generic) only reports `AXA011` (suppressed when the same compilation contains a closed call site). When a referenced assembly has already generated a proxy for the same interface, the consumer recognises it by the generated class name and reuses that registration instead of emitting a duplicate (a duplicate registration would throw at startup); only when the referenced assembly did not run the generator does the consumer generate at the call site;
 - **Fallback path**: without generated metadata JIT falls back to `DispatchProxy`; Native AOT has no fallback and throws `AxiosAotMetadataException`;
 - **Prerequisite**: consumers need C# 9 or later (`[ModuleInitializer]`); the generator itself targets `netstandard2.0` and ships with the package (built against Roslyn 4.0.1, so any compiler from .NET SDK 6.0.100 / VS 2022 17.0 onward can load it);
@@ -1742,7 +1742,7 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1970 / 1963 | `net8.0` / `net6.0` | 3933 |
+| `AxiosNet.Tests` (core + declarative) | 1971 / 1964 | `net8.0` / `net6.0` | 3935 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | **Total** | **2024 / 2015** | | **4039** |
 
@@ -1868,8 +1868,10 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ Serialization/               # IContentSerializer + JSON / XML implementations
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / statistics + handler injection
-│  │  ├─ WebAPI/                      # declarative API client (model-based / interface-based)
+│  │  ├─ WebAPI/                      # declarative API client (model-based / interface-based; Internal/ = shared contract, Reflection/ = JIT-only)
+│  │  ├─ Reflection/                  # object-shape and STJ reflection fallbacks (JIT-only, trimmed away entirely under AOT)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
+│  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
 ├─ samples/                           # Simple (50 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
@@ -1879,6 +1881,8 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet (per-stage cost of one implementation)
    └─ AxiosNet.Comparison/             # cross-implementation comparison (RPS / p99 / allocations, optional gate)
 ```
+
+Only two folder rules: feature directories (`WebAPI/`, `Serialization/`, `Internal/`) split by concern, and **JIT-only reflection implementations always live under a `Reflection/` folder, of which there are exactly two** — the root `Reflection/` holds the cross-feature building blocks (object-shape reflection, the STJ reflection fallback), while `WebAPI/Reflection/` holds the reflection readers and `DispatchProxy` fallback that belong to the declarative API feature. The converse also holds: code outside a `Reflection/` folder does not touch reflection directly.
 
 ## License
 

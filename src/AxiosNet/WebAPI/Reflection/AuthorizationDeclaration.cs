@@ -1,6 +1,7 @@
 using System.Reflection;
+using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal.Reflection;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// 读一层的授权声明（<see cref="AllowAnonymousAttribute"/> / <see cref="AuthorizeAttribute"/>）。

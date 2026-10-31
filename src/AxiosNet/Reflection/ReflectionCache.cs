@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json.Serialization;
 
-namespace AxiosNet.Internal.Reflection;
+namespace AxiosNet.Reflection;
 
 /// <summary>
 /// 属性级反射元数据缓存：按 <see cref="PropertyInfo"/> 缓存字段名与忽略标记，避免每请求重复读特性。

@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
 
-namespace AxiosNet.WebAPI.Internal.Reflection;
+namespace AxiosNet.WebAPI.Reflection;
 
 /// <summary>
 /// 接口级声明的反射读取与静态校验：接口形状、路由特性、返回类型、参数绑定特性。
@@ -321,7 +321,7 @@ internal static class InterfaceDeclaration
             try
             {
                 // 只构建契约，不创建泛型调用器。
-                InterfaceMethodMetadata.Validate(interfaceType, method);
+                InterfaceMethodMetadataJit.Validate(interfaceType, method);
             }
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
             {
