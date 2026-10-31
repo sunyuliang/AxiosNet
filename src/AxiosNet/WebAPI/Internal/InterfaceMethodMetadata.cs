@@ -62,6 +62,9 @@ internal sealed class InterfaceMethodMetadata
     /// <summary>声明里的方法名（生成代理用它校验索引是否与注册声明一致）。</summary>
     internal string? Name => _methodName;
 
+    /// <summary>声明错误（构建失败时的可读消息）；合法契约为 <c>null</c>。</summary>
+    internal string? BuildError => _buildError;
+
     /// <summary>取（必要时构建并缓存）方法元数据；构建期错误在首次访问时抛 <see cref="InvalidOperationException"/>。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",

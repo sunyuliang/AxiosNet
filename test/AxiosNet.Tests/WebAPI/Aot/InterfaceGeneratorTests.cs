@@ -101,7 +101,7 @@ public sealed class InterfaceGeneratorTests
         var (result, diagnostics, output) = RunGenerator(ClosedGenericInterface.Replace("__NS__", ns));
 
         Assert.Empty(diagnostics);
-        Assert.Single(result.Results.Single().GeneratedSources);
+        Assert.Single(ProxySources(result));
 
         var assembly = LoadEmitted(output);
         var repoType = assembly.GetType(ns + ".IRepo`1", throwOnError: true)!
@@ -154,7 +154,7 @@ public sealed class InterfaceGeneratorTests
         Assert.Equal(DiagnosticSeverity.Warning, diagnostics.Single(static d => d.Id == "AXA011").Severity);
 
         // 合法接口生成代理；接口级授权冲突可静态表达，注册后由共享构建器在首次使用时抛出。
-        var sources = result.Results.Single().GeneratedSources;
+        var sources = ProxySources(result).ToArray();
         Assert.Equal(2, sources.Length);
         Assert.Contains(sources, static source => source.SourceText.ToString().Contains("IGoodApi"));
 
@@ -207,7 +207,7 @@ public sealed class InterfaceGeneratorTests
 
         var fallback = CompileConsumer(libNs, plainLibBytes);
         Assert.Empty(fallback.Diagnostics);
-        Assert.Single(fallback.Result.Results.Single().GeneratedSources);
+        Assert.Single(ProxySources(fallback.Result));
         var fallbackAssembly = LoadEmitted(fallback.Compilation);
         await AssertProxySendsRequest(fallbackAssembly, plainLibType);
     }
@@ -239,7 +239,7 @@ public sealed class InterfaceGeneratorTests
 
         var (libResult, libDiagnostics, libCompilation) = RunGenerator(libSource);
         Assert.Empty(libDiagnostics);
-        Assert.Single(libResult.Results.Single().GeneratedSources);
+        Assert.Single(ProxySources(libResult));
 
         var libBytes = EmitToBytes(libCompilation);
         var libAssembly = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(libBytes));
@@ -299,8 +299,8 @@ public sealed class InterfaceGeneratorTests
         var second = CompileSibling("B", contractsNs, contractsBytes);
         Assert.Empty(first.Diagnostics);
         Assert.Empty(second.Diagnostics);
-        Assert.Single(first.Result.Results.Single().GeneratedSources);
-        Assert.Single(second.Result.Results.Single().GeneratedSources);
+        Assert.Single(ProxySources(first.Result));
+        Assert.Single(ProxySources(second.Result));
 
         var contractsAssembly = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(contractsBytes));
         RuntimeHelpers.RunModuleConstructor(contractsAssembly.ManifestModule.ModuleHandle);
@@ -444,7 +444,7 @@ public sealed class InterfaceGeneratorTests
 
         // 开放声明无法静态命名（Outer<T> 未闭合），AXA011 由同一编译里的闭合调用点抵消。
         Assert.Empty(diagnostics);
-        Assert.Single(result.Results.Single().GeneratedSources);
+        Assert.Single(ProxySources(result));
 
         var assembly = LoadEmitted(output);
         var innerType = assembly.GetType(ns + ".Container`1+IInnerApi", throwOnError: true)!.MakeGenericType(typeof(int));
@@ -467,7 +467,7 @@ public sealed class InterfaceGeneratorTests
         source = LibraryInterface.Replace("__NS__", ns);
         var (result, diagnostics, compilation) = RunGenerator(source);
         Assert.Empty(diagnostics);
-        Assert.Single(result.Results.Single().GeneratedSources);
+        Assert.Single(ProxySources(result));
         return EmitToBytes(compilation);
     }
 

@@ -1,13 +1,27 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.WebAPI.Internal;
+using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.WebAPI;
 
 public sealed partial class ApiClient
 {
-    /// <summary>校验接口级声明，返回全部错误（空集合 = 合法）；不创建代理，可在启动时扫描后统一报告。</summary>
-    [RequiresUnreferencedCode("接口级校验通过反射读取接口方法与参数特性；裁剪时需 root 接口类型及其参数 / 返回类型。")]
+    /// <summary>
+    /// 校验接口级声明，返回全部错误（空集合 = 合法）；不创建代理，可在启动时扫描后统一报告。
+    /// 生成器 / 手工注册过的接口走声明路径（Native AOT 下同样可用）；未注册的接口只在 JIT 下回退反射。
+    /// </summary>
+    // ILLink 不支持在 Type[] 上标注 DynamicallyAccessedMembers（IL2098），只能在实现处抑制：
+    // JIT 回退会反射接口成员，PublishTrimmed 下调用方需自行 root 接口（AOT 下由源生成器提供元数据，不走反射）。
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "反射回退只在 RuntimeSupport.IsDynamicCodeSupported 为 true 时可达；AOT 下未注册的接口直接报告缺少元数据，不反射。"
+            + "PublishTrimmed（非 AOT）下需调用方 root 接口类型。")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2062",
+        Justification = "同上：反射回退（InterfaceDeclaration.Validate）只在 JIT 下可达，AOT 下提前返回缺少元数据的错误。")]
     public static IReadOnlyList<string> ValidateInterfaces(params Type[] interfaceTypes)
     {
         ArgumentNullException.ThrowIfNull(interfaceTypes);
@@ -28,17 +42,51 @@ public sealed partial class ApiClient
                 continue;
             }
 
+            if (!interfaceType.IsInterface)
+            {
+                errors.Add($"{interfaceType.FullName} 不是接口：接口级声明只能用于 interface 类型。");
+                continue;
+            }
+
+            if (interfaceType.IsGenericTypeDefinition)
+            {
+                errors.Add($"接口 {interfaceType.Name} 是开放泛型：请使用闭合的接口类型（如 IUserApi / IRepo<User>）。");
+                continue;
+            }
+
+            if (GeneratedMetadataRegistry.TryGetInterface(interfaceType, out var entry))
+            {
+                errors.AddRange(entry.ValidateAll());
+                continue;
+            }
+
+            if (!RuntimeSupport.IsDynamicCodeSupported)
+            {
+                errors.Add(AxiosAotMetadataException.MissingInterface(interfaceType).Message);
+                continue;
+            }
+
             errors.AddRange(InterfaceDeclaration.Validate(interfaceType));
         }
 
         return errors;
     }
 
-    /// <summary>扫描程序集中标注了路由特性的接口并校验（普通接口自动跳过）。</summary>
+    /// <summary>扫描程序集中标注了路由特性的接口并校验（普通接口自动跳过）。Native AOT 下不可用，改用生成的 ValidateAll 或按类型校验。</summary>
+    /// <exception cref="PlatformNotSupportedException">当前运行时禁用动态代码（Native AOT）：改用生成的 <c>ValidateAll()</c> 或按类型校验。</exception>
     [RequiresUnreferencedCode("程序集扫描通过反射枚举类型；裁剪时需 root 接口程序集。")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2072",
+        Justification = "程序集扫描本身已标注 RequiresUnreferencedCode：扫描出来的类型无法携带裁剪标注，这里的接口成员访问不再单独报裁剪警告。")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2062",
+        Justification = "同上：程序集扫描出的类型不具备裁剪标注，接口校验的成员访问由 RequiresUnreferencedCode 统一承担。")]
     public static IReadOnlyList<string> ValidateInterfaces(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
+        EnsureAssemblyScanSupported();
 
         var errors = new List<string>();
 

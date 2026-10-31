@@ -15,7 +15,8 @@ namespace AxiosNet.SourceGen
     /// </summary>
     public sealed partial class RequestModelGenerator
     {
-        private void InitializeInterfaces(
+        /// <summary>注册接口代理生成，并返回「声明 + 调用点」合并后的接口模型流（供校验入口复用）。</summary>
+        private static IncrementalValueProvider<ImmutableArray<InterfaceModelInfo>> InitializeInterfaces(
             IncrementalGeneratorInitializationContext context,
             IncrementalValueProvider<GeneratorOptions> options)
         {
@@ -31,9 +32,16 @@ namespace AxiosNet.SourceGen
                     transform: static (ctx, ct) => TransformCallSite(ctx, ct))
                 .SelectMany(static (models, _) => models);
 
+            var collectedDeclarations = declarations.Collect();
+            var collectedCallSites = callSites.Collect();
+
             context.RegisterSourceOutput(
-                declarations.Collect().Combine(callSites.Collect()).Combine(options),
+                collectedDeclarations.Combine(collectedCallSites).Combine(options),
                 static (output, pair) => ExecuteInterfaces(output, pair.Left.Left, pair.Left.Right, pair.Right));
+
+            return collectedDeclarations
+                .Combine(collectedCallSites)
+                .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
         }
 
         private static void ExecuteInterfaces(

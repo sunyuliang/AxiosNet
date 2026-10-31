@@ -30,15 +30,17 @@ namespace AxiosNet.SourceGen
                 .Where(static model => model is not null)
                 .Select(static (model, _) => model!);
 
+            var collectedModels = models.Collect();
             var options = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) => new GeneratorOptions(
                 Enabled: !string.Equals(GetProperty(provider, "build_property.AxiosNetSourceGen"), "false", StringComparison.OrdinalIgnoreCase),
                 PublishAot: string.Equals(GetProperty(provider, "build_property.PublishAot"), "true", StringComparison.OrdinalIgnoreCase)));
 
-            context.RegisterSourceOutput(models.Collect().Combine(options), static (output, pair)
+            context.RegisterSourceOutput(collectedModels.Combine(options), static (output, pair)
                 => Execute(output, pair.Left, pair.Right));
 
-            InitializeInterfaces(context, options);
+            var interfaces = InitializeInterfaces(context, options);
             InitializeShapes(context, options);
+            InitializeValidation(context, collectedModels, interfaces, options);
         }
 
         private static bool IsCandidate(SyntaxNode node)

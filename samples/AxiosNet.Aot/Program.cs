@@ -18,14 +18,11 @@ var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
     TypeInfoResolver = ExchangeJsonContext.Default,
 };
 
-// 启动期体检：显式传入 typeof，避免 ValidateModels(Assembly) 的运行时类型枚举。
-var modelErrors = ApiClient.ValidateModels(
-    typeof(GetPersonRequest),
-    typeof(CreatePersonRequest),
-    typeof(SearchPersonRequest));
-if (modelErrors.Count > 0)
+// 启动期体检：源生成器为「本程序集的请求模型 + 接口」写出的 ValidateAll（AOT 下不扫描程序集）。
+var validationErrors = AxiosNet.Generated.AxiosNetValidation_AxiosNet_Aot.ValidateAll();
+if (validationErrors.Count > 0)
 {
-    throw new InvalidOperationException(string.Join(Environment.NewLine, modelErrors));
+    throw new InvalidOperationException(string.Join(Environment.NewLine, validationErrors));
 }
 
 // 1) axios 风格：POST JSON + 泛型回读
@@ -200,6 +197,7 @@ if (feedCount != 2)
 }
 
 Console.WriteLine($"POST /echo      -> {posted.Data?.Name} / {posted.Data?.Age} / {posted.Data?.Address?.City}");
+Console.WriteLine("校验入口        -> 生成的 ValidateAll 覆盖请求模型 + 接口 / 无错误");
 Console.WriteLine($"GET persons/7   -> {fetched.Data?.Name} / query+header+auth 校验通过");
 Console.WriteLine($"POST persons    -> {created.Data?.Name} / body+query+auth 校验通过");
 Console.WriteLine($"GET persons     -> {searched.Data?.Name} / 匿名请求校验通过");

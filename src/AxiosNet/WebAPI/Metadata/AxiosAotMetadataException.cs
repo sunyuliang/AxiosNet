@@ -45,8 +45,17 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
     /// <summary>System.Text.Json 缺少该类型的源生成元数据。</summary>
     internal static AxiosAotMetadataException MissingJsonPropertyInfo(Type type)
         => new($"类型 {Describe(type)} 没有可用的 System.Text.Json 元数据："
-            + "Native AOT 下反射回退默认关闭。请把该类型加入 JsonSerializerContext 的 [JsonSerializable]，"
-            + "并在 AxiosJson.Options（或实例 / 单次请求的 Serialization.JsonSerializerOptions）上设置 TypeInfoResolver。");
+            + "Native AOT 下反射回退默认关闭。"
+            + (IsAnonymousType(type)
+                ? "该类型是匿名类型：匿名类型无法写进 JsonSerializerContext 的 [JsonSerializable]，请改用命名类型，"
+                    + "或改用 params / 表单发送该对象的扁平字段。"
+                : "请把该类型加入 JsonSerializerContext 的 [JsonSerializable]，"
+                    + "并在 AxiosJson.Options（或实例 / 单次请求的 Serialization.JsonSerializerOptions）上设置 TypeInfoResolver。"));
+
+    /// <summary>匿名类型的编译器生成名形如 <c>&lt;&gt;f__AnonymousType0`1</c>（C#）/ <c>VB$AnonymousType_0</c>（VB）；只做前缀判断。</summary>
+    private static bool IsAnonymousType(Type type)
+        => type.Name.StartsWith("<>", StringComparison.Ordinal)
+            || type.Name.StartsWith("VB$AnonymousType", StringComparison.Ordinal);
 
     private static string Describe(Type type) => type.FullName ?? type.Name;
 

@@ -191,15 +191,31 @@ internal sealed class InterfaceEntry
     /// <summary>构建全部方法契约（不创建泛型调用器）：Create 时一次性暴露全部声明错误。</summary>
     public void Validate()
     {
-        // 接口级错误（configure 在声明任何方法前抛错）没有方法可挂：先单独抛出，避免被空方法表吞掉。
+        var errors = ValidateAll();
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
+        }
+    }
+
+    /// <summary>返回全部声明错误（按方法顺序，保留重载各自的错误）；空列表 = 合法。启动期校验与 Create 共用。</summary>
+    public IReadOnlyList<string> ValidateAll()
+    {
+        // 接口级错误（configure 在声明任何方法前抛错）没有方法可挂：直接返回，避免被空方法表吞掉。
         if (Declaration.Error is { } error)
         {
-            throw new InvalidOperationException(error);
+            return [error];
         }
 
+        var errors = new List<string>();
         foreach (var method in GetMethods())
         {
-            method.EnsureValid();
+            if (method.BuildError is { } buildError)
+            {
+                errors.Add(buildError);
+            }
         }
+
+        return errors;
     }
 }

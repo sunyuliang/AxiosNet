@@ -62,6 +62,18 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 #if NET8_0_OR_GREATER
     private static string SerializeCore(object? value, Type type, JsonSerializerOptions options)
     {
+        // null 请求体与类型无关：不需要任何元数据，按 STJ 默认输出 null（否则空体会被误报为缺元数据）。
+        if (value is null)
+        {
+            // 但 null 传给非可空值类型仍是非法调用：STJ 会抛，net6 走 legacy 也抛，这里不能静默产出 "null"。
+            if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
+            {
+                throw new ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
+            }
+
+            return "null";
+        }
+
         // 没有 TypeInfoResolver 时保持旧的反射重载语义（含匿名类型）；AOT 下反射默认关闭，提前给出可读错误。
         if (options.TypeInfoResolver is null)
         {
@@ -102,6 +114,13 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     {
         for (var current = type; current is not null; current = current.BaseType)
         {
+            if (current == typeof(object) && type != typeof(object))
+            {
+                // object 的元数据只描述 object：拿它序列化派生实例会按「未注册的运行时类型」报错，
+                // 而且错误文本指向 STJ 内部，不如直接报缺元数据。
+                break;
+            }
+
             try
             {
                 return options.GetTypeInfo(current);
