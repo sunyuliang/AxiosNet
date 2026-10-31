@@ -184,7 +184,8 @@ public sealed class ErrorModelTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://example.com/" });
         var huge = new string('a', 200_000);
 
-        // .NET 的 Uri 上限是 65519 字符，超长查询串只能报 ERR_INVALID_URL；
+        // 超长 URL 一律报 ERR_INVALID_URL，由库的闸门（UrlBuilder.MaxUrlLength = 65519）保证：
+        // .NET 10 之前 Uri 自己会抛，之后 Uri 不再限长，只能靠这道闸门——两个运行时的结果因此一致；
         // 但消息里不该塞进整条 URL（否则一条日志几十万字符）。
         var ex = Assert.Throws<AxiosException>(() => client.GetUri(c =>
         {

@@ -742,7 +742,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_QUEUE_FULL` | Queue depth already at `MaxQueueLength` (request never sent, not queued) |
 | `ERR_CIRCUIT_OPEN` | Circuit is open, request **not sent** (`RetryAfter` suggests how long to wait) |
 | `ERR_POOL_EXHAUSTED` | Pool origin cardinality saturated (all in flight, no evictable idle node); request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry |
-| `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme |
+| `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme, or a URL longer than 65519 characters (the pre-.NET 10 `Uri` limit, now enforced by the library itself) |
 | `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…) |
 
 Branch on `ex.ErrorCode` (an enum you can exhaustively `switch`) or `ex.Code` (the axios-aligned string); never parse the message:
@@ -1804,6 +1804,25 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 ```
 
 A plain `dotnet test` still runs everything, excluded classes included.
+
+### Runtime matrix
+
+"Compile target" and "runtime" are two different dimensions, and they cover different things:
+
+| Dimension | CI coverage | Why each entry must be exercised |
+| --- | --- | --- |
+| Compile target | the two `lib/` assets, `net6.0` and `net8.0` | the library source has nine `NET*_OR_GREATER` sites; the other side of each is not even compiled into IL under the other target |
+| Runtime | .NET 6.0 and .NET 10.0 | the same `lib/net8.0` asset is loaded by .NET 8 / 9 / 10 / 11, each with a different BCL implementation |
+
+The first dimension is covered by `build-test` (`dotnet test` without `-f`, so each TFM runs once); the second by `test-runtime` — no `TargetFrameworks` change, no extra TFM, no packaging change, just host roll-forward putting the `net8.0` test host on a newer runtime, which is exactly how a consumer on a newer runtime loads the `net8.0` asset:
+
+```bash
+DOTNET_ROLL_FORWARD=LatestMajor dotnet test <project> -f net8.0
+```
+
+It must be `LatestMajor`: `Major` prefers the latest patch within the same major (8.0.x), and only `LatestMajor` crosses majors. Assert the target runtime is installed first — when roll-forward finds nothing newer it falls back silently to net8, and the run still goes green while covering nothing.
+
+Only .NET 10 is added, not 9 or 11: .NET 8 and 9 both go out of support on 2026-11-10, 10 is LTS (through 2028-11-14) and the only version currently in active support, and 11 has not shipped. The concurrency performance suite does not take part in this pass — it judges the ratio against `HttpClient`, and changing the runtime changes the baseline; performance on a newer runtime needs its own baseline.
 
 ### Native AOT verification
 

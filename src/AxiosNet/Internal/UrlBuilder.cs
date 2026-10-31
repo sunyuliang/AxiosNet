@@ -82,6 +82,17 @@ internal static class UrlBuilder
         {
             var uri = new Uri(pathAndQuery, UriKind.RelativeOrAbsolute);
 
+            // 长度闸门：.NET 10 起 Uri 取消了约 65519 字符的长度上限（官方 breaking change
+            // 「URI length limits removed」），同一个超长地址在 net6 / net8 上被 Uri 拒、在 net10 上构造成功——
+            // 对外契约会随运行时漂移（net10 上一条几十万字符的 URL 会真的变成一次请求）。
+            // 这里补一道与运行时无关的判定，边界取 net6 / net8 的实测值（65519 可用、65520 起抛），
+            // 三个运行时的表现因此一致：超长地址一律 ERR_INVALID_URL。
+            // 放在 new Uri 之后是刻意的：旧目标上 Uri 先抛，既有的 UriFormatException 归一化路径与覆盖都不受影响。
+            if (pathAndQuery.Length > MaxUrlLength)
+            {
+                throw AxiosException.InvalidUrl(pathAndQuery, config);
+            }
+
             // 必须使用 http/https 绝对地址；IsFile 拦下 Unix 下被解析成 file:/// 的根相对路径。
             if (!uri.IsAbsoluteUri || uri.IsFile || !IsHttpScheme(uri))
             {
@@ -96,6 +107,13 @@ internal static class UrlBuilder
             throw AxiosException.InvalidUrl(pathAndQuery, config, ex);
         }
     }
+
+    /// <summary>
+    /// URL 长度上限，对应 <c>ERR_INVALID_URL</c>。取 .NET 10 之前 <see cref="Uri"/> 的实测边界
+    /// （65519 字符可用、65520 起抛 <see cref="UriFormatException"/>）；.NET 10 取消了这道限制，
+    /// 多目标运行时下必须由库自己守住同一个边界，否则同一份代码在不同运行时上接受不同的输入。
+    /// </summary>
+    private const int MaxUrlLength = 65519;
 
     /// <summary>解析结果缓存上限：满了整表清空，URL 集合频繁变化时不会无限增长。</summary>
     private const int UriCacheLimit = 256;

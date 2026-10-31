@@ -320,7 +320,8 @@ public class AxiosException : Exception
 
     internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null, string? message = null)
     {
-        // 超长 URL 本身就会让 Uri 拒绝解析，整条塞进消息只会变成几十万字符。
+        // 超长 URL 整条塞进消息只会变成几十万字符的日志。长度本身由 UrlBuilder 的闸门负责拒
+        // （.NET 10 起 Uri 不再限长，不能再指望它挡），这里只保证消息恒定在 MaxUrlInMessage 量级。
         return new AxiosException(message ?? $"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
     }
 

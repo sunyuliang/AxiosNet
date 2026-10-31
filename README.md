@@ -743,7 +743,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_QUEUE_FULL` | 排队深度已达 `MaxQueueLength`（请求未发出、也没入队） |
 | `ERR_CIRCUIT_OPEN` | 熔断打开，请求**没有发出**（`RetryAfter` 给建议等待） |
 | `ERR_POOL_EXHAUSTED` | 连接池 origin 基数饱和（全部在途、无可驱逐空闲节点），请求未发出；可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试 |
-| `ERR_INVALID_URL` | URL 非法、相对地址但没有 `BaseAddress`、非 http(s) scheme |
+| `ERR_INVALID_URL` | URL 非法、相对地址但没有 `BaseAddress`、非 http(s) scheme、长度超过 65519 字符（与 .NET 10 之前的 `Uri` 上限一致，由库自己守住） |
 | `ERR_BAD_OPTION_VALUE` | 选项取值非法（按请求写实例级选项、multipart 头体矛盾、`Params` 是标量、重试 / 熔断配置越界等） |
 
 分支判断优先用 `ex.ErrorCode`（枚举，`switch` 能穷举）或 `ex.Code`（与 axios 对齐的字符串），不要解析消息文本：
@@ -1804,6 +1804,25 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 ```
 
 普通 `dotnet test` 仍然全跑（含被排除的这几类）。
+
+### 运行时矩阵
+
+「编译目标」与「运行时」是两个维度，覆盖的东西不同：
+
+| 维度 | CI 覆盖 | 为什么必须逐项跑 |
+| --- | --- | --- |
+| 编译目标 | `net6.0` / `net8.0` 两份 `lib/` 资产 | 源码里有 9 处 `NET*_OR_GREATER` 条件编译，另一侧分支在别的目标里根本没进 IL |
+| 运行时 | .NET 6.0 与 .NET 10.0 | 同一份 `lib/net8.0` 资产被 .NET 8 / 9 / 10 / 11 加载，BCL 实现各不相同 |
+
+前一个维度由 `build-test` 覆盖（`dotnet test` 不带 `-f`，两个 TFM 各执行一次）；后一个维度由 `test-runtime` 覆盖——不改 `TargetFrameworks`、不加 TFM、不改包结构，只用 host 前滚让 `net8.0` 测试宿主在更高版本的运行时上执行，也就是消费者引用 `net8.0` 资产的主流形态：
+
+```bash
+DOTNET_ROLL_FORWARD=LatestMajor dotnet test <project> -f net8.0
+```
+
+必须是 `LatestMajor`：`Major` 会优先留在同一 major 的最新补丁（8.0.x），只有 `LatestMajor` 才真的跨 major。执行前先断言目标运行时已安装——前滚找不到更高版本时会静默回落到 net8，回落之后测试照样全绿，覆盖等于没做。
+
+只加 .NET 10、不加 9 / 11：.NET 8 与 9 同在 2026-11-10 退出支持，10 是 LTS（到 2028-11-14）且是当前唯一处于活动支持期的版本，11 尚未 GA。并发性能用例不参与这一轮——它判的是与 `HttpClient` 的配对比值，换运行时等于换基线；要验高版本运行时上的性能得另建基线。
 
 ### Native AOT 验证
 
