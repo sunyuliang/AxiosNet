@@ -25,6 +25,7 @@ public sealed class TransportProfileExample : IExample
             .AddTransport("tenant-a", new ConnectionTransportOptions { UseCookies = true })
             .AddTransport("tenant-b", new ConnectionTransportOptions { UseCookies = true });
 
+        // 池与客户端随本次运行新建：Cookie 会话与租约统计需要从干净状态开始
         using var pool = new HttpConnectionPool(options);
         using var client = new AxiosClient(pool: pool);
 

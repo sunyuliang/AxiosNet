@@ -32,6 +32,7 @@ public sealed class CircuitExample : IExample
         breaker.StateChanged += change =>
             Console.WriteLine($"    [StateChanged] {change.Host}: {change.Previous} -> {change.Current}");
 
+        // 客户端随熔断器新建：熔断状态是本次运行的状态，静态复用会带上上一轮的打开 / 半开进度
         using var client = new AxiosClient(new AxiosConfig
         {
             Circuit =

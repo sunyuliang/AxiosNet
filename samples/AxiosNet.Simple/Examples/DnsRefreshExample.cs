@@ -31,6 +31,7 @@ public sealed class DnsRefreshExample : IExample
         Console.WriteLine();
         Console.WriteLine("  [1] PooledConnectionLifetime = 2s：过期后下一次请求换新连接并重新解析");
 
+        // 池与客户端随本次运行的假 DNS / 服务器新建：连接寿命与清池演示需要从干净状态开始
         using var pool = new HttpConnectionPool(CreateOptions(dns, TimeSpan.FromSeconds(2)));
         using var client = new AxiosClient(pool: pool);
 

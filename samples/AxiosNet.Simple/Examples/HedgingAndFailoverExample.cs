@@ -6,6 +6,12 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>32. 并发对冲与备用端点：首个成功者胜出、全失败交给重试、当前端点用不了就换端点。</summary>
 public sealed class HedgingAndFailoverExample : IExample
 {
+    /// <summary>对冲客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _hedged;
+
+    /// <summary>备用端点客户端：端点取首次运行时的演示服务器地址，创建后跨运行复用。</summary>
+    private static AxiosClient? _failover;
+
     public int Number => 32;
 
     public string Title => "并发对冲 / 备用端点：首个成功结果胜出、全失败交给重试、换端点重发";
@@ -15,7 +21,7 @@ public sealed class HedgingAndFailoverExample : IExample
         SampleConsole.Section(Number, Title);
 
         // ---- 1) 并发对冲：首发之后 100ms 再放一条同样的请求 ----
-        using var hedged = new AxiosClient(new AxiosConfig
+        var hedged = _hedged ??= new AxiosClient(new AxiosConfig
         {
             Hedging = { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(100) }
         });
@@ -42,7 +48,7 @@ public sealed class HedgingAndFailoverExample : IExample
         }
 
         // ---- 2) 备用端点：主端点连不上时换到演示服务器的同路径 ----
-        using var failover = new AxiosClient(new AxiosConfig
+        var failover = _failover ??= new AxiosClient(new AxiosConfig
         {
             Failover = { Endpoints = new[] { new Uri(context.BaseUrl) } }
         });

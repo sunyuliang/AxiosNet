@@ -6,9 +6,6 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>26. HTTP/2：默认就是 2.0，服务端不支持时自动降级；需要老协议时一行退回 1.1。</summary>
 public sealed class Http2Example : IExample
 {
-    /// <summary>默认客户端：配置固定，首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _client;
-
     public int Number => 26;
 
     public string Title => "HTTP/2：默认 2.0（不支持时自动降级）、一行退回 1.1";
@@ -17,18 +14,18 @@ public sealed class Http2Example : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        var http = _client ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        var protocolUrl = context.BaseUrl + "protocol";
 
         Console.WriteLine("  服务端能力：本示例的演示服务器只实现 HTTP/1.1（相当于「不支持 h2 的老服务」）");
         Console.WriteLine();
 
         // 1) 默认：什么都不配，库按 2.0 发起，服务端不支持就降级
-        var byDefault = await http.GetAsync<ProtocolProbe>("protocol");
+        var byDefault = await Axios.GetAsync<ProtocolProbe>(protocolUrl);
         Console.WriteLine("  [1] 默认配置（不设置 HttpVersion）");
         Console.WriteLine($"      客户端配置 2.0（本示例是明文，没有 ALPN 可协商）-> 服务端收到 {byDefault.Data!.RequestVersion}，响应协商结果 {byDefault.ProtocolVersion}：按契约落 1.1，请求照常成功");
 
         // 2) 退回 1.1：老网关 / NTLM 认证 / 必须用连接级头时
-        var forced = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version11);
+        var forced = await Axios.GetAsync<ProtocolProbe>(protocolUrl, c => c.Connection.HttpVersion = HttpVersion.Version11);
         Console.WriteLine("  [2] 退回 1.1（HttpVersion = Version11，策略仍是默认的 RequestVersionOrLower）");
         Console.WriteLine($"      客户端请求 1.1 -> 服务端收到 {forced.Data!.RequestVersion}，响应协商结果 {forced.ProtocolVersion}：不再尝试协商");
 
@@ -36,7 +33,7 @@ public sealed class Http2Example : IExample
         Console.WriteLine("  [3] 要求必须是 h2（VersionPolicy = RequestVersionExact）");
         try
         {
-            await http.GetAsync<ProtocolProbe>("protocol", c =>
+            await Axios.GetAsync<ProtocolProbe>(protocolUrl, c =>
             {
                 c.Connection.HttpVersion = HttpVersion.Version20;
                 c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
@@ -51,14 +48,14 @@ public sealed class Http2Example : IExample
         // 4) HTTP/3：默认仍是 2.0，h3 要显式要求（Version30）
         Console.WriteLine("  [4] 要求 h3（HttpVersion = Version30，策略默认 OrLower）");
         Console.WriteLine($"      本机 HTTP/3 能力：{(Http3Support.IsSupported ? "可用" : "不可用 —— " + Http3Support.UnsupportedReason)}");
-        var h3 = await http.GetAsync<ProtocolProbe>("protocol", c => c.Connection.HttpVersion = HttpVersion.Version30);
+        var h3 = await Axios.GetAsync<ProtocolProbe>(protocolUrl, c => c.Connection.HttpVersion = HttpVersion.Version30);
         Console.WriteLine($"      客户端请求 3.0 -> 服务端收到 {h3.Data!.RequestVersion}，响应协商结果 {h3.ProtocolVersion}：明文上不存在 h3，按 OrLower 落 1.1");
 
         // 5) 「必须 h3」在明文目标上发请求前就报错
         Console.WriteLine("  [5] 要求必须 h3（VersionPolicy = RequestVersionExact）");
         try
         {
-            await http.GetAsync<ProtocolProbe>("protocol", c =>
+            await Axios.GetAsync<ProtocolProbe>(protocolUrl, c =>
             {
                 c.Connection.HttpVersion = HttpVersion.Version30;
                 c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;

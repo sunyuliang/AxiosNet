@@ -5,9 +5,6 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>16. P1 能力：下载/上传进度回调与 maxRate 限速。</summary>
 public sealed class ProgressAndRateExample : IExample
 {
-    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _http;
-
     public int Number => 16;
 
     public string Title => "下载/上传进度回调 + maxRate 限速";
@@ -15,9 +12,6 @@ public sealed class ProgressAndRateExample : IExample
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
-
-        // 静态复用：首次运行创建，之后复用同一实例与连接池
-        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
 
         var lastStep = 0;
 
@@ -36,7 +30,7 @@ public sealed class ProgressAndRateExample : IExample
         }
 
         // 1) 下载 256 KB，限速 256 KB/s（约 1s，能看到多次进度）
-        var download = await http.GetAsync<byte[]>("/download?kb=256", c =>
+        var download = await Axios.GetAsync<byte[]>(context.BaseUrl + "download?kb=256", c =>
         {
             c.Limits.MaxRate = 256 * 1024;
             c.Callbacks.OnDownloadProgress = Report;
@@ -46,7 +40,7 @@ public sealed class ProgressAndRateExample : IExample
         // 2) 上传 512 KB 文本，限速 1 MB/s
         lastStep = 0;
         var payload = new string('x', 512 * 1024);
-        await http.PostAsync<string>("/echo", payload, c =>
+        await Axios.PostAsync<string>(context.BaseUrl + "echo", payload, c =>
         {
             c.ContentType = AxiosContentType.TextPlain;
             c.ResponseType = ResponseType.Text;

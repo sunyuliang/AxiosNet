@@ -9,9 +9,6 @@ public sealed class XmlSerializationExample : IExample
     /// <summary>本示例专用客户端（XML 引擎）：配置固定，首次运行创建后跨运行复用。</summary>
     private static AxiosClient? _xml;
 
-    /// <summary>本示例专用客户端（自动模式，按 Content-Type 选序列化器）：配置固定，首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _auto;
-
     public int Number => 23;
 
     public string Title => "XML 序列化：内置 XmlContentSerializer";
@@ -54,14 +51,11 @@ public sealed class XmlSerializationExample : IExample
 
         Console.WriteLine($"  标量请求体(application/xml, 不经过序列化器): {scalar.Data}");
 
-        // 5) 自动模式：只按媒体类型注册，同一个 client 可以混用格式
+        // 5) 自动模式：只按媒体类型注册；注册表是全局的，所以直接用 Axios 静态门面也能吃到它
         AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
         try
         {
-            // 注册表是全局的，与用哪个客户端无关
-            var auto = _auto ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
-
-            var byRegistry = await auto.GetAsync<XmlUser>("users/1/xml");
+            var byRegistry = await Axios.GetAsync<XmlUser>(context.BaseUrl + "users/1/xml");
             Console.WriteLine($"  自动模式(按 Content-Type 注册): Id={byRegistry.Data!.Id}, Name={byRegistry.Data.Name}, Age={byRegistry.Data.Age}");
         }
         finally

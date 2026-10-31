@@ -7,9 +7,6 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>17. HttpMethod 直用 + 自定义 Handler 注入：单 Handler 模式与连接池 HandlerFactory。</summary>
 public sealed class CustomHandlerExample : IExample
 {
-    /// <summary>本示例专用客户端（PROPFIND 演示）：配置固定，首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _http;
-
     public int Number => 17;
 
     public string Title => "HttpMethod 直用 + 自定义 Handler 注入";
@@ -18,13 +15,10 @@ public sealed class CustomHandlerExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 静态复用：首次运行创建，之后复用同一实例与连接池
-        var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
-
         // 1) Method 就是 System.Net.Http.HttpMethod：内置谓词与自定义谓词一视同仁
-        var propfind = await http.RequestAsync<JsonElement>(c =>
+        var propfind = await Axios.RequestAsync<JsonElement>(c =>
         {
-            c.Url = "users/1";
+            c.Url = context.BaseUrl + "users/1";
             c.Method = new HttpMethod("PROPFIND");
         });
 

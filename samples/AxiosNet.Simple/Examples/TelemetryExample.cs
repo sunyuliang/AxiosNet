@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using AxiosNet;
-using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 using AxiosNet.Telemetry;
 
@@ -21,14 +20,13 @@ public sealed class TelemetryExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 尝试级审计是可选内置项：不 Append 就不在链上，也不会有 Attempt 事件。
+        // 尝试级审计已在默认尝试链上：只要有人订阅 Attempt 事件，就能看到每次尝试的结果。
         var client = _client ??= new AxiosClient(
             new AxiosConfig
             {
                 BaseAddress = context.BaseUrl,
                 Retry = { Policy = new RetryPolicy(3, TimeSpan.FromMilliseconds(100)) }
-            },
-            pipeline: AxiosAttemptPipeline.Default.Append(Attempt.Audit));
+            });
 
         // ── 1) 链路：订阅 ActivitySource「AxiosNet」 ────────────────────────────
         // 一次逻辑请求 = 一个 span，重试不另开 span
@@ -178,7 +176,7 @@ public sealed class TelemetryExample : IExample
         Console.WriteLine();
         Console.WriteLine("  要点：");
         Console.WriteLine("    · 三路都默认开启，但「有人订阅才产出」：没人听时不建 span、不发事件，指标退化为几次空检查");
-        Console.WriteLine("    · Attempt 事件要先把 Attempt.Audit 装到链上（本示例已装）；它只覆盖真正到达终端的尝试，耗时不含排队与退避");
+        Console.WriteLine("    · Attempt 事件来自默认尝试链上的 Attempt.Audit（重复 Append 会被拒绝）；它只覆盖真正到达终端的尝试，耗时不含排队与退避");
         Console.WriteLine("    · span 名按语义约定取方法（GET / POST），URL 放标签；标签用 OpenTelemetry HTTP semconv 标准名，后端不用额外映射");
         Console.WriteLine("    · 一次逻辑请求一个 span：重试次数记在 http.request.resend_count，每次重试再加一条 retry 事件");
         Console.WriteLine("    · 底层那次真实 I/O 的 span 由 BCL 自己产出（.NET 8+ 的 System.Net.Http），会自然挂在本库 span 下面；.NET 6 上 BCL 不产出，只剩本库这一个 span");

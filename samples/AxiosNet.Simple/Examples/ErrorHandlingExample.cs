@@ -6,9 +6,6 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>11. 错误处理 / 超时 / 取消。</summary>
 public sealed class ErrorHandlingExample : IExample
 {
-    /// <summary>本示例专用客户端（无 BaseAddress，地址写全）：首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _http;
-
     public int Number => 11;
 
     public string Title => "错误码语义、超时 ECONNABORTED、取消 ERR_CANCELED、validateStatus";
@@ -17,13 +14,10 @@ public sealed class ErrorHandlingExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        // 静态复用：首次运行创建，之后复用同一实例与连接池
-        var http = _http ??= new AxiosClient();
-
         // 4xx -> ERR_BAD_REQUEST，异常上带完整 response
         try
         {
-            await http.GetAsync(context.BaseUrl + "not-found");
+            await Axios.GetAsync(context.BaseUrl + "not-found");
         }
         catch (AxiosException ex)
         {
@@ -34,7 +28,7 @@ public sealed class ErrorHandlingExample : IExample
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await http.GetAsync(context.BaseUrl + "slow?ms=1000", c => c.Timeout = TimeSpan.FromMilliseconds(200));
+            await Axios.GetAsync(context.BaseUrl + "slow?ms=1000", c => c.Timeout = TimeSpan.FromMilliseconds(200));
         }
         catch (AxiosException ex)
         {
@@ -46,7 +40,7 @@ public sealed class ErrorHandlingExample : IExample
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
         try
         {
-            await http.GetAsync(context.BaseUrl + "slow?ms=1000", cancellationToken: cts.Token);
+            await Axios.GetAsync(context.BaseUrl + "slow?ms=1000", cancellationToken: cts.Token);
         }
         catch (AxiosException ex)
         {
@@ -58,7 +52,7 @@ public sealed class ErrorHandlingExample : IExample
         stopwatch.Restart();
         try
         {
-            await http.GetAsync(context.BaseUrl + "slow?ms=300", c =>
+            await Axios.GetAsync(context.BaseUrl + "slow?ms=300", c =>
             {
                 c.Timeout = TimeSpan.FromMilliseconds(200);   // 单次尝试的上限
                 c.TotalTimeout = TimeSpan.FromMilliseconds(250);  // 含重试等待的总预算
@@ -72,7 +66,7 @@ public sealed class ErrorHandlingExample : IExample
         }
 
         // validateStatus：自己定义合法状态码，404 也可以正常返回
-        var accepted = await http.GetAsync(context.BaseUrl + "not-found", c => c.Callbacks.ValidateStatus = s => s is >= 200 and < 500);
+        var accepted = await Axios.GetAsync(context.BaseUrl + "not-found", c => c.Callbacks.ValidateStatus = s => s is >= 200 and < 500);
         Console.WriteLine($"  validateStatus 放行 404: status={accepted.Status}");
     }
 }

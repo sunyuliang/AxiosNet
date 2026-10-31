@@ -6,6 +6,12 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>29. 短路响应：不发请求、直接交付调用方给的响应。</summary>
 public sealed class ShortCircuitExample : IExample
 {
+    /// <summary>拦截器缓存：跨运行复用，每次运行开始清空。</summary>
+    private static readonly Dictionary<string, AxiosShortCircuit> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>客户端静态复用：请求 / 响应两个拦截器在创建时挂一次。</summary>
+    private static AxiosClient? _client;
+
     public int Number => 29;
 
     public string Title => "短路响应：缓存命中不发请求 / 一份字节多形态 / 拦截器接缓存 / mock / 错误语义";
@@ -14,7 +20,8 @@ public sealed class ShortCircuitExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
+        var client = _client ??= CreateClient(context.BaseUrl);
+        Cache.Clear();
 
         // 缓存条目 = 状态码 + Content-Type + 原始字节（先用 Real 响应取一份）
         var body = (await client.GetAsync<byte[]>("users/1", c => c.ResponseType = ResponseType.ArrayBuffer)).Data!;
@@ -47,35 +54,7 @@ public sealed class ShortCircuitExample : IExample
         Console.WriteLine($"  GetAsync<User>  → {typed.Data!.Name}, {typed.Data.Age} 岁，X-Cache={typed.GetHeader("X-Cache")}");
         Console.WriteLine($"  GetAsync<string> → {Shorten(text.Data!)}");
 
-        // 3) 拦截器接一层缓存：请求拦截器命中就不发，响应拦截器负责写入
-        var cache = new Dictionary<string, AxiosShortCircuit>(StringComparer.OrdinalIgnoreCase);
-
-        client.Interceptors.Request.Use(config =>
-        {
-            if (config.Url is { } url && cache.TryGetValue(url, out var hit))
-            {
-                config.ShortCircuit = hit;
-            }
-
-            return config;
-        });
-
-        client.Interceptors.Response.Use(response =>
-        {
-            // 只缓存拿得到字节的响应
-            if (response.Data is byte[] bytes && response.Config?.Url is { } url)
-            {
-                cache[url] = new AxiosShortCircuit
-                {
-                    Status = response.Status,
-                    ContentType = response.GetHeader("Content-Type"),
-                    Body = bytes
-                };
-            }
-
-            return response;
-        });
-
+        // 3) 拦截器接一层缓存：请求拦截器命中就不发，响应拦截器负责写入（两个拦截器在 CreateClient 里挂好）
         var miss = await client.GetAsync<byte[]>("users/1?from=cache", c => c.ResponseType = ResponseType.ArrayBuffer);
 
         stopwatch.Restart();
@@ -85,7 +64,7 @@ public sealed class ShortCircuitExample : IExample
         Console.WriteLine(
             $"  第一次（未命中）发了 {miss.Data!.Length} 字节；第二次（命中）{stopwatch.ElapsedMilliseconds}ms，"
             + $"{hit.Data!.Name} 来自缓存");
-        Console.WriteLine($"  缓存条目数：{cache.Count}");
+        Console.WriteLine($"  缓存条目数：{Cache.Count}");
 
         // 4) mock：Data 直接给，不解析也不跑 transformResponse
         var stub = new User(99, "stub", 0, false, 0, null, null);
@@ -109,6 +88,43 @@ public sealed class ShortCircuitExample : IExample
         }
 
         Console.WriteLine("  说明: 短路不占并发名额、不进重试与熔断、不产生遥测 span；反序列化 / transformResponse / 响应拦截器照常");
+    }
+
+    /// <summary>
+    /// 创建静态复用的客户端，并挂上「请求拦截器查缓存 / 响应拦截器写缓存」这一层。
+    /// 拦截器只挂一次，避免跨运行重复叠加。
+    /// </summary>
+    private static AxiosClient CreateClient(string baseUrl)
+    {
+        var client = new AxiosClient(new AxiosConfig { BaseAddress = baseUrl });
+
+        client.Interceptors.Request.Use(config =>
+        {
+            if (config.Url is { } url && Cache.TryGetValue(url, out var hit))
+            {
+                config.ShortCircuit = hit;
+            }
+
+            return config;
+        });
+
+        client.Interceptors.Response.Use(response =>
+        {
+            // 只缓存拿得到字节的响应
+            if (response.Data is byte[] bytes && response.Config?.Url is { } url)
+            {
+                Cache[url] = new AxiosShortCircuit
+                {
+                    Status = response.Status,
+                    ContentType = response.GetHeader("Content-Type"),
+                    Body = bytes
+                };
+            }
+
+            return response;
+        });
+
+        return client;
     }
 
     /// <summary>正文太长时截断显示（示例输出保持一行）。</summary>

@@ -17,6 +17,12 @@ public sealed class AuthorizationExample : IExample
     /// <summary>固定令牌客户端：令牌固定，首次运行创建后跨运行复用。</summary>
     private static ApiClient? _fixedToken;
 
+    /// <summary>令牌管理器客户端：客户端静态复用，管理器按运行重新挂载。</summary>
+    private static ApiClient? _managedClient;
+
+    /// <summary>401 重放客户端：客户端静态复用，轮换管理器按运行重新挂载。</summary>
+    private static ApiClient? _rotatingClient;
+
     public int Number => 4;
 
     public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方 / AccessTokenManager（对比自定义 IAuthorizationProvider）";
@@ -87,7 +93,8 @@ public sealed class AuthorizationExample : IExample
             return ValueTask.FromResult(new AccessToken(DemoApiServer.DemoToken, DateTimeOffset.UtcNow.AddMinutes(5)));
         }));
 
-        using var managedClient = new ApiClient(context.BaseUrl) { AccessTokenProvider = managed };
+        var managedClient = _managedClient ??= new ApiClient(context.BaseUrl);
+        managedClient.AccessTokenProvider = managed;
         await managedClient.RequestAsync(new SecureProfileRequest());
         await managedClient.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  令牌管理器：两次请求只取令牌 {acquires} 次（未进刷新窗口时直接走缓存）");
@@ -96,7 +103,8 @@ public sealed class AuthorizationExample : IExample
         var rotateCalls = 0;
         using var rotating = new AccessTokenManager(new AccessTokenOptions(_ =>
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref rotateCalls)))));
-        using var rotatingClient = new ApiClient(context.BaseUrl) { AccessTokenProvider = rotating };
+        var rotatingClient = _rotatingClient ??= new ApiClient(context.BaseUrl);
+        rotatingClient.AccessTokenProvider = rotating;
 
         var rotated = await rotatingClient.RequestAsync(new RotatingProfileRequest());
         Console.WriteLine($"  401 重放 -> {rotated.Status} {rotated.Data!.IssuedBy}（取令牌 {rotateCalls} 次，只重放一次）");

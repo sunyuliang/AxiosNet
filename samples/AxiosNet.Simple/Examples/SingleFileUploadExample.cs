@@ -7,9 +7,6 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>18. 单文件上传的两种形态：裸流直传（请求体就是文件字节）与 multipart 单文件。</summary>
 public sealed class SingleFileUploadExample : IExample
 {
-    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _http;
-
     public int Number => 18;
 
     public string Title => "单文件上传：裸流直传 / multipart（服务端精确解析）";
@@ -27,13 +24,10 @@ public sealed class SingleFileUploadExample : IExample
 
         try
         {
-            // 静态复用：首次运行创建，之后复用同一实例与连接池
-            var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
-
             // 1) 裸流直传：请求体 = 文件字节，Content-Type 声明文件类型，文件名走自定义头
             await using (var stream = File.OpenRead(path))
             {
-                var raw = await http.PostAsync<JsonElement>("upload/raw", stream, c =>
+                var raw = await Axios.PostAsync<JsonElement>(context.BaseUrl + "upload/raw", stream, c =>
                 {
                     c.ContentType = AxiosContentType.OctetStream;
                     c.Headers.Set("X-File-Name", "single-file.bin");
@@ -48,7 +42,7 @@ public sealed class SingleFileUploadExample : IExample
             }
 
             // 2) multipart 单文件：PostFormAsync 默认 multipart，字段名 file 与服务端解析一致
-            var form = await http.PostFormAsync<JsonElement>("upload/single", new
+            var form = await Axios.PostFormAsync<JsonElement>(context.BaseUrl + "upload/single", new
             {
                 file = FormFile.FromPath(path, "single-file.bin", AxiosContentType.OctetStream),
                 note = "季度报告"

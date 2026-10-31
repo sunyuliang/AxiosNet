@@ -22,10 +22,9 @@ public sealed class CacheExample : IExample
         var client = _client ??= new AxiosClient(new AxiosConfig { Cache = Cache });
         await Cache.ClearAsync();
 
-        // 1) 没有缓存：每发一次，服务端的计数器就加一
-        using var plain = new AxiosClient();
-        var a = await plain.GetAsync<Dictionary<string, int>>($"{context.BaseUrl}cache/counter");
-        var b = await plain.GetAsync<Dictionary<string, int>>($"{context.BaseUrl}cache/counter");
+        // 1) 没有缓存：用 Axios 静态门面的默认客户端，每发一次，服务端的计数器就加一
+        var a = await Axios.GetAsync<Dictionary<string, int>>($"{context.BaseUrl}cache/counter");
+        var b = await Axios.GetAsync<Dictionary<string, int>>($"{context.BaseUrl}cache/counter");
         Console.WriteLine($"  无缓存: served = {a.Data!["served"]} -> {b.Data!["served"]}（每次都到服务端）");
 
         // 2) 有缓存：第二次拿的是缓存里的字节，计数器不动
@@ -91,6 +90,7 @@ public sealed class CacheExample : IExample
         Console.WriteLine($"  no-store: {s1} -> {s2}（既不查也不写，每次都发），恢复默认后 {s3} -> {s4}（先发一次再命中）");
 
         // 9) 条件请求：条目过期但带 ETag 时，客户端发 If-None-Match；服务端回 304，正文直接从缓存交付
+        //    客户端自带一份缓存，每次运行新建以隔离条目
         using var etagClient = new AxiosClient(new AxiosConfig
         {
             Cache = new AxiosCache(new AxiosCacheOptions
@@ -114,7 +114,7 @@ public sealed class CacheExample : IExample
             + "调用方自己写条件头时以调用方为准（库不接管那次 304）");
     }
 
-    /// <summary>Intersection 模式客户端：配置 TTL 10s，与服务端新鲜期取交集。</summary>
+    /// <summary>Intersection 模式客户端：配置 TTL 10s，与服务端新鲜期取交集。缓存条目是本次运行的状态，故每次调用新建。</summary>
     private static AxiosClient NewIntersectionClient() => new(new AxiosConfig
     {
         Cache = new AxiosCache(new AxiosCacheOptions
@@ -133,7 +133,7 @@ public sealed class CacheExample : IExample
         return response.Data!["served"];
     }
 
-    /// <summary>用指定模式连取两次（隔 <paramref name="delayMs"/> 毫秒），返回两次响应里的 served 计数。</summary>
+    /// <summary>用指定模式连取两次（隔 <paramref name="delayMs"/> 毫秒），返回两次响应里的 served 计数。客户端带着本次运行的缓存状态，故每次新建。</summary>
     private static async Task<(int First, int Second)> ProbeAsync(string url, CacheFreshnessMode mode, int delayMs = 0)
     {
         // 客户端 TTL 给到 10 秒：Server / Intersection 是否提前失效由服务端新鲜期决定，Configured 则一直用这 10 秒

@@ -6,6 +6,9 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>34. 全局重试预算：RetryBudgetPolicy 用共享令牌桶限制整个实例的重试总量，下游故障时不放大重试。</summary>
 public sealed class RetryBudgetExample : IExample
 {
+    /// <summary>对照用的无预算客户端：配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _unbounded;
+
     public int Number => 34;
 
     public string Title => "全局重试预算：RetryBudgetPolicy 限制整个实例的重试总量";
@@ -18,7 +21,7 @@ public sealed class RetryBudgetExample : IExample
         const string failing = "flaky?fail=99";
 
         // 对照：只配重试 —— 每条请求各自重试，重试量跟着请求数线性放大
-        using var unbounded = new AxiosClient(new AxiosConfig
+        var unbounded = _unbounded ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
             Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(20)) }
@@ -36,6 +39,7 @@ public sealed class RetryBudgetExample : IExample
         budget.OnBudgetExhausted = ctx =>
             Console.WriteLine($"    [OnBudgetExhausted] 第 {ctx.Attempt} 次尝试后预算不足，放弃重试（{ctx.ErrorCode}）");
 
+        // 预算对象带着本次运行的令牌桶状态，客户端随它新建，保证每轮演示都从满桶开始
         using var throttled = new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,

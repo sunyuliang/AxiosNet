@@ -53,10 +53,9 @@ public sealed class IdempotencyExample : IExample
         var response = await client.PostAsync($"{context.BaseUrl}flaky?fail=2&tag={tag}-idem", new { orderId = 42 });
         Console.WriteLine($"  POST /flaky -> {response.Status}（重试没有换键，服务端只会认一次写）");
 
-        // 2) 显式键：把上游系统的键原样透传，优先于 KeyFactory
+        // 2) 显式键：把上游系统的键原样透传，优先于 KeyFactory（默认客户端只在这一条请求上开幂等键）
         var explicitKey = "order-" + tag;
-        using var other = new AxiosClient();
-        var echo = await other.GetAsync($"{context.BaseUrl}users/1", c =>
+        var echo = await Axios.GetAsync(context.BaseUrl + "users/1", c =>
         {
             c.Idempotency.Enabled = true;
             c.Idempotency.Key = explicitKey;

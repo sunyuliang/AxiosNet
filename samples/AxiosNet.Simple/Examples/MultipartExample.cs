@@ -7,9 +7,6 @@ namespace AxiosNet.Simple.Examples;
 /// <summary>13. multipart/form-data：普通字段 + 一堆文件（内存文件与本地文件各一）。</summary>
 public sealed class MultipartExample : IExample
 {
-    /// <summary>本示例专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
-    private static AxiosClient? _http;
-
     public int Number => 13;
 
     public string Title => "multipart/form-data：字段 + 一堆文件（服务端精确解析）";
@@ -23,11 +20,8 @@ public sealed class MultipartExample : IExample
 
         try
         {
-            // 静态复用：首次运行创建，之后复用同一实例与连接池
-            var http = _http ??= new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl });
-
-            var response = await http.PostAsync<JsonElement>(
-                "upload",
+            var response = await Axios.PostAsync<JsonElement>(
+                context.BaseUrl + "upload",
                 new
                 {
                     title = "季度报告",

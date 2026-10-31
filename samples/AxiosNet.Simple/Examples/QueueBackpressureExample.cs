@@ -9,6 +9,9 @@ public sealed class QueueBackpressureExample : IExample
     /// <summary>2 个在途名额 + 1 个排队位：配置固定，首次运行创建后跨运行复用。</summary>
     private static AxiosClient? _capped;
 
+    /// <summary>对照用：不设排队上限，配置固定，首次运行创建后跨运行复用。</summary>
+    private static AxiosClient? _unlimitedQueue;
+
     public int Number => 33;
 
     public string Title => "排队上限 / 背压：MaxConcurrentRequests + MaxQueueLength，队列满立刻失败";
@@ -42,7 +45,7 @@ public sealed class QueueBackpressureExample : IExample
         Console.WriteLine($"  总耗时 {stopwatch.ElapsedMilliseconds}ms（两批 400ms 串行执行）");
 
         // 对照：不设 MaxQueueLength（null = 不限排队深度）时，同样 4 条都排进队列，全部成功
-        using var unlimitedQueue = new AxiosClient(new AxiosConfig
+        var unlimitedQueue = _unlimitedQueue ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
             Limits = new() { MaxConcurrentRequests = 2 }
