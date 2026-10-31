@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2057%2F2050%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-2069%2F2062%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -166,6 +166,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 | 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
+| 编码 | `[BodyContentType]` / `[QueryCollectionFormat]`（接口方法） | 正文媒体类型（决定怎么编码）/ 查询集合格式；覆盖实例默认值 |
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
 
 - **单负载模型可省 `[Body]`**：POST / PUT / PATCH 且模型只有一个未标注的**非标量**属性时默认按 Body 绑定（字典属性除外，始终按查询串）。
@@ -214,13 +215,26 @@ Task<AxiosResponse<UploadResult>> UploadAsync(
 Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
 ```
 
+编码声明同样是方法级的——媒体类型决定正文怎么编码，查询集合格式决定数组怎么写进 URL：
+
+```csharp
+[Post("login")]
+[BodyContentType("application/x-www-form-urlencoded")]   // 对象按表单展平（只写 Content-Type 头不会改变编码）
+Task<AxiosResponse<Token>> LoginAsync([Body] LoginForm form, CancellationToken cancellationToken = default);
+
+[Get("users")]
+[QueryCollectionFormat(AxiosCollectionFormat.Multi)]    // ids=1&ids=2（默认 Brackets：ids[]=1&ids[]=2）
+Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cancellationToken = default);
+```
+
 - 每个方法必须标注且只标注一个路由特性。返回类型有四种：`Task<AxiosResponse<T>>`（完整响应）/ `Task<AxiosResponse>`（正文按 `JsonElement` 原样交付）/ `Task<T>`（只交付 `Data`）/ `Task`（只完成请求，不解析正文——非 JSON 正文不会变成解析错误）。不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法（裸 `Task<IAsyncEnumerable<T>>` 缺少响应元数据与释放归属，启动期校验即报错）。
 - 四种形态的失败口径一致：非 2xx 抛 `AxiosException`，配置了 `ErrorFactory` 时照常替换/包装；用 `Task` 形态时 `ErrorFactory` 仍能拿到响应（只是正文被丢弃）。
 - `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口或接口方法上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。方法级声明压过接口级：静态头同名项覆盖、`[AllowAnonymous]` 可让接口里单个方法匿名、`[Authorize("Basic")]` 可让单个方法换 scheme；方法上同标 `[Authorize]` 与 `[AllowAnonymous]` 属二义性（`Create<T>()` / `ValidateInterfaces` 报错）。
-- 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛；同一接口的多个方法错误会聚合，而不是只报第一条）。按类型重载在 Native AOT 下同样可用；`ValidateInterfaces(assembly)` 在 AOT 下抛 `PlatformNotSupportedException`，改调生成的 `ValidateAll()`。
+- 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` / `[BodyContentType]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛；同一接口的多个方法错误会聚合，而不是只报第一条）。按类型重载在 Native AOT 下同样可用；`ValidateInterfaces(assembly)` 在 AOT 下抛 `PlatformNotSupportedException`，改调生成的 `ValidateAll()`。
 - 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
 - 接口级流式：帧格式用 `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` 声明，省略按 NDJSON；返回流只能枚举一次，超时与错误口径与 `RequestStreamAsync(...)` 完全一致。
+- 方法级编码：`[BodyContentType(...)]` 写入 `config.ContentType`（决定正文编码，而不是只加一个头），用于表单、XML 或自定义媒体类型；它与 `[Multipart]` 互斥（multipart 的媒体类型固定）。`[QueryCollectionFormat(...)]` 写入 `config.Serialization.CollectionFormat`，覆盖实例默认值；OpenAPI 的 `explode: true` 对应 `AxiosCollectionFormat.Multi`。
 - 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
 - **Native AOT**：接口所在程序集启用源生成器即生成真实代理（内部接口同样支持）；闭合泛型接口（如 `IRepo<User>`）在调用点 `Create<T>()` / `AddApiInterface<T>()` 出现时生成，只有开放泛型声明本身会给出 `AXA011` 警告。未生成 / 未注册时 AOT 下 `Create<T>()` 抛 `AxiosAotMetadataException`（带修复指引），JIT 下回退 `DispatchProxy`（需 public 接口）。生成路径不要求 `TrimmerRootAssembly`，也不再需要 root 接口类型。
 
@@ -1682,7 +1696,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **51 项**：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **52 项**：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1692,8 +1706,8 @@ dotnet run --project samples/AxiosNet.Simple
 
 | 套件 | 项数 | 覆盖 |
 | --- | ---: | --- |
-| 核心 | 36 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压 |
-| 声明式 | 14 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式 |
+| 核心 | 37 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档 |
+| 声明式 | 15 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式） |
 
 另有两个示例：
 
@@ -1710,7 +1724,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 ### 请求模型与接口：内置源生成器
 
-包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并为接口级声明生成真实代理类（含继承接口、授权、multipart、流式），全部在模块初始化器里注册。它取代了旧版「root 模型程序集」的做法：
+包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并为接口级声明生成真实代理类（含继承接口、授权、multipart、流式、方法级编码），全部在模块初始化器里注册。它取代了旧版「root 模型程序集」的做法：
 
 - **零配置**：不需要 `TrimmerRootAssembly`，也不需要手写注册；
 - **两条路径同一份声明**：生成器只写事实（路由 / 成员 / 绑定 / 授权），校验与绑定计划仍由运行时共享构建器完成，JIT 与 AOT 的行为、错误文本一致；
@@ -1748,6 +1762,7 @@ dotnet run --project samples/AxiosNet.Simple
 | `AXA011` | Warning | 开放泛型接口（含外层类型为开放泛型的嵌套接口）没有闭合调用点（AOT 下 `Create` 会显式失败） |
 | `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
 | `AXA013` | Warning | 形状类型的访问级别对生成代码不可见（已跳过形状；AOT 下展平到该类型会显式失败） |
+| `AXA014` | Error | 接口方法的编码声明无效：`[BodyContentType]` 为空白 / 含控制字符、`[QueryCollectionFormat]` 值未定义，或与 `[Multipart]` 同用 |
 
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
@@ -1789,9 +1804,9 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1991 / 1984 | `net8.0` / `net6.0` | 3975 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2003 / 1996 | `net8.0` / `net6.0` | 3999 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **合计** | **2057 / 2050** | | **4107** |
+| **合计** | **2069 / 2062** | | **4131** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
@@ -1942,7 +1957,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（51 项）/ DI / Aot
+├─ samples/                           # Simple（52 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）

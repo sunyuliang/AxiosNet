@@ -138,5 +138,15 @@ namespace AxiosNet.SourceGen
             DiagnosticSeverity.Warning,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
+
+        /// <summary>接口方法的编码声明无效：[BodyContentType] / [QueryCollectionFormat] 取值非法或与 [Multipart] 冲突。</summary>
+        public static readonly DiagnosticDescriptor InterfaceEncodingInvalid = new DiagnosticDescriptor(
+            "AXA014",
+            "接口方法的编码声明无效",
+            "接口 {0} 的 {1} 的编码声明无效：{2}。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
     }
 }

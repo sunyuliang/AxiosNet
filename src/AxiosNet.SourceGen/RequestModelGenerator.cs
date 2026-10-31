@@ -857,6 +857,9 @@ namespace AxiosNet.SourceGen
             CancellationToken = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
             Stream = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.StreamAttribute");
             StreamFormat = compilation.GetTypeByMetadataName("AxiosNet.AxiosStreamFormat");
+            BodyContentType = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.BodyContentTypeAttribute");
+            QueryCollectionFormat = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.QueryCollectionFormatAttribute");
+            CollectionFormat = compilation.GetTypeByMetadataName("AxiosNet.AxiosCollectionFormat");
             ApiClient = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.ApiClient");
             ApiInterfaceExtensions = compilation.GetTypeByMetadataName(
                 "AxiosNet.WebAPI.DependencyInjection.ApiInterfaceServiceCollectionExtensions");
@@ -909,6 +912,12 @@ namespace AxiosNet.SourceGen
         public INamedTypeSymbol? Stream { get; }
 
         public INamedTypeSymbol? StreamFormat { get; }
+
+        public INamedTypeSymbol? BodyContentType { get; }
+
+        public INamedTypeSymbol? QueryCollectionFormat { get; }
+
+        public INamedTypeSymbol? CollectionFormat { get; }
 
         public INamedTypeSymbol? ApiClient { get; }
 

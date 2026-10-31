@@ -125,6 +125,87 @@ public sealed class InterfaceGeneratorTests
     }
 
     [Fact]
+    public async Task EncodingAttributes_FlowIntoGeneratedRegistration()
+    {
+        var ns = UniqueNamespace();
+        var (result, diagnostics, output) = RunGenerator(EncodingInterface.Replace("__NS__", ns));
+
+        Assert.Empty(diagnostics);
+
+        var proxySource = ProxySources(result).Single().SourceText.ToString();
+        Assert.Contains(".ContentType(\"application/x-www-form-urlencoded\")", proxySource);
+        Assert.Contains(".QueryCollectionFormat((global::AxiosNet.AxiosCollectionFormat)1)", proxySource);
+
+        var assembly = LoadEmitted(output);
+        var apiType = assembly.GetType(ns + ".IEncodingApi", throwOnError: true)!;
+        Assert.True(GeneratedMetadataRegistry.TryGetInterface(apiType, out var entry));
+        entry!.Validate();
+
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            StatusCode: 200,
+            Body: Encoding.UTF8.GetBytes("ok")));
+        using var client = new ApiClient(server.Url);
+        var proxy = CreateProxy(client, apiType);
+
+        var payload = CreateInstance(assembly, ns + ".Payload", "alice", 2);
+        var submitted = await InvokeAsync(apiType, proxy, "SubmitAsync", payload, default(CancellationToken));
+        Assert.Equal("ok", submitted);
+
+        var submitRequest = server.Received.Last();
+        Assert.Equal("POST", submitRequest.Method);
+        Assert.Equal("application/x-www-form-urlencoded", submitRequest.Headers["Content-Type"]);
+        Assert.Equal("Name=alice&Count=2", Encoding.UTF8.GetString(submitRequest.Body));
+
+        await InvokeAsync(apiType, proxy, "SearchAsync", new[] { "a", "b" }, default(CancellationToken));
+
+        var searchQuery = Uri.UnescapeDataString(server.Received.Last().Query ?? string.Empty);
+        Assert.Equal("tags=a&tags=b", searchQuery);
+    }
+
+    [Fact]
+    public void InheritedInterface_EncodingAttributesReachDerivedProxy()
+    {
+        var ns = UniqueNamespace();
+        var (result, diagnostics, output) = RunGenerator(InheritedEncodingInterface.Replace("__NS__", ns));
+
+        Assert.Empty(diagnostics);
+        var sources = ProxySources(result).Select(static s => s.SourceText.ToString()).ToArray();
+        var derived = Assert.Single(sources, static s => s.Contains("IDerivedEncodingApi"));
+        Assert.Contains(".QueryCollectionFormat((global::AxiosNet.AxiosCollectionFormat)1)", derived);
+        Assert.Contains(".ContentType(\"application/x-www-form-urlencoded\")", derived);
+
+        var assembly = LoadEmitted(output);
+        var derivedType = assembly.GetType(ns + ".IDerivedEncodingApi", throwOnError: true)!;
+        Assert.True(GeneratedMetadataRegistry.TryGetInterface(derivedType, out var entry));
+        entry!.Validate();
+    }
+
+    private const string InheritedEncodingInterface = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using AxiosNet;
+        using AxiosNet.WebAPI;
+
+        namespace __NS__;
+
+        public record EncPayload(string Name);
+
+        public interface IBaseEncodingApi
+        {
+            [Get("base-search")]
+            [QueryCollectionFormat(AxiosCollectionFormat.Multi)]
+            Task<AxiosResponse<EncPayload>> SearchAsync([Query] string[] tags, CancellationToken cancellationToken = default);
+        }
+
+        public interface IDerivedEncodingApi : IBaseEncodingApi
+        {
+            [Post("derived-form")]
+            [BodyContentType("application/x-www-form-urlencoded")]
+            Task<AxiosResponse<EncPayload>> SubmitAsync([Body] EncPayload payload, CancellationToken cancellationToken = default);
+        }
+        """;
+
+    [Fact]
     public void BrokenInterfaces_ReportDiagnosticsAndSkipEmission()
     {
         var ns = UniqueNamespace();
@@ -153,6 +234,9 @@ public sealed class InterfaceGeneratorTests
         Assert.Contains("IHiddenApi", messagesById["AXA009"].Single());
         Assert.Contains("CustomRouteAttribute", messagesById["AXA010"].Single());
         Assert.Contains("IOpenApi", messagesById["AXA011"].Single());
+        Assert.Contains(messagesById["AXA014"], static message => message.Contains("空白"));
+        Assert.Contains(messagesById["AXA014"], static message => message.Contains("查询集合格式值 99"));
+        Assert.Contains(messagesById["AXA014"], static message => message.Contains("multipart/form-data"));
 
         Assert.Equal(DiagnosticSeverity.Warning, diagnostics.Single(static d => d.Id == "AXA010").Severity);
         Assert.Equal(DiagnosticSeverity.Warning, diagnostics.Single(static d => d.Id == "AXA011").Severity);
@@ -831,6 +915,28 @@ public sealed class InterfaceGeneratorTests
         }
         """;
 
+    private const string EncodingInterface = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using AxiosNet;
+        using AxiosNet.WebAPI;
+
+        namespace __NS__;
+
+        public sealed record Payload(string Name, int Count);
+
+        public interface IEncodingApi
+        {
+            [Post("form")]
+            [BodyContentType("application/x-www-form-urlencoded")]
+            Task<string> SubmitAsync([Body] Payload payload, CancellationToken cancellationToken);
+
+            [Get("search")]
+            [QueryCollectionFormat(AxiosCollectionFormat.Multi)]
+            Task<string> SearchAsync([Query] string[] tags, CancellationToken cancellationToken);
+        }
+        """;
+
     private const string BrokenInterfaces = """
         using System;
         using System.Collections.Generic;
@@ -956,6 +1062,22 @@ public sealed class InterfaceGeneratorTests
         {
             [Get("open")]
             Task<T> GetAsync();
+        }
+
+        public interface IEncodingApi
+        {
+            [Post("blank-type")]
+            [BodyContentType(" ")]
+            Task BlankAsync();
+
+            [Get("bad-format")]
+            [QueryCollectionFormat((AxiosCollectionFormat)99)]
+            Task FormatAsync();
+
+            [Post("multipart-conflict")]
+            [Multipart]
+            [BodyContentType("application/x-www-form-urlencoded")]
+            Task ConflictAsync([Part] string name);
         }
         """;
 

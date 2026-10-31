@@ -221,6 +221,18 @@ namespace AxiosNet.SourceGen
                     builder.AppendLine("                        .Multipart()");
                 }
 
+                if (method.ContentType is not null)
+                {
+                    builder.Append("                        .ContentType(").Append(Literal(method.ContentType)).AppendLine(")");
+                }
+
+                if (method.QueryCollectionFormat is { } queryCollectionFormat)
+                {
+                    builder.Append("                        .QueryCollectionFormat((global::AxiosNet.AxiosCollectionFormat)")
+                        .Append(queryCollectionFormat)
+                        .AppendLine(")");
+                }
+
                 if (method.IsStreaming)
                 {
                     builder.Append("                        .Stream((global::AxiosNet.AxiosStreamFormat)")

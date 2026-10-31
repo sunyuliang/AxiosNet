@@ -447,6 +447,55 @@ namespace AxiosNet.SourceGen
                         continue;
                     }
 
+                    var isMultipart = FindAttribute(method, wellKnown.Multipart) is not null;
+
+                    var contentTypeAttribute = FindAttribute(method, wellKnown.BodyContentType);
+                    string? contentType = null;
+                    if (contentTypeAttribute is not null)
+                    {
+                        contentType = GetStringArgument(contentTypeAttribute, 0)?.Trim();
+                        if (contentType is null || contentType.Length == 0 || HasHeaderControlCharacter(contentType))
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                Diagnostics.InterfaceEncodingInvalid,
+                                ToEquatable([symbol.Name, methodDisplay, "[BodyContentType] 的媒体类型不能为空白或包含控制字符"]),
+                                methodLocation));
+                            blocked = true;
+                            continue;
+                        }
+
+                        if (isMultipart)
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                Diagnostics.InterfaceEncodingInvalid,
+                                ToEquatable([symbol.Name, methodDisplay, "[Multipart] 与 [BodyContentType] 互斥：multipart 的媒体类型固定为 multipart/form-data"]),
+                                methodLocation));
+                            blocked = true;
+                            continue;
+                        }
+                    }
+
+                    int? queryCollectionFormat = null;
+                    var collectionFormatAttribute = FindAttribute(method, wellKnown.QueryCollectionFormat);
+                    if (collectionFormatAttribute is not null)
+                    {
+                        var value = collectionFormatAttribute.ConstructorArguments.Length == 1
+                            && collectionFormatAttribute.ConstructorArguments[0].Value is int declaredFormat
+                                ? declaredFormat
+                                : -1;
+                        if (!IsDefinedCollectionFormat(value, wellKnown))
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                Diagnostics.InterfaceEncodingInvalid,
+                                ToEquatable([symbol.Name, methodDisplay, $"查询集合格式值 {value} 无效"]),
+                                methodLocation));
+                            blocked = true;
+                            continue;
+                        }
+
+                        queryCollectionFormat = value;
+                    }
+
                     var parameters = new List<InterfaceParameterInfo>();
                     var cancellationTokenIndex = -1;
                     var parameterBlocked = false;
@@ -549,7 +598,9 @@ namespace AxiosNet.SourceGen
                         routeMethod!,
                         routePath!,
                         new EquatableArray<string>(ReadHeaders(method, wellKnown).ToImmutableArray()),
-                        FindAttribute(method, wellKnown.Multipart) is not null,
+                        isMultipart,
+                        contentType,
+                        queryCollectionFormat,
                         methodAuth.AllowAnonymous,
                         methodAuth.Scheme,
                         streaming,
@@ -836,6 +887,43 @@ namespace AxiosNet.SourceGen
             foreach (var member in wellKnown.StreamFormat.GetMembers().OfType<IFieldSymbol>())
             {
                 if (member.HasConstantValue && member.ConstantValue is int constant && constant == value)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsDefinedCollectionFormat(int value, WellKnownSymbols wellKnown)
+        {
+            if (wellKnown.CollectionFormat is null)
+            {
+                return value == 0;
+            }
+
+            foreach (var member in wellKnown.CollectionFormat.GetMembers().OfType<IFieldSymbol>())
+            {
+                if (member.HasConstantValue && member.ConstantValue is int constant && constant == value)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>与运行时头取值校验同口径：拒绝 C0 控制字符（HTAB 除外）与 DEL。</summary>
+        private static bool HasHeaderControlCharacter(string value)
+        {
+            foreach (var character in value)
+            {
+                if (character == '\t')
+                {
+                    continue;
+                }
+
+                if (character < 0x20 || character == 0x7F)
                 {
                     return true;
                 }

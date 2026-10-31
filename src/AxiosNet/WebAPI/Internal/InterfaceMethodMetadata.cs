@@ -18,6 +18,8 @@ internal sealed partial class InterfaceMethodMetadata
     private readonly ApiAuthorization _authorization;
     private readonly int _cancellationTokenIndex;
     private readonly bool _isMultipart;
+    private readonly string? _contentType;
+    private readonly AxiosCollectionFormat? _queryCollectionFormat;
     private readonly PartBinding[] _partBindings;
     private readonly Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>? _invoker;
     private readonly Func<Exception, object>? _fault;
@@ -37,6 +39,8 @@ internal sealed partial class InterfaceMethodMetadata
         ApiAuthorization authorization,
         int cancellationTokenIndex,
         bool isMultipart,
+        string? contentType,
+        AxiosCollectionFormat? queryCollectionFormat,
         PartBinding[] partBindings,
         // 校验路径只构建契约，不创建泛型调用器：这两个字段允许为 null。
         Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object>? invoker,
@@ -50,6 +54,8 @@ internal sealed partial class InterfaceMethodMetadata
         _authorization = authorization;
         _cancellationTokenIndex = cancellationTokenIndex;
         _isMultipart = isMultipart;
+        _contentType = contentType;
+        _queryCollectionFormat = queryCollectionFormat;
         _partBindings = partBindings;
         _invoker = invoker;
         _fault = fault;
@@ -114,6 +120,17 @@ internal sealed partial class InterfaceMethodMetadata
         else if (_plan.ResolveBodyValue(args) is { } body)
         {
             config.Data = body;
+        }
+
+        // 声明级编码：媒体类型决定正文编码（不只是头），集合格式覆盖实例配置。
+        if (_contentType is not null)
+        {
+            config.ContentType = _contentType;
+        }
+
+        if (_queryCollectionFormat is { } collectionFormat)
+        {
+            config.Serialization.CollectionFormat = collectionFormat;
         }
 
         // 声明级静态头先写，参数上的 [Header] / [HeaderCollection] 覆盖同名项
@@ -274,6 +291,8 @@ internal sealed partial class InterfaceMethodMetadata
             _authorization,
             _cancellationTokenIndex,
             _isMultipart,
+            _contentType,
+            _queryCollectionFormat,
             _partBindings,
             invoker,
             fault);

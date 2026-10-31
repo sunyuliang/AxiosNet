@@ -89,6 +89,8 @@ namespace AxiosNet.SourceGen
         string RoutePath,
         EquatableArray<string> StaticHeaders,
         bool Multipart,
+        string? ContentType,
+        int? QueryCollectionFormat,
         bool AllowAnonymous,
         string? AuthorizeScheme,
         bool IsStreaming,

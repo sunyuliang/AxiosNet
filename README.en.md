@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2057%2F2050%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-2069%2F2062%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -166,6 +166,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 | Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header; method level overrides interface level |
 | Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
 | Body | `[Body]` | At most one per model; `null` sends no body |
+| Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` (interface methods) | Body media type (decides encoding) / query collection format; overrides instance defaults |
 | Skip | `[ApiIgnore]` | Not bound at all |
 
 - **Single-payload models can omit `[Body]`**: for POST / PUT / PATCH with exactly one undecorated **non-scalar** property, it binds as the body (dictionary properties excepted — always query).
@@ -214,13 +215,26 @@ Task<AxiosResponse<UploadResult>> UploadAsync(
 Task<AxiosResponse<IAsyncEnumerable<Chunk>>> EventsAsync(CancellationToken cancellationToken = default);
 ```
 
+Encoding declarations are method-level too — the media type decides how the body is encoded, and the collection format decides how arrays are written into the URL:
+
+```csharp
+[Post("login")]
+[BodyContentType("application/x-www-form-urlencoded")]   // object flattened as a form (setting only the Content-Type header does not change encoding)
+Task<AxiosResponse<Token>> LoginAsync([Body] LoginForm form, CancellationToken cancellationToken = default);
+
+[Get("users")]
+[QueryCollectionFormat(AxiosCollectionFormat.Multi)]    // ids=1&ids=2 (default Brackets: ids[]=1&ids[]=2)
+Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cancellationToken = default);
+```
+
 - Every method must carry exactly one route attribute. Four return shapes are supported: `Task<AxiosResponse<T>>` (full response) / `Task<AxiosResponse>` (body delivered as a raw `JsonElement`) / `Task<T>` (only `Data`) / `Task` (request only, body never parsed — a non-JSON body is not a parse error). Synchronous returns / `ValueTask` / generic methods / `ref`·`out` are rejected. Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method (a bare `Task<IAsyncEnumerable<T>>` has no response metadata or disposal ownership and fails startup validation).
 - Failure semantics are identical across shapes: non-2xx throws `AxiosException`, and a configured `ErrorFactory` still replaces/wraps it; with the `Task` shape the factory still receives the response (only the body is discarded).
 - `CancellationToken` parameters are recognized by type (at most one) and never bound; every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface or on an interface method; with base interfaces, static headers and authorization merge in the **derived interface's scope** (the same base method can carry different static headers per derived interface). Method-level declarations win over interface level: same-name static headers are overridden, `[AllowAnonymous]` makes a single method anonymous, `[Authorize("Basic")]` switches the scheme for one method; declaring both `[Authorize]` and `[AllowAnonymous]` on one method is ambiguous (`Create<T>()` / `ValidateInterfaces` reports it).
-- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws; errors from every method of the same interface are aggregated rather than only the first). The type-based overloads work under Native AOT; `ValidateInterfaces(assembly)` throws `PlatformNotSupportedException` there — call the generated `ValidateAll()` instead.
+- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]` / `[BodyContentType]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`; validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)` (returns all messages, never throws; errors from every method of the same interface are aggregated rather than only the first). The type-based overloads work under Native AOT; `ValidateInterfaces(assembly)` throws `PlatformNotSupportedException` there — call the generated `ValidateAll()` instead.
 - Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
 - Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
+- Method-level encoding: `[BodyContentType(...)]` writes `config.ContentType` (it drives body encoding, not just the header) for forms, XML or custom media types; it is mutually exclusive with `[Multipart]` (whose media type is fixed). `[QueryCollectionFormat(...)]` writes `config.Serialization.CollectionFormat` and overrides instance defaults; OpenAPI `explode: true` maps to `AxiosCollectionFormat.Multi`.
 - Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
 - **Native AOT**: as long as the assembly declaring the interface runs the source generator, a real proxy is emitted (internal interfaces included); closed generic interfaces (e.g. `IRepo<User>`) are generated at the call site — `Create<T>()` / `AddApiInterface<T>()` — and only an open generic declaration itself reports warning `AXA011`. Without generated metadata, `Create<T>()` throws `AxiosAotMetadataException` (with repair guidance) under AOT and falls back to `DispatchProxy` (requires a public interface) on JIT. The generated path needs no `TrimmerRootAssembly` and no longer roots the interface type.
 
@@ -1682,7 +1696,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **51 items**:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **52 items**:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1692,8 +1706,8 @@ It opens an interactive menu (reflection lists every sample; type a number to ru
 
 | Suite | Items | Coverage |
 | --- | ---: | --- |
-| Core | 36 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure |
-| Declarative | 14 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming |
+| Core | 37 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles |
+| Declarative | 15 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format) |
 
 Two more samples:
 
@@ -1710,7 +1724,7 @@ The library targets `net6.0` and `net8.0`: .NET 8 and later consume `lib/net8.0`
 
 ### Request models and interfaces: built-in source generator
 
-The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute, and emits real proxy classes for interface-based declarations (inherited interfaces, authorization, multipart, streaming), registering both from a module initializer. It replaces the old "root the model assembly" approach:
+The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute, and emits real proxy classes for interface-based declarations (inherited interfaces, authorization, multipart, streaming, method-level encoding), registering both from a module initializer. It replaces the old "root the model assembly" approach:
 
 - **Zero configuration**: no `TrimmerRootAssembly`, no hand-written registration;
 - **One declaration for both paths**: the generator only writes facts (route / members / bindings / authorization); validation and the binding plan still run through the shared runtime builder, so JIT and AOT behave the same and produce the same error text;
@@ -1748,6 +1762,7 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA011` | Warning | Open generic interface (including a nested interface whose outer type is open generic) without a closed call site (`Create` fails explicitly under AOT) |
 | `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
 | `AXA013` | Warning | Shape type is not accessible to generated code (shape skipped; flattening to it fails explicitly under AOT) |
+| `AXA014` | Error | Invalid encoding declaration on an interface method: blank / control-character `[BodyContentType]`, undefined `[QueryCollectionFormat]` value, or combined with `[Multipart]` |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
@@ -1789,9 +1804,9 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1991 / 1984 | `net8.0` / `net6.0` | 3975 |
+| `AxiosNet.Tests` (core + declarative) | 2003 / 1996 | `net8.0` / `net6.0` | 3999 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **Total** | **2057 / 2050** | | **4107** |
+| **Total** | **2069 / 2062** | | **4131** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling, transport profiles and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints and endpoint health memory, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
@@ -1942,7 +1957,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
 │  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (51 items) / DI / Aot
+├─ samples/                           # Simple (52 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")

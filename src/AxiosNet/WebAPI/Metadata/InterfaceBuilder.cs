@@ -110,6 +110,26 @@ public sealed class InterfaceMethodBuilder
         return this;
     }
 
+    /// <summary>方法级 <c>[BodyContentType]</c>：请求体媒体类型，决定正文编码（如 form-urlencoded）。</summary>
+    public InterfaceMethodBuilder ContentType(string contentType)
+    {
+        ArgumentNullException.ThrowIfNull(contentType);
+        _method.ContentType = DeclarationNormalization.ContentType(contentType);
+        return this;
+    }
+
+    /// <summary>方法级 <c>[QueryCollectionFormat]</c>：查询串里集合值的编码格式。</summary>
+    public InterfaceMethodBuilder QueryCollectionFormat(AxiosCollectionFormat format)
+    {
+        if (!Enum.IsDefined(typeof(AxiosCollectionFormat), format))
+        {
+            throw new ArgumentOutOfRangeException(nameof(format), format, "不是已定义的 AxiosCollectionFormat 值。");
+        }
+
+        _method.QueryCollectionFormat = format;
+        return this;
+    }
+
     /// <summary>方法级静态头（覆盖接口级同名项）。</summary>
     public InterfaceMethodBuilder StaticHeaders(params string[] headers)
     {

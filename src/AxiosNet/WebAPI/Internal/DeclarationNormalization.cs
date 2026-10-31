@@ -52,6 +52,19 @@ internal static class DeclarationNormalization
         return trimmed;
     }
 
+    /// <summary>请求体媒体类型归一化：去首尾空白；空白直接拒绝，并复用请求头取值校验（阻止 CR/LF 注入）。</summary>
+    internal static string ContentType(string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            throw new ArgumentException("请求体 Content-Type 不能为空白。", nameof(contentType));
+        }
+
+        var trimmed = contentType.Trim();
+        AxiosHeaders.ValidateHeaderValue("Content-Type", trimmed);
+        return trimmed;
+    }
+
     /// <summary>[Part] 的可选字符串：省略（null）保持 null；显式空白视为构建错误。</summary>
     internal static string? OptionalPartValue(string? value, string memberDisplay, string attributeMember)
     {

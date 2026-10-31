@@ -45,6 +45,9 @@ internal static class InterfaceDeclarationReader
         declaration.HasStreamAttribute = stream is not null;
         declaration.StreamFormat = stream?.Format ?? AxiosStreamFormat.NewlineDelimitedJson;
 
+        declaration.ContentType = method.GetCustomAttribute<BodyContentTypeAttribute>(inherit: false)?.ContentType;
+        declaration.QueryCollectionFormat = method.GetCustomAttribute<QueryCollectionFormatAttribute>(inherit: false)?.Format;
+
         return (owner, declaration);
     }
 

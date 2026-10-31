@@ -214,6 +214,10 @@ public sealed class DemoApiServer : IDisposable
             case "POST" when path == "/api/auth/login":
                 return (200, $$"""{"token":"{{DemoToken}}","expiresIn":300}""", null);
 
+            // 表单登录：请求体是 application/x-www-form-urlencoded（由接口方法的 [BodyContentType] 决定）
+            case "POST" when path == "/api/auth/login/form":
+                return (200, LoginFormJson(body), null);
+
             case "GET" when path == "/api/secure/profile":
                 return headers.TryGetValue("authorization", out var auth)
                     && auth == $"Bearer {DemoToken}"
@@ -291,7 +295,28 @@ public sealed class DemoApiServer : IDisposable
 
     private static UserProfile? Find(int id) => Users.FirstOrDefault(u => u.Id == id) is { } found ? found : null;
 
-    /// <summary>解析 role= 与 ids[]= 过滤参数并返回列表（键名与请求模型的 Query 绑定对应，比较不区分大小写）。</summary>
+    /// <summary>表单登录：按 x-www-form-urlencoded 解析字段，演示媒体类型驱动的正文编码。</summary>
+    private static string LoginFormJson(byte[] body)
+    {
+        var fields = Encoding.UTF8.GetString(body)
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .Where(kv => kv.Length == 2)
+            .ToDictionary(
+                kv => Uri.UnescapeDataString(kv[0]),
+                kv => Uri.UnescapeDataString(kv[1]),
+                StringComparer.OrdinalIgnoreCase);
+
+        return fields.GetValueOrDefault("username") is { Length: > 0 } username
+            && fields.GetValueOrDefault("password") == "wonderland"
+            ? $$"""{"token":"{{DemoToken}}","expiresIn":300,"user":"{{username}}"}"""
+            : """{"error":"invalid credentials"}""";
+    }
+
+    /// <summary>
+    /// 解析 role= 与 ids 过滤参数并返回列表（键名与请求模型的 Query 绑定对应，比较不区分大小写）。
+    /// 同时接受 ids[]=（库默认 Brackets）与重复键 ids=（[QueryCollectionFormat(Multi)]）。
+    /// </summary>
     private static string UsersJson(string query)
     {
         var pairs = query
@@ -308,7 +333,8 @@ public sealed class DemoApiServer : IDisposable
         var ids = pairs
             .Select(pair => pair.Split('=', 2))
             .Where(kv => kv.Length == 2
-                && kv[0].Equals("ids[]", StringComparison.OrdinalIgnoreCase)
+                && (kv[0].Equals("ids[]", StringComparison.OrdinalIgnoreCase)
+                    || kv[0].Equals("ids", StringComparison.OrdinalIgnoreCase))
                 && int.TryParse(kv[1], out _))
             .Select(kv => int.Parse(kv[1]))
             .ToArray();

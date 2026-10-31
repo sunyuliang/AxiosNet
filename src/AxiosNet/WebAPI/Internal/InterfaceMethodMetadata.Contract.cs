@@ -162,6 +162,35 @@ internal sealed partial class InterfaceMethodMetadata
                 + "multipart 方法的请求体由全部参数装配，两者互斥。");
         }
 
+        if (isMultipart && declaration.ContentType is not null)
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 [BodyContentType]："
+                + "multipart 方法的请求体由全部参数装配，媒体类型固定为 multipart/form-data，两者互斥。");
+        }
+
+        string? contentType = null;
+        if (declaration.ContentType is { } declaredContentType)
+        {
+            try
+            {
+                contentType = DeclarationNormalization.ContentType(declaredContentType);
+            }
+            catch (ArgumentException ex)
+            {
+                // 归一化失败时补上接口与方法上下文：属性构造期不做校验，错误只能在这里汇总。
+                throw new InvalidOperationException(
+                    $"接口 {interfaceType.Name} 的 {methodName} 的 [BodyContentType] 取值无效：{ex.Message}", ex);
+            }
+        }
+
+        if (declaration.QueryCollectionFormat is { } collectionFormat
+            && !Enum.IsDefined(typeof(AxiosCollectionFormat), collectionFormat))
+        {
+            throw new InvalidOperationException(
+                $"接口 {interfaceType.Name} 的 {methodName} 的 [QueryCollectionFormat] 集合格式值 {(int)collectionFormat} 无效：请使用 AxiosCollectionFormat 的已定义值。");
+        }
+
         var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart);
 
         var shape = declaration.ReturnShape;
@@ -204,6 +233,8 @@ internal sealed partial class InterfaceMethodMetadata
             authorization,
             cancellationTokenIndex,
             isMultipart,
+            contentType,
+            declaration.QueryCollectionFormat,
             [.. parts],
             invoker: null,
             fault: null);

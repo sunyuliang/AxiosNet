@@ -111,6 +111,12 @@ internal sealed class InterfaceMethodDeclaration
 
     public bool Multipart { get; set; }
 
+    /// <summary>[BodyContentType] 声明的请求体媒体类型；null 表示不覆盖库默认值。</summary>
+    public string? ContentType { get; set; }
+
+    /// <summary>[QueryCollectionFormat] 声明的查询集合格式；null 表示不覆盖实例配置。</summary>
+    public AxiosCollectionFormat? QueryCollectionFormat { get; set; }
+
     public bool AllowAnonymous { get; set; }
 
     public string? AuthorizeScheme { get; set; }
