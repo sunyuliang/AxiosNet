@@ -1,3 +1,4 @@
+using AxiosNet.Internal;
 using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.WebAPI.Internal;
@@ -88,6 +89,13 @@ internal static class GeneratedMetadataRegistry
     }
 
     internal static void RegisterShape(ObjectShape shape)
+        => AddShape(shape, allowExisting: false);
+
+    /// <summary>生成代码的形状注册：同一被引用类型可能被多个程序集各生成一份，结果等价，保留先注册的一份。</summary>
+    internal static void RegisterGeneratedShape(ObjectShape shape)
+        => AddShape(shape, allowExisting: true);
+
+    private static void AddShape(ObjectShape shape, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(shape);
         lock (Gate)
@@ -95,16 +103,31 @@ internal static class GeneratedMetadataRegistry
             var current = _shapes;
             if (current.ContainsKey(shape.Type))
             {
+                if (allowExisting)
+                {
+                    return;
+                }
+
                 throw new InvalidOperationException(
                     $"类型 {Describe(shape.Type)} 的对象形状已注册：[AxiosShape] 与手工 AxiosMetadata.RegisterShape 不能同时声明同一类型。");
             }
 
             var next = new Dictionary<Type, ObjectShape>(current) { [shape.Type] = shape };
             Volatile.Write(ref _shapes, next);
+
+            // 与请求模型同理：显式注册必须压过 JIT 反射构建的旧缓存。
+            ShapeCache.Invalidate(shape.Type);
         }
     }
 
     internal static void RegisterMap(MapAccessor accessor)
+        => AddMap(accessor, allowExisting: false);
+
+    /// <summary>生成代码的映射注册：重复注册保留先注册的一份（与 <see cref="RegisterGeneratedShape"/> 同理）。</summary>
+    internal static void RegisterGeneratedMap(MapAccessor accessor)
+        => AddMap(accessor, allowExisting: true);
+
+    private static void AddMap(MapAccessor accessor, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(accessor);
         lock (Gate)
@@ -112,12 +135,20 @@ internal static class GeneratedMetadataRegistry
             var current = _maps;
             if (current.ContainsKey(accessor.Type))
             {
+                if (allowExisting)
+                {
+                    return;
+                }
+
                 throw new InvalidOperationException(
                     $"类型 {Describe(accessor.Type)} 的映射访问器已注册：源生成器与手工 AxiosMetadata.RegisterMap 不能同时声明同一类型。");
             }
 
             var next = new Dictionary<Type, MapAccessor>(current) { [accessor.Type] = accessor };
             Volatile.Write(ref _maps, next);
+
+            // 手工注册可能晚于首次展平：丢掉 QueryMap 按类型缓存的「没有访问器」结果。
+            QueryMap.Invalidate();
         }
     }
 

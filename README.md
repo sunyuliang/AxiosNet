@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1978%2F1974%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.3%25_(branch_87.9%25)-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-1995%2F1991%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1672,6 +1672,17 @@ dotnet run --project samples/AxiosNet.Simple
 - **自定义路由特性**：`HttpApiAttribute` 的自定义子类无法在编译期执行构造器 → 警告 `AXA010` 并跳过生成；JIT 下仍走反射，AOT 下请改用 `[HttpApi("METHOD", "path")]` 或内置的 `[Get]` / `[Post]` 等；
 - **关闭生成器**：`<AxiosNetSourceGen>false</AxiosNetSourceGen>`。JIT 下自动回退反射 / `DispatchProxy`；`PublishAot` 为 true 时给出警告 `AXA012`。
 
+### 对象形状：params / 表单 / multipart 的展平
+
+`params`、`form-urlencoded` 与 `multipart` 都要把对象展开成「键 → 值」。JIT 下按反射构建成员清单；启用源生成器时，形状在编译期烘焙并注册，AOT 下不再反射：
+
+- **自动发现**：`[AxiosShape]` 类型、路由请求模型、接口方法参数类型、Axios 调用点实参（含 `PostFormAsync` 的 data）、`Params` / `Data` 赋值与对象初始化器、匿名对象创建；嵌套对象、集合元素、字典值递归展开；
+- **命名类型**：用 `default(T)` 推断类型参数注册，取值委托是编译期写死的属性访问；只收录 public 读访问器（非 public getter 在生成与反射路径上一致跳过），ref struct / 指针成员无法装箱、两条路径同样跳过，`[JsonPropertyName]` / `[JsonIgnore]`、基类 `new` 隐藏与 `override` 的语义与反射路径逐字段一致；
+- **匿名类型**：按「属性名 / 类型 / 顺序」生成结构相同的样本（`RegisterGeneratedShapeFromSample`）推断匿名类型参数；匿名元素数组写成 `new[] { ... }` 让编译器推断，结构不一致的匿名类型不会误命中；
+- **自定义只读字典**：只生成枚举访问器（不注册 POCO 形状），`params` / 表单 / `multipart` 三条展平通道都走它；声明为接口类型时按接口登记，运行时沿具体类型的接口命中；访问器给出的 `null` 键在展平时跳过，回收 / 重试的遍历路径在 AOT 下没有访问器时停止下钻而不是抛错；
+- **缺失形状显式失败**：AOT 下运行时类型没有形状就抛 `AxiosAotMetadataException`，消息带类型与字段路径（如 `位置：Payload`），不会静默丢字段。静态类型是 `object` / 接口 / 泛型参数的位置无法静态推断，可给具体类型标 `[AxiosShape]`，或手工调用 `AxiosMetadata.RegisterShape<T>()` / `RegisterShapeFromSample(...)` / `RegisterMap(typeof(T), ...)` 兜底；
+- **不可见类型**：private 嵌套 / file-local / 跨程序集 internal 的类型无法被生成代码引用，跳过并给出 `AXA013` 警告（AOT 下用到会显式失败）。
+
 | 诊断 | 级别 | 场景 |
 | --- | --- | --- |
 | `AXA001` | Error | 接口含无法代理的成员：属性 / 事件 / 静态成员 |
@@ -1685,6 +1696,7 @@ dotnet run --project samples/AxiosNet.Simple
 | `AXA010` | Warning | 使用了自定义 `HttpApiAttribute` 子类（已跳过生成） |
 | `AXA011` | Warning | 开放泛型接口（含外层类型为开放泛型的嵌套接口）没有闭合调用点（AOT 下 `Create` 会显式失败） |
 | `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
+| `AXA013` | Warning | 形状类型的访问级别对生成代码不可见（已跳过形状；AOT 下展平到该类型会显式失败） |
 
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
@@ -1706,7 +1718,7 @@ var client = new AxiosClient(new AxiosConfig
 
 AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型 / 接口缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
 
-AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、匿名对象作为 params / 表单值、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT；`ValidateInterfaces(Assembly)` 同受裁剪影响，改用 `ValidateInterfaces(typeof(IA), ...)`）。
+AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、`ValidateModels(Assembly)`（改用 `ValidateModels(typeof(A), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT；`ValidateInterfaces(Assembly)` 同受裁剪影响，改用 `ValidateInterfaces(typeof(IA), ...)`）。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
 
 ## 构建与测试
 
@@ -1718,13 +1730,13 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 1915 / 1911 | `net8.0` / `net6.0` | 3826 |
+| `AxiosNet.Tests`（核心 + 声明式） | 1932 / 1928 | `net8.0` / `net6.0` | 3860 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **合计** | **1978 / 1974** | | **3952** |
+| **合计** | **1995 / 1991** | | **3986** |
 
-测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理与 DI 注册。
+测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、流式响应、重试、熔断、并发对冲、备用端点、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
-行覆盖率 **92.3%**、分支覆盖率 **87.9%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
+行覆盖率 **91.9%**、分支覆盖率 **87.3%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash

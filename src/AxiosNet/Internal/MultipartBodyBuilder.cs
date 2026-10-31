@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Internal;
 
@@ -68,10 +69,6 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>按值形态把数据项装配进容器：文件类 → 文件部件，标量 → 文本字段，字典 / 集合 / POCO 递归展开。</summary>
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2072",
-        Justification = "multipart 值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void CollectParts(
         string? name,
         object? value,
@@ -241,6 +238,31 @@ internal static class MultipartBodyBuilder
             return;
         }
 
+        // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+        if (value is IEnumerable mapValue && QueryMap.CanEnumerate(mapValue))
+        {
+            visited = ObjectGraph.Enter(visited, mapValue);
+            try
+            {
+                foreach (var entry in QueryMap.Enumerate(mapValue))
+                {
+                    CollectParts(
+                        BodyFields.CombineName(nameSelector, name, entry.Key),
+                        entry.Value,
+                        content,
+                        encoding,
+                        config,
+                        visited);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, mapValue);
+            }
+
+            return;
+        }
+
         if (value is IEnumerable enumerable)
         {
             visited = ObjectGraph.Enter(visited, value);
@@ -260,20 +282,21 @@ internal static class MultipartBodyBuilder
             return;
         }
 
-        // 嵌套 POCO：public 可读属性，命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
+        // 嵌套 POCO：成员清单来自对象形状，命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
         visited = ObjectGraph.Enter(visited, value);
         try
         {
-            foreach (var property in ReflectionCache.GetReadableProperties(type))
+            var shape = ShapeCache.Get(type, name);
+            foreach (var member in shape.Members)
             {
-                if (BodyFields.IsIgnored(property))
+                if (member.Ignored)
                 {
                     continue;
                 }
 
                 CollectParts(
-                    BodyFields.CombineName(nameSelector, name, BodyFields.ResolveFieldName(property)),
-                    property.GetValue(value),
+                    BodyFields.CombineName(nameSelector, name, member.FieldName),
+                    member.GetValue(value),
                     content,
                     encoding,
                     config,

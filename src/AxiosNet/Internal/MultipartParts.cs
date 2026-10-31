@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Internal;
 
@@ -164,6 +165,20 @@ internal static class MultipartOwnership
 
                 return;
 
+            // 自定义只读字典 / 仅泛型字典：能安全枚举的才按键值对下钻（拿不准的形态留给下面的集合通道）。
+            case IEnumerable map when QueryMap.CanEnumerateBestEffort(map):
+                if (!visited.Add(map))
+                {
+                    return;
+                }
+
+                foreach (var entry in QueryMap.Enumerate(map))
+                {
+                    Walk(entry.Value, visited, onStream, onContent);
+                }
+
+                return;
+
             // 集合 / 迭代器（含非泛型 ArrayList 等）：逐项回收
             case IEnumerable items:
                 if (!visited.Add(value))
@@ -179,18 +194,18 @@ internal static class MultipartOwnership
                 return;
         }
 
-        // 嵌套对象：按 public 可读属性下钻回收。
+        // 嵌套对象：按对象形状下钻回收；AOT 下没有形状就停止（回收路径尽力而为，不抛错）。
         var type = value.GetType();
-        if (BodyFields.IsScalar(type) || !visited.Add(value))
+        if (BodyFields.IsScalar(type) || !visited.Add(value) || !ShapeCache.TryGet(type, out var shape))
         {
             return;
         }
 
-        foreach (var property in ReflectionCache.GetReadableProperties(type))
+        foreach (var member in shape.Members)
         {
-            if (!BodyFields.IsIgnored(property))
+            if (!member.Ignored)
             {
-                Walk(property.GetValue(value), visited, onStream, onContent);
+                Walk(member.GetValue(value), visited, onStream, onContent);
             }
         }
     }

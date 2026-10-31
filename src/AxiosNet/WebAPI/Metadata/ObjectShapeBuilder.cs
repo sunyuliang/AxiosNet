@@ -53,7 +53,14 @@ public sealed class ObjectShapeBuilder
         var members = new List<ShapeMember>();
         foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            if (!property.CanRead || property.GetIndexParameters().Length > 0)
+            // 与生成的形状口径一致：只收录 public 读访问器（非 public getter 两边都跳过）。
+            if (property.GetMethod is not { IsPublic: true } || property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+
+            // ref struct / 指针无法装箱成 object：生成器同样跳过，两边保持一致。
+            if (ShapeCache.IsUnboxable(property.PropertyType))
             {
                 continue;
             }

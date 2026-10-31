@@ -38,6 +38,7 @@ namespace AxiosNet.SourceGen
                 => Execute(output, pair.Left, pair.Right));
 
             InitializeInterfaces(context, options);
+            InitializeShapes(context, options);
         }
 
         private static bool IsCandidate(SyntaxNode node)
@@ -507,6 +508,12 @@ namespace AxiosNet.SourceGen
                 case INamedTypeSymbol named:
                     for (var current = named; current is not null; current = current.ContainingType)
                     {
+                        // file-local 类型在别的文件里写不出名字（生成代码是独立文件），与访问级别无关。
+                        if (current.IsFileLocal())
+                        {
+                            return false;
+                        }
+
                         var sameAssembly = SymbolEqualityComparer.Default.Equals(current.ContainingAssembly, currentAssembly);
                         if (!IsAccessible(current.DeclaredAccessibility, sameAssembly))
                         {
@@ -832,6 +839,8 @@ namespace AxiosNet.SourceGen
             ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.ApiIgnoreAttribute");
             ApiRequest = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.IApiRequest`1");
             JsonPropertyName = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonPropertyNameAttribute");
+            JsonIgnore = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonIgnoreAttribute");
+            AxiosShape = compilation.GetTypeByMetadataName("AxiosNet.AxiosShapeAttribute");
             Task = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task");
             TaskOfT = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task`1");
             AxiosResponse = compilation.GetTypeByMetadataName("AxiosNet.AxiosResponse");
@@ -872,6 +881,10 @@ namespace AxiosNet.SourceGen
         public INamedTypeSymbol? ApiRequest { get; }
 
         public INamedTypeSymbol? JsonPropertyName { get; }
+
+        public INamedTypeSymbol? JsonIgnore { get; }
+
+        public INamedTypeSymbol? AxiosShape { get; }
 
         public INamedTypeSymbol? Task { get; }
 

@@ -62,6 +62,15 @@ namespace AxiosNet.SourceGen
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
 
+        public static readonly DiagnosticDescriptor ShapeTypeInaccessible = new DiagnosticDescriptor(
+            "AXA013",
+            "对象形状类型无法生成",
+            "类型 {0} 无法生成对象形状：{1}。Native AOT 下展平到该类型会显式失败；请改成生成代码可见的类型（public，或同一程序集内的 internal），或改用 JIT 反射。",
+            Category,
+            DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
         public static readonly DiagnosticDescriptor GeneratorDisabledWithAot = new DiagnosticDescriptor(
             "AXA012",
             "AOT 项目关闭了 AxiosNet 源生成器",

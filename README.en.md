@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-1978%2F1974%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.3%25_(branch_87.9%25)-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-1995%2F1991%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1674,6 +1674,17 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 - **Custom route attributes**: a custom subclass of `HttpApiAttribute` cannot have its constructor executed at compile time → warning `AXA010` and generation is skipped; JIT still uses reflection, and under AOT use `[HttpApi("METHOD", "path")]` or the built-in `[Get]` / `[Post]` etc. instead;
 - **Disabling the generator**: `<AxiosNetSourceGen>false</AxiosNetSourceGen>`. JIT falls back to reflection / `DispatchProxy` automatically; when `PublishAot` is true it raises warning `AXA012`.
 
+### Object shapes: flattening for params / forms / multipart
+
+`params`, `form-urlencoded` and `multipart` all need to expand an object into "key → value" pairs. JIT builds the member list through reflection; with the generator enabled the shape is baked at compile time and registered, so AOT needs no reflection:
+
+- **Automatic discovery**: `[AxiosShape]` types, route request models, interface method parameter types, Axios call-site arguments (including `PostFormAsync` data), `Params` / `Data` assignments and object initializers, and anonymous object creations; nested objects, collection elements and dictionary values are expanded recursively;
+- **Named types**: registered with `default(T)` as the type-parameter sample, and getters are property accesses baked at compile time; only public getters are included (both the generated and the reflection path skip non-public getters), ref struct / pointer members cannot be boxed and are skipped on both paths, and `[JsonPropertyName]` / `[JsonIgnore]`, base-class `new` hiding and `override` behave exactly like the reflection path, member by member;
+- **Anonymous types**: a structurally identical sample is generated from "property name / type / order" (`RegisterGeneratedShapeFromSample`), so the anonymous type argument is inferred; arrays of anonymous elements are written as `new[] { ... }` for the compiler to infer, and structurally different anonymous types never match by accident;
+- **Custom read-only dictionaries**: only an enumeration accessor is generated (no POCO shape is registered), and `params` / form / `multipart` all flatten through it; when the declaration is an interface type the accessor is registered under the interface and resolved through the concrete type's interfaces at runtime; `null` keys from the accessor are skipped while flattening, and the ownership / retry traversal stops descending instead of throwing when no accessor exists under AOT;
+- **Missing shapes fail explicitly**: under AOT a runtime type without a shape throws `AxiosAotMetadataException` whose message carries the type and field path (e.g. `Payload`), never silently dropping fields. Positions statically typed as `object` / an interface / a generic parameter cannot be inferred; annotate the concrete type with `[AxiosShape]`, or fall back to `AxiosMetadata.RegisterShape<T>()` / `RegisterShapeFromSample(...)` / `RegisterMap(typeof(T), ...)`;
+- **Invisible types**: private nested / file-local / cross-assembly internal types cannot be referenced by generated code; they are skipped with warning `AXA013` (using them under AOT fails explicitly).
+
 | Diagnostic | Severity | Scenario |
 | --- | --- | --- |
 | `AXA001` | Error | Interface member that cannot be proxied: property / event / static member |
@@ -1687,6 +1698,7 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA010` | Warning | Custom `HttpApiAttribute` subclass used (generation skipped) |
 | `AXA011` | Warning | Open generic interface (including a nested interface whose outer type is open generic) without a closed call site (`Create` fails explicitly under AOT) |
 | `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
+| `AXA013` | Warning | Shape type is not accessible to generated code (shape skipped; flattening to it fails explicitly under AOT) |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
@@ -1708,7 +1720,7 @@ var client = new AxiosClient(new AxiosConfig
 
 Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models and interfaces throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosMetadata.RegisterRequestModel` / `RegisterInterface` APIs can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver`; `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
 
-Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, anonymous objects as params / form values, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`).
+Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, `ValidateModels(Assembly)` (use `ValidateModels(typeof(A), ...)`), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only; `ValidateInterfaces(Assembly)` is subject to trimming too — use `ValidateInterfaces(typeof(IA), ...)`). Anonymous objects as params / form values need no extra configuration: the generator bakes a sample for their structure (see "Object shapes" above).
 
 ## Build and test
 
@@ -1720,13 +1732,13 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 1915 / 1911 | `net8.0` / `net6.0` | 3826 |
+| `AxiosNet.Tests` (core + declarative) | 1932 / 1928 | `net8.0` / `net6.0` | 3860 |
 | `AxiosNet.DependencyInjection.Tests` | 63 | `net8.0` / `net6.0` | 126 |
-| **Total** | **1978 / 1974** | | **3952** |
+| **Total** | **1995 / 1991** | | **3986** |
 
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies and DI registration.
+Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
-Line coverage **92.3%**, branch coverage **87.9%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
+Line coverage **91.9%**, branch coverage **87.3%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using AxiosNet.Internal;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -26,6 +27,7 @@ internal static class RuntimeSupport
 
             _forceNoDynamicCode = value;
             RequestModelMetadata.InvalidateAll();
+            ShapeCache.InvalidateAll();
         }
     }
 }

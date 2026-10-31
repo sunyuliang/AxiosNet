@@ -99,6 +99,29 @@ namespace AxiosNet.SourceGen
         int CancellationTokenIndex,
         EquatableArray<InterfaceParameterInfo> Parameters);
 
+    /// <summary>对象形状的一个成员：展平时的名字与直接取值委托（生成代码里的 lambda 文本）。</summary>
+    internal sealed record ShapeMemberInfo(string Name, string FieldName, bool Ignored, string GetterExpression);
+
+    /// <summary>
+    /// 一个可注册的对象形状：命名类型用 <c>default(T)</c> 推断类型参数，匿名类型用结构相同的样本推断；
+    /// <see cref="MapInterfaceExpression"/> 非 null 时同一注册块里再登记映射访问器；
+    /// <see cref="RegisterShape"/> 为 false 时只登记映射访问器（自定义只读字典不是 POCO 展平对象）。
+    /// </summary>
+    internal sealed record ShapeInfo(
+        string Key,
+        string ClassName,
+        string HintName,
+        string? TypeExpression,
+        string? SampleExpression,
+        EquatableArray<ShapeMemberInfo> Members,
+        string? MapInterfaceExpression,
+        bool RegisterShape);
+
+    /// <summary>一次语法候选展开出的形状与诊断（同一类型可能由多个候选各自携带，输出阶段按 <see cref="ShapeInfo.Key"/> 去重）。</summary>
+    internal sealed record ShapeBatchInfo(
+        EquatableArray<ShapeInfo> Shapes,
+        EquatableArray<DiagnosticInfo> Diagnostics);
+
     /// <summary>一个接口（可能是闭合泛型）的完整生成数据；<see cref="Emit"/> 为 false 时只携带诊断。</summary>
     internal sealed record InterfaceModelInfo(
         string FullTypeName,

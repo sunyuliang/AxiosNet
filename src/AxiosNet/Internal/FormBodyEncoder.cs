@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Internal;
 
@@ -72,10 +73,6 @@ internal static class FormBodyEncoder
     }
 
     /// <summary>把结构化数据展平为表单键值对；<see cref="JsonElement"/> 按树语义展平（<see cref="Flatten"/>）。</summary>
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2072",
-        Justification = "表单值的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void CollectFormPairs(
         string? prefix,
         object? value,
@@ -198,6 +195,31 @@ internal static class FormBodyEncoder
 
                 return;
             }
+
+            // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+            case IEnumerable map when QueryMap.CanEnumerate(map):
+            {
+                visited = ObjectGraph.Enter(visited, map);
+                try
+                {
+                    foreach (var entry in QueryMap.Enumerate(map))
+                    {
+                        CollectFormPairs(
+                            BodyFields.CombineName(nameSelector, prefix, entry.Key),
+                            entry.Value,
+                            pairs,
+                            encoding,
+                            nameSelector,
+                            visited);
+                    }
+                }
+                finally
+                {
+                    ObjectGraph.Exit(visited, map);
+                }
+
+                return;
+            }
         }
 
         var type = value.GetType();
@@ -232,16 +254,17 @@ internal static class FormBodyEncoder
         visited = ObjectGraph.Enter(visited, value);
         try
         {
-            foreach (var property in ReflectionCache.GetReadableProperties(type))
+            var shape = ShapeCache.Get(type, prefix);
+            foreach (var member in shape.Members)
             {
-                if (BodyFields.IsIgnored(property))
+                if (member.Ignored)
                 {
                     continue;
                 }
 
                 CollectFormPairs(
-                    BodyFields.CombineName(nameSelector, prefix, BodyFields.ResolveFieldName(property)),
-                    property.GetValue(value),
+                    BodyFields.CombineName(nameSelector, prefix, member.FieldName),
+                    member.GetValue(value),
                     pairs,
                     encoding,
                     nameSelector,

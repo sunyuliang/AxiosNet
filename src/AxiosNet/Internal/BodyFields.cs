@@ -62,10 +62,4 @@ internal static class BodyFields
         => selector is not null
             ? selector(prefix, name)
             : string.IsNullOrEmpty(prefix) ? name : prefix + "[" + name + "]";
-
-    /// <summary>属性名在表单 / multipart 里的字段名：<c>[JsonPropertyName]</c> 优先，否则属性名（按属性缓存）。</summary>
-    public static string ResolveFieldName(PropertyInfo property) => ReflectionCache.GetFieldName(property);
-
-    /// <summary>是否整体忽略：只认 <c>[JsonIgnore(Always)]</c>（按属性缓存，条件忽略按参与处理）。</summary>
-    public static bool IsIgnored(PropertyInfo property) => ReflectionCache.IsIgnoredProperty(property);
 }

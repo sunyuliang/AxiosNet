@@ -160,13 +160,74 @@ public static class AxiosMetadata
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>()
         => GeneratedMetadataRegistry.RegisterShape(ObjectShapeBuilder.FromReflection<T>());
 
+    /// <summary>
+    /// 生成代码专用的形状注册入口：<paramref name="sample"/> 只用于推断 <typeparamref name="T"/>
+    /// （匿名类型无法写出类型名，只能由样本推断）；成员取值是编译期生成的直接委托。
+    /// </summary>
+    /// <typeparam name="T">参与展平的类型（可以是匿名类型）。</typeparam>
+    /// <param name="sample">用于推断类型参数的样本，运行期不读取。</param>
+    /// <param name="configure">成员声明。</param>
+    public static void RegisterShapeFromSample<T>(T sample, Action<ShapeBuilder<T>> configure)
+    {
+        _ = sample;
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new ShapeBuilder<T>();
+        ObjectShape shape;
+        try
+        {
+            configure(builder);
+            shape = builder.Build(typeof(T));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
+        {
+            shape = new ObjectShape(typeof(T), [], ex.Message);
+        }
+
+        GeneratedMetadataRegistry.RegisterShape(shape);
+    }
+
+    /// <summary>
+    /// 生成代码专用的形状注册入口：两个互不引用的程序集可能各自为同一被引用类型生成形状，
+    /// 结果等价，保留先注册的一份（模块初始化器重复注册不应让进程启动失败）。
+    /// </summary>
+    public static void RegisterGeneratedShapeFromSample<T>(T sample, Action<ShapeBuilder<T>> configure)
+    {
+        _ = sample;
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new ShapeBuilder<T>();
+        ObjectShape shape;
+        try
+        {
+            configure(builder);
+            shape = builder.Build(typeof(T));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
+        {
+            shape = new ObjectShape(typeof(T), [], ex.Message);
+        }
+
+        GeneratedMetadataRegistry.RegisterGeneratedShape(shape);
+    }
+
     /// <summary>注册自定义只读字典的枚举访问器（形状里映射不出 <see cref="IDictionary{TKey,TValue}"/> 的只读实现用）；每个类型只能注册一个。</summary>
     /// <param name="type">字典类型。</param>
-    /// <param name="enumerate">把实例枚举成键值对（<c>null</c> 键跳过由调用方处理）。</param>
+    /// <param name="enumerate">把实例枚举成键值对（<c>null</c> 键在展平时跳过）。</param>
     public static void RegisterMap(Type type, Func<object, IEnumerable<KeyValuePair<string, object?>>> enumerate)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(enumerate);
         GeneratedMetadataRegistry.RegisterMap(new MapAccessor(type, enumerate));
+    }
+
+    /// <summary>生成代码专用的映射访问器注册入口：重复注册保留先注册的一份（与 <see cref="RegisterGeneratedShapeFromSample{T}"/> 同理）。</summary>
+    /// <param name="type">字典类型。</param>
+    /// <param name="enumerate">把实例枚举成键值对。</param>
+    public static void RegisterGeneratedMap(Type type, Func<object, IEnumerable<KeyValuePair<string, object?>>> enumerate)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(enumerate);
+        GeneratedMetadataRegistry.RegisterGeneratedMap(new MapAccessor(type, enumerate));
     }
 }

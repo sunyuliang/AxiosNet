@@ -12,12 +12,15 @@ namespace AxiosNet.SourceGen
         {
             foreach (var reference in symbol.DeclaringSyntaxReferences)
             {
-                if (reference.GetSyntax() is not TypeDeclarationSyntax declaration)
+                // class / struct / interface / record / enum 都是 BaseTypeDeclarationSyntax，delegate 单独一类。
+                var modifiers = reference.GetSyntax() switch
                 {
-                    continue;
-                }
+                    BaseTypeDeclarationSyntax declaration => declaration.Modifiers,
+                    DelegateDeclarationSyntax declaration => declaration.Modifiers,
+                    _ => default,
+                };
 
-                foreach (var modifier in declaration.Modifiers)
+                foreach (var modifier in modifiers)
                 {
                     if (modifier.ValueText == "file")
                     {

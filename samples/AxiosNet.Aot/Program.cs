@@ -88,7 +88,82 @@ if (searchRequest.HasHeader("Authorization"))
     throw new InvalidOperationException("[AllowAnonymous] 模型不应带 Authorization 头。");
 }
 
-// 3) 接口级声明（Refit 风格）：源生成器在编译期写出真实代理，AOT 下不走 DispatchProxy。
+// 3) 对象形状：params / form-urlencoded / multipart 的展平在 AOT 下由源生成器烘焙，不再走反射。
+await http.GetAsync("/search", c => c.Params = new SearchQuery
+{
+    q = "a b",
+    tags = new List<string> { "x", "y" },
+    filter = new SearchFilter { kind = "book", page = 2 },
+});
+Verify(server.TakeLast(), "GET /search?q=a%20b&tags[]=x&tags[]=y&filter[kind]=book&filter[page]=2 HTTP/1.1");
+
+// 匿名对象按「属性名 / 类型 / 顺序」生成结构相同的样本，嵌套对象与集合同样逐层展平。
+await http.GetAsync("/anon", c => c.Params = new
+{
+    q = "a b",
+    nested = new { flag = true, items = new[] { "u", "v" } },
+});
+Verify(server.TakeLast(), "GET /anon?q=a%20b&nested[flag]=true&nested[items][]=u&nested[items][]=v HTTP/1.1");
+
+// form-urlencoded：字段名取形状的 FieldName（[JsonPropertyName] 优先），嵌套对象用 [key] 展平。
+await http.PostFormAsync("/form", new FormPayload
+{
+    name = "alice",
+    address = new FormAddress { city = "Shanghai" },
+    tags = new List<string> { "x", "y" },
+}, c => c.ContentType = AxiosContentType.FormUrlEncoded);
+var formRequest = server.TakeLast();
+Verify(formRequest, "POST /form HTTP/1.1");
+VerifyBody(formRequest.Body, "name=alice&address[city]=Shanghai&tags[]=x&tags[]=y");
+
+// multipart：FormFile 走文件部件，其余成员按字段展平。
+await http.PostFormAsync("/upload", new UploadPayload
+{
+    title = "avatar",
+    file = new FormFile("note.txt", Encoding.UTF8.GetBytes("hello"), "text/plain"),
+});
+var uploadRequest = server.TakeLast();
+Verify(uploadRequest, "POST /upload HTTP/1.1");
+if (uploadRequest.GetHeader("Content-Type")?.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase) != true)
+{
+    throw new InvalidOperationException($"上传的 Content-Type 不是 multipart/form-data：{uploadRequest.GetHeader("Content-Type")}");
+}
+
+foreach (var expected in new[] { "name=title", "avatar", "name=file", "filename=note.txt", "hello" })
+{
+    if (!uploadRequest.Body.Contains(expected, StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"multipart 请求体缺少 \"{expected}\"：{uploadRequest.Body}");
+    }
+}
+
+// 自定义只读字典（值类型值）：值类型的字典不满足 IReadOnlyDictionary<string,object> 的协变匹配，
+// AOT 下必须由源生成器烘焙映射访问器；声明为接口时只登记接口键，运行时沿接口命中。
+var mapped = await api.RequestAsync(new MapRequest());
+Verify(server.TakeLast(), "GET /map?a=1&b=2 HTTP/1.1", ("Authorization", "Bearer aot-token"));
+if (mapped.Data?.Name != "alice")
+{
+    throw new InvalidOperationException("自定义字典请求的响应正文不符。");
+}
+
+// 旧通道（params / form / multipart）同样走映射访问器，而不是按 KeyValuePair 下标展开。
+await http.GetAsync("/map-query", c => c.Params = new FormBag());
+Verify(server.TakeLast(), "GET /map-query?c=3&d=4 HTTP/1.1");
+
+await http.PostFormAsync("/map-form", new FormBag(), c => c.ContentType = AxiosContentType.FormUrlEncoded);
+VerifyBody(server.TakeLast().Body, "c=3&d=4");
+
+await http.PostFormAsync("/map-upload", new FormBag());
+var mapUpload = server.TakeLast();
+foreach (var expected in new[] { "name=c", "name=d" })
+{
+    if (!mapUpload.Body.Contains(expected, StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"multipart 映射请求体缺少 \"{expected}\"：{mapUpload.Body}");
+    }
+}
+
+// 4) 接口级声明（Refit 风格）：源生成器在编译期写出真实代理，AOT 下不走 DispatchProxy。
 var personApi = api.Create<IPersonApi>();
 var interfaceGet = await personApi.GetAsync(7, "true", default);
 Verify(
@@ -128,6 +203,10 @@ Console.WriteLine($"POST /echo      -> {posted.Data?.Name} / {posted.Data?.Age} 
 Console.WriteLine($"GET persons/7   -> {fetched.Data?.Name} / query+header+auth 校验通过");
 Console.WriteLine($"POST persons    -> {created.Data?.Name} / body+query+auth 校验通过");
 Console.WriteLine($"GET persons     -> {searched.Data?.Name} / 匿名请求校验通过");
+Console.WriteLine("形状 params     -> query / 匿名对象 / 集合 / 嵌套展平通过");
+Console.WriteLine("形状 form       -> form-urlencoded 字段与嵌套展平通过");
+Console.WriteLine("形状 multipart  -> FormFile 文件部件 + 字段展平通过");
+Console.WriteLine("形状 字典映射   -> 自定义只读字典 params/form/multipart 通过");
 Console.WriteLine($"接口 GET/POST   -> {interfaceGet.Data?.Name} / POST 已发送 / 声明式代理校验通过");
 Console.WriteLine($"接口 SSE 流式   -> {feedCount} 帧 / 闭合泛型接口代理校验通过");
 
@@ -148,6 +227,14 @@ static void Verify(
         {
             throw new InvalidOperationException($"请求头 {name} 不符：期望 \"{value}\"，实际 \"{actual}\"。");
         }
+    }
+}
+
+static void VerifyBody(string body, string expected)
+{
+    if (body != expected)
+    {
+        throw new InvalidOperationException($"请求体不符：期望 \"{expected}\"，实际 \"{body}\"。");
     }
 }
 
@@ -195,6 +282,121 @@ internal sealed class SearchPersonRequest : IApiRequest<Person>
 public sealed record Person(string Name, int Age, Address? Address);
 
 public sealed record Address(string City, string Zip);
+
+// 普通对象（非请求模型）：调用点出现时由源生成器烘焙展平形状（query / form / multipart 共用）。
+internal sealed class SearchQuery
+{
+    public string? q { get; set; }
+
+    public List<string>? tags { get; set; }
+
+    public SearchFilter? filter { get; set; }
+}
+
+internal sealed class SearchFilter
+{
+    public string? kind { get; set; }
+
+    public int page { get; set; }
+}
+
+internal sealed class FormPayload
+{
+    public string? name { get; set; }
+
+    public FormAddress? address { get; set; }
+
+    public List<string>? tags { get; set; }
+}
+
+internal sealed class FormAddress
+{
+    public string? city { get; set; }
+}
+
+internal sealed class UploadPayload
+{
+    public string? title { get; set; }
+
+    public FormFile? file { get; set; }
+}
+
+// 自定义只读字典：值类型值不满足 IReadOnlyDictionary<string,object> 的协变匹配，
+// AOT 下的枚举访问器由源生成器烘焙（声明为接口时按接口登记）。
+internal sealed class QueryBag : IReadOnlyDictionary<string, int>
+{
+    private static readonly KeyValuePair<string, int>[] Entries = [new("a", 1), new("b", 2)];
+
+    public int this[string key] => Entries.First(pair => pair.Key == key).Value;
+
+    public IEnumerable<string> Keys => Entries.Select(static pair => pair.Key);
+
+    public IEnumerable<int> Values => Entries.Select(static pair => pair.Value);
+
+    public int Count => Entries.Length;
+
+    public bool ContainsKey(string key) => Entries.Any(pair => pair.Key == key);
+
+    public bool TryGetValue(string key, out int value)
+    {
+        foreach (var pair in Entries)
+        {
+            if (pair.Key == key)
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = 0;
+        return false;
+    }
+
+    public IEnumerator<KeyValuePair<string, int>> GetEnumerator() => ((IEnumerable<KeyValuePair<string, int>>)Entries).GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+internal sealed class FormBag : IReadOnlyDictionary<string, int>
+{
+    private static readonly KeyValuePair<string, int>[] Entries = [new("c", 3), new("d", 4)];
+
+    public int this[string key] => Entries.First(pair => pair.Key == key).Value;
+
+    public IEnumerable<string> Keys => Entries.Select(static pair => pair.Key);
+
+    public IEnumerable<int> Values => Entries.Select(static pair => pair.Value);
+
+    public int Count => Entries.Length;
+
+    public bool ContainsKey(string key) => Entries.Any(pair => pair.Key == key);
+
+    public bool TryGetValue(string key, out int value)
+    {
+        foreach (var pair in Entries)
+        {
+            if (pair.Key == key)
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = 0;
+        return false;
+    }
+
+    public IEnumerator<KeyValuePair<string, int>> GetEnumerator() => ((IEnumerable<KeyValuePair<string, int>>)Entries).GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+[Get("map")]
+internal sealed class MapRequest : IApiRequest<Person>
+{
+    [Query]
+    public IReadOnlyDictionary<string, int> Bag { get; set; } = new QueryBag();
+}
 
 // 接口级声明：GET / POST 由源生成器烘焙成真实代理（内部接口同样支持，不需要 root 反射元数据）。
 [Headers("X-Api: v1")]

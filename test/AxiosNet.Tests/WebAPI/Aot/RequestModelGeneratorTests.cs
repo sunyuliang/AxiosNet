@@ -30,7 +30,7 @@ public sealed class RequestModelGeneratorTests
         var (result, diagnostics, output) = RunGenerator(RichModels.Replace("__NS__", ns));
 
         Assert.Empty(diagnostics);
-        Assert.Equal(3, result.Results.Single().GeneratedSources.Length);
+        Assert.Equal(3, ModelSources(result).Count());
 
         var assembly = LoadEmitted(output);
         AssertSameDeclaration(assembly, ns + ".ParityDerived");
@@ -109,7 +109,7 @@ public sealed class RequestModelGeneratorTests
         }
 
         // 可静态表达的冲突仍会生成注册代码：错误由共享构建器在首次使用时抛出，文本与反射路径一致。
-        var sources = result.Results.Single().GeneratedSources;
+        var sources = ModelSources(result).ToArray();
         Assert.Equal(2, sources.Length);
         Assert.DoesNotContain(sources, static source => source.SourceText.ToString().Contains("MultiRouteModel"));
 
@@ -178,7 +178,7 @@ public sealed class RequestModelGeneratorTests
         var ns = UniqueNamespace();
         var (result, diagnostics, output) = RunGenerator(PartialModel.Replace("__NS__", ns));
         Assert.Empty(diagnostics);
-        Assert.Single(result.Results.Single().GeneratedSources);
+        Assert.Single(ModelSources(result));
 
         var assembly = LoadEmitted(output);
         var modelType = assembly.GetType(ns + ".SplitModel", throwOnError: true)!;
@@ -345,6 +345,11 @@ public sealed class RequestModelGeneratorTests
     }
 
     private static string? NormalizeOptionalName(string? name) => string.IsNullOrEmpty(name) ? null : name;
+
+    /// <summary>只取请求模型注册源：同一驱动还会输出对象形状源（<c>AxiosNet.Shape.*</c>），计数断言不应受其影响。</summary>
+    private static IEnumerable<GeneratedSourceResult> ModelSources(GeneratorDriverRunResult result)
+        => result.Results.Single().GeneratedSources.Where(
+            static source => source.HintName.StartsWith("AxiosNet.RequestModel.", StringComparison.Ordinal));
 
     /// <summary>按声明的定位文本（<c>DeclaringType.Name.PropertyName</c>）找到对应层级的属性：new 隐藏时基类与派生类各有一个。</summary>
     private static PropertyInfo FindDeclaredProperty(Type modelType, string description)

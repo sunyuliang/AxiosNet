@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
+using AxiosNet.WebAPI.Internal;
+using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.Internal;
 
@@ -41,7 +43,7 @@ internal static class UrlBuilder
                 ? ParamsSerializer.Serialize(queryParams, config)
                 : NormalizeQuery(serializer(queryParams));
         }
-        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException and not AxiosAotMetadataException)
         {
             throw AxiosException.InvalidOption($"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
         }
@@ -190,10 +192,6 @@ internal static class UrlBuilder
 internal static class ParamsSerializer
 {
     /// <summary>把查询参数序列化成查询串：对象 / 字典 / 集合 / 已序列化的字符串原样透传。</summary>
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2072",
-        Justification = "params 的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     public static string Serialize(object? paramsObj, AxiosConfig? config = null)
     {
         if (paramsObj is null)
@@ -250,6 +248,14 @@ internal static class ParamsSerializer
                     Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null, format);
                 }
             }
+            else if (QueryMap.CanEnumerate(paramsObj))
+            {
+                // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+                foreach (var entry in QueryMap.Enumerate(paramsObj))
+                {
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
+                }
+            }
             else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
             {
                 // 根集合用下标作键（与表单展平一致）。
@@ -267,9 +273,11 @@ internal static class ParamsSerializer
             }
             else
             {
-                foreach (var property in ReflectionCache.GetReadableProperties(paramsObj.GetType()))
+                // 根对象：形状决定成员顺序与键名；query 展平不跳过 [JsonIgnore]（与表单不同）。
+                var shape = ShapeCache.Get(paramsObj.GetType());
+                foreach (var member in shape.Members)
                 {
-                    Append(ReflectionCache.GetEscapedName(property), property.GetValue(paramsObj), pairs, visited: null, format);
+                    Append(member.EscapedName, member.GetValue(paramsObj), pairs, visited: null, format);
                 }
             }
 
@@ -319,10 +327,6 @@ internal static class ParamsSerializer
     }
 
     /// <summary>把单个值按实际形态展平成查询键值对：null 跳过，字典 / 集合 / JSON 树 / 标量 / 嵌套对象分别处理。</summary>
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2072",
-        Justification = "嵌套对象的运行时类型无法静态标注；AOT 下需由消费方 root 模型程序集（README「Native AOT / 裁剪」）。")]
     private static void Append(
         string prefix,
         object? value,
@@ -403,6 +407,25 @@ internal static class ParamsSerializer
             return;
         }
 
+        // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+        if (value is IEnumerable mapValue && value is not string && value is not byte[] && QueryMap.CanEnumerate(mapValue))
+        {
+            visited = ObjectGraph.Enter(visited, mapValue);
+            try
+            {
+                foreach (var entry in QueryMap.Enumerate(mapValue))
+                {
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format);
+                }
+            }
+            finally
+            {
+                ObjectGraph.Exit(visited, mapValue);
+            }
+
+            return;
+        }
+
         if (value is not string && value is not byte[] && value is IEnumerable enumerable)
         {
             if (format != AxiosCollectionFormat.Brackets)
@@ -433,14 +456,15 @@ internal static class ParamsSerializer
             return;
         }
 
-        // 嵌套对象（匿名类型 / record / POCO）：反射公共属性，序列化为 prefix[prop]=value
+        // 嵌套对象（匿名类型 / record / POCO）：形状决定成员，序列化为 prefix[prop]=value（不跳过 [JsonIgnore]）。
         visited = ObjectGraph.Enter(visited, value);
         try
         {
-            foreach (var property in ReflectionCache.GetReadableProperties(value.GetType()))
+            var shape = ShapeCache.Get(value.GetType(), prefix);
+            foreach (var member in shape.Members)
             {
-                // 后缀（含转义）按属性缓存，这里只需一次前缀拼接。
-                Append(prefix + ReflectionCache.GetBracketSuffix(property), property.GetValue(value), pairs, visited, format);
+                // 后缀（含转义）在形状里预计算，这里只需一次前缀拼接。
+                Append(prefix + member.BracketSuffix, member.GetValue(value), pairs, visited, format);
             }
         }
         finally

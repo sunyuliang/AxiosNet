@@ -29,7 +29,7 @@ public sealed class InterfaceGeneratorTests
         var (result, diagnostics, output) = RunGenerator(RichInterface.Replace("__NS__", ns));
 
         Assert.Empty(diagnostics);
-        Assert.Equal(2, result.Results.Single().GeneratedSources.Length);
+        Assert.Equal(2, ProxySources(result).Count());
 
         var assembly = LoadEmitted(output);
         var richType = assembly.GetType(ns + ".IRichApi", throwOnError: true)!;
@@ -608,6 +608,11 @@ public sealed class InterfaceGeneratorTests
     }
 
     private static string UniqueNamespace() => "AxiosNet.InterfaceGenerated.G" + Guid.NewGuid().ToString("N");
+
+    /// <summary>只取接口代理源：同一驱动还会输出对象形状源（<c>AxiosNet.Shape.*</c>），计数断言不应受其影响。</summary>
+    private static IEnumerable<GeneratedSourceResult> ProxySources(GeneratorDriverRunResult result)
+        => result.Results.Single().GeneratedSources.Where(
+            static source => source.HintName.StartsWith("AxiosNet.InterfaceProxy.", StringComparison.Ordinal));
 
     private static MetadataReference[] CreateReferences()
     {
