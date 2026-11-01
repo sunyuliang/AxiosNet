@@ -63,6 +63,23 @@ public class FailoverHealthTests
     }
 
     [Fact]
+    public void RecordFailure_TreatsCapBelowBaseAsTheBaseCooldown()
+    {
+        long now = 0;
+        var health = new FailoverHealth(() => now);
+
+        // FailoverSettings.MaxCooldown 的约定：小于 Cooldown 时按 Cooldown 处理（不会把冷却缩到 0）。
+        health.RecordFailure("primary", failureThreshold: 1, Base, maxCooldown: TimeSpan.Zero);
+        Assert.False(health.IsAvailable("primary"));
+
+        now += Base.Ticks - 1;
+        Assert.False(health.IsAvailable("primary"));
+
+        now += 1;
+        Assert.True(health.IsAvailable("primary"));
+    }
+
+    [Fact]
     public void RecordSuccess_ClearsBothFailuresAndCooldown()
     {
         long now = 0;

@@ -106,7 +106,11 @@ internal sealed class FailoverHealth
 
             var doublings = entry.ConsecutiveFailures - failureThreshold;
             var ticks = (double)baseCooldown.Ticks * Math.Pow(2d, Math.Min(doublings, 16));
-            var capped = ticks >= maxCooldown.Ticks ? maxCooldown.Ticks : (long)ticks;
+
+            // 上限低于基础冷却时按基础冷却处理（FailoverSettings.MaxCooldown 的约定）：
+            // 封顶不能把冷却缩到 0，否则「设了上限」反而把健康记忆关掉。
+            var cap = Math.Max(baseCooldown.Ticks, maxCooldown.Ticks);
+            var capped = ticks >= cap ? cap : (long)ticks;
             entry.CooldownUntil = _clock() + Math.Max(1L, capped);
         }
     }
