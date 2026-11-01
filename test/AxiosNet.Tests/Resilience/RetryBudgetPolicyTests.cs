@@ -137,8 +137,14 @@ public sealed class RetryBudgetPolicyTests
 
         var pending = client.GetAsync(server.Url + "x", c => c.CancellationToken = cts.Token);
 
-        // 等退避真的开始，再取消：这一次重试同样没有发出去
-        await Task.Delay(150);
+        // 等重试真正开始（预算令牌被扣下）再取消：不赌墙钟，也不会取消到首发上
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (policy.AvailableTokens >= 1d)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "重试预算令牌迟迟未被扣下，退避未开始");
+            await Task.Delay(10);
+        }
+
         cts.Cancel();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => pending);

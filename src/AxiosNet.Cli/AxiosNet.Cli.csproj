@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 仅面向设计期：net8.0 是 dotnet tool 的稳妥基线；生成的代码始终按 net6.0 兼容性输出。 -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>AxiosNet.Cli</AssemblyName>
+    <RootNamespace>AxiosNet.Cli</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>axiosnet-gen</ToolCommandName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>AxiosNet.Cli</PackageId>
+    <Title>AxiosNet.Cli - 从 OpenAPI 文档生成 AxiosNet 强类型客户端</Title>
+    <Version>1.0.0</Version>
+    <Authors>sunyuliang</Authors>
+    <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
+    <Description>设计期命令行工具：读取 OpenAPI 3.0 / 3.1、Swagger 2.0 文档（JSON / YAML、本地 / URL / stdin），生成 AxiosNet.WebAPI 声明式接口与模型。生成代码不含运行时代码，由 AxiosNet 源生成器在编译期烘焙代理，Native AOT 同样可用。Design-time CLI that generates strongly typed AxiosNet declarative clients from OpenAPI documents.</Description>
+    <PackageTags>openapi;swagger;codegen;client-generator;axios;http;dotnet-tool;csharp;dotnet;net8</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/sunyuliang/AxiosNet</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 唯一的解析依赖：YAML（JSON 由 System.Text.Json 处理）。设计期工具依赖不影响 AxiosNet 运行时零依赖的承诺。 -->
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <!-- SourceLink：与其他包口径一致，仅在 GitHub Actions 里启用 -->
+  <ItemGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

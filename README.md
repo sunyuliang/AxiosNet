@@ -2,13 +2,13 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2069%2F2062%20passed-success)](#构建与测试)
+[![tests](https://img.shields.io/badge/tests-2141%2F2078%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
 
-axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com/axios/axios)，并补齐服务端真正需要的部分：按 origin 复用的连接池、重试、熔断、并发对冲、备用端点、流式响应、在途并发闸门、声明式 API 客户端（模型式 / 接口式）、OpenTelemetry 观测点。
+axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com/axios/axios)，并补齐服务端真正需要的部分：按 origin 复用的连接池、重试、熔断、并发对冲、备用端点、流式响应、在途并发闸门、声明式 API 客户端（模型式 / 接口式 / OpenAPI 导入）、OpenTelemetry 观测点。
 
 | 项 | 值 |
 | --- | --- |
@@ -26,7 +26,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 分组 | 章节 |
 | --- | --- |
-| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api)） · [能力地图](#能力地图) · [令牌管理](#令牌管理) |
+| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api) / [OpenAPI 导入](#从-openapi-导入)） · [能力地图](#能力地图) · [令牌管理](#令牌管理) |
 | 请求与响应 | [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) · [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [发送前钩子](#发送前钩子签名--最终请求) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性与治理 | [重试](#重试) · [全局重试预算](#全局重试预算retrybudgetpolicy) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) · [响应缓存](#响应缓存) |
@@ -238,6 +238,66 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 - 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
 - **Native AOT**：接口所在程序集启用源生成器即生成真实代理（内部接口同样支持）；闭合泛型接口（如 `IRepo<User>`）在调用点 `Create<T>()` / `AddApiInterface<T>()` 出现时生成，只有开放泛型声明本身会给出 `AXA011` 警告。未生成 / 未注册时 AOT 下 `Create<T>()` 抛 `AxiosAotMetadataException`（带修复指引），JIT 下回退 `DispatchProxy`（需 public 接口）。生成路径不要求 `TrimmerRootAssembly`，也不再需要 root 接口类型。
 
+### 从 OpenAPI 导入
+
+已有接口文档时，不必手写上面这些声明：`src/AxiosNet.Cli` 是设计期的 dotnet 工具（命令 `axiosnet-gen`，包 `AxiosNet.Cli`），读取 OpenAPI 3.0.x / 3.1.x、Swagger 2.0 文档（JSON / YAML，本地文件、http(s) URL 或 `-` 标准输入），生成声明式 C#。默认是**模型式**：每个操作一个 `ApiRequest<T>` 请求模型，`client.RequestAsync(new XxxRequest { ... })` 直接调用；加 `--style interface` 切换到接口式（每个 tag 一个接口，`client.Create<T>()`）。两种形态都只有声明、不含运行时代码——模型与接口代理都由源生成器在编译期烘焙，JIT 与 Native AOT 同一路径。工具自身的 YAML 解析是设计期依赖，`AxiosNet` 运行时仍零第三方依赖。
+
+```bash
+# 仓库内直接运行（默认模型式）
+dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api
+
+# 接口式
+dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api --style interface
+
+# 或安装为全局工具后
+axiosnet-gen demo.openapi.json --namespace MyApp.Api --output Generated --report import.json
+```
+
+模型式的产物长这样（`users` tag → `UsersRequests.g.cs`，每个操作一个类；属性名按 PascalCase 生成，wire 名不同时显式给出）：
+
+```csharp
+[Get("/api/users")]
+[Authorize]                                             // 根级 / 操作级 security
+public sealed class ListUsersRequest : ApiRequest<User[]>
+{
+    [Query("role")] public string? Role { get; set; }
+    [Query("ids")]  public long[]? Ids { get; set; }
+
+    protected override void Configure(AxiosConfig config)
+    {
+        config.Serialization.CollectionFormat = AxiosCollectionFormat.Multi;   // explode: true
+    }
+}
+```
+
+`Configure` 是模型式表达方法级编码的出口（特性没有可用的方法级位置）：非 JSON 请求体在这里写 `config.ContentType`（表单 / XML / 自定义媒体类型），查询数组写 `config.Serialization.CollectionFormat`。流式端点额外生成 `public const AxiosStreamFormat StreamFormat`，用 `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)` 逐帧读。响应无正文时生成 `ApiRequest<object>`，照常 `RequestAsync`，`Data` 为 `null`。
+
+**默认映射规则**（都有开关或报告提示）：
+
+- **分组**：按操作的第一个 tag 分组。模型式每个分组一个文件（`users` → `UsersRequests.g.cs`），请求类名取 `operationId` + `Request`（重名时自动加序号，且不会遮蔽 `ApiRequest` 等运行时类型）；接口式每个 tag 一个接口（`users` → `IUsersApi`；tag 已是 `XxxApi` 时加 `I` 前缀）。无 tag 的操作进 `DefaultRequests.g.cs` / `IDefaultApi`。`--single-file` 全部写进一个文件；`--single-interface`（配合 `--interface-name`，默认 `IApiClient`）只在接口式下可用。
+- **参数与正文**：`path` / `query` / `header` 对应 `[Path]` / `[Query]` / `[Header]`（模型式落在属性上，接口式落在参数上）。请求体按媒体类型选一份（JSON > `+json` > `*/*` > 表单 > multipart > 文本 > 二进制 > 第一份）：JSON 生成强类型 `[Body]`；`application/x-www-form-urlencoded` 模型式写进 `Configure` 的 `config.ContentType`、接口式生成 `[BodyContentType(...)]`；`multipart/form-data` 的对象属性展开成 `[Part("wire")]`（`format: binary` → `byte[]`）；文本正文 → `string`；二进制 → `byte[]`。多份候选记 `MULTIPLE_REQUEST_CONTENT`。
+- **查询数组**：`style: form` + `explode: true` → `Multi`（`ids=1&ids=2`）；`explode: false` → `Csv`；`spaceDelimited` / `pipeDelimited` → `Ssv` / `Pipes`；Swagger 2 的 `collectionFormat` 同样映射。模型式写进 `Configure`，接口式生成 `[QueryCollectionFormat(...)]`。
+- **响应**：在 2xx 中按状态码升序取第一个（其次 `2XX`、`default`）。模型式生成 `ApiRequest<T>`，调用得到 `AxiosResponse<T>`；无正文时 `ApiRequest<object>`。接口式生成 `Task<AxiosResponse<T>>` / `Task<AxiosResponse>`，`--response-wrapper none` 改为只交付 `Task<T>`（仅接口式）。`text/event-stream` 或文档里标注 `x-axios-stream` 时：模型式生成 `StreamFormat` 常量与帧类型，接口式生成 `[Stream(...)]` 与 `Task<AxiosResponse<IAsyncEnumerable<T>>>`；数组 schema 按元素类型逐帧。多状态码 / 多份内容分别记 `MULTIPLE_SUCCESS_RESPONSES` / `MULTIPLE_RESPONSE_CONTENT`。
+- **授权**：根级或操作级 `security` → `[Authorize]`，但只覆盖 http bearer / basic；`apiKey` / `oauth2` / `openIdConnect` 与其他 http scheme 记警告、不生成授权声明，由调用方在 `AxiosClient` 的 Authorization 或请求配置里自行设置（apiKey 按文档要求补对应的头 / 查询参数 / Cookie）；`security: []` → `[AllowAnonymous]`。模型式落在请求类上；接口式在同组所有操作要求同一 scheme 时才提到接口上，否则落在方法上。
+- **模型**：`allOf` 摊平为字段；3.0 `nullable`、3.1 `type: [..., "null"]` 与 Swagger `x-nullable` 都映射为可空；`oneOf` / `anyOf` 无法用声明式类型表达，主类型按 `JsonElement` 生成并同时生成各成员类型，由调用方自行判别；仅当全部取值都是合法 C# 标识符时生成 `enum`（成员名即线上值），否则生成常量类 + `string`；数值枚举保持数值类型。生成的每个属性都带显式 `[JsonPropertyName]`，命名与 `System.Text.Json` 默认选项一致。
+- **缺口不猜**：断链 `$ref`、外部引用、cookie 参数、非标量（数组 / 对象 / `label`·`matrix` 风格）的 path / header 参数、缺 `items` 的数组、循环引用等都会给出稳定警告码并降级（`JsonElement` / 跳过整个操作 / `byte[]`），不会静默丢字段；`--fail-on warnings` 可把它们变成退出码 1，完整清单在 `--report` 的 `warnings` 里。
+
+**落地安全**：
+
+- 输出确定性（LF 换行、排序稳定），每个文件带 `// <auto-generated />`；同目录的 `axiosnet-gen.manifest.json` 记录上次生成的文件列表，失联的旧文件也留在清单里。
+- `--check` 只比较不写文件：缺文件、内容过期或存在失联旧文件都返回 1，适合放进 CI 防手改。
+- 不带生成标记的文件默认拒绝覆盖，`--force` 才放行；删除失联旧文件也只在 `--force` 下发生，且只删带生成标记的文件——用户自己写的文件永远不会被自动删除。
+- `--dry-run` 把内容打到 stdout；远端文档用 `--header "Authorization: Bearer ..."` 与 `--timeout <seconds>`。
+
+完整走通这一流程的是示例 [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs)：从 [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) 以默认模型式生成 [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated)（tag 分组的 `*Requests.g.cs` / 根级授权 / 表单登录 / multipart / SSE 与 JSON 数组流式），再用 `RequestAsync` / `RequestStreamAsync` 调用 `DemoApiServer` 的真实路由：
+
+```bash
+dotnet run --project src/AxiosNet.Cli -- \
+  samples/AxiosNet.Simple/WebAPI/demo.openapi.json \
+  -o samples/AxiosNet.Simple/WebAPI/Generated \
+  -n AxiosNet.Simple.WebAPI.Generated --force
+```
+
 ## 能力地图
 
 按能力分四组，点能力名直达对应章节。这里只给入口，边界条件都在章节里。
@@ -247,7 +307,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 | 能力 | 一句话 | 怎么做 |
 | --- | --- | --- |
 | [四种调用形态](#快速上手) | 原文 / `JsonElement` / `dynamic` / 强类型 | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
-| [声明式 API](#声明式-api) | 用模型或接口描述请求，`ApiClient` 生成调用 | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` |
+| [声明式 API](#声明式-api) | 用模型或接口描述请求，`ApiClient` 生成调用；有 OpenAPI 文档时直接生成 | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` / `axiosnet-gen`（[从 OpenAPI 导入](#从-openapi-导入)） |
 | [客户端实例](#客户端) | 一套 baseURL + 超时 + 默认头 | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
 | [只拼 URL](#方法与-url) | 不发请求，拿最终 URL | `client.GetUri(c => ...)` |
 | [查询参数](#查询参数-params) | 对象 / 字典 / 集合 / 已编码串 | `c.Params = new { page = 2 }` |
@@ -1696,7 +1756,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **52 项**：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **53 项**：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1707,7 +1767,7 @@ dotnet run --project samples/AxiosNet.Simple
 | 套件 | 项数 | 覆盖 |
 | --- | ---: | --- |
 | 核心 | 37 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档 |
-| 声明式 | 15 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式） |
+| 声明式 | 16 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
 
 另有两个示例：
 
@@ -1806,7 +1866,8 @@ dotnet build AxiosNet.sln -c Release
 | --- | ---: | --- | ---: |
 | `AxiosNet.Tests`（核心 + 声明式） | 2003 / 1996 | `net8.0` / `net6.0` | 3999 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **合计** | **2069 / 2062** | | **4131** |
+| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 72 | `net8.0` | 72 |
+| **合计** | **2141 / 2078** | | **4219** |
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
@@ -1886,6 +1947,8 @@ bash eng/aot-package-smoke.sh
 
 `AxiosNet.DependencyInjection.Tests` 同规则分两组：`Registration/`（注册扩展与命名注册）、`Lifecycle/`（并发解析与持有者释放）。
 
+`AxiosNet.Cli.Tests` 把生成结果当成可编译的产物来验：fixtures 快照（petstore / Swagger 2 / 3.1 / 对抗性文档）、生成代码连同 AxiosNet 源生成器一起编译并断言模型数等于操作数（`--style interface` 下断言代理数等于接口数）、输出确定性与 `--check`、覆盖保护与清单跟踪、`--dry-run`、参数解析与导入报告。生成客户端对真实服务端的往返由示例 `OpenApiGeneratedExample`（→ `DemoApiServer`）覆盖。
+
 ### 性能基准
 
 [`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) 是独立 BenchmarkDotNet 项目（单目标 `net8.0`、`IsPackable=false`、不被 `src/` 引用），把「这次优化有没有效果」变成可读数字。它不参与 `dotnet test`，CI 也不跑（基准对机器状态敏感）。
@@ -1956,12 +2019,14 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Reflection/                  # 对象形状与 STJ 的反射回退（只在 JIT 下可达，AOT 镜像里整块裁掉）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
-│  └─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
-├─ samples/                           # Simple（52 项）/ DI / Aot
+│  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
+│  └─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
+├─ samples/                           # Simple（53 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/
+   ├─ AxiosNet.Cli.Tests/              # CLI：fixtures 快照 / 生成代码编译 / 确定性与 --check / 端到端
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet（单实现分项成本）
    └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```

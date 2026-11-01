@@ -1,0 +1,22 @@
+openapi: 3.1.0
+info:
+  title: Mini YAML
+  version: 0.1.0
+paths:
+  /ping:
+    get:
+      operationId: ping
+      tags: [Diagnostics]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pong]
+                properties:
+                  pong:
+                    type: boolean
+                  echo:
+                    type: [string, "null"]

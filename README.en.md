@@ -2,13 +2,13 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2069%2F2062%20passed-success)](#build-and-test)
+[![tests](https://img.shields.io/badge/tests-2141%2F2078%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
 
-An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming responses, an in-flight concurrency gate, a declarative API client (model-based / interface-based), and OpenTelemetry instrumentation.
+An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming responses, an in-flight concurrency gate, a declarative API client (model-based / interface-based / OpenAPI import), and OpenTelemetry instrumentation.
 
 | Item | Value |
 | --- | --- |
@@ -26,7 +26,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api)) · [Capability map](#capability-map) · [Token management](#token-management) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api) / [OpenAPI import](#openapi-import)) · [Capability map](#capability-map) · [Token management](#token-management) |
 | Requests and responses | [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) · [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience and governance | [Retries](#retries) · [Global retry budget](#global-retry-budget-retrybudgetpolicy) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
@@ -238,6 +238,66 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 - Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
 - **Native AOT**: as long as the assembly declaring the interface runs the source generator, a real proxy is emitted (internal interfaces included); closed generic interfaces (e.g. `IRepo<User>`) are generated at the call site — `Create<T>()` / `AddApiInterface<T>()` — and only an open generic declaration itself reports warning `AXA011`. Without generated metadata, `Create<T>()` throws `AxiosAotMetadataException` (with repair guidance) under AOT and falls back to `DispatchProxy` (requires a public interface) on JIT. The generated path needs no `TrimmerRootAssembly` and no longer roots the interface type.
 
+### OpenAPI import
+
+When the contract already exists, you do not have to write any of the declarations above: `src/AxiosNet.Cli` is a design-time dotnet tool (command `axiosnet-gen`, package `AxiosNet.Cli`) that reads OpenAPI 3.0.x / 3.1.x and Swagger 2.0 documents (JSON / YAML, local file, http(s) URL or stdin via `-`) and emits declarative C#. The default is **model-based**: one `ApiRequest<T>` request model per operation, called directly with `client.RequestAsync(new XxxRequest { ... })`; add `--style interface` to switch to interface-based generation (one interface per tag, `client.Create<T>()`). Both styles are declarations only — request models and proxies are baked at compile time by the source generator, the same path for JIT and Native AOT. The tool's YAML parser is a design-time dependency — the `AxiosNet` runtime stays free of third-party packages.
+
+```bash
+# Run from the repository (model-based by default)
+dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api
+
+# Interface-based
+dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api --style interface
+
+# Or install it as a global tool and run
+axiosnet-gen demo.openapi.json --namespace MyApp.Api --output Generated --report import.json
+```
+
+Model-based output looks like this (the `users` tag → `UsersRequests.g.cs`, one class per operation; properties are PascalCase, so the wire name is stated explicitly when it differs):
+
+```csharp
+[Get("/api/users")]
+[Authorize]                                             // root-level / operation-level security
+public sealed class ListUsersRequest : ApiRequest<User[]>
+{
+    [Query("role")] public string? Role { get; set; }
+    [Query("ids")]  public long[]? Ids { get; set; }
+
+    protected override void Configure(AxiosConfig config)
+    {
+        config.Serialization.CollectionFormat = AxiosCollectionFormat.Multi;   // explode: true
+    }
+}
+```
+
+`Configure` is how model style expresses method-level encoding (attributes have no usable method-level target): non-JSON request bodies set `config.ContentType` there (forms / XML / custom media types), and query arrays set `config.Serialization.CollectionFormat`. Streaming endpoints additionally get `public const AxiosStreamFormat StreamFormat`, read with `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)`. When a response has no body the model derives from `ApiRequest<object>` and `Data` is `null` after the usual `RequestAsync`.
+
+**Default mapping rules** (each has a switch or shows up in the report):
+
+- **Grouping**: operations are grouped by their first tag. Model style writes one file per group (`users` → `UsersRequests.g.cs`) and names request classes from the `operationId` + `Request` (collisions get a numeric suffix and never shadow runtime types such as `ApiRequest`); interface style writes one interface per tag (`users` → `IUsersApi`; a tag already ending in `Api` just gets the `I` prefix). Untagged operations go to `DefaultRequests.g.cs` / `IDefaultApi`. `--single-file` puts everything into one file; `--single-interface` (with `--interface-name`, default `IApiClient`) is interface-style only.
+- **Parameters and bodies**: `path` / `query` / `header` map to `[Path]` / `[Query]` / `[Header]` (on properties in model style, on parameters in interface style). One request media type is chosen (JSON > `+json` > `*/*` > form > multipart > text > binary > first): JSON produces a strongly typed `[Body]`; `application/x-www-form-urlencoded` sets `config.ContentType` in the generated `Configure` (model style) or produces `[BodyContentType(...)]` (interface style); `multipart/form-data` expands object properties into `[Part("wire")]` members (`format: binary` → `byte[]`); text bodies become `string`; binary bodies become `byte[]`. Multiple candidates report `MULTIPLE_REQUEST_CONTENT`.
+- **Query arrays**: `style: form` + `explode: true` → `Multi` (`ids=1&ids=2`); `explode: false` → `Csv`; `spaceDelimited` / `pipeDelimited` → `Ssv` / `Pipes`; Swagger 2 `collectionFormat` maps the same way. Model style writes it in `Configure`; interface style emits `[QueryCollectionFormat(...)]`.
+- **Responses**: the lowest 2xx status wins (then `2XX`, then `default`). Model style derives from `ApiRequest<T>` (a call yields `AxiosResponse<T>`) or `ApiRequest<object>` for a bodyless response; interface style yields `Task<AxiosResponse<T>>` / `Task<AxiosResponse>`, and `--response-wrapper none` delivers `Task<T>` instead (interface style only). `text/event-stream` or an `x-axios-stream` marker produces a `StreamFormat` constant plus the frame type in model style, or `[Stream(...)]` and `Task<AxiosResponse<IAsyncEnumerable<T>>>` in interface style; an array schema is delivered frame by frame as its element type. Multiple status codes / multiple content entries report `MULTIPLE_SUCCESS_RESPONSES` / `MULTIPLE_RESPONSE_CONTENT`.
+- **Authorization**: root-level or operation-level `security` → `[Authorize]`, but only http bearer / basic; `apiKey` / `oauth2` / `openIdConnect` and other http schemes are reported with a warning and get no authorization declaration — set the credential yourself on the `AxiosClient` Authorization chain or request config (for apiKey, add the documented header / query parameter / cookie); `security: []` → `[AllowAnonymous]`. Model style puts it on the request class; interface style moves it up to the interface only when every operation in the group requires the same scheme, otherwise it stays on methods.
+- **Models**: `allOf` is flattened into members; OpenAPI 3.0 `nullable`, 3.1 `type: [..., "null"]` and Swagger `x-nullable` all become nullable; `oneOf` / `anyOf` cannot be expressed as a declarative type, so the primary type is `JsonElement` and each member type is generated next to it for the caller to discriminate; an `enum` is generated only when every value is a valid C# identifier (member names are the wire values), otherwise a constants class plus `string` is generated; numeric enums stay numeric. Every generated property carries an explicit `[JsonPropertyName]` matching the defaults of `System.Text.Json`.
+- **Gaps are reported, not guessed**: broken `$ref`s, external references, cookie parameters, non-scalar (array / object / `label`·`matrix` style) path and header parameters, arrays without `items`, reference cycles and friends produce stable warning codes and degrade (to `JsonElement`, skipping the whole operation, or `byte[]`) instead of silently dropping fields; `--fail-on warnings` turns them into exit code 1, and the full list is in the report's `warnings`.
+
+**Safe output**:
+
+- Output is deterministic (LF line endings, stable ordering) and every file carries `// <auto-generated />`; a sibling `axiosnet-gen.manifest.json` records the file list from the previous run, including leftover stale names.
+- `--check` compares without writing: missing files, out-of-date content or leftover stale files all return 1 — suitable for CI to catch hand edits.
+- Files without a generation marker are protected from overwrite unless `--force` is given; deleting leftover stale files also only happens under `--force`, and only for marked files — files you wrote yourself are never deleted automatically.
+- `--dry-run` prints the output to stdout; for remote documents use `--header "Authorization: Bearer ..."` and `--timeout <seconds>`.
+
+The full flow is demonstrated by [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs): it generates [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated) from [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) in the default model style (tag-grouped `*Requests.g.cs` / root authorization / form login / multipart / SSE and JSON-array streaming) and calls the real routes of `DemoApiServer` with `RequestAsync` / `RequestStreamAsync`:
+
+```bash
+dotnet run --project src/AxiosNet.Cli -- \
+  samples/AxiosNet.Simple/WebAPI/demo.openapi.json \
+  -o samples/AxiosNet.Simple/WebAPI/Generated \
+  -n AxiosNet.Simple.WebAPI.Generated --force
+```
+
 ## Capability map
 
 Four groups; click a capability to jump to its section. Boundaries and edge cases live in the sections themselves.
@@ -247,7 +307,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | Capability | What you get | How |
 | --- | --- | --- |
 | [Four response shapes](#quick-start) | Raw text / `JsonElement` / `dynamic` / strong type | `GetAsync<string>` / `GetAsync()` / `GetAsync<dynamic>` / `GetAsync<T>` |
-| [Declarative API](#declarative-api) | Describe requests with models or interfaces; `ApiClient` makes the call | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` |
+| [Declarative API](#declarative-api) | Describe requests with models or interfaces; `ApiClient` makes the call — or generate it from OpenAPI | `[Get("users/{id}")] class X : IApiRequest<User>` / `client.Create<T>()` / `axiosnet-gen` ([OpenAPI import](#openapi-import)) |
 | [Client instance](#clients) | One baseURL + timeout + default headers | `Axios.Create(c => ...)` / `new AxiosClient(config)` |
 | [URL only](#methods-and-urls) | Build the final URL without sending | `client.GetUri(c => ...)` |
 | [Query parameters](#query-parameters) | Object / dictionary / collection / pre-encoded string | `c.Params = new { page = 2 }` |
@@ -1696,7 +1756,7 @@ Intentional differences from axios:
 
 ## Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **52 items**:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **53 items**:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1707,7 +1767,7 @@ It opens an interactive menu (reflection lists every sample; type a number to ru
 | Suite | Items | Coverage |
 | --- | ---: | --- |
 | Core | 37 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles |
-| Declarative | 15 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format) |
+| Declarative | 16 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
 
 Two more samples:
 
@@ -1806,7 +1866,8 @@ dotnet build AxiosNet.sln -c Release
 | --- | ---: | --- | ---: |
 | `AxiosNet.Tests` (core + declarative) | 2003 / 1996 | `net8.0` / `net6.0` | 3999 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| **Total** | **2069 / 2062** | | **4131** |
+| `AxiosNet.Cli.Tests` (OpenAPI generation) | 72 | `net8.0` | 72 |
+| **Total** | **2141 / 2078** | | **4219** |
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling, transport profiles and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints and endpoint health memory, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
@@ -1886,6 +1947,8 @@ Timing-sensitive cases (upper-bound duration assertions, telling "placeholder vs
 
 `AxiosNet.DependencyInjection.Tests` follows the same rule with two groups: `Registration/` (registration extensions and named clients) and `Lifecycle/` (concurrent resolution and holder disposal).
 
+`AxiosNet.Cli.Tests` treats generated output as a compilable artifact: fixture snapshots (petstore / Swagger 2 / 3.1 / adversarial documents), compiling generated code together with the AxiosNet source generator and asserting one request model per operation (one proxy per interface under `--style interface`), determinism and `--check`, overwrite protection and manifest tracking, `--dry-run`, option parsing and the import report. The round trip from a generated client to a real server is covered by the `OpenApiGeneratedExample` sample (→ `DemoApiServer`).
+
 ### Benchmarks
 
 [`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) is a standalone BenchmarkDotNet project (single target `net8.0`, `IsPackable=false`, not referenced by `src/`) that turns "did this change help?" into numbers. It is not part of `dotnet test` and CI does not run it (benchmarks are machine-sensitive).
@@ -1956,12 +2019,14 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ Reflection/                  # object-shape and STJ reflection fallbacks (JIT-only, trimmed away entirely under AOT)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
-│  └─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
-├─ samples/                           # Simple (52 items) / DI / Aot
+│  ├─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
+│  └─ AxiosNet.Cli/                   # design-time tool axiosnet-gen: OpenAPI / Swagger → declarative C# (see "OpenAPI import")
+├─ samples/                           # Simple (53 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/
+   ├─ AxiosNet.Cli.Tests/              # CLI: fixture snapshots / generated-code compilation / determinism and --check / end to end
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet (per-stage cost of one implementation)
    └─ AxiosNet.Comparison/             # cross-implementation comparison (RPS / p99 / allocations, optional gate)
 ```

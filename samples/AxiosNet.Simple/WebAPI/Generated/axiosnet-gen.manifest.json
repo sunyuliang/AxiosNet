@@ -1,0 +1,10 @@
+{
+  "generator": "axiosnet-gen/1.0.0",
+  "files": [
+    "AuthRequests.g.cs",
+    "FilesRequests.g.cs",
+    "Models.g.cs",
+    "StreamsRequests.g.cs",
+    "UsersRequests.g.cs"
+  ]
+}
