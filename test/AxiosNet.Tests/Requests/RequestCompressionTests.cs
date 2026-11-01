@@ -30,6 +30,13 @@ public sealed class RequestCompressionTests
         Assert.Equal(headerValue, received.Headers["content-encoding"]);
         Assert.Equal("""{"name":"alice","age":42}""", Encoding.UTF8.GetString(Decompress(received.Body, compression)));
 
+        // deflate 必须是 zlib（RFC 1950）包装：CMF 首字节 0x78（裸 DEFLATE 这里是压缩数据本身）。
+        // 裸流少了 2 字节头与 Adler-32 尾，Java/Tomcat 与部分网关会直接解不出来。
+        if (compression == AxiosCompression.Deflate)
+        {
+            Assert.Equal(0x78, received.Body[0]);
+        }
+
         // 压缩后长度已知，Content-Length 与实际字节数一致。
         Assert.Equal(received.Body.Length.ToString(), received.Headers["content-length"]);
     }
@@ -244,7 +251,8 @@ public sealed class RequestCompressionTests
         using Stream decompressor = compression switch
         {
             AxiosCompression.Gzip => new GZipStream(input, CompressionMode.Decompress),
-            AxiosCompression.Deflate => new DeflateStream(input, CompressionMode.Decompress),
+            // 请求侧的 deflate 是 zlib 包装（RFC 7230 §4.2.2 → RFC 1950），所以解压也要用 ZLibStream。
+            AxiosCompression.Deflate => new ZLibStream(input, CompressionMode.Decompress),
             AxiosCompression.Brotli => new BrotliStream(input, CompressionMode.Decompress),
             _ => throw new ArgumentOutOfRangeException(nameof(compression))
         };

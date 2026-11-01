@@ -121,23 +121,37 @@ internal static class UrlBuilder
     /// <summary>已校验过的绝对地址缓存（<see cref="Uri"/> 不可变，可安全共享）。</summary>
     private static readonly ConcurrentDictionary<string, Uri> UriCache = new(StringComparer.Ordinal);
 
-    /// <summary>缓存已校验的绝对地址；达到上限时整表清空（不做逐项淘汰，胜在简单且不会无界增长）。</summary>
+    /// <summary>缓存条目的近似计数：<see cref="ConcurrentDictionary{TKey,TValue}.Count"/> 要遍历全部桶并逐个加锁，未命中路径上不能用它。</summary>
+    private static int _uriCacheCount;
+
+    /// <summary>
+    /// 缓存已校验的绝对地址；达到上限时整表清空（不做逐项淘汰，胜在简单且不会无界增长）。
+    /// </summary>
+    /// <remarks>上限是软上限：清表与并发写入交错时计数会短暂偏小，表现为略超 256 条，下一次清表即收敛。</remarks>
     private static void CacheUri(string key, Uri uri)
     {
-        if (UriCache.Count >= UriCacheLimit)
+        if (Volatile.Read(ref _uriCacheCount) >= UriCacheLimit)
         {
             UriCache.Clear();
+            Volatile.Write(ref _uriCacheCount, 0);
         }
 
-        UriCache.TryAdd(key, uri);
+        // 并发下另一个线程可能刚插了同一个键：只有真的插进去才计数。
+        if (UriCache.TryAdd(key, uri))
+        {
+            Interlocked.Increment(ref _uriCacheCount);
+        }
     }
 
     /// <summary>对应 axios isAbsoluteURL + combineURLs。</summary>
     private static string Combine(string? baseAddress, string? url)
     {
+        // url 为 null 表示「请求 baseAddress 本身」：原样返回，不能裁掉尾斜杠——
+        // 否则 baseAddress 为 "https://h/api/" 时 null 得到 "/api"、显式传 "/" 得到 "/api/"，
+        // 同一语义两种地址，路由与签名校验（含尾斜杠）都会对不上。
         if (string.IsNullOrWhiteSpace(url))
         {
-            return baseAddress!.TrimEnd('/');
+            return baseAddress!;
         }
 
         // 协议相对 URL（//host/path）：有 baseAddress 时按它的 scheme 补全，否则原样返回交给 Build 报错。

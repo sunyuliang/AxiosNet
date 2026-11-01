@@ -50,10 +50,12 @@ internal static class RequestCompression
         return output.ToArray();
     }
 
+    // HTTP 的 deflate 是 zlib（RFC 1950）包装，不是裸 DEFLATE（RFC 1951）：RFC 7230 §4.2.2 明确指向 RFC 1950，
+    // axios(JS) 侧也走 zlib.deflate。裸流少了 2 字节头与 Adler-32 尾，Java/Tomcat 与多数网关会直接解不出来。
     private static Stream CreateCompressor(Stream output, AxiosCompression compression) => compression switch
     {
         AxiosCompression.Gzip => new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true),
-        AxiosCompression.Deflate => new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true),
+        AxiosCompression.Deflate => new ZLibStream(output, CompressionLevel.Fastest, leaveOpen: true),
         AxiosCompression.Brotli => new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true),
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, "未定义的请求体压缩算法。")
     };

@@ -32,7 +32,7 @@ internal static class RequestBodyFactory
         // 显式声明的 charset 优先于 RequestEncoding，只对文本正文生效；两者矛盾时直接拦下。
         if (data is not null
             && EncodesText(data)
-            && RequestContentType.GetCharsetEncoding(mediaType) is { } declared)
+            && RequestContentType.ResolveCharset(mediaType, config) is { } declared)
         {
             if (requestEncoding is { } requested && declared.CodePage != requested.CodePage)
             {
@@ -50,7 +50,7 @@ internal static class RequestBodyFactory
             && !MediaTypes.Is(mediaType, MultipartMediaType)
             && config.HasHeaders
             && config.Headers.Get("Content-Type") is { Length: > 0 } headerContentType
-            && RequestContentType.GetCharsetEncoding(headerContentType) is { } headerCharset
+            && RequestContentType.ResolveCharset(headerContentType, config) is { } headerCharset
             && headerCharset.CodePage != encoding.CodePage)
         {
             throw AxiosException.InvalidOption(
@@ -239,7 +239,7 @@ internal static class RequestBodyFactory
             : content.Headers.ContentType?.ToString();
 
         if (finalType is { Length: > 0 }
-            && RequestContentType.GetCharsetEncoding(finalType) is { } declared
+            && RequestContentType.ResolveCharset(finalType, config) is { } declared
             && declared.CodePage != bodyEncoding.CodePage)
         {
             throw AxiosException.InvalidOption(

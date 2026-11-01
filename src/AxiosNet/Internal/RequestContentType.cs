@@ -66,10 +66,38 @@ internal static class RequestContentType
     }
 
     /// <summary>
-    /// 解析媒体类型参数里显式声明的 charset 对应的 <see cref="Encoding"/>；未声明或平台无法识别时为 <c>null</c>。
+    /// 取媒体类型里显式声明的 charset，供「正文要按它编码 / 要与头判定一致」的调用点使用：
+    /// 没有声明 charset 时为 <c>null</c>，声明了但当前平台解析不出来时抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
-    public static Encoding? GetCharsetEncoding(string mediaType)
+    /// <remarks>
+    /// 解析不出来的名字**必须**是错误而不是 <c>null</c>：库零依赖、不注册 <c>CodePagesEncodingProvider</c>，
+    /// <c>charset=gbk</c> / <c>windows-1252</c> 在默认 .NET 上本来就解析不出来；调用点再把它当「没声明」，
+    /// 正文就会按 UTF-8 编码、头里却留着 gbk，服务端按头解出乱码且没有任何报错。
+    /// </remarks>
+    public static Encoding? ResolveCharset(string mediaType, AxiosConfig? config)
     {
+        if (ParseCharset(mediaType, out var unresolved) is { } encoding)
+        {
+            return encoding;
+        }
+
+        if (unresolved is null)
+        {
+            return null;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"Content-Type 声明的 charset '{unresolved}' 在当前平台上解析不出来：库零依赖、不注册 System.Text.Encoding.CodePages，"
+            + "默认只有 UTF-8 / UTF-16 / ASCII / ISO-8859-1。按这个头发送等于把实际上按 UTF-8 编码的正文标成别的编码，"
+            + "服务端会解出乱码。请改用内置编码（如 utf-8），或在应用启动时注册 "
+            + "Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)（需引用 System.Text.Encoding.CodePages 包）。",
+            config);
+    }
+
+    /// <summary>解析 charset 参数：返回编码；解析不出来时由 <paramref name="unresolvedName"/> 带回声明的名字（不判定对错）。</summary>
+    private static Encoding? ParseCharset(string mediaType, out string? unresolvedName)
+    {
+        unresolvedName = null;
         if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed))
         {
             return null;
@@ -95,7 +123,8 @@ internal static class RequestContentType
             }
             catch (ArgumentException)
             {
-                // 平台不识别的 charset 名不在此判定。
+                // 平台不识别的 charset 名不在此判定：要不要报错由调用点（ResolveCharset）决定。
+                unresolvedName = name;
                 return null;
             }
         }

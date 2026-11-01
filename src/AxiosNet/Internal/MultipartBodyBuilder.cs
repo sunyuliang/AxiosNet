@@ -40,7 +40,8 @@ internal static class MultipartBodyBuilder
 
         try
         {
-            CollectParts(null, data, content, encoding, config, visited: null);
+            // claimed：本次装配已经用掉的流（同一份流只能挂一个部件，见 ClaimStream）。
+            CollectParts(null, data, content, encoding, config, visited: null, claimed: new HashSet<Stream>(ReferenceEqualityComparer.Instance));
             return content;
         }
         catch (Exception ex)
@@ -75,6 +76,7 @@ internal static class MultipartBodyBuilder
         Encoding encoding,
         AxiosConfig config,
         HashSet<object>? visited,
+        HashSet<Stream> claimed,
         PartOverride partOverride = default)
     {
         // 字段名选择器从 config 读取（含实例默认值）。
@@ -86,6 +88,7 @@ internal static class MultipartBodyBuilder
 
             case FormFile file:
                 // 值自带的声明是默认值，声明覆盖压过它；流所有权随即转给 StreamContent。
+                ClaimStream(file.Content, claimed);
                 AddFilePart(
                     content,
                     name,
@@ -141,6 +144,7 @@ internal static class MultipartBodyBuilder
                 return;
 
             case Stream stream:
+                ClaimStream(stream, claimed);
                 AddFilePart(content, name, new StreamContent(stream), config, partOverride);
                 return;
 
@@ -164,6 +168,7 @@ internal static class MultipartBodyBuilder
                             encoding,
                             config,
                             visited,
+                            claimed,
                             entryOverride);
                     }
                 }
@@ -189,7 +194,8 @@ internal static class MultipartBodyBuilder
                             content,
                             encoding,
                             config,
-                            visited);
+                            visited,
+                            claimed);
                     }
                 }
                 finally
@@ -218,7 +224,8 @@ internal static class MultipartBodyBuilder
                             content,
                             encoding,
                             config,
-                            visited);
+                            visited,
+                            claimed);
                     }
                 }
                 finally
@@ -251,7 +258,8 @@ internal static class MultipartBodyBuilder
                         content,
                         encoding,
                         config,
-                        visited);
+                        visited,
+                        claimed);
                 }
             }
             finally
@@ -270,7 +278,7 @@ internal static class MultipartBodyBuilder
                 foreach (var item in enumerable)
                 {
                     // 集合逐项应用同一份声明（同名重复部件）
-                    CollectParts(name, item, content, encoding, config, visited, partOverride);
+                    CollectParts(name, item, content, encoding, config, visited, claimed, partOverride);
                 }
             }
             finally
@@ -299,7 +307,8 @@ internal static class MultipartBodyBuilder
                     content,
                     encoding,
                     config,
-                    visited);
+                    visited,
+                    claimed);
             }
         }
         finally
@@ -344,6 +353,24 @@ internal static class MultipartBodyBuilder
             default:
                 // null / undefined：跳过
                 break;
+        }
+    }
+
+    /// <summary>
+    /// 登记「这个流已经归某个部件所有」：同一份流挂到两个部件上时第二个只能发出空内容 ——
+    /// <see cref="StreamContent"/> 的长度是序列化时按 <c>Length - Position</c> 现算的，
+    /// 第一个部件读完后游标已在末尾，第二个部件的长度就是 0。
+    /// </summary>
+    /// <remarks>常见来源：<c>new[] { file, file }</c>，或同一个 <see cref="FormFile"/> 挂到两个字段上。</remarks>
+    private static void ClaimStream(Stream stream, HashSet<Stream> claimed)
+    {
+        if (!claimed.Add(stream))
+        {
+            // 与「字段名非法」同属配置错误：上层统一转成 ERR_BAD_OPTION_VALUE。
+            throw new InvalidMultipartOptionException(
+                "同一个流（FormFile.Content 或裸 Stream）被多个 multipart 部件引用：流的读取是单向的，"
+                + "第一个部件读完后游标已在末尾，第二个部件只会发出空内容。"
+                + "请为每个部件准备独立的流（同一个文件要发两次请开两个 FileStream），或改用 byte[]。");
         }
     }
 

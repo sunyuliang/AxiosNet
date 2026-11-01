@@ -50,6 +50,17 @@ internal static class RequestModelDeclarationReader
 
         foreach (var property in EnumerateBindableProperties(requestType))
         {
+            // 与源生成器同一口径（AXA009）：非 public 的 getter 生成代码取不到值。
+            // 反射这里能取到，但同一份模型一开源生成器就编译不过——要么两条路径都绑、要么都不绑，
+            // 而「都不绑」等于静默丢字段，所以统一拒绝。
+            if (property.GetMethod is not { IsPublic: true })
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {requestType.Name} 的属性 {property.Name} 的 getter 不是 public："
+                    + "源生成器无法直接取值（AXA009），反射路径也不接受，否则同一份声明在两条路径上语义不同。"
+                    + "请把 getter 改成 public。");
+            }
+
             var member = new RequestModelMemberDeclaration
             {
                 Name = property.Name,

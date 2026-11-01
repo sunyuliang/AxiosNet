@@ -24,6 +24,47 @@ namespace AxiosNet.Tests.Requests;
 public sealed class FormAndMultipartTests
 {
     [Fact]
+    public async Task SameStreamReferencedByTwoParts_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var file = new FormFile("a.txt", Encoding.UTF8.GetBytes("payload"));
+
+        // 同一份流挂两个部件：第一个读完后游标在末尾，第二个只会发出 0 字节（StreamContent 的长度是
+        // 序列化时按 Length - Position 现算的）。装配期就该拒绝，而不是发出一份残缺的正文。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
+            server.Url + "u",
+            new Dictionary<string, object?> { ["first"] = file, ["second"] = file },
+            c => c.ContentType = "multipart/form-data"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("同一个流", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task UrlEncodedWithFilePart_ReleasesTheStreamWhenRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var stream = new DisposeTrackingStream(Encoding.UTF8.GetBytes("payload"));
+        var file = new FormFile("a.txt", stream);
+
+        // urlencoded 装不下文件部件：报 ERR_BAD_OPTION_VALUE 的同时，必须按 FormFile 契约回收已经取得的流。
+        // 只抛不释放的话，调用方既没拿到正文、流也留到 GC（真实场景里就是 FileStream 句柄泄漏）。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
+            server.Url + "u",
+            new Dictionary<string, object?> { ["a.txt"] = file },
+            c => c.ContentType = "application/x-www-form-urlencoded"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.True(stream.Disposed, "表单装不下文件部件时，已取得的流必须被释放");
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public void FormFile_FromPath_InvalidFileName_DoesNotLeakFileHandle()
     {
         var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".txt");
@@ -1777,4 +1818,18 @@ public sealed class FormAndMultipartTests
     }
 
     private static string Body_SerializationAndTransform(TestRequest request) => Encoding.UTF8.GetString(request.Body);
+
+    /// <summary>记录是否被释放的流：用来断言「报错时也必须回收」，真正的释放仍交给基类。</summary>
+    private sealed class DisposeTrackingStream : MemoryStream
+    {
+        public DisposeTrackingStream(byte[] content) => Write(content, 0, content.Length);
+
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
 }

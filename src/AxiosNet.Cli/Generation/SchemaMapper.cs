@@ -25,6 +25,9 @@ internal sealed class SchemaMapper
     /// <summary>$ref 原文 → 已映射类型，避免同一引用重复生成，也让循环引用提前收敛。</summary>
     private readonly Dictionary<string, TypeRef> _refTypes = new(StringComparer.Ordinal);
 
+    /// <summary>正在解析的别名（primitive / array / enum）：用来识别 A → B → A 这类别名环。</summary>
+    private readonly HashSet<string> _resolvingAliases = new(StringComparer.Ordinal);
+
     /// <summary>已占用的类型名（运行库保留名 + 调用方预留给定 + 本次已生成的名字）。</summary>
     private readonly HashSet<string> _usedNames = new(StringComparer.Ordinal);
 
@@ -253,16 +256,30 @@ internal sealed class SchemaMapper
             return _refTypes[reference];
         }
 
-        // 别名（primitive / array / enum）：不额外生成包装类型，直接映射目标；占位先打断别名环。
-        _refTypes[reference] = TypeRef.JsonElement;
-        var mapped = MapCore(target, rawName, location);
-        if (nullable)
+        // 别名（primitive / array / enum）：不额外生成包装类型，直接映射目标。
+        // 别名环（A → B → A）在「解析中」集合处打断并告警：以前是往缓存里塞一个 JsonElement 占位，
+        // 环里的字段就这样悄悄退化成 JsonElement，生成的 SDK 少了强类型且没有任何提示。
+        if (!_resolvingAliases.Add(reference))
         {
-            mapped = mapped with { Nullable = true };
+            _warnings.Add("REF_CYCLE", location, $"别名循环引用 {reference}，按 JsonElement 处理。");
+            return TypeRef.JsonElement;
         }
 
-        _refTypes[reference] = mapped;
-        return mapped;
+        try
+        {
+            var mapped = MapCore(target, rawName, location);
+            if (nullable)
+            {
+                mapped = mapped with { Nullable = true };
+            }
+
+            _refTypes[reference] = mapped;
+            return mapped;
+        }
+        finally
+        {
+            _resolvingAliases.Remove(reference);
+        }
     }
 
     /// <summary>把内联对象 schema 注册成一个以建议名命名的类（重名自动加序号）。</summary>

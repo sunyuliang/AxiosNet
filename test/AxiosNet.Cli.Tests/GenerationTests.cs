@@ -204,6 +204,80 @@ public sealed class GenerationTests
         Assert.Contains("LoginAsync(", all);
     }
 
+    /// <summary>别名互相引用（A → B → A）必须告警，不再靠 JsonElement 占位悄悄降级。</summary>
+    [Fact]
+    public void AliasCycle_IsReportedInsteadOfSilentlyDegrading()
+    {
+        const string Spec = """
+            {
+              "openapi": "3.0.0",
+              "info": { "title": "alias-cycle", "version": "1.0" },
+              "paths": {
+                "/a": {
+                  "get": {
+                    "operationId": "getA",
+                    "responses": {
+                      "200": {
+                        "description": "ok",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/A" } } }
+                      }
+                    }
+                  }
+                }
+              },
+              "components": {
+                "schemas": {
+                  "A": { "$ref": "#/components/schemas/B" },
+                  "B": { "$ref": "#/components/schemas/A" }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(Spec, ".json", "--style", "interface");
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.Contains("REF_CYCLE", run.Codes);
+    }
+
+    [Fact]
+    public void AliasChain_IsNotReportedAsCycle()
+    {
+        // 别名链 A → B → string：只是一层套一层，不是环。环检测用「解析中」集合而不是「解析过」集合，
+        // 就是为了不把这种正常形态（以及同一个别名被两处引用）误报成 REF_CYCLE。
+        const string Spec = """
+            {
+              "openapi": "3.0.0",
+              "info": { "title": "alias-chain", "version": "1.0" },
+              "paths": {
+                "/a": {
+                  "get": {
+                    "operationId": "getA",
+                    "responses": {
+                      "200": {
+                        "description": "ok",
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/A" } } }
+                      }
+                    }
+                  }
+                }
+              },
+              "components": {
+                "schemas": {
+                  "A": { "$ref": "#/components/schemas/B" },
+                  "B": { "$ref": "#/components/schemas/C" },
+                  "C": { "type": "string" }
+                }
+              }
+            }
+            """;
+
+        using var run = CliHarness.RunText(Spec, ".json", "--style", "interface");
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.DoesNotContain("REF_CYCLE", run.Codes);
+    }
+
     /// <summary>--response-wrapper none 去掉 AxiosResponse 包装；流式接口因无法表达而记警告。</summary>
     [Fact]
     public void ResponseWrapperNone_UnwrapsReturnTypes()

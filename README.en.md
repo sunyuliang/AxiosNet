@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2148%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2141%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2159%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2152%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -164,7 +164,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 | Query parameter | `[Query]` / undecorated | Bound to the query by default; arrays `a[]=v`, nesting `a[b]=v` |
 | Dictionary query | `[Query]` + dictionary | Unnamed flattens to `?a=1&b=2`, explicit name keeps `?filters[a]=1` |
 | Header | `[Header]` / `[HeaderCollection]` | `null` is skipped |
-| Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header; method level overrides interface level |
+| Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header (a same-name `[Header]` property / parameter still writes it back); method level overrides interface level |
 | Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
 | Body | `[Body]` | At most one per model; `null` sends no body |
 | Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` (interface methods) | Body media type (decides encoding) / query collection format; overrides instance defaults |
@@ -446,6 +446,7 @@ Everything else is copied as per-request items: `Url` / `Method` / `Headers` / `
 All seven verbs also have an overload that takes a full `AxiosConfig` (`GetAsync(url, config)` / `PostAsync(url, config)` …): `config.Url` / `config.Method` are overridden by the `url` / verb, everything else merges into the instance defaults as usual. That is why `PostAsync(url, null)` means "no config to pass" and behaves like `PostAsync(url)` (empty body) instead of throwing `ArgumentNullException`.
 
 - `url` may be relative (resolved against `BaseAddress`) or absolute; `null` / blank throws `ERR_INVALID_URL` — to hit the base address itself pass `"/"` explicitly.
+- Leaving `config.Url` as `null` also means "request `BaseAddress` itself" and is fully equivalent to passing `"/"`: a trailing slash belongs to the address and is kept as-is.
 - `Method` is BCL's `HttpMethod`, so custom verbs work: `new HttpMethod("PROPFIND")`.
 - Escape path segments with `AxiosUrl.EncodePathSegment(value)`.
 
@@ -507,7 +508,7 @@ var client = new AxiosClient(new AxiosConfig { RequestCompression = AxiosCompres
 await client.PostAsync(url, data, c => c.RequestCompression = AxiosCompression.None);             // off for one call
 ```
 
-- Algorithms: `Gzip` / `Deflate` / `Brotli` (`br`), always at `CompressionLevel.Fastest` — HTTP is usually network-bound, so saving CPU beats squeezing the last byte.
+- Algorithms: `Gzip` / `Deflate` / `Brotli` (`br`), always at `CompressionLevel.Fastest` — HTTP is usually network-bound, so saving CPU beats squeezing the last byte. `Deflate` emits the RFC 1950 zlib wrapper (which is what RFC 7230 means by `deflate`), not raw DEFLATE — Java / Tomcat and most gateways only accept zlib.
 - Only bodies the library buffers as bytes are compressed: objects / primitives / `string` / `byte[]` / `Memory<byte>` / form encoding. `Content-Length` (and the `Limits.MaxBodyLength` check) then reflect the compressed size.
 - Rejected with `ERR_BAD_OPTION_VALUE`: `Stream` and streaming bodies (no full length to compress — compress upstream instead), caller-supplied `HttpContent` (encoding belongs to the content), multipart (parts may stream files), and a hand-written `Content-Encoding` header (mutually exclusive with `RequestCompression`).
 - The server must decompress request bodies by `Content-Encoding` itself (ASP.NET Core and most frameworks don't do it by default); don't enable this against a peer that can't.
@@ -544,6 +545,7 @@ await http.PostAsync("upload", multipart);          // passed through with its o
 - Field names come from property names / dictionary keys (respects `[JsonPropertyName]` / `[JsonIgnore]`); nesting becomes `meta[author]`, collections expand into repeated parts of the same name. Override the rule with `Serialization.FormFieldNameSelector`.
 - A root-level file array has no key: set `FormFile.FieldName`.
 - Parts are disposed with the request (success / error / cancellation); read into `byte[]` first if you need to reuse them.
+- One `FormFile` / `Stream` can feed one part only: a stream reads forward once, so the second part would emit 0 bytes — assembly fails with `ERR_BAD_OPTION_VALUE`.
 - Field names or filenames containing `"`, `\`, CR/LF or control characters would break `Content-Disposition` and fail before sending.
 - In ASP.NET Core `FormFile` is ambiguous, alias it: `using ClientFile = AxiosNet.FormFile;`.
 
@@ -957,7 +959,7 @@ AxiosContent.Serializer = new YamlSerializer();
 - Response business objects enter through the byte entry (valid UTF-8 text is parsed as bytes, with no UTF-16 round trip); a body that is not valid UTF-8 goes through the text entry instead, with bad bytes replaced by U+FFFD, matching the old decode-only behavior. Text formats need not implement the byte entry — the default implementation decodes by the response charset and forwards to the text entry.
 - Forms / multipart, primitives, `string` / `byte[]` / `Stream` never go through the serializer.
 - Implementations must be thread-safe (shared across concurrent requests); exceptions are wrapped as `ERR_BAD_REQUEST` / `ERR_BAD_RESPONSE`.
-- Text encodings: `Serialization.RequestEncoding` / `ResponseEncoding` (UTF-8 / auto-detect by default). Code pages like GBK need `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` first, otherwise you get silent mojibake.
+- Text encodings: `Serialization.RequestEncoding` / `ResponseEncoding` (UTF-8 / auto-detect by default). Code pages like GBK need `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` first: on the **send** side a `charset` this platform cannot resolve fails with `ERR_BAD_OPTION_VALUE` (UTF-8 bytes are never labelled as gbk), while the **receive** side treats an unknown `charset` as absent and falls back to BOM / UTF-8.
 
 ## Retries
 
@@ -1865,10 +1867,10 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2010 / 2003 | `net8.0` / `net6.0` | 4013 |
+| `AxiosNet.Tests` (core + declarative) | 2019 / 2012 | `net8.0` / `net6.0` | 4031 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| `AxiosNet.Cli.Tests` (OpenAPI generation) | 72 | `net8.0` | 72 |
-| **Total** | **2148 / 2141** | | **4289** |
+| `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
+| **Total** | **2159 / 2152** | | **4237** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed". `net8.0` has 7 more cases than `net6.0`: the nine `AotJsonTests` only compile on the net8 branch (`JsonSerializerOptions.TypeInfoResolver` is a .NET 7+ API), while `net6.0` alone has the two `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*` cases, which assert the error raised when no `TypeInfoResolver` exists. `AxiosNet.Cli.Tests` runs locally only — CI's `TEST_PROJECTS` lists just the first two projects, so generator snapshots and CLI fixtures are not part of the gate.
 

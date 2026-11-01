@@ -101,7 +101,9 @@ public sealed class GetUriTests
     {
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://a.com/api/" });
 
-        Assert.Equal("http://a.com/api", client.GetUri(new AxiosConfig()));
+        // 取消 url = 请求 baseAddress 本身：尾斜杠是地址的一部分，裁掉就变成了另一个资源
+        // （/api 与 /api/ 在路由、签名校验里并不等价），与显式传 "/" 必须给出同一个地址。
+        Assert.Equal("http://a.com/api/", client.GetUri(new AxiosConfig()));
     }
 
     [Fact]
@@ -159,6 +161,17 @@ public sealed class GetUriTests
 
         // 并发用例可能同时写入、冲到软上限附近，留一档余量即可证明没有无限增长。
         Assert.True(cache.Count <= 512, $"URI 缓存已增长到 {cache.Count} 条——应在上限处整表清空。");
+    }
+
+    [Fact]
+    public void GetUri_NullUrl_KeepsBaseAddressTrailingSlash()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://api.example.com/v1/" });
+
+        // null = 请求 baseAddress 本身，与显式传 "/" 必须等价：尾斜杠被裁掉会变成另一个路由
+        // （"/api" vs "/api/"），服务端路由与签名校验都可能因此对不上。
+        Assert.Equal("https://api.example.com/v1/", client.GetUri(c => c.Url = null));
+        Assert.Equal("https://api.example.com/v1/", client.GetUri(c => c.Url = "/"));
     }
 
     [Fact]

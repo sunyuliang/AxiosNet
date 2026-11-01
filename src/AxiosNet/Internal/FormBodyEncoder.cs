@@ -26,12 +26,16 @@ internal static class FormBodyEncoder
         }
         catch (DataCycleException ex)
         {
+            // 正文不再产出：数据里的流 / FormFile 按 FormFile 契约（异常时 Dispose）一并回收。
+            MultipartOwnership.DisposeOwned(data);
+
             // 环检测：转成带配置的选项错误。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
         catch (UnsupportedFormValueException ex)
         {
-            // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE。
+            // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE，流同样不能留到 GC。
+            MultipartOwnership.DisposeOwned(data);
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
 

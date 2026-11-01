@@ -169,6 +169,19 @@ public sealed class ModelValidationTests
     }
 
     [Fact]
+    public async Task RequestModel_NonPublicGetter_IsRejected()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 生成器对这种模型报 AXA009（生成代码取不到值）。反射路径能取到，但同一份模型
+        // 一开源生成器就编译不过——两条路径必须同一口径，这里选「都拒绝」，不静默丢字段。
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.RequestAsync(new PrivateGetterRequest()));
+
+        Assert.Contains("getter 不是 public", ex.Message);
+    }
+
+    [Fact]
     public void ValidateModels_AssemblyScan_IncludesNestedModels()
     {
         var errors = ApiClient.ValidateModels(typeof(ModelValidationTests).Assembly);
@@ -194,6 +207,14 @@ public sealed class ModelValidationTests
             => Task.FromResult(_respond(request));
     }
 
+
+    /// <summary>getter 非 public 的请求模型：反射与源生成器都必须拒绝。</summary>
+    [Get("private-getter")]
+    private sealed class PrivateGetterRequest : IApiRequest<Person>
+    {
+        [Query]
+        public string? Name { private get; set; }
+    }
 
     /// <summary>抽象请求基类（开放泛型）：程序集扫描必须跳过它。</summary>
     public abstract class PagedRequest<TResponse> : IApiRequest<TResponse>

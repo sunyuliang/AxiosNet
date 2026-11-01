@@ -45,6 +45,36 @@ public sealed class BindingAttributesTests
     }
 
     [Fact]
+    public async Task PropertyHeader_OverridesStaticRemovalDeclaration()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+
+        // 实例默认里有一份签名头；类上 [Headers("X-Sign")] 声明删除它，属性上的 [Header("X-Sign")] 又给了具体值。
+        // 参数头更具体，必须压过删除声明——否则合并层最后统一 Delete，会把手写进去的签名头静默摘掉。
+        using var client = new ApiClient(server.Url, defaults => defaults.Headers.Set("X-Sign", "default"));
+
+        await client.RequestAsync(new RemovedThenSuppliedRequest { Sign = "computed" });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("computed", received.Headers["X-Sign"]);
+    }
+
+    [Fact]
+    public async Task DuplicateRemovalDeclarations_AreAllOverriddenByPropertyHeader()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+
+        // 同名删除声明出现两次（RemoveHeaders 是 ICollection，不去重）：只摘掉一条的话，
+        // 剩下那条仍会在合并层把头删掉，属性头算出来的签名就发不出去。
+        using var client = new ApiClient(server.Url, defaults => defaults.Headers.Set("X-Sign", "default"));
+
+        await client.RequestAsync(new DuplicateRemovalThenSuppliedRequest { Sign = "computed" });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("computed", received.Headers["X-Sign"]);
+    }
+
+    [Fact]
     public async Task HeaderCollection_WritesEachEntry_NullValueSkipped()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
@@ -249,6 +279,22 @@ public sealed class BindingAttributesTests
     [Headers("X-Remove")]
     private sealed class RemoveHeaderRequest : IApiRequest<Person>
     {
+    }
+
+    [Get("static")]
+    [Headers("X-Sign")]
+    private sealed class RemovedThenSuppliedRequest : IApiRequest<Person>
+    {
+        [Header("X-Sign")]
+        public string? Sign { get; set; }
+    }
+
+    [Get("static")]
+    [Headers("X-Sign", "X-Sign")]
+    private sealed class DuplicateRemovalThenSuppliedRequest : IApiRequest<Person>
+    {
+        [Header("X-Sign")]
+        public string? Sign { get; set; }
     }
 
     [Get("headers")]

@@ -64,11 +64,10 @@ internal sealed class RetryBody
             },
             part =>
             {
-                // 部件级 HttpContent 由调用方构造，库无法回拨：与根级 StreamContent 同一规则，一律拒绝。
-                if (part is StreamContent)
-                {
-                    throw NotReplayable(config, "multipart 部件里的 StreamContent");
-                }
+                // 部件级 HttpContent 由调用方构造，库无法回拨：与根级内容同一套白名单，并且必须逐层下钻——
+                // 只判「这一层是不是 StreamContent」会漏掉 MultipartContent 里嵌套的 StreamContent，
+                // 那种正文第一次照常发出、第二次只剩空部件。
+                EnsureReplayableContent(part, config);
             });
 
         return streams.Count == 0 ? null : new RetryBody(streams);
@@ -101,6 +100,11 @@ internal sealed class RetryBody
     /// <remarks>
     /// 「长度已知」不等于「可重放」——一次性流包装成自定义内容后照样只发得出一次。
     /// 所以这里按白名单判断：内存缓冲形态与 JsonContent 放行，其余自定义内容一律在发送前拒绝。
+    /// <para>
+    /// 自引用的 <see cref="MultipartContent"/>（部件里包含自身）在这里**不做**环检测：BCL 的
+    /// <c>TryComputeLength</c> / <c>Dispose</c> / 序列化本身就会沿部件图无限递归，进到本方法之前或之后
+    /// 都会 StackOverflow —— 加一圈访问栈只是把崩溃点挪个位置，用例也测不出来（实测崩在 Dispose）。
+    /// </para>
     /// </remarks>
     private static void EnsureReplayableContent(HttpContent content, AxiosConfig config)
     {

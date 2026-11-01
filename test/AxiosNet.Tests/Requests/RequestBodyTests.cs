@@ -191,6 +191,24 @@ public sealed class RequestBodyTests
         Assert.Equal("héllo", Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
     }
 
+    [Fact]
+    public async Task UnknownCharsetName_ThrowsInsteadOfSilentlyEncodingAsUtf8()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        // gbk 需要 CodePagesEncodingProvider（库零依赖、不注册）：解析不出来时必须报错，
+        // 而不是把正文按 UTF-8 编出去、头里却留着 charset=gbk —— 那是必定乱码。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
+            "x",
+            "中文",
+            c => c.ContentType = "text/plain; charset=gbk"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("gbk", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
     // ===============================================================
     // L13：ContentType 的 charset 判重要容忍 "charset = utf-8" 这种空格写法
     // ===============================================================

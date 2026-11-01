@@ -56,6 +56,27 @@ public sealed class RetryTimingTests
     }
 
     [Fact]
+    public async Task NestedMultipartPart_HidingStreamContent_WithRetry_FailsFast()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+
+        // 库装配的 multipart 里再嵌一层 MultipartContent，真正的 StreamContent 在里层：
+        // 只判「这一层是不是 StreamContent」会放过它，第一次照常发出、重发就只剩空部件。
+        var nested = new MultipartContent("mixed");
+        nested.Add(new StreamContent(new NonSeekableStream(Encoding.UTF8.GetBytes("nested"))));
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
+            server.Url + "u",
+            new Dictionary<string, object?> { ["f"] = nested },
+            c => c.ContentType = "multipart/form-data"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public async Task MultipartStreamContentPart_WithoutRetry_IsSentAsIs()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

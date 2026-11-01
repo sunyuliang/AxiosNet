@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2148%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2141%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2159%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2152%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -164,7 +164,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 | 查询参数 | `[Query]` / 无标注属性 | 默认绑 Query；数组 `a[]=v`、嵌套 `a[b]=v` |
 | 字典查询 | `[Query]` + 字典 | 未命名平铺 `?a=1&b=2`，显式命名保留 `?filters[a]=1` |
 | 请求头 | `[Header]` / `[HeaderCollection]` | `null` 跳过 |
-| 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头；方法级覆盖接口级同名项 |
+| 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头（同名 `[Header]` 属性 / 参数仍会把它写回来）；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
 | 编码 | `[BodyContentType]` / `[QueryCollectionFormat]`（接口方法） | 正文媒体类型（决定怎么编码）/ 查询集合格式；覆盖实例默认值 |
@@ -447,6 +447,7 @@ var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + fi
 以上七个方法还各有一套直接收完整 `AxiosConfig` 的重载（`GetAsync(url, config)` / `PostAsync(url, config)` …）：`config.Url` / `config.Method` 会被 `url` / 方法名覆盖，其余项按常规合并到实例默认值。`PostAsync(url, null)` 因此按「没有要传的配置」处理，等价于 `PostAsync(url)`（发空正文），不再抛 `ArgumentNullException`。
 
 - `url` 可相对（拼 `BaseAddress`）可绝对；`null` / 空白串抛 `ERR_INVALID_URL`——要请求基地址本身请显式传 `"/"`。
+- `config.Url` 留空（`null`）同样表示请求 `BaseAddress` 本身，与传 `"/"` 完全等价：尾斜杠属于地址的一部分，会原样保留。
 - `Method` 直接用 BCL 的 `HttpMethod`，自定义谓词照发：`new HttpMethod("PROPFIND")`。
 - 路径段特殊字符用 `AxiosUrl.EncodePathSegment(value)` 转义。
 
@@ -508,7 +509,7 @@ var client = new AxiosClient(new AxiosConfig { RequestCompression = AxiosCompres
 await client.PostAsync(url, data, c => c.RequestCompression = AxiosCompression.None);             // 单次关掉
 ```
 
-- 算法：`Gzip` / `Deflate` / `Brotli`（`br`），压缩级别固定 `Fastest`——HTTP 的瓶颈通常在网络，省 CPU 比压到最小更划算。
+- 算法：`Gzip` / `Deflate` / `Brotli`（`br`），压缩级别固定 `Fastest`——HTTP 的瓶颈通常在网络，省 CPU 比压到最小更划算。`Deflate` 发的是 RFC 1950 的 zlib 包装（RFC 7230 里的 `deflate` 指的就是它），不是裸 DEFLATE：Java / Tomcat 与多数网关只认 zlib。
 - 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`Limits.MaxBodyLength` 也按压缩后字节数校验。
 - 拒绝（`ERR_BAD_OPTION_VALUE`）：`Stream` 与流式正文（没有完整长度可压，要压缩请先压好再传）、调用方自带的 `HttpContent`（压缩与编码归内容自己）、multipart（部件里可能含流式文件）、以及同时手写 `Content-Encoding` 头（与 `RequestCompression` 二选一）。
 - 服务端必须自己按 `Content-Encoding` 解压请求体（ASP.NET Core 等框架默认不解压请求体）；对端不支持时不要开启。
@@ -545,6 +546,7 @@ await http.PostAsync("upload", multipart);          // 原样透传，保留自�
 - 字段名取属性名 / 字典键（识别 `[JsonPropertyName]` / `[JsonIgnore]`），嵌套写 `meta[author]`，集合展开成同名重复部件；规则可用 `Serialization.FormFieldNameSelector` 改。
 - 根节点是文件数组时没有键名，用 `FormFile.FieldName` 指定。
 - 部件随请求释放（成功 / 异常 / 取消都 `Dispose`）；要复用请先读成 `byte[]`。
+- 同一个 `FormFile` / `Stream` 只能挂一个部件：流是单向读的，第一个部件读完后游标在末尾，第二个只会发出 0 字节，装配时直接报 `ERR_BAD_OPTION_VALUE`。
 - 字段名 / 文件名含 `"`、`\`、CR/LF、控制字符会破坏 `Content-Disposition`，发出前直接报错。
 - ASP.NET Core 项目里 `FormFile` 有歧义：`using ClientFile = AxiosNet.FormFile;`。
 
@@ -958,7 +960,7 @@ AxiosContent.Serializer = new YamlSerializer();
 - 响应正文里的业务对象统一走字节入口（合法 UTF-8 文本直接按字节解析，不做 UTF-16 中转）；正文不是合法 UTF-8 时改走文本入口，坏字节按 U+FFFD 替换，与只解码的老行为一致。文本格式无需实现字节入口，接口默认实现会按响应字符集解码后转调文本入口。
 - 表单 / multipart、基础类型、`string` / `byte[]` / `Stream` 不经过序列化器。
 - 实现需线程安全（会被并发共享）；异常统一包装成 `ERR_BAD_REQUEST` / `ERR_BAD_RESPONSE`。
-- 文本编码：`Serialization.RequestEncoding` / `ResponseEncoding`（默认 UTF-8 / 自动识别）。GBK 等代码页需先 `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`，否则静默乱码。
+- 文本编码：`Serialization.RequestEncoding` / `ResponseEncoding`（默认 UTF-8 / 自动识别）。GBK 等代码页需先 `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`：**发送侧**遇到解析不出来的 `charset` 直接报 `ERR_BAD_OPTION_VALUE`（不会把 UTF-8 字节标成 gbk 发出去），**接收侧**把未知 `charset` 当没声明，回落到 BOM / UTF-8。
 
 ## 重试
 
@@ -1865,10 +1867,10 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2010 / 2003 | `net8.0` / `net6.0` | 4013 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2019 / 2012 | `net8.0` / `net6.0` | 4031 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
-| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 72 | `net8.0` | 72 |
-| **合计** | **2148 / 2141** | | **4289** |
+| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
+| **合计** | **2159 / 2152** | | **4237** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。`net8.0` 比 `net6.0` 净多 7 条：`AotJsonTests` 9 条只在 net8 分支编译（`JsonSerializerOptions.TypeInfoResolver` 是 .NET 7+ API），`net6.0` 独有 2 条 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。`AxiosNet.Cli.Tests` 只在本地跑——CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
 

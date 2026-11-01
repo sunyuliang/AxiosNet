@@ -122,7 +122,10 @@ internal sealed class BindingPlan
         return query.Count > 0 ? query : null;
     }
 
-    /// <summary>把全部请求头绑定写进配置；没有任何头绑定时不动配置。</summary>
+    /// <summary>
+    /// 把全部请求头绑定写进配置；没有任何头绑定时不动配置。
+    /// 属性 / 参数上的头压过声明级同名项（含「只写名字 = 删除」的声明）：写值时撤销待删除项。
+    /// </summary>
     public void ApplyHeaders(object target, AxiosConfig config)
     {
         foreach (var binding in _headerBindings)
@@ -132,6 +135,9 @@ internal sealed class BindingPlan
             // 与 query 一致：null 头跳过
             if (value is not null)
             {
+                // 静态头先写、参数头后写，所以这里必须撤销声明级的待删除项：
+                // 否则合并层最后统一 Delete，会把刚写进去的签名 / 鉴权头静默摘掉。
+                ClearPendingRemoval(config, binding.Name);
                 config.Headers.Set(binding.Name, ToText(value));
             }
         }
@@ -148,6 +154,7 @@ internal sealed class BindingPlan
                 // 值为 null 的项跳过（字典头没有「删除」语义，删除请用声明级 [Headers("X-Remove")]）
                 if (entry.Value is string text)
                 {
+                    ClearPendingRemoval(config, entry.Key);
                     config.Headers.Set(entry.Key, text);
                 }
             }
@@ -172,6 +179,11 @@ internal sealed class BindingPlan
     }
 
     /// <summary>从待删除集合里摘掉匹配的名字（头名大小写不敏感）；没有匹配项时不动集合。</summary>
+    /// <remarks>
+    /// 同名声明可能重复出现（<see cref="AxiosConfig.RemoveHeaders"/> 只是 <c>ICollection</c>，不去重：
+    /// <c>[Headers("X", "X")]</c> 或类 / 接口各声明一次都会留下两条），所以必须**删干净**。
+    /// 只删一条的话，剩下那条仍然会在合并层把这个头删掉——表现为「写了签名头却发不出去」。
+    /// </remarks>
     private static void ClearPendingRemoval(AxiosConfig config, string name)
     {
         if (!config.HasRemoveHeaders)
@@ -179,20 +191,24 @@ internal sealed class BindingPlan
             return;
         }
 
-        string? matched = null;
-        foreach (var pending in config.RemoveHeaders)
+        while (TakeOne(config.RemoveHeaders, name))
         {
-            if (string.Equals(pending, name, StringComparison.OrdinalIgnoreCase))
+        }
+    }
+
+    /// <summary>删掉集合里第一个同名项；没有返回 <c>false</c>（删除后立即退出枚举，不在枚举中继续 Remove）。</summary>
+    private static bool TakeOne(ICollection<string> pending, string name)
+    {
+        foreach (var item in pending)
+        {
+            if (string.Equals(item, name, StringComparison.OrdinalIgnoreCase))
             {
-                matched = pending;
-                break;
+                pending.Remove(item);
+                return true;
             }
         }
 
-        if (matched is not null)
-        {
-            config.RemoveHeaders.Remove(matched);
-        }
+        return false;
     }
 
     /// <summary>基础类型的线上文本：转调查询串 / 表单的同一份规则。</summary>

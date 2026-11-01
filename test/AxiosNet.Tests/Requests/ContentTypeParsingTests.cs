@@ -47,25 +47,32 @@ public sealed class ContentTypeParsingTests
     }
 
     [Fact]
-    public void GetCharsetEncoding_ReadsDeclaredCharset()
+    public void ResolveCharset_ReadsDeclaredCharset()
     {
-        Assert.Equal(Encoding.UTF8, RequestContentType.GetCharsetEncoding("application/json; charset=utf-8"));
-        Assert.Equal(Encoding.Latin1, RequestContentType.GetCharsetEncoding("text/plain; charset=\"iso-8859-1\""));
+        Assert.Equal(Encoding.UTF8, RequestContentType.ResolveCharset("application/json; charset=utf-8", config: null));
+        Assert.Equal(Encoding.Latin1, RequestContentType.ResolveCharset("text/plain; charset=\"iso-8859-1\"", config: null));
     }
 
     [Fact]
-    public void GetCharsetEncoding_UndecidableInputs_ReturnNull()
+    public void ResolveCharset_UndecidableInputs_ReturnNull()
     {
-        Assert.Null(RequestContentType.GetCharsetEncoding("text/plain"));
+        Assert.Null(RequestContentType.ResolveCharset("text/plain", config: null));
 
         // 连媒体类型都解析不出来
-        Assert.Null(RequestContentType.GetCharsetEncoding("not a media type///"));
+        Assert.Null(RequestContentType.ResolveCharset("not a media type///", config: null));
 
-        // charset 参数存在但值为空
-        Assert.Null(RequestContentType.GetCharsetEncoding("text/plain; charset="));
+        // charset 参数存在但值为空：等同于没声明，不能报「'' 解析不出来」
+        Assert.Null(RequestContentType.ResolveCharset("text/plain; charset=", config: null));
+    }
 
-        // 平台不认识的 charset 名：不在解析阶段判定
-        Assert.Null(RequestContentType.GetCharsetEncoding("text/plain; charset=x-unknown-charset"));
+    [Fact]
+    public void ResolveCharset_UnknownCharsetName_Throws()
+    {
+        // 声明了但平台解析不出来：静默当「没声明」会让正文按 UTF-8 编码、头里却写着别的编码。
+        var ex = Assert.Throws<AxiosException>(
+            () => RequestContentType.ResolveCharset("text/plain; charset=x-unknown-charset", config: null));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
     [Fact]
