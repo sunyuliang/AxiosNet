@@ -2,8 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2141%2F2078%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2148%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2141%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1669,7 +1670,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 - 容器里的 `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` 自动挂到 `ApiClient`，`configure` 里显式设置的优先。
 - 生命周期归容器：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端。
 - 多站点用 `IApiClientResolver.Get(name)` / `TryGet` / `Names`；.NET 8+ 也可用键名服务（`AddKeyedSingleton` + `[FromKeyedServices]`）。
-- 接口级声明可直接注册：`services.AddApiInterface<IUserApi>()`（取未命名 `ApiClient`）或 `AddApiInterface<IUserApi>("a")`（取命名站点）；代理按单例复用，仅在 JIT 下可用。
+- 接口级声明可直接注册：`services.AddApiInterface<IUserApi>()`（取未命名 `ApiClient`）或 `AddApiInterface<IUserApi>("a")`（取命名站点）；代理按单例复用，来自源生成器烘焙的代理（JIT 与 Native AOT 同一路径），未生成时才在 JIT 下回退 `DispatchProxy`，AOT 下解析即显式失败。
 - 一个接口只能绑一个站点：换站点再注册一次（含未命名 ↔ 命名）在注册期抛 `InvalidOperationException`，不会静默丢掉第二条；两个站点共用方法时定义派生接口再注册到另一个站点。
 
 ## 配置速查
@@ -1864,14 +1865,16 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2003 / 1996 | `net8.0` / `net6.0` | 3999 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2010 / 2003 | `net8.0` / `net6.0` | 4013 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 72 | `net8.0` | 72 |
-| **合计** | **2141 / 2078** | | **4219** |
+| **合计** | **2148 / 2141** | | **4289** |
+
+表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。`net8.0` 比 `net6.0` 净多 7 条：`AotJsonTests` 9 条只在 net8 分支编译（`JsonSerializerOptions.TypeInfoResolver` 是 .NET 7+ API），`net6.0` 独有 2 条 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。`AxiosNet.Cli.Tests` 只在本地跑——CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
-行覆盖率 **91.7%**、分支覆盖率 **87.2%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内，这也是这两项比上一版略低的原因）。
+行覆盖率 **91.7%**、分支覆盖率 **87.3%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内）。
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1902,12 +1905,12 @@ DOTNET_ROLL_FORWARD=LatestMajor dotnet test <project> -f net8.0
 
 ### Native AOT 验证
 
-CI 另有一组 `aot` 任务（`win-x64` / `linux-x64` 矩阵），把 `IL2026` / `IL3050` / `IL3051` 直接当错误，因此「发布成功」等于「裁剪与 AOT 分析都是 0 警告」：
+CI 另有一组 `aot` 任务（`win-x64` / `linux-x64` 矩阵），把 `IL2026` / `IL3050` / `IL3051` 与 DAM 那组（`IL2070` / `IL2072` / `IL2075` / `IL2087` / `IL2098`）直接当错误，因此「发布成功」等于「裁剪与 AOT 分析都是 0 警告」。DAM 那组必须一起收紧：本库大量依赖 `DynamicallyAccessedMembers` 与抑制标注，这类警告最容易只在包消费方发布时才暴露。
 
 ```bash
 # 示例：不再 root 整个程序集，能否通过完全取决于源生成器烘焙的元数据
 dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn=false \
-  -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+  -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051%3BIL2070%3BIL2072%3BIL2075%3BIL2087%3BIL2098
 ./samples/AxiosNet.Aot/bin/Release/net8.0/linux-x64/publish/AxiosNet.Aot
 
 # 包消费：pack → 只引用包的临时项目 → AOT 发布 → 运行
@@ -1992,7 +1995,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 
 读法、前后对比流程与已知噪声见 [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md)。
 
-跨实现横向对比另见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：同一回环服务器、同一负载（默认 8 并发 × 1s × 5 轮、每轮轮转顺序），对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告；加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁（不设阈值时只出数字、不判定）。它不进 CI、也不被 `dotnet test` 收集（`IsTestProject=false`，放在 sln 里只为 IDE 直接打开）；口径、读法与一次本机参考数据见该工程 README。
+跨实现横向对比另见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：同一回环服务器、同一负载（默认 8 并发 × 1s × 5 轮、每轮轮转顺序），对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告；加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁（不设阈值时只出数字、不判定）。它不进 CI、也不被 `dotnet test` 收集（`IsTestProject=false`，放在 sln 里只为 IDE 直接打开）；口径、读法与一次本机参考数据见该工程 README，整理成结论（功能 / 性能 / 易用性 + 选型建议）的版本见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
 
 ## 项目结构
 
@@ -2026,7 +2029,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
    ├─ AxiosNet.DependencyInjection.Tests/
-   ├─ AxiosNet.Cli.Tests/              # CLI：fixtures 快照 / 生成代码编译 / 确定性与 --check / 端到端
+   ├─ AxiosNet.Cli.Tests/              # CLI：fixtures 快照 / 生成代码编译 / 确定性与 --check / 覆盖保护与清单跟踪 / --dry-run
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet（单实现分项成本）
    └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```

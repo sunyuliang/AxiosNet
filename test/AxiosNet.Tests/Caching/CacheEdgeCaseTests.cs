@@ -350,29 +350,41 @@ public sealed class CacheEdgeCaseTests
     [Fact]
     public async Task StoreWrite_IsBoundedByTotalTimeout()
     {
+        // 预算要远大于「本机一条请求」的耗时，否则线程池被别的用例占住时，被预算收掉的是发送本身而不是落库。
+        // 判据不靠绝对秒数：存储延迟比预算大一个数量级，落库没被截断时响应会被拖到分钟级。
+        var budget = TimeSpan.FromSeconds(2);
+        var storeDelay = TimeSpan.FromSeconds(60);
+
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
+        var store = new SlowSetStore(storeDelay);
         using var client = new AxiosClient(new AxiosConfig
         {
-            TotalTimeout = TimeSpan.FromMilliseconds(200),
-            Cache = new AxiosCache(new AxiosCacheOptions
-            {
-                Store = new SlowSetStore(TimeSpan.FromSeconds(5)),
-                StoreTimeout = TimeSpan.FromSeconds(5)
-            })
+            TotalTimeout = budget,
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store, StoreTimeout = storeDelay })
         });
+
+        // 预热建连接、跑 JIT：这些耗时与「落库受预算约束」无关，但同样花的是这份预算。
+        // 另起一个客户端并给它普通存储：连接池按 origin 共享，预热不会碰被测的慢存储。
+        using (var warmup = new AxiosClient(new AxiosConfig { Cache = NewCache() }))
+        {
+            await warmup.GetAsync(server.Url + "warmup");
+        }
+
         var url = server.Url + "slow-store-set";
+        var receivedBefore = server.Received.Count;
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await client.GetAsync<Person>(url).WaitAsync(TimeSpan.FromSeconds(5));
+        var response = await client.GetAsync<Person>(url).WaitAsync(storeDelay);
         stopwatch.Stop();
 
         // 写入受剩余总预算约束：存储比 StoreTimeout 还慢时也不能把响应拖过预算。
         Assert.Equal("ada", response.Data!.Name);
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"落库拖住了响应：{stopwatch.Elapsed}。");
+        Assert.Equal(1, store.SetCalls);
+        Assert.True(stopwatch.Elapsed < budget * 3, $"落库拖住了响应：{stopwatch.Elapsed}（预算 {budget}，存储延迟 {storeDelay}）。");
 
         // 这次没落库：下一次仍旧发请求。
-        await client.GetAsync<Person>(url).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(2, server.Received.Count);
+        await client.GetAsync<Person>(url).WaitAsync(storeDelay);
+        Assert.Equal(receivedBefore + 2, server.Received.Count);
     }
 
     // ---------------------------------------------------------------
@@ -445,11 +457,19 @@ public sealed class CacheEdgeCaseTests
 
     private sealed class SlowSetStore(TimeSpan delay) : IAxiosCacheStore
     {
+        private int _setCalls;
+
+        /// <summary>被调用过多少次写入：落库路径真的走到存储了才算测到「写入受预算约束」。</summary>
+        public int SetCalls => Volatile.Read(ref _setCalls);
+
         public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
             => new((AxiosShortCircuit?)null);
 
         public async ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
-            => await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        {
+            Interlocked.Increment(ref _setCalls);
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
 
         public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken) => new(false);
 

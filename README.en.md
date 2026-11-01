@@ -2,8 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests](https://img.shields.io/badge/tests-2141%2F2078%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.2%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2148%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2141%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1669,7 +1670,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 - `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` from the container attach automatically; explicit values in `configure` win.
 - Lifetime belongs to the container: disposing an injected `ApiClient` does not dispose the shared underlying client.
 - Multi-site via `IApiClientResolver.Get(name)` / `TryGet` / `Names`; on .NET 8+ keyed services (`AddKeyedSingleton` + `[FromKeyedServices]`) work too.
-- Interface declarations register directly: `services.AddApiInterface<IUserApi>()` (unkeyed `ApiClient`) or `AddApiInterface<IUserApi>("a")` (named site); the proxy is reused as a singleton and is JIT-only.
+- Interface declarations register directly: `services.AddApiInterface<IUserApi>()` (unkeyed `ApiClient`) or `AddApiInterface<IUserApi>("a")` (named site); the proxy is reused as a singleton and comes from the source generator (same path for JIT and Native AOT). Without generated metadata it falls back to `DispatchProxy` under JIT, and under AOT resolution fails explicitly.
 - One interface binds to one site: registering it again under a different name (including unkeyed ↔ named) throws `InvalidOperationException` at registration time instead of silently dropping the second registration; to share a method set across two sites, derive an interface and register that against the other site.
 
 ## Configuration reference
@@ -1864,14 +1865,16 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2003 / 1996 | `net8.0` / `net6.0` | 3999 |
+| `AxiosNet.Tests` (core + declarative) | 2010 / 2003 | `net8.0` / `net6.0` | 4013 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 72 | `net8.0` | 72 |
-| **Total** | **2141 / 2078** | | **4219** |
+| **Total** | **2148 / 2141** | | **4289** |
+
+Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed". `net8.0` has 7 more cases than `net6.0`: the nine `AotJsonTests` only compile on the net8 branch (`JsonSerializerOptions.TypeInfoResolver` is a .NET 7+ API), while `net6.0` alone has the two `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*` cases, which assert the error raised when no `TypeInfoResolver` exists. `AxiosNet.Cli.Tests` runs locally only — CI's `TEST_PROJECTS` lists just the first two projects, so generator snapshots and CLI fixtures are not part of the gate.
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling, transport profiles and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints and endpoint health memory, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 
-Line coverage **91.7%**, branch coverage **87.2%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement — that is why both numbers are slightly lower than the previous release.
+Line coverage **91.7%**, branch coverage **87.3%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites; now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1). Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable. The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement.
 Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
 
 ```bash
@@ -1902,12 +1905,12 @@ Only .NET 10 is added, not 9 or 11: .NET 8 and 9 both go out of support on 2026-
 
 ### Native AOT verification
 
-A separate `aot` CI job (`win-x64` / `linux-x64` matrix) treats `IL2026` / `IL3050` / `IL3051` as errors, so "publish succeeded" means both trimming and AOT analysis are warning-free:
+A separate `aot` CI job (`win-x64` / `linux-x64` matrix) treats `IL2026` / `IL3050` / `IL3051` plus the DAM group (`IL2070` / `IL2072` / `IL2075` / `IL2087` / `IL2098`) as errors, so "publish succeeded" means both trimming and AOT analysis are warning-free. The DAM group has to be tightened together with the rest: the library leans heavily on `DynamicallyAccessedMembers` and suppression annotations, and that class of warning is the one most likely to surface only when a package consumer publishes.
 
 ```bash
 # Sample: the app no longer roots the whole assembly — passing depends entirely on generated metadata
 dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn=false \
-  -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051
+  -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051%3BIL2070%3BIL2072%3BIL2075%3BIL2087%3BIL2098
 ./samples/AxiosNet.Aot/bin/Release/net8.0/linux-x64/publish/AxiosNet.Aot
 
 # Package consumer: pack → throwaway project that only references the package → publish → run
@@ -1992,7 +1995,7 @@ By default it runs **in-process** (no temp project, no rebuild). Add `--isolated
 
 Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
 
-For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison): one loopback server, one load profile (8 concurrent × 1s × 5 rounds by default, with the implementation order rotated every round), comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV. Add `--min-ratio` / `--max-alloc-ratio` to use it as a regression gate (without thresholds it only reports, never judges). It is not part of CI and is not collected by `dotnet test` (`IsTestProject=false`; it sits in the solution only so the IDE can open it). Methodology, reading guide and one sample run live in that project's README.
+For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison): one loopback server, one load profile (8 concurrent × 1s × 5 rounds by default, with the implementation order rotated every round), comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV. Add `--min-ratio` / `--max-alloc-ratio` to use it as a regression gate (without thresholds it only reports, never judges). It is not part of CI and is not collected by `dotnet test` (`IsTestProject=false`; it sits in the solution only so the IDE can open it). Methodology, reading guide and one sample run live in that project's README; the write-up with conclusions (features / performance / ergonomics plus selection advice) is [`docs/http-client-comparison.md`](docs/http-client-comparison.md).
 
 ## Project layout
 
@@ -2026,7 +2029,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
    ├─ AxiosNet.DependencyInjection.Tests/
-   ├─ AxiosNet.Cli.Tests/              # CLI: fixture snapshots / generated-code compilation / determinism and --check / end to end
+   ├─ AxiosNet.Cli.Tests/              # CLI: fixture snapshots / generated-code compilation / determinism and --check / overwrite protection and manifest tracking / --dry-run
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet (per-stage cost of one implementation)
    └─ AxiosNet.Comparison/             # cross-implementation comparison (RPS / p99 / allocations, optional gate)
 ```
