@@ -13,7 +13,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 项 | 值 |
 | --- | --- |
-| 包 | `AxiosNet`（核心 + 声明式客户端同包）、`AxiosNet.DependencyInjection`（可选） |
+| 包 | `AxiosNet`（核心 + 声明式客户端同包）、`AxiosNet.DependencyInjection`（可选）、`AxiosNet.Cli`（可选，设计期 dotnet tool） |
 | 目标框架 | `net6.0` / `net8.0` 双目标：.NET 8 及以上取 `lib/net8.0`，.NET 6 / 7 取 `lib/net6.0` |
 | 依赖 | 零第三方，只用 BCL |
 | 风格 | 全异步：`Task` + `CancellationToken` |
@@ -51,6 +51,8 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 ```bash
 dotnet add package AxiosNet                       # 核心客户端 + 声明式 API 客户端（同一包）
 dotnet add package AxiosNet.DependencyInjection   # 可选：DI 注册扩展
+
+dotnet tool install -g AxiosNet.Cli               # 可选：从 OpenAPI 生成客户端（设计期工具，不进运行时）
 ```
 
 引用本仓库源码：`dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj`
@@ -244,14 +246,20 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 已有接口文档时，不必手写上面这些声明：`src/AxiosNet.Cli` 是设计期的 dotnet 工具（命令 `axiosnet-gen`，包 `AxiosNet.Cli`），读取 OpenAPI 3.0.x / 3.1.x、Swagger 2.0 文档（JSON / YAML，本地文件、http(s) URL 或 `-` 标准输入），生成声明式 C#。默认是**模型式**：每个操作一个 `ApiRequest<T>` 请求模型，`client.RequestAsync(new XxxRequest { ... })` 直接调用；加 `--style interface` 切换到接口式（每个 tag 一个接口，`client.Create<T>()`）。两种形态都只有声明、不含运行时代码——模型与接口代理都由源生成器在编译期烘焙，JIT 与 Native AOT 同一路径。工具自身的 YAML 解析是设计期依赖，`AxiosNet` 运行时仍零第三方依赖。
 
 ```bash
-# 仓库内直接运行（默认模型式）
-dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api
+# 一次性安装（全局 dotnet tool，命令 axiosnet-gen；net6.0 / net8.0 双目标，.NET 6 及以上都能跑）
+dotnet tool install -g AxiosNet.Cli
+
+# 生成（默认模型式）
+axiosnet-gen demo.openapi.json -o Generated -n MyApp.Api
 
 # 接口式
-dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api --style interface
+axiosnet-gen demo.openapi.json -o Generated -n MyApp.Api --style interface
 
-# 或安装为全局工具后
-axiosnet-gen demo.openapi.json --namespace MyApp.Api --output Generated --report import.json
+# 远端文档 + 导入报告
+axiosnet-gen https://api.example.com/openapi.json --namespace MyApp.Api --output Generated --report import.json
+
+# 改工具本身时，仓库内直接跑源码
+dotnet run --project src/AxiosNet.Cli -f net8.0 -- demo.openapi.json -o Generated -n MyApp.Api
 ```
 
 模型式的产物长这样（`users` tag → `UsersRequests.g.cs`，每个操作一个类；属性名按 PascalCase 生成，wire 名不同时显式给出）：
@@ -293,7 +301,7 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 完整走通这一流程的是示例 [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs)：从 [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) 以默认模型式生成 [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated)（tag 分组的 `*Requests.g.cs` / 根级授权 / 表单登录 / multipart / SSE 与 JSON 数组流式），再用 `RequestAsync` / `RequestStreamAsync` 调用 `DemoApiServer` 的真实路由：
 
 ```bash
-dotnet run --project src/AxiosNet.Cli -- \
+dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
   samples/AxiosNet.Simple/WebAPI/demo.openapi.json \
   -o samples/AxiosNet.Simple/WebAPI/Generated \
   -n AxiosNet.Simple.WebAPI.Generated --force

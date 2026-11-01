@@ -318,7 +318,7 @@ internal sealed class CliOptions
 
         foreach (var c in value)
         {
-            if (!char.IsAsciiLetterOrDigit(c) && !"!#$%&'*+-.^_`|~".Contains(c))
+            if (!IsAsciiLetterOrDigit(c) && !"!#$%&'*+-.^_`|~".Contains(c))
             {
                 return false;
             }
@@ -326,6 +326,11 @@ internal sealed class CliOptions
 
         return true;
     }
+
+    /// <summary>只认 ASCII 字母数字：net6.0 没有 <c>char.IsAsciiLetterOrDigit</c>，而 RFC 7230 的 token 本就是 ASCII，
+    /// <see cref="char.IsLetterOrDigit(char)"/> 会放过非 ASCII 字母。</summary>
+    private static bool IsAsciiLetterOrDigit(char c) =>
+        c is >= '0' and <= '9' or >= 'a' and <= 'z' or >= 'A' and <= 'Z';
 
     /// <summary>把 <c>--name=value</c> 拆成名字与内联取值；没有 <c>=</c> 时值返回 null，表示从下一个参数取。</summary>
     private static (string Name, string? Value) SplitOption(string arg)

@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 仅面向设计期：net8.0 是 dotnet tool 的稳妥基线；生成的代码始终按 net6.0 兼容性输出。 -->
+    <!-- 设计期工具，双目标打包：net6.0 是运行基线（只装 .NET 6 / 7 运行时的机器取 tools/net6.0），
+         net8.0 给 .NET 8 及以上（tools/net8.0 优先被选中）。生成的代码始终按 net6.0 兼容性输出，
+         工具自身的目标框架不影响产物。 -->
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net6.0;net8.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -21,16 +23,27 @@
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
     <Description>设计期命令行工具：读取 OpenAPI 3.0 / 3.1、Swagger 2.0 文档（JSON / YAML、本地 / URL / stdin），生成 AxiosNet.WebAPI 声明式接口与模型。生成代码不含运行时代码，由 AxiosNet 源生成器在编译期烘焙代理，Native AOT 同样可用。Design-time CLI that generates strongly typed AxiosNet declarative clients from OpenAPI documents.</Description>
-    <PackageTags>openapi;swagger;codegen;client-generator;axios;http;dotnet-tool;csharp;dotnet;net8</PackageTags>
+    <PackageTags>openapi;swagger;codegen;client-generator;axios;http;dotnet-tool;csharp;dotnet;net6;net8</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/sunyuliang/AxiosNet</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <Deterministic>true</Deterministic>
+    <!-- 与类库包口径一致：发布闸门要求 nupkg 旁边有 snupkg，缺了 CI 直接失败 -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- 工具只建 net8.0：没装 .NET 8 运行时（只有 9/10/11）的用户也能直接运行，而不是报「必须安装 .NET 8」 -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
+
+  <!-- 自述文件打进包：nuget.org 上的工具页直接显示用法（源与类库包共用同一份 README） -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- 唯一的解析依赖：YAML（JSON 由 System.Text.Json 处理）。设计期工具依赖不影响 AxiosNet 运行时零依赖的承诺。 -->

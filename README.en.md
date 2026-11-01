@@ -13,7 +13,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Item | Value |
 | --- | --- |
-| Packages | `AxiosNet` (core + declarative client in one package), `AxiosNet.DependencyInjection` (optional) |
+| Packages | `AxiosNet` (core + declarative client in one package), `AxiosNet.DependencyInjection` (optional), `AxiosNet.Cli` (optional, design-time dotnet tool) |
 | Target | Dual-target `net6.0` / `net8.0`: .NET 8+ consumes `lib/net8.0`, .NET 6 / 7 consumes `lib/net6.0` |
 | Dependencies | Zero third-party, BCL only |
 | Style | Async first: `Task` + `CancellationToken` |
@@ -51,6 +51,8 @@ Pick your entry point:
 ```bash
 dotnet add package AxiosNet                       # core client + declarative API client (one package)
 dotnet add package AxiosNet.DependencyInjection   # optional: DI registration
+
+dotnet tool install -g AxiosNet.Cli               # optional: generate clients from OpenAPI (design-time tool)
 ```
 
 Referencing the source tree: `dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj`
@@ -244,14 +246,20 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 When the contract already exists, you do not have to write any of the declarations above: `src/AxiosNet.Cli` is a design-time dotnet tool (command `axiosnet-gen`, package `AxiosNet.Cli`) that reads OpenAPI 3.0.x / 3.1.x and Swagger 2.0 documents (JSON / YAML, local file, http(s) URL or stdin via `-`) and emits declarative C#. The default is **model-based**: one `ApiRequest<T>` request model per operation, called directly with `client.RequestAsync(new XxxRequest { ... })`; add `--style interface` to switch to interface-based generation (one interface per tag, `client.Create<T>()`). Both styles are declarations only — request models and proxies are baked at compile time by the source generator, the same path for JIT and Native AOT. The tool's YAML parser is a design-time dependency — the `AxiosNet` runtime stays free of third-party packages.
 
 ```bash
-# Run from the repository (model-based by default)
-dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api
+# Install once (global dotnet tool, command axiosnet-gen; ships net6.0 + net8.0, runs on .NET 6 and up)
+dotnet tool install -g AxiosNet.Cli
+
+# Generate (model-based by default)
+axiosnet-gen demo.openapi.json -o Generated -n MyApp.Api
 
 # Interface-based
-dotnet run --project src/AxiosNet.Cli -- demo.openapi.json -o Generated -n MyApp.Api --style interface
+axiosnet-gen demo.openapi.json -o Generated -n MyApp.Api --style interface
 
-# Or install it as a global tool and run
-axiosnet-gen demo.openapi.json --namespace MyApp.Api --output Generated --report import.json
+# Remote document + import report
+axiosnet-gen https://api.example.com/openapi.json --namespace MyApp.Api --output Generated --report import.json
+
+# Working on the tool itself: run it straight from the repository
+dotnet run --project src/AxiosNet.Cli -f net8.0 -- demo.openapi.json -o Generated -n MyApp.Api
 ```
 
 Model-based output looks like this (the `users` tag → `UsersRequests.g.cs`, one class per operation; properties are PascalCase, so the wire name is stated explicitly when it differs):
@@ -293,7 +301,7 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 The full flow is demonstrated by [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs): it generates [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated) from [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) in the default model style (tag-grouped `*Requests.g.cs` / root authorization / form login / multipart / SSE and JSON-array streaming) and calls the real routes of `DemoApiServer` with `RequestAsync` / `RequestStreamAsync`:
 
 ```bash
-dotnet run --project src/AxiosNet.Cli -- \
+dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
   samples/AxiosNet.Simple/WebAPI/demo.openapi.json \
   -o samples/AxiosNet.Simple/WebAPI/Generated \
   -n AxiosNet.Simple.WebAPI.Generated --force

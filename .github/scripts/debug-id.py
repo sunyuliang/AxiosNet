@@ -14,6 +14,7 @@
     python3 .github/scripts/debug-id.py --nupkg published.nupkg
     python3 .github/scripts/debug-id.py --dll src/AxiosNet/bin/Release/net6.0/AxiosNet.dll
     python3 .github/scripts/debug-id.py --nupkg x.nupkg --entry lib/net6.0/AxiosNet.dll
+    python3 .github/scripts/debug-id.py --nupkg artifacts/AxiosNet.Cli.1.0.0.nupkg   # dotnet tool 包：tools/ 下的主程序集
 
 stdout 只输出 32 位大写十六进制 id（便于 `$(...)` 直接取用），诊断信息走 stderr。
 """
@@ -21,6 +22,8 @@ stdout 只输出 32 位大写十六进制 id（便于 `$(...)` 直接取用）�
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import struct
 import sys
 import uuid
@@ -37,19 +40,40 @@ DATA_DIR_OFFSET_PE32PLUS = 112
 DEBUG_ENTRY_SIZE = 28
 
 
+def _package_id(package: zipfile.ZipFile, names: list[str]) -> str:
+    """从包内 .nuspec 取 <id>：dotnet tool 包的 tools/<tfm>/any/ 里同时躺着依赖 dll，靠它认出主程序集。"""
+    for name in names:
+        if not name.endswith(".nuspec"):
+            continue
+        match = re.search(r"<id>([^<]+)</id>", package.read(name).decode("utf-8", "replace"))
+        if match:
+            return match.group(1).strip()
+    sys.exit("包内没有可解析的 .nuspec，无法确定主程序集")
+
+
 def load_dll_from_nupkg(path: str, entry: str | None) -> tuple[str, bytes]:
     with zipfile.ZipFile(path) as package:
-        candidates = [n for n in package.namelist() if n.startswith("lib/") and n.endswith(".dll")]
+        names = package.namelist()
+        # 两种包形态：类库包 assets 在 lib/<tfm>/，dotnet tool 包在 tools/<tfm>/any/
+        candidates = [n for n in names if n.endswith(".dll") and (n.startswith("lib/") or n.startswith("tools/"))]
         if not candidates:
-            sys.exit(f"{path} 内没有 lib/**/*.dll，不是类库包？")
+            sys.exit(f"{path} 内没有 lib/** 或 tools/** 下的 .dll，既不是类库包也不是 dotnet tool 包？")
         if entry is not None:
             if entry not in candidates:
                 sys.exit(f"{path} 内没有条目 {entry}")
             chosen = entry
         else:
-            # 优先取 net6.0 资产（双目标里覆盖面最广的那份：.NET 6/7 消费者拿到的就是它）
-            preferred = [n for n in candidates if n.startswith("lib/net6.0/")]
-            chosen = sorted(preferred or candidates)[0]
+            # 类库包优先取 net6.0 资产（双目标里覆盖面最广的那份：.NET 6/7 消费者拿到的就是它）
+            preferred = [n for n in candidates if n.startswith("lib/net6.0/")] or [
+                n for n in candidates if n.startswith("lib/")
+            ]
+            if not preferred:
+                # dotnet tool 包：主程序集与包 ID 同名，同目录的依赖 dll 不参与判定
+                package_id = _package_id(package, names)
+                preferred = [n for n in candidates if os.path.basename(n) == f"{package_id}.dll"]
+                if not preferred:
+                    sys.exit(f"{path} 内找不到与包 ID（{package_id}）同名的 tools/**/*.dll")
+            chosen = sorted(preferred)[0]
         return chosen, package.read(chosen)
 
 
@@ -104,9 +128,9 @@ def debug_id_of(dll: bytes) -> tuple[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="提取 .NET 程序集的 PDB debug id")
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--nupkg", help="从 .nupkg 内的 lib/**/*.dll 提取")
+    source.add_argument("--nupkg", help="从 .nupkg 内的 lib/**/*.dll（类库包）或 tools/**/*.dll（dotnet tool 包）提取")
     source.add_argument("--dll", help="从裸 .dll 提取")
-    parser.add_argument("--entry", help="包内 DLL 条目路径（默认优先 lib/net6.0/）")
+    parser.add_argument("--entry", help="包内 DLL 条目路径（类库包默认优先 lib/net6.0/；dotnet tool 包按包 ID 选主程序集）")
     args = parser.parse_args()
 
     if args.nupkg:

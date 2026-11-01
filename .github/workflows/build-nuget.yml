@@ -4,17 +4,19 @@
 #
 # 发布前置条件：build-test（双 TFM 全量用例）、test-runtime（net8.0 资产在高版本运行时上的全量
 # 用例）与 aot（win / linux 冒烟 + 包消费 smoke）都成功，publish 才会启动；任一失败或取消，
-# 两个包都不会被推送——不会出现「发了一半」。
+# 任何包都不会被推送——不会出现「发了一半」。
 #
 # 幂等：每次运行都先探测 nuget.org 上这个版本在不在，在库就只补缺失的符号，不在库才推一次。
 # 探测必须容忍摄入延迟——包推成功后公开索引（flat container）最长约 30 分钟才生效，这段窗口里
 # 404 不代表「没发布」，重跑撞上 409 也不代表出错。窗口按 30 分钟给，取不到只告警不判失败。
 #
-# 仓库同时维护两个 NuGet 包：AxiosNet（axios 风格 HTTP 客户端 + 内置声明式 API 客户端，
-# 命名空间 AxiosNet.WebAPI）与 AxiosNet.DependencyInjection（两者的 DI 单例注入扩展，依赖主包；
-# 主库自身零外部依赖）。
-# 两个包用同一 tag 同步发版（monorepo 锁步版本）：publish / verify-published 按 matrix 逐包执行同一套流程，
+# 仓库同时维护三个 NuGet 包：AxiosNet（axios 风格 HTTP 客户端 + 内置声明式 API 客户端，
+# 命名空间 AxiosNet.WebAPI）、AxiosNet.DependencyInjection（两者的 DI 单例注入扩展，依赖主包；
+# 主库自身零外部依赖）与 AxiosNet.Cli（设计期 dotnet tool，命令 axiosnet-gen，从 OpenAPI 生成声明式客户端）。
+# 三个包用同一 tag 同步发版（monorepo 锁步版本）：publish / verify-published 按 matrix 逐包执行同一套流程，
 # 包项目由 matrix.package 注入 PACKAGE_PROJECT，各步骤内的发布状态机逻辑与单包时代逐字不变。
+# 两种包形态共用这套流程：类库包资产在 lib/<tfm>/（双目标），工具包在 tools/<tfm>/any/（单目标），
+# 凡是按资产路径取值的步骤都同时认这两种前缀。
 #
 # 与 nuget.org「Trusted Publishing」策略必须逐项一致（大小写不敏感，但内容要相同）：
 #   Repository Owner : sunyuliang        ← 仓库：https://github.com/sunyuliang/AxiosNet
@@ -60,6 +62,7 @@ jobs:
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
+        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -138,6 +141,7 @@ jobs:
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
+        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -286,13 +290,14 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC：换取 nuget.org 短期 API Key 的前提
-    # 两包锁步发版：两个包项目各起一个 job，跑同一套（逐字未改的）发布状态机
+    # 三包锁步发版：每个包项目各起一个 job，跑同一套（逐字未改的）发布状态机
     strategy:
       fail-fast: false
       matrix:
         package:
           - src/AxiosNet/AxiosNet.csproj
           - src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj
+          - src/AxiosNet.Cli/AxiosNet.Cli.csproj
 
     env:
       DOTNET_NOLOGO: true
@@ -302,6 +307,7 @@ jobs:
       PACKAGE_PROJECT: ${{ matrix.package }}
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
+        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -416,13 +422,14 @@ jobs:
             echo "::error::pack 未生成 snupkg，源码映射将不可用，终止发布"
             exit 1
           fi
-          # 双目标：nupkg 里每个 lib/<tfm>/ 都必须有同名 PDB，缺哪个 TFM，哪个 TFM 的消费者就 F11 不进源码。
-          LIB_TFMS="$(unzip -l artifacts/*.nupkg | grep -oE 'lib/[^/]+/[^/]+\.dll' | cut -d/ -f2 | sort -u | tr '\n' ' ' || true)"
-          PDB_TFMS="$(unzip -l artifacts/*.snupkg | grep -oE 'lib/[^/]+/[^/]+\.pdb' | cut -d/ -f2 | sort -u | tr '\n' ' ' || true)"
-          echo "nupkg 资产 TFM: $LIB_TFMS"
-          echo "snupkg PDB TFM: $PDB_TFMS"
-          if [ -z "$LIB_TFMS" ] || [ "$LIB_TFMS" != "$PDB_TFMS" ]; then
-            echo "::error::snupkg 的 PDB 未覆盖 nupkg 的全部资产 TFM，缺失 TFM 的源码映射将不可用，终止发布"
+          # 资产目录：类库包是 lib/<tfm>/（双目标），dotnet tool 包是 tools/<tfm>/any/（单目标）。
+          # 不论哪种形态，nupkg 里每个资产目录都必须有同名 PDB，缺了哪个目录，那个目录的消费者就 F11 不进源码。
+          ASSET_DIRS="$(unzip -l artifacts/*.nupkg | grep -oE '(lib|tools)/[^/]+(/any)?/[^/]+\.dll' | sed -E 's#/[^/]+\.dll$##' | sort -u | tr '\n' ' ' || true)"
+          PDB_DIRS="$(unzip -l artifacts/*.snupkg | grep -oE '(lib|tools)/[^/]+(/any)?/[^/]+\.pdb' | sed -E 's#/[^/]+\.pdb$##' | sort -u | tr '\n' ' ' || true)"
+          echo "nupkg 资产目录: $ASSET_DIRS"
+          echo "snupkg PDB 目录: $PDB_DIRS"
+          if [ -z "$ASSET_DIRS" ] || [ "$ASSET_DIRS" != "$PDB_DIRS" ]; then
+            echo "::error::snupkg 的 PDB 未覆盖 nupkg 的全部资产目录，缺失目录的源码映射将不可用，终止发布"
             exit 1
           fi
 
@@ -653,7 +660,7 @@ jobs:
     name: 复核已发布版本（包可拉取 + 符号可见）
     # 发布时的符号校验只是有界观察，摄入慢于窗口属于常态。事后补验走这里：
     # Actions → build-nuget → Run workflow → 填版本号。不构建、不发布、不动线上，只打两个权威端点。
-    # 两包锁步发版：按 matrix 逐包复核（同一版本号）。
+    # 三包锁步发版：按 matrix 逐包复核（同一版本号）。
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
@@ -662,6 +669,7 @@ jobs:
         package:
           - src/AxiosNet/AxiosNet.csproj
           - src/AxiosNet.DependencyInjection/AxiosNet.DependencyInjection.csproj
+          - src/AxiosNet.Cli/AxiosNet.Cli.csproj
     env:
       DOTNET_NOLOGO: true
       PACKAGE_PROJECT: ${{ matrix.package }}
