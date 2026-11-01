@@ -148,6 +148,20 @@ public sealed class UnauthorizedRetryTests
     }
 
     [Fact]
+    public async Task MultipartBody_DoesNotReplay()
+    {
+        // multipart 装配出的正文随第一次请求的消息一起释放：第二次发送拿不到同一份部件。
+        await using var server = TestHttpServer.Start(_ =>
+            TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+
+        using var client = new ApiClient(server.Url) { AccessTokenProvider = new StaticTokenProvider("tok") };
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new MultipartSecureRequest { Name = "bob" }));
+
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
     public async Task IdempotencyKey_IsPreservedAcrossTheReplay()
     {
         await using var server = SecureServer("Bearer tok-2");
@@ -253,6 +267,13 @@ public sealed class ExplicitAuthRequest : IApiRequest<Person>
 public sealed class StreamBodyRequest : IApiRequest<Person>
 {
     [Body] public Stream? Payload { get; set; }
+}
+
+[Multipart]
+[Post("secure")]
+public sealed class MultipartSecureRequest : IApiRequest<Person>
+{
+    [Part] public string? Name { get; set; }
 }
 
 public interface ISecureApi

@@ -121,6 +121,33 @@ public sealed class IdempotencyTests
     }
 
     [Fact]
+    public async Task KeyFactory_IsAskedOncePerLogicalRequest_EvenAcrossRetries()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(_ => Interlocked.Increment(ref calls) < 3
+            ? TestJson.Response(new { error = "boom" }, statusCode: 500)
+            : TestJson.Response(new { ok = true }));
+
+        var factoryCalls = 0;
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) },
+            Idempotency =
+            {
+                Enabled = true,
+                KeyFactory = _ => "key-" + Interlocked.Increment(ref factoryCalls)
+            }
+        });
+
+        var response = await client.PutAsync(server.Url + "x", new { a = 1 });
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal(1, factoryCalls);
+        Assert.Equal(3, server.Received.Count);
+        Assert.All(server.Received, request => Assert.Equal("key-1", request.Headers[Header]));
+    }
+
+    [Fact]
     public async Task ExplicitBlankKey_Throws_AndSendsNothing()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

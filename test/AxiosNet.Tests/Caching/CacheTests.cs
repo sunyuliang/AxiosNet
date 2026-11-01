@@ -675,6 +675,23 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task SetCookie2_IsNotReplayedOnHit()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new Person("ada", 36),
+            headers: new Dictionary<string, string> { ["Set-Cookie2"] = "sid=secret; Path=/" }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var first = await client.GetAsync<Person>(server.Url + "x");
+        var hit = await client.GetAsync<Person>(server.Url + "x");
+
+        Assert.Single(server.Received);
+        Assert.Equal("sid=secret; Path=/", first.GetHeader("Set-Cookie2"));
+        Assert.Null(hit.GetHeader("Set-Cookie2"));
+    }
+
+    [Fact]
     public async Task ServerMode_CachesBeyondConfiguredTtl()
     {
         // 服务器说 600 秒，配置只给 100 毫秒：睡过配置 TTL 后仍然命中，证明配置值不是上限。
@@ -935,6 +952,30 @@ public sealed class CacheTests
         Assert.Equal("Bearer one", first.Data?["token"]);
         Assert.Equal("Bearer two", second.Data?["token"]);
         Assert.Equal("Bearer one", third.Data?["token"]);
+    }
+
+    [Fact]
+    public async Task DifferentConnectionAuth_DoesNotShareEntries()
+    {
+        // 凭据也可以来自 Connection.Auth（不是 Authorization 头），摘要同样要进键。
+        await using var server = TestHttpServer.Start(request => TestJson.Response(new
+        {
+            auth = request.Headers.TryGetValue("Authorization", out var value) ? value : null
+        }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var first = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Connection.Auth = new AxiosAuth("alice", "pw"));
+        var second = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Connection.Auth = new AxiosAuth("bob", "pw"));
+        var third = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Connection.Auth = new AxiosAuth("alice", "pw"));
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("Basic YWxpY2U6cHc=", first.Data?["auth"]);
+        Assert.Equal("Basic Ym9iOnB3", second.Data?["auth"]);
+        Assert.Equal("Basic YWxpY2U6cHc=", third.Data?["auth"]);
     }
 
     [Fact]

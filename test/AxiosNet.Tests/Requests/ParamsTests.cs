@@ -279,6 +279,22 @@ public sealed class ParamsTests
         Assert.Equal(expected, uri);
     }
 
+    [Theory]
+    [InlineData("http://a.com/p?a=1&#top", "http://a.com/p?a=1&q=1#top")]
+    [InlineData("http://a.com/p?#top", "http://a.com/p?q=1#top")]
+    public void Params_UrlEndingWithSeparator_AndFragment(string url, string expected)
+    {
+        using var client = new AxiosClient();
+
+        var uri = client.GetUri(c =>
+        {
+            c.Url = url;
+            c.Params = new { q = 1 };
+        });
+
+        Assert.Equal(expected, uri);
+    }
+
     [Fact]
     public async Task Params_WithFragment_ReachTheServer()
     {
