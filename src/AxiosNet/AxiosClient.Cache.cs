@@ -100,21 +100,21 @@ public sealed partial class AxiosClient
             // 先挡掉不可能落库的响应（非 2xx / 部分内容 / 没拿到原始字节）：解析模式连响应头都不用解析。
             if (IsStorable(response))
             {
-                // 总预算已经花完：不克隆正文、也不等存储 —— 缓存是加速手段，不能反过来拖住返回。
+                // 总预算已经花完：不准备正文、也不等存储 —— 缓存是加速手段，不能反过来拖住返回。
                 if (TotalTimeoutBudget.IsExhausted(TotalTimeoutBudget.Remaining(deadlineTimestamp)))
                 {
                     AxiosTelemetry.CacheStoreFailed(config);
                     return;
                 }
 
-                // 再判 HTTP 语义、最后才复制正文：no-store / no-cache 的响应没必要为落库克隆一份字节。
+                // 再判 HTTP 语义、最后才动正文：no-store / no-cache 的响应没必要为落库复制字节。
                 var policy = cache.CreateEntryPolicy(response.Headers, DateTimeOffset.UtcNow, requestDirectives);
 
                 if (policy is not null)
                 {
                     reply = TryCreateCacheEntry(response);
 
-                    // 复制正文也要花时间，剩余预算按此刻重算。
+                    // 复制正文（需要时）也要花时间，剩余预算按此刻重算。
                     if (await cache.TrySetAsync(
                             key, reply, policy, TotalTimeoutBudget.Remaining(deadlineTimestamp)).ConfigureAwait(false))
                     {
@@ -137,7 +137,7 @@ public sealed partial class AxiosClient
         }
         finally
         {
-            // 条目已持有自己那一份，响应不必再拉着原始字节。
+            // 条目已持有正文（可能与响应共用同一块内存），响应不必再拉着原始字节。
             response.RawBody = null;
 
             if (flight is not null)
@@ -199,10 +199,16 @@ public sealed partial class AxiosClient
             ProtocolVersion = response.ProtocolVersion,
             Headers = headers,
 
-            // 缓存自己持有一份：调用方拿到的 byte[] 可能就是这块内存，不能被改写污染。
-            Body = (byte[])body.Clone()
+            Body = CanShareBody(response) ? body : (byte[])body.Clone()
         };
     }
+
+    /// <summary>
+    /// 条目能否直接与响应共用正文：<c>Data</c> 不是这块数组，且没有 transformResponse（它可能把数组包进自己的对象）。
+    /// </summary>
+    private static bool CanShareBody(AxiosResponse response)
+        => !ReferenceEquals(response.Data, response.RawBody)
+           && response.Config?.HasTransformResponse is not true;
 
     private static bool IsSessionCookieHeader(string name)
         => string.Equals(name, "Set-Cookie", StringComparison.OrdinalIgnoreCase)
@@ -226,7 +232,7 @@ public sealed partial class AxiosClient
     /// </summary>
     /// <remarks>
     /// 状态码与正文都取库里的那一份（304 没有正文）；响应拦截器与 <c>validateStatus</c> 看到的都是合并后的响应。
-    /// 正文不复制：<see cref="AxiosResponse.RawBody"/> 与条目共用同一块内存（落库时 <see cref="TryCreateCacheEntry"/> 会克隆）。
+    /// 正文不复制：<see cref="AxiosResponse.RawBody"/> 与条目共用同一块内存（重新落库时由 <see cref="TryCreateCacheEntry"/> 按需复制）。
     /// </remarks>
     private static AxiosAttemptResult CompleteNotModified(
         HttpResponseMessage message,

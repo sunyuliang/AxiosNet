@@ -1313,6 +1313,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 
 **存的是原始正文字节**，命中时按本次调用的 `ResponseType` 与泛型参数重新解析：同一份字节喂给 `GetAsync<User>` 与 `GetAsync<string>` 各得该有的形态。
 
+**条目尽量与响应共用正文**：JSON / 文本形态的 `Data` 是另建的对象，调用方拿不到这块数组，条目就直接与响应共用同一块内存，不再克隆；以下两种情况条目自持一份——`byte[]` / `ArrayBuffer` 形态的 `Data` 就是原始字节本身，或配了 `transformResponse`（它可能把这块数组包进自己的对象，库无法证明调用方没拿到引用）。否则调用方一次改写就污染后续命中。命中缓存时 `byte[]` / `Stream` 形态同样每次交付独立副本（条目不能被某次写入污染）。
+
 只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库；空正文同样算原始字节（HEAD / 204 本就没有正文，缓存的是头）。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。范围请求（带 `Range` 头）默认不参与缓存，206 / 带 `Content-Range` 的响应也不落库——键只有方法 + URL，分段正文会被后续普通 GET 当成整份内容交付。
 
 **流式请求不参与缓存**：`ResponseType = Stream` 的请求默认连查询都不做（调用方要的是流，命中会把整份正文缓冲进内存）；已落库的条目仍可被普通调用命中。要让流式请求也查缓存，用 `ShouldCache` 放行 —— 但请确认这正是你要的所有权语义。
@@ -1369,7 +1371,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 - **等待者可以被取消**：`CancellationToken` 取消只放弃等待，不会取消那次共享的发送（`ERR_CANCELED`）。
 - **等待受总预算约束**：跟随者的等待不超过剩余 `TotalTimeout`，到点按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会挂在原地等一个慢领导者。
 - **查询同样吃总预算**：缓存读取也受剩余 `TotalTimeout` 约束，存储挂起（自建存储不可用 / 网络分区）时按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会把请求挂在查缓存上；调用方取消按 `ERR_CANCELED` 报出，存储自己抛的取消按「没命中」处理。实现 `IAxiosCacheStore.GetAsync` 时应当尊重传入的令牌。
-- **落库同样吃总预算**：写入受 `StoreTimeout` 与剩余 `TotalTimeout` 中较短者约束，超出就按「这次没缓存」处理（跟随者各自补发），不会把已经拿到的响应拖过预算；落库前预算就已耗尽时连正文副本都不复制。
+- **落库同样吃总预算**：写入受 `StoreTimeout` 与剩余 `TotalTimeout` 中较短者约束，超出就按「这次没缓存」处理（跟随者各自补发），不会把已经拿到的响应拖过预算；落库前预算就已耗尽时连正文都不准备。
 
 **存储与运维**
 
@@ -1875,10 +1877,10 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2019 / 2012 | `net8.0` / `net6.0` | 4031 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2022 / 2015 | `net8.0` / `net6.0` | 4037 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2159 / 2152** | | **4237** |
+| **合计** | **2162 / 2155** | | **4243** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。`net8.0` 比 `net6.0` 净多 7 条：`AotJsonTests` 9 条只在 net8 分支编译（`JsonSerializerOptions.TypeInfoResolver` 是 .NET 7+ API），`net6.0` 独有 2 条 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。`AxiosNet.Cli.Tests` 只在本地跑——CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
 

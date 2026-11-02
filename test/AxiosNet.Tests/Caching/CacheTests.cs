@@ -1774,6 +1774,85 @@ public sealed class CacheTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
+    [Fact]
+    public async Task JsonResponse_EntrySharesBody()
+    {
+        var store = new RecordingCacheStore();
+        var payload = TestJson.Bytes(new Person("ada", 36));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload));
+
+        byte[]? observed = null;
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
+        });
+
+        await client.GetAsync<Person>("person", c => c.Callbacks.OnRawResponse = (_, body) =>
+        {
+            if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(body, out var segment))
+            {
+                observed = segment.Array;
+            }
+        });
+
+        // JSON 形态的 Data 是另建的对象，条目与响应共用同一块内存（OnRawResponse 拿到的是只在回调期间有效的借用视图，不算持有）。
+        Assert.NotNull(observed);
+        Assert.Same(observed, store.LastEntry!.Body);
+    }
+
+    [Fact]
+    public async Task ByteArrayResponse_EntryKeepsItsOwnCopy()
+    {
+        var store = new RecordingCacheStore();
+        var payload = TestJson.Bytes(new Person("ada", 36));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
+        });
+
+        var response = await client.GetAsync<byte[]>("blob");
+
+        // byte[] 形态的 Data 就是原始字节本身：条目必须自持一份，否则调用方一次改写就污染后续命中。
+        Assert.NotSame(response.Data, store.LastEntry!.Body);
+        Assert.Equal(payload, store.LastEntry.Body);
+
+        var before = store.LastEntry.Body![0];
+        response.Data![0] = (byte)(before ^ 0xFF);
+        Assert.Equal(before, store.LastEntry.Body[0]);
+    }
+
+    [Fact]
+    public async Task TransformWrappingRawBytes_EntryKeepsItsOwnCopy()
+    {
+        var store = new RecordingCacheStore();
+        var payload = TestJson.Bytes(new Person("ada", 36));
+        await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
+        });
+
+        // transformResponse 把原始字节包进自己的对象：Data 不再是那块数组，但内部仍引用着它。
+        var response = await client.GetAsync<byte[][]>("blob", c =>
+        {
+            c.ResponseType = ResponseType.ArrayBuffer;
+            c.TransformResponse.Add((data, _) => new[] { (byte[])data! });
+        });
+
+        // 无法证明调用方没拿到引用 → 按最坏情况克隆，改写 Data 不会污染条目。
+        Assert.NotSame(store.LastEntry!.Body, response.Data![0]);
+
+        var before = store.LastEntry.Body![0];
+        response.Data[0][0] = (byte)(before ^ 0xFF);
+        Assert.Equal(before, store.LastEntry.Body[0]);
+    }
+
     private static Dictionary<string, IEnumerable<string>> HeaderLines(params (string Name, string[] Values)[] pairs)
     {
         var headers = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);

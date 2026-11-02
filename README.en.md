@@ -1313,6 +1313,8 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 
 **What is stored is the raw body bytes**, re-parsed per call with the current `ResponseType` and generic argument: the same bytes feed `GetAsync<User>` and `GetAsync<string>` and each gets the shape it asked for.
 
+**An entry shares the body with the response whenever it can**: for JSON / text shapes `Data` is a separate object, so the caller never holds that array and the entry points at the very same memory instead of cloning it; the entry keeps its own copy when `Data` *is* the raw bytes (`byte[]` / `ArrayBuffer` shapes) or when a `transformResponse` is configured (it may wrap that array in an object of its own, so the library cannot prove the caller never got a reference) — otherwise one write by the caller would poison later hits. Cache hits likewise hand out an independent copy for `byte[]` / `Stream` shapes (an entry must never be mutated by one caller).
+
 An entry is only stored when all of these hold: status is 2xx, the raw bytes were captured (not streaming), and `ShouldCache` passes. An empty body counts as raw bytes too (HEAD / 204 have no body — the headers are what gets cached). Streaming responses, a response interceptor that swapped the response object, and a failing store all just mean "not cached this time" — the request itself is unaffected. Range requests (a `Range` header) do not take part by default, and 206 / `Content-Range` responses are never stored — the key is only method + URL, so a partial body would be delivered as the whole document to a later plain GET.
 
 **Streaming requests stay out of the cache**: a request with `ResponseType = Stream` skips even the lookup by default (the caller asked for a stream; a hit would buffer the whole body into memory). Entries already stored remain reachable from plain calls. Let `ShouldCache` admit streaming requests if that is really the ownership model you want.
@@ -1875,10 +1877,10 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2019 / 2012 | `net8.0` / `net6.0` | 4031 |
+| `AxiosNet.Tests` (core + declarative) | 2022 / 2015 | `net8.0` / `net6.0` | 4037 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| **Total** | **2159 / 2152** | | **4237** |
+| **Total** | **2162 / 2155** | | **4243** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed". `net8.0` has 7 more cases than `net6.0`: the nine `AotJsonTests` only compile on the net8 branch (`JsonSerializerOptions.TypeInfoResolver` is a .NET 7+ API), while `net6.0` alone has the two `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*` cases, which assert the error raised when no `TypeInfoResolver` exists. `AxiosNet.Cli.Tests` runs locally only — CI's `TEST_PROJECTS` lists just the first two projects, so generator snapshots and CLI fixtures are not part of the gate.
 
