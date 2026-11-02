@@ -5,8 +5,13 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests.Caching;
 
 /// <summary>
-/// 缓存的边界用例：单飞生命周期、命中路径语义、无效新鲜期（RFC 9111 §4.2.1）、存储读取的总预算与取消。
+/// 缓存的边界用例：单飞生命周期、命中路径语义、无效新鲜期（RFC 9111 §4.2.1）、存储读写的总预算与取消。
 /// </summary>
+/// <remarks>
+/// 存储读写那两条断言的是「上限耗时」，与其它集合并行跑时会被抢走 CPU 与线程池线程而超预算，
+/// 故整类进 <see cref="TimingCollection"/> 独占运行。
+/// </remarks>
+[Collection(TimingCollection.Name)]
 public sealed class CacheEdgeCaseTests
 {
     private static AxiosCache NewCache(Action<AxiosCacheOptions>? configure = null)
@@ -292,21 +297,43 @@ public sealed class CacheEdgeCaseTests
     [Fact]
     public async Task StoreRead_IsBoundedByTotalTimeout()
     {
+        // 判据不靠绝对秒数：存储永不完成，能返回就说明有一道时限生效；把 StoreTimeout 抬到 30s，
+        // 「被剩余总预算（200ms）收住」与「被 StoreTimeout 收住」就差两个数量级，不会被 CI 抖动抹平。
+        var budget = TimeSpan.FromMilliseconds(200);
+        var storeTimeout = TimeSpan.FromSeconds(30);
+        var liveness = TimeSpan.FromSeconds(10);
+
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         using var client = new AxiosClient(new AxiosConfig
         {
-            TotalTimeout = TimeSpan.FromMilliseconds(200),
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = new HangingGetStore() })
+            TotalTimeout = budget,
+            Cache = new AxiosCache(new AxiosCacheOptions { Store = new HangingGetStore(), StoreTimeout = storeTimeout })
         });
+
+        // 预热：入口到读缓存之间的合并 / 拦截 / 编码 / 键计算与冷启动的 JIT 同样花的是这份 200ms 预算，
+        // 不预热时测量窗口里混进的是这些机器开销，而不是「存储读取被截断」。
+        // 另起一个客户端并给它普通存储：连接池按 origin 共享，预热不会碰被测的挂起存储。
+        using (var warmup = new AxiosClient(new AxiosConfig { Cache = NewCache() }))
+        {
+            await warmup.GetAsync(server.Url + "warmup");
+        }
+
+        var receivedBefore = server.Received.Count;
 
         var stopwatch = Stopwatch.StartNew();
         var error = await Assert.ThrowsAnyAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "hanging-store").WaitAsync(TimeSpan.FromSeconds(5)));
+            client.GetAsync(server.Url + "hanging-store").WaitAsync(liveness));
+        stopwatch.Stop();
 
         // 存储挂起不能把请求一起拖住：与「总预算耗尽、尝试没能发出」同一错误模型。
         Assert.True(error.IsTotalTimeoutExceeded, $"实际错误：{error.Code}");
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"实际耗时 {stopwatch.Elapsed}。");
-        Assert.Empty(server.Received);
+
+        // 上限给到 5s（正常实现约 200ms）：留出的余量只为吸收 CI 调度抖动，
+        // 「谁在收住这次读取」由 StoreTimeout 30s > 活性闸 10s 这个数量级差来判，不靠这条阈值。
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"实际耗时 {stopwatch.Elapsed}（总预算 {budget}，StoreTimeout {storeTimeout}）。");
+
+        // 预算在查缓存时就耗尽了，这次尝试一个字节都没发出（预热那一条是另一个客户端发的）。
+        Assert.Equal(receivedBefore, server.Received.Count);
     }
 
     [Fact]
@@ -354,6 +381,7 @@ public sealed class CacheEdgeCaseTests
         // 判据不靠绝对秒数：存储延迟比预算大一个数量级，落库没被截断时响应会被拖到分钟级。
         var budget = TimeSpan.FromSeconds(2);
         var storeDelay = TimeSpan.FromSeconds(60);
+        var liveness = TimeSpan.FromSeconds(20);
 
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         var store = new SlowSetStore(storeDelay);
@@ -374,16 +402,19 @@ public sealed class CacheEdgeCaseTests
         var receivedBefore = server.Received.Count;
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await client.GetAsync<Person>(url).WaitAsync(storeDelay);
+        var response = await client.GetAsync<Person>(url).WaitAsync(liveness);
         stopwatch.Stop();
 
         // 写入受剩余总预算约束：存储比 StoreTimeout 还慢时也不能把响应拖过预算。
         Assert.Equal("ada", response.Data!.Name);
         Assert.Equal(1, store.SetCalls);
-        Assert.True(stopwatch.Elapsed < budget * 3, $"落库拖住了响应：{stopwatch.Elapsed}（预算 {budget}，存储延迟 {storeDelay}）。");
+
+        // 测量窗口只含第一次请求：它应当被 2s 的预算收住（约 2s）。上限 15s 只吸收 CI 抖动，
+        // 与 60s 的存储延迟仍差 4 倍；「落库有没有被截断」由活性闸（20s < 60s）来判，不靠这条阈值。
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(15), $"落库拖住了响应：{stopwatch.Elapsed}（预算 {budget}，存储延迟 {storeDelay}）。");
 
         // 这次没落库：下一次仍旧发请求。
-        await client.GetAsync<Person>(url).WaitAsync(storeDelay);
+        await client.GetAsync<Person>(url).WaitAsync(liveness);
         Assert.Equal(receivedBefore + 2, server.Received.Count);
     }
 

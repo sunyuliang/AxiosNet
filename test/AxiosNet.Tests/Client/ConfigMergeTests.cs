@@ -368,13 +368,14 @@ public sealed class ConfigMergeTests
 
         // 实例默认 32 B/s：4KB 需要 128 秒，3 秒预算下必然超时。
         // 清不掉实例限速时本用例会以 ECONNABORTED 失败，而不是变慢。
+        var timeout = TimeSpan.FromSeconds(3);
         using var client = new AxiosClient(new AxiosConfig
         {
             Limits = new()
             {
                 MaxRate = 32,
             },
-            Timeout = TimeSpan.FromSeconds(3),
+            Timeout = timeout,
         });
 
         var stopwatch = Stopwatch.StartNew();
@@ -382,7 +383,10 @@ public sealed class ConfigMergeTests
         stopwatch.Stop();
 
         Assert.Equal(size, response.Data!.Length);
-        Assert.True(stopwatch.ElapsedMilliseconds < 2000, $"限速未被清除：{stopwatch.ElapsedMilliseconds}ms");
+
+        // 阈值锚在配置的超时预算上、不写死秒数：没清掉限速那条路会等满 128 秒（先撞 3 秒超时报错），
+        // 能走到这里说明是毫秒级完成，这条只兜「清掉了但明显变慢」。
+        Assert.True(stopwatch.Elapsed < timeout, $"限速未被清除或明显变慢：{stopwatch.Elapsed}");
     }
 
     /// <summary>

@@ -18,6 +18,11 @@ namespace AxiosNet.Tests.Errors;
 /// <summary>
 /// 统一错误模型：稳定 `Code`、状态与响应快照、回调异常归一、配置错误携带 config。
 /// </summary>
+/// <remarks>
+/// `Timeout_ThrowsECONNABORTED_Quickly` 断言的是「一次尝试的超时必须尽快生效」，
+/// 与其它集合并行跑时会被抢走 CPU 与线程池线程而超预算，故整类进 <see cref="TimingCollection"/> 独占运行（约 3 秒）。
+/// </remarks>
+[Collection(TimingCollection.Name)]
 public sealed class ErrorModelTests
 {
     [Fact]
