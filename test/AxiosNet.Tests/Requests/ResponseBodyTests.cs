@@ -34,6 +34,17 @@ public sealed class ResponseBodyTests
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
     }
 
+    [Fact]
+    public async Task ResponseBodyProbeFailure_NonIoException_MapsToNetworkError()
+    {
+        // 按声明长度读满后的探测读抛出非 IO 异常：不能当作「正文已结束」静默截断。
+        using var client = new AxiosClient(handler: new ProbeThrowingHandler(), disposeHandler: false);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>("http://localhost/probe"));
+
+        Assert.Equal(AxiosException.ErrNetwork, ex.Code);
+    }
+
     [Theory]
     [InlineData(4)]    // 恰好等于上限：必须放行（判定是 ≤，不是 <）
     [InlineData(1024)] // 上限远大于正文
@@ -356,6 +367,80 @@ public sealed class ResponseBodyTests
             length = (long)_chunks * _chunkSize;
             return true;
         }
+    }
+
+    /// <summary>按声明长度返回正文、随后探测读抛 <see cref="ObjectDisposedException"/> 的响应。</summary>
+    private sealed class ProbeThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ProbeThrowingContent()
+            });
+    }
+
+    private sealed class ProbeThrowingContent : HttpContent
+    {
+        public ProbeThrowingContent() => Headers.ContentLength = ProbeThrowingStream.LengthBytes;
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = ProbeThrowingStream.LengthBytes;
+            return true;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync()
+            => Task.FromResult<Stream>(new ProbeThrowingStream());
+    }
+
+    private sealed class ProbeThrowingStream : Stream
+    {
+        public const int LengthBytes = 4;
+
+        private int _remaining = LengthBytes;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => ReadCore(count);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => cancellationToken.IsCancellationRequested
+                ? ValueTask.FromCanceled<int>(cancellationToken)
+                : ValueTask.FromResult(ReadCore(buffer.Length));
+
+        private int ReadCore(int count)
+        {
+            if (_remaining == 0)
+            {
+                throw new ObjectDisposedException(nameof(ProbeThrowingStream));
+            }
+
+            var read = Math.Min(count, _remaining);
+            _remaining -= read;
+            return read;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
 

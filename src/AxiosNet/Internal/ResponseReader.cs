@@ -108,10 +108,15 @@ internal static class ResponseReader
             {
                 more = await stream.ReadAsync(probe, cancellationToken).ConfigureAwait(false);
             }
+            catch (Exception ex) when (ex is IOException or HttpRequestException)
+            {
+                // 连接在声明长度之后断开：已按声明读满的正文是完整的，探测失败不影响交付。
+                return buffer;
+            }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
-                // 探测失败不影响已按声明读满的正文；正文上限（AxiosException）与取消照常上抛。
-                return buffer;
+                // 其它异常不是「正文已结束」的证据：归一到统一错误模型，不静默截断。
+                throw AxiosException.Network(config, request, ex);
             }
 
             if (more == 0)

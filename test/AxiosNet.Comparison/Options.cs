@@ -10,7 +10,7 @@ internal sealed class Options
 
     public double DurationSeconds { get; private set; } = 1;
 
-    public int Rounds { get; private set; } = 5;
+    public int Rounds { get; private set; } = 10;
 
     public double WarmupSeconds { get; private set; } = 3;
 
