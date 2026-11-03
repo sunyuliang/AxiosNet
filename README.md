@@ -2,9 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2312%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2227%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2334%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2249%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -197,7 +197,9 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 
 **底层入口**
 
-- `client.ValueFormatter` 接管路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文的文本形态（优先级低于成员上的 `[Format]`，见[值格式化](#值格式化)）。
+- 文本形态的钩子只有一处：`AxiosConfig.ValueFormatter`（实例默认值 `client.Axios.Defaults.ValueFormatter`，或建 `ApiClient` 时给的 `configureDefaults`）。声明式与直接调用读的是同一个属性，优先级低于成员上的 `[Format]`（见[值格式化](#值格式化)）；回调第二个参数是值所在的 `ValueTextChannel`。
+  - 走直接调用时它覆盖查询参数 / 表单字段 / multipart 文本部件 / 裸标量正文；路径段与请求头没有「值 → 文本」这一步（URL 和头都是调用方给的字符串），不经过它。
+  - 走声明式时必须设在实例默认值上：绑定参数时就要用它，在按请求 `configure` 里改会抛 `ERR_BAD_OPTION_VALUE`。
 - `client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）。
 - 流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
 
@@ -295,7 +297,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 值写进 URL、请求头或表单时最终都是文本。库把「值 → 文本」收敛成**一条**路径，两层声明按优先级叠加：
 
 1. 成员上的 `[Format]`（模型属性 / 接口参数）—— 最具体；
-2. 实例上的 `ValueFormatter` —— 成员没声明时生效；
+2. 客户端实例默认值上的 `AxiosConfig.ValueFormatter`（直接调用时也可在单次请求的配置里给）—— 成员没声明时生效；回调带 `ValueTextChannel`，可以只处理某个通道；
 3. 通道默认规则（日期时间折 UTC 毫秒、枚举取名字、`byte[]` 取 base64、`IFormattable` 按不变文化…）。
 
 ```csharp
@@ -312,21 +314,29 @@ public sealed class ListRequest : IApiRequest<User[]>
 
 public static class Formats
 {
-    // 签名固定：public static string? M(object? value)；返回 null = 本次不处理，回落默认规则。
-    public static string? Money(object? value)
+    // 签名固定：public static string? M(object? value, ValueTextChannel channel)；
+    // 返回 null = 本次不处理，回落默认规则；不关心通道时把第二个参数写成 _ 丢掉即可。
+    public static string? Money(object? value, ValueTextChannel _)
         => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
 }
 
-var client = new ApiClient(url)
+var client = new ApiClient(url, c =>
 {
-    ValueFormatter = value => value is DateTime date
-        ? date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-        : null
-};
+    // 第二个参数是值所在通道（AxiosNet.Metadata.ValueTextChannel）：
+    // 请求头里用 RFC 1123，其余位置用紧凑日期；返回 null 表示本次不处理，回落默认规则。
+    c.ValueFormatter = (value, channel) => value is DateTime date
+        ? channel == ValueTextChannel.Header
+            ? date.ToString("R", CultureInfo.InvariantCulture)
+            : date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+        : null;
+});
 ```
 
-- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文。同一套规则，不存在「查询里能格式化、表单里不能」。
+- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文。同一套规则，不存在「查询里能格式化、表单里不能」；钩子的第二个参数就是这六种之一（`Path` / `Query` / `Header` / `Form` / `Multipart` / `ScalarBody`），用来按位置分叉。
+  - 请求头集合（`[HeaderCollection]`）的字典值逐项经过钩子（通道 `Header`），与单值 `[Header]` 同一口径；`[Format]` 仍不能标在该成员上（值本就是字符串，构建期报错）。
+- **成员函数也拿得到通道**：`[Format(typeof(Formats), nameof(Formats.Money))]` 指向的静态方法签名固定为 `public static string? Money(object? value, ValueTextChannel channel)`，第二个参数是该成员所在的通道；不关心通道就写成 `_` 丢弃，没有「只写一个参数」的形态。
   - 裸标量正文（`data` 本身是标量）含 `byte[]` 等二进制形态：只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64。
+  - 直接调用（`PostAsync(url, data)`）的裸标量同样过钩子；但 `data` 是 `string` / `byte[]` / `Stream` / 字节块时属于「原样正文」，没有「值 → 文本」这一步，钩子不参与。
   - 查询里的嵌套对象 / 字典 / `JsonElement` 树按叶子应用：成员声明优先，其次实例钩子。
 - **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
 - **格式串**要求值实现 `IFormattable`，区域固定为不变文化（不跟随 `CurrentCulture`）；需要区域相关的形态就写格式化函数。
@@ -346,7 +356,7 @@ config.Serialization.JsonSerializerOptions =
   - 标在非标量（POCO）的查询参数上。
 - **写错怎么发现**，三种都不必等到发请求：
   - 方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；
-  - 签名不对（非 `public static` / 泛型 / 参数不是 `object` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；
+  - 签名不对（非 `public static` / 泛型 / 参数列表不是 `(object?, ValueTextChannel)` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；
   - 值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `InvalidOperationException`。
 - 没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
 - **Native AOT**：源生成器把格式化委托直接烘焙进元数据（签名不合法报 `AXA015`），运行期不需要反射。手动 `RegisterShape<T>()` 的形状没有烘焙，AOT 下用 `[Format(typeof(...), nameof(...))]` 会显式报错并指向「启用源生成器或改用格式串」，不会静默丢格式化。
@@ -640,7 +650,7 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 | `byte[]` | base64 |
 | 其它 | `IFormattable` + `InvariantCulture` |
 
-按成员改写形态用 `[Format]`，按实例改写的钩子是 `ApiClient.ValueFormatter`（见[值格式化](#值格式化)）。
+按成员改写形态用 `[Format]`，按实例改写的钩子是 `AxiosConfig.ValueFormatter`（回调的第二个参数拿到值所在通道，见[值格式化](#值格式化)）。
 
 ### 请求体 data 与 ContentType
 
@@ -2049,7 +2059,7 @@ dotnet run --project samples/AxiosNet.Simple
 | `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
 | `AXA013` | Warning | 形状类型的访问级别对生成代码不可见（已跳过形状；AOT 下展平到该类型会显式失败） |
 | `AXA014` | Error | 接口方法的编码声明无效：`[BodyContentType]` 为空白 / 含控制字符、`[QueryCollectionFormat]` 值未定义，或与 `[Multipart]` 同用 |
-| `AXA015` | Error | `[Format]` 声明无效：格式化字符串为空白，或格式化函数不存在 / 不是 `public static`、参数不是单个 `object`、返回值不是 `string` |
+| `AXA015` | Error | `[Format]` 声明无效：格式化字符串为空白，或格式化函数不存在 / 不是 `public static`、参数列表不是 `(object?, ValueTextChannel)`、返回值不是 `string` |
 
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
@@ -2108,10 +2118,10 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2172 / 2161 | `net8.0` / `net6.0` | 4333 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2194 / 2183 | `net8.0` / `net6.0` | 4377 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2312 / 2227** | | **4539** |
+| **合计** | **2334 / 2249** | | **4583** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

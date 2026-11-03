@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using AxiosNet.Metadata;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
+using AxiosNet.WebAPI.Reflection;
 #if NET8_0_OR_GREATER
 using AxiosNet.WebAPI.Serialization;
 #endif
@@ -39,18 +41,115 @@ public sealed class FormatAttributeTests
         Assert.Equal("T42", received.Headers["X-Trace"]);
     }
 
+    /// <summary>
+    /// 实例钩子收到的通道必须与实际位置一致：同一个值换个通道就要能给出不同文本。
+    /// 覆盖路径段 / 查询串 / 请求头 / 表单字段 / 裸标量正文五个入口。
+    /// </summary>
+    [Fact]
+    public async Task ValueFormatter_ReceivesChannelPerLocation()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+
+        var seen = new List<ValueTextChannel>();
+        Func<object?, ValueTextChannel, string?> hook = (_, channel) =>
+        {
+            seen.Add(channel);
+            return "ch" + ((int)channel).ToString(CultureInfo.InvariantCulture);
+        };
+
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = hook);
+
+        // 声明式四通道：路径段 / 查询串 / 裸标量正文 / 请求头。
+        await client.RequestAsync(new ChannelProbeRequest
+        {
+            Id = 7,
+            When = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+            Count = 42,
+            Trace = 7
+        });
+
+        // 表单字段：正文在管线内组装，直接调用要在按请求回调里给钩子。
+        await client.Axios.PostAsync(
+            server.Url + "probe-form",
+            new Dictionary<string, object?> { ["amount"] = 1.5m },
+            c =>
+            {
+                c.ContentType = "application/x-www-form-urlencoded";
+                c.ValueFormatter = hook;
+            });
+
+        Assert.True(seen.Count == 5, "实际通道：" + string.Join(",", seen));
+        Assert.Equal(
+            new[]
+            {
+                ValueTextChannel.Path,
+                ValueTextChannel.Query,
+                ValueTextChannel.Header,
+                ValueTextChannel.Form,
+                ValueTextChannel.ScalarBody
+            },
+            seen.OrderBy(channel => channel).ToArray());
+
+        var declarative = server.Received[0];
+        Assert.Equal("/probe/ch0", declarative.Path);
+        Assert.Equal("When=ch1", Uri.UnescapeDataString(declarative.Query ?? string.Empty));
+        Assert.Equal("ch2", declarative.Headers["X-Probe"]);
+        Assert.Equal("ch5", Encoding.UTF8.GetString(declarative.Body));
+
+        Assert.Equal("amount=ch3", Encoding.UTF8.GetString(server.Received[1].Body));
+    }
+
+    /// <summary>
+    /// 反射解析路径只认二参数签名（AOT 下由源生成器烘焙，这里是 JIT 反射那条）。
+    /// 只写一参数的旧形态必须显式报错——否则会出现「生成器拦下、反射放行」两条路径口径不一致。
+    /// </summary>
+    [Fact]
+    public void FormatSpecReader_RequiresChannelSignature()
+    {
+        var withChannel = FormatSpecReader.Read(
+            new FormatAttribute(typeof(FormatHelpers), nameof(FormatHelpers.PerChannel)),
+            "probe",
+            "Page");
+
+        Assert.Equal("q3", withChannel.TryFormat(3, ValueTextChannel.Query));
+        Assert.Equal("h3", withChannel.TryFormat(3, ValueTextChannel.Header));
+
+        var legacy = Assert.Throws<InvalidOperationException>(() => FormatSpecReader.Read(
+            new FormatAttribute(typeof(LegacyFormats), nameof(LegacyFormats.Plain)),
+            "probe",
+            "Id"));
+
+        Assert.Contains("ValueTextChannel", legacy.Message);
+    }
+
+    /// <summary>
+    /// 成员级格式化函数也能声明第二个通道参数：同一个函数挂在路径 / 查询 / 请求头上时，
+    /// 收到的通道必须与实际位置一致。
+    /// </summary>
+    [Fact]
+    public async Task MemberFormatter_ReceivesChannelPerLocation()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new MemberChannelRequest { Id = 7, Page = 3, Trace = 5 });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("/ch/p7", received.Path);
+        Assert.Equal("Page=q3", Uri.UnescapeDataString(received.Query ?? string.Empty));
+        Assert.Equal("h5", received.Headers["X-Page"]);
+    }
+
     [Fact]
     public async Task MemberFormat_WinsOverValueFormatter()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
-        using var client = new ApiClient(server.Url)
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value switch
         {
-            ValueFormatter = value => value switch
-            {
-                int id => "hook" + id.ToString(CultureInfo.InvariantCulture),
-                DateTime date => "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
-                _ => null
-            }
+            int id => "hook" + id.ToString(CultureInfo.InvariantCulture),
+            DateTime date => "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+            _ => null
         };
 
         await client.RequestAsync(new MixedFormatRequest
@@ -150,12 +249,10 @@ public sealed class FormatAttributeTests
     public async Task ValueFormatter_AppliesInsideNestedQueryObject()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is DateTime date
-                ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-                : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime date
+            ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+            : null;
 
         await client.RequestAsync(new NestedQueryRequest
         {
@@ -176,14 +273,12 @@ public sealed class FormatAttributeTests
     public async Task ValueFormatter_AppliesToHeaderAndScalarBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value switch
         {
-            ValueFormatter = value => value switch
-            {
-                int number => "p" + number.ToString(CultureInfo.InvariantCulture),
-                DateTime date => date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
-                _ => null
-            }
+            int number => "p" + number.ToString(CultureInfo.InvariantCulture),
+            DateTime date => date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+            _ => null
         };
 
         await client.RequestAsync(new HookedScalarBodyRequest
@@ -197,6 +292,88 @@ public sealed class FormatAttributeTests
         Assert.Equal("20240102", Encoding.UTF8.GetString(received.Body));
     }
 
+    /// <summary>
+    /// 格式化函数只有一个合法签名：<c>public static string? M(object?, ValueTextChannel)</c>。
+    /// 可见性 / 第二参类型 / 返回类型任一处不符都要显式报错，不能退化成「找不到方法」或运行期静默回落。
+    /// </summary>
+    [Fact]
+    public void FormatSpecReader_RejectsInvalidFormatterShapes()
+    {
+        var hidden = Assert.Throws<InvalidOperationException>(() => FormatSpecReader.Read(
+            new FormatAttribute(typeof(InvalidFormats), "Hidden"),
+            "probe",
+            "Page"));
+        Assert.Contains("ValueTextChannel", hidden.Message);
+
+        var wrongChannel = Assert.Throws<InvalidOperationException>(() => FormatSpecReader.Read(
+            new FormatAttribute(typeof(InvalidFormats), nameof(InvalidFormats.WrongChannel)),
+            "probe",
+            "Page"));
+        Assert.Contains("ValueTextChannel", wrongChannel.Message);
+
+        var wrongReturn = Assert.Throws<InvalidOperationException>(() => FormatSpecReader.Read(
+            new FormatAttribute(typeof(InvalidFormats), nameof(InvalidFormats.ReturnsInt)),
+            "probe",
+            "Page"));
+        Assert.Contains("返回", wrongReturn.Message);
+    }
+
+    /// <summary>钩子产出的文本按通道各自收尾：路径 / 查询继续转义，请求头原样写入。</summary>
+    [Fact]
+    public async Task ValueFormatter_OutputIsEscapedPerChannel()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "a&b c");
+
+        await client.RequestAsync(new ChannelProbeRequest { Id = 1, Count = 2, Trace = 3 });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("/probe/a%26b%20c", received.Path);
+        Assert.Equal("When=a%26b%20c", received.Query);
+        Assert.Equal("a&b c", received.Headers["X-Probe"]);
+    }
+
+    /// <summary>成员声明返回 null（本次不处理）时交给实例钩子，通道仍是成员所在的位置。</summary>
+    [Fact]
+    public async Task MemberFormatReturningNull_HandsOverToHook()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        var seen = new List<ValueTextChannel>();
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, channel) =>
+        {
+            seen.Add(channel);
+            return "hook";
+        });
+
+        await client.RequestAsync(new NullableFormatRequest { Value = 0 });
+
+        Assert.Equal("Value=hook", Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty));
+        Assert.Equal([ValueTextChannel.Query], seen);
+    }
+
+    /// <summary>集合逐元素、嵌套对象逐叶子都会走到钩子，通道统一是 Query，且每个值只走一次。</summary>
+    [Fact]
+    public async Task ValueFormatter_ReachesEveryCollectionElementAndNestedLeaf()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        var seen = new List<ValueTextChannel>();
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, channel) =>
+        {
+            seen.Add(channel);
+            return "e";
+        });
+
+        await client.RequestAsync(new HookedCollectionRequest { Codes = [1, 2, 3] });
+        await client.RequestAsync(new HookedNestedRequest { Inner = new HookedInner { X = 1, Y = 2 } });
+
+        var collection = Uri.UnescapeDataString(server.Received[0].Query ?? string.Empty);
+        var nested = Uri.UnescapeDataString(server.Received[1].Query ?? string.Empty);
+        Assert.Equal("Codes[]=e&Codes[]=e&Codes[]=e", collection);
+        Assert.Equal("Inner[X]=e&Inner[Y]=e", nested);
+        Assert.Equal(5, seen.Count);
+        Assert.All(seen, static channel => Assert.Equal(ValueTextChannel.Query, channel));
+    }
+
     // ------------------------------------------------------------------
     // 表单 / multipart：实例钩子与成员声明的分工
     // ------------------------------------------------------------------
@@ -205,12 +382,10 @@ public sealed class FormatAttributeTests
     public async Task ValueFormatter_AppliesToFormFields_MemberFormatStillWins()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is DateTime date
-                ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-                : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime date
+            ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+            : null;
 
         await client.Create<IFormatFormApi>().SubmitAsync(new FormPayload
         {
@@ -229,10 +404,8 @@ public sealed class FormatAttributeTests
     public async Task ValueFormatter_AppliesToMultipartTextParts()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.Create<IFormatMultipartApi>().UploadAsync(7, new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc));
 
@@ -345,6 +518,80 @@ public sealed class FormatAttributeTests
             () => client.GetUri(new ThrowingHeaderRequest { Code = "abc" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+    }
+
+    /// <summary>头集合的字典值也走钩子：钩子抛错同样是装配失败（ERR_BAD_REQUEST），请求不会发出。</summary>
+    [Fact]
+    public async Task HeaderCollectionHookFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) =>
+            throw new InvalidOperationException("boom"));
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new HookedHeaderCollectionRequest
+            {
+                Extra = new Dictionary<string, string> { ["X-K"] = "v" }
+            }));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    /// <summary>
+    /// 钩子产出的头值同样要在写头时过控制字符校验：头集合是本轮才接上钩子的入口，
+    /// 不能让它成为绕过 <see cref="AxiosHeaders"/> 校验的通道（CR/LF 等于追加任意头）。
+    /// </summary>
+    [Fact]
+    public async Task HeaderCollectionHookText_WithControlChars_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "v\r\nX-Evil: 1");
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new HookedHeaderCollectionRequest
+            {
+                Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
+            }));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Contains("控制字符", error.Message);
+        Assert.Empty(server.Received);
+    }
+
+    /// <summary>
+    /// 钩子返回 <c>null</c>（本次不处理）时，字典值退回通道默认文本，
+    /// 不能被当成「这个头不要了」——否则任一钩子写了 <c>is string</c> 判断就会静默丢头。
+    /// </summary>
+    [Fact]
+    public async Task HeaderCollectionHookDeclining_KeepsDictionaryValue()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => null);
+
+        await client.RequestAsync(new HookedHeaderCollectionRequest
+        {
+            Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
+        });
+
+        Assert.Equal("raw", Assert.Single(server.Received).Headers["X-K"]);
+    }
+
+    /// <summary>
+    /// 钩子产出空串是「值就是空的」，不是「没有值」：头写成空值、查询保留 <c>key=</c>。
+    /// 这两处的心智模型是「值 → 文本」，空串是合法文本，与 <c>null</c>（不处理）必须分开。
+    /// </summary>
+    [Fact]
+    public async Task EmptyHookText_KeepsKeyWithEmptyValue()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => string.Empty);
+
+        await client.RequestAsync(new EmptyTextRequest { Id = 1, Trace = 2 });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("Id=", received.Query);
+        Assert.Equal(string.Empty, received.Headers["X-Empty"]);
     }
 
     // ------------------------------------------------------------------
@@ -463,6 +710,35 @@ public sealed class FormatAttributeTests
     // ------------------------------------------------------------------
     // 测试模型：请求模型
     // ------------------------------------------------------------------
+
+    [Get("ch/{id}")]
+    private sealed class MemberChannelRequest : IApiRequest<Person>
+    {
+        [Path, Format(typeof(FormatHelpers), nameof(FormatHelpers.PerChannel))]
+        public int Id { get; set; }
+
+        [Query, Format(typeof(FormatHelpers), nameof(FormatHelpers.PerChannel))]
+        public int Page { get; set; }
+
+        [Header("X-Page"), Format(typeof(FormatHelpers), nameof(FormatHelpers.PerChannel))]
+        public int Trace { get; set; }
+    }
+
+    [Post("probe/{id}")]
+    private sealed class ChannelProbeRequest : IApiRequest<Person>
+    {
+        [Path]
+        public int Id { get; set; }
+
+        [Query]
+        public DateTime When { get; set; }
+
+        [Body]
+        public int Count { get; set; }
+
+        [Header("X-Probe")]
+        public int Trace { get; set; }
+    }
 
     [Get("fmt/{id}")]
     private sealed class FormattedScalarRequest : IApiRequest<Person>
@@ -605,6 +881,55 @@ public sealed class FormatAttributeTests
         public NestedFilter Filter { get; set; } = new();
     }
 
+    [Get("hook-codes")]
+    private sealed class HookedCollectionRequest : IApiRequest<Person>
+    {
+        [Query]
+        public int[] Codes { get; set; } = [];
+    }
+
+    [Get("hook-nested")]
+    private sealed class HookedNestedRequest : IApiRequest<Person>
+    {
+        [Query]
+        public HookedInner Inner { get; set; } = new();
+    }
+
+    /// <summary>嵌套对象：没有任何成员声明，叶子全部交给实例钩子。</summary>
+    public sealed class HookedInner
+    {
+        public int X { get; set; }
+
+        public int Y { get; set; }
+    }
+
+    [Get("hc")]
+    private sealed class HookedHeaderCollectionRequest : IApiRequest<Person>
+    {
+        [HeaderCollection]
+        public Dictionary<string, string> Extra { get; set; } = new();
+    }
+
+    [Get("empty-text")]
+    private sealed class EmptyTextRequest : IApiRequest<Person>
+    {
+        [Query]
+        public int Id { get; set; }
+
+        [Header("X-Empty")]
+        public int Trace { get; set; }
+    }
+
+    /// <summary>非法签名样本：private / 第二参类型不对 / 返回类型不对。</summary>
+    internal static class InvalidFormats
+    {
+        private static string? Hidden(object? value, ValueTextChannel channel) => null;
+
+        public static string? WrongChannel(object? value, DayOfWeek channel) => null;
+
+        public static int ReturnsInt(object? value, ValueTextChannel channel) => 0;
+    }
+
     /// <summary>嵌套查询对象：一个叶子靠实例钩子、一个叶子靠成员声明。</summary>
     public sealed class NestedFilter
     {
@@ -712,20 +1037,38 @@ public sealed class FormatAttributeTests
     }
 }
 
-/// <summary>测试用的格式化函数集合：签名必须是 <c>public static string? M(object? value)</c>。</summary>
+/// <summary>测试用的格式化函数集合：签名必须是 <c>public static string? M(object? value, ValueTextChannel channel)</c>。</summary>
 internal static class FormatHelpers
 {
-    public static string? Prefixed(object? value)
+    public static string? Prefixed(object? value, ValueTextChannel _)
         => value is int number ? "T" + number.ToString(CultureInfo.InvariantCulture) : null;
 
-    public static string? NullWhenZero(object? value)
+    /// <summary>按通道给出不同文本：验证成员级格式化函数的第二个参数确实是值所在通道。</summary>
+    public static string? PerChannel(object? value, ValueTextChannel channel)
+        => value is int number
+            ? channel switch
+            {
+                ValueTextChannel.Path => "p" + number.ToString(CultureInfo.InvariantCulture),
+                ValueTextChannel.Query => "q" + number.ToString(CultureInfo.InvariantCulture),
+                ValueTextChannel.Header => "h" + number.ToString(CultureInfo.InvariantCulture),
+                _ => "x" + number.ToString(CultureInfo.InvariantCulture)
+            }
+            : null;
+
+    public static string? NullWhenZero(object? value, ValueTextChannel _)
         => value is int number and not 0 ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
-    public static string? Money(object? value)
+    public static string? Money(object? value, ValueTextChannel _)
         => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
 
-    public static string? Throwing(object? value) => throw new InvalidOperationException("formatter failed");
+    public static string? Throwing(object? value, ValueTextChannel _) => throw new InvalidOperationException("formatter failed");
 
-    public static string? Hex(object? value)
+    public static string? Hex(object? value, ValueTextChannel _)
         => value is byte[] bytes ? Convert.ToHexString(bytes) : null;
+}
+
+/// <summary>只写了一参数的旧形态：反射路径必须拒绝，与源生成器的 AXA015 口径一致。</summary>
+internal static class LegacyFormats
+{
+    public static string? Plain(object? value) => value?.ToString();
 }

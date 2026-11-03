@@ -20,7 +20,9 @@ public sealed class HeadersAttribute : Attribute
 }
 
 /// <summary>把属性 / 参数里的字典逐项写进请求头；类型须为字符串键值字典（<c>IDictionary&lt;string, string&gt;</c> 或 <c>IReadOnlyDictionary&lt;string, string&gt;</c>，构建期校验）。
-/// 字典为 <c>null</c> 或空时不写头，值为 <c>null</c> 的项跳过；不能与 <see cref="HeaderAttribute"/> 标在同一成员上。</summary>
+/// 字典为 <c>null</c> 或空时不写头，值为 <c>null</c> 的项跳过；不能与 <see cref="HeaderAttribute"/> 标在同一成员上。
+/// 写入时逐项经过实例级 <c>ValueFormatter</c>（通道为 <c>Header</c>），与单值 <see cref="HeaderAttribute"/> 同一口径；
+/// <see cref="FormatAttribute"/> 不能标在该成员上（值本就是字符串，逐项格式化没有意义），构建期报错。</summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class HeaderCollectionAttribute : Attribute
 {

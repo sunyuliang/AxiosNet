@@ -1,7 +1,10 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using AxiosNet.Metadata;
+using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
+using AxiosNet.Tests.WebAPI;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
 
@@ -21,11 +24,9 @@ public sealed class FormatRegressionTests
     public async Task Query_ScalarBinding_IsNotHookedTwice()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            // 只处理字符串的钩子：它只应看到原始 int / DateTime，不应看到已定型的文本
-            ValueFormatter = value => value is string text ? "X" + text : null
-        };
+        using var client = new ApiClient(server.Url);
+        // 只处理字符串的钩子：它只应看到原始 int / DateTime，不应看到已定型的文本
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is string text ? "X" + text : null;
 
         await client.RequestAsync(new HookQuery { Id = 7, Month = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) });
 
@@ -37,10 +38,8 @@ public sealed class FormatRegressionTests
     public async Task Query_MapAndCsvCollection_AreNotHookedTwice()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is string text ? "X" + text : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is string text ? "X" + text : null;
 
         await client.RequestAsync(
             new MapAndCsvQuery
@@ -68,7 +67,7 @@ public sealed class FormatRegressionTests
             await plain.RequestAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
         }
 
-        using (var hooked = new ApiClient(server.Url) { ValueFormatter = _ => null })
+        using (var hooked = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => null))
         {
             await hooked.RequestAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
         }
@@ -171,14 +170,13 @@ public sealed class FormatRegressionTests
             await plain.RequestAsync(new BinaryBody { Payload = payload });
         }
 
-        using (var hooked = new ApiClient(server.Url)
-        {
-            // 只处理 int 的钩子：对 byte[] 返回 null 时必须保持原始字节，而不是退化成 base64 文本正文
-            ValueFormatter = value => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null
-        })
-        {
-            await hooked.RequestAsync(new BinaryBody { Payload = payload });
-        }
+        using var hooked = new ApiClient(server.Url);
+
+        // 只处理 int 的钩子：对 byte[] 返回 null 时必须保持原始字节，而不是退化成 base64 文本正文
+        hooked.Axios.Defaults.ValueFormatter =
+            (value, _) => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
+
+        await hooked.RequestAsync(new BinaryBody { Payload = payload });
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(payload, server.Received[0].Body);
@@ -224,10 +222,8 @@ public sealed class FormatRegressionTests
     public async Task PathAndHeader_ApplyHookOnceAtBindTime()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is DateTime when ? when.ToString("yyyy-MM", CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime when ? when.ToString("yyyy-MM", CultureInfo.InvariantCulture) : null;
 
         var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
         await client.RequestAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
@@ -235,6 +231,241 @@ public sealed class FormatRegressionTests
         var received = Assert.Single(server.Received);
         Assert.Equal("/probe/path/2024-03", received.Path);
         Assert.Equal("2024-03", received.Headers["X-When"]);
+    }
+
+    // ------------------------------------------------------------------
+    // 请求头集合：字典值与单值头同一口径，逐项经过钩子且只经过一次
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task HeaderCollection_ValuesGoThroughHookOnce()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        var seen = new List<object?>();
+        using var client = new ApiClient(server.Url);
+        // 只处理字符串的钩子：单值头与字典头都该命中它，且字典值只命中一次
+        client.Axios.Defaults.ValueFormatter = (value, _) =>
+        {
+            seen.Add(value);
+            return value is string text ? "H" + text : null;
+        };
+
+        await client.RequestAsync(new MixedHeaderRequest
+        {
+            One = "v",
+            Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
+        });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("Hv", received.Headers["X-One"]);
+        Assert.Equal("Hraw", received.Headers["X-K"]);
+
+        // 单值头一次、字典值一次：绑定期定型后不会再被正文工厂之类的位置套第二遍
+        Assert.Equal(new object?[] { "v", "raw" }, seen);
+    }
+
+    // ------------------------------------------------------------------
+    // 裸标量正文：直接调用与声明式同一口径，钩子看到原值一次
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task DirectScalarBody_GoesThroughHook()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new AxiosClient();
+
+        await client.PostAsync(server.Url + "b", 42, c =>
+        {
+            c.ContentType = "text/plain";
+            c.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+        });
+
+        Assert.Equal("v42", Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
+    }
+
+    [Fact]
+    public async Task DeclarativeScalarBody_HookCalledOnce()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        var seen = new List<object?>();
+        using var client = new ApiClient(server.Url);
+        // 返回 null 的钩子最容易被问两遍：绑定期一次、正文工厂一次
+        client.Axios.Defaults.ValueFormatter = (value, _) =>
+        {
+            seen.Add(value);
+            return null;
+        };
+
+        await client.RequestAsync(new ScalarBodyRequest { Payload = new DateTime(2024, 3, 5, 6, 7, 8, DateTimeKind.Utc) });
+
+        Assert.Equal("2024-03-05T06:07:08.0000000Z", Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
+        Assert.Single(seen);
+    }
+
+    // ------------------------------------------------------------------
+    // 钩子只有一处（AxiosConfig.ValueFormatter）：两条入口共用，按请求可覆盖
+    // ------------------------------------------------------------------
+
+    /// <summary>接口式代理读的也是实例默认值上的钩子（与请求模型走同一个来源）。</summary>
+    [Fact]
+    public async Task InterfaceProxy_UsesInstanceHook()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (value, _) =>
+            value is int number ? "H" + number.ToString(CultureInfo.InvariantCulture) : null);
+
+        await client.Create<IUserApi>().GetAsync(7);
+
+        Assert.Equal("/users/H7", Assert.Single(server.Received).Path);
+    }
+
+    /// <summary>
+    /// 字符串正文的两条口径：声明式把它当裸标量正文（值 → 文本，过钩子），
+    /// 直接调用的 <c>string</c> 是「原样正文」，没有这一步。
+    /// </summary>
+    [Fact]
+    public async Task StringBody_HookedOnlyOnTheDeclarativePath()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "HOOKED");
+
+        await client.RequestAsync(new StringBodyRequest { Text = "raw" });
+        await client.Axios.PostAsync(server.Url + "raw-str", "raw", c => c.ContentType = "text/plain");
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("HOOKED", Encoding.UTF8.GetString(server.Received[0].Body));
+        Assert.Equal("raw", Encoding.UTF8.GetString(server.Received[1].Body));
+    }
+
+    /// <summary>模型自己的 <c>Configure</c> 里换钩子，同样算「绑定期之后」，要被护栏拦下。</summary>
+    [Fact]
+    public async Task ModelConfigureSettingHook_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SelfConfiguringRequest()));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task InstanceHook_CoversDeclarativeAndDirectCalls()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c =>
+            c.ValueFormatter = (value, _) => value is DateTime date
+                ? "d" + date.ToString("yyyy", CultureInfo.InvariantCulture)
+                : null);
+
+        // 声明式：路径段与请求头都走同一个钩子
+        var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
+        await client.RequestAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
+
+        // 直接调用：裸标量正文也走同一个钩子（实例默认值里的钩子不能被按请求配置冲掉）
+        await client.Axios.PostAsync(server.Url + "raw", new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc), c =>
+            c.ContentType = "text/plain");
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("/probe/path/d2024", server.Received[0].Path);
+        Assert.Equal("d2024", server.Received[0].Headers["X-When"]);
+        Assert.Equal("d2024", Encoding.UTF8.GetString(server.Received[1].Body));
+    }
+
+    [Fact]
+    public async Task PerCallHook_OverridesInstanceHook()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "D");
+
+        await client.Axios.PostAsync(server.Url + "raw", 42);
+        await client.Axios.PostAsync(server.Url + "raw", 42, c => c.ValueFormatter = (_, _) => "P");
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("D", Encoding.UTF8.GetString(server.Received[0].Body));
+        Assert.Equal("P", Encoding.UTF8.GetString(server.Received[1].Body));
+    }
+
+    [Fact]
+    public async Task DeclarativeRequest_CannotRetargetHookAfterBinding()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "D");
+
+        var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
+        var error = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(
+                new PathHeaderRequest { When = when, HeaderWhen = when },
+                c => c.ValueFormatter = (_, _) => "P"));
+
+        // 绑定期已经用旧钩子写完 URL / 头 / 正文，再换只会半生效：直接拒绝，不留静默行为
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    // ------------------------------------------------------------------
+    // 直接调用（AxiosClient）的钩子覆盖面：查询 / 表单 / 裸标量正文；路径与头没有这一步
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task DirectCall_HookCoversQueryFormAndScalarBody()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        var seen = new List<ValueTextChannel>();
+        using var client = new AxiosClient();
+        client.Defaults.ValueFormatter = (value, channel) =>
+        {
+            seen.Add(channel);
+            return value is DateTime date ? "d" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
+        };
+
+        var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
+
+        await client.GetAsync(server.Url + "q", c => c.Params = new { when });
+        await client.PostAsync(server.Url + "f", new { when }, c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
+        await client.PostAsync(server.Url + "b", when, c => c.ContentType = "text/plain");
+        await client.GetAsync(server.Url + "h", c => c.Headers.Set("X-Raw", "raw"));
+
+        Assert.Equal(4, server.Received.Count);
+        Assert.Equal("when=d2024", server.Received[0].Query);
+        Assert.Equal("when=d2024", Uri.UnescapeDataString(Encoding.UTF8.GetString(server.Received[1].Body)));
+        Assert.Equal("d2024", Encoding.UTF8.GetString(server.Received[2].Body));
+
+        // 头就是最终文本，没有「值 → 文本」这一步：钩子一次都不该被它触发
+        Assert.Equal("raw", server.Received[3].Headers["X-Raw"]);
+        Assert.Equal(
+            new[] { ValueTextChannel.Query, ValueTextChannel.Form, ValueTextChannel.ScalarBody },
+            seen);
+    }
+
+    /// <summary>
+    /// 钩子在请求构造期只跑一次：重试是重发同一份已定型的请求，
+    /// 不该再问一遍钩子（否则带副作用的钩子会随重试次数累加）。
+    /// </summary>
+    [Fact]
+    public async Task Retry_DoesNotRerunHook()
+    {
+        var attempts = 0;
+        await using var server = TestHttpServer.Start(_ =>
+            Interlocked.Increment(ref attempts) == 1 ? new TestResponse(500) : TestJson.Response(new Person("ok", 1)));
+
+        var calls = 0;
+        using var client = new AxiosClient();
+
+        await client.GetAsync(server.Url + "q", c =>
+        {
+            c.Params = new { when = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc) };
+            c.ValueFormatter = (value, _) =>
+            {
+                calls++;
+                return value is DateTime ? "d2024" : null;
+            };
+            c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
+        });
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal(1, calls);
     }
 
     // ------------------------------------------------------------------
@@ -382,6 +613,38 @@ public sealed class FormatRegressionTests
         public DateTime HeaderWhen { get; set; }
     }
 
+    [Get("probe/mixed-header")]
+    private sealed class MixedHeaderRequest : IApiRequest<Person>
+    {
+        [Header("X-One")]
+        public string One { get; set; } = string.Empty;
+
+        [HeaderCollection]
+        public Dictionary<string, string> Extra { get; set; } = new();
+    }
+
+    [Get("probe/scalar-body")]
+    private sealed class ScalarBodyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public DateTime Payload { get; set; }
+    }
+
+    [Post("probe/string-body")]
+    private sealed class StringBodyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public string Text { get; set; } = string.Empty;
+    }
+
+    /// <summary>在自己的 <c>Configure</c> 里换钩子：绑定期已过，会被护栏拒绝。</summary>
+    [Get("probe/self-configuring")]
+    private sealed class SelfConfiguringRequest : ApiRequest<Person>
+    {
+        /// <summary>按请求调整配置：这里故意改钩子。</summary>
+        protected override void Configure(AxiosConfig config) => config.ValueFormatter = (_, _) => "bad";
+    }
+
     [Get("probe/optional")]
     private sealed class NullableRequest : IApiRequest<Person>
     {
@@ -398,7 +661,7 @@ public sealed class FormatRegressionTests
 
 internal static class Formats
 {
-    public static string? PrefixedString(object? value) => value is string text ? "F" + text : null;
+    public static string? PrefixedString(object? value, ValueTextChannel _) => value is string text ? "F" + text : null;
 
-    public static string? Hex(object? value) => value is ReadOnlyMemory<byte> memory ? Convert.ToHexString(memory.Span) : null;
+    public static string? Hex(object? value, ValueTextChannel _) => value is ReadOnlyMemory<byte> memory ? Convert.ToHexString(memory.Span) : null;
 }

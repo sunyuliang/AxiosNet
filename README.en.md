@@ -2,9 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2312%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2227%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2334%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2249%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -197,7 +197,9 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 
 **Lower-level entry points**
 
-- `client.ValueFormatter` overrides the text form of path / query / header / form field / multipart text part / raw scalar body (lower priority than a member's `[Format]` — see [Value formatting](#value-formatting)).
+- The text-shape hook lives in exactly one place: `AxiosConfig.ValueFormatter` (instance defaults via `client.Axios.Defaults.ValueFormatter`, or the `configureDefaults` you pass when building an `ApiClient`). Declarative and direct calls read the same property, and it sits below a member's `[Format]` (see [Value formatting](#value-formatting)); its second argument is the `ValueTextChannel` the value is written through.
+  - On a direct call it covers query params / form fields / multipart text parts / raw scalar body; path segments and headers have no value-to-text step (the URL and headers are strings you supply), so they never reach it.
+  - On a declarative request it must be set on the instance defaults: binding needs it up front, and changing it in the per-request `configure` throws `ERR_BAD_OPTION_VALUE`.
 - `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work).
 - Streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
 
@@ -295,7 +297,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 A value written into a URL, a header or a form always ends up as text. The library funnels "value → text" through **one** path, with two declaration layers stacked by priority:
 
 1. `[Format]` on the member (model property / interface parameter) — the most specific;
-2. `ValueFormatter` on the instance — applies when the member declares nothing;
+2. `AxiosConfig.ValueFormatter` on the client's instance defaults (a per-request config works too, for direct calls) — applies when the member declares nothing; the callback receives a `ValueTextChannel`, so it can target a single channel;
 3. Channel defaults (date-time folded to UTC milliseconds, enums by name, `byte[]` as base64, `IFormattable` with the invariant culture…).
 
 ```csharp
@@ -312,21 +314,29 @@ public sealed class ListRequest : IApiRequest<User[]>
 
 public static class Formats
 {
-    // Fixed signature: public static string? M(object? value); returning null means "not mine", fall back to the default rule.
-    public static string? Money(object? value)
+    // Fixed signature: public static string? M(object? value, ValueTextChannel channel);
+    // returning null means "not mine", fall back to the default rule; pass the channel as _ when you do not care.
+    public static string? Money(object? value, ValueTextChannel _)
         => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
 }
 
-var client = new ApiClient(url)
+var client = new ApiClient(url, c =>
 {
-    ValueFormatter = value => value is DateTime date
-        ? date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-        : null
-};
+    // Second argument is the channel the value is written through (AxiosNet.Metadata.ValueTextChannel):
+    // RFC 1123 in headers, compact date elsewhere; returning null means "not handled here".
+    c.ValueFormatter = (value, channel) => value is DateTime date
+        ? channel == ValueTextChannel.Header
+            ? date.ToString("R", CultureInfo.InvariantCulture)
+            : date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+        : null;
+});
 ```
 
-- **Channels covered**: path segment / query string / header / form field / multipart text part / raw scalar body. One rule set — there is no "works in the query but not in the form".
+- **Channels covered**: path segment / query string / header / form field / multipart text part / raw scalar body. One rule set — there is no "works in the query but not in the form"; the hook's second argument is exactly one of these six (`Path` / `Query` / `Header` / `Form` / `Multipart` / `ScalarBody`), so it can branch per location.
+  - A header collection (`[HeaderCollection]`) applies the hook per dictionary value (channel `Header`), exactly like a single `[Header]`; `[Format]` still cannot be put on that member (the values are already strings — build-time error).
+- **Member formatters get the channel too**: the static method behind `[Format(typeof(Formats), nameof(Formats.Money))]` has a fixed signature of `public static string? Money(object? value, ValueTextChannel channel)`; the second argument is the channel that member is written through. Discard it as `_` when you do not care — there is no one-parameter form.
   - The raw scalar body means `data` itself is a scalar, binary forms such as `byte[]` included: a binary body only becomes a text body when the declaration / hook actually produces text, otherwise it is sent as raw bytes, and a hook returning `null` never triggers base64.
+  - A raw scalar body on a direct call (`PostAsync(url, data)`) goes through the hook too; but when `data` is a `string` / `byte[]` / `Stream` / byte chunks it is a "verbatim body" — there is no value-to-text step, so the hook does not take part.
   - Nested objects, dictionaries and `JsonElement` trees inside the query apply it per leaf: member declaration first, then the instance hook.
 - **Collections and dictionaries**: on a collection it applies per element, on a dictionary per value (keys untouched). Declarations on dictionaries skip the build-time type check — the value type is only known at runtime.
 - **Format strings** require `IFormattable` and always use the invariant culture (never `CurrentCulture`); use a formatter method when you need culture-aware output.
@@ -346,7 +356,7 @@ config.Serialization.JsonSerializerOptions =
   - `[Format]` on a non-scalar (POCO) query parameter.
 - **Catching mistakes**, none of the three waits for a request:
   - with `nameof(...)` a typo is an ordinary compile error (`CS0117`);
-  - a wrong signature (not `public static` / generic / parameter is not `object` / return is not `string`) is reported at compile time as `AXA015`, with the correct signature spelled out in the message;
+  - a wrong signature (not `public static` / generic / parameters are not `(object?, ValueTextChannel)` / return is not `string`) is reported at compile time as `AXA015`, with the correct signature spelled out in the message;
   - a value shape that does not fit the channel (a format string on `bool` / a binary form, `[Format]` on a structured `[Body]` or a file part) throws `InvalidOperationException` while the binding plan is built.
 - Without the source generator `AXA015` does not run — use `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` to surface these at startup instead.
 - **Native AOT**: the source generator bakes the formatter delegate into the metadata (an invalid signature reports `AXA015`), so nothing reflects at runtime. Shapes registered by hand via `RegisterShape<T>()` are not baked: `[Format(typeof(...), nameof(...))]` on them fails explicitly under AOT with a pointer to "enable the source generator or use a format string" instead of silently dropping the format.
@@ -639,7 +649,7 @@ c.Params = new[] { 1, 2 };            // root collection: [0]=1&[1]=2
 | `byte[]` | base64 |
 | anything else | `IFormattable` + `InvariantCulture` |
 
-Override per member with `[Format]`, or per instance with `ApiClient.ValueFormatter` (see [Value formatting](#value-formatting)).
+Override per member with `[Format]`, or per instance with `AxiosConfig.ValueFormatter` (its second argument is the channel the value is written through — see [Value formatting](#value-formatting)).
 
 ### Body and ContentType
 
@@ -2049,7 +2059,7 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
 | `AXA013` | Warning | Shape type is not accessible to generated code (shape skipped; flattening to it fails explicitly under AOT) |
 | `AXA014` | Error | Invalid encoding declaration on an interface method: blank / control-character `[BodyContentType]`, undefined `[QueryCollectionFormat]` value, or combined with `[Multipart]` |
-| `AXA015` | Error | Invalid `[Format]` declaration: blank format string, or a formatter that does not exist / is not `public static` / does not take a single `object` / does not return `string` |
+| `AXA015` | Error | Invalid `[Format]` declaration: blank format string, or a formatter that does not exist / is not `public static` / does not take `(object?, ValueTextChannel)` / does not return `string` |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
@@ -2108,10 +2118,10 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2172 / 2161 | `net8.0` / `net6.0` | 4333 |
+| `AxiosNet.Tests` (core + declarative) | 2194 / 2183 | `net8.0` / `net6.0` | 4377 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| **Total** | **2312 / 2227** | | **4539** |
+| **Total** | **2334 / 2249** | | **4583** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

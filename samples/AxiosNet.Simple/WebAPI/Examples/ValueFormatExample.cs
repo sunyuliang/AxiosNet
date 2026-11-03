@@ -1,4 +1,5 @@
 using System.Globalization;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
 
@@ -7,7 +8,8 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 /// <summary>
 /// 17. 值格式化：成员级 <c>[Format]</c>（格式串 / 静态函数）与实例级 <c>ValueFormatter</c>。
 /// 优先级是「成员声明 &gt; 实例钩子 &gt; 通道默认」，集合与字典逐元素 / 逐值应用；
-/// 路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文走的是同一条转换路径。
+/// 路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文走的是同一条转换路径，
+/// 实例钩子的第二个参数就是这条路径的通道（<c>ValueTextChannel</c>），成员级格式化函数也可以声明这个参数。
 /// </summary>
 public sealed class ValueFormatExample : IExample
 {
@@ -20,13 +22,14 @@ public sealed class ValueFormatExample : IExample
     {
         ExampleConsole.Section(Number, Title);
 
-        using var client = new ApiClient(context.BaseUrl)
+        using var client = new ApiClient(context.BaseUrl, c =>
         {
-            // 实例级钩子：成员自己没有声明时生效；返回 null 表示「本次不处理」，回落到默认规则。
-            ValueFormatter = value => value is DateTime date
+            // 实例级钩子（客户端默认值，声明式与直接调用同一口径）：成员自己没有声明时生效；
+            // 第二个参数是值所在通道，这里只在查询串里改日期形态，其余通道返回 null 交回默认规则。
+            c.ValueFormatter = (value, channel) => value is DateTime date && channel == ValueTextChannel.Query
                 ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
-                : null
-        };
+                : null;
+        });
 
         var api = client.Create<IFormatApi>();
 
@@ -47,11 +50,14 @@ public sealed class ValueFormatExample : IExample
     }
 }
 
-/// <summary>示例用格式化函数：签名必须是 <c>public static string? M(object? value)</c>，返回 null 表示回落默认规则。</summary>
+/// <summary>
+/// 示例用格式化函数：签名固定为 <c>public static string? M(object? value, ValueTextChannel channel)</c>，
+/// 返回 null 表示回落默认规则；不关心通道时把第二个参数丢掉即可。
+/// </summary>
 public static class SampleFormats
 {
     /// <summary>金额固定两位小数（区域固定为不变文化，与库的默认规则一致）。</summary>
-    public static string? Money(object? value)
+    public static string? Money(object? value, ValueTextChannel _)
         => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
 }
 

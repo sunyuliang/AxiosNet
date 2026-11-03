@@ -38,29 +38,40 @@ internal static class FormatSpecReader
                 methodName,
                 BindingFlags.Public | BindingFlags.Static,
                 binder: null,
-                types: [typeof(object)],
+                types: [typeof(object), typeof(ValueTextChannel)],
                 modifiers: null);
 
             if (method is null)
             {
                 throw new InvalidOperationException(
                     $"{owner} 的成员 {member} 标注了 [Format(typeof({type.Name}), \"{methodName}\")]，"
-                    + $"但 {type.Name} 没有可用的格式化函数：签名必须是 public static string? {methodName}(object? value)。");
+                    + $"但 {type.Name} 没有可用的格式化函数：签名必须是 public static string? {methodName}(object? value, ValueTextChannel channel)。");
             }
 
-            if (method.ReturnType != typeof(string))
-            {
-                throw new InvalidOperationException(
-                    $"{owner} 的成员 {member} 的格式化函数 {type.Name}.{methodName} 返回 {method.ReturnType.Name}："
-                    + "签名必须是 public static string? M(object? value)（返回 null 表示回落默认规则）。");
-            }
-
-            return ValueFormat.FromDelegate(method.CreateDelegate<Func<object?, string?>>());
+            EnsureStringReturn(method, owner, member, type, methodName);
+            return ValueFormat.FromDelegate(method.CreateDelegate<Func<object?, ValueTextChannel, string?>>());
         }
 
         throw new InvalidOperationException(
             $"{owner} 的成员 {member} 的 [Format] 指向格式化函数 {type.Name}.{methodName}，"
             + "但 Native AOT 下无法用反射取静态方法：请启用 AxiosNet 源生成器（生成期把委托烘焙进元数据），"
             + "或改用 [Format(\"...\")] 格式串。");
+    }
+
+    /// <summary>格式化函数必须返回 <c>string</c>（<c>string?</c> 编译后同为 <c>string</c>，可空性不参与判定）。</summary>
+    /// <param name="method">已按参数列表定位到的静态方法。</param>
+    /// <param name="owner">定位前缀（如 <c>请求模型 UserRequest</c>）。</param>
+    /// <param name="member">成员名。</param>
+    /// <param name="type">声明格式化函数的类型。</param>
+    /// <param name="methodName">格式化函数名。</param>
+    private static void EnsureStringReturn(MethodInfo method, string owner, string member, Type type, string methodName)
+    {
+        if (method.ReturnType != typeof(string))
+        {
+            throw new InvalidOperationException(
+                $"{owner} 的成员 {member} 的格式化函数 {type.Name}.{methodName} 返回 {method.ReturnType.Name}："
+                + "签名必须是 public static string? M(object? value, ValueTextChannel channel)"
+                + "（返回 null 表示回落默认规则）。");
+        }
     }
 }

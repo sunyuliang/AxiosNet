@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Internal;
 
@@ -21,13 +22,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// （scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。令牌为 null / 空白时不写头，模型或实例默认值已显式写该头时不覆盖。
     /// </summary>
     public IAccessTokenProvider? AccessTokenProvider { get; set; }
-
-    /// <summary>
-    /// 实例级格式化钩子：绑定 <c>[Path]</c> / <c>[Query]</c> / <c>[Header]</c> / <c>[Part]</c> / 表单字段与裸标量正文的值时调用，
-    /// 返回的字符串直接作为该值的线上文本（路径段仍会被 URL 转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。
-    /// 优先级低于成员上的 <see cref="FormatAttribute"/>。
-    /// </summary>
-    public Func<object?, string?>? ValueFormatter { get; set; }
 
     /// <summary>
     /// 收到 401 时用新令牌重放一次，默认开启（只在 <see cref="AccessTokenProvider"/> 真的写了 <c>Authorization</c> 头时生效；
@@ -121,7 +115,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken)
     {
-        var formatter = ValueFormatter;
+        // 格式化钩子只有一个来源（客户端的实例默认值）：绑定参数时就要用它，所以这里先取定，再写进本次配置供发送期的表单 / multipart 使用。
+        var formatter = Axios.Defaults.ValueFormatter;
         var target = request.GetType().Name;
         var config = new AxiosConfig
         {
@@ -155,6 +150,17 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
         (request as IApiRequestConfigurable)?.Configure(config);
         configure?.Invoke(config);
+
+        // 钩子在绑定期就已经用过（路径 / 查询 / 头 / 正文全部定型），这里再换只会让同一个请求出现两个钩子：
+        // 一路是「已经写进 URL 与头的文本」，一路是「发送期的表单 / multipart / 正文」。报错，不留静默半生效。
+        if (!ReferenceEquals(config.ValueFormatter, formatter))
+        {
+            throw AxiosException.InvalidOption(
+                $"请求模型 {target} 在绑定期之后修改了 ValueFormatter：路径 / 查询 / 请求头 / 正文已按原钩子定型，改了不会重算。"
+                + "请把钩子设在客户端实例默认值上（AxiosClient.Defaults.ValueFormatter）；"
+                + "直接调用（GetAsync / PostAsync 等）的按请求配置不受此限制。",
+                config);
+        }
 
         // [Multipart] 模型：Content-Type 由库设定（调用方/Configure 显式设置过则保留，可自带 boundary）
         if (metadata.IsMultipart && !config.ContentTypeSet)

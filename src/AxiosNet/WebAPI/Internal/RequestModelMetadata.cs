@@ -95,18 +95,18 @@ internal sealed class RequestModelMetadata
     /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
     /// <param name="request">请求模型实例。</param>
     /// <param name="formatter">URL 参数格式化钩子（返回 null 表示用默认规则），可为 null。</param>
-    public string ResolveUrl(object request, Func<object?, string?>? formatter)
+    public string ResolveUrl(object request, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ResolveUrl(_pathTemplate, request, formatter);
 
     /// <summary>汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定 + 平铺的字典映射）；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
     /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。</summary>
-    public Dictionary<string, object?>? ResolveQuery(object request, Func<object?, string?>? formatter)
+    public Dictionary<string, object?>? ResolveQuery(object request, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ResolveQuery(request, formatter);
 
     /// <summary>请求体的原始值：普通模型取 <see cref="BodyAttribute"/> 属性；multipart 模型返回装配好的声明式表单（全部属性为 <c>null</c> 时返回 <c>null</c>）。</summary>
     /// <param name="request">请求模型实例。</param>
     /// <param name="formatter">实例级格式化钩子；只作用于裸标量正文与部件文本。</param>
-    public object? ResolveBody(object request, Func<object?, string?>? formatter)
+    public object? ResolveBody(object request, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (!IsMultipart)
         {
@@ -156,7 +156,7 @@ internal sealed class RequestModelMetadata
     }
 
     /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置。头名 / 头值在配置构建期按 <see cref="AxiosHeaders.Set(string, string?)"/> 校验。</summary>
-    public void ApplyHeaders(object request, AxiosConfig config, Func<object?, string?>? formatter)
+    public void ApplyHeaders(object request, AxiosConfig config, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ApplyHeaders(request, config, formatter);
 
     /// <summary>应用类级 <see cref="HeadersAttribute"/> 声明：值写入头，只有名字的声明摘除同名头。</summary>

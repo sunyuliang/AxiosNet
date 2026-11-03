@@ -777,11 +777,12 @@ namespace AxiosNet.SourceGen
                 && arguments.Length > 1
                 && arguments[1].Value is string methodName)
             {
-                if (!IsValidFormatMethod(formatterType, methodName))
+                var method = FindFormatMethod(formatterType, methodName);
+                if (method is null)
                 {
                     // 「方法不存在」与「签名不对」是两种修法，消息必须分开：混在一起会把拼错的名字说成签名问题。
                     var reason = HasMember(formatterType, methodName)
-                        ? $"函数 {formatterType.Name}.{methodName} 必须是 public static string? {methodName}(object? value)"
+                        ? $"函数 {formatterType.Name}.{methodName} 必须是 public static string? {methodName}(object? value, AxiosNet.Metadata.ValueTextChannel channel)"
                         : $"函数 {formatterType.Name}.{methodName} 不存在：请检查方法名（写 nameof(...) 时编译器会先帮你查）";
 
                     onInvalid(new DiagnosticInfo(Diagnostics.FormatInvalid, ToEquatable([owner, reason]), location));
@@ -789,8 +790,8 @@ namespace AxiosNet.SourceGen
                 }
 
                 // Display 已经带 global:: 前缀（FullyQualifiedFormat），这里不能再拼一次。
-                return "global::AxiosNet.Metadata.ValueFormat.FromDelegate(static v => "
-                    + TypeFormats.Display(formatterType) + "." + methodName + "(v))";
+                return "global::AxiosNet.Metadata.ValueFormat.FromDelegate(static (v, channel) => "
+                    + TypeFormats.Display(formatterType) + "." + methodName + "(v, channel))";
             }
 
             return null;
@@ -800,19 +801,24 @@ namespace AxiosNet.SourceGen
         private static bool HasMember(INamedTypeSymbol type, string methodName)
             => type.GetMembers(methodName).Length > 0;
 
-        /// <summary>格式化函数的签名判定：public static、非泛型、非抽象、单个 object 参数、返回 string。</summary>
-        private static bool IsValidFormatMethod(INamedTypeSymbol type, string methodName)
-            => type.GetMembers(methodName).OfType<IMethodSymbol>().Any(IsFormatSignature);
+        /// <summary>在该类型上挑出签名合法的格式化函数（只有一种形态：值 + 通道）。</summary>
+        private static IMethodSymbol? FindFormatMethod(INamedTypeSymbol type, string methodName)
+            => type.GetMembers(methodName).OfType<IMethodSymbol>().FirstOrDefault(IsFormatSignature);
 
-        // 格式方法的形态判据：public 静态、非泛型、单参数、返回 string。
+        // 格式方法的形态判据：public 静态、非泛型、参数为 (object?, ValueTextChannel)、返回 string。
         private static bool IsFormatSignature(IMethodSymbol method)
             => method.IsStatic
                 && !method.IsGenericMethod
                 && !method.IsAbstract
                 && method.DeclaredAccessibility == Accessibility.Public
-                && method.Parameters.Length == 1
+                && method.Parameters.Length == 2
                 && method.Parameters[0].Type.SpecialType == SpecialType.System_Object
+                && IsChannelParameter(method.Parameters[1].Type)
                 && method.ReturnType.SpecialType == SpecialType.System_String;
+
+        /// <summary>第二参数必须是 <c>AxiosNet.Metadata.ValueTextChannel</c>；别的枚举不算。</summary>
+        private static bool IsChannelParameter(ITypeSymbol type)
+            => type.ToDisplayString() == "AxiosNet.Metadata.ValueTextChannel";
 
         // 沿 override 链往上找特性：基类属性上的标注对派生重写同样生效。
         private static AttributeData? FindInOverrideChain(IPropertySymbol property, INamedTypeSymbol? attributeType)

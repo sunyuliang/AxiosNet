@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using AxiosNet.Cache;
 using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.Serialization;
 
 namespace AxiosNet;
@@ -269,9 +270,17 @@ public sealed partial class AxiosConfig
     internal bool CacheCaptureRawBody { get; set; }
 
     /// <summary>
-    /// 实例级格式化钩子：由绑定层写入，作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文；普通调用不设置。
+    /// 实例级格式化钩子：值转线上文本时调用（路径 / 查询 / 请求头（含头集合的字典值）/ 表单字段 / multipart 文本部件 / 裸标量正文），
+    /// 第二个参数是值所在的 <see cref="ValueTextChannel"/>，同一个钩子可以按位置给出不同文本（如请求头用 RFC 1123、查询串用 ISO 8601）。
+    /// 返回的字符串直接作为该值的线上文本（路径段与查询 / 表单值随后仍会被转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。
+    /// 优先级低于成员上的 <c>[Format]</c>。
     /// </summary>
-    internal Func<object?, string?>? ValueFormatter { get; set; }
+    /// <remarks>
+    /// 设在 <see cref="AxiosClient.Defaults"/> 上对整个客户端生效（声明式请求与直接调用同一口径），直接调用时也可在单次请求的配置里覆盖。
+    /// 声明式层的路径 / 查询 / 请求头 / 正文在绑定参数时就要用到它，所以那里取的是客户端默认值：
+    /// 在 <c>ApiClient</c> 的按请求 <c>configure</c> 里改它会抛 <c>ERR_BAD_OPTION_VALUE</c>（绑定已完成，改了不会重算）。
+    /// </remarks>
+    public Func<object?, ValueTextChannel, string?>? ValueFormatter { get; set; }
 
     /// <summary>
     /// 本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，

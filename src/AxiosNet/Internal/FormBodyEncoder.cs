@@ -331,7 +331,7 @@ internal static class FormBodyEncoder
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, options.Encoding), EncodeValue(ValueText.JsonScalar(element, options.Formatter), options.Encoding)));
+                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, options.Encoding), EncodeValue(ValueText.JsonScalar(element, ValueTextChannel.Form, options.Formatter), options.Encoding)));
                 break;
 
             default:
@@ -418,7 +418,7 @@ internal static class FormBodyEncoder
 /// <summary>表单展平的共享参数：编码、字段名选择器与实例级格式化钩子。</summary>
 internal readonly struct FormFlattenOptions
 {
-    public FormFlattenOptions(Encoding encoding, Func<string?, string, string>? nameSelector, Func<object?, string?>? formatter)
+    public FormFlattenOptions(Encoding encoding, Func<string?, string, string>? nameSelector, Func<object?, ValueTextChannel, string?>? formatter)
     {
         Encoding = encoding;
         NameSelector = nameSelector;
@@ -431,8 +431,8 @@ internal readonly struct FormFlattenOptions
     /// <summary>字段名生成器（<see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/>）。</summary>
     public Func<string?, string, string>? NameSelector { get; }
 
-    /// <summary>实例级格式化钩子（<c>ApiClient.ValueFormatter</c>）。</summary>
-    public Func<object?, string?>? Formatter { get; }
+    /// <summary>实例级格式化钩子（<c>AxiosConfig.ValueFormatter</c>）。</summary>
+    public Func<object?, ValueTextChannel, string?>? Formatter { get; }
 }
 
 /// <summary>

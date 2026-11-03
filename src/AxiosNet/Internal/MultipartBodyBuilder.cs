@@ -342,7 +342,7 @@ internal static class MultipartBodyBuilder
         MultipartFormDataContent content,
         Encoding encoding,
         Func<string?, string, string>? nameSelector,
-        Func<object?, string?>? formatter)
+        Func<object?, ValueTextChannel, string?>? formatter)
     {
         switch (element.ValueKind)
         {
@@ -366,7 +366,7 @@ internal static class MultipartBodyBuilder
             case JsonValueKind.Number:
             case JsonValueKind.True:
             case JsonValueKind.False:
-                content.Add(new StringContent(ValueText.JsonScalar(element, formatter), encoding), RequireName(name));
+                content.Add(new StringContent(ValueText.JsonScalar(element, ValueTextChannel.Multipart, formatter), encoding), RequireName(name));
                 break;
 
             default:

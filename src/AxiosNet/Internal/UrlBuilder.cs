@@ -456,7 +456,7 @@ internal static class ParamsSerializer
         HashSet<object>? visited,
         AxiosCollectionFormat format,
         ValueFormat? memberFormat,
-        Func<object?, string?>? formatter)
+        Func<object?, ValueTextChannel, string?>? formatter)
     {
         // 与 axios 一致：null 直接跳过
         if (value is null)
@@ -627,7 +627,7 @@ internal static class ParamsSerializer
         HashSet<object>? visited,
         AxiosCollectionFormat format,
         ValueFormat? memberFormat,
-        Func<object?, string?>? formatter)
+        Func<object?, ValueTextChannel, string?>? formatter)
     {
         visited = ObjectGraph.Enter(visited, enumerable);
         try
@@ -700,7 +700,7 @@ internal static class ParamsSerializer
         JsonElement element,
         List<KeyValuePair<string, string>> pairs,
         AxiosCollectionFormat format,
-        Func<object?, string?>? formatter)
+        Func<object?, ValueTextChannel, string?>? formatter)
     {
         switch (element.ValueKind)
         {
@@ -740,7 +740,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ValueText.JsonScalar(element, formatter))));
+                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ValueText.JsonScalar(element, ValueTextChannel.Query, formatter))));
                 break;
 
             default:
@@ -757,7 +757,7 @@ internal static class ParamsSerializer
         JsonElement element,
         List<KeyValuePair<string, string>> pairs,
         AxiosCollectionFormat format,
-        Func<object?, string?>? formatter)
+        Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (prefix is not null)
         {
@@ -786,7 +786,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                parts.Add(ValueText.JsonScalar(item, formatter));
+                parts.Add(ValueText.JsonScalar(item, ValueTextChannel.Query, formatter));
             }
 
             if (parts is { Count: > 0 })

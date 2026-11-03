@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using AxiosNet.Metadata;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -17,10 +18,8 @@ public sealed class FormatAdversarialTests
     public async Task CustomParamsSerializer_SeesFormattedStrings()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(new P1Request { Id = 7 }, c =>
             c.Serialization.ParamsSerializer = raw =>
@@ -64,10 +63,8 @@ public sealed class FormatAdversarialTests
     private static async Task ExpectCollection(AxiosCollectionFormat format, string expected)
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(
             new P2Request { Dates = [new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc), new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc)] },
@@ -89,10 +86,8 @@ public sealed class FormatAdversarialTests
     public async Task NestedCollections_KeepShapeWithHook()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(new P3Request { Matrix = [[1, 2], [3]] });
 
@@ -131,10 +126,8 @@ public sealed class FormatAdversarialTests
     public async Task MultipartStringCollection_MemberFormatWinsOverHook()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is string text ? "H" + text : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is string text ? "H" + text : null;
 
         await client.RequestAsync(new P5Request { Tags = ["a", "b"] });
 
@@ -157,10 +150,8 @@ public sealed class FormatAdversarialTests
     public async Task ConcurrentRequests_NoCrosstalk()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await Task.WhenAll(Enumerable.Range(0, 32).Select(id =>
             client.RequestAsync(new P6Request { Id = id })));
@@ -235,7 +226,7 @@ public sealed class FormatAdversarialTests
         await client.GetAsync(server.Url + "p8", c =>
         {
             c.Params = new { when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) };
-            c.ValueFormatter = value => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
+            c.ValueFormatter = (value, _) => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
         });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
@@ -254,7 +245,7 @@ public sealed class FormatAdversarialTests
         await client.GetAsync(server.Url + "p9", c =>
         {
             c.Params = document.RootElement;
-            c.ValueFormatter = value => value is string text ? "H" + text : null;
+            c.ValueFormatter = (value, _) => value is string text ? "H" + text : null;
         });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
@@ -267,17 +258,15 @@ public sealed class FormatAdversarialTests
     public async Task NestedObjectHookFailure_IsBadRequest()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) =>
         {
-            ValueFormatter = value =>
+            if (value is DateTime)
             {
-                if (value is DateTime)
-                {
-                    throw new InvalidOperationException("hook failed");
-                }
-
-                return null;
+                throw new InvalidOperationException("hook failed");
             }
+
+            return null;
         };
 
         var error = await Assert.ThrowsAsync<AxiosException>(
@@ -337,7 +326,7 @@ public sealed class FormatAdversarialTests
         await client.PostAsync(server.Url + "p13", document.RootElement, c =>
         {
             c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-            c.ValueFormatter = value => value is string text ? "H" + text : null;
+            c.ValueFormatter = (value, _) => value is string text ? "H" + text : null;
         });
 
         var body = Uri.UnescapeDataString(Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
@@ -348,11 +337,11 @@ public sealed class FormatAdversarialTests
     public async Task MultipartJsonElement_HookAppliesToLeaves()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url);
+        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (value, _) => value is string text ? "H" + text : null);
         using var document = JsonDocument.Parse("""{"when":"2024-03-04"}""");
         var request = new P14Request { Fields = document.RootElement };
 
-        await client.RequestAsync(request, c => c.ValueFormatter = value => value is string text ? "H" + text : null);
+        await client.RequestAsync(request);
 
         var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
         Assert.Contains("H2024-03-04", body);
@@ -379,10 +368,8 @@ public sealed class FormatAdversarialTests
                 : TestJson.Response(new Person("ok", 1));
         });
 
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(new P6Request { Id = 7 }, c =>
             c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero });
@@ -398,10 +385,8 @@ public sealed class FormatAdversarialTests
     public async Task ClosedGenericInterfaceParameter_Formats()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            ValueFormatter = value => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null
-        };
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         var api = client.Create<IGenericQueryApi<int>>();
         await api.GetAsync(5);
@@ -419,10 +404,10 @@ public sealed class FormatAdversarialTests
 
 internal static class AdversarialFormats
 {
-    public static string? Hex(object? value)
+    public static string? Hex(object? value, ValueTextChannel _)
         => value is byte[] bytes ? Convert.ToHexString(bytes) : null;
 
-    public static string? Prefixed(object? value) => value is string text ? "F" + text : null;
+    public static string? Prefixed(object? value, ValueTextChannel _) => value is string text ? "F" + text : null;
 
-    public static string? Throw(object? value) => throw new InvalidOperationException("formatter failed");
+    public static string? Throw(object? value, ValueTextChannel _) => throw new InvalidOperationException("formatter failed");
 }

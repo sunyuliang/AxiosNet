@@ -11,9 +11,9 @@ namespace AxiosNet.Metadata;
 public sealed class ValueFormat
 {
     private readonly string? _format;
-    private readonly Func<object?, string?>? _formatter;
+    private readonly Func<object?, ValueTextChannel, string?>? _formatter;
 
-    private ValueFormat(string? format, Func<object?, string?>? formatter)
+    private ValueFormat(string? format, Func<object?, ValueTextChannel, string?>? formatter)
     {
         _format = format;
         _formatter = formatter;
@@ -31,9 +31,12 @@ public sealed class ValueFormat
         return new ValueFormat(format.Trim(), null);
     }
 
-    /// <summary>按格式化函数取文本；函数返回 <c>null</c> 表示本次不处理，回落到默认规则。</summary>
-    /// <param name="formatter">接收成员值、返回线上文本的委托。</param>
-    public static ValueFormat FromDelegate(Func<object?, string?> formatter)
+    /// <summary>
+    /// 按格式化函数取文本，函数同时拿到值所在的 <see cref="ValueTextChannel"/>；
+    /// 返回 <c>null</c> 表示本次不处理，回落到默认规则。
+    /// </summary>
+    /// <param name="formatter">接收成员值与通道、返回线上文本的委托。</param>
+    public static ValueFormat FromDelegate(Func<object?, ValueTextChannel, string?> formatter)
     {
         ArgumentNullException.ThrowIfNull(formatter);
         return new ValueFormat(null, formatter);
@@ -43,8 +46,10 @@ public sealed class ValueFormat
     internal bool HasDelegate => _formatter is not null;
 
     /// <summary>取值的线上文本；无法格式化时返回 <c>null</c>（调用方回落默认规则）。</summary>
-    internal string? TryFormat(object value)
+    /// <param name="value">待格式化的成员值。</param>
+    /// <param name="channel">值所在的通道。</param>
+    internal string? TryFormat(object value, ValueTextChannel channel)
         => _formatter is not null
-            ? _formatter(value)
+            ? _formatter(value, channel)
             : value is IFormattable formattable ? formattable.ToString(_format, CultureInfo.InvariantCulture) : null;
 }

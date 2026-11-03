@@ -88,11 +88,11 @@ public sealed class RequestModelGeneratorTests
     }
 
     /// <summary>
-    /// <c>[Format]</c> 的两种形态都要烘焙成 <c>ValueFormat</c>：格式串与静态函数在生成代码里同样可用，
-    /// 且与反射路径产出的文本逐字符相同。
+    /// <c>[Format]</c> 的三种声明形态都要烘焙成 <c>ValueFormat</c>：格式串、忽略通道的格式化函数、按通道分叉的格式化函数，
+    /// 在生成代码里同样可用，且与反射路径产出的文本逐字符相同。
     /// </summary>
     [Fact]
-    public void Format_EmitsBothForms_WithSameTextAsReflection()
+    public void Format_EmitsAllForms_WithSameTextAsReflection()
     {
         var ns = UniqueNamespace();
         var (_, diagnostics, output) = RunGenerator(FormatModels.Replace("__NS__", ns));
@@ -105,11 +105,15 @@ public sealed class RequestModelGeneratorTests
         var request = Activator.CreateInstance(modelType)!;
         SetProperty(request, "When", new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc));
         SetProperty(request, "Amount", 12.5m);
+        SetProperty(request, "Stamp", new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc));
 
         var query = metadata.ResolveQuery(request, formatter: null);
         Assert.NotNull(query);
         Assert.Equal("2024-01-02", query["when"]);
         Assert.Equal("12.50", query["amount"]);
+
+        // 二参数签名拿到的通道必须是这个成员实际的通道（Query），不是默认值。
+        Assert.Equal("Query:2024-01-02", query["stamp"]);
     }
 
     [Fact]
@@ -124,7 +128,7 @@ public sealed class RequestModelGeneratorTests
             .Select(static diagnostic => diagnostic.GetMessage())
             .ToArray();
 
-        Assert.Equal(3, messages.Length);
+        Assert.Equal(5, messages.Length);
 
         // 签名不对：消息直接给出正确签名，照着改就行。
         Assert.Contains(messages, static message => message.Contains("Bad.Money") && message.Contains("public static string?"));
@@ -134,6 +138,12 @@ public sealed class RequestModelGeneratorTests
 
         // 泛型方法：生成 Type.Generic(v) 推不出类型参数，只能报「签名不对」。
         Assert.Contains(messages, static message => message.Contains("Bad.Generic") && message.Contains("public static string?"));
+
+        // 第二参数类型不对：报「签名不对」，且消息里点名 ValueTextChannel 这个正确形态。
+        Assert.Contains(messages, static message => message.Contains("Bad.WrongChannel") && message.Contains("ValueTextChannel"));
+
+        // 只写一参数：规范只有一个形态，漏写通道参数同样按「签名不对」拦下。
+        Assert.Contains(messages, static message => message.Contains("Bad.OneArgument") && message.Contains("ValueTextChannel"));
     }
 
     [Fact]
@@ -943,8 +953,12 @@ public sealed class RequestModelGeneratorTests
 
         public static class Fmt
         {
-            public static string? Money(object? value)
+            public static string? Money(object? value, AxiosNet.Metadata.ValueTextChannel _)
                 => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
+
+            // 通道也要烘焙进委托（AOT 下没有反射兜底，漏了就是静默丢掉通道）。
+            public static string? PerChannel(object? value, AxiosNet.Metadata.ValueTextChannel channel)
+                => value is DateTime stamp ? channel + ":" + stamp.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null;
         }
 
         /// <summary>普通 POCO 形状：形状管线的 Member(..., format) 也要能编译。</summary>
@@ -963,6 +977,9 @@ public sealed class RequestModelGeneratorTests
             [Query("amount"), Format(typeof(Fmt), nameof(Fmt.Money))]
             public decimal Amount { get; set; }
 
+            [Query("stamp"), Format(typeof(Fmt), nameof(Fmt.PerChannel))]
+            public DateTime Stamp { get; set; }
+
             [Query]
             public ShapePayload? Nested { get; set; }
         }
@@ -977,11 +994,17 @@ public sealed class RequestModelGeneratorTests
 
         public static class Bad
         {
-            // 签名必须是 string? M(object? value)：参数类型不对时格式串形态无处可用。
+            // 签名必须是 string? M(object? value, ValueTextChannel channel)：参数类型不对时格式串形态无处可用。
             public static string? Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
 
             // 泛型静态方法：生成 Type.Generic(v) 推不出类型参数，必须按「签名不对」在编译期拦下。
             public static string? Generic<T>(object? value) => null;
+
+            // 第二参数必须是 AxiosNet.Metadata.ValueTextChannel：其它类型不算，否则通道会被静默吞掉。
+            public static string? WrongChannel(object? value, string channel) => null;
+
+            // 一参数签名不再接受：规范只有一个形态，漏写通道参数按「签名不对」拦下。
+            public static string? OneArgument(object? value) => null;
         }
 
         [Get("broken")]
@@ -996,6 +1019,12 @@ public sealed class RequestModelGeneratorTests
 
             [Query("generic"), Format(typeof(Bad), nameof(Bad.Generic))]
             public decimal GenericValue { get; set; }
+
+            [Query("wrongChannel"), Format(typeof(Bad), nameof(Bad.WrongChannel))]
+            public decimal WrongChannelValue { get; set; }
+
+            [Query("legacy"), Format(typeof(Bad), nameof(Bad.OneArgument))]
+            public decimal Legacy { get; set; }
         }
         """;
 

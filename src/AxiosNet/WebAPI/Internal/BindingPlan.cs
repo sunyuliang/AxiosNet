@@ -59,11 +59,13 @@ internal sealed class BindingPlan
 
     /// <summary>
     /// 请求体的原始值（普通声明取 <see cref="BodyAttribute"/> 绑定的来源）。
-    /// 标量 + 成员级格式化 / 实例钩子时返回 <see cref="FormattedScalarBody"/>，让正文工厂按标量正文处理而不是当字符串透传。
+    /// 标量 + 成员级格式化 / 实例钩子时返回 <see cref="FormattedScalarBody"/>，让正文工厂按标量正文处理而不是当字符串透传；
+    /// 钩子返回 <c>null</c>（本次不处理）时封存通道默认文本，正文工厂便不会再问它第二遍。
+    /// 二进制正文只在真的产出文本时封存，否则保持原始字节。
     /// </summary>
     /// <param name="target">请求模型实例或方法参数数组。</param>
     /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
-    public object? ResolveBodyValue(object target, Func<object?, string?>? formatter)
+    public object? ResolveBodyValue(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
         var value = _body?.GetValue(target);
         if (value is null || !ScalarTypes.IsScalarBodyType(value.GetType()))
@@ -73,13 +75,21 @@ internal sealed class BindingPlan
 
         // 只有两层声明真的产出文本时才改成文本正文：二进制正文的默认形态是原始字节，
         // 不能因为配置了「对其它类型生效、对 byte[] 返回 null」的实例钩子就退化成 base64 文本。
-        return ValueText.TryCustomFormat(value, _body!.Format, formatter) is { } text
-            ? new FormattedScalarBody(text)
+        if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, _body!.Format, formatter) is { } text)
+        {
+            return new FormattedScalarBody(text);
+        }
+
+        // 钩子在绑定期已经看过这个值（返回 null = 不处理）：把默认文本一并封存，
+        // 正文工厂对裸标量还会按「直接调用」那条规则再问一次钩子，封存后同一个值不会被问第二遍。
+        // 二进制正文除外——它的默认形态是原始字节，封存成文本就等于 base64 化。
+        return formatter is not null && !ScalarTypes.IsBinaryType(value.GetType())
+            ? new FormattedScalarBody(ValueText.Format(value, ValueTextChannel.ScalarBody)!)
             : value;
     }
 
     /// <summary>把路径模板里的 <c>{name}</c> 替换成值（URL 转义），返回最终请求 URL。</summary>
-    public string ResolveUrl(string pathTemplate, object target, Func<object?, string?>? formatter)
+    public string ResolveUrl(string pathTemplate, object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (_pathTokens.Length == 0)
         {
@@ -108,7 +118,7 @@ internal sealed class BindingPlan
     /// 汇总全部查询参数；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
     /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。
     /// </summary>
-    public Dictionary<string, object?>? ResolveQuery(object target, Func<object?, string?>? formatter)
+    public Dictionary<string, object?>? ResolveQuery(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (_queryBindings.Length == 0 && _queryMaps.Length == 0)
         {
@@ -154,7 +164,7 @@ internal sealed class BindingPlan
     /// 把全部请求头绑定写进配置；没有任何头绑定时不动配置。
     /// 属性 / 参数上的头压过声明级同名项（含「只写名字 = 删除」的声明）：写值时撤销待删除项。
     /// </summary>
-    public void ApplyHeaders(object target, AxiosConfig config, Func<object?, string?>? formatter)
+    public void ApplyHeaders(object target, AxiosConfig config, Func<object?, ValueTextChannel, string?>? formatter)
     {
         foreach (var binding in _headerBindings)
         {
@@ -182,7 +192,14 @@ internal sealed class BindingPlan
             foreach (var entry in QueryMap.Enumerate(dictionary))
             {
                 // 值为 null 的项跳过（字典头没有「删除」语义，删除请用声明级 [Headers("X-Remove")]）
-                if (entry.Value is string text)
+                if (entry.Value is null)
+                {
+                    continue;
+                }
+
+                // 字典值与单值头同一口径：都走「值 → 请求头文本」这一步，实例钩子对两者一视同仁
+                // （成员级 [Format] 在构建期已被拒绝，所以这里没有成员声明可应用）。
+                if (ValueText.Format(entry.Value, ValueTextChannel.Header, memberFormat: null, formatter) is { } text)
                 {
                     ClearPendingRemoval(config, entry.Key);
                     config.Headers.Set(entry.Key, text);
@@ -212,7 +229,7 @@ internal sealed class BindingPlan
     /// 查询参数的文本化：标量取文本、集合逐元素取文本、其余（嵌套对象）原样交给 <see cref="ParamsSerializer"/> 展开。
     /// 集合在这里就折成文本列表，是因为查询串不需要再区分元素原始类型。
     /// </summary>
-    private static object? FormatQueryValue(object? value, ValueFormat? format, Func<object?, string?>? formatter)
+    private static object? FormatQueryValue(object? value, ValueFormat? format, Func<object?, ValueTextChannel, string?>? formatter)
     {
         if (value is null)
         {

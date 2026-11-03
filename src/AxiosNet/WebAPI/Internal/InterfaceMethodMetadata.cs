@@ -82,7 +82,7 @@ internal sealed partial class InterfaceMethodMetadata
     /// <summary>把参数绑定成配置：URL / 查询 / 请求体（含 multipart）→ 声明级静态头 → 参数头（后者覆盖同名项）。</summary>
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
-        var formatter = client.ValueFormatter;
+        var formatter = client.Axios.Defaults.ValueFormatter;
         var target = $"{_interfaceType!.Name}.{_methodName}";
         var config = new AxiosConfig
         {

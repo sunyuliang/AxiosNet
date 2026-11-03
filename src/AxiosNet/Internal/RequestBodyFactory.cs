@@ -1,3 +1,4 @@
+using AxiosNet.Metadata;
 using AxiosNet.Serialization;
 
 namespace AxiosNet.Internal;
@@ -222,7 +223,13 @@ internal static class RequestBodyFactory
         // 基础类型不经过序列化器，直接取文本。
         if (ScalarTypes.IsScalarType(type))
         {
-            var scalar = CreateText(ValueText.Format(data, ValueTextChannel.ScalarBody)!, mediaType, encoding, appendCharset, config);
+            // 实例钩子与声明式同一条规则（钩子 > 通道默认）：绑定层已定型的正文走上面的 FormattedScalarBody 分支，不会再被问一次。
+            var scalar = CreateText(
+                ValueText.Format(data, ValueTextChannel.ScalarBody, memberFormat: null, config.ValueFormatter)!,
+                mediaType,
+                encoding,
+                appendCharset,
+                config);
             ValidateDeclaredCharset(scalar, config, encoding);
             return scalar;
         }

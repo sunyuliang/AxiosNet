@@ -226,14 +226,12 @@ public sealed class BindingAttributesTests
     public async Task ValueFormatter_AppliesToPathAndQuery()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
-        using var client = new ApiClient(server.Url)
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.ValueFormatter = (value, _) => value switch
         {
-            ValueFormatter = value => value switch
-            {
-                int id => "p" + id,
-                DateTime date => date.ToString("yyyyMMdd"),
-                _ => null // 其余值走默认规则
-            }
+            int id => "p" + id,
+            DateTime date => date.ToString("yyyyMMdd"),
+            _ => null // 其余值走默认规则
         };
 
         await client.RequestAsync(new FormattedRequest
