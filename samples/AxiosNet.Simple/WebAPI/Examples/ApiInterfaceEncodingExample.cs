@@ -16,6 +16,7 @@ public sealed class ApiInterfaceEncodingExample : IExample
 
     public string Title => "方法级编码：[BodyContentType] 表单正文 + [QueryCollectionFormat] 重复键查询";
 
+    /// <summary>示例入口：方法级编码：[BodyContentType] 表单正文 + [QueryCollectionFormat] 重复键查询。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

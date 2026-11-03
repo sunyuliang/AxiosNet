@@ -21,6 +21,7 @@ internal sealed class DemoAuthApi
 
     private const string DemoUser = "alice";
     private const string DemoPassword = "wonderland";
+    // 演示令牌的有效期（秒）：签发时 exp 取当前时间加这个值，示例里不等它真的过期。
     private const int DefaultTokenTtlSeconds = 300;
 
     /// <summary>签名时间戳允许的偏差窗口（秒）：|服务端时间 - X-Timestamp| 超出即判过期。</summary>
@@ -34,6 +35,9 @@ internal sealed class DemoAuthApi
     private readonly ConcurrentDictionary<string, long> _nonces = new();
     private readonly ConcurrentDictionary<string, Session> _sessions = new();
 
+    /// <summary>访问令牌条目：指向哪个会话、何时过期（绝对时间，便于比较且不受时区影响）。</summary>
+    /// <param name="SessionId">令牌对应的会话 ID。</param>
+    /// <param name="ExpiresAtTicks">过期时刻的 UTC 刻度。</param>
     private sealed record AccessEntry(string SessionId, long ExpiresAtTicks);
 
     private sealed class Session
@@ -279,6 +283,7 @@ internal sealed class DemoAuthApi
         return (session, null);
     }
 
+    /// <summary>撤销会话：标记失效，并把该会话的访问令牌与刷新令牌一并摘掉。</summary>
     private void RevokeSession(Session session)
     {
         session.Revoked = true;
@@ -306,6 +311,7 @@ internal sealed class DemoAuthApi
         }
     }
 
+    /// <summary>nonce 数量超上限时清掉已过期的（防重放窗口之外的不再需要）。</summary>
     private void CleanupNonces(long now)
     {
         if (_nonces.Count <= NonceCacheLimit)

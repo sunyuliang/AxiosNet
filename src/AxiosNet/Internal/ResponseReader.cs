@@ -386,6 +386,7 @@ internal static class ResponseReader
         return false;
     }
 
+    /// <summary>JSON 首字符判定：对象、数组、字符串、负号、字面量首字母与数字都算，用于嗅探而非严格解析。</summary>
     private static bool IsJsonStart(char c)
         => c is '{' or '[' or '"' or '-' or 't' or 'f' or 'n' || (c >= '0' && c <= '9');
 
@@ -942,6 +943,7 @@ internal sealed class ResponseHeadersView : IReadOnlyDictionary<string, IEnumera
 {
     private readonly HttpHeaders? _responseHeaders;
     private readonly HttpContentHeaders? _contentHeaders;
+    // 展开后的头字典（懒建一次）：并发首次访问只发布一份。
     private Dictionary<string, IEnumerable<string>>? _map;
 
     public ResponseHeadersView(HttpHeaders? responseHeaders, HttpContentHeaders? contentHeaders)
@@ -985,10 +987,13 @@ internal sealed class ResponseHeadersView : IReadOnlyDictionary<string, IEnumera
 
     public int Count => Map.Count;
 
+    /// <summary>是否含指定响应头（比较不区分大小写）；首次访问时才构建合并视图。</summary>
     public bool ContainsKey(string key) => Map.ContainsKey(key);
 
+    /// <summary>取指定响应头的全部值；不存在时返回 false 而不抛异常。</summary>
     public bool TryGetValue(string key, out IEnumerable<string> value) => Map.TryGetValue(key, out value!);
 
+    /// <summary>枚举合并后的全部响应头（响应头在前、内容头在后，同名覆盖）。</summary>
     public IEnumerator<KeyValuePair<string, IEnumerable<string>>> GetEnumerator() => Map.GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

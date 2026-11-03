@@ -13,6 +13,7 @@ public sealed class InterfaceBuilder
         Declaration = new InterfaceDeclarationData { InterfaceType = interfaceType };
     }
 
+    /// <summary>构建中的接口声明；<c>Build</c> 后交给注册表。</summary>
     internal InterfaceDeclarationData Declaration { get; }
 
     /// <summary>接口级静态头（基接口在前、派生接口在后由生成器排好序）。</summary>
@@ -52,6 +53,7 @@ public sealed class InterfaceBuilder
         return AddMethod(name, method, path);
     }
 
+    /// <summary>追加一个方法声明并返回它的构建器（名字、HTTP 方法、路径此时已定）。</summary>
     private InterfaceMethodBuilder AddMethod(string name, string method, string path)
     {
         var declaration = new InterfaceMethodDeclaration

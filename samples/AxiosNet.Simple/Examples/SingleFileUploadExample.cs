@@ -11,6 +11,7 @@ public sealed class SingleFileUploadExample : IExample
 
     public string Title => "单文件上传：裸流直传 / multipart（服务端精确解析）";
 
+    /// <summary>示例入口：单文件上传：裸流直传 / multipart（服务端精确解析）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -66,6 +67,7 @@ public sealed class SingleFileUploadExample : IExample
         }
     }
 
+    /// <summary>比对服务端与本地哈希，给出「一致 / 不一致」的结论。</summary>
     private static string Verify(string? serverHash, string localHash)
         => serverHash == localHash ? "一致" : $"不一致（server={serverHash}）";
 }

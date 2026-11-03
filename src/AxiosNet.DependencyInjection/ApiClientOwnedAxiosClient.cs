@@ -12,7 +12,9 @@ internal sealed class ApiClientOwnedAxiosClient : IDisposable, IAsyncDisposable
 
     public AxiosClient Client { get; }
 
+    /// <summary>同步释放内部客户端，连接池随之关闭。</summary>
     public void Dispose() => Client.Dispose();
 
+    /// <summary>异步释放内部客户端，避免阻塞连接关闭。</summary>
     public ValueTask DisposeAsync() => Client.DisposeAsync();
 }

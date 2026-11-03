@@ -15,6 +15,7 @@ public sealed class RequestSigningExample : IExample
 
     public string Title => "请求签名：HMAC-SHA256(token + 请求内容)，防篡改、防重放";
 
+    /// <summary>示例入口：请求签名：HMAC-SHA256(token + 请求内容)，防篡改、防重放。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -132,6 +133,7 @@ public sealed class RequestSigningExample : IExample
         Console.WriteLine($"      [签名] {request.Method.Method} {pathAndQuery} bodyHash={RequestSigner.BodyHash(body)[..12]}…");
     }
 
+    /// <summary>跑一次预期失败的签名请求：抛错就打印错误码与服务端原因。</summary>
     private static async Task ShowSignedErrorAsync(Task<AxiosResponse<JsonElement>> request)
     {
         try

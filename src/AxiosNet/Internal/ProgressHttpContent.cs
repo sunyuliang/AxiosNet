@@ -33,6 +33,7 @@ internal sealed class ProgressHttpContent : HttpContent
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         => SerializeToStreamAsync(stream, context, CancellationToken.None);
 
+    /// <summary>写正文：内部内容的字节流经计量包装写出，边写边回调进度，结束后补发最后一帧。</summary>
     protected override async Task SerializeToStreamAsync(
         Stream stream,
         TransportContext? context,
@@ -55,6 +56,7 @@ internal sealed class ProgressHttpContent : HttpContent
     private Exception MapCallbackError(Exception ex)
         => AxiosException.CallbackFailed(_config, null, nameof(AxiosConfig.CallbackSettings.OnUploadProgress), ex, upload: true);
 
+    /// <summary>收尾补发进度回调；回调抛出的异常统一翻译成 <c>ERR_BAD_REQUEST</c>。</summary>
     private void Complete()
     {
         try
@@ -67,6 +69,7 @@ internal sealed class ProgressHttpContent : HttpContent
         }
     }
 
+    /// <summary>长度沿用内部内容声明的 <c>Content-Length</c>；未知时返回 false 走分块传输。</summary>
     protected override bool TryComputeLength(out long length)
     {
         var declared = _inner.Headers.ContentLength;
@@ -80,6 +83,7 @@ internal sealed class ProgressHttpContent : HttpContent
         return false;
     }
 
+    /// <summary>释放内部内容（本包装不持有其它资源）。</summary>
     protected override void Dispose(bool disposing)
     {
         if (disposing)

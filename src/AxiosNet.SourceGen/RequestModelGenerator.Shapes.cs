@@ -18,6 +18,7 @@ namespace AxiosNet.SourceGen
     {
         private const string ShapeNamespace = "AxiosNet.Generated";
 
+        // 被视为「调用点」的容器方法名：出现在形状构建器里说明是声明式代码，跳过。
         private static readonly HashSet<string> AxiosCallNames = new HashSet<string>(StringComparer.Ordinal)
         {
             "GetAsync",
@@ -35,6 +36,7 @@ namespace AxiosNet.SourceGen
             "GetUri"
         };
 
+        // 承载形状声明的容器类型名（同样用于跳过声明式代码）。
         private static readonly HashSet<string> AxiosContainerNames = new HashSet<string>(StringComparer.Ordinal)
         {
             "AxiosNet.Axios",
@@ -42,6 +44,7 @@ namespace AxiosNet.SourceGen
             "AxiosNet.WebAPI.ApiClient"
         };
 
+        // 注册形状管道：语法种子 → 形状批次 → 一次性执行（与请求模型那条管道并行，互不依赖）。
         private static void InitializeShapes(
             IncrementalGeneratorInitializationContext context,
             IncrementalValueProvider<GeneratorOptions> options)
@@ -58,6 +61,7 @@ namespace AxiosNet.SourceGen
                 static (output, pair) => ExecuteShapes(output, pair.Left, pair.Right));
         }
 
+        // 语法层粗筛：只放行匿名对象、类型声明、接口方法、Axios 容器调用与配置赋值/初始化器。
         private static bool IsShapeSeedCandidate(SyntaxNode node)
         {
             switch (node)
@@ -98,8 +102,10 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 只有 Params / Data 两个槽位承载会被序列化的值，其它配置项不产形状。
         private static bool IsConfigSlot(string name) => name == "Params" || name == "Data";
 
+        // 把一个语法种子的收集结果折成批次；没引用 AxiosNet 时直接返回（不可能有调用点）。
         private static ShapeBatchInfo? TransformShapeSeeds(GeneratorSyntaxContext context, CancellationToken cancellationToken)
         {
             var compilation = context.SemanticModel.Compilation;
@@ -145,6 +151,7 @@ namespace AxiosNet.SourceGen
                     new EquatableArray<DiagnosticInfo>(collection.DiagnosticItems.ToImmutableArray()));
         }
 
+        // 形状开关关掉就整段不跑；否则按 key 去重后每个形状输出一个生成文件。
         private static void ExecuteShapes(
             SourceProductionContext context,
             ImmutableArray<ShapeBatchInfo> batches,
@@ -207,6 +214,7 @@ namespace AxiosNet.SourceGen
 
             public List<DiagnosticInfo> DiagnosticItems { get; } = new List<DiagnosticInfo>();
 
+            // 匿名对象字面量：确认它真是匿名类型再登记，是否报 AXA013 取决于它是否处在 Axios 上下文。
             public void AddAnonymous(AnonymousObjectCreationExpressionSyntax syntax)
             {
                 if (_model.GetTypeInfo(syntax, _cancellationToken).Type is not INamedTypeSymbol { IsAnonymousType: true } anonymous)
@@ -262,6 +270,7 @@ namespace AxiosNet.SourceGen
                 return false;
             }
 
+            // 按显示名判定 AxiosConfig：配置赋值与初始化器只关心这一个类型，不做符号相等。
             private bool IsAxiosConfig(ExpressionSyntax expression)
                 => _model.GetTypeInfo(expression, _cancellationToken).Type?.ToDisplayString() == "AxiosNet.AxiosConfig";
 
@@ -284,6 +293,7 @@ namespace AxiosNet.SourceGen
                 return false;
             }
 
+            // 类型声明只有两种进法：显式标了 [AxiosShape]，或自身就是带路由特性的请求模型；不可见的请求模型由模型管线报 AXA009，这里不重复报。
             public void AddTypeDeclaration(TypeDeclarationSyntax declaration)
             {
                 if (_model.GetDeclaredSymbol(declaration, _cancellationToken) is not INamedTypeSymbol symbol)
@@ -317,6 +327,7 @@ namespace AxiosNet.SourceGen
                 }
             }
 
+            // 接口方法带路由特性时，把每个参数的类型登记成种子：声明式接口的入参同样要能烘焙形状。
             public void AddInterfaceMethod(MethodDeclarationSyntax declaration)
             {
                 if (_model.GetDeclaredSymbol(declaration, _cancellationToken) is not IMethodSymbol method
@@ -346,6 +357,7 @@ namespace AxiosNet.SourceGen
                 }
             }
 
+            // Axios / AxiosClient / ApiClient 的调用点：每个实参类型登记为种子，再顺带扫配置里的 Params / Data 赋值。
             public void AddInvocation(InvocationExpressionSyntax invocation)
             {
                 if (_model.GetSymbolInfo(invocation, _cancellationToken).Symbol is not IMethodSymbol method
@@ -366,6 +378,7 @@ namespace AxiosNet.SourceGen
                 SeedConfigSlots(invocation.DescendantNodes().OfType<AssignmentExpressionSyntax>());
             }
 
+            // 形如 config.Params = … 的赋值：接收者必须是 AxiosConfig，右侧表达式登记为种子。
             public void AddConfigAssignment(AssignmentExpressionSyntax assignment)
             {
                 if (assignment.Left is not MemberAccessExpressionSyntax access
@@ -378,6 +391,7 @@ namespace AxiosNet.SourceGen
                 SeedExpression(assignment.Right, assignment.Right.GetLocation());
             }
 
+            // new AxiosConfig { … } 的初始化器：目标类型是 AxiosConfig 时逐个表达式登记。
             public void AddConfigInitializer(InitializerExpressionSyntax initializer)
             {
                 if (!IsObjectCreation(initializer.Parent, out var creation) || !IsAxiosConfig(creation))
@@ -398,6 +412,7 @@ namespace AxiosNet.SourceGen
                 }
             }
 
+            // 从一批赋值里挑出 Params / Data（成员访问与裸标识符两种写法）并登记其右侧表达式。
             private void SeedConfigSlots(IEnumerable<AssignmentExpressionSyntax> assignments)
             {
                 foreach (var assignment in assignments)
@@ -412,6 +427,7 @@ namespace AxiosNet.SourceGen
                 }
             }
 
+            // 取表达式的静态类型登记种子；取不到类型（error 类型等）就跳过，生成期不抛。
             private void SeedExpression(ExpressionSyntax expression, Location location)
             {
                 if (_model.GetTypeInfo(expression, _cancellationToken).Type is { } type)
@@ -485,6 +501,7 @@ namespace AxiosNet.SourceGen
                 }
             }
 
+            // 递归收集一个类型的成员形状：接口与抽象类型不收，含类型参数或匿名类型的也不收（构造不出样本）。
             private void Collect(INamedTypeSymbol type, Location location)
             {
                 if (type.TypeKind is TypeKind.Interface || type.IsAbstract)
@@ -612,6 +629,7 @@ namespace AxiosNet.SourceGen
                     false));
             }
 
+            // 匿名类型收敛成形状；泛型上下文里的匿名类型直接放弃（模块初始化器无法构造样本）。
             private void AddAnonymousShape(INamedTypeSymbol anonymous, Location location, bool reportInaccessible)
             {
                 if (ContainsTypeParameter(anonymous))
@@ -733,6 +751,7 @@ namespace AxiosNet.SourceGen
                 return "new { " + string.Join(", ", parts) + " }";
             }
 
+            // 能否在生成代码里构造样本：指针、函数指针、类型参数、ref struct 一律不行。
             private static bool IsSampleable(ITypeSymbol type)
                 => type.TypeKind switch
                 {
@@ -742,6 +761,7 @@ namespace AxiosNet.SourceGen
                     _ => type is not INamedTypeSymbol { IsRefLikeType: true } && !ContainsTypeParameter(type)
                 };
 
+            // JsonIgnore 在 override 链上也算：基类属性标了忽略，派生类的同名属性同样不进形状。
             private bool IsIgnored(IPropertySymbol property)
             {
                 var attribute = FindInOverrideChain(property, _wellKnown.JsonIgnore);
@@ -762,6 +782,7 @@ namespace AxiosNet.SourceGen
                 return true;
             }
 
+            // 同一组 (诊断 ID, 参数) 只报一次：多个语法种子会命中同一个类型。
             private void AddDiagnostic(DiagnosticDescriptor descriptor, Location location, params string[] args)
             {
                 var key = descriptor.Id + "|" + string.Join("|", args);
@@ -792,6 +813,7 @@ namespace AxiosNet.SourceGen
                 return false;
             }
 
+            // 由形状 key 拼合法类名：只留字母数字、总长截到 48，避免生成超长标识符。
             private static string BuildShapeClassName(string key)
             {
                 var builder = new System.Text.StringBuilder();
@@ -809,11 +831,13 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 拆掉 Nullable 取内层类型；不是可空值类型时返回 null。
         private static INamedTypeSymbol? UnwrapNullable(INamedTypeSymbol type)
             => type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
                 ? type.TypeArguments[0] as INamedTypeSymbol
                 : null;
 
+        // 递归看数组元素与泛型实参：含类型参数就无法烘焙出具体形状。
         private static bool ContainsTypeParameter(ITypeSymbol type)
         {
             switch (type)
@@ -837,6 +861,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 递归看是否含匿名类型：匿名类型既不能出现在公开签名上，也构造不出样本。
         private static bool ContainsAnonymousType(ITypeSymbol type)
         {
             switch (type)
@@ -863,6 +888,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        /// <summary>是否按标量处理（先解可空）：集合与复杂类型要展平成多个键。</summary>
         private static bool IsScalar(ITypeSymbol type)
         {
             if (type is INamedTypeSymbol named && named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
@@ -939,6 +965,7 @@ namespace AxiosNet.SourceGen
                 || metadataName == "AxiosNet.AxiosConfig";
         }
 
+        // 沿基类链按元数据名比较，所以具体特性（HttpGet 之类）也能命中特性基类。
         private static bool DerivesFromName(INamedTypeSymbol type, string metadataName)
         {
             for (var current = type; current is not null; current = current.BaseType)
@@ -952,6 +979,7 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 是否字典：泛型字典顺带取出值类型；只实现非泛型 IDictionary 的也算（值形状仍要收集）。
         private static bool IsDictionary(INamedTypeSymbol type, out ITypeSymbol? valueType)
         {
             valueType = FindDictionaryValueType(type);
@@ -990,6 +1018,7 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        // 自身或任一接口是 IAsyncEnumerable 时为真：流式返回的类型不做形状烘焙。
         private static bool IsAsyncEnumerable(INamedTypeSymbol type)
         {
             foreach (var candidate in EnumerateSelfAndInterfaces(type))
@@ -1004,6 +1033,7 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 取 IEnumerable 的元素类型；只是普通集合（非泛型枚举）时返回 null。
         private static ITypeSymbol? GetEnumerableElement(INamedTypeSymbol type)
         {
             if (type.IsGenericType
@@ -1024,9 +1054,11 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        // 是否实现非泛型 IEnumerable：手写集合常只继承它。
         private static bool ImplementsNonGenericEnumerable(INamedTypeSymbol type)
             => HasInterface(type, "System.Collections.IEnumerable");
 
+        // 自身或任一接口的元数据名是否等于给定名。
         private static bool HasInterface(INamedTypeSymbol type, string metadataName)
         {
             if (GetMetadataName(type) == metadataName)
@@ -1080,6 +1112,7 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        // 先自身再全部接口：查找接口时不能漏掉「类型本身就是该接口」这种情况。
         private static IEnumerable<INamedTypeSymbol> EnumerateSelfAndInterfaces(INamedTypeSymbol type)
         {
             yield return type;
@@ -1089,6 +1122,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 拼出带外层类型的元数据名（Outer+Inner），与 GetTypeByMetadataName 的写法对齐。
         private static string GetMetadataName(INamedTypeSymbol type)
         {
             var name = type.MetadataName;

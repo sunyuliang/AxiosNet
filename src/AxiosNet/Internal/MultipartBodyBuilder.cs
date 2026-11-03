@@ -11,6 +11,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class MultipartBodyBuilder
 {
+    // 文件部件的默认媒体类型（无显式 Content-Type 时用它）。
     private const string OctetStreamMediaType = AxiosContentType.OctetStream;
 
     /// <summary>

@@ -345,6 +345,7 @@ internal static class InterfaceDeclaration
         return (definition.FullName ?? definition.Name) + "|" + string.Join("|", type.GetGenericArguments().Select(GetChainArgumentName));
     }
 
+    /// <summary>泛型实参的稳定名字：数组写成 <c>T[]</c>，泛型只取定义名、不带闭合实参，便于不同类型共用同一份声明。</summary>
     private static string GetChainArgumentName(Type type)
     {
         if (type.IsArray)
@@ -356,6 +357,7 @@ internal static class InterfaceDeclaration
         return definition.FullName ?? definition.Name;
     }
 
+    /// <summary>两个方法是否同签名：参数个数与逐个参数类型都要一致（显式接口实现靠它定位）。</summary>
     private static bool SameSignature(MethodInfo left, MethodInfo right)
     {
         var leftParameters = left.GetParameters();
@@ -376,6 +378,7 @@ internal static class InterfaceDeclaration
         return true;
     }
 
+    /// <summary>去掉特性类名末尾的 <c>Attribute</c>，让 <c>Get</c> 与 <c>GetAttribute</c> 两种写法都能对上。</summary>
     private static string TrimAttributeSuffix(string name)
         => name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name;
 }

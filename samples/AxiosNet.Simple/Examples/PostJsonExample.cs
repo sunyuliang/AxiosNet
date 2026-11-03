@@ -9,6 +9,7 @@ public sealed class PostJsonExample : IExample
 
     public string Title => "POST 对象自动 JSON 序列化（/echo 原样回显）";
 
+    /// <summary>示例入口：POST 对象自动 JSON 序列化（/echo 原样回显）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

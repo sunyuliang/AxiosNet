@@ -16,6 +16,7 @@ public sealed class SelfBuiltApiClientExample : IExample
 
     public string Title => "AddApiClient(baseAddress, ...)：自建底层客户端";
 
+    /// <summary>示例入口：AddApiClient(baseAddress, ...)：自建底层客户端。</summary>
     public async Task RunAsync(string baseUrl)
     {
         var builder = Host.CreateApplicationBuilder();

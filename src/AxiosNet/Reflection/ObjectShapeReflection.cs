@@ -15,6 +15,7 @@ internal static class ObjectShapeReflection
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>()
         => Create(typeof(T));
 
+    /// <summary>按公共可读属性构造形状（生成期未烘焙时的回退）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",

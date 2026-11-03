@@ -41,6 +41,7 @@ public sealed class ShapeBuilder<T>
         return this;
     }
 
+    /// <summary>泛型构建器的出口：草稿转成已绑定取值委托的形状。</summary>
     internal ObjectShape Build(Type type)
     {
         var members = new ShapeMember[_members.Count];
@@ -59,5 +60,11 @@ public sealed class ShapeBuilder<T>
         return new ObjectShape(type, members);
     }
 
+    /// <summary>展平过程中的中间记录：一个成员的名字、字段名、忽略标记、取值委托与格式化钩子。</summary>
+    /// <param name="Name">CLR 成员名。</param>
+    /// <param name="FieldName">展平后使用的字段名（特性改名后的名字）。</param>
+    /// <param name="Ignored">是否被忽略，展平时跳过。</param>
+    /// <param name="GetValue">直接取值的委托，避免运行期反射 <c>PropertyInfo</c>。</param>
+    /// <param name="Format">成员级格式化钩子；null 表示原样输出。</param>
     private sealed record ShapeMemberDraft(string Name, string FieldName, bool Ignored, Func<T, object?> GetValue, ValueFormat? Format);
 }

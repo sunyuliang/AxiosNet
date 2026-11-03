@@ -31,11 +31,16 @@ public class LargeBodyDownloadBenchmarks
     [Params(1, 8, 32)]
     public int Megabytes { get; set; }
 
+    // 回环服务器：把 Megabytes 档位的正文整块吐出去。
     private LoopbackHttpServer _server = null!;
+    // 被测客户端；用绝对 URL，不吃 BaseAddress 拼接成本。
     private AxiosClient _axios = null!;
+    // 基线客户端，handler 与库默认连接池对齐。
     private HttpClient _http = null!;
+    // 两侧共用的下载地址：地址字符串只拼一次。
     private string _url = null!;
 
+    /// <summary>按档位生成正文并起服务器；两侧都用绝对 URL，避免把基地址拼接算进任何一侧。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -47,6 +52,7 @@ public class LargeBodyDownloadBenchmarks
         _http = new HttpClient(ComparableHttpClientHandler.Create());
     }
 
+    /// <summary>先释放客户端再停服务器，避免残留连接在关闭时抛异常。</summary>
     [GlobalCleanup]
     public async Task CleanupAsync()
     {

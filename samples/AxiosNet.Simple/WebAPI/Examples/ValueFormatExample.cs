@@ -15,6 +15,7 @@ public sealed class ValueFormatExample : IExample
 
     public string Title => "值格式化：[Format] 格式串 / 静态函数 + ValueFormatter 优先级";
 
+    /// <summary>示例入口：值格式化：[Format] 格式串 / 静态函数 + ValueFormatter 优先级。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

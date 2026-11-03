@@ -40,9 +40,12 @@ public class ConfigMergeBenchmarks
     [Params(0, 2)]
     public int PerCallHeaders { get; set; }
 
+    // 按请求配置：复用同一个对象，构造成本不算进测量。
     private AxiosConfig _perCall = null!;
+    // 持有实例默认配置的客户端，合并的右值就是它的 Defaults。
     private AxiosClient _client = null!;
 
+    /// <summary>按参数组合造默认头与按请求头；一条 transform 用来覆盖「继承段长度 + 去重扫描」这段逻辑。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -69,6 +72,7 @@ public class ConfigMergeBenchmarks
         }
     }
 
+    /// <summary>释放客户端（连同内部连接池）：参数组合之间不共用实例。</summary>
     [GlobalCleanup]
     public void Cleanup() => _client.Dispose();
 

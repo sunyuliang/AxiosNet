@@ -22,6 +22,7 @@ internal static class DynamicJson
         return FromElement(document.RootElement);
     }
 
+    /// <summary>JSON 元素 → 动态对象图；布尔复用共享实例，整数不装箱。</summary>
     private static object? FromElement(JsonElement element)
     {
         switch (element.ValueKind)

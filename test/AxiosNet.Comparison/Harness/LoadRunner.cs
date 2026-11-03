@@ -35,6 +35,7 @@ internal sealed class LoadRunner
         _concurrency = concurrency;
     }
 
+    /// <summary>开满 <c>Concurrency</c> 路 session 跑一个窗口，结束后全部关掉：连接不跨窗口复用，上一轮的状态带不到下一轮。</summary>
     public async Task<WindowResult> RunAsync(ITarget target, TimeSpan window)
     {
         var sessions = new ITargetSession[_concurrency];
@@ -60,6 +61,7 @@ internal sealed class LoadRunner
         }
     }
 
+    /// <summary>跑一个测量窗口：全部 worker 并发打请求，汇总吞吐、延迟分位、分配与 CPU 占比。</summary>
     private async Task<WindowResult> MeasureAsync(
         string name,
         ITargetSession[] sessions,
@@ -202,6 +204,18 @@ internal sealed class LoadRunner
 }
 
 /// <summary>一个测量窗口的结果。延迟为客户端观察值（含服务端处理 + 回环 RTT + 反序列化）。</summary>
+/// <param name="Target">被测实现的显示名。</param>
+/// <param name="Seconds">该窗口的实际墙钟时长。</param>
+/// <param name="Completed">成功完成的请求数。</param>
+/// <param name="Errors">失败请求数。</param>
+/// <param name="FirstError">第一个异常的样本，用来解释失败原因；全成功时为 null。</param>
+/// <param name="Rps">吞吐（请求 / 秒）。</param>
+/// <param name="P50Microseconds">延迟中位数，单位微秒。</param>
+/// <param name="P99Microseconds">延迟 99 分位，单位微秒。</param>
+/// <param name="MaxMicroseconds">最大延迟，单位微秒。</param>
+/// <param name="AllocatedBytesPerRequest">每请求分摊的托管分配字节数。</param>
+/// <param name="CpuShare">该窗口占用的 CPU 时间与墙钟之比（1.0 = 占满一核）。</param>
+/// <param name="SamplesDropped">超出采样预算而没进延迟统计的请求数（只影响分位精度，不影响吞吐与分配）。</param>
 internal readonly record struct WindowResult(
     string Target,
     double Seconds,

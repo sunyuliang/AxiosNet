@@ -27,6 +27,7 @@ public sealed class OrderBinarySerializer : IContentSerializer
     public object? Deserialize(string text, Type type, AxiosConfig config)
         => throw new NotSupportedException("二进制格式不支持文本入口。");
 
+    /// <summary>按示例二进制格式解析出 <see cref="BinaryOrder"/>。</summary>
     public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Parse(data.Span);
 

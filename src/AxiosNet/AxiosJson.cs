@@ -11,6 +11,7 @@ namespace AxiosNet;
 /// </remarks>
 public static class AxiosJson
 {
+    // 默认 JSON 选项（Web 默认：camelCase 命名 + 忽略大小写读取），可整体替换。
     private static JsonSerializerOptions _options = new(JsonSerializerDefaults.Web);
 
     /// <summary>全局默认 JSON 选项，默认 <see cref="JsonSerializerDefaults.Web"/>。</summary>

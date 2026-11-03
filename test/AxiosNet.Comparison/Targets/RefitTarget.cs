@@ -24,12 +24,15 @@ internal sealed class RefitTarget : ITarget
 
     public string Name => "Refit";
 
+    /// <summary>为一个 worker 开一条会话；Refit 生成的接口只借用共享的 <see cref="HttpClient"/>。</summary>
     public ITargetSession OpenSession() => new Session(_api);
 
+    /// <summary>释放底层 <see cref="HttpClient"/>。</summary>
     public void Dispose() => _http.Dispose();
 
     private sealed class Session(IUserApi api) : ITargetSession
     {
+        /// <summary>调生成的接口方法发一次 GET；返回 null 视为错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             var user = await api.GetUserAsync(cancellationToken).ConfigureAwait(false);
@@ -39,6 +42,7 @@ internal sealed class RefitTarget : ITarget
             }
         }
 
+        /// <summary>会话不独占资源，无需释放。</summary>
         public void Dispose()
         {
         }

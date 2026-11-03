@@ -17,6 +17,7 @@ public sealed class NamedSitesExample : IExample
 
     public string Title => "AddApiClient(name, ...)：多站点命名注册 + IApiClientResolver";
 
+    /// <summary>示例入口：AddApiClient(name, ...)：多站点命名注册 + IApiClientResolver。</summary>
     public async Task RunAsync(string baseUrl)
     {
         var builder = Host.CreateApplicationBuilder();

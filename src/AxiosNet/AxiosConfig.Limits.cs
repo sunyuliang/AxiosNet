@@ -197,6 +197,7 @@ public sealed partial class AxiosConfig
             }
         }
 
+        /// <summary>浅拷贝（合并层用）：策略与委托共用，不深克隆。</summary>
         internal LimitSettings Clone() => (LimitSettings)MemberwiseClone();
     }
 }

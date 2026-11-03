@@ -90,6 +90,7 @@ public sealed class AxiosJsonFormatTypeInfoResolver : IJsonTypeInfoResolver
 /// <summary>按属性类型构造 <see cref="FormattedValueConverter{T}"/>（泛型类无法直接调用自己的静态工厂）。</summary>
 internal static class FormattedValueConverterFactory
 {
+    /// <summary>为指定类型造一个 <c>[Format]</c> 转换器（net7+ 的 JSON 桥）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL3050",
@@ -104,6 +105,7 @@ internal static class FormattedValueConverterFactory
 }
 
 /// <summary>按成员级格式化写出 JSON 字符串，读取时按不变文化还原。</summary>
+/// <summary>单个 <c>[Format]</c> 成员的转换器：写走格式化，读按不变文化还原。</summary>
 [UnconditionalSuppressMessage(
     "Trimming",
     "IL2026",
@@ -121,6 +123,7 @@ internal sealed class FormattedValueConverter<T> : JsonConverter<T>
         _format = format;
     }
 
+    /// <summary>读：只接受 JSON 字符串，按 <c>[Format]</c> 反解成目标类型（可空类型先剥外层）。</summary>
     public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType != JsonTokenType.String)
@@ -133,6 +136,7 @@ internal sealed class FormattedValueConverter<T> : JsonConverter<T>
         return (T)Parse(text, target);
     }
 
+    /// <summary>写：null 写 null，其余按 <c>[Format]</c> 转成字符串；格式化返回 null 时回落到通道默认规则。</summary>
     public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
     {
         if (value is null)
@@ -145,6 +149,7 @@ internal sealed class FormattedValueConverter<T> : JsonConverter<T>
         writer.WriteStringValue(ValueText.Format(value, ValueTextChannel.ScalarBody, _format) ?? string.Empty);
     }
 
+    /// <summary>把格式化后的字符串还原成目标类型：<c>string</c> 直通，其余走 <c>TypeConverter</c>。</summary>
     private static object Parse(string text, Type target)
     {
         if (target == typeof(string))

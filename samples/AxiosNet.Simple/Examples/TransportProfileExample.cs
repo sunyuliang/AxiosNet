@@ -13,6 +13,7 @@ public sealed class TransportProfileExample : IExample
 
     public string Title => "传输档：一个池多条出口，按请求切档、各档独立连接与 Cookie 会话";
 
+    /// <summary>示例入口：传输档：一个池多条出口，按请求切档、各档独立连接与 Cookie 会话。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

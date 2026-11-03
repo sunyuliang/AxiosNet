@@ -16,6 +16,7 @@ public sealed class ApiInterfaceStreamingExample : IExample
 
     public string Title => "接口级流式：返回 IAsyncEnumerable + [Stream] 选帧格式（SSE / JSON 数组）";
 
+    /// <summary>示例入口：接口级流式：返回 IAsyncEnumerable + [Stream] 选帧格式（SSE / JSON 数组）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

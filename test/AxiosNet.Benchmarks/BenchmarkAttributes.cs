@@ -11,6 +11,7 @@ namespace AxiosNet.Benchmarks;
 [AttributeUsage(AttributeTargets.Class)]
 internal sealed class BenchmarkGroupAttribute(string name, string note) : Attribute
 {
+    /// <summary>分组名：既是菜单里的分组标题，也是「同口径才能放一起下结论」的判据。</summary>
     public string Name { get; } = name;
 
     /// <summary>分组的口径说明，印在菜单的分组标题行上。</summary>
@@ -30,5 +31,6 @@ internal sealed class BenchmarkGroupAttribute(string name, string note) : Attrib
 [AttributeUsage(AttributeTargets.Class)]
 internal sealed class BenchmarkHintAttribute(string hint) : Attribute
 {
+    /// <summary>一句「这组数字怎么读」；反射拿不到比值该乘还是该除，所以只能由人写在类上。</summary>
     public string Hint { get; } = hint;
 }

@@ -6,17 +6,22 @@ namespace AxiosNet.Comparison;
 /// <summary>命令行参数。无参数时按默认口径跑全量对比，不设门禁（只出数字）。</summary>
 internal sealed class Options
 {
+    /// <summary>每个实现同时压测的 worker 数（<c>--concurrency</c>，默认 8）；与轮次无关，恒为常驻连接数。</summary>
     public int Concurrency { get; private set; } = 8;
 
+    /// <summary>每轮测量窗口的秒数（<c>--duration</c>，默认 1）；下限 0.2，窗口再短 p99 只是在测抖动。</summary>
     public double DurationSeconds { get; private set; } = 1;
 
+    /// <summary>测量轮数（<c>--rounds</c>，默认 10）；每轮轮转实现顺序，汇总取轮中位数。</summary>
     public int Rounds { get; private set; } = 10;
 
+    /// <summary>每个实现的预热秒数（<c>--warmup</c>，默认 3）：让分层编译、连接池与 TLS 先到位，预热数据不计入结果。</summary>
     public double WarmupSeconds { get; private set; } = 3;
 
     /// <summary>预热后等待分层编译在后台落地的秒数（首次运行尤其需要；跑热以后可以不看）。</summary>
     public double CooldownSeconds { get; private set; } = 2;
 
+    /// <summary>参与对比的实现（已归一成 <see cref="LibraryCatalog"/> 里的标准名）；RawSocket 基线由目录自动追加。</summary>
     public IReadOnlyList<string> Libraries { get; private set; } = LibraryCatalog.DefaultLibraries;
 
     /// <summary>AxiosNet 吞吐 / HttpClient 吞吐的下限；null 表示不做门禁。</summary>
@@ -25,12 +30,16 @@ internal sealed class Options
     /// <summary>AxiosNet 净分配 / HttpClient 净分配的上限；null 表示不做门禁。</summary>
     public double? MaxAllocRatio { get; private set; }
 
+    /// <summary>报告输出目录（<c>--out</c>，默认 results，相对当前工作目录）。</summary>
     public string OutputDirectory { get; private set; } = "results";
 
+    /// <summary>报告文件名后缀（<c>--tag</c>）：同一个输出目录要归档多组结果时用来区分，非法文件名字符会被替换。</summary>
     public string? Tag { get; private set; }
 
+    /// <summary>只打印用法就返回（<c>-h</c> / <c>--help</c>），不跑任何测量。</summary>
     public bool ShowHelp { get; private set; }
 
+    /// <summary>解析命令行；<c>--name=value</c> 与 <c>--name value</c> 两种写法都认，值非法统一抛 <see cref="ArgumentException"/>（外层翻成退出码 3）。</summary>
     public static Options Parse(string[] args)
     {
         var options = new Options();
@@ -89,6 +98,7 @@ internal sealed class Options
         return options;
     }
 
+    /// <summary>打印用法、退出码约定与测量口径提示（2 = 有失败请求、1 = 门禁未过、3 = 参数错误）。</summary>
     public static void PrintHelp()
     {
         Console.WriteLine(
@@ -101,7 +111,7 @@ internal sealed class Options
             选项：
               --concurrency <n>        每实现的并发 worker 数（默认 8）
               --duration <秒>          每轮测量窗口（默认 1）
-              --rounds <n>             测量轮数，每轮轮转实现顺序（默认 5）
+              --rounds <n>             测量轮数，每轮轮转实现顺序（默认 10）
               --warmup <秒>            每实现预热窗口（默认 3）
               --cooldown <秒>          预热后等待分层编译（默认 2）
               --libs <a,b,...>         参与对比的实现（默认 HttpClient,Refit,RestSharp,Flurl,AxiosNet）
@@ -132,11 +142,13 @@ internal sealed class Options
         return eq < 0 ? (arg, null) : (arg[..eq], arg[(eq + 1)..]);
     }
 
+    /// <summary>解析整数参数并检查下界；不满足就抛出，由入口转成用法提示。</summary>
     private static int ParseInt(string name, string text, int min)
         => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= min
             ? value
             : throw new ArgumentException($"{name} 需要 ≥ {min} 的整数，收到「{text}」。");
 
+    /// <summary>解析浮点参数：先拒掉非有限值（<c>Infinity</c> 会让后续换算溢出），再检查下界。</summary>
     private static double ParseDouble(string name, string text, double min)
         // TryParse 会接受 "Infinity"，而 TimeSpan.FromSeconds(∞) 会抛 OverflowException；
         // 这类值必须在参数层拦掉，否则用户拿到的是未处理异常而不是用法提示（退出码 3）。
@@ -146,6 +158,7 @@ internal sealed class Options
             ? value
             : throw new ArgumentException($"{name} 需要 ≥ {min:0.##} 的有限数，收到「{text}」。");
 
+    /// <summary>解析逗号分隔的实现名列表并逐个规范化；有未知名字时报错并列出可选值。</summary>
     private static IReadOnlyList<string> ParseLibraries(string text)
     {
         var result = new List<string>();

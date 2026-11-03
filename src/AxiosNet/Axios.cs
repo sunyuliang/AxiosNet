@@ -10,7 +10,9 @@ namespace AxiosNet;
 /// </summary>
 public static class Axios
 {
+    // 默认实例的懒创建锁：只在首次创建与 Dispose 后重建时进入。
     private static readonly object DefaultClientLock = new();
+    // 进程级默认实例；Dispose 后置回 null，下次访问重建。
     private static AxiosClient? _defaultClient;
 
     /// <summary>全局默认实例（对应 axios.defaults / axios.interceptors 所在实例）。</summary>

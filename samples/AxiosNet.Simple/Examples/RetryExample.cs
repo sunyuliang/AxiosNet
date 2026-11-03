@@ -23,6 +23,7 @@ public sealed class RetryExample : IExample
 
     public string Title => "弹性重试：默认不重试 / 次数与间隔 / 幂等判定 / OnRetry / 自定义策略";
 
+    /// <summary>示例入口：弹性重试：默认不重试 / 次数与间隔 / 幂等判定 / OnRetry / 自定义策略。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -106,9 +107,11 @@ public sealed class RetryExample : IExample
     /// <summary>一次性正文：库认不出可重放形态，重试 / 换端点开启时会在发送前拒绝。</summary>
     private sealed class OneShotContent : HttpContent
     {
+        /// <summary>一次性正文：只往流里写 5 个字节，没有可回拨的来源。</summary>
         protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
             => await stream.WriteAsync("hello"u8.ToArray()).ConfigureAwait(false);
 
+        /// <summary>声明固定长度 5，这样请求能带 <c>Content-Length</c> 而不是分块。</summary>
         protected override bool TryComputeLength(out long length)
         {
             length = 5;
@@ -131,8 +134,10 @@ public sealed class RetryExample : IExample
 
         public int MaxRetries { get; }
 
+        /// <summary>只对构造时指定的状态码重试。</summary>
         public bool ShouldRetry(AxiosRetryContext context) => context.StatusCode == _status;
 
+        /// <summary>固定间隔，不做退避（示例要的是可观察的重试节奏）。</summary>
         public TimeSpan GetDelay(AxiosRetryContext context) => _delay;
     }
 }

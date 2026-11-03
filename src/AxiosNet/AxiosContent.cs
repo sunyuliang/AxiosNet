@@ -16,11 +16,13 @@ namespace AxiosNet;
 /// </remarks>
 public static class AxiosContent
 {
+    // 媒体类型 → 序列化器（进程级，用户注册入口）；空表时走内置快路径。
     private static readonly ConcurrentDictionary<string, IContentSerializer> Registry = new(StringComparer.Ordinal);
 
     /// <summary>注册表条目数，只用于 <see cref="Lookup"/> 的空表快路径判定。</summary>
     private static int _registeredCount;
 
+    // 全局序列化器：null = 未注入，按媒体类型自动匹配。
     private static IContentSerializer? _serializer;
 
     /// <summary>

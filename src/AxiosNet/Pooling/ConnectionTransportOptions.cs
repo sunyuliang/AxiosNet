@@ -69,5 +69,6 @@ public sealed class ConnectionTransportOptions
     /// </summary>
     public bool UseCookies { get; set; }
 
+    /// <summary>浅拷贝（合并层用）：Handler 工厂与引用型子项共用。</summary>
     internal ConnectionTransportOptions Clone() => (ConnectionTransportOptions)MemberwiseClone();
 }

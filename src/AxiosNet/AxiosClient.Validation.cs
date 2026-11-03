@@ -37,6 +37,9 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>两种连接级场景的报错文案。</summary>
+    /// <param name="MaxRedirects">重定向次数不被接受时的文案。</param>
+    /// <param name="WithCredentials">凭证 / Cookie 不被接受时的文案。</param>
+    /// <param name="ProxyCredentials">代理及其凭证不被接受时的文案。</param>
     private sealed record ConnectionLevelMessages(string MaxRedirects, string WithCredentials, string ProxyCredentials)
     {
         /// <summary>注入自定义 handler：连接级选项由 handler 决定。</summary>
@@ -456,6 +459,7 @@ public sealed partial class AxiosClient
         return winner;
     }
 
+    /// <summary>并发上限与已建闸门不一致时的报错：讲清这是实例级配置、按请求写不会生效。</summary>
     private static AxiosException ConcurrencyMismatch(AxiosConfig config, int requested, int effective)
     {
         return AxiosException.InvalidOption(
@@ -465,6 +469,7 @@ public sealed partial class AxiosClient
             config);
     }
 
+    /// <summary>排队上限与已建闸门不一致时的报错（null 在消息里显示为「不限」）。</summary>
     private static AxiosException QueueLengthMismatch(AxiosConfig config, int? requested, int? effective)
     {
         static string Text(int? value) => value is int v ? v.ToString() : "null（不限）";

@@ -13,6 +13,7 @@ namespace AxiosNet.WebAPI.Reflection;
 /// </summary>
 internal static class RequestModelDeclarationReader
 {
+    // AOT 保留范围：模型类型的公开属性与实现的接口。
     private const DynamicallyAccessedMemberTypes ModelMembers =
         DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
 
@@ -177,6 +178,7 @@ internal static class RequestModelDeclarationReader
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.GetIndexParameters().Length == 0);
 
+    /// <summary>反射判定是否实现 <c>IApiRequest&lt;TResponse&gt;</c>；只有 JIT 路径会走到，AOT 下由生成器直接写标志。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",

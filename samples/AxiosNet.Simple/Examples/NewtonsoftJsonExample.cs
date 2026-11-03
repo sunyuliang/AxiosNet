@@ -12,6 +12,7 @@ public sealed class NewtonsoftJsonExample : IExample
 
     public string Title => "自定义 JSON 序列化：用 Newtonsoft.Json 替换 System.Text.Json";
 
+    /// <summary>示例入口：自定义 JSON 序列化：用 Newtonsoft.Json 替换 System.Text.Json。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

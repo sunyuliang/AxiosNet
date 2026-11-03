@@ -16,6 +16,7 @@ public sealed class HedgingAndFailoverExample : IExample
 
     public string Title => "并发对冲 / 备用端点：首个成功结果胜出、全失败交给重试、换端点重发";
 
+    /// <summary>示例入口：并发对冲 / 备用端点：首个成功结果胜出、全失败交给重试、换端点重发。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

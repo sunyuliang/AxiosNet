@@ -10,6 +10,7 @@ public sealed class DynamicRequestExample : IExample
 
     public string Title => "dynamic 请求：AxiosDynamic / ExpandoObject 作为 data / params";
 
+    /// <summary>示例入口：dynamic 请求：AxiosDynamic / ExpandoObject 作为 data / params。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

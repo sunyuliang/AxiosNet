@@ -49,14 +49,17 @@ namespace AxiosNet.SourceGen
             InitializeDependencyInjection(context, interfaces, options);
         }
 
+        // 语法层粗筛：非接口的类型声明且带特性；是不是请求模型留给语义层判定。
         private static bool IsCandidate(SyntaxNode node)
             => node is TypeDeclarationSyntax declaration
                 && declaration is not InterfaceDeclarationSyntax
                 && declaration.AttributeLists.Count > 0;
 
+        // 读 buildTransitive props 暴露的编译期属性；没配置返回 null，默认值由调用方决定。
         private static string? GetProperty(AnalyzerConfigOptionsProvider provider, string key)
             => provider.GlobalOptions.TryGetValue(key, out var value) ? value : null;
 
+        // 输出阶段：开关关闭时只在 PublishAot 下报一条提示，否则按全名去重后逐模型生成文件并汇总诊断。
         private static void Execute(SourceProductionContext context, ImmutableArray<RequestModelInfo> models, GeneratorOptions options)
         {
             if (!options.Enabled)
@@ -92,6 +95,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 单个类型声明 → 生成数据；没有路由特性（不是请求模型）时返回 null。
         private static RequestModelInfo? Transform(GeneratorSyntaxContext context, System.Threading.CancellationToken cancellationToken)
         {
             var declaration = (TypeDeclarationSyntax)context.Node;
@@ -142,6 +146,7 @@ namespace AxiosNet.SourceGen
             return BuildModelInfo(symbol, routeAttributes, declaration, wellKnown, compilation);
         }
 
+        // 把类型符号、路由特性与语法位置折成生成数据：类名、路由、静态头、成员和诊断都在这里定。
         private static RequestModelInfo BuildModelInfo(
             INamedTypeSymbol symbol,
             List<AttributeData> routeAttributes,
@@ -260,6 +265,7 @@ namespace AxiosNet.SourceGen
                 true);
         }
 
+        // 单个属性 → 一条成员绑定：解析 Path / Query / Header / Body / Part，并写好取值的表达式。
         private static RequestMemberInfo BuildMemberInfo(
             INamedTypeSymbol model,
             IPropertySymbol property,
@@ -318,6 +324,7 @@ namespace AxiosNet.SourceGen
                 new EquatableArray<MemberBindingInfo>(bindings.ToImmutable()));
         }
 
+        /// <summary>读出成员命中的绑定目标（路径 / 查询 / 头 / 正文 / 部件）；多个命中留给构建期报错。</summary>
         private static MemberBindingInfo? ReadBinding(IPropertySymbol property, WellKnownSymbols wellKnown, bool inherit)
         {
             var path = Find(property, wellKnown.Path, inherit);
@@ -416,6 +423,7 @@ namespace AxiosNet.SourceGen
             return (multipart, allowAnonymous, authorizeScheme);
         }
 
+        // 沿基类链由表及里收集 Headers 声明的静态头：基类在前、派生类在后，同名由运行时按顺序覆盖。
         private static IEnumerable<string> ReadStaticHeaders(INamedTypeSymbol symbol, WellKnownSymbols wellKnown)
         {
             var chain = new List<INamedTypeSymbol>();
@@ -452,6 +460,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 是否实现 IApiRequest：没有它就取不到响应类型，属于不支持的情形。
         private static bool ImplementsApiRequest(INamedTypeSymbol symbol, WellKnownSymbols wellKnown)
         {
             if (wellKnown.ApiRequest is null)
@@ -471,6 +480,7 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 请求模型不能用的原因（静态类、开放泛型等），null 表示可用；返回值直接进诊断文案。
         private static string? GetUnsupportedReason(INamedTypeSymbol symbol, Compilation compilation)
         {
             if (symbol.IsStatic)
@@ -509,6 +519,7 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        // 类型能否在生成代码里被引用：数组看元素、泛型看实参、嵌套类型逐层看可见性。
         private static bool IsTypeAccessible(ITypeSymbol type, IAssemblySymbol currentAssembly)
         {
             switch (type)
@@ -550,11 +561,13 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 同程序集内 public / internal / protected internal 都算可见，跨程序集只认 public。
         private static bool IsAccessible(Accessibility accessibility, bool sameAssembly)
             => sameAssembly
                 ? accessibility is Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal
                 : accessibility is Accessibility.Public;
 
+        // 按反射 GetProperties 的顺序枚举可绑定属性：本类型在前、基类在后，override 与 new 隐藏只留最派生一份。
         private static IEnumerable<IPropertySymbol> EnumerateProperties(INamedTypeSymbol symbol)
         {
             // 与反射 GetProperties(Public | Instance) 一致：本类型声明的属性在前、基类在后；
@@ -660,6 +673,7 @@ namespace AxiosNet.SourceGen
             return SymbolEqualityComparer.Default.Equals(left, right);
         }
 
+        // dynamic 与 object 视为同一回事：都表示「不做强类型绑定」。
         private static bool IsDynamicOrObject(ITypeSymbol type)
             => type.TypeKind == TypeKind.Dynamic || type.SpecialType == SpecialType.System_Object;
 
@@ -713,6 +727,7 @@ namespace AxiosNet.SourceGen
             return definition8.Construct(head.ToArray());
         }
 
+        // 在属性（可选沿继承链）上找指定特性；特性符号缺失时直接返回 null。
         private static AttributeData? Find(IPropertySymbol property, INamedTypeSymbol? attributeType, bool inherit)
         {
             if (attributeType is null)
@@ -789,6 +804,7 @@ namespace AxiosNet.SourceGen
         private static bool IsValidFormatMethod(INamedTypeSymbol type, string methodName)
             => type.GetMembers(methodName).OfType<IMethodSymbol>().Any(IsFormatSignature);
 
+        // 格式方法的形态判据：public 静态、非泛型、单参数、返回 string。
         private static bool IsFormatSignature(IMethodSymbol method)
             => method.IsStatic
                 && !method.IsGenericMethod
@@ -798,6 +814,7 @@ namespace AxiosNet.SourceGen
                 && method.Parameters[0].Type.SpecialType == SpecialType.System_Object
                 && method.ReturnType.SpecialType == SpecialType.System_String;
 
+        // 沿 override 链往上找特性：基类属性上的标注对派生重写同样生效。
         private static AttributeData? FindInOverrideChain(IPropertySymbol property, INamedTypeSymbol? attributeType)
         {
             if (attributeType is null)
@@ -819,6 +836,7 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        // 数一条成员自带的绑定特性个数：多于一个说明声明冲突，要报诊断。
         private static int CountOwnBindings(ImmutableArray<AttributeData> attributes, WellKnownSymbols wellKnown)
         {
             var count = 0;
@@ -838,11 +856,13 @@ namespace AxiosNet.SourceGen
             return count;
         }
 
+        // 取特性构造参数里的字符串；位置不够或类型不符返回 null。
         private static string? GetStringArgument(AttributeData attribute, int index)
             => attribute.ConstructorArguments.Length > index && attribute.ConstructorArguments[index].Value is string value
                 ? value
                 : null;
 
+        // 沿基类链做符号相等比较：具体特性能否归到某个特性基类。
         private static bool DerivesFrom(INamedTypeSymbol? candidate, INamedTypeSymbol? baseType)
         {
             for (var current = candidate; current is not null; current = current.BaseType)
@@ -856,17 +876,21 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 属性的源码位置；元数据里的属性没有源码位置，给 Location.None 而不是让诊断抛。
         private static Location GetLocation(IPropertySymbol property)
             => property.Locations.FirstOrDefault(location => location.IsInSource) ?? Location.None;
 
+        // 数组转可结构比较的快照：增量管线的相等性判断靠它。
         private static EquatableArray<string> ToEquatable(string[] values) => new EquatableArray<string>(values.ToImmutableArray());
 
+        // 往 builder 里追加一条诊断并返回快照：构建过程要多次拼装同一份数据。
         private static EquatableArray<DiagnosticInfo> AddDiagnostic(ImmutableArray<DiagnosticInfo>.Builder diagnostics, DiagnosticInfo diagnostic)
         {
             diagnostics.Add(diagnostic);
             return new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable());
         }
 
+        // 类型显示名 → 合法类名：非字母数字一律换成下划线。
         private static string BuildClassName(INamedTypeSymbol symbol)
         {
             var builder = new StringBuilder();
@@ -879,6 +903,7 @@ namespace AxiosNet.SourceGen
             return "__AxiosRequestModel_" + builder + "_" + hash.ToString("x8");
         }
 
+        // FNV-1a 32 位哈希：给类名拼稳定后缀，同名不同命名空间不会撞车。
         private static uint Fnv1a(string value)
         {
             var hash = 2166136261u;
@@ -891,6 +916,7 @@ namespace AxiosNet.SourceGen
             return hash;
         }
 
+        // 关键字标识符加 @ 前缀，非关键字原样返回。
         private static string EscapeIdentifier(string name)
             => SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None || SyntaxFacts.GetContextualKeywordKind(name) != SyntaxKind.None
                 ? "@" + name
@@ -935,64 +961,94 @@ namespace AxiosNet.SourceGen
                 "AxiosNet.WebAPI.DependencyInjection.ApiInterfaceServiceCollectionExtensions");
         }
 
+        /// <summary><c>[HttpApi]</c>：接口级路由前缀。</summary>
         public INamedTypeSymbol? HttpApi { get; }
 
+        /// <summary><c>[Headers]</c>：接口 / 类型级的静态头。</summary>
         public INamedTypeSymbol? Headers { get; }
 
+        /// <summary><c>[Multipart]</c>：把请求正文标成 multipart/form-data。</summary>
         public INamedTypeSymbol? Multipart { get; }
 
+        /// <summary><c>[Authorize]</c>：该成员要带令牌。</summary>
         public INamedTypeSymbol? Authorize { get; }
 
+        /// <summary><c>[AllowAnonymous]</c>：该成员不需要令牌，授权链整条跳过。</summary>
         public INamedTypeSymbol? AllowAnonymous { get; }
 
+        /// <summary><c>[Path]</c>：替换路由里的同名占位。</summary>
         public INamedTypeSymbol? Path { get; }
 
+        /// <summary><c>[Query]</c>：成员进查询串。</summary>
         public INamedTypeSymbol? Query { get; }
 
+        /// <summary><c>[Header]</c>：单值请求头。</summary>
         public INamedTypeSymbol? Header { get; }
 
+        /// <summary><c>[HeaderCollection]</c>：整个字典 / 集合进请求头。</summary>
         public INamedTypeSymbol? HeaderCollection { get; }
 
+        /// <summary><c>[Body]</c>：成员作为请求正文。</summary>
         public INamedTypeSymbol? Body { get; }
 
+        /// <summary><c>[Part]</c>：成员作为一个 multipart 部件。</summary>
         public INamedTypeSymbol? Part { get; }
 
+        /// <summary><c>[ApiIgnore]</c>：成员不参与任何绑定。</summary>
         public INamedTypeSymbol? ApiIgnore { get; }
 
+        /// <summary><c>[Format]</c>：成员或返回值用哪种序列化格式。</summary>
         public INamedTypeSymbol? Format { get; }
 
+        /// <summary><c>IApiRequest&lt;T&gt;</c>：声明响应类型的基接口。</summary>
         public INamedTypeSymbol? ApiRequest { get; }
 
+        /// <summary>System.Text.Json 的 <c>[JsonPropertyName]</c>：属性名映射，烘焙进正文形状。</summary>
         public INamedTypeSymbol? JsonPropertyName { get; }
 
+        /// <summary>System.Text.Json 的 <c>[JsonIgnore]</c>：属性不进正文。</summary>
         public INamedTypeSymbol? JsonIgnore { get; }
 
+        /// <summary><c>[AxiosShape]</c>：显式指定用哪个类型烘焙展平形状。</summary>
         public INamedTypeSymbol? AxiosShape { get; }
 
+        /// <summary><c>Task</c>：无返回值的接口方法签名。</summary>
         public INamedTypeSymbol? Task { get; }
 
+        /// <summary><c>Task&lt;T&gt;</c>：带返回值的接口方法签名。</summary>
         public INamedTypeSymbol? TaskOfT { get; }
 
+        /// <summary><c>AxiosResponse</c>：只要状态与头、不要正文的返回包装。</summary>
         public INamedTypeSymbol? AxiosResponse { get; }
 
+        /// <summary><c>AxiosResponse&lt;T&gt;</c>：带正文的返回包装。</summary>
         public INamedTypeSymbol? AxiosResponseOfT { get; }
 
+        /// <summary><c>IAsyncEnumerable&lt;T&gt;</c>：流式方法的返回签名。</summary>
         public INamedTypeSymbol? AsyncEnumerable { get; }
 
+        /// <summary><c>CancellationToken</c>：方法末尾的取消令牌，不当参数绑定。</summary>
         public INamedTypeSymbol? CancellationToken { get; }
 
+        /// <summary><c>[Stream]</c>：流式返回，并指定帧格式。</summary>
         public INamedTypeSymbol? Stream { get; }
 
+        /// <summary><c>AxiosStreamFormat</c>：帧格式枚举（NDJSON / SSE / JSON 数组）。</summary>
         public INamedTypeSymbol? StreamFormat { get; }
 
+        /// <summary><c>[BodyContentType]</c>：覆写正文的 Content-Type。</summary>
         public INamedTypeSymbol? BodyContentType { get; }
 
+        /// <summary><c>[QueryCollectionFormat]</c>：集合型查询参数的分隔风格。</summary>
         public INamedTypeSymbol? QueryCollectionFormat { get; }
 
+        /// <summary><c>AxiosCollectionFormat</c>：分隔风格枚举。</summary>
         public INamedTypeSymbol? CollectionFormat { get; }
 
+        /// <summary><c>ApiClient</c>：声明式接口的宿主类型，代理构造函数的入参。</summary>
         public INamedTypeSymbol? ApiClient { get; }
 
+        /// <summary>生成 DI 注册代码时要引用的那个扩展方法所在类型。</summary>
         public INamedTypeSymbol? ApiInterfaceExtensions { get; }
 
         /// <summary>
@@ -1001,12 +1057,15 @@ namespace AxiosNet.SourceGen
         /// </summary>
         private static readonly ConditionalWeakTable<Compilation, WellKnownSymbols> ResolvedCache = new();
 
+        /// <summary>按编译实例取（并缓存）well-known 类型表。</summary>
         public static WellKnownSymbols Resolve(Compilation compilation)
             => ResolvedCache.GetValue(compilation, static current => new WellKnownSymbols(current));
     }
 
+    /// <summary>内置路由特性全名 → HTTP 方法：精确匹配全名，不靠名字后缀猜。</summary>
     internal static class BuiltInRouteMethods
     {
+        // 内置路由特性 → HTTP 方法：生成期只认这张表，不做名字猜测。
         private static readonly Dictionary<string, string> Methods = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["AxiosNet.WebAPI.Attributes.GetAttribute"] = "GET",
@@ -1018,14 +1077,17 @@ namespace AxiosNet.SourceGen
             ["AxiosNet.WebAPI.Attributes.OptionsAttribute"] = "OPTIONS"
         };
 
+        /// <summary>特性全名 → HTTP 方法；不是内置路由特性时返回 <c>false</c>。</summary>
         public static bool TryGetValue(string attributeName, out string method) => Methods.TryGetValue(attributeName, out method!);
     }
 
+    /// <summary>生成代码里的类型名口径：全限定、<c>global::</c> 前缀、关键字用特殊类型。</summary>
     internal static class TypeFormats
     {
         /// <summary>全限定、global:: 前缀、关键字用特殊类型（int / string）；不含可空引用标注（typeof 不允许）。</summary>
         public static readonly SymbolDisplayFormat FullyQualified = SymbolDisplayFormat.FullyQualifiedFormat;
 
+        /// <summary>生成代码里的类型名（<c>dynamic</c> 统一写成 <c>object</c>）。</summary>
         public static string Display(ITypeSymbol type)
             => type.TypeKind == TypeKind.Dynamic ? "object" : type.ToDisplayString(FullyQualified);
     }

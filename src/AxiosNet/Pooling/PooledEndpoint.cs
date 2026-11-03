@@ -47,6 +47,7 @@ internal sealed class PooledEndpoint : IDisposable
         set => _disposeWhenIdle = value;
     }
 
+    // 关闭时还有租约在外：最后一个租约归还时由它触发真正的释放。
     private volatile bool _disposeWhenIdle;
 
     /// <summary>租约计数与释放共用的锁。</summary>
@@ -70,6 +71,7 @@ internal sealed class PooledEndpoint : IDisposable
         };
     }
 
+    /// <summary>按出口建 handler：命名传输档的工厂优先于全局工厂，都没有就走默认传输；超时一律交给客户端控制。</summary>
     private static HttpMessageHandler CreateHandler(
         string origin,
         OriginKey key,
@@ -195,6 +197,7 @@ internal sealed class PooledEndpoint : IDisposable
     /// <summary>释放 HttpClient 与 Handler（调用方须已通过 <see cref="MarkDisposed"/> 置位）。</summary>
     internal void ReleaseResources() => DisposeClientAndHandler();
 
+    /// <summary>释放客户端与 handler；关闭阶段的异常吞掉，不影响整个池的清理。</summary>
     private void DisposeClientAndHandler()
     {
         try

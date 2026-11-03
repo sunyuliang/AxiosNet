@@ -275,6 +275,7 @@ public sealed partial class AxiosClient
         object? data)
         => Shortcut(url, method, configure, cancellationToken, data, AxiosContentType.MultipartFormData);
 
+    /// <summary>按目标类型跑一次请求：预造强类型响应让管线就地填充；拦截器换掉响应对象时改走复制路径。</summary>
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
         // 响应对象按目标类型预先造好，由管线就地填充。

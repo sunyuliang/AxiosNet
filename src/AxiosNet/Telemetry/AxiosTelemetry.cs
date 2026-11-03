@@ -355,6 +355,7 @@ public static class AxiosTelemetry
         }
     }
 
+    /// <summary>连接复用事件的标签集：复用与新建出口各一个取值。</summary>
     private static TagList LeaseTags(bool reused) => new()
     {
         { TagEndpointReused, reused ? "true" : "false" }
@@ -743,6 +744,7 @@ public static class AxiosTelemetry
         }
     }
 
+    /// <summary>累加缓存计数：本方法不在主路径的开关分支内，要自己判一次观测开关与计数器启用状态。</summary>
     private static void AddCacheCount(Counter<long> counter, AxiosConfig? config)
     {
         try

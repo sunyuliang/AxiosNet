@@ -31,6 +31,7 @@ public static partial class Attempt
                 : next(request, ctx);
     };
 
+    /// <summary>换端点重发：按健康顺序（或原序）逐个试，只换「换个下游就能解决」的故障——取消、4xx、配置错误、闸门拒绝与总预算耗尽都不换。</summary>
     private static async ValueTask<AxiosAttemptResult> FailoverAsync(
         AxiosAttemptHandler next,
         HttpRequestMessage template,

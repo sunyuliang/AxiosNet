@@ -13,6 +13,7 @@ namespace AxiosNet.Simple.WebAPI;
 /// </summary>
 public sealed class DemoApiServer : IDisposable
 {
+    // 演示用的固定用户表：列表、过滤、详情都读它，不落库也不改动。
     private static readonly UserProfile[] Users =
     [
         new(1, "alice", 18, "admin"),
@@ -39,6 +40,7 @@ public sealed class DemoApiServer : IDisposable
 
     public string Url => $"http://127.0.0.1:{Port}/";
 
+    /// <summary>在回环地址的随机端口上起监听器，返回已就绪的演示服务。</summary>
     public static DemoApiServer Start()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -46,12 +48,14 @@ public sealed class DemoApiServer : IDisposable
         return new DemoApiServer(listener);
     }
 
+    /// <summary>置取消标志并停止监听；在途连接由处理任务自行收尾。</summary>
     public void Dispose()
     {
         _cts.Cancel();
         _listener.Stop();
     }
 
+    /// <summary>接受循环：每个连接丢给后台任务，不阻塞后续接入。</summary>
     private async Task AcceptLoopAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -70,6 +74,7 @@ public sealed class DemoApiServer : IDisposable
         }
     }
 
+    /// <summary>处理一条连接：循环读请求直到对端关闭，按方法与路径分派到各演示端点。</summary>
     private async Task HandleConnectionAsync(TcpClient client)
     {
         using (client)
@@ -269,6 +274,7 @@ public sealed class DemoApiServer : IDisposable
         return (200, json, new Dictionary<string, string> { ["X-Signature"] = signature });
     }
 
+    /// <summary>用示例共享密钥对数据做 HMAC-SHA256，返回大写十六进制（签名端点用）。</summary>
     private static string HmacHex(byte[] data)
         => Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(SigningKey), data));
 
@@ -293,6 +299,7 @@ public sealed class DemoApiServer : IDisposable
         return (200, JsonSerializer.Serialize(new UploadResult(parts.Count, title, summary)), null);
     }
 
+    /// <summary>按 ID 找用户；找不到返回 null，端点据此回 404。</summary>
     private static UserProfile? Find(int id) => Users.FirstOrDefault(u => u.Id == id) is { } found ? found : null;
 
     /// <summary>表单登录：按 x-www-form-urlencoded 解析字段，演示媒体类型驱动的正文编码。</summary>
@@ -350,6 +357,7 @@ public sealed class DemoApiServer : IDisposable
     /// <summary>请求体解析用：键名大小写不敏感（AxiosNet 默认按 camelCase 序列化，属性是 PascalCase）。</summary>
     private static readonly JsonSerializerOptions BodyOptions = new() { PropertyNameCaseInsensitive = true };
 
+    /// <summary>创建用户：解析请求体，并把 <c>X-Trace</c> 原样回显——证明请求模型 Configure 钩子写的头真的到了服务器。</summary>
     private static string CreateUserJson(IReadOnlyDictionary<string, string> headers, byte[] body)
     {
         var payload = JsonSerializer.Deserialize<UserPayload>(body, BodyOptions);
@@ -397,6 +405,7 @@ public sealed class DemoApiServer : IDisposable
         await stream.FlushAsync().ConfigureAwait(false);
     }
 
+    /// <summary>按 chunked 编码写一个分块：长度行 + 数据 + CRLF，写完立即刷出。</summary>
     private static async Task WriteChunkAsync(NetworkStream stream, byte[] data)
     {
         await stream.WriteAsync(Encoding.ASCII.GetBytes($"{data.Length:x}\r\n")).ConfigureAwait(false);
@@ -477,6 +486,7 @@ public sealed class DemoApiServer : IDisposable
         await stream.FlushAsync().ConfigureAwait(false);
     }
 
+    /// <summary>写一个 keep-alive 的 JSON 响应：状态行、按状态码取原因短语、可选附加头。</summary>
     private static async Task WriteResponseAsync(
         NetworkStream stream,
         int status,

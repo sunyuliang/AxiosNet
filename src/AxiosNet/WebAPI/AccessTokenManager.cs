@@ -26,6 +26,7 @@ public sealed class AccessTokenManager : IAccessTokenProvider, IAccessTokenRefre
     private readonly Func<DateTimeOffset> _clock;
     private readonly object _gate = new();
 
+    // 当前令牌与刷新状态（_gate 保护）；_hasToken 区分「没取过」与「取到 null」。
     private AccessToken? _current;
     private bool _hasToken;
     private TimeSpan _refreshAhead;

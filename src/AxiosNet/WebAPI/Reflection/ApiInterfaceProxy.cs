@@ -10,16 +10,19 @@ namespace AxiosNet.WebAPI.Reflection;
 /// </summary>
 internal class ApiInterfaceProxy : DispatchProxy
 {
+    // <c>DispatchProxy.Create</c> 的句柄：每个代理类型只解析一次。
     private static readonly MethodInfo CreateMethod = typeof(DispatchProxy)
         .GetMethods(BindingFlags.Public | BindingFlags.Static)
         .Single(method => method.Name == nameof(DispatchProxy.Create) && method.IsGenericMethodDefinition);
 
+    // AOT 保留范围：接口的方法 / 属性 / 事件与实现的接口（DispatchProxy 要按签名找方法）。
     private const DynamicallyAccessedMemberTypes InterfaceMembers =
         DynamicallyAccessedMemberTypes.PublicMethods
         | DynamicallyAccessedMemberTypes.PublicProperties
         | DynamicallyAccessedMemberTypes.PublicEvents
         | DynamicallyAccessedMemberTypes.Interfaces;
 
+    // 下面两个由 <c>Create</c> 在返回代理前填好（DispatchProxy 无法带构造参数）。
     private ApiClient? _client;
 
     [DynamicallyAccessedMembers(InterfaceMembers)]
@@ -39,6 +42,7 @@ internal class ApiInterfaceProxy : DispatchProxy
 
     // category 必须是 "AOT"（IL3050 的实际类别）；写成别的名字时 Roslyn 放行、ILC 阶段仍会重新报，
     // 包消费方（NuGet 引用）发布时就会看到这条不属于它代码的警告。
+    /// <summary>按接口类型创建 DispatchProxy 代理（仅在动态代码可用时可达）。</summary>
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -54,6 +58,7 @@ internal class ApiInterfaceProxy : DispatchProxy
         return proxy;
     }
 
+    /// <summary>拦截接口调用：按接口 + 方法签名取元数据，交给它发请求并把结果还原成声明的返回形态。</summary>
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         => InterfaceMethodMetadataJit
             .Get(_interfaceType!, InterfaceDeclaration.ResolveMethod(_interfaceType!, targetMethod!))

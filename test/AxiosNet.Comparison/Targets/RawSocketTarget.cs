@@ -30,20 +30,24 @@ internal sealed class RawSocketTarget : ITarget
 
     public string Name => "RawSocket";
 
+    /// <summary>为一个 worker 开一条独占连接：裸 socket 基线按「一条会话 = 一条连接」，没有连接池。</summary>
     public ITargetSession OpenSession() => new Session(_endpoint, _request);
 
+    /// <summary>目标本身不持资源（连接都在会话里）。</summary>
     public void Dispose()
     {
     }
 
     private sealed class Session : ITargetSession
     {
+        // 读响应的缓冲区：这几十字节的响应头加正文一次 Read 就能读完，不用再循环。
         private const int BufferSize = 16 * 1024;
 
         private readonly TcpClient _client;
         private readonly NetworkStream _stream;
         private readonly byte[] _request;
         private readonly byte[] _buffer = new byte[BufferSize];
+        // 缓冲区里已读到的字节数；一个响应可能分几次 Read 到齐，跨读累积。
         private int _filled;
 
         public Session(IPEndPoint endpoint, byte[] request)
@@ -54,6 +58,7 @@ internal sealed class RawSocketTarget : ITarget
             _request = request;
         }
 
+        /// <summary>写请求再读响应：凑齐「响应头 + <c>Content-Length</c>」声明的字节数就算完成，多余字节留给下一次。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             await _stream.WriteAsync(_request, cancellationToken).ConfigureAwait(false);
@@ -89,6 +94,7 @@ internal sealed class RawSocketTarget : ITarget
             }
         }
 
+        /// <summary>关闭网络流与连接。</summary>
         public void Dispose()
         {
             _stream.Dispose();
@@ -121,6 +127,7 @@ internal sealed class RawSocketTarget : ITarget
         return true;
     }
 
+    /// <summary>在响应头里找 <c>Content-Length</c> 并解析十进制值，头名大小写不敏感。</summary>
     private static bool TryParseContentLength(ReadOnlySpan<byte> headers, out int value)
     {
         value = 0;
@@ -163,5 +170,6 @@ internal sealed class RawSocketTarget : ITarget
         return false;
     }
 
+    /// <summary>ASCII 大写字母转小写，其余原样，用于头名比较。</summary>
     private static byte Fold(byte value) => value is >= (byte)'A' and <= (byte)'Z' ? (byte)(value + 32) : value;
 }

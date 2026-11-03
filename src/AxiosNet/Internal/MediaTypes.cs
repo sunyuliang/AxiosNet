@@ -6,6 +6,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class MediaTypes
 {
+    // 文本类型判定用的字面前缀 / 后缀与常见文本媒体类型。
     private const string TextPrefix = "text/";
     private const string JsonSuffix = "+json";
     private const string XmlSuffix = "+xml";

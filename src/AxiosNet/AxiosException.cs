@@ -268,16 +268,19 @@ public class AxiosException : Exception
             null);
     }
 
+    /// <summary>取消（<c>ERR_CANCELED</c>）：默认文案。</summary>
     internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, Exception? inner = null)
     {
         return new AxiosException("Request canceled", ErrCanceled, config, request, null, inner);
     }
 
+    /// <summary>取消（<c>ERR_CANCELED</c>）：带调用方原因，超时与主动取消共用此码。</summary>
     internal static AxiosException Canceled(AxiosConfig config, HttpRequestMessage? request, string message, Exception? inner = null)
     {
         return new AxiosException(message, ErrCanceled, config, request, null, inner);
     }
 
+    /// <summary>网络层失败（<c>ERR_NETWORK</c>）：连接 / DNS / TLS 等，原始异常进 <c>Cause</c>。</summary>
     internal static AxiosException Network(AxiosConfig config, HttpRequestMessage? request, Exception inner)
     {
         return new AxiosException("Network Error", ErrNetwork, config, request, null, inner);
@@ -324,6 +327,7 @@ public class AxiosException : Exception
             ? $"{value.TotalSeconds:0.##}s"
             : $"{value.TotalMilliseconds:0}ms";
 
+    /// <summary>URL 非法（<c>ERR_INVALID_URL</c>）：消息里的 URL 截断到 <c>MaxUrlInMessage</c>。</summary>
     internal static AxiosException InvalidUrl(string url, AxiosConfig? config = null, Exception? inner = null, string? message = null)
     {
         // 超长 URL 整条塞进消息只会变成几十万字符的日志。长度本身由 UrlBuilder 的闸门负责拒
@@ -331,21 +335,26 @@ public class AxiosException : Exception
         return new AxiosException(message ?? $"Invalid URL: {Truncate(url)}", ErrInvalidUrl, config, null, null, inner);
     }
 
+    // 消息里 URL 的截断长度：日志不该被一条超长 URL 撑爆。
     private const int MaxUrlInMessage = 512;
 
+    /// <summary>超长 URL 截断后再进消息（512 字符上限），尾部标出原始长度。</summary>
     private static string Truncate(string value)
         => value.Length <= MaxUrlInMessage
             ? value
             : value[..MaxUrlInMessage] + $"...(truncated, {value.Length} chars)";
 
+    /// <summary>选项值非法（<c>ERR_BAD_OPTION_VALUE</c>）：消息直接来自校验点。</summary>
     internal static AxiosException InvalidOption(string message, AxiosConfig? config = null)
         => InvalidOption(message, config, null);
 
+    /// <summary>选项值非法，并保留原始异常。</summary>
     internal static AxiosException InvalidOption(string message, AxiosConfig? config, Exception? inner)
     {
         return new AxiosException(message, ErrBadOptionValue, config, null, null, inner);
     }
 
+    /// <summary>非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>。</summary>
     internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage? request, AxiosResponse response)
     {
         var code = response.Status >= 500 ? ErrBadResponse : ErrBadRequest;
@@ -358,9 +367,11 @@ public class AxiosException : Exception
             null);
     }
 
+    /// <summary>响应正文反序列化失败（<c>ERR_BAD_RESPONSE</c>），消息带目标类型名。</summary>
     internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, Type targetType, Exception inner)
         => BadResponse(config, request, targetType.Name, inner);
 
+    /// <summary>响应正文反序列化失败，目标名由调用方给出（避免再取 <c>Type</c>）。</summary>
     internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
     {
         return new AxiosException(
@@ -384,6 +395,7 @@ public class AxiosException : Exception
             inner);
     }
 
+    /// <summary>请求正文序列化失败（<c>ERR_BAD_REQUEST</c>），原始异常进 <c>Cause</c>。</summary>
     internal static AxiosException BadRequestPayload(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
     {
         return new AxiosException(
@@ -478,6 +490,7 @@ public class AxiosException : Exception
             null);
     }
 
+    /// <summary>请求体超过 <c>MaxBodyLength</c>（<c>ERR_BAD_REQUEST</c>）：发出前拦下，不带副作用。</summary>
     internal static AxiosException MaxBodyLength(AxiosConfig config, HttpRequestMessage request, long actual, long limit)
     {
         return new AxiosException(

@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace AxiosNet.SourceGen
 {
+    /// <summary>生成器各分部共用的语义模型小工具。</summary>
     internal static class SymbolExtensions
     {
         /// <summary>file-local 类型（C# 11 的 <c>file</c> 修饰符）：其它文件里的生成代码无法引用。</summary>

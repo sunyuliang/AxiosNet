@@ -12,6 +12,7 @@ public sealed class BinarySerializationExample : IExample
 
     public string Title => "二进制格式：字节通道双向（protobuf / MessagePack 同理）";
 
+    /// <summary>示例入口：二进制格式：字节通道双向（protobuf / MessagePack 同理）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

@@ -39,10 +39,14 @@ public class StreamingFramingBenchmarks
     public int Frames { get; set; }
 
     private readonly StreamRequest _request = new();
+    // NDJSON 客户端：每行一个完整 JSON 值。
     private ApiClient _ndjson = null!;
+    // SSE 客户端：<c>data:</c> 行 + 空行结束一帧。
     private ApiClient _sse = null!;
+    // 单个 JSON 数组客户端：靠 <c>Utf8JsonReader</c> 增量定位顶层元素。
     private ApiClient _array = null!;
 
+    /// <summary>按 Frames 档位把三种格式的正文各编码一次，再建三个客户端。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -52,6 +56,7 @@ public class StreamingFramingBenchmarks
         _array = CreateClient(Payloads.JsonArray(Frames), Payloads.JsonContentType);
     }
 
+    /// <summary>释放三个客户端。</summary>
     [GlobalCleanup]
     public void Cleanup()
     {
@@ -72,6 +77,7 @@ public class StreamingFramingBenchmarks
     [Benchmark]
     public Task<int> JsonArray() => CountFramesAsync(_array, AxiosStreamFormat.JsonArray);
 
+    /// <summary>按指定帧格式把响应读完并数帧数（顺带触摸帧内容，防止循环被当死代码）。</summary>
     private async Task<int> CountFramesAsync(ApiClient client, AxiosStreamFormat format)
     {
         var response = await client.RequestStreamAsync(_request, format).ConfigureAwait(false);
@@ -86,6 +92,7 @@ public class StreamingFramingBenchmarks
         return count;
     }
 
+    /// <summary>用假 handler 造一个只回固定正文的 <see cref="ApiClient"/>。</summary>
     private static ApiClient CreateClient(byte[] body, string contentType)
     {
         var axios = new AxiosClient(

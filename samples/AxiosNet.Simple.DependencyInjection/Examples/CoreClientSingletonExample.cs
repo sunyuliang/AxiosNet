@@ -14,6 +14,7 @@ public sealed class CoreClientSingletonExample : IExample
 
     public string Title => "AddAxiosClient：核心客户端单例";
 
+    /// <summary>示例入口：AddAxiosClient：核心客户端单例。</summary>
     public async Task RunAsync(string baseUrl)
     {
         var builder = Host.CreateApplicationBuilder();

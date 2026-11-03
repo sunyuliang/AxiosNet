@@ -104,6 +104,7 @@ internal static class BenchmarkMenu
         return failed ? 1 : 0;
     }
 
+    /// <summary>打印菜单：按分组列出编号、类名与读法提示，类名列对齐。</summary>
     private static void Print(BenchmarkEntry[] entries)
     {
         // 类名均为 ASCII，按字符数填充即视觉等宽
@@ -128,6 +129,7 @@ internal static class BenchmarkMenu
         }
     }
 
+    /// <summary>跑一个基准：先打印读法与提示，再交给 BDN；失败只报告，不退出菜单。</summary>
     private static bool RunOne(int index, BenchmarkEntry entry, string? job, bool pause, bool inProcess)
     {
         Console.WriteLine();
@@ -162,6 +164,7 @@ internal static class BenchmarkMenu
         return failed;
     }
 
+    /// <summary>命令是否命中给定别名之一（忽略大小写）。</summary>
     private static bool Is(string command, params string[] options)
         => options.Any(option => string.Equals(command, option, StringComparison.OrdinalIgnoreCase));
 }

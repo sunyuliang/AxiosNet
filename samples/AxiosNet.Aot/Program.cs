@@ -256,6 +256,7 @@ internal sealed class GetPersonRequest : IApiRequest<Person>
     public string? TraceId { get; set; }
 }
 
+/// <summary>POST /persons：整个 Person 当 JSON 正文，带 <c>[Authorize]</c>（令牌由 <see cref="FixedTokenProvider"/> 提供）。</summary>
 [Post("persons")]
 [Authorize]
 internal sealed class CreatePersonRequest : IApiRequest<Person>
@@ -267,6 +268,7 @@ internal sealed class CreatePersonRequest : IApiRequest<Person>
     public bool Notify { get; set; }
 }
 
+/// <summary>GET /persons?q=…&amp;page=…：引用型与整型查询参数各一个，<c>[AllowAnonymous]</c> 让授权链路整条跳过。</summary>
 [Get("persons")]
 [AllowAnonymous]
 internal sealed class SearchPersonRequest : IApiRequest<Person>
@@ -278,45 +280,67 @@ internal sealed class SearchPersonRequest : IApiRequest<Person>
     public int Page { get; set; }
 }
 
+/// <summary>人员模型：既作响应也作请求正文，AOT 下的读写都由源生成器烘焙，不依赖反射。</summary>
+/// <param name="Name">姓名。</param>
+/// <param name="Age">年龄。</param>
+/// <param name="Address">嵌套地址对象（可空）。</param>
 public sealed record Person(string Name, int Age, Address? Address);
 
+/// <summary>人员模型里的嵌套对象：覆盖一层嵌套的烘焙形状。</summary>
+/// <param name="City">城市名。</param>
+/// <param name="Zip">邮政编码。</param>
 public sealed record Address(string City, string Zip);
 
 // 普通对象（非请求模型）：调用点出现时由源生成器烘焙展平形状（query / form / multipart 共用）。
 internal sealed class SearchQuery
 {
+    /// <summary>搜索关键词；属性名故意用小写，演示 C# 命名与查询键不一致时的绑定。</summary>
     public string? q { get; set; }
 
+    /// <summary>标签数组：覆盖集合形态的查询值（重复键）。</summary>
     public List<string>? tags { get; set; }
 
+    /// <summary>嵌套过滤对象：展平成 filter[kind]=… 这类带前缀的查询键。</summary>
     public SearchFilter? filter { get; set; }
 }
 
+/// <summary>嵌套过滤条件：本身不是请求模型，只在被展平时参与形状烘焙。</summary>
 internal sealed class SearchFilter
 {
+    /// <summary>过滤类型（展平后的键是 filter[kind]）。</summary>
     public string? kind { get; set; }
 
+    /// <summary>页码（展平后的键是 filter[page]）。</summary>
     public int page { get; set; }
 }
 
+/// <summary>表单正文模型：按 form-urlencoded 展开，嵌套对象用 a[b] 键名、数组用 a[] 键名。</summary>
 internal sealed class FormPayload
 {
+    /// <summary>表单里的文本字段。</summary>
     public string? name { get; set; }
 
+    /// <summary>表单里的嵌套对象（展开成 address[city]）。</summary>
     public FormAddress? address { get; set; }
 
+    /// <summary>表单里的数组（展开成 tags[]=…，可重复）。</summary>
     public List<string>? tags { get; set; }
 }
 
+/// <summary>表单正文里的嵌套对象。</summary>
 internal sealed class FormAddress
 {
+    /// <summary>城市（表单里的键是 address[city]）。</summary>
     public string? city { get; set; }
 }
 
+/// <summary>multipart 上传模型：一个文本字段 + 一个文件字段。</summary>
 internal sealed class UploadPayload
 {
+    /// <summary>上传表单里的文本字段。</summary>
     public string? title { get; set; }
 
+    /// <summary>上传的表单文件：由 <see cref="FormFile"/> 转成 multipart 的一个部件。</summary>
     public FormFile? file { get; set; }
 }
 
@@ -324,6 +348,7 @@ internal sealed class UploadPayload
 // AOT 下的枚举访问器由源生成器烘焙（声明为接口时按接口登记）。
 internal sealed class QueryBag : IReadOnlyDictionary<string, int>
 {
+    // 固定的两对键值（a=1 / b=2）：用显式数组而不是 Dictionary，让枚举访问器的烘焙形状可读。
     private static readonly KeyValuePair<string, int>[] Entries = [new("a", 1), new("b", 2)];
 
     public int this[string key] => Entries.First(pair => pair.Key == key).Value;
@@ -334,8 +359,10 @@ internal sealed class QueryBag : IReadOnlyDictionary<string, int>
 
     public int Count => Entries.Length;
 
+    /// <summary>是否含指定查询键（在固定键值数组上线性扫描）。</summary>
     public bool ContainsKey(string key) => Entries.Any(pair => pair.Key == key);
 
+    /// <summary>按键取值；没有该键时返回 false 并给出 0。</summary>
     public bool TryGetValue(string key, out int value)
     {
         foreach (var pair in Entries)
@@ -351,13 +378,16 @@ internal sealed class QueryBag : IReadOnlyDictionary<string, int>
         return false;
     }
 
+    /// <summary>按固定键值顺序枚举（数组本身就是枚举源，不再另建集合）。</summary>
     public IEnumerator<KeyValuePair<string, int>> GetEnumerator() => ((IEnumerable<KeyValuePair<string, int>>)Entries).GetEnumerator();
 
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+/// <summary>第二个自定义只读字典：验证同一进程里两套字典形状各自烘焙、互不干扰。</summary>
 internal sealed class FormBag : IReadOnlyDictionary<string, int>
 {
+    // 另一份固定键值（c=3 / d=4）：与 QueryBag 的键刻意不重叠，便于验证两套形状各自独立。
     private static readonly KeyValuePair<string, int>[] Entries = [new("c", 3), new("d", 4)];
 
     public int this[string key] => Entries.First(pair => pair.Key == key).Value;
@@ -368,8 +398,10 @@ internal sealed class FormBag : IReadOnlyDictionary<string, int>
 
     public int Count => Entries.Length;
 
+    /// <summary>是否含指定表单键（两套字典各自的固定键值不重叠）。</summary>
     public bool ContainsKey(string key) => Entries.Any(pair => pair.Key == key);
 
+    /// <summary>按键取值；没有该键时返回 false 并给出 0。</summary>
     public bool TryGetValue(string key, out int value)
     {
         foreach (var pair in Entries)
@@ -385,11 +417,13 @@ internal sealed class FormBag : IReadOnlyDictionary<string, int>
         return false;
     }
 
+    /// <summary>按固定键值顺序枚举；这是第二个字典独立烘焙的形状，与 <c>QueryBag</c> 互不干扰。</summary>
     public IEnumerator<KeyValuePair<string, int>> GetEnumerator() => ((IEnumerable<KeyValuePair<string, int>>)Entries).GetEnumerator();
 
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+/// <summary>GET /map：查询参数声明成 <see cref="IReadOnlyDictionary{TKey, TValue}"/>，值类型值按接口登记枚举访问器。</summary>
 [Get("map")]
 internal sealed class MapRequest : IApiRequest<Person>
 {
@@ -420,8 +454,10 @@ internal interface IFeedApi<T>
     Task<AxiosResponse<IAsyncEnumerable<T>>> StreamAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>固定令牌提供者：AOT 示例不演示登录流程，只要让 <c>[Authorize]</c> 拿得到令牌。</summary>
 internal sealed class FixedTokenProvider : IAccessTokenProvider
 {
+    /// <summary>固定返回一个示例令牌：AOT 示例不演示登录流程，只为让 <c>[Authorize]</c> 拿得到令牌。</summary>
     public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
         => new ValueTask<string?>("aot-token");
 }
@@ -445,6 +481,7 @@ internal sealed class LoopbackServer : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
     private readonly Task _loop;
+    // 最近一次请求的快照；被 TakeLast 取走后清空，避免相邻场景读到上一条。
     private RequestSnapshot? _last;
 
     public LoopbackServer()
@@ -467,6 +504,7 @@ internal sealed class LoopbackServer : IDisposable
         }
     }
 
+    /// <summary>接受循环：来一个连接就丢给后台任务，取消时安静退出。</summary>
     private async Task AcceptLoopAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -485,6 +523,7 @@ internal sealed class LoopbackServer : IDisposable
         }
     }
 
+    /// <summary>处理一个连接：读一次请求、把快照记进状态；<c>/feed</c> 回 SSE 帧，其余回单个 <c>Person</c>。</summary>
     private async Task HandleAsync(TcpClient client)
     {
         using (client)
@@ -557,6 +596,7 @@ internal sealed class LoopbackServer : IDisposable
         return (head, body);
     }
 
+    /// <summary>找请求头结束（<c>\r\n\r\n</c>）的起点，没找到返回 -1。</summary>
     private static int IndexOfHeaderEnd(List<byte> buffer)
     {
         for (var i = 3; i < buffer.Count; i++)
@@ -570,6 +610,7 @@ internal sealed class LoopbackServer : IDisposable
         return -1;
     }
 
+    /// <summary>停止监听、取消在途连接，再释放监听器。</summary>
     public void Dispose()
     {
         _cts.Cancel();
@@ -588,6 +629,7 @@ internal sealed class LoopbackServer : IDisposable
     }
 }
 
+/// <summary>回环服务器收到的一次请求：请求行、头、正文，用于断言「客户端到底发出去什么」。</summary>
 internal sealed class RequestSnapshot
 {
     private readonly Dictionary<string, string> _headers;
@@ -599,10 +641,13 @@ internal sealed class RequestSnapshot
         Body = body;
     }
 
+    /// <summary>请求行原文（方法 + 路径 + HTTP 版本）。</summary>
     public string RequestLine { get; }
 
+    /// <summary>正文原文（按 Content-Length 读满的那一段）。</summary>
     public string Body { get; }
 
+    /// <summary>用请求头块与正文构造快照；头名按 HTTP 语义做大小写不敏感匹配。</summary>
     public static RequestSnapshot Parse(string head, string body)
     {
         var lines = head.Split("\r\n");
@@ -621,7 +666,9 @@ internal sealed class RequestSnapshot
         return new RequestSnapshot(lines.Length > 0 ? lines[0] : string.Empty, headers, body);
     }
 
+    /// <summary>取某个请求头；不存在返回 null。</summary>
     public string? GetHeader(string name) => _headers.TryGetValue(name, out var value) ? value : null;
 
+    /// <summary>是否存在某个请求头（不关心取值）。</summary>
     public bool HasHeader(string name) => _headers.ContainsKey(name);
 }

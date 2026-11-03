@@ -1,5 +1,9 @@
 namespace AxiosNet.Interceptors;
 
+/// <summary>一条请求拦截器：<c>Id</c> 用于 Eject，<c>OnRejected</c> 只兜自身 <c>OnFulfilled</c> 的异常。</summary>
+/// <param name="Id">注册时分配的编号，Eject 按它定位；只增不复用。</param>
+/// <param name="OnFulfilled">正常路径：拿到配置、改完再交回。</param>
+/// <param name="OnRejected">补偿路径：只处理本拦截器 <c>OnFulfilled</c> 抛出的异常；null 表示不处理。</param>
 internal sealed record RequestInterceptor(
     int Id,
     Func<AxiosConfig, Task<AxiosConfig>> OnFulfilled,
@@ -12,6 +16,7 @@ internal sealed record RequestInterceptor(
 public sealed class RequestInterceptorManager
 {
     private readonly List<RequestInterceptor> _interceptors = new();
+    // 单调递增的拦截器编号（Eject 用），只增不复用。
     private int _nextId;
 
     // 快照缓存：注册 / Eject / Clear 时失效。

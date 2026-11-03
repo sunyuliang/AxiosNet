@@ -36,12 +36,14 @@ public sealed class ExampleContext
 /// <summary>示例共用的控制台输出辅助方法。</summary>
 internal static class ExampleConsole
 {
+    /// <summary>打印小节标题（编号 + 标题）：WebAPI 这批示例共用它对齐输出格式。</summary>
     public static void Section(int number, string title)
     {
         Console.WriteLine();
         Console.WriteLine($"-- {number}. {title}");
     }
 
+    /// <summary>把对象压成单行 JSON 打印。</summary>
     public static string Pretty(object? value)
         => System.Text.Json.JsonSerializer.Serialize(value);
 }

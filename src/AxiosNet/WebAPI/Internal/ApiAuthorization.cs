@@ -16,6 +16,8 @@ internal enum ApiAuthorizationMode
 }
 
 /// <summary>授权策略 + 认证方案。</summary>
+/// <param name="Mode">策略：未标注 / 要求授权 / 匿名。</param>
+/// <param name="Scheme">拼 Authorization 头用的认证方案名（如 <c>Bearer</c>）。</param>
 internal readonly record struct ApiAuthorization(ApiAuthorizationMode Mode, string Scheme)
 {
     /// <summary>未标注时的默认值：<see cref="ApiAuthorizationMode.Inherit"/> 表示「不强制要求授权」，但客户端配了令牌提供方或自定义授权时照样写头。</summary>

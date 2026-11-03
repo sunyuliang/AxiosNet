@@ -50,6 +50,7 @@ internal static class BenchmarkDigest
         }
     }
 
+    /// <summary>打一段结果摘要：类名（有 <c>[Description]</c> 时带说明）、验证错误与换算后的汇总行。</summary>
     private static void PrintSummary(Summary summary, BenchmarkReport[] reports)
     {
         var type = reports[0].BenchmarkCase.Descriptor.Type;
@@ -99,6 +100,7 @@ internal static class BenchmarkDigest
         public double? Ratio { get; set; }
     }
 
+    /// <summary>把 BDN 报告摊成表格行：方法名、<c>PrintInfo</c> 里的参数、时间与分配。</summary>
     private static List<Row> BuildRows(BenchmarkReport[] reports)
     {
         var rows = new List<Row>(reports.Length);
@@ -228,6 +230,7 @@ internal static class BenchmarkDigest
         }
     }
 
+    /// <summary>按列宽补齐一行单元格（可选右对齐），中文按双列宽计算。</summary>
     private static string FormatLine(string[] cells, int[] widths, List<bool> alignRight)
     {
         var parts = new string[cells.Length];
@@ -260,6 +263,7 @@ internal static class BenchmarkDigest
         return max >= 10_000_000 ? "ms" : max >= 10_000 ? "µs" : "ns";
     }
 
+    /// <summary>按单位换算时间并保留合适小数位；没有统计值时写「—」。</summary>
     private static string FormatTime(double? nanoseconds, string unit)
     {
         if (nanoseconds is not { } value)
@@ -275,6 +279,7 @@ internal static class BenchmarkDigest
         };
     }
 
+    /// <summary>把分配字节数格式化成 B / KB / MB；null 写「—」，0 写「0 B」。</summary>
     private static string FormatAllocated(long? bytes)
     {
         if (bytes is not { } value)
@@ -297,6 +302,7 @@ internal static class BenchmarkDigest
             : (value / 1024d / 1024d).ToString("N2", CultureInfo.InvariantCulture) + " MB";
     }
 
+    /// <summary>打印表尾口径说明：哪些量可跨运行比、当前是同进程还是隔离执行。</summary>
     private static void PrintFooter(bool inProcess)
     {
         Console.WriteLine("说明：Allocated 是确定性量（跨运行可比）；Mean 只在本机本次运行内可比，差值小于 Error 视为噪声。");
@@ -325,6 +331,7 @@ internal static class BenchmarkDigest
         return width;
     }
 
+    /// <summary>是否宽字符（CJK / 全角）：在终端占两列，补齐时要按 2 计。</summary>
     private static bool IsWide(char c) =>
         c is >= '\u1100' and <= '\u115F'    // 谚文字母
             or >= '\u2E80' and <= '\uA4CF'  // CJK 部首 / 汉字 / 假名 / 注音

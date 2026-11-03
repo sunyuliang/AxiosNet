@@ -1,5 +1,9 @@
 namespace AxiosNet.Interceptors;
 
+/// <summary>一条响应拦截器：<c>Id</c> 用于 Eject，<c>OnRejected</c> 只兜自身 <c>OnFulfilled</c> 的异常。</summary>
+/// <param name="Id">注册时分配的编号，Eject 按它定位；只增不复用。</param>
+/// <param name="OnFulfilled">正常路径：拿到响应、改完再交回。</param>
+/// <param name="OnRejected">补偿路径：只处理本拦截器 <c>OnFulfilled</c> 抛出的异常；null 表示不处理。</param>
 internal sealed record ResponseInterceptor(
     int Id,
     Func<AxiosResponse, Task<AxiosResponse>> OnFulfilled,
@@ -11,6 +15,7 @@ internal sealed record ResponseInterceptor(
 public sealed class ResponseInterceptorManager
 {
     private readonly List<ResponseInterceptor> _interceptors = new();
+    // 单调递增的拦截器编号（Eject 用），只增不复用。
     private int _nextId;
 
     // 快照缓存：注册 / 弹出 / 清空时失效。
@@ -77,6 +82,7 @@ public sealed class ResponseInterceptorManager
         }
     }
 
+    /// <summary>取不可变快照：稳态无锁，重建在锁内复查一次。</summary>
     internal ResponseInterceptor[] Snapshot()
     {
         // 稳态零锁：快照是不可变数组。

@@ -10,6 +10,7 @@ public sealed class ErrorHandlingExample : IExample
 
     public string Title => "错误码语义、超时 ECONNABORTED、取消 ERR_CANCELED、validateStatus";
 
+    /// <summary>示例入口：错误码语义、超时 ECONNABORTED、取消 ERR_CANCELED、validateStatus。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

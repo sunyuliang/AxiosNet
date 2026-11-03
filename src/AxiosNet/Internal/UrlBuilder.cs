@@ -202,6 +202,7 @@ internal static class UrlBuilder
         return false;
     }
 
+    // ASCII 字母判定：解析 scheme 前缀时只认 ASCII，别把 Unicode 字母放进来。
     private static bool IsAsciiLetter(char c)
         => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 
@@ -210,6 +211,7 @@ internal static class UrlBuilder
         => string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
             || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
+    // 查询串规整：去首尾空白与前导 ? / &，不改顺序（顺序会影响部分服务端的缓存键）。
     private static string NormalizeQuery(string? query)
     {
         if (string.IsNullOrWhiteSpace(query))
@@ -287,8 +289,10 @@ internal sealed class FormattedQueryValue
 {
     public FormattedQueryValue(string text) => Text = text;
 
+    /// <summary>已定型的查询文本，直接拼进 URL，不会再被格式钩子改写。</summary>
     public string Text { get; }
 
+    // 定型文本就是查询值本身，拼 URL 时直接用它。
     public override string ToString() => Text;
 }
 
@@ -805,6 +809,7 @@ internal static class ParamsSerializer
         }
     }
 
+    // 叶子值判定：二进制族按 base64 当叶子、已定型文本当叶子，其余标量直接 ToString 拼进去。
     private static bool IsScalar(object value)
         // 二进制族（byte[] / Memory / ReadOnlyMemory / ArraySegment）都算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
         // FormattedQueryValue 是绑定层定型的文本，同样按叶子处理（否则会被集合逻辑回落到方括号形态）。
@@ -817,6 +822,7 @@ internal static class ParamsSerializer
     internal static string EscapeKey(string key)
         => Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]");
 
+    // 值转义用标准 encodeURIComponent 规则（键那边会额外还原方括号）。
     private static string EscapeValue(string value)
         => Uri.EscapeDataString(value);
 }

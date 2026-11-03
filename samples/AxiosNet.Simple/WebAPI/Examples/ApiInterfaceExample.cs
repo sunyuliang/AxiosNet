@@ -16,6 +16,7 @@ public sealed class ApiInterfaceExample : IExample
 
     public string Title => "接口级声明：[Headers] 静态头 + 方法路由 + 参数绑定（Create<T> 代理）";
 
+    /// <summary>示例入口：接口级声明：[Headers] 静态头 + 方法路由 + 参数绑定（Create<T> 代理）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
@@ -40,6 +41,7 @@ public sealed class ApiInterfaceExample : IExample
         Console.WriteLine($"    默认 Body 推断生效，服务器回显 X-Trace = {created.Data!.Trace}");
     }
 
+    /// <summary>读请求消息上的某个头；没有请求消息时返回 <c>none</c>。</summary>
     private static string Header(System.Net.Http.HttpRequestMessage? request, string name)
         => request is not null && request.Headers.TryGetValues(name, out var values)
             ? string.Join(",", values!)

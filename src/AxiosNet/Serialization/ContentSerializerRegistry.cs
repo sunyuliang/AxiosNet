@@ -13,9 +13,11 @@ namespace AxiosNet.Serialization;
 /// </remarks>
 public sealed class ContentSerializerRegistry
 {
+    // 空表单例：未注册任何序列化器时的共同起点。
     private static readonly IReadOnlyDictionary<string, IContentSerializer> Empty =
         new Dictionary<string, IContentSerializer>(0, StringComparer.Ordinal);
 
+    // 媒体类型别名 → 注册键（如 <c>text/json</c> 归一），避免每个别名各存一份实例。
     private static readonly Dictionary<string, string> AliasTargets = new(StringComparer.Ordinal)
     {
         ["text/xml"] = AxiosContentType.Xml,
@@ -23,6 +25,7 @@ public sealed class ContentSerializerRegistry
     };
 
     private readonly object _gate = new();
+    // 当前表（写时复制）：读路径只 Volatile.Read，注册整体替换。
     private volatile IReadOnlyDictionary<string, IContentSerializer> _entries = Empty;
 
     /// <summary>已登记的类型数。</summary>

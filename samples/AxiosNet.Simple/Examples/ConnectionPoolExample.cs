@@ -10,6 +10,7 @@ public sealed class ConnectionPoolExample : IExample
 
     public string Title => "连接池：顺序请求复用单 TCP、并发受 MaxConnectionsPerServer 约束、多客户端共享";
 
+    /// <summary>示例入口：连接池：顺序请求复用单 TCP、并发受 MaxConnectionsPerServer 约束、多客户端共享。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

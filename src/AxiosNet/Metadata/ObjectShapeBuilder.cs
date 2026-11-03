@@ -34,6 +34,7 @@ public sealed class ObjectShapeBuilder
         return new ObjectShapeMemberBuilder(this, draft);
     }
 
+    /// <summary>冻结成不可变形状（生成器与手工注册共用这一条出口）。</summary>
     internal ObjectShape Build()
         => new(_type, [.. _members.Select(static draft => new ShapeMember(
             draft.Name,
@@ -43,8 +44,10 @@ public sealed class ObjectShapeBuilder
             draft.GetValue,
             draft.Format))]);
 
+    /// <summary>成员草稿：<see cref="ObjectShapeMemberBuilder"/> 在构建完成前就地填字段。</summary>
     internal sealed class ShapeMemberDraft
     {
+        // 草稿字段：构建期就地可改，Build 时一次性转成不可变形状。
         public string Name { get; init; } = string.Empty;
 
         public string FieldName { get; set; } = string.Empty;

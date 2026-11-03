@@ -36,6 +36,7 @@ public sealed partial class AxiosConfig
             }
         }
 
+        /// <summary>复制端点列表：调用方之后改自己的集合，不会影响已生效的配置。</summary>
         private static Uri[] Snapshot(IReadOnlyList<Uri> endpoints)
         {
             var copy = new Uri[endpoints.Count];
@@ -135,6 +136,7 @@ public sealed partial class AxiosConfig
             }
         }
 
+        /// <summary>浅拷贝（合并层用）：策略与委托共用，不深克隆。</summary>
         internal FailoverSettings Clone() => (FailoverSettings)MemberwiseClone();
     }
 }

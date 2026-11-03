@@ -98,6 +98,7 @@ internal static class BenchmarkLauncher
 
         public bool InProcess { get; init; }
 
+        /// <summary>解析命令行：摘出 <c>--job</c> / <c>--isolated</c> 等本工具自己的开关，其余原样留给 BDN。</summary>
         public static RunOptions Parse(string[] args)
         {
             var remaining = new List<string>(args.Length);

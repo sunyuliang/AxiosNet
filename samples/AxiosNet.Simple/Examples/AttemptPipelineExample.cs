@@ -35,6 +35,7 @@ public sealed class AttemptPipelineExample : IExample
 
     public string Title => "尝试管线：默认链 / 插一个每次尝试的中间件 / 重排 / 与响应拦截器的分工";
 
+    /// <summary>示例入口：尝试管线：默认链 / 插一个每次尝试的中间件 / 重排 / 与响应拦截器的分工。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -85,6 +86,7 @@ public sealed class AttemptPipelineExample : IExample
         Console.WriteLine($"  响应侧读请求头: X-Trace={traced.GetRequestHeader("X-Trace")}（响应头用 GetHeader）");
     }
 
+    /// <summary>中间件的中文名（用于打印中间件链），认不出就写「自定义」。</summary>
     private static string Describe(AxiosAttemptMiddleware middleware)
         => ReferenceEquals(middleware, Attempt.Retry) ? "重试"
             : ReferenceEquals(middleware, Attempt.Failover) ? "备用端点"

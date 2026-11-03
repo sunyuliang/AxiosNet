@@ -19,6 +19,7 @@ internal sealed class BindingAccumulator
     private readonly List<IValueSource> _headerCollections = [];
     private readonly List<IValueSource> _unannotated = [];
     private readonly List<(string Name, string? Value)> _staticHeaders = [];
+    // 正文来源：构建期只允许一个，重复声明直接报错。
     private IValueSource? _body;
 
     private readonly HashSet<string> _pathNames = new(StringComparer.OrdinalIgnoreCase);
@@ -33,8 +34,10 @@ internal sealed class BindingAccumulator
         _memberKind = memberKind;
     }
 
+    /// <summary>是否已绑定请求正文（正文只能有一个）。</summary>
     public bool HasBody => _body is not null;
 
+    /// <summary>正文的定位名（错误消息用）。</summary>
     public string? BodyName => _body?.Name;
 
     /// <summary>路径绑定：占位符名称大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
@@ -65,6 +68,7 @@ internal sealed class BindingAccumulator
         _headers.Add((name, source));
     }
 
+    /// <summary>登记一个「头集合」来源：一次写入多个头，键冲突留给构建期校验。</summary>
     public void AddHeaderCollection(IValueSource source)
     {
         if (source.Format is not null)
@@ -383,6 +387,7 @@ internal sealed class BindingAccumulator
         return false;
     }
 
+    /// <summary>是否为文件型部件（<c>byte[]</c> / <c>Memory&lt;byte&gt;</c> / 流 / <see cref="FormFile"/> 等；可空类型先剥掉外层）。</summary>
     private static bool IsFilePartType(Type type)
     {
         type = Nullable.GetUnderlyingType(type) ?? type;
@@ -400,6 +405,7 @@ internal sealed class BindingAccumulator
     private void EnsureFormat(IValueSource source, string target)
         => FormatRules.EnsureApplicable(source.Format, source.ValueType, _owner, source.Name, target);
 
+    /// <summary>同名绑定冲突的错误：说明同名参数要合并成同一个成员。</summary>
     private InvalidOperationException DuplicateBinding(string name, string kind)
         => new($"{_owner} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个{_memberKind}（集合值走 AxiosNet 的数组规则）。");
 

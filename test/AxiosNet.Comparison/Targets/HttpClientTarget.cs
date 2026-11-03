@@ -22,12 +22,15 @@ internal sealed class HttpClientTarget : ITarget
 
     public string Name => "HttpClient";
 
+    /// <summary>为一个 worker 开一条会话；<see cref="HttpClient"/> 实例由全部 worker 共享。</summary>
     public ITargetSession OpenSession() => new Session(_client, _url);
 
+    /// <summary>释放基线用的 <see cref="HttpClient"/>。</summary>
     public void Dispose() => _client.Dispose();
 
     private sealed class Session(HttpClient client, string url) : ITargetSession
     {
+        /// <summary>发一次 GET 并用 <c>GetFromJsonAsync</c> 读成 <c>User</c>；null 视为错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             var user = await client.GetFromJsonAsync<User>(url, cancellationToken).ConfigureAwait(false);
@@ -37,6 +40,7 @@ internal sealed class HttpClientTarget : ITarget
             }
         }
 
+        /// <summary>会话不独占资源，无需释放。</summary>
         public void Dispose()
         {
         }

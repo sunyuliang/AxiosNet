@@ -16,6 +16,7 @@ public sealed class StreamingExample : IExample
 
     public string Title => "流式响应（SSE / JSON 数组）：RequestStreamAsync + IAsyncEnumerable 逐帧消费";
 
+    /// <summary>示例入口：流式响应（SSE / JSON 数组）：RequestStreamAsync + IAsyncEnumerable 逐帧消费。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

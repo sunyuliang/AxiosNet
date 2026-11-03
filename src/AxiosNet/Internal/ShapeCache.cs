@@ -63,8 +63,10 @@ internal static class ShapeCache
     /// <summary>清空反射构建的形状缓存（能力切换时调用，避免 AOT 与 JIT 的构建结论混用）。</summary>
     public static void InvalidateAll() => Cache.Clear();
 
+    /// <summary>取类型形状，没有就用反射建一份并缓存（同一类型只建一次）。</summary>
     private static ObjectShape GetOrAdd(Type type) => Cache.GetOrAdd(type, static t => ObjectShapeReflection.Create(t));
 
+    /// <summary>构建失败（<c>Error</c> 非 null）就抛出去，成功则原样返回。</summary>
     private static ObjectShape Validate(ObjectShape shape)
         => shape.Error is null ? shape : throw new InvalidOperationException(shape.Error);
 }

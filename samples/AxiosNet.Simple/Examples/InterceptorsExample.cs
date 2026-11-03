@@ -12,6 +12,7 @@ public sealed class InterceptorsExample : IExample
 
     public string Title => "拦截器：请求改写配置、响应改写数据、错误分支恢复";
 
+    /// <summary>示例入口：拦截器：请求改写配置、响应改写数据、错误分支恢复。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

@@ -12,9 +12,11 @@ namespace AxiosNet.WebAPI.Internal;
 /// <summary>请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）。校验失败同样进入缓存，每次调用都抛同一份错误。</summary>
 internal sealed class RequestModelMetadata
 {
+    // AOT 保留范围：模型类型的公开属性与实现的接口。
     private const DynamicallyAccessedMemberTypes ModelMembers =
         DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
 
+    // 类型 → 构建好的元数据（注册后失效重建）。
     private static readonly ConcurrentDictionary<Type, RequestModelMetadata> Cache = new();
 
     static RequestModelMetadata()
@@ -336,6 +338,7 @@ internal sealed class RequestModelMetadata
         };
     }
 
+    /// <summary>同名绑定冲突的错误：说明同名参数要合并成同一个属性。</summary>
     private static InvalidOperationException DuplicateBinding(Type requestType, string name, string kind)
         => new($"请求模型 {requestType.Name} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个属性（集合值走 AxiosNet 的数组规则）。");
 }

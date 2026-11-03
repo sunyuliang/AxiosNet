@@ -143,6 +143,7 @@ public sealed partial class ApiClient
         return errors;
     }
 
+    /// <summary>反射判定类型是否实现 <c>IApiRequest&lt;TResponse&gt;</c>；接口列表要在裁剪后保留，所以标了 <c>DynamicallyAccessedMembers</c>。</summary>
     private static bool ImplementsApiRequest(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type type)
         => type.GetInterfaces().Any(candidate
@@ -152,5 +153,6 @@ public sealed partial class ApiClient
     private static string NotARequestModel(Type type)
         => $"{Describe(type)}：未实现 IApiRequest<TResponse>，不能作为请求模型。";
 
+    /// <summary>错误消息里的类型名：全名优先，无名类型退回短名。</summary>
     private static string Describe(Type type) => type.FullName ?? type.Name;
 }

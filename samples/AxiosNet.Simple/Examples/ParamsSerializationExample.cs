@@ -10,6 +10,7 @@ public sealed class ParamsSerializationExample : IExample
 
     public string Title => "params 序列化（数组 a[]=1&a[]=2、嵌套 o[k]=v）";
 
+    /// <summary>示例入口：params 序列化（数组 a[]=1&a[]=2、嵌套 o[k]=v）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

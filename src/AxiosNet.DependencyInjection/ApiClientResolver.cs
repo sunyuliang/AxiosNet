@@ -36,10 +36,13 @@ internal sealed class ApiClientDefinition
         Configure = configure;
     }
 
+    /// <summary>站点名：解析器里的键，注入时按它取对应客户端。</summary>
     public string Name { get; }
 
+    /// <summary>该站点的默认配置：每站点一份，注册之间的改动不会互相污染。</summary>
     public AxiosConfig Defaults { get; }
 
+    /// <summary>客户端创建后的最后一步配置（拦截器、默认头等）；null 表示不再额外设置。</summary>
     public Action<ApiClient>? Configure { get; }
 }
 
@@ -62,6 +65,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
     /// <c>_clients</c> / <c>_owned</c> / <c>_disposed</c> 的读写，不执行用户代码。configure 里做跨站点同步等待可能互锁。
     /// </summary>
     private readonly ConcurrentDictionary<string, object> _siteGates = new(StringComparer.Ordinal);
+    // 0/1 释放标志（解析器与它创建的客户端一起释放）。
     private int _disposed;
 
     public ApiClientResolver(IServiceProvider services, IEnumerable<ApiClientDefinition> definitions)
@@ -75,6 +79,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
 
     public IReadOnlyList<string> Names => _namesReadOnly;
 
+    /// <summary>取指定站点的客户端（首次访问时才创建）；未注册时抛出并列出全部已注册站点名。</summary>
     public ApiClient Get(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
@@ -88,6 +93,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         throw new InvalidOperationException($"未注册名为 \"{name}\" 的 ApiClient 站点。已注册的站点: {available}");
     }
 
+    /// <summary>尝试取指定站点的客户端：站点名为 null 或解析器已释放时返回 false，不抛异常。</summary>
     public bool TryGet(string name, [MaybeNullWhen(false)] out ApiClient client)
     {
         if (name is null)
@@ -117,6 +123,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         return true;
     }
 
+    /// <summary>解析主流程：全局锁内查缓存与定义，站点锁内建客户端，创建结果再回填缓存。</summary>
     private bool TryGetCore(string name, [MaybeNullWhen(false)] out ApiClient client, bool throwIfDisposed = true)
     {
         // 第一层（全局锁）：只做字典查询与定义查找，不执行任何用户代码。
@@ -199,6 +206,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         }
     }
 
+    /// <summary>先置释放标志并快照已建客户端，再逐个同步释放（释放逻辑不在锁内跑）。</summary>
     public void Dispose()
     {
         ApiClientOwnedAxiosClient[] holders;
@@ -214,6 +222,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
         HolderDisposal.DisposeAll(holders);
     }
 
+    /// <summary>异步版本：标志与快照同 <see cref="Dispose"/>，释放走异步路径以免阻塞底层连接关闭。</summary>
     public async ValueTask DisposeAsync()
     {
         ApiClientOwnedAxiosClient[] holders;
@@ -234,6 +243,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
 /// </summary>
 internal static class HolderDisposal
 {
+    /// <summary>逆序释放一组持有者：收集首个异常，其余照常释放，最后重抛。</summary>
     public static void DisposeAll(IEnumerable<IDisposable> holders)
     {
         ExceptionDispatchInfo? failure = null;
@@ -252,6 +262,7 @@ internal static class HolderDisposal
         failure?.Throw();
     }
 
+    /// <summary>同上，异步释放版。</summary>
     public static async ValueTask DisposeAllAsync(IEnumerable<IAsyncDisposable> holders)
     {
         ExceptionDispatchInfo? failure = null;
@@ -274,6 +285,7 @@ internal static class HolderDisposal
 /// <summary>创建 <see cref="ApiClient"/>：显式设置的 Authorization / AccessTokenProvider / ErrorFactory 优先，未设置时才取容器里的单例。</summary>
 internal static class ApiClientFactory
 {
+    /// <summary>按注册数据造一个站点的客户端（底层 <see cref="AxiosClient"/> 由调用方持有）。</summary>
     public static ApiClient Create(IServiceProvider services, AxiosClient axiosClient, Action<ApiClient>? configure)
     {
         var client = new ApiClient(axiosClient);

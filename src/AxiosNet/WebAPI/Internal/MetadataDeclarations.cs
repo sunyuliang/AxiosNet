@@ -34,6 +34,7 @@ internal sealed class RequestModelDeclaration
     /// <summary>类级静态头（已按「基类在前、派生类在后」排序；构建期解析 "Name: Value"）。</summary>
     public List<string> StaticHeaders { get; } = new();
 
+    /// <summary>成员绑定声明（构建期按名字 / 类型 / 绑定目标校验）。</summary>
     public List<RequestModelMemberDeclaration> Members { get; } = new();
 }
 
@@ -45,6 +46,7 @@ internal sealed class RequestModelMemberDeclaration
     /// <summary>表单 / multipart 的默认字段名（[JsonPropertyName] 或属性名）；[Part] 未显式命名时用它。</summary>
     public string FieldName { get; set; } = string.Empty;
 
+    // 类型与取值委托：构建期从属性元数据填好，绑定时只按位置取值。
     public Type ValueType { get; set; } = typeof(object);
 
     public Func<object, object?>? GetValue { get; set; }
@@ -81,6 +83,7 @@ internal sealed class RequestModelMemberDeclaration
 
     public string? PartContentType { get; set; }
 
+    /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
     public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
 }
 
@@ -128,6 +131,7 @@ internal sealed class InterfaceMethodDeclaration
     /// <summary>方法级静态头（覆盖接口级同名项）。</summary>
     public List<string> StaticHeaders { get; } = new();
 
+    /// <summary>方法参数声明（含 CancellationToken 的位置）。</summary>
     public List<InterfaceParameterDeclaration> Parameters { get; } = new();
 
     public int CancellationTokenIndex { get; set; } = -1;
@@ -153,6 +157,7 @@ internal sealed class InterfaceParameterDeclaration
 
     public string Name { get; set; } = string.Empty;
 
+    // 类型与取值委托：构建期从参数元数据填好，绑定时只按位置取值。
     public Type ValueType { get; set; } = typeof(object);
 
     public string? Description { get; set; }
@@ -186,5 +191,6 @@ internal sealed class InterfaceParameterDeclaration
 
     public string? PartContentType { get; set; }
 
+    /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
     public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
 }

@@ -6,6 +6,7 @@ namespace AxiosNet.Metadata;
 /// </summary>
 public sealed class AxiosAotMetadataException : InvalidOperationException
 {
+    // 修复提示：直接给出三个可选动作，避免用户只看到「元数据缺失」。
     private const string RepairHint =
         "修复方式（任选其一）："
         + "（1）启用 AxiosNet 源生成器（默认随包启用，确认项目未设置 <AxiosNetSourceGen>false</AxiosNetSourceGen>）；"
@@ -58,8 +59,10 @@ public sealed class AxiosAotMetadataException : InvalidOperationException
         => type.Name.StartsWith("<>", StringComparison.Ordinal)
             || type.Name.StartsWith("VB$AnonymousType", StringComparison.Ordinal);
 
+    /// <summary>异常消息里的类型名：全名优先，无名类型退回短名。</summary>
     private static string Describe(Type type) => type.FullName ?? type.Name;
 
+    /// <summary>异常消息里的位置描述：没有字段路径时写成「根对象」。</summary>
     private static string DescribePath(string? fieldPath)
         => string.IsNullOrEmpty(fieldPath) ? "位置：根对象。" : $"位置：{fieldPath}。";
 }

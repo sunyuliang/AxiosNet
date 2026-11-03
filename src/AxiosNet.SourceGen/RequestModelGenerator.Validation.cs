@@ -14,6 +14,7 @@ namespace AxiosNet.SourceGen
     {
         private const string ValidationNamespace = "AxiosNet.Generated";
 
+        // 注册校验管道：把程序集名与开关并进来，决定这次编译要不要产校验入口。
         private static void InitializeValidation(
             IncrementalGeneratorInitializationContext context,
             IncrementalValueProvider<ImmutableArray<RequestModelInfo>> models,
@@ -32,6 +33,7 @@ namespace AxiosNet.SourceGen
                     data.Right));
         }
 
+        // 输出阶段：开关打开才生成校验方法，否则只在 PublishAot 下提示并返回。
         private static void ExecuteValidation(
             SourceProductionContext context,
             ImmutableArray<RequestModelInfo> models,
@@ -78,6 +80,7 @@ namespace AxiosNet.SourceGen
                 Emit(className, requestTypes, interfaceTypes));
         }
 
+        // 生成校验入口类：内部程序集用 internal，跨程序集验证时改 public。
         private static string Emit(string className, List<string> requestTypes, List<string> interfaceTypes)
         {
             var builder = new StringBuilder(2048);
@@ -121,6 +124,7 @@ namespace AxiosNet.SourceGen
         /// </summary>
         private const int ValidationBatchSize = 100;
 
+        // 按批写校验调用：单次 typeof 列表太长会拖慢编译，每批 100 个。
         private static void AppendValidationCall(StringBuilder builder, string method, List<string> typeNames)
         {
             for (var start = 0; start < typeNames.Count; start += ValidationBatchSize)

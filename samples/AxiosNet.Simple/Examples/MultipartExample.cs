@@ -11,6 +11,7 @@ public sealed class MultipartExample : IExample
 
     public string Title => "multipart/form-data：字段 + 一堆文件（服务端精确解析）";
 
+    /// <summary>示例入口：multipart/form-data：字段 + 一堆文件（服务端精确解析）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

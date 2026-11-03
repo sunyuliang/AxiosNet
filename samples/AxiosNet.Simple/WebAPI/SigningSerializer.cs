@@ -22,6 +22,7 @@ public sealed class SigningSerializer : IContentSerializer
         _key = Encoding.UTF8.GetBytes(key);
     }
 
+    /// <summary>先让内层序列化出正文，再对这段字节签名写进 <c>X-Signature</c> 头。</summary>
     public string Serialize(object? value, Type type, AxiosConfig config)
     {
         var body = _inner.Serialize(value, type, config);
@@ -32,6 +33,7 @@ public sealed class SigningSerializer : IContentSerializer
         return body;
     }
 
+    /// <summary>先用响应头里的 <c>X-Signature</c> 验签，通过后才交给内层解析。</summary>
     public object? Deserialize(string text, Type type, AxiosConfig config)
     {
         // config.Response 只在响应方向有值（状态码 / 响应头 / 字符集）
@@ -48,6 +50,7 @@ public sealed class SigningSerializer : IContentSerializer
         return _inner.Deserialize(text, type, config); // 验签过了才解析
     }
 
+    /// <summary>正文的 HMAC-SHA256，输出大写十六进制。</summary>
     private string Sign(string text)
         => Convert.ToHexString(HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(text)));
 }

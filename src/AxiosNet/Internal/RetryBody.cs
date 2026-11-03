@@ -138,6 +138,7 @@ internal sealed class RetryBody
         }
     }
 
+    /// <summary>正文不可重发时的报错：说清第二次为什么发不出完整正文，并列出可重放的替代形态。</summary>
     private static AxiosException NotReplayable(AxiosConfig config, string what)
         => AxiosException.InvalidOption(
             $"开启重试或备用端点要求请求体能重发，但当前 data 是{what}："

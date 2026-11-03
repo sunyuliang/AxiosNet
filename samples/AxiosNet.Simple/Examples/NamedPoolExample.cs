@@ -10,6 +10,7 @@ public sealed class NamedPoolExample : IExample
 
     public string Title => "命名共享池：GetOrCreate 按名字复用一条池，客户端释放不影响它";
 
+    /// <summary>示例入口：命名共享池：GetOrCreate 按名字复用一条池，客户端释放不影响它。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

@@ -13,6 +13,7 @@ public sealed class RequestModelBuilder
         Declaration = new RequestModelDeclaration { ModelType = modelType };
     }
 
+    /// <summary>构建中的请求模型声明；<c>Build</c> 后交给注册表。</summary>
     internal RequestModelDeclaration Declaration { get; }
 
     /// <summary>路由；方法名会被归一化（大写）。</summary>
@@ -92,6 +93,7 @@ public sealed class RequestModelBuilder
         return this;
     }
 
+    /// <summary>追加一个成员声明并返回它的构建器；参数校验在这里做，具体绑定由调用方在返回的构建器上继续加。</summary>
     private RequestModelMemberBuilder AddMember(
         string name,
         Type valueType,

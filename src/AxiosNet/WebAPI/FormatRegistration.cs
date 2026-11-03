@@ -17,9 +17,11 @@ namespace AxiosNet.WebAPI;
 /// </summary>
 internal static class FormatRegistration
 {
+    /// <summary>模块初始化时挂上格式化读取器（核心只留可空回调，不反向引用 WebAPI）。</summary>
     [ModuleInitializer]
     internal static void Register() => ShapeFormatReader.Reader = ReadPropertyFormat;
 
+    /// <summary>读属性上的 <c>[Format]</c> 并翻成格式化规格；没有该特性时返回 null。</summary>
     private static ValueFormat? ReadPropertyFormat(PropertyInfo property)
     {
         var attribute = property.GetCustomAttribute<FormatAttribute>(inherit: true);

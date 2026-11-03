@@ -40,6 +40,7 @@ public sealed partial class AxiosClient
         return await WaitOnFlightAsync(flight, config, linked.Token, bounded: true).ConfigureAwait(false);
     }
 
+    /// <summary>跟随同键的在途请求：等到它的结果；令牌被自己取消就抛，领导者失败或预算到点则返回 null 让调用方自行补发。</summary>
     private static async Task<AxiosShortCircuit?> WaitOnFlightAsync(
         AxiosCacheFlight flight,
         AxiosConfig config,
@@ -210,6 +211,7 @@ public sealed partial class AxiosClient
         => !ReferenceEquals(response.Data, response.RawBody)
            && response.Config?.HasTransformResponse is not true;
 
+    /// <summary>是否为会话型 Cookie 头（<c>Set-Cookie</c> / <c>Set-Cookie2</c>）：落库时跳过，缓存条目不该回放过期 Cookie。</summary>
     private static bool IsSessionCookieHeader(string name)
         => string.Equals(name, "Set-Cookie", StringComparison.OrdinalIgnoreCase)
            || string.Equals(name, "Set-Cookie2", StringComparison.OrdinalIgnoreCase);
@@ -303,6 +305,7 @@ public sealed partial class AxiosClient
         };
     }
 
+    /// <summary>把 304 的头并进缓存条目：只描述 304 自身（没有正文）的头直接丢弃，同名值先清后写。</summary>
     private static void MergeNotModifiedHeader(
         Dictionary<string, List<string>> headers,
         string name,

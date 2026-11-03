@@ -17,7 +17,9 @@ public sealed class DemoServer : IDisposable
     private readonly ConcurrentBag<TcpClient> _clients = new();
 
     private int _totalConnections;
+    // 当前在飞请求数（进入 +1、结束 -1），用来算峰值并发。
     private int _activeRequests;
+    // 历史峰值在飞数，演示连接复用效果时打印。
     private int _peakRequests;
 
     // 缓存示例用：每次真正被请求到就加一，命中缓存时客户端看不到增长。
@@ -59,6 +61,7 @@ public sealed class DemoServer : IDisposable
 
     public int PeakConcurrentRequests => Volatile.Read(ref _peakRequests);
 
+    /// <summary>在回环地址的随机端口上起监听器：端口由系统分配，多个示例之间不会撞车。</summary>
     public static DemoServer Start()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -66,6 +69,7 @@ public sealed class DemoServer : IDisposable
         return new DemoServer(listener);
     }
 
+    /// <summary>清零连接数与并发峰值，让每次测量从同一基线开始。</summary>
     public void ResetStats()
     {
         Volatile.Write(ref _totalConnections, 0);
@@ -73,6 +77,7 @@ public sealed class DemoServer : IDisposable
         Volatile.Write(ref _peakRequests, 0);
     }
 
+    /// <summary>接受循环：每来一个连接就登记总数并丢给后台任务，不阻塞后续接入。</summary>
     private async Task AcceptLoopAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -93,6 +98,7 @@ public sealed class DemoServer : IDisposable
         }
     }
 
+    /// <summary>处理一条连接：循环读请求头与正文，按方法与路径分派到各演示端点，异常只影响这条连接。</summary>
     private async Task HandleConnectionAsync(TcpClient client)
     {
         using (client)
@@ -460,11 +466,14 @@ public sealed class DemoServer : IDisposable
             + $"\"sha256\":\"{Sha256Hex(part.Content)}\"}}";
     }
 
+    /// <summary>内容摘要（小写十六进制），供示例核对上传的字节确实完整到达。</summary>
     private static string Sha256Hex(byte[] content)
         => Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 
+    /// <summary>JSON 字符串转义：只处理反斜杠与双引号，够手写响应体用。</summary>
     private static string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
+    /// <summary>写一个完整 HTTP/1.1 响应：状态行、固定头、可选附加头，最后写正文。</summary>
     private static async Task WriteResponseAsync(
         NetworkStream stream,
         int status,
@@ -497,6 +506,7 @@ public sealed class DemoServer : IDisposable
         await stream.FlushAsync();
     }
 
+    /// <summary>逐字节读到终止符（含终止符）为止；连接先关闭时返回 null。</summary>
     private static async Task<byte[]?> ReadUntilAsync(NetworkStream stream, byte[] terminator, CancellationToken token)
     {
         using var buffer = new MemoryStream();
@@ -527,6 +537,7 @@ public sealed class DemoServer : IDisposable
         return buffer.ToArray();
     }
 
+    /// <summary>用 CAS 把并发峰值抬到当前值（只在超过旧峰值时写，避免锁）。</summary>
     private void UpdatePeak(int active)
     {
         while (true)
@@ -539,6 +550,7 @@ public sealed class DemoServer : IDisposable
         }
     }
 
+    /// <summary>停止监听、取消在途请求并逐个关闭已接入的连接。</summary>
     public void Dispose()
     {
         _cts.Cancel();

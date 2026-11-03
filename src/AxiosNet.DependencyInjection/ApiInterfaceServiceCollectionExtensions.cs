@@ -113,6 +113,7 @@ public static class ApiInterfaceServiceCollectionExtensions
         services.AddSingleton(new ApiInterfaceBinding(interfaceType, name));
     }
 
+    /// <summary>错误消息里的站点描述：未命名站点与具名站点各一种措辞。</summary>
     private static string DescribeSite(string? name)
         => name is null ? "未命名站点（AddApiClient(baseAddress)）" : $"站点 \"{name}\"";
 

@@ -29,5 +29,6 @@ internal sealed class DelegateValueSource : IValueSource
 
     public ValueFormat? Format { get; }
 
+    /// <summary>直接调用生成期写死的取值委托，取值不经过反射。</summary>
     public object? GetValue(object target) => _getValue(target);
 }

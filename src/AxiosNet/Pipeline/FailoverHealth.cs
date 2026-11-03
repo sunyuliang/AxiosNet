@@ -43,6 +43,7 @@ internal sealed class FailoverHealth
     /// <summary>测试用：注入单调时钟（单位 <see cref="TimeSpan"/> 刻度）以控制冷却窗口。</summary>
     internal FailoverHealth(Func<long>? clock) => _clock = clock ?? NowTicks;
 
+    /// <summary>当前单调时钟（已换算成 <see cref="TimeSpan"/> 刻度），不受系统时间调整影响。</summary>
     private static long NowTicks() => (long)(Stopwatch.GetTimestamp() * TicksPerTimestamp);
 
     /// <summary>该端点此刻是否可用：没有记录、连续失败未达阈值、或冷却已到期都算可用。</summary>

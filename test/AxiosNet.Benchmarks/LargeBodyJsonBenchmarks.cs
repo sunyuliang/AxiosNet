@@ -47,6 +47,7 @@ public class LargeBodyJsonBenchmarks
     private HttpClient _http = null!;
     private string _url = null!;
 
+    /// <summary>按档位生成 JSON 数组正文并起服务器；正文只生成一次，不进测量区。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -57,6 +58,7 @@ public class LargeBodyJsonBenchmarks
         _http = new HttpClient(ComparableHttpClientHandler.Create());
     }
 
+    /// <summary>先释放客户端再停服务器。</summary>
     [GlobalCleanup]
     public async Task CleanupAsync()
     {

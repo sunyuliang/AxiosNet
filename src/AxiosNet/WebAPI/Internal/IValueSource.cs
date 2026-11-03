@@ -42,5 +42,6 @@ internal sealed class ArgumentValueSource : IValueSource
 
     public ValueFormat? Format { get; }
 
+    /// <summary>从调用参数数组里按序号取值（生成代码传进来的就是一个 <c>object?[]</c>）。</summary>
     public object? GetValue(object target) => ((object?[])target)[_index];
 }

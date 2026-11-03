@@ -25,6 +25,7 @@ namespace AxiosNet.Benchmarks.Infrastructure;
 /// </summary>
 internal sealed class LoopbackHttpServer : IAsyncDisposable
 {
+    // 读请求头用的缓冲区：基准只发小请求，一次 Read 就能读完整个请求。
     private const int BufferSize = 16 * 1024;
 
     private readonly TcpListener _listener;
@@ -49,6 +50,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
     /// <summary>累计已回复的请求数（用于确认基准确实打到了服务器，而不是本地短路）。</summary>
     public long Requests => Interlocked.Read(ref _requests);
 
+    /// <summary>在回环随机端口上起一个固定正文的 HTTP 服务器（每个基准一套，端口互不冲突）。</summary>
     public static LoopbackHttpServer Start(byte[] body, string contentType = "application/json; charset=utf-8")
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -56,6 +58,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         return new LoopbackHttpServer(listener, body, contentType);
     }
 
+    /// <summary>接受循环：每个连接丢给后台任务处理。</summary>
     private async Task AcceptLoopAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -75,6 +78,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         }
     }
 
+    /// <summary>处理一条连接：关掉 Nagle、按 <c>Content-Length</c> 读完正文后回同一份固定响应。</summary>
     private async Task HandleConnectionAsync(TcpClient client)
     {
         using (client)
@@ -161,6 +165,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         }
     }
 
+    /// <summary>把请求正文按声明长度读完并丢弃；连接先断开就报错，避免静默失真。</summary>
     private static async Task DrainAsync(NetworkStream stream, int count)
     {
         var scratch = new byte[Math.Min(count, 4096)];
@@ -421,8 +426,10 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         return -1;
     }
 
+    /// <summary>ASCII 大写字母转小写，其余原样（头名比较用）。</summary>
     private static byte Fold(byte value) => value is >= (byte)'A' and <= (byte)'Z' ? (byte)(value + 32) : value;
 
+    /// <summary>找 <c>\r\n\r\n</c> 的下标，没找到返回 -1。</summary>
     private static int IndexOfHeaderEnd(byte[] buffer, int length)
     {
         for (var i = 0; i + 3 < length; i++)
@@ -439,6 +446,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         return -1;
     }
 
+    /// <summary>拼一个 200 + keep-alive 的完整响应字节（头与正文一次拷好再发）。</summary>
     private static byte[] BuildResponse(byte[] body, string contentType)
     {
         var head = Encoding.ASCII.GetBytes(
@@ -454,6 +462,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         return response;
     }
 
+    /// <summary>取消、停监听，并关闭所有已接入的连接。</summary>
     public ValueTask DisposeAsync()
     {
         try

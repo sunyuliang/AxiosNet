@@ -12,6 +12,7 @@ public sealed class CreateInstanceExample : IExample
 
     public string Title => "Axios.Create 创建实例（baseURL、默认头、强类型响应）";
 
+    /// <summary>示例入口：Axios.Create 创建实例（baseURL、默认头、强类型响应）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

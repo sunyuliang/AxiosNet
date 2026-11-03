@@ -16,6 +16,7 @@ public sealed class TelemetryExample : IExample
 
     public string Title => "可观测性：span / 指标 / 诊断事件，以及按请求关掉遥测";
 
+    /// <summary>示例入口：可观测性：span / 指标 / 诊断事件，以及按请求关掉遥测。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -189,6 +190,7 @@ public sealed class TelemetryExample : IExample
         eventSubscription?.Dispose();
     }
 
+    /// <summary>把标签拼成 <c>k=v, k=v</c> 一行，便于打印。</summary>
     private static string Tags(ReadOnlySpan<KeyValuePair<string, object?>> tags)
         => string.Join(", ", tags.ToArray().Select(tag => $"{tag.Key}={tag.Value}"));
 
@@ -199,14 +201,17 @@ public sealed class TelemetryExample : IExample
 
         public Observer(Action<T> onNext) => _onNext = onNext;
 
+        /// <summary>诊断流结束：本示例不需要收尾动作。</summary>
         public void OnCompleted()
         {
         }
 
+        /// <summary>诊断流报错：吞掉，遥测问题不该影响示例流程。</summary>
         public void OnError(Exception error)
         {
         }
 
+        /// <summary>把事件转给构造时传进来的回调。</summary>
         public void OnNext(T value) => _onNext(value);
     }
 }

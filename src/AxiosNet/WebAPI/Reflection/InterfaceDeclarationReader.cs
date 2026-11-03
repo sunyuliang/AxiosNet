@@ -11,6 +11,7 @@ namespace AxiosNet.WebAPI.Reflection;
 /// </summary>
 internal static class InterfaceDeclarationReader
 {
+    // AOT 保留范围：接口方法与实现的接口。
     private const DynamicallyAccessedMemberTypes InterfaceMembers =
         DynamicallyAccessedMemberTypes.PublicMethods
         | DynamicallyAccessedMemberTypes.Interfaces;

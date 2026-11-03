@@ -63,6 +63,7 @@ public sealed partial class AxiosClient
                 : AxiosException.Canceled(config, request, exception);
         }
 
+        /// <summary>释放这次尝试用的定时器（取消源）；外部令牌不归本对象管。</summary>
         public void Dispose() => _timeoutCts?.Dispose();
 
         /// <summary>
@@ -385,6 +386,7 @@ public sealed partial class AxiosClient
         }
     }
 
+    /// <summary>默认的成功判定：2xx 才算成功（未配置 <c>ValidateStatus</c> 时用它）。</summary>
     private static bool DefaultValidateStatus(int status) => status is >= 200 and < 300;
 
     /// <summary>沿 <see cref="Exception.InnerException"/> 链找库自己的异常（HttpClient 会把正文序列化异常包成 <see cref="HttpRequestException"/>）。</summary>

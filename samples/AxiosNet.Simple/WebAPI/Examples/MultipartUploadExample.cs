@@ -15,6 +15,7 @@ public sealed class MultipartUploadExample : IExample
 
     public string Title => "multipart 上传：[Multipart] + [Part]（模型自身即表单，服务器按字节解析回执）";
 
+    /// <summary>示例入口：multipart 上传：[Multipart] + [Part]（模型自身即表单，服务器按字节解析回执）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

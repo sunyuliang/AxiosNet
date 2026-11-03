@@ -27,6 +27,7 @@ public sealed class AuthorizationExample : IExample
 
     public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方 / AccessTokenManager（对比自定义 IAuthorizationProvider）";
 
+    /// <summary>示例入口：授权：[AllowAnonymous] / [Authorize] + 令牌提供方 / AccessTokenManager（对比自定义 IAuthorizationProvider）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
@@ -110,6 +111,7 @@ public sealed class AuthorizationExample : IExample
         Console.WriteLine($"  401 重放 -> {rotated.Status} {rotated.Data!.IssuedBy}（取令牌 {rotateCalls} 次，只重放一次）");
     }
 
+    /// <summary>读请求消息上的某个头；短路响应没有请求消息，返回 <c>none</c>。</summary>
     private static string Header(System.Net.Http.HttpRequestMessage? request, string name)
         => request is not null && request.Headers.TryGetValues(name, out var values)
             ? string.Join(",", values!)
@@ -121,14 +123,17 @@ public sealed class AuthorizationExample : IExample
     /// </summary>
     private sealed class SessionTokenProvider : IAccessTokenProvider
     {
+        // 当前会话令牌；登录前为 null，此时不写 Authorization 头。
         private volatile string? _token;
         private int _calls;
 
         /// <summary>被调用次数（用于证明 [AllowAnonymous] 真的跳过了授权链路）。</summary>
         public int Calls => Volatile.Read(ref _calls);
 
+        /// <summary>换会话令牌：下一次取令牌就返回新值（volatile 写，读侧不会缓存旧值）。</summary>
         public void SetToken(string? token) => _token = token;
 
+        /// <summary>取当前会话令牌并计一次调用；未登录时返回 null，库据此不写 <c>Authorization</c> 头。</summary>
         public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _calls);
@@ -141,6 +146,7 @@ public sealed class AuthorizationExample : IExample
     {
         public string? Seen { get; private set; }
 
+        /// <summary>只把当前的 <c>Authorization</c> 头记下来，用来证明授权提供方在令牌提供方之后执行。</summary>
         public ValueTask ApplyAsync(ApiAuthContext context, CancellationToken cancellationToken)
         {
             Seen = context.Config.Headers.Get("Authorization");

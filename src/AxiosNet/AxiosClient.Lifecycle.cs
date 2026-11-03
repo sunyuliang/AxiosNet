@@ -3,6 +3,7 @@
 // AxiosClient 的释放与在途请求计数。
 public sealed partial class AxiosClient
 {
+    // 释放后发起新请求的错误文案。
     private const string DisposedMessage = "AxiosClient 已释放，不能发起新请求";
 
     /// <summary>最后一个在途请求结束时，补做 <see cref="Dispose"/> 推迟的资源释放。</summary>

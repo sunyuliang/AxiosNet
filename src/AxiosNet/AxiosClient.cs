@@ -17,8 +17,11 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private readonly HttpMessageHandler? _customHandler;
     private readonly bool _ownsPool;
     private readonly bool _ownsCustomHandler;
+    // 0/1 一次性释放标志（Interlocked），重复 Dispose 直接返回。
     private int _disposed;
+    // 在途请求数：释放时等它归零，避免打断正在用连接池的请求。
     private int _inFlight;
+    // 池 / Handler 的释放标志：先拒绝新请求，等尾款归零再释放资源。
     private int _resourcesDisposed;
 
     /// <summary>

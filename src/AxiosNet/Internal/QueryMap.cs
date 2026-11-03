@@ -65,6 +65,7 @@ internal static class QueryMap
         return accessor is not null;
     }
 
+    /// <summary>沿基类链找访问器：生成器按声明类型注册，运行时是派生实例也能命中。</summary>
     private static MapAccessor? ResolveAccessor(Type type)
     {
         // 生成器按「声明类型」注册：声明是基类、运行时是派生实例时沿基类链命中（访问器委托对派生实例同样有效）。
@@ -199,6 +200,7 @@ internal static class QueryMap
         return null;
     }
 
+    /// <summary>枚举类型自身与它的全部接口：字典契约可能声明在接口上，要逐个试。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
@@ -215,8 +217,12 @@ internal static class QueryMap
     /// <summary>具体类型 → 注册表访问器（null 表示没有）。条目带纪元，注册表更新后旧条目（含「没有」）自动失效。</summary>
     private static readonly ConcurrentDictionary<Type, ResolvedMap> ResolvedMaps = new();
 
+    // 注册表纪元：每次注册 +1，让缓存的「没有」也一并失效。
     private static int _epoch;
 
+    /// <summary>缓存条目：注册表纪元 + 该类型对应的访问器（null 表示「查过了，没有」）。</summary>
+    /// <param name="Epoch">写入时的注册表纪元，与当前纪元不符即视为过期。</param>
+    /// <param name="Accessor">访问器；null 表示该类型不是字符串键字典。</param>
     private readonly record struct ResolvedMap(int Epoch, MapAccessor? Accessor);
 
     /// <summary>类型是否「字符串键字典」的缓存：纯类型形状，与注册表无关。</summary>

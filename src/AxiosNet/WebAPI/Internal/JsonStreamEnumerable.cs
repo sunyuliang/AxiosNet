@@ -14,6 +14,7 @@ namespace AxiosNet.WebAPI.Internal;
 /// </remarks>
 internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnumerator<T>
 {
+    // 每次从流里读的块大小：8 KB 足够摊薄 syscall，又不至于让单帧缓冲过大。
     private const int ReadChunk = 8 * 1024;
     private const string DoneSentinel = "[DONE]";
     private const string ArrayFormatName = "JSON array";
@@ -75,6 +76,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     /// <summary>当前 SSE 帧已累积的<b>原始字节数</b>（分帧上限按字节判定）。</summary>
     private int _frameBytes;
 
+    // 读缓冲与游标：_start/_end 是未消费区间，_eof = 流已读完，_finished = 不再产出。
     private byte[] _buffer = new byte[ReadChunk];
     private int _start;
     private int _end;
@@ -151,6 +153,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
     public T Current => _current;
 
+    // 只允许枚举一次：返回 this 并记下取消令牌，第二次枚举必须重新发请求。
     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
         if (_enumeratorTaken)
@@ -163,6 +166,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return this;
     }
 
+    // 推进一帧：切出下一个完整值并反序列化，流结束或已释放时返回 false。
     public async ValueTask<bool> MoveNextAsync()
     {
         if (_disposed)
@@ -209,6 +213,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
+    // 释放包装流（连带归还连接池租约、释放响应消息）；重复调用无副作用。
     public ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -300,6 +305,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
+    // 这一帧是不是结束哨兵（SSE 的 [DONE]）。
     private static bool IsDone(ReadOnlySpan<byte> frame) => IsAscii(frame, DoneSentinel);
 
     /// <summary>取走当前累积的 SSE 帧并重置帧状态；<c>[DONE]</c> 返回 <c>null</c>（流结束）。超过基础容量的帧缓冲换成新实例。</summary>
@@ -335,6 +341,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _frameLength += value.Length;
     }
 
+    // 帧缓冲不够就扩：取「需要的量」与「当前两倍」的较大者，单帧超长时少拷几次。
     private void EnsureFrameCapacity(int required)
     {
         if (required <= _frameBuffer.Length)
@@ -359,8 +366,10 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
             _bytes = bytes;
         }
 
+        // 文本入口：只在 JSON 数组声明了非 UTF-8 编码时使用。
         public static FramePayload FromText(string text) => new(text, default);
 
+        // 字节入口：默认路径，省掉每帧一次的 UTF-16 往返。
         public static FramePayload FromBytes(ReadOnlyMemory<byte> bytes) => new(null, bytes);
 
         public string? Text => _text;
@@ -696,6 +705,9 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     }
 
     /// <summary>一行在缓冲区里的字节区间（不含行尾 CR / LF）+ 它在原始字节流里的长度（SSE 分帧上限按字节判定）。</summary>
+    /// <param name="Offset">行首在缓冲区里的下标。</param>
+    /// <param name="Length">行内容的字节数，不含行尾。</param>
+    /// <param name="ByteLength">该行连同行尾在原始字节流里占用的字节数，用于累计单帧上限。</param>
     private readonly record struct Line(int Offset, int Length, int ByteLength);
 
     /// <summary>行尾判定：LF / CR / CRLF 都是合法行分隔符，返回最早出现的 CR 或 LF 的下标，没有则返回 -1。</summary>
@@ -711,6 +723,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         return index < 0 ? -1 : _start + index;
     }
 
+    // 按已解析的编码把字节区间解成字符串；零长度直接给空串。
     private string Decode(int offset, int length)
         => length <= 0 ? string.Empty : ResponseTextDecoder.DecodeResolved(_buffer.AsSpan(offset, length), _encoding);
 
@@ -761,6 +774,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         }
     }
 
+    // 一帧 → T：优先按字节反序列化，非 UTF-8 或字节非法时回退文本入口。
     private T Deserialize(in FramePayload payload)
     {
         try

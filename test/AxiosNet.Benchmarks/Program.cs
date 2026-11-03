@@ -19,6 +19,7 @@ namespace AxiosNet.Benchmarks;
 /// </summary>
 public static class Program
 {
+    /// <summary>有参数走 BDN 切换器（脚本 / CI 用），无参数进交互菜单；标准输入被重定向时只打印用法，不进菜单。</summary>
     public static int Main(string[] args)
     {
 #if DEBUG
@@ -42,6 +43,7 @@ public static class Program
         return BenchmarkMenu.Run();
     }
 
+    /// <summary>打印用法：交互菜单、按名过滤、只列举与快速冒烟各自的命令行。</summary>
     private static void PrintUsage()
     {
         Console.WriteLine("AxiosNet 性能基准（BenchmarkDotNet）");

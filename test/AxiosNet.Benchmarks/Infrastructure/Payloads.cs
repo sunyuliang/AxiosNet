@@ -9,42 +9,55 @@ namespace AxiosNet.Benchmarks.Infrastructure;
 /// <summary>典型的小对象响应（5 个字段 + 嵌套对象），用于「全链路」与「强类型反序列化」。</summary>
 public sealed class UserDto
 {
+    /// <summary>用户 ID。</summary>
     public int Id { get; set; }
 
+    /// <summary>用户名：覆盖字符串解码与转义。</summary>
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>布尔字段：覆盖 <c>true</c> / <c>false</c> 的字面量解析。</summary>
     public bool Active { get; set; }
 
+    /// <summary>字符串数组：覆盖数组节点与元素分配。</summary>
     public string[] Tags { get; set; } = [];
 
+    /// <summary>嵌套对象：覆盖一层对象图构建。</summary>
     public AddressDto? Address { get; set; }
 }
 
 /// <summary><see cref="UserDto"/> 的嵌套对象。</summary>
 public sealed class AddressDto
 {
+    /// <summary>嵌套对象的城市字段。</summary>
     public string City { get; set; } = string.Empty;
 
+    /// <summary>嵌套对象的邮编字段。</summary>
     public string Zip { get; set; } = string.Empty;
 }
 
 /// <summary>大正文 JSON 数组的元素：数字 / 字符串 / 浮点三种字段，覆盖常见对象图成本。</summary>
 public sealed class JsonItemDto
 {
+    /// <summary>大数组元素里的整数列。</summary>
     public int Id { get; set; }
 
+    /// <summary>大数组元素里的字符串列。</summary>
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>大数组元素里的浮点列。</summary>
     public double Value { get; set; }
 }
 
 /// <summary>流式响应的单帧（模拟 LLM token 流的一行）。</summary>
 public sealed class StreamFrame
 {
+    /// <summary>帧序号。</summary>
     public int Id { get; set; }
 
+    /// <summary>本帧正文（模拟 token 片段）。</summary>
     public string Delta { get; set; } = string.Empty;
 
+    /// <summary>是否最后一帧。</summary>
     public bool Done { get; set; }
 }
 
@@ -54,6 +67,7 @@ public sealed class StreamRequest : IApiRequest<StreamFrame>
 {
 }
 
+/// <summary>全部基准共用的预编码载荷：字符串在这里编码成 UTF-8 字节一次，基准方法内不再做编码。</summary>
 internal static class Payloads
 {
     /// <summary>大正文用的确定性内容（避免全零被中间层特殊对待，也让内容校验有意义）。</summary>
@@ -209,6 +223,7 @@ internal static class Payloads
         return data;
     }
 
+    /// <summary>生成一帧 NDJSON 文本（id / delta / done 三个字段）。</summary>
     private static string FrameJson(int index)
         => $$"""{"id":{{index}},"delta":"token {{index}}","done":false}""";
 }

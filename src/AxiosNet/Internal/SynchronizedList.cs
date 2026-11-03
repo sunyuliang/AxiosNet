@@ -8,6 +8,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal sealed class SynchronizedList<T> : IList<T>
 {
+    // 空数组单例：清空 / 初始状态都指向它，避免反复分配。
     private static readonly T[] Empty = Array.Empty<T>();
 
     /// <summary>索引越界消息（中文，语义与 <see cref="List{T}"/> 的同名错误一致）。</summary>
@@ -79,6 +80,7 @@ internal sealed class SynchronizedList<T> : IList<T>
 
     public bool IsReadOnly => false;
 
+    // 追加：整数组复制后 CAS 发布新版本；CAS 失败说明别人抢先，重试而不是加锁。
     public void Add(T item)
     {
         while (true)
@@ -111,10 +113,13 @@ internal sealed class SynchronizedList<T> : IList<T>
         Volatile.Write(ref _items, Empty);
     }
 
+    // 存在性判断交给 IndexOf，比较语义与 List 保持一致。
     public bool Contains(T item) => IndexOf(item) >= 0;
 
+    // 先取一次快照再拷：拷贝期间不会被并发写打断。
     public void CopyTo(T[] array, int arrayIndex) => Volatile.Read(ref _items).CopyTo(array, arrayIndex);
 
+    // 线性找第一个相等项，没有返回 -1（与 List 语义一致）。
     public int IndexOf(T item)
     {
         var items = Volatile.Read(ref _items);
@@ -130,6 +135,7 @@ internal sealed class SynchronizedList<T> : IList<T>
         return -1;
     }
 
+    // 插入：允许 index == Count（等价追加），其余越界抛；复制两段后 CAS 发布。
     public void Insert(int index, T item)
     {
         while (true)
@@ -154,6 +160,7 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
     }
 
+    // 按值删首个匹配项；找不到就不发布新版本（不产生垃圾），CAS 失败重试。
     public bool Remove(T item)
     {
         var comparer = EqualityComparer<T>.Default;
@@ -189,6 +196,7 @@ internal sealed class SynchronizedList<T> : IList<T>
         }
     }
 
+    // 按下标删：越界抛 ArgumentOutOfRangeException，成功后 CAS 发布新版本。
     public void RemoveAt(int index)
     {
         while (true)

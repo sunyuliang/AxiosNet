@@ -2,9 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2159%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2152%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2312%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2227%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -133,6 +133,8 @@ string url = http.GetUri(c =>
 
 ### 模型式 API
 
+一个端点一个类：路由写在类上、绑定特性写在属性上，URL 由声明拼出，调用只剩 `RequestAsync` / `GetUri`。
+
 ```csharp
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
@@ -170,18 +172,34 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 | 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头（同名 `[Header]` 属性 / 参数仍会把它写回来）；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
-| 值格式化 | `[Format]`（属性 / 参数） | 格式串或静态函数；集合逐元素、字典逐值（见「值格式化」） |
+| 值格式化 | `[Format]`（属性 / 参数） | 格式串或静态函数；集合逐元素、字典逐值（见[值格式化](#值格式化)） |
 | 编码 | `[BodyContentType]` / `[QueryCollectionFormat]`（接口方法） | 正文媒体类型（决定怎么编码）/ 查询集合格式；覆盖实例默认值 |
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
 
-- **单负载模型可省 `[Body]`**：POST / PUT / PATCH 且模型只有一个未标注的**非标量**属性时默认按 Body 绑定（字典属性除外，始终按查询串）。
-- 一个属性可同时标多个绑定特性（`[Path]` + `[Header]`），值只读一次、分别应用。
+**绑定规则**
+
+- 单负载模型可省 `[Body]`：POST / PUT / PATCH 且模型只有一个未标注的**非标量**属性时默认按 Body 绑定（字典属性除外，始终按查询串）。
+- 一个属性可同时标多个绑定特性（`[Path]` + `[Header]`）：值只读一次、分别应用。
 - 按请求微调：继承 `ApiRequest<T>` 覆写 `Configure(config)`，或 `RequestAsync(request, config => ...)`。
-- 模型定义非法（缺路由、占位符未绑定、多个 Body…）首次调用抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateModels(typeof(A), ...)` 或 `ValidateModels(assembly)`（返回全部错误消息，不抛）。按类型重载在 Native AOT 下同样可用（已生成的声明直接走注册表）；`ValidateModels(assembly)` 依赖反射枚举，AOT 下改调生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`。
-- 声明本身合法、但运行时取值 / 格式化失败（路径值为 null、格式化函数抛错、非法头名 / 头值等）属于请求装配失败，统一抛 `AxiosException`（`ERR_BAD_REQUEST`），原异常在 `Cause`；与正文 / multipart 装配同口径。
+
+**校验与报错**
+
+- 模型定义非法（缺路由、占位符未绑定、多个 Body…）首次调用抛 `InvalidOperationException`。
+- 启动期体检用 `ApiClient.ValidateModels(typeof(A), ...)` 或 `ValidateModels(assembly)`，返回全部错误消息、不抛：
+  - 按类型重载在 Native AOT 下同样可用（已生成的声明直接走注册表）。
+  - `ValidateModels(assembly)` 依赖反射枚举，AOT 下改调生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`。
+- 声明本身合法、但运行时取值 / 格式化失败（路径值为 `null`、格式化函数抛错、非法头名 / 头值等）属于请求装配失败，统一抛 `AxiosException`（`ERR_BAD_REQUEST`），原异常在 `Cause`；与正文 / multipart 装配同口径。
+
+**授权与强类型错误**
+
 - 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；`IAuthorizationProvider` 是扩展点，内置 `BearerAuthorizationProvider`。
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
-- 其它：`client.ValueFormatter` 接管路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文的文本形态（优先级低于成员上的 `[Format]`，见「值格式化」）；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
+
+**底层入口**
+
+- `client.ValueFormatter` 接管路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文的文本形态（优先级低于成员上的 `[Format]`，见[值格式化](#值格式化)）。
+- `client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）。
+- 流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
 
 ### 接口式 API
 
@@ -233,16 +251,44 @@ Task<AxiosResponse<Token>> LoginAsync([Body] LoginForm form, CancellationToken c
 Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cancellationToken = default);
 ```
 
-- 每个方法必须标注且只标注一个路由特性。返回类型有四种：`Task<AxiosResponse<T>>`（完整响应）/ `Task<AxiosResponse>`（正文按 `JsonElement` 原样交付）/ `Task<T>`（只交付 `Data`）/ `Task`（只完成请求，不解析正文——非 JSON 正文不会变成解析错误）。不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法（裸 `Task<IAsyncEnumerable<T>>` 缺少响应元数据与释放归属，启动期校验即报错）。
+**方法与返回类型**
+
+- 每个方法必须标注且只标注一个路由特性。返回类型有四种：`Task<AxiosResponse<T>>`（完整响应）/ `Task<AxiosResponse>`（正文按 `JsonElement` 原样交付）/ `Task<T>`（只交付 `Data`）/ `Task`（只完成请求，不解析正文——非 JSON 正文不会变成解析错误）。
+- 返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法；裸 `Task<IAsyncEnumerable<T>>` 缺少响应元数据与释放归属，启动期校验即报错。
+- 不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`。
 - 四种形态的失败口径一致：非 2xx 抛 `AxiosException`，配置了 `ErrorFactory` 时照常替换/包装；用 `Task` 形态时 `ErrorFactory` 仍能拿到响应（只是正文被丢弃）。声明式装配失败（路径 / 查询 / 请求头 / 正文的取值或格式化抛错）统一为 `ERR_BAD_REQUEST`，原异常在 `Cause`。
-- `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
-- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口或接口方法上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。方法级声明压过接口级：静态头同名项覆盖、`[AllowAnonymous]` 可让接口里单个方法匿名、`[Authorize("Basic")]` 可让单个方法换 scheme；方法上同标 `[Authorize]` 与 `[AllowAnonymous]` 属二义性（`Create<T>()` / `ValidateInterfaces` 报错）。
-- 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` / `[BodyContentType]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛；同一接口的多个方法错误会聚合，而不是只报第一条）。按类型重载在 Native AOT 下同样可用；`ValidateInterfaces(assembly)` 在 AOT 下抛 `PlatformNotSupportedException`，改调生成的 `ValidateAll()`。
+
+**参数绑定**
+
+- `CancellationToken` 参数按名字识别（最多一个），不参与绑定。
+- 其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
+
+**头与授权**
+
+- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口或接口方法上；继承基接口时，静态头与授权按**当前派生接口作用域**合并——同一基方法在不同派生接口下可以有不同静态头。
+- 方法级声明压过接口级：静态头同名项覆盖、`[AllowAnonymous]` 可让接口里单个方法匿名、`[Authorize("Basic")]` 可让单个方法换 scheme。
+- 方法上同标 `[Authorize]` 与 `[AllowAnonymous]` 属二义性（`Create<T>()` / `ValidateInterfaces` 报错）。
 - 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
+
+**声明校验**
+
+- 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` / `[BodyContentType]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`。
+- 启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`：返回全部错误消息、不抛，同一接口的多个方法错误会聚合而不是只报第一条。
+  - 按类型重载在 Native AOT 下同样可用。
+  - `ValidateInterfaces(assembly)` 在 AOT 下抛 `PlatformNotSupportedException`，改调生成的 `ValidateAll()`。
+
+**编码与流式**
+
+- 方法级编码：`[BodyContentType(...)]` 写入 `config.ContentType`（决定正文编码，而不是只加一个头），用于表单、XML 或自定义媒体类型；它与 `[Multipart]` 互斥（multipart 的媒体类型固定）。
+- `[QueryCollectionFormat(...)]` 写入 `config.Serialization.CollectionFormat`，覆盖实例默认值；OpenAPI 的 `explode: true` 对应 `AxiosCollectionFormat.Multi`。
 - 接口级流式：帧格式用 `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` 声明，省略按 NDJSON；返回流只能枚举一次，超时与错误口径与 `RequestStreamAsync(...)` 完全一致。
-- 方法级编码：`[BodyContentType(...)]` 写入 `config.ContentType`（决定正文编码，而不是只加一个头），用于表单、XML 或自定义媒体类型；它与 `[Multipart]` 互斥（multipart 的媒体类型固定）。`[QueryCollectionFormat(...)]` 写入 `config.Serialization.CollectionFormat`，覆盖实例默认值；OpenAPI 的 `explode: true` 对应 `AxiosCollectionFormat.Multi`。
 - 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
-- **Native AOT**：接口所在程序集启用源生成器即生成真实代理（内部接口同样支持）；闭合泛型接口（如 `IRepo<User>`）在调用点 `Create<T>()` / `AddApiInterface<T>()` 出现时生成，只有开放泛型声明本身会给出 `AXA011` 警告。未生成 / 未注册时 AOT 下 `Create<T>()` 抛 `AxiosAotMetadataException`（带修复指引），JIT 下回退 `DispatchProxy`（需 public 接口）。生成路径不要求 `TrimmerRootAssembly`，也不再需要 root 接口类型。
+
+**Native AOT**
+
+- 接口所在程序集启用源生成器即生成真实代理（内部接口同样支持）；闭合泛型接口（如 `IRepo<User>`）在调用点 `Create<T>()` / `AddApiInterface<T>()` 出现时生成，只有开放泛型声明本身会给出 `AXA011` 警告。
+- 未生成 / 未注册时 AOT 下 `Create<T>()` 抛 `AxiosAotMetadataException`（带修复指引），JIT 下回退 `DispatchProxy`（需 public 接口）。
+- 生成路径不要求 `TrimmerRootAssembly`，也不再需要 root 接口类型。
 
 ### 值格式化
 
@@ -279,7 +325,9 @@ var client = new ApiClient(url)
 };
 ```
 
-- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文（`data` 本身是标量，含 `byte[]` 等二进制形态；二进制正文只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64）。同一套规则，不存在「查询里能格式化、表单里不能」；查询里的嵌套对象 / 字典 / `JsonElement` 树按叶子应用（成员声明优先，其次实例钩子）。
+- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文。同一套规则，不存在「查询里能格式化、表单里不能」。
+  - 裸标量正文（`data` 本身是标量）含 `byte[]` 等二进制形态：只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64。
+  - 查询里的嵌套对象 / 字典 / `JsonElement` 树按叶子应用：成员声明优先，其次实例钩子。
 - **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
 - **格式串**要求值实现 `IFormattable`，区域固定为不变文化（不跟随 `CurrentCulture`）；需要区域相关的形态就写格式化函数。
 - **结构化正文内部不归它管**：`[Body]` + 结构化类型上标 `[Format]` 在构建期报错（文档内部由序列化器负责）。要让 JSON 里的成员也按 `[Format]` 输出，挂可选桥：
@@ -292,13 +340,27 @@ config.Serialization.JsonSerializerOptions =
     AxiosJsonFormat.ApplyTo(new JsonSerializerOptions(JsonSerializerDefaults.Web));
 ```
 
-- **构建期报错**（不留到运行期静默回落）：`[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合元素 / 字典值同此判定）同用；格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；标在非标量（POCO）的查询参数上。模型属性与接口参数走同一套校验。
-- **写错怎么发现**（都不必等到发请求）：方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；签名不对（非 `public static` / 泛型 / 参数不是 `object` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `InvalidOperationException`。没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
+- **构建期报错**，不留到运行期静默回落（模型属性与接口参数走同一套校验）：
+  - `[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合元素 / 字典值同此判定）同用；
+  - 格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；
+  - 标在非标量（POCO）的查询参数上。
+- **写错怎么发现**，三种都不必等到发请求：
+  - 方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；
+  - 签名不对（非 `public static` / 泛型 / 参数不是 `object` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；
+  - 值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `InvalidOperationException`。
+- 没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
 - **Native AOT**：源生成器把格式化委托直接烘焙进元数据（签名不合法报 `AXA015`），运行期不需要反射。手动 `RegisterShape<T>()` 的形状没有烘焙，AOT 下用 `[Format(typeof(...), nameof(...))]` 会显式报错并指向「启用源生成器或改用格式串」，不会静默丢格式化。
 
 ### 从 OpenAPI 导入
 
-已有接口文档时，不必手写上面这些声明：`src/AxiosNet.Cli` 是设计期的 dotnet 工具（命令 `axiosnet-gen`，包 `AxiosNet.Cli`），读取 OpenAPI 3.0.x / 3.1.x、Swagger 2.0 文档（JSON / YAML，本地文件、http(s) URL 或 `-` 标准输入），生成声明式 C#。默认是**模型式**：每个操作一个 `ApiRequest<T>` 请求模型，`client.RequestAsync(new XxxRequest { ... })` 直接调用；加 `--style interface` 切换到接口式（每个 tag 一个接口，`client.Create<T>()`）。两种形态都只有声明、不含运行时代码——模型与接口代理都由源生成器在编译期烘焙，JIT 与 Native AOT 同一路径。工具自身的 YAML 解析是设计期依赖，`AxiosNet` 运行时仍零第三方依赖。
+已有接口文档时，不必手写上面这些声明。`src/AxiosNet.Cli` 是设计期 dotnet 工具（命令 `axiosnet-gen`，包 `AxiosNet.Cli`），读取 OpenAPI 3.0.x / 3.1.x、Swagger 2.0 文档（JSON / YAML；本地文件、http(s) URL 或 `-` 标准输入），生成声明式 C#。
+
+| 形态 | 产物 | 调用写法 |
+| --- | --- | --- |
+| 模型式（默认） | 每个操作一个 `ApiRequest<T>` 请求模型 | `client.RequestAsync(new XxxRequest { ... })` |
+| 接口式（`--style interface`） | 每个 tag 一个接口 | `client.Create<T>()` |
+
+两种形态都只有声明、不含运行时代码：模型与接口代理都由源生成器在编译期烘焙，JIT 与 Native AOT 同一路径。工具自身的 YAML 解析是设计期依赖，`AxiosNet` 运行时仍零第三方依赖。
 
 ```bash
 # 一次性安装（全局 dotnet tool，命令 axiosnet-gen；net6.0 / net8.0 双目标，.NET 6 及以上都能跑）
@@ -334,17 +396,41 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 }
 ```
 
-`Configure` 是模型式表达方法级编码的出口（特性没有可用的方法级位置）：非 JSON 请求体在这里写 `config.ContentType`（表单 / XML / 自定义媒体类型），查询数组写 `config.Serialization.CollectionFormat`。流式端点额外生成 `public const AxiosStreamFormat StreamFormat`，用 `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)` 逐帧读。响应无正文时生成 `ApiRequest<object>`，照常 `RequestAsync`，`Data` 为 `null`。
+`Configure` 是模型式表达方法级编码的出口（特性没有可用的方法级位置）：
+
+- 非 JSON 请求体在这里写 `config.ContentType`（表单 / XML / 自定义媒体类型）；
+- 查询数组写 `config.Serialization.CollectionFormat`。
+
+流式端点额外生成 `public const AxiosStreamFormat StreamFormat`，用 `client.RequestStreamAsync(new StreamEventsRequest(), StreamEventsRequest.StreamFormat)` 逐帧读。响应无正文时生成 `ApiRequest<object>`，照常 `RequestAsync`，`Data` 为 `null`。
 
 **默认映射规则**（都有开关或报告提示）：
 
-- **分组**：按操作的第一个 tag 分组。模型式每个分组一个文件（`users` → `UsersRequests.g.cs`），请求类名取 `operationId` + `Request`（重名时自动加序号，且不会遮蔽 `ApiRequest` 等运行时类型）；接口式每个 tag 一个接口（`users` → `IUsersApi`；tag 已是 `XxxApi` 时加 `I` 前缀）。无 tag 的操作进 `DefaultRequests.g.cs` / `IDefaultApi`。`--single-file` 全部写进一个文件；`--single-interface`（配合 `--interface-name`，默认 `IApiClient`）只在接口式下可用。
-- **参数与正文**：`path` / `query` / `header` 对应 `[Path]` / `[Query]` / `[Header]`（模型式落在属性上，接口式落在参数上）。请求体按媒体类型选一份（JSON > `+json` > `*/*` > 表单 > multipart > 文本 > 二进制 > 第一份）：JSON 生成强类型 `[Body]`；`application/x-www-form-urlencoded` 模型式写进 `Configure` 的 `config.ContentType`、接口式生成 `[BodyContentType(...)]`；`multipart/form-data` 的对象属性展开成 `[Part("wire")]`（`format: binary` → `byte[]`）；文本正文 → `string`；二进制 → `byte[]`。多份候选记 `MULTIPLE_REQUEST_CONTENT`。
+- **分组**：按操作的第一个 tag 分组。
+  - 模型式每个分组一个文件（`users` → `UsersRequests.g.cs`），请求类名取 `operationId` + `Request`（重名时自动加序号，且不会遮蔽 `ApiRequest` 等运行时类型）。
+  - 接口式每个 tag 一个接口（`users` → `IUsersApi`；tag 已是 `XxxApi` 时加 `I` 前缀）。
+  - 无 tag 的操作进 `DefaultRequests.g.cs` / `IDefaultApi`。
+  - `--single-file` 全部写进一个文件；`--single-interface`（配合 `--interface-name`，默认 `IApiClient`）只在接口式下可用。
+- **参数与正文**：`path` / `query` / `header` 对应 `[Path]` / `[Query]` / `[Header]`（模型式落在属性上，接口式落在参数上）。
+  - 请求体按媒体类型选一份，优先级 JSON > `+json` > `*/*` > 表单 > multipart > 文本 > 二进制 > 第一份。
+  - JSON 生成强类型 `[Body]`；`application/x-www-form-urlencoded` 模型式写进 `Configure` 的 `config.ContentType`、接口式生成 `[BodyContentType(...)]`；`multipart/form-data` 的对象属性展开成 `[Part("wire")]`（`format: binary` → `byte[]`）；文本正文 → `string`；二进制 → `byte[]`。
+  - 多份候选记 `MULTIPLE_REQUEST_CONTENT`。
 - **查询数组**：`style: form` + `explode: true` → `Multi`（`ids=1&ids=2`）；`explode: false` → `Csv`；`spaceDelimited` / `pipeDelimited` → `Ssv` / `Pipes`；Swagger 2 的 `collectionFormat` 同样映射。模型式写进 `Configure`，接口式生成 `[QueryCollectionFormat(...)]`。
-- **响应**：在 2xx 中按状态码升序取第一个（其次 `2XX`、`default`）。模型式生成 `ApiRequest<T>`，调用得到 `AxiosResponse<T>`；无正文时 `ApiRequest<object>`。接口式生成 `Task<AxiosResponse<T>>` / `Task<AxiosResponse>`，`--response-wrapper none` 改为只交付 `Task<T>`（仅接口式）。`text/event-stream` 或文档里标注 `x-axios-stream` 时：模型式生成 `StreamFormat` 常量与帧类型，接口式生成 `[Stream(...)]` 与 `Task<AxiosResponse<IAsyncEnumerable<T>>>`；数组 schema 按元素类型逐帧。多状态码 / 多份内容分别记 `MULTIPLE_SUCCESS_RESPONSES` / `MULTIPLE_RESPONSE_CONTENT`。
-- **授权**：根级或操作级 `security` → `[Authorize]`，但只覆盖 http bearer / basic；`apiKey` / `oauth2` / `openIdConnect` 与其他 http scheme 记警告、不生成授权声明，由调用方在 `AxiosClient` 的 Authorization 或请求配置里自行设置（apiKey 按文档要求补对应的头 / 查询参数 / Cookie）；`security: []` → `[AllowAnonymous]`。模型式落在请求类上；接口式在同组所有操作要求同一 scheme 时才提到接口上，否则落在方法上。
-- **模型**：`allOf` 摊平为字段；3.0 `nullable`、3.1 `type: [..., "null"]` 与 Swagger `x-nullable` 都映射为可空；`oneOf` / `anyOf` 无法用声明式类型表达，主类型按 `JsonElement` 生成并同时生成各成员类型，由调用方自行判别；仅当全部取值都是合法 C# 标识符时生成 `enum`（成员名即线上值），否则生成常量类 + `string`；数值枚举保持数值类型。生成的每个属性都带显式 `[JsonPropertyName]`，命名与 `System.Text.Json` 默认选项一致。
-- **缺口不猜**：断链 `$ref`、外部引用、cookie 参数、非标量（数组 / 对象 / `label`·`matrix` 风格）的 path / header 参数、缺 `items` 的数组、循环引用等都会给出稳定警告码并降级（`JsonElement` / 跳过整个操作 / `byte[]`），不会静默丢字段；`--fail-on warnings` 可把它们变成退出码 1，完整清单在 `--report` 的 `warnings` 里。
+- **响应**：在 2xx 中按状态码升序取第一个（其次 `2XX`、`default`）。
+  - 模型式生成 `ApiRequest<T>`，调用得到 `AxiosResponse<T>`；无正文时 `ApiRequest<object>`。
+  - 接口式生成 `Task<AxiosResponse<T>>` / `Task<AxiosResponse>`，`--response-wrapper none` 改为只交付 `Task<T>`（仅接口式）。
+  - `text/event-stream` 或文档里标注 `x-axios-stream` 时：模型式生成 `StreamFormat` 常量与帧类型，接口式生成 `[Stream(...)]` 与 `Task<AxiosResponse<IAsyncEnumerable<T>>>`；数组 schema 按元素类型逐帧。
+  - 多状态码 / 多份内容分别记 `MULTIPLE_SUCCESS_RESPONSES` / `MULTIPLE_RESPONSE_CONTENT`。
+- **授权**：根级或操作级 `security` → `[Authorize]`，但只覆盖 http bearer / basic。
+  - `apiKey` / `oauth2` / `openIdConnect` 与其他 http scheme 记警告、不生成授权声明，由调用方在 `AxiosClient` 的 Authorization 或请求配置里自行设置（apiKey 按文档要求补对应的头 / 查询参数 / Cookie）。
+  - `security: []` → `[AllowAnonymous]`。
+  - 模型式落在请求类上；接口式在同组所有操作要求同一 scheme 时才提到接口上，否则落在方法上。
+- **模型**：
+  - `allOf` 摊平为字段。
+  - 3.0 `nullable`、3.1 `type: [..., "null"]` 与 Swagger `x-nullable` 都映射为可空。
+  - `oneOf` / `anyOf` 无法用声明式类型表达，主类型按 `JsonElement` 生成并同时生成各成员类型，由调用方自行判别。
+  - 仅当全部取值都是合法 C# 标识符时生成 `enum`（成员名即线上值），否则生成常量类 + `string`；数值枚举保持数值类型。
+  - 生成的每个属性都带显式 `[JsonPropertyName]`，命名与 `System.Text.Json` 默认选项一致。
+- **缺口不猜**：断链 `$ref`、外部引用、cookie 参数、非标量（数组 / 对象 / `label`·`matrix` 风格）的 path / header 参数、缺 `items` 的数组、循环引用等都会给出稳定警告码并降级（`JsonElement` / 跳过整个操作 / `byte[]`），不会静默丢字段。`--fail-on warnings` 可把它们变成退出码 1，完整清单在 `--report` 的 `warnings` 里。
 
 **落地安全**：
 
@@ -353,7 +439,9 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 - 不带生成标记的文件默认拒绝覆盖，`--force` 才放行；删除失联旧文件也只在 `--force` 下发生，且只删带生成标记的文件——用户自己写的文件永远不会被自动删除。
 - `--dry-run` 把内容打到 stdout；远端文档用 `--header "Authorization: Bearer ..."` 与 `--timeout <seconds>`。
 
-完整走通这一流程的是示例 [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs)：从 [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) 以默认模型式生成 [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated)（tag 分组的 `*Requests.g.cs` / 根级授权 / 表单登录 / multipart / SSE 与 JSON 数组流式），再用 `RequestAsync` / `RequestStreamAsync` 调用 `DemoApiServer` 的真实路由：
+完整走通这一流程的是示例 [`OpenApiGeneratedExample`](samples/AxiosNet.Simple/WebAPI/Examples/OpenApiGeneratedExample.cs)：它把 [`samples/AxiosNet.Simple/WebAPI/demo.openapi.json`](samples/AxiosNet.Simple/WebAPI/demo.openapi.json) 以默认模型式生成到 [`WebAPI/Generated/`](samples/AxiosNet.Simple/WebAPI/Generated)，再用 `RequestAsync` / `RequestStreamAsync` 调用 `DemoApiServer` 的真实路由。
+
+生成的覆盖面包括 tag 分组的 `*Requests.g.cs`、根级授权、表单登录、multipart、SSE 与 JSON 数组流式。仓库内重新生成这批产物：
 
 ```bash
 dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
@@ -490,7 +578,13 @@ var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + fi
 | `Serialization.ContentSerializers` | 当前实例的注册表（来源实例登记的媒体类型不会带过来） |
 | `ShortCircuit` | 不生效（短路响应只属于那一次调用） |
 
-其余按请求项照搬：`Url` / `Method` / `Headers` / `Params` / `Data` / `ContentType` / `RequestCompression` / `Timeout` / `TotalTimeout` / `ResponseType` / 重试 / 熔断 / 对冲 / 备用端点 / 遥测 / 序列化其余项 / `Limits` 其余项 / `Connection.HttpVersion` / `VersionPolicy` / transform 链（作为追加段，与实例默认段按引用去重）。
+其余按请求项照搬，分三组：
+
+- 请求本身：`Url` / `Method` / `Headers` / `Params` / `Data` / `ContentType` / `RequestCompression` / `ResponseType`；
+- 时间与策略：`Timeout` / `TotalTimeout` / 重试 / 熔断 / 对冲 / 备用端点 / 遥测；
+- 其它：序列化其余项 / `Limits` 其余项 / `Connection.HttpVersion` / `VersionPolicy` / transform 链（作为追加段，与实例默认段按引用去重）。
+
+**两条边界**
 
 - 「实例来源」只针对**库产出的配置**：`response.Config`、它的 `Clone()` 副本、快捷方法内部组装的生效配置。自己 `new AxiosConfig { BaseAddress = ... }` 提交的配置不在此列，写什么就用什么。
 - 要换主机 / 换令牌再发一次：换实例（`Axios.Create(c => c.BaseAddress = ...)`）或自己写 `new AxiosConfig { Url = ..., Method = ... }`；只想在当前实例上补改几项，用 `RequestAsync(c => ...)` 这类 Action 重载（它在当前实例默认值的副本上修改）。
@@ -516,6 +610,8 @@ var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + fi
 
 ### 查询参数 params
 
+`Params` 收匿名对象、集合，也能直接给已编码好的查询串；展平与转义规则见下。
+
 ```csharp
 await http.GetAsync("search", c => c.Params = new
 {
@@ -531,7 +627,20 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 - 集合形态由 `Serialization.CollectionFormat` 决定：`Brackets`（默认）/ `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`。
 - 键与值走 `Uri.EscapeDataString`（空格 `%20`）；手写在 `Url` 里的查询串不二次编码。
 - `Params` 传标量抛 `ERR_BAD_OPTION_VALUE`（没有键名）。完全自定义：`c.Serialization.ParamsSerializer = p => "a=1&b=2"`（设置 `ValueFormatter` 时，回调里看到的仍是定型后的文本，内部封套已剥离）。
-- 标量文本形态（`Params` / `[Path]` / `[Header]` / 表单 / multipart / 裸标量正文共用同一条路径）：`bool` → `true`/`false`，枚举 → 名字，`DateTime`/`DateTimeOffset` → UTC 毫秒 ISO（`Unspecified` 按 UTC；裸标量正文例外，用往返格式 `"O"`），`DateOnly` → `yyyy-MM-dd`，`byte[]` → base64，其它走 `IFormattable` + `InvariantCulture`。按成员改写形态用 `[Format]`，按实例改写的钩子是 `ApiClient.ValueFormatter`（见「值格式化」）。
+
+「值 → 文本」在 `Params` / `[Path]` / `[Header]` / 表单 / multipart / 裸标量正文之间共用同一条路径：
+
+| 值 | 文本形态 |
+| --- | --- |
+| `bool` | `true` / `false` |
+| 枚举 | 名字 |
+| `DateTime` / `DateTimeOffset` | UTC 毫秒 ISO（`Unspecified` 按 UTC） |
+| 同上，但作为裸标量正文 | 往返格式 `"O"` |
+| `DateOnly` | `yyyy-MM-dd` |
+| `byte[]` | base64 |
+| 其它 | `IFormattable` + `InvariantCulture` |
+
+按成员改写形态用 `[Format]`，按实例改写的钩子是 `ApiClient.ValueFormatter`（见[值格式化](#值格式化)）。
 
 ### 请求体 data 与 ContentType
 
@@ -578,6 +687,8 @@ await client.PostAsync(url, data, c => c.RequestCompression = AxiosCompression.N
 - 服务端必须自己按 `Content-Encoding` 解压请求体（ASP.NET Core 等框架默认不解压请求体）；对端不支持时不要开启。
 
 ### 表单与文件上传
+
+三种写法：`PostFormAsync` 走 multipart、裸流直传、自己拼 `MultipartFormDataContent`。
 
 ```csharp
 // 1) multipart：字段 + 文件（FormFile / Stream / byte[] / HttpContent 都行）
@@ -646,6 +757,8 @@ await http.PostAsync<UploadResult>("ingest", ReadChunks(file), c =>
 - **`PipeReader`**：net6 / net8 的基础框架不含 `System.IO.Pipelines`，库不为此引依赖；用 `pipe.Reader.AsStream()` 包成 `Stream` 传入即可（走不可 seek 流路径，同样一块一块写出）。
 
 ### 响应类型与下载
+
+`ResponseType` 决定正文怎么交付，泛型参数会替你选好对应的一种。
 
 ```csharp
 var typed  = await http.GetAsync<User>("users/1");                        // 强类型
@@ -738,13 +851,18 @@ await client.GetAsync("orders/scan", c =>
 });
 ```
 
-- 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）；被总预算压小的那次超时，消息会写 `(remaining TotalTimeout budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。「根本没发出」这一类不参与熔断失败计数、不重试、也不换端点（见[熔断](#熔断)的失败口径）。两者错误码相同，要区分就用 `AxiosException.IsTotalTimeoutExceeded`：`true` = 发出前就耗尽（别重试，预算已经空了），`false` = 发出后超时（下游不响应，换端点有意义）。
+- 总预算用尽时下一次尝试**根本不发出**：抛 `ECONNABORTED`，消息指明是第几次（`... before attempt #7 could be sent`）。这一类「根本没发出」不参与熔断失败计数、不重试、也不换端点（见[熔断](#熔断)的失败口径）。
+- 被总预算压小的那次超时，消息会写 `(remaining TotalTimeout budget; Timeout = 10000ms)`，避免误判成 `Timeout` 没生效。
+- 两种耗尽的错误码相同，要区分就用 `AxiosException.IsTotalTimeoutExceeded`：`true` = 发出前就耗尽（别重试，预算已经空了），`false` = 发出后超时（下游不响应，换端点有意义）。
 - **被预算压小的那次超时到点即收手**：上限本来就取自剩余总预算，到点时剩下的零头（不足一个计时器 tick）已经发不出任何有意义的尝试，因此直接报「预算耗尽」而不是拿这点余额再发一次；同理，退避睡不完剩余预算时也不白等，立刻退回令牌并报耗尽。
-- 排队时间**计入** `TotalTimeout`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长；因此剩余预算比 `Limits.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）。`QueueTimeout` 为空（一直等）时同样受这条约束。
+- 排队时间**计入** `TotalTimeout`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长。
+- 剩余预算比 `Limits.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）；`QueueTimeout` 为空（一直等）时同样受这条约束。
 - **流式正文也在预算之内**：正文读取沿用被预算压小后的剩余额度，读到一半到点即 `ECONNABORTED`；长连接（SSE / 大文件下载）不要设 `Timeout` / `TotalTimeout`，改用取消令牌退出。
 - `TotalTimeout = null` 不设总预算（默认），`Zero` 与 `null` 同义，负值 `ERR_BAD_OPTION_VALUE`；按请求显式写 `null` 可以关掉实例默认的总预算。
 
 ### 进度、限速与大小上限
+
+三件事都在一次 `configure` 里：进度回调、速率上限、请求 / 响应体大小上限。
 
 ```csharp
 await http.PostAsync("upload", payload, c =>
@@ -1023,7 +1141,8 @@ AxiosContent.Serializer = new YamlSerializer();
 - 响应正文里的业务对象统一走字节入口（合法 UTF-8 文本直接按字节解析，不做 UTF-16 中转）；正文不是合法 UTF-8 时改走文本入口，坏字节按 U+FFFD 替换，与只解码的老行为一致。文本格式无需实现字节入口，接口默认实现会按响应字符集解码后转调文本入口。
 - 表单 / multipart、基础类型、`string` / `byte[]` / `Stream` 不经过序列化器。
 - 实现需线程安全（会被并发共享）；异常统一包装成 `ERR_BAD_REQUEST` / `ERR_BAD_RESPONSE`。
-- 文本编码：`Serialization.RequestEncoding` / `ResponseEncoding`（默认 UTF-8 / 自动识别）。GBK 等代码页需先 `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`：**发送侧**遇到解析不出来的 `charset` 直接报 `ERR_BAD_OPTION_VALUE`（不会把 UTF-8 字节标成 gbk 发出去），**接收侧**把未知 `charset` 当没声明，回落到 BOM / UTF-8。
+- 文本编码：`Serialization.RequestEncoding` / `ResponseEncoding`（默认 UTF-8 / 自动识别）。
+- GBK 等代码页需先 `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`。**发送侧**遇到解析不出来的 `charset` 直接报 `ERR_BAD_OPTION_VALUE`（不会把 UTF-8 字节标成 gbk 发出去）；**接收侧**把未知 `charset` 当没声明，回落到 BOM / UTF-8。
 
 ## 重试
 
@@ -1062,8 +1181,11 @@ client.Defaults.Retry.OnRetry = ctx => logger.LogWarning(
 
 - `Timeout` 是**每次尝试**的预算（3 次重试 × 10s 最坏 40s）；要「整条请求」的上界用 `TotalTimeout`，也可以在调用方用 `CancellationToken`。
 - 拦截器、`transformRequest`、正文序列化只跑一次；响应拦截器看到最终结果。
-- 正文必须可重放：可 seek 的流每次重试前自动拨回起点；不可 seek 的流、`StreamContent`（含 multipart 部件）与流式请求体（`IAsyncEnumerable`）在开启重试 / 备用端点时直接抛 `ERR_BAD_OPTION_VALUE`。调用方自带的 `HttpContent` 按**白名单**放行：`ByteArrayContent`（含 `StringContent` / `FormUrlEncodedContent`）、`ReadOnlyMemoryContent`、`JsonContent`（每次从持有的值重新序列化），以及全部部件都可重放的 `MultipartContent`；其余自定义内容一律在**发送前**拒绝 —— 「长度已知」不等于「可重放」，一次性流包一层自定义内容照样只发得出一次。
-- 自定义策略：实现 `IAxiosRetryPolicy`（`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`），`ctx` 提供 `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`。策略被同一实例的并发请求共享，必须线程安全（推荐无状态；需要跨请求共享状态时自行同步，内置的 `RetryBudgetPolicy` 就是这样）。
+- 正文必须可重放：可 seek 的流每次重试前自动拨回起点；不可 seek 的流、`StreamContent`（含 multipart 部件）与流式请求体（`IAsyncEnumerable`）在开启重试 / 备用端点时直接抛 `ERR_BAD_OPTION_VALUE`。
+- 调用方自带的 `HttpContent` 按**白名单**放行：`ByteArrayContent`（含 `StringContent` / `FormUrlEncodedContent`）、`ReadOnlyMemoryContent`、`JsonContent`（每次从持有的值重新序列化），以及全部部件都可重放的 `MultipartContent`；其余自定义内容一律在**发送前**拒绝。
+- 「长度已知」不等于「可重放」：一次性流包一层自定义内容照样只发得出一次。
+- 自定义策略：实现 `IAxiosRetryPolicy`（`MaxRetries` / `ShouldRetry(ctx)` / `GetDelay(ctx)`），`ctx` 提供 `Attempt` / `MaxRetries` / `Exception` / `Response` / `StatusCode` / `ErrorCode` / `Delay` / `Config` / `Method`。
+- 策略被同一实例的并发请求共享，必须线程安全（推荐无状态；需要跨请求共享状态时自行同步，内置的 `RetryBudgetPolicy` 就是这样）。
 
 ### 全局重试预算（`RetryBudgetPolicy`）
 
@@ -1083,7 +1205,11 @@ budget.RefusedRetries;   // 累计被预算拦下的重试次数，随时可读
 ```
 
 - **只拦重试，不拦首发**：桶空了只是「不再重试」，调用方拿到的是内层策略判定为可重试的那次**真实失败**，不会被预算改写成新错误。
-- **只被「会发出」的重试消耗**：内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌；总预算已耗尽、这次重试注定发不出去时，刚扣的令牌会立刻退回（只认内建 `RetryBudgetPolicy`，自定义装饰器包住它时识别不到）；已经放行、但退避睡不完剩余总预算的那一次同样会**退回令牌并直接报耗尽**（不再白等一段只为「下一次尝试立刻失败」）—— 共享桶不会被空扣，也就不会连累同实例的其它请求。放行之后才发生的意外（进管线后被闸门拦下）仍计一次：决定那一刻不可预知，多计只让预算更紧，不会放大流量；退避等待期间被取消同样退回令牌 —— 那一发也没发出去。
+- **只被「会发出」的重试消耗**：
+  - 内层或库级说「不该重试」的失败（4xx、取消、闸门拒绝、次数已到顶等）根本不取令牌。
+  - 总预算已耗尽、这次重试注定发不出去时，刚扣的令牌会立刻退回（只认内建 `RetryBudgetPolicy`，自定义装饰器包住它时识别不到）。
+  - 已经放行、但退避睡不完剩余总预算的那一次同样会**退回令牌并直接报耗尽**（不再白等一段只为「下一次尝试立刻失败」）—— 共享桶不会被空扣，也就不会连累同实例的其它请求。
+  - 放行之后才发生的意外（进管线后被闸门拦下）仍计一次：决定那一刻不可预知，多计只让预算更紧，不会放大流量；退避等待期间被取消同样退回令牌 —— 那一发也没发出去。
 - **令牌管的是「重试轮次」，不是「发送次数」**：一轮重试若开了备用端点 / 对冲，实际发送量最多放大到 `(1 + 端点数) × (1 + MaxHedges)` 倍（失败会提前结束一轮、跳过的端点不发送，实际通常更小）；要按发送量估算容量，记得除以这个系数。首发不取令牌。
 - **桶按策略对象共享**：`Retry.Policy` 在配置克隆间是同一个引用，所以同一个客户端实例的所有请求共用一个桶；某次请求想单独用一个桶，就在那次请求里 `new RetryBudgetPolicy(...)`。
 - 桶初始是满的；`refillPerSecond = 0` 表示「只靠初始容量、不随时间恢复」（适合批处理 / 测试）。
@@ -1136,14 +1262,17 @@ breaker.Reset();                                                 // 运维手工
 - **「没发出」不算下游故障**：排队 / 入口处就耗尽 `TotalTimeout` 而抛的 `ECONNABORTED`（`AxiosCircuitContext.TotalTimeoutExpiredBeforeSend`）不进失败计数。过载时排队变长足以让每条请求都撞上它——记成故障就等于「越拥堵越容易熔断健康的下游」，把局部排队放大成整条链路不可用。已经发出去之后的超时仍照常计入，那才是下游不响应。
 - **按 origin 计数**：默认维度 `host:port`（`uri.Authority`）；`KeySelector` 可改成 `ctx => ctx.Uri.Host` 或按路由前缀隔离租户。
 - **打开条件取「或」**：连续失败达 `FailureThreshold`，或窗口（`WindowSize`）内失败数 ≥ `ceil(样本数 × FailureRateThreshold)` 且样本数达 `MinimumSamples`。`WindowSize = 0` 表示只看连续失败；`MinimumSamples` 大于 `WindowSize` 会在发请求前报 `ERR_BAD_OPTION_VALUE`（那种配法永远触发不了）。
-- **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷。`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。熔断打开前就已放行、冷却结束之后才回报的迟到结果按代次丢弃：它属于上一轮，不会把刚进入的半开打回打开，也不会替这一轮归还探测名额。
+- **慢启动恢复**：半开态允许的在途探测数是 `HalfOpenAttempts + 已连续成功次数`，凑满 `RecoverySuccesses` 次才转闭合。默认 1 → 2 → 3 逐步放宽，避免下游刚缓过来就被打回满负荷；`RecoverySuccesses = 0`（或 1）退化成「探测一次成功即闭合」。
+- 探测失败会清零进度并立刻重开；被忽略的结果（4xx / 取消 / 预算耗尽没发出）只归还名额、不影响进度，且只有真的领到名额的探测才推进度。
+- 熔断打开前就已放行、冷却结束之后才回报的迟到结果按代次丢弃：它属于上一轮，不会把刚进入的半开打回打开，也不会替这一轮归还探测名额。
 - **卡死的探测不会永久占住名额**：半开态的探测在 `ProbeTimeout`（默认 30 秒，`null` 关闭）内没有回报就视为卡死——整轮半开作废、重新打开并重新冷却，迟到的结果按代次丢弃。请求本身没配 `Timeout` 时，一个挂住的探测原本会让该维度永远停在半开；探测自身的超时预算更长时把本项调大（非正值报 `ERR_BAD_OPTION_VALUE`）。
 - 被拒请求**不发出**：不建连、不占租约，直接抛 `ERR_CIRCUIT_OPEN`，`AxiosException.RetryAfter` 给建议等待。
 - 与重试同时开：闸门在**每次尝试之前**，熔断打开后重试的下一轮会被立刻拦下；`ERR_CIRCUIT_OPEN` 本身不重试。
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
 - **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
 - 状态表有上限（`MaxTrackedHosts`，默认 512，**硬上限**）：满员时先淘汰「丢了不改变判定」的维度（闭合态里优先丢窗口中没有失败样本的那条；连续失败数可能已被一次成功清零，但失败率台账仍然有效）；仍放不下就**不再登记**新维度，新维度按闭合态直通（不参与熔断判定、不记账），已有维度的判定不受影响——熔断保护失效总好过状态表无界增长。未登记的次数见 `circuit.untracked_host` 指标。
-- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。策略**有状态**且被并发共享，需自己保证线程安全。用装饰器包住内置 `CircuitBreaker` 时拿不到准入票（接口上没有票号），迟到结果会按旧口径记账 —— 与 `RetryBudgetPolicy` 被装饰器包住时认不出退费同类的保守偏差。
+- 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。
+- 策略**有状态**且被并发共享，需自己保证线程安全。用装饰器包住内置 `CircuitBreaker` 时拿不到准入票（接口上没有票号），迟到结果会按旧口径记账 —— 与 `RetryBudgetPolicy` 被装饰器包住时认不出退费同类的保守偏差。
 
 ## 并发对冲
 
@@ -1199,7 +1328,12 @@ await client.GetAsync("health", c => c.Failover.Endpoints = null);
 | 配置 / 编程错误、取消 | 不换 |
 
 - **预算耗尽不换端点**：与[熔断的失败口径](#熔断)同一条边界 —— `TotalTimeout` 在发出前就耗尽时，换端点既不能让预算变长，又要在备用端点白走一遍管线（占一次熔断判定与闸门入口，然后必然在同一处立刻失败）。已经发出去之后的超时照常换端点，那才是「换个下游可能就好」。
-- **端点健康状态跨请求记忆**：同一个端点连续失败达 `FailureThreshold`（默认 2）后进入冷却（`Cooldown`，默认 30 秒，按失败次数翻倍、封顶 `MaxCooldown` 5 分钟）。冷却期内它不再作为首跳，主端点持续不可用时不必每条请求都先白撞一次。只有「换一个下游可能好」的故障计失败（与上表同源），4xx / 取消 / 配置错误既不加也不减；冷却到期自动重新参与，**所有端点都在冷却时仍按原顺序逐个试**——健康表只决定先后，不会把请求挡住。设 `FailureThreshold = 0` 或 `Cooldown = TimeSpan.Zero` 关闭。
+- **端点健康状态跨请求记忆**：
+  - 同一端点连续失败达 `FailureThreshold`（默认 2）后进入冷却（`Cooldown`，默认 30 秒，按失败次数翻倍、封顶 `MaxCooldown` 5 分钟）。
+  - 冷却期内它不再作为首跳，主端点持续不可用时不必每条请求都先白撞一次。
+  - 只有「换一个下游可能好」的故障计失败（与上表同源）；4xx / 取消 / 配置错误既不加也不减。
+  - 冷却到期自动重新参与；**所有端点都在冷却时仍按原顺序逐个试** —— 健康表只决定先后，不会把请求挡住。
+  - 设 `FailureThreshold = 0` 或 `Cooldown = TimeSpan.Zero` 关闭。
 - **每次重试都会重新过一遍端点顺序**：端点表在重试之内，一轮换完所有端点才把第一条失败交给重试；健康记忆只影响这一轮的先后，不影响「都试过才算失败」。
 - **换端点会重算 `Host`**：调用方显式设过的 `Host` 头在换端点时丢掉，由目标地址重新算 —— 留着会让镜像按原端点的虚拟主机路由（`HttpClient` 只认 `Headers.Host`，它优先于 URI authority）。要按端点用不同的 `Host`，请写尝试中间件按 `ctx.Uri` 设置（`config.Headers` 只应用在模板上）。
 - **端点表不能重复**：两个端点拼出同一个 base URL（尾斜杠不算区别）会在发请求前抛 `ERR_BAD_OPTION_VALUE` —— 那只是把同一份请求对同一个地址多打一遍。
@@ -1256,7 +1390,8 @@ var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) 
 using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeline: pipeline);
 ```
 
-- **上下文 `AxiosAttemptContext` 是只读结构体**：`Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`，只能用 `WithXxx` 派生副本。它是结构体而不是类，因为中间件链构造期编译一次、每次尝试零分配，且并发类中间件需要按分支拷贝上下文。
+- **上下文 `AxiosAttemptContext` 是只读结构体**，字段：`Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`；只能用 `WithXxx` 派生副本。
+- 它是结构体而不是类，因为中间件链构造期编译一次、每次尝试零分配，且并发类中间件需要按分支拷贝上下文。
 - **两个编号分开走**：`AttemptNumber` 由重试推进，`EndpointIndex` 由备用端点推进（`0` = 请求自己的地址）。换端点不推进尝试号，所以同一个尝试号下可能有多条尝试事件。
 - **中间件恒在链上，是否干活由它自己看 `ctx.Config` 决定**：没配重试策略时重试中间件就是纯直通。链因此可以在构造时固化，不必每次请求重建。
 - **审计默认在链上**：`Attempt.Audit` 是默认链第 6 项（闸门之后、终端之前），订阅 `AxiosNet.Attempt` 就能拿到每次尝试的耗时 / 状态码 / 错误码，不订阅时只做一次开关判定、不建状态机。它已在链上，再 `Append(Attempt.Audit)` 会被当作重复内置项拒绝。
@@ -1368,7 +1503,9 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 
 **存的是原始正文字节**，命中时按本次调用的 `ResponseType` 与泛型参数重新解析：同一份字节喂给 `GetAsync<User>` 与 `GetAsync<string>` 各得该有的形态。
 
-**条目尽量与响应共用正文**：JSON / 文本形态的 `Data` 是另建的对象，调用方拿不到这块数组，条目就直接与响应共用同一块内存，不再克隆；以下两种情况条目自持一份——`byte[]` / `ArrayBuffer` 形态的 `Data` 就是原始字节本身，或配了 `transformResponse`（它可能把这块数组包进自己的对象，库无法证明调用方没拿到引用）。否则调用方一次改写就污染后续命中。命中缓存时 `byte[]` / `Stream` 形态同样每次交付独立副本（条目不能被某次写入污染）。
+**条目尽量与响应共用正文**：JSON / 文本形态的 `Data` 是另建的对象，调用方拿不到这块数组，条目就直接与响应共用同一块内存，不再克隆。否则调用方一次改写就污染后续命中。
+
+以下两种情况条目自持一份：`byte[]` / `ArrayBuffer` 形态的 `Data` 就是原始字节本身，或配了 `transformResponse`（它可能把这块数组包进自己的对象，库无法证明调用方没拿到引用）。命中缓存时 `byte[]` / `Stream` 形态同样每次交付独立副本（条目不能被某次写入污染）。
 
 只有同时满足「状态码 2xx」「拿到了原始字节（非流式）」「`ShouldCache` 通过」才落库；空正文同样算原始字节（HEAD / 204 本就没有正文，缓存的是头）。流式响应、响应拦截器换了响应对象、写缓存失败都只是「这次不入缓存」，不影响请求本身。范围请求（带 `Range` 头）默认不参与缓存，206 / 带 `Content-Range` 的响应也不落库——键只有方法 + URL，分段正文会被后续普通 GET 当成整份内容交付。
 
@@ -1431,9 +1568,14 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 **存储与运维**
 
 - **强制清除**：`cache.ClearAsync()` 清空全部条目，`cache.RemoveAsync(key)` 摘掉单条（键由 `cache.KeyFor(config, uri)` 得到）；已发出的请求不受影响，完成后照常落库。
-- **自定义存储收到完整策略**：`IAxiosCacheStore` 新增带 `AxiosCacheEntryPolicy` 的 `SetAsync` 重载（生效 / 配置 TTL、HTTP 新鲜期、龄期、解析后的 `Cache-Control`、`Date` / `Expires` / `Vary`）。默认实现转发到旧签名，已经写好的存储不用改；要按 `private` 拒写共享缓存、按 `Vary` 分区、或用 `stale-while-revalidate` 延长可服务窗口时覆写它即可。`Configured` 模式下落库前不解析响应头，这些 HTTP 字段在存储读取时才按需解析；只读 TTL 的存储没有任何解析开销。
-- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`，`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。存储读写失败只等于「这次没缓存」，请求照发；读取挂起超出剩余 `TotalTimeout` 则按 `ECONNABORTED` 报出（见上）。
-- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `IAxiosCacheRevalidationStore` / `MemoryCacheStore` 都在里面，`AxiosShortCircuit` 仍在 `AxiosNet`（它不是缓存专用的，mock / 回放也在用）。
+- **自定义存储收到完整策略**：`IAxiosCacheStore` 新增带 `AxiosCacheEntryPolicy` 的 `SetAsync` 重载（生效 / 配置 TTL、HTTP 新鲜期、龄期、解析后的 `Cache-Control`、`Date` / `Expires` / `Vary`）。
+  - 默认实现转发到旧签名，已经写好的存储不用改；要按 `private` 拒写共享缓存、按 `Vary` 分区、或用 `stale-while-revalidate` 延长可服务窗口时覆写它即可。
+  - `Configured` 模式下落库前不解析响应头，这些 HTTP 字段在存储读取时才按需解析；只读 TTL 的存储没有任何解析开销。
+- **存储可换**：`AxiosCache` 自己不存条目 —— 存取全交给 `IAxiosCacheStore`（`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`；`AxiosShortCircuit` 本身就是「状态码 + 头 + 原始字节」，可直接序列化）。
+  - 默认实现是进程内 `MemoryCacheStore`；接 Redis 或跨实例共享缓存时实现这个接口，多个客户端挂同一个存储即跨实例命中。
+  - 存储读写失败只等于「这次没缓存」，请求照发；读取挂起超出剩余 `TotalTimeout` 则按 `ECONNABORTED` 报出（见上）。
+- **命名空间是 `AxiosNet.Cache`**（与 `Retry/` / `Circuit/` 一致）：`AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `IAxiosCacheRevalidationStore` / `MemoryCacheStore` 都在里面。
+- `AxiosShortCircuit` 仍在 `AxiosNet` —— 它不是缓存专用的，mock / 回放也在用。
 - 回放 `response.Config` 会带着同一个缓存对象（它是共享状态，不是「那次请求的结果」）。
 
 ## 连接池
@@ -1501,11 +1643,21 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
 - `Dispose()` 是优雅关闭：空闲节点立即释放，有在途请求的节点等租约归还后回收；`Clear()` 立即释放全部节点（会打断在途）。
 - DNS 变更的收敛窗口由 `PooledConnectionLifetime` 决定；需要自定义建连（拨到 UDS / 本机传输 / 自管 DNS）时直接设 `ConnectionPoolOptions.ConnectCallback`。
 - `ConnectCallback` 与 `MaxResponseHeadersLength` 只作用于库默认 Handler：`HandlerFactory` 里用 `ctx.CreateDefaultHandler()` 建内层 Handler 会带过去，完全自建 Handler 则需自行映射。
-- **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。它对付的是「静默掐断」——AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接，要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多；低频高价值调用（webhook 回调、定时任务）可以配 `Always` 连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）——这也是它默认关闭的原因。
-- **`UseCookies` 只按域 / 路径隔离，不按业务身份隔离**：默认档一份容器，命名传输档各一份（见[传输档](#传输档)）。多租户、爬虫、按用户切身份的进程请给每个身份一条档，否则不同身份会串 cookie。容器可用 `pool.Cookies` / `pool.GetCookies("档名")` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去；登出用 `pool.ClearCookies()`（会换掉**所有档**的容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie）。注意开启容器后请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。命名共享池上调用 `ClearCookies()` 会影响所有共用该池的客户端；容器容量默认 300 条 / 单域 20 条 / 单条 4096 字节，超出会静默淘汰最早的，可用 `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` 调整。
+- **h2 keep-alive 默认关闭**（与 `SocketsHttpHandler` 一致，不悄悄改变线上行为）：把 `KeepAlivePingDelay` 设成正值（常见 30 秒）即打开，只在有在途请求时发。
+- 它对付的是「静默掐断」：AWS ALB 默认 60 秒空闲断连、NAT 表 30–120 秒，客户端以为连接还在池里，下一个请求撞上已关闭的连接 —— 要么多付一次 TLS 握手，要么在 h2 上收到 `GOAWAY` / 流重置（表现为偶发 `ERR_NETWORK`）。代价是一个 17 字节的帧，比一次重连便宜得多。
+- 低频高价值调用（webhook 回调、定时任务）可以配 `Always`，连空闲期也维持。反过来，链路上若有**不回应 `PING`** 的代理 / 中间盒，打开后连接会被判死重连（`ERR_NETWORK` 变多）—— 这也是它默认关闭的原因。
+- **`UseCookies` 只按域 / 路径隔离，不按业务身份隔离**：默认档一份容器，命名传输档各一份（见[传输档](#传输档)）。多租户、爬虫、按用户切身份的进程请给每个身份一条档，否则不同身份会串 cookie。
+- 容器可用 `pool.Cookies` / `pool.GetCookies("档名")` 直接读写（线程安全），用于启动预置或排查某个 cookie 为什么没发出去。
+- 登出用 `pool.ClearCookies()`：会换掉**所有档**的容器并回收现有 origin 节点，后续请求因此重建连接；在途请求不打断，可能仍带旧 cookie。
+- 开启容器后，请求上的 `Cookie` 头与容器内容是**合并**发送、不能覆盖同名 cookie；`Clear()` / `Dispose()` 都不会清空容器。命名共享池上调用 `ClearCookies()` 会影响所有共用该池的客户端。
+- 容器容量默认 300 条 / 单域 20 条 / 单条 4096 字节，超出会静默淘汰最早的；可用 `CookieCapacity` / `CookiePerDomainCapacity` / `CookieMaxCookieSize` 调整。
 - **Trailers 目前不读取**：chunked 响应的尾部头（校验和、配额）停留在 `HttpResponseMessage.TrailingHeaders`，没有暴露到 `AxiosResponse`。需要时用 `HandlerFactory` 包一层在正文读完后取，或直接注入自定义 Handler。
 - **代理 / 凭据默认是池级单份**：`Proxy` 落在 Handler 实例上，按请求改代理会抛 `ERR_BAD_OPTION_VALUE`。要多出口 IP / 多租户会话，用下面的[传输档](#传输档)在同一条池里挂多套出口，而不是每个出口各建一条池。
-- **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹**——`HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。规则只有三条：同名取同一条；`options` 只在首次创建时生效（重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略）；表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
+- **命名共享池**（用法 4）解决「多客户端想复用连接又不方便传池对象」：key 由调用方给，**不做配置指纹** —— `HandlerFactory` / `ConnectCallback` / `Proxy` / `Credentials` / 证书回调这类引用成员没有可靠的结构等价，两份「长得一样」的配置宁可报错也不共用一条池。
+- 命名池的规则只有三条：
+  - 同名取同一条；
+  - `options` 只在首次创建时生效，重复传一份**不同**的配置抛 `ERR_BAD_OPTION_VALUE`，不静默忽略；
+  - 表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
 - 想知道「池是不是被建太多了」看指标 `axiosnet.client.pool.active_pools`（存活池数）与 `.shared_pools`（命名池条目数）。
 
 ### 传输档
@@ -1584,6 +1736,8 @@ await client.GetAsync(url, c => c.Connection.HttpVersion = HttpVersion.Version30
 
 ### 自定义 Handler
 
+两个接入点，区别在于是否走连接池：
+
 | 需求 | 用法 | 走连接池 |
 | --- | --- | --- |
 | 套一层日志 / 签名 / 埋点 `DelegatingHandler` | `ConnectionPoolOptions.HandlerFactory` | 是 |
@@ -1639,7 +1793,10 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.pool.endpoint.reused` | 是否命中池里已有 origin 节点（`false` = 顺手新建） |
 | `axiosnet.cache.revalidated` | 这次响应由条件请求的 304 合并出来（正文来自缓存） |
 
-- 4xx / 5xx 即使被 `validateStatus` 接受也标 `Error`；失败另记一条 `exception` 事件；每次决定重试加一条 `retry` 事件（带 `axiosnet.retry.delay_ms` / `axiosnet.retry.reason`，以及 `server.address` / `server.port` —— 与 span / 指标同一份逻辑地址，事件自带是为了只看事件的消费方不必回头拼 span 标签；换端点 / 对冲分支实际连的主机不在标签里，要看那条分支的尝试事件 —— `Attempt.Audit` 默认就在链上，订阅 `AxiosNet.Attempt*` 即可）。失败但收到了响应（4xx / 5xx）时照常写 `http.response.status_code` / `network.protocol.version` / `http.response.body.size`。
+- 4xx / 5xx 即使被 `validateStatus` 接受也标 `Error`；失败另记一条 `exception` 事件。
+- 每次决定重试加一条 `retry` 事件，带 `axiosnet.retry.delay_ms` / `axiosnet.retry.reason` 与 `server.address` / `server.port` —— 与 span / 指标同一份逻辑地址。事件自带这些字段，是为了只看事件的消费方不必回头拼 span 标签。
+- 换端点 / 对冲分支实际连的主机不在标签里，要看那条分支的尝试事件 —— `Attempt.Audit` 默认就在链上，订阅 `AxiosNet.Attempt*` 即可。
+- 失败但收到了响应（4xx / 5xx）时照常写 `http.response.status_code` / `network.protocol.version` / `http.response.body.size`。
 - `ResponseType.Stream` 的 span 在拿到响应头时结束，耗时等于首包时间。
 
 **Metrics**（源名 `AxiosNet`）：
@@ -1669,7 +1826,8 @@ builder.Services.AddOpenTelemetry()
 - 缓存命中率 = `cache.hits / (cache.hits + cache.misses)`（跟随者拿到共享结果计命中；请求侧 `no-cache` / `no-store` 绕开新鲜查询的请求两边都不计，`no-cache` 走成条件请求时只计入 `cache.revalidations`；条件请求拿到 304 计一次未命中）；`cache.store_failures` 单独看，别混进命中率。
 - 指标只用低基数标签；URL 路径只进 span。**池指标不带 host / port**：网关 / 爬虫 / 多租户场景下一个 host 一条时间序列会把后端打爆；要定位到具体 origin 看 span 的 `server.address` / `server.port` 与 `axiosnet.pool.endpoint.reused`。
 - `axiosnet.retry.reason` 取值有界：有状态码统一报 `status`（具体码在 `error.type`），否则是库错误码（`ECONNABORTED` / `ERR_NETWORK` …）——「该调策略（429）」和「该修下游（5xx）」在面板上直接分得开。
-- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级），`gate.rejections` 是入口拒绝计数（排队超时 / 队列满），`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key），`circuit.untracked_host` 是「状态表满员后按闭合态直通」的次数，`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数，缓存五件套（`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`）也不带标签——都不带 host。
+- `gate.queue_depth` 是此刻正在等槽位的请求数（进程级）；`gate.rejections` 是入口拒绝计数（排队超时 / 队列满）；`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key）；`circuit.untracked_host` 是「状态表满员后按闭合态直通」的次数；`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数。
+- 缓存五件套（`cache.hits` / `misses` / `stores` / `store_failures` / `revalidations`）同样不带标签 —— 上面这些都不带 host。
 - `request.duration` 是逻辑请求耗时（含重试、退避与缓存落库等待）；`active_requests` 请求结束即减（流式到响应头），`active_leases` 要等正文流释放——「长下载占了多少并发额度」看后者。
 - 池域指标描述池这个资源，不受 `Telemetry.Enabled` 影响。
 - `pool.active_pools` 是存活池数（建 +1 / `Dispose` -1），`pool.shared_pools` 是命名池表的条目数：前者持续上涨 = 有代码在反复建池（典型是「按请求 new 客户端」）。
@@ -1824,7 +1982,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 
 ## 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **53 项**：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **54 项**：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -1917,11 +2075,26 @@ var client = new AxiosClient(new AxiosConfig
 
 `[Format]` 的 JSON 桥（`AxiosJsonFormat.ApplyTo`）同样不可用：它按属性类型构造泛型 `JsonConverter` 并读取属性特性，方法上已标注 `[RequiresDynamicCode]` / `[RequiresUnreferencedCode]`。AOT 下用 `[Format]` 只能作用于库自己转文本的通道（路径 / 查询 / 请求头 / 表单 / multipart / 裸标量正文），JSON 文档内部请改用自定义 `JsonConverter` 或直接换个 DTO。
 
-AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型 / 接口缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosApiMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`（匿名类型无法写入 `[JsonSerializable]`，消息会直接建议改用命名类型或 params / 表单）；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
+AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：
 
-AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、程序集扫描（`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` 依赖反射枚举，AOT 下抛 `PlatformNotSupportedException`；改用生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`，它覆盖本程序集里源生成器生成过元数据的全部请求模型与接口，或按类型调用 `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT）。生成的类名把程序集名里的非标识符字符换成 `_`（`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`）；本程序集没有任何可生成的模型 / 接口时不会生成该类。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
+- 请求模型 / 接口缺元数据 → `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosApiMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）。
+- `System.Text.Json` 缺类型元数据 → `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`；匿名类型无法写入 `[JsonSerializable]`，因此消息会直接建议改用命名类型或 params / 表单。
+- `XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法 → `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
 
-容器注册与冻结都是可选加固。引用了 `AxiosNet.DependencyInjection` 时，生成器会额外产出 `AxiosNetGeneratedDependencyInjection.AddAxiosGeneratedApiInterfaces(services[, siteName])`，把本程序集里声明过路由的接口逐个按单例注册：它逐条调用公开的 `AddApiInterface<T>()`，站点冲突 / 命名站点 / 单例语义与手写完全同一份实现，区别是类型在编译期绑定——接口改名会让它编译失败，而不是运行时少注册一个服务。启动末尾想锁死元数据可调用隐藏 API `AxiosMetadata.Freeze()`：之后任何真正写入（新程序集的模块初始化器、手工注册）都会抛错并指出类型与程序集；等价重复注册仍是空操作。不调用它完全不影响使用。
+AOT 下不可用的能力：
+
+- `dynamic` 成员语法（`data.name`）与运行期才确定的类型。
+- `XmlContentSerializer`。
+- 程序集扫描：`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` 依赖反射枚举，AOT 下抛 `PlatformNotSupportedException`。改用生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`（覆盖本程序集里源生成器生成过元数据的全部请求模型与接口），或按类型调用 `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)`。
+- 接口代理的回退路径：未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT。
+
+生成的类名把程序集名里的非标识符字符换成 `_`（`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`）；本程序集没有任何可生成的模型 / 接口时不会生成该类。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
+
+容器注册与冻结都是可选加固。
+
+引用了 `AxiosNet.DependencyInjection` 时，生成器会额外产出 `AxiosNetGeneratedDependencyInjection.AddAxiosGeneratedApiInterfaces(services[, siteName])`，把本程序集里声明过路由的接口逐个按单例注册。它逐条调用公开的 `AddApiInterface<T>()`，站点冲突 / 命名站点 / 单例语义与手写完全同一份实现，区别是类型在编译期绑定 —— 接口改名会让它编译失败，而不是运行时少注册一个服务。
+
+启动末尾想锁死元数据可调用隐藏 API `AxiosMetadata.Freeze()`：之后任何真正写入（新程序集的模块初始化器、手工注册）都会抛错并指出类型与程序集；等价重复注册仍是空操作。不调用它完全不影响使用。
 
 **已知限制**：等价重复注册「保留先注册的一份」是为「多个互不引用的程序集各为同一接口生成代理」设计的。在可卸载 `AssemblyLoadContext`（插件热重载）里，第二次注册会被静默丢弃，代理工厂仍指向先注册那次加载的程序集——重载插件时不要依赖注册表自动换新，改用独立的进程或卸载后重新进入新的 `AssemblyLoadContext` 边界。
 
@@ -1935,16 +2108,26 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2070 / 2061 | `net8.0` / `net6.0` | 4131 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2172 / 2161 | `net8.0` / `net6.0` | 4333 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2210 / 2201** | | **4337** |
+| **合计** | **2312 / 2227** | | **4539** |
 
-表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。`net8.0` 比 `net6.0` 净多 9 条：`AotJsonTests` 9 条与 `FormatAttributeTests` 里 JSON 桥 2 条只在 net8 分支编译（`JsonSerializerOptions.TypeInfoResolver` / `JsonTypeInfo.Properties` 是 .NET 7+ API），`net6.0` 独有 2 条 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。`AxiosNet.Cli.Tests` 只在本地跑——CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
+表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
+
+- `net8.0` 比 `net6.0` 净多 11 条：差额来自只在 net8 分支编译的 `AotJsonTests` 与 `FormatAttributeTests` 的 JSON 桥（`JsonSerializerOptions.TypeInfoResolver` / `JsonTypeInfo.Properties` 是 .NET 7+ API）。
+- `net6.0` 另有 2 条独有的 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。
+- 合计行的 `net6.0` 列不含只跑 net8 的 `AxiosNet.Cli.Tests`（74 条）。
+- `AxiosNet.Cli.Tests` 只在本地跑 —— CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 
-行覆盖率 **91.7%**、分支覆盖率 **87.3%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例；测试项目引用源生成器后覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动；对比历史值请沿用同一配置——下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内）。
+行覆盖率 **91.8%**、分支覆盖率 **87.3%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）。几点口径：
+
+- 测试项目引用源生成器后，覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动。
+- 对比历史值请沿用同一配置：下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。
+- 生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内。
+
 采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
 
 ```bash
@@ -1987,9 +2170,13 @@ dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn
 bash eng/aot-package-smoke.sh
 ```
 
-`eng/aot-package-smoke.sh` 先断言 nupkg 里带 `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` 与 `buildTransitive/AxiosNet.props`，再把包装进一个只引用它的临时项目发布运行。它补的是示例覆盖不到的一环——示例用 `ProjectReference`，看不到「包内分析器是否真的生效」和「包内 dll 的 AOT 标注是否自洽」；脚本每次用唯一版本号打包，避免 NuGet 复用全局缓存里的旧 dll（版本不变时它不会重新解包，等于一直在验证上一次的包）。
+`eng/aot-package-smoke.sh` 先断言 nupkg 里带 `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` 与 `buildTransitive/AxiosNet.props`，再把包装进一个只引用它的临时项目发布运行。
 
-体积与启动都在预算内才算过：示例与包 smoke 都断言发布产物不超过预算——win-x64 上限 9 MiB（当前示例 8.3 MiB、包 smoke 8.1 MiB），linux-x64 上限 11 MiB（当前 10.2 MiB）。两个平台差约 2 MiB 属平台差异、不是体积退化：Linux 把 OpenSSL、`System.Native`、压缩、globalization 这些 shim 全部静态链进可执行文件，Windows 走系统 DLL 或预烘焙的 `Aot.lib`，所以预算按平台分别定。超了基本只有两种原因——又引入了反射依赖把代码拉回来，或者程序集被整体 root（`TrimmerRootAssembly` / 生成器没生效）。启动 + 完整跑完用 10 s 拦网，只拦数量级退化，不当性能结论；性能对比看 `test/AxiosNet.Benchmarks`。
+它补的是示例覆盖不到的一环：示例用 `ProjectReference`，看不到「包内分析器是否真的生效」与「包内 dll 的 AOT 标注是否自洽」。脚本每次用唯一版本号打包，避免 NuGet 复用全局缓存里的旧 dll（版本不变时它不会重新解包，等于一直在验证上一次的包）。
+
+体积与启动都在预算内才算过：示例与包 smoke 都断言发布产物不超过预算 —— win-x64 上限 9 MiB（当前示例 8.3 MiB、包 smoke 8.1 MiB），linux-x64 上限 11 MiB（当前 10.2 MiB）。两个平台差约 2 MiB 属平台差异、不是体积退化：Linux 把 OpenSSL、`System.Native`、压缩、globalization 这些 shim 全部静态链进可执行文件，Windows 走系统 DLL 或预烘焙的 `Aot.lib`，所以预算按平台分别定。
+
+超了基本只有两种原因：又引入了反射依赖把代码拉回来，或程序集被整体 root（`TrimmerRootAssembly` / 生成器没生效）。启动 + 完整跑完用 10 s 拦网，只拦数量级退化，不当性能结论；性能对比看 `test/AxiosNet.Benchmarks`。
 
 生成代码本身也有快照基线（`test/AxiosNet.Tests/WebAPI/Aot/Snapshots/GeneratedSources.snap.txt`）：生成器输出一变，diff 就直接落在基线文件上；用 `AXIOS_UPDATE_SNAPSHOTS=1` 重生成并逐行审阅。
 
@@ -2065,7 +2252,12 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 
 读法、前后对比流程与已知噪声见 [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md)。
 
-跨实现横向对比另见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：同一回环服务器、同一负载（默认 8 并发 × 1s × 5 轮、每轮轮转顺序），对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告；加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁（不设阈值时只出数字、不判定）。它不进 CI、也不被 `dotnet test` 收集（`IsTestProject=false`，放在 sln 里只为 IDE 直接打开）；口径、读法与一次本机参考数据见该工程 README，整理成结论（功能 / 性能 / 易用性 + 选型建议）的版本见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
+跨实现横向对比另见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：
+
+- 同一回环服务器、同一负载（默认 8 并发 × 1s × 10 轮、每轮轮转顺序），对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告。
+- 加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁；不设阈值时只出数字、不判定。
+- 它不进 CI、也不被 `dotnet test` 收集（`IsTestProject=false`，放在 sln 里只为 IDE 直接打开）。
+- 口径、读法与一次本机参考数据见该工程 README；整理成结论（功能 / 性能 / 易用性 + 选型建议）的版本见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
 
 ## 项目结构
 
@@ -2094,7 +2286,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
 │  └─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
-├─ samples/                           # Simple（53 项）/ DI / Aot
+├─ samples/                           # Simple（54 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
@@ -2104,7 +2296,13 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
    └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```
 
-目录约定三条：领域目录（`Metadata/`、`Serialization/`、`Internal/`）按功能分家；**只在 JIT 下可达的反射实现一律放进 `Reflection/` 目录**，且只有两处——根级 `Reflection/` 装跨领域共用的底层（对象形状反射、STJ 反射回退），`WebAPI/Reflection/` 装属于声明式 API 这个领域的反射读取与 `DispatchProxy` 回退（不在 `Reflection/` 目录里的代码不直接碰反射）；**`WebAPI/` 是可整体删除的扩展**——删掉它，核心与原始 HTTP 照样编译、照样能用，所以核心不得反向引用它（对象形状、字典映射、生成注册表、AOT 守卫与异常都因此住在 `Metadata/` 与 `Internal/`）。公开特性统一收在 `WebAPI/Attributes/`（命名空间 `AxiosNet.WebAPI.Attributes`），其余公开类型留在 `WebAPI/` 根。
+目录约定三条：
+
+- 领域目录（`Metadata/`、`Serialization/`、`Internal/`）按功能分家；
+- **只在 JIT 下可达的反射实现一律放进 `Reflection/` 目录**，且只有两处：根级 `Reflection/` 装跨领域共用的底层（对象形状反射、STJ 反射回退），`WebAPI/Reflection/` 装属于声明式 API 这个领域的反射读取与 `DispatchProxy` 回退（不在 `Reflection/` 目录里的代码不直接碰反射）；
+- **`WebAPI/` 是可整体删除的扩展**：删掉它，核心与原始 HTTP 照样编译、照样能用，所以核心不得反向引用它（对象形状、字典映射、生成注册表、AOT 守卫与异常都因此住在 `Metadata/` 与 `Internal/`）。
+
+公开特性统一收在 `WebAPI/Attributes/`（命名空间 `AxiosNet.WebAPI.Attributes`），其余公开类型留在 `WebAPI/` 根。
 
 ## License
 

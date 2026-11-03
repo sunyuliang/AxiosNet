@@ -21,6 +21,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     private readonly object _writeLock = new();
     private readonly int _maxEntries;
     private readonly long _maxBytes;
+    // 当前占用字节数（近似值）：按条目写入时算好的 Size 增减。
     private long _bytes;
 
     /// <summary>构造一份内存存储。</summary>
@@ -100,6 +101,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
         => SetCore(key, entry, policy.TimeToLive);
 
+    /// <summary>写入条目：算尺寸与过期时刻，腾出空间后替换同键旧条目。</summary>
     private ValueTask SetCore(string key, AxiosShortCircuit entry, TimeSpan timeToLive)
     {
         var size = EstimateSize(entry);
@@ -159,6 +161,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
         return default;
     }
 
+    /// <summary>容量判定：条目数与字节预算（0 表示不限字节）都还有余量。</summary>
     private bool HasRoom(long size)
         => _entries.Count < _maxEntries
            && (_maxBytes == 0 || Interlocked.Read(ref _bytes) + size <= _maxBytes);
@@ -202,6 +205,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
             Size = size;
         }
 
+        /// <summary>缓存下来的短路响应（正文已缓冲，可直接复用）。</summary>
         internal AxiosShortCircuit Reply { get; }
 
         /// <summary>到期时刻（<see cref="Environment.TickCount64"/> 口径，单调递增）。</summary>

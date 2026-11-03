@@ -33,9 +33,12 @@ namespace AxiosNet.Benchmarks;
 // 不能 sealed：BDN 会派生基准类来拦截调用（0.15 起对 sealed 直接报校验错误）。
 public class DynamicDeserializationBenchmarks
 {
+    // 小对象正文（5 字段 + 嵌套）。
     private AxiosClient _user = null!;
+    // 宽对象图正文（13 标量 / 3 层嵌套 / 2 数组 / 1 null）。
     private AxiosClient _wide = null!;
 
+    /// <summary>两个客户端各配一份正文：切载荷不用改路由，也不进测量区。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -43,6 +46,7 @@ public class DynamicDeserializationBenchmarks
         _wide = CreateClient(Payloads.WideJsonBytes);
     }
 
+    /// <summary>释放两个客户端（正文由 FakeHttpHandler 持有，不涉及服务器）。</summary>
     [GlobalCleanup]
     public void Cleanup()
     {
@@ -106,6 +110,7 @@ public class DynamicDeserializationBenchmarks
         return (JsonElement)response.Data!;
     }
 
+    /// <summary>用假 handler 造一个只回固定正文的客户端（基准里不碰网络）。</summary>
     private static AxiosClient CreateClient(byte[] body)
         => new(new AxiosConfig { BaseAddress = "http://bench.local/" }, handler: new FakeHttpHandler(body, Payloads.JsonContentType));
 }

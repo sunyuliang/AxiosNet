@@ -177,9 +177,11 @@ internal static class ResponseTextDecoder
     // GetPreamble() 每次调用都新建数组，按编码实例缓存。
     private static readonly ConditionalWeakTable<Encoding, byte[]> Preambles = new();
 
+    /// <summary>取编码的 BOM 字节；<c>GetPreamble()</c> 每次都新建数组，这里按编码实例缓存一份。</summary>
     private static ReadOnlySpan<byte> PreambleOf(Encoding encoding)
         => Preambles.GetValue(encoding, static e => e.GetPreamble());
 
+    /// <summary>开头有该编码的 BOM 时返回它的长度（解码前要跳过），没有则返回 0。</summary>
     private static int GetPreambleLength(ReadOnlySpan<byte> bytes, Encoding encoding)
     {
         var preamble = PreambleOf(encoding);

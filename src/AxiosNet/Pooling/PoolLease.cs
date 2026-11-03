@@ -8,6 +8,7 @@ public sealed class PoolLease : IDisposable
 {
     private readonly HttpConnectionPool _pool;
     private readonly PooledEndpoint _endpoint;
+    // 0/1：租约只能归还一次，重复归还会打乱在途计数。
     private int _returned;
 
     internal PoolLease(HttpConnectionPool pool, PooledEndpoint endpoint, bool endpointReused)

@@ -36,6 +36,7 @@ public sealed class XmlContentSerializer : IContentSerializer
     /// <summary>无状态单例，可安全并发共享（内部按类型缓存 <see cref="XmlSerializer"/>）。</summary>
     public static XmlContentSerializer Instance { get; } = new();
 
+    // 类型 → 已生成的 XmlSerializer：建一次很贵，且可重复使用。
     private static readonly ConcurrentDictionary<Type, XmlSerializer> Cache = new();
 
     private XmlContentSerializer()

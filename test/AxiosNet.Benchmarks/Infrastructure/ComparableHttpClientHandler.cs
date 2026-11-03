@@ -14,6 +14,7 @@ namespace AxiosNet.Benchmarks.Infrastructure;
 /// </summary>
 internal static class ComparableHttpClientHandler
 {
+    /// <summary>按 <see cref="ConnectionPoolOptions"/> 的默认值逐项配置裸 handler；不对齐的话测到的是两套默认值的差，不是实现差。</summary>
     public static SocketsHttpHandler Create()
     {
         var defaults = new ConnectionPoolOptions();

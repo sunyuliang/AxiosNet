@@ -27,6 +27,7 @@ public static partial class Attempt
                 : next(request, ctx);
     };
 
+    /// <summary>给一次尝试计时并上报起点 / 终点事件；只有订阅了尝试审计时才走这条分支。</summary>
     private static async ValueTask<AxiosAttemptResult> AuditAsync(
         AxiosAttemptHandler next,
         HttpRequestMessage request,

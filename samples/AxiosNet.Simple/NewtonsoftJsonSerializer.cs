@@ -23,9 +23,11 @@ public sealed class NewtonsoftJsonSerializer : IContentSerializer
         };
     }
 
+    /// <summary>用 Newtonsoft.Json 序列化，保留属性名原名以对齐 PascalCase 契约。</summary>
     public string Serialize(object? value, Type type, AxiosConfig config)
         => JsonConvert.SerializeObject(value, type, _settings);
 
+    /// <summary>用 Newtonsoft.Json 反序列化；未知成员忽略。</summary>
     public object? Deserialize(string json, Type type, AxiosConfig config)
         => JsonConvert.DeserializeObject(json, type, _settings);
 

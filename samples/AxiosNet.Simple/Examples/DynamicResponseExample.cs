@@ -9,6 +9,7 @@ public sealed class DynamicResponseExample : IExample
 
     public string Title => "dynamic 响应：GetAsync<dynamic> 直接 data.name / data[\"name\"] / data.address.city";
 
+    /// <summary>示例入口：dynamic 响应：GetAsync<dynamic> 直接 data.name / data[\"name\"] / data.address.city。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

@@ -10,8 +10,10 @@ using AxiosNet.Tests.Infrastructure;
 
 return await ComparisonProgram.RunAsync(args);
 
+/// <summary>对比程序入口：解析参数 → 起回环服务器 → 预热与校准 → 轮转测量 → 汇总导出 → 门禁判定。</summary>
 internal static class ComparisonProgram
 {
+    /// <summary>跑完整流程并返回进程退出码；任何一处统计不可信（有失败请求、服务器少收请求）都直接反映到退出码上。</summary>
     public static async Task<int> RunAsync(string[] args)
     {
         Options options;
@@ -185,11 +187,13 @@ internal static class ComparisonProgram
         return targets.Skip(offset).Concat(targets.Take(offset)).ToArray();
     }
 
+    /// <summary>窗口有失败时补一句「几个失败、首个错误类型」；全成功返回空串。</summary>
     private static string DescribeWindow(WindowResult window)
         => window.Errors > 0
             ? $"（{window.Errors} 个失败：{window.FirstError?.GetType().Name}）"
             : string.Empty;
 
+    /// <summary>把本轮结果导出到输出目录：按启动时间戳命名，返回写出的文件路径。</summary>
     private static IEnumerable<string> Export(
         SummarySet set,
         Options options,
@@ -240,6 +244,7 @@ internal static class ComparisonProgram
         return tag.Trim();
     }
 
+    /// <summary>门禁判定：有失败请求就先按「数字不可信」退出，否则比对阈值后给出退出码。</summary>
     private static int Evaluate(SummarySet set, Options options)
     {
         var hasErrors = set.Targets.Any(t => t.Errors > 0);
@@ -297,6 +302,7 @@ internal static class ComparisonProgram
         return gateFailed ? 1 : 0;
     }
 
+    /// <summary>环境摘要：OS、核数、运行时、Server GC 与构建类型（Debug 的数字不能当基线）。</summary>
     private static string DescribeEnvironment()
     {
 #if DEBUG

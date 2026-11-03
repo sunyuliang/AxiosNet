@@ -172,10 +172,12 @@ internal sealed class ConcurrencyGate
     /// </summary>
     private sealed class SlotLease : IDisposable
     {
+        // 槽位信号量：首次使用时按当时上限创建并固定（改上限会抛）。
         private SemaphoreSlim? _slots;
 
         public SlotLease(SemaphoreSlim slots) => _slots = slots;
 
+        /// <summary>归还槽位；重复 Dispose 只生效一次（先换出信号量，再释放）。</summary>
         public void Dispose() => Interlocked.Exchange(ref _slots, null)?.Release();
     }
 }

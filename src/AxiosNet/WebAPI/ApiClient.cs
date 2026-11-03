@@ -114,6 +114,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return BindingErrors.Run(config, request.GetType().Name, () => Axios.GetUri(config));
     }
 
+    /// <summary>按请求模型的声明拼出这次请求的配置：路由、静态头、绑定参数与授权都在这条路径上落地。</summary>
     private AxiosConfig BuildConfig(
         RequestModelMetadata metadata,
         object request,

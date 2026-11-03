@@ -35,11 +35,15 @@ internal sealed class HttpCacheInfo
     /// <summary>剩余新鲜期（新鲜期减龄期）；没有声明新鲜期时为 <c>null</c>，用尽时为零。</summary>
     internal TimeSpan? Remaining { get; }
 
+    /// <summary>解析后的 <c>Cache-Control</c> 指令。</summary>
     internal CacheControlDirectives CacheControl { get; }
 
+    /// <summary><c>Date</c> 头；缺失时为 <c>null</c>。</summary>
     internal DateTimeOffset? Date { get; }
 
+    /// <summary><c>Expires</c> 头；缺失时为 <c>null</c>。</summary>
     internal DateTimeOffset? Expires { get; }
 
+    /// <summary><c>Vary</c> 列出的请求头名：决定缓存键要不要带上它们。</summary>
     internal IReadOnlyList<string> Vary { get; }
 }

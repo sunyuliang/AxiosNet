@@ -12,17 +12,23 @@ namespace AxiosNet.WebAPI.Internal;
 /// </remarks>
 internal static class GeneratedMetadataRegistry
 {
+    // 写入锁；读路径不加锁（写时复制 + Volatile.Read）。
     private static readonly object Gate = new();
 
+    // 类型 → 请求模型声明（写时复制，整体替换）。
     private static Dictionary<Type, RequestModelDeclaration> _requestModels = new();
+    // 类型 → 接口代理声明（写时复制，整体替换）。
     private static Dictionary<Type, InterfaceEntry> _interfaces = new();
 
+    /// <summary>取生成期烘焙的请求模型元数据（无锁读，注册走写时复制）。</summary>
     internal static bool TryGetRequestModel(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out RequestModelDeclaration? declaration)
         => Volatile.Read(ref _requestModels).TryGetValue(type, out declaration);
 
+    /// <summary>取生成期烘焙的接口代理元数据（无锁读，注册走写时复制）。</summary>
     internal static bool TryGetInterface(Type type, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out InterfaceEntry? entry)
         => Volatile.Read(ref _interfaces).TryGetValue(type, out entry);
 
+    /// <summary>登记请求模型元数据；同一类型重复登记属编程错误。</summary>
     internal static void RegisterRequestModel(RequestModelDeclaration declaration)
     {
         ArgumentNullException.ThrowIfNull(declaration);
@@ -45,6 +51,7 @@ internal static class GeneratedMetadataRegistry
         }
     }
 
+    /// <summary>登记接口代理元数据；同一类型重复登记属编程错误。</summary>
     internal static void RegisterInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
         => AddInterface(declaration, factory, allowExisting: false);
 
@@ -55,6 +62,7 @@ internal static class GeneratedMetadataRegistry
     internal static void RegisterGeneratedInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
         => AddInterface(declaration, factory, allowExisting: true);
 
+    /// <summary>登记接口声明：写时复制换表；<paramref name="allowExisting"/> 为 true 时重复注册直接忽略（多个程序集为同一契约生成的代理等价）。</summary>
     private static void AddInterface(InterfaceDeclarationData declaration, Func<ApiClient, object> factory, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(declaration);
@@ -90,6 +98,7 @@ internal static class GeneratedMetadataRegistry
 /// <summary>接口注册项：声明 + 代理工厂；方法元数据在首次创建代理时按索引构建并缓存。</summary>
 internal sealed class InterfaceEntry
 {
+    // 方法元数据表（首次调用时建好，之后只读）。
     private InterfaceMethodMetadata[]? _methods;
 
     public InterfaceEntry(InterfaceDeclarationData declaration, Func<ApiClient, object> factory)
@@ -98,8 +107,10 @@ internal sealed class InterfaceEntry
         Factory = factory;
     }
 
+    /// <summary>源生成期烘焙好的接口声明：路由前缀、静态头、方法签名都按它恢复。</summary>
     public InterfaceDeclarationData Declaration { get; }
 
+    /// <summary>代理工厂：入参是宿主客户端，返回接口的代理实例；生成期已写死构造，不走反射。</summary>
     public Func<ApiClient, object> Factory { get; }
 
     /// <summary>按声明顺序构建（并缓存）全部方法的绑定元数据；构建错误照旧在首次使用该方法的契约时抛出。</summary>

@@ -7,6 +7,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal sealed class TrafficMeter
 {
+    // 进度回调的最小间隔：更密的回调只是重复报同一个百分比。
     private const int ReportIntervalMs = 50;
 
     private readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -28,7 +29,9 @@ internal sealed class TrafficMeter
     /// </summary>
     private bool _roundStarted;
 
+    // 上次回调时刻；初值取负一个间隔，保证首块一定上报。
     private long _lastReportMs = -ReportIntervalMs;
+    // 完成回调只发一次。
     private bool _completed;
 
     public TrafficMeter(long? total, Action<AxiosProgressEvent>? callback, long? maxRate)
@@ -38,6 +41,7 @@ internal sealed class TrafficMeter
         _maxRate = maxRate;
     }
 
+    /// <summary>累计已传输字节（跨重发轮次，不随本轮起点归零）。</summary>
     public long Loaded => _loaded;
 
     /// <summary>累计本轮字节；首字节在此定下本轮计时起点（见 <see cref="_roundStarted"/>）。</summary>
@@ -119,6 +123,7 @@ internal sealed class TrafficMeter
         _roundStartClock = _clock.Elapsed;
     }
 
+    // 按本轮增量算进度事件：累计值减本轮起点，速率也只用本轮耗时。
     private AxiosProgressEvent BuildEvent(bool upload)
     {
         // 只按本轮增量算。
@@ -167,8 +172,10 @@ internal sealed class ProgressReadStream : DelegatingStream
 
     public override bool CanWrite => false;
 
+    // 读取流不能改长度：显式抛，别让内层悄悄截断正文。
     public override void SetLength(long value) => throw new NotSupportedException();
 
+    // 读取流不支持写。
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
     /// <summary>
@@ -237,6 +244,7 @@ internal sealed class ProgressReadStream : DelegatingStream
         }
     }
 
+    // 读侧记账：读到结尾（read <= 0）时强制上报一次，保证最后一帧进度一定发出。
     private async ValueTask TrackAsync(int read, CancellationToken cancellationToken)
     {
         if (read <= 0)
@@ -303,21 +311,26 @@ internal sealed class ProgressWriteStream : DelegatingStream
         set => throw new NotSupportedException();
     }
 
+    // 写入流不支持定位。
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 
+    // 写入流不支持改长度：长度由正文对象决定。
     public override void SetLength(long value) => throw new NotSupportedException();
 
     protected override bool DisposeInnerStream => false;
 
+    // 写入流不支持读。
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
+    // 先写内层再记账：顺序反了会把还没发出去的字节算成已上传。
     protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         await Inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         await TrackAsync(buffer.Length, cancellationToken).ConfigureAwait(false);
     }
 
+    // 写侧记账：累计已写字节并按时间节流上报，读侧同款逻辑。
     private async ValueTask TrackAsync(int count, CancellationToken cancellationToken)
     {
         if (count <= 0)

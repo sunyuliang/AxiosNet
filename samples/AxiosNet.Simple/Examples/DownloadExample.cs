@@ -10,6 +10,7 @@ public sealed class DownloadExample : IExample
 
     public string Title => "文件下载：GetAsync<Stream> 流式落盘 / GetAsync<byte[]>";
 
+    /// <summary>示例入口：文件下载：GetAsync<Stream> 流式落盘 / GetAsync<byte[]>。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

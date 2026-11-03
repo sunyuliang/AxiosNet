@@ -17,6 +17,7 @@ namespace AxiosNet.SourceGen
     {
         private const string DependencyInjectionAssembly = "AxiosNet.DependencyInjection";
 
+        /// <summary>把「引用集合里有没有 DI 包」折成一位布尔再接管线：直接 Combine 整个 Compilation 会让输出在每次按键后重跑。</summary>
         private static void InitializeDependencyInjection(
             IncrementalGeneratorInitializationContext context,
             IncrementalValueProvider<ImmutableArray<InterfaceModelInfo>> interfaces,
@@ -42,6 +43,7 @@ namespace AxiosNet.SourceGen
                 static (output, pair) => ExecuteDependencyInjection(output, pair.Left.Left, pair.Left.Right, pair.Right));
         }
 
+        /// <summary>筛掉不注册的接口（未输出 / 开放泛型 / 闭合泛型调用点副本）后去重排序，产出一份注册扩展源码。</summary>
         private static void ExecuteDependencyInjection(
             SourceProductionContext context,
             ImmutableArray<InterfaceModelInfo> interfaces,

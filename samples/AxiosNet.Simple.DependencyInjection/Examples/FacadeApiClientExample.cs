@@ -17,6 +17,7 @@ public sealed class FacadeApiClientExample : IExample
 
     public string Title => "AddApiClient(configure)：门面复用已注册的 AxiosClient";
 
+    /// <summary>示例入口：AddApiClient(configure)：门面复用已注册的 AxiosClient。</summary>
     public async Task RunAsync(string baseUrl)
     {
         var builder = Host.CreateApplicationBuilder();

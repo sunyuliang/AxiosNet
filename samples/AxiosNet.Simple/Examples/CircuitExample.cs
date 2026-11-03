@@ -11,6 +11,7 @@ public sealed class CircuitExample : IExample
 
     public string Title => "熔断：连续失败 / 窗口失败率打开 / 半开慢启动 / 探测失败重开 / 单请求绕过 / 手工 Reset";
 
+    /// <summary>示例入口：熔断：连续失败 / 窗口失败率打开 / 半开慢启动 / 探测失败重开 / 单请求绕过 / 手工 Reset。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

@@ -18,6 +18,7 @@ namespace AxiosNet.Internal;
 /// </remarks>
 internal static class RequestBodyFactory
 {
+    // multipart 表单的媒体类型；boundary 由 builder 追加，这里不带参数。
     private const string MultipartMediaType = AxiosContentType.MultipartFormData;
 
     /// <summary>按 data 的实际形态与生效 Content-Type 产出请求正文；<c>null</c> 表示没有正文。</summary>
@@ -158,6 +159,7 @@ internal static class RequestBodyFactory
         return content;
     }
 
+    /// <summary>字节正文：按配置压缩后挂上 <c>Content-Type</c>；字节数组自带长度，能带 <c>Content-Length</c>。</summary>
     private static HttpContent CreateBinary(byte[] bytes, string mediaType, AxiosConfig config)
     {
         var content = RequestCompression.WrapBytes(bytes, config);

@@ -40,11 +40,16 @@ public class FormEncodingBenchmarks
     [Params(5, 50)]
     public int Fields { get; set; }
 
+    // 表单请求都走这个客户端（FakeHttpHandler，不出网）。
     private AxiosClient _client = null!;
+    // 扁平 ASCII 表单：转义映射几乎不命中，是编码的最省路径。
     private Dictionary<string, string> _ascii = null!;
+    // 全字段都要百分号转义的表单（空格 / 中文 / & / = / + / % / 斜杠）。
     private Dictionary<string, string> _unicode = null!;
+    // 嵌套键名（user[profile][city]）加数组（tags[]）的表单。
     private Dictionary<string, object?> _nested = null!;
 
+    /// <summary>按 Fields 档位预造三份表单：字典构造与字符串插值都在测量区外。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -57,6 +62,7 @@ public class FormEncodingBenchmarks
         _nested = Payloads.FormNested(Fields);
     }
 
+    /// <summary>释放客户端。</summary>
     [GlobalCleanup]
     public void Cleanup() => _client.Dispose();
 

@@ -1,6 +1,9 @@
 namespace AxiosNet.Cli.Model;
 
 /// <summary>映射到 C# 的类型引用：名字不含可空标注，可空由 <see cref="Nullable"/> 或调用方的 required 语义决定。</summary>
+/// <param name="Name">类型名（如 <c>int</c>、<c>List&lt;string&gt;</c>），不含 <c>?</c> 标注。</param>
+/// <param name="IsValueType">是否值类型，决定可空要不要写成 <c>Nullable&lt;T&gt;</c>。</param>
+/// <param name="Nullable">是否需要可空标注（引用类型补 <c>?</c>）。</param>
 internal readonly record struct TypeRef(string Name, bool IsValueType, bool Nullable)
 {
     /// <summary>兜底类型：无法表达的结构一律降级成 <c>JsonElement</c>（值类型、默认非空）。</summary>
@@ -59,6 +62,9 @@ internal enum ApiTypeKind
 }
 
 /// <summary>一处导入缺口或降级：写进控制台摘要与 <c>--report</c>。</summary>
+/// <param name="Code">缺口编号，用于去重与分类统计。</param>
+/// <param name="Location">出现位置（如 <c>操作.状态码</c>），报告里靠它定位。</param>
+/// <param name="Message">给人看的说明。</param>
 internal sealed record ApiWarning(string Code, string Location, string Message);
 
 /// <summary>警告收集器：去重并设置上限，避免病态文档刷屏。</summary>
@@ -286,6 +292,10 @@ internal sealed class ApiPart
 }
 
 /// <summary>一个展开后的对象属性（模型与 multipart 部件共用）。</summary>
+/// <param name="WireName">线上键名，写进 <c>[JsonPropertyName]</c>。</param>
+/// <param name="Schema">该属性的 schema 节点，类型解析与嵌套展开都靠它。</param>
+/// <param name="Required">是否在 schema 的 required 列表里。</param>
+/// <param name="Description">属性说明；null 表示文档里没写。</param>
 internal readonly record struct ApiObjectProperty(string WireName, Spec.SpecNode Schema, bool Required, string? Description);
 
 /// <summary>一个可复用的生成类型：对象模型、字符串枚举或常量类。</summary>
@@ -333,7 +343,11 @@ internal sealed class ApiProperty
 }
 
 /// <summary>字符串枚举成员：成员名与线上值一致。</summary>
+/// <param name="Name">生成的 C# 成员名。</param>
+/// <param name="WireValue">线上字面量，写进 <c>[EnumMember]</c>。</param>
 internal sealed record ApiEnumMember(string Name, string WireValue);
 
 /// <summary>常量类成员：用于无法作为枚举成员名的线上字面量。</summary>
+/// <param name="Name">生成的常量名。</param>
+/// <param name="Value">线上字面量的原样文本。</param>
 internal sealed record ApiConstant(string Name, string Value);

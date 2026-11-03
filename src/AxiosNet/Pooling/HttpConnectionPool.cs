@@ -32,7 +32,9 @@ public sealed class HttpConnectionPool : IDisposable
     private readonly ConcurrentDictionary<string, CookieContainer> _cookies = new(StringComparer.Ordinal);
 
     private readonly Timer? _evictionTimer;
+    // 累计租约数（统计用，只增）。
     private long _totalLeases;
+    // 0/1 释放标志。
     private int _disposed;
 
     /// <summary>默认传输档的档名（空串）。</summary>
@@ -281,6 +283,7 @@ public sealed class HttpConnectionPool : IDisposable
         return true;
     }
 
+    // 共享池名必须非空且稳定：写错名字会让两处客户端意外共用同一个池。
     private static void ValidateSharedKey(string key)
     {
         if (key is null)
@@ -363,6 +366,7 @@ public sealed class HttpConnectionPool : IDisposable
         return true;
     }
 
+    // 传输配置是否可视为同一档：代理按引用比较，其余逐项比较；不同就不能共池。
     private static bool SameTransport(ConnectionTransportOptions a, ConnectionTransportOptions b)
         => a.UseCookies == b.UseCookies
            && a.EnabledSslProtocols == b.EnabledSslProtocols
@@ -687,6 +691,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
+    // 定时清理：把空闲超时的端点摘掉并释放，避免长期占着连接。
     private void EvictIdleEndpoints(object? state)
     {
         if (Volatile.Read(ref _disposed) == 1)
@@ -871,14 +876,17 @@ internal readonly struct OriginKey : IEquatable<OriginKey>
     /// <summary>默认档的 origin 文本（<c>scheme://host:port</c>），可直接拼成 Uri。</summary>
     public string BaseAddress => $"{Scheme}://{Host}:{Port}";
 
+    // 按 (scheme, host, port, 档名) 判等：这正是「能不能复用连接」的粒度。
     public bool Equals(OriginKey other)
         => Port == other.Port
             && string.Equals(Scheme, other.Scheme, StringComparison.Ordinal)
             && string.Equals(Host, other.Host, StringComparison.Ordinal)
             && string.Equals(Profile, other.Profile, StringComparison.Ordinal);
 
+    // 装箱入口转强类型比较：字典查键会走这条。
     public override bool Equals(object? obj) => obj is OriginKey other && Equals(other);
 
+    // 与 Equals 同一组字段，保证相等的键落在同一个桶里。
     public override int GetHashCode() => HashCode.Combine(Scheme, Host, Port, Profile);
 
     /// <summary>默认档输出 <c>scheme://host:port</c>；命名档追加 <c>#档名</c>（统计与诊断用）。</summary>

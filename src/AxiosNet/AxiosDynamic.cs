@@ -223,6 +223,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
         }
     }
 
+    /// <summary>槽位数组按需扩容（至少 8，否则翻倍）：拷完旧值再发布，读侧不会看到半截数组。</summary>
     private void EnsureCapacity(int slots)
     {
         var values = Volatile.Read(ref _values);
@@ -245,6 +246,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
         /// <summary>单个形状节点最多缓存多少个「加字段 / 减字段」迁移。</summary>
         private const int MaxTransitions = 256;
 
+        // 空形状：所有动态空对象的共同起点。
         internal static readonly Shape Empty = new(new Dictionary<string, int>(StringComparer.Ordinal), 0);
 
         /// <summary>名字 → 槽位；构造后不再修改（增删都换新实例）。</summary>
@@ -269,6 +271,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
             }
         }
 
+        /// <summary>当前形状的字段数（槽位只增不减）。</summary>
         internal int Count => Slots.Count;
 
         /// <summary>迁移到「多一个键」的形状；同名字序列在全进程内复用同一个实例。</summary>
@@ -324,12 +327,14 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
             }
         }
 
+        /// <summary>在现形状上加一个槽位派生出新形状；旧形状不变，写入方随后把它发布为当前值。</summary>
         private Shape DeriveAdded(string name, bool cacheable)
         {
             var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal) { [name] = NextSlot };
             return new Shape(slots, NextSlot + 1, cacheable);
         }
 
+        /// <summary>从现形状里摘掉一个槽位派生出新形状；槽位号不复用，已编译的 DLR 规则仍然指得对。</summary>
         private Shape DeriveRemoved(string name, bool cacheable)
         {
             var slots = new Dictionary<string, int>(Slots, StringComparer.Ordinal);

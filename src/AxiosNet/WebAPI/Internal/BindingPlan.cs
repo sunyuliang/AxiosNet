@@ -12,6 +12,7 @@ namespace AxiosNet.WebAPI.Internal;
 /// </summary>
 internal sealed class BindingPlan
 {
+    // 空计划：没有参数要绑的方法共用这一份，省一次分配。
     internal static readonly BindingPlan Empty = new(
         [],
         [],
@@ -50,8 +51,10 @@ internal sealed class BindingPlan
         _body = body;
     }
 
+    /// <summary>是否已绑定请求正文（正文只能有一个）。</summary>
     public bool HasBody => _body is not null;
 
+    /// <summary>正文的定位名（错误消息用）。</summary>
     public string? BodyName => _body?.Name;
 
     /// <summary>

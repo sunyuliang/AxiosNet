@@ -25,6 +25,7 @@ internal sealed record MultipartPart(string Name, string? FileName, string? Cont
 /// </summary>
 internal static class MultipartReader
 {
+    // 部件头与内容的分界（CRLF CRLF）：按字节查找，避免把正文里的换行当边界。
     private static readonly byte[] HeaderTerminator = "\r\n\r\n"u8.ToArray();
 
     /// <summary>解析 multipart 请求体。</summary>
@@ -145,6 +146,7 @@ internal static class MultipartReader
         return true;
     }
 
+    /// <summary>从 <c>Content-Type</c> 里取出 boundary，允许带引号。</summary>
     private static string? ExtractBoundary(string contentType)
     {
         foreach (var segment in contentType.Split(';'))

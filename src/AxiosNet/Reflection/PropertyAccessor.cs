@@ -11,8 +11,10 @@ namespace AxiosNet.Reflection;
 /// </summary>
 internal static class PropertyAccessor
 {
+    // getter 缓存：反射调用比委托慢一个量级，同一个属性只编译一次。
     private static readonly ConcurrentDictionary<PropertyInfo, Func<object, object?>> Getters = new();
 
+    /// <summary>取属性值：按 <see cref="PropertyInfo"/> 缓存已编译的 getter。</summary>
     public static object? GetValue(PropertyInfo property, object target)
     {
         if (!RuntimeFeature.IsDynamicCodeSupported)
@@ -23,6 +25,7 @@ internal static class PropertyAccessor
         return Getters.GetOrAdd(property, static p => CreateGetter(p))(target);
     }
 
+    /// <summary>借泛型包装类编译出强类型 getter 委托，省掉每次取值的反射开销；AOT 下不会进这里。</summary>
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -39,6 +42,7 @@ internal static class PropertyAccessor
 
     private static class GetterWrapper<TTarget, TValue>
     {
+        /// <summary>把属性 getter 绑成 <c>Func&lt;TTarget, TValue&gt;</c> 再包一层装箱转换；没有可读 getter 时抛出。</summary>
         public static Func<object, object?> Create(PropertyInfo property)
         {
             var getter = property.GetGetMethod(nonPublic: true)

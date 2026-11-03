@@ -27,6 +27,7 @@ namespace AxiosNet.Retry;
 /// </example>
 public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
 {
+    // 令牌桶状态（_sync 保护）：当前令牌数 / 上次补充时刻 / 累计拒绝次数。
     private readonly object _sync = new();
     private readonly IAxiosRetryPolicy _inner;
     private readonly int _capacity;
@@ -155,6 +156,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
         }
     }
 
+    /// <summary>锁内先按经过时间补充令牌，再尝试扣一个；预算不足返回 false，调用方据此拒绝这次重试。</summary>
     private bool TryTake()
     {
         lock (_sync)

@@ -17,6 +17,7 @@ public sealed class ApiInterfaceContractExample : IExample
 
     public string Title => "接口级契约：[Authorize] / [AllowAnonymous] 授权 + 方法级 [Headers] + ValidateInterfaces 静态校验";
 
+    /// <summary>示例入口：接口级契约：[Authorize] / [AllowAnonymous] 授权 + 方法级 [Headers] + ValidateInterfaces 静态校验。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
@@ -51,6 +52,7 @@ public sealed class ApiInterfaceContractExample : IExample
         }
     }
 
+    /// <summary>读请求消息上的某个头；没有请求消息时返回 <c>none</c>。</summary>
     private static string Header(System.Net.Http.HttpRequestMessage? request, string name)
         => request is not null && request.Headers.TryGetValues(name, out var values)
             ? string.Join(",", values!)

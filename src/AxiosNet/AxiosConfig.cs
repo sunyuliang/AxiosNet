@@ -90,28 +90,37 @@ public sealed partial class AxiosConfig
         set => _idempotency = value;
     }
 
-    // 库内读取一律走这几个访问器：公共 getter 会懒创建对象。
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建（公共 getter 会建对象，库内一律走这几个）。</summary>
     internal SerializationSettings? SerializationOrNull => _serialization;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal ConnectionSettings? ConnectionOrNull => _connection;
 
     /// <summary>本次请求选中的传输档名（<c>null</c> / 空串 = 默认档）；不懒创建连接组。</summary>
     internal string? TransportOrNull => _connection?.Transport;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal LimitSettings? LimitsOrNull => _limits;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal CallbackSettings? CallbacksOrNull => _callbacks;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal RetrySettings? RetryOrNull => _retry;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal CircuitSettings? CircuitOrNull => _circuit;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal HedgingSettings? HedgingOrNull => _hedging;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal FailoverSettings? FailoverOrNull => _failover;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal TelemetrySettings? TelemetryOrNull => _telemetry;
 
+    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal IdempotencySettings? IdempotencyOrNull => _idempotency;
 
     /// <summary>对应 axios baseURL。</summary>

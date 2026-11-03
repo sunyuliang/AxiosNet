@@ -19,6 +19,7 @@ public sealed class OpenApiGeneratedExample : IExample
 
     public string Title => "OpenAPI 导入：axiosnet-gen 生成的请求模型（tag 分组 / 授权 / multipart / 流式）";
 
+    /// <summary>示例入口：OpenAPI 导入：axiosnet-gen 生成的请求模型（tag 分组 / 授权 / multipart / 流式）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

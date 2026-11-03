@@ -9,6 +9,7 @@ public sealed class ProgressAndRateExample : IExample
 
     public string Title => "下载/上传进度回调 + maxRate 限速";
 
+    /// <summary>示例入口：下载/上传进度回调 + maxRate 限速。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

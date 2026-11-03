@@ -13,6 +13,7 @@ public sealed class IdempotencyExample : IExample
 
     public string Title => "幂等键：重试共用同一个键 / 显式键透传 / 默认关闭";
 
+    /// <summary>示例入口：幂等键：重试共用同一个键 / 显式键透传 / 默认关闭。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

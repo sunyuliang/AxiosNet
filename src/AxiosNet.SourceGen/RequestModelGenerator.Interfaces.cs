@@ -46,6 +46,7 @@ namespace AxiosNet.SourceGen
                 .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
         }
 
+        // 输出阶段：接口声明与调用点两路数据合流去重后逐个生成代理；开关关掉整段跳过。
         private static void ExecuteInterfaces(
             SourceProductionContext context,
             ImmutableArray<InterfaceModelInfo> declarations,
@@ -129,6 +130,7 @@ namespace AxiosNet.SourceGen
                 BuildInterfaceInfo(symbol, declaration.Identifier.GetLocation(), wellKnown, compilation, fromCallSite: false)));
         }
 
+        // 语法层粗筛：只看 Create / AddApiInterface / ValidateInterfaces 三个入口名，真正判定在语义层。
         private static bool IsCreateCallSite(SyntaxNode node)
         {
             if (node is not InvocationExpressionSyntax invocation)
@@ -146,6 +148,7 @@ namespace AxiosNet.SourceGen
             return name is "Create" or "AddApiInterface" or "ValidateInterfaces";
         }
 
+        // 调用点 → 接口批次：只认 ApiClient 与 DI 扩展这两个宿主类型，别的同名方法一律放过。
         private static InterfaceBatchInfo TransformCallSite(
             GeneratorSyntaxContext context,
             System.Threading.CancellationToken cancellationToken)
@@ -225,6 +228,7 @@ namespace AxiosNet.SourceGen
             return new InterfaceBatchInfo(models.ToImmutable());
         }
 
+        // 接口符号 → 代理生成数据：全名、类名、静态头、方法表与诊断；调用点来的还要处理闭合泛型。
         private static InterfaceModelInfo BuildInterfaceInfo(
             INamedTypeSymbol symbol,
             Location location,
@@ -623,6 +627,7 @@ namespace AxiosNet.SourceGen
                 new EquatableArray<InterfaceMethodInfo>(methods.ToImmutableArray()));
         }
 
+        // 单个方法参数 → 绑定声明：特性决定它走路径 / 查询 / 头 / 正文，未标注的按名字兜底成查询参数。
         private static InterfaceParameterInfo ReadParameter(
             IParameterSymbol parameter,
             IMethodSymbol method,
@@ -685,6 +690,7 @@ namespace AxiosNet.SourceGen
                 partContentType);
         }
 
+        // 参数上是否标了任一绑定特性：标了就不再按名字推断。
         private static bool HasBindingAttribute(IParameterSymbol parameter, WellKnownSymbols wellKnown)
         {
             var attributes = parameter.GetAttributes();
@@ -696,9 +702,11 @@ namespace AxiosNet.SourceGen
                 || FindAttribute(attributes, wellKnown.Body) is not null;
         }
 
+        // 取参数名；匿名位置参数没有名字时用 arg + 序号，保证生成代码合法。
         private static string ParameterName(IParameterSymbol parameter)
             => string.IsNullOrEmpty(parameter.Name) ? "arg" + parameter.Ordinal : parameter.Name;
 
+        // 整条接口链上是否存在带路由特性的方法：没有就没什么可生成。
         private static bool HasRouteMethod(INamedTypeSymbol symbol, WellKnownSymbols wellKnown)
         {
             foreach (var current in GetInterfaceChain(symbol))
@@ -749,6 +757,7 @@ namespace AxiosNet.SourceGen
                 ? GetMetadataName(type.OriginalDefinition)
                 : GetMetadataName(type.OriginalDefinition) + "|" + string.Join("|", type.TypeArguments.Select(GetChainArgumentName));
 
+        // 拼泛型实参的链式名字：数组加 []、泛型递归展开，用于区分同一接口的不同闭合形态。
         private static string GetChainArgumentName(ITypeSymbol type)
             => type switch
             {
@@ -757,6 +766,7 @@ namespace AxiosNet.SourceGen
                 _ => type.Name
             };
 
+        // 读接口上的 Headers 静态头（构造参数是字符串数组，非数组形态一律忽略）。
         private static IEnumerable<string> ReadHeaders(INamedTypeSymbol type, WellKnownSymbols wellKnown)
         {
             var attribute = FindAttribute(type.GetAttributes(), wellKnown.Headers);
@@ -780,6 +790,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 读方法上的 Headers 静态头：只作用于这一个方法，不继承到整个接口。
         private static IEnumerable<string> ReadHeaders(IMethodSymbol method, WellKnownSymbols wellKnown)
         {
             var attribute = FindAttribute(method.GetAttributes(), wellKnown.Headers);
@@ -803,6 +814,7 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 从路由特性里取出方法名与路径；不是路由特性或参数形态不认识时返回 false。
         private static bool TryReadRoute(
             AttributeData route,
             WellKnownSymbols wellKnown,
@@ -830,6 +842,7 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 解析方法返回类型：Task / Task<T> / AxiosResponse / IAsyncEnumerable 各对应一种返回形态与是否流式。
         private static bool TryGetReturnShape(
             IMethodSymbol method,
             WellKnownSymbols wellKnown,
@@ -884,10 +897,12 @@ namespace AxiosNet.SourceGen
             return true;
         }
 
+        // 是否 IAsyncEnumerable<T>（按原始定义比较，不看实参）。
         private static bool IsAsyncEnumerable(ITypeSymbol type, WellKnownSymbols wellKnown)
             => type is INamedTypeSymbol { IsGenericType: true } named
                 && SymbolEqualityComparer.Default.Equals(named.OriginalDefinition, wellKnown.AsyncEnumerable);
 
+        // 枚举值是否落在 AxiosStreamFormat 的定义范围内：越界值要报诊断，不能照抄进生成代码。
         private static bool IsDefinedStreamFormat(int value, WellKnownSymbols wellKnown)
         {
             if (wellKnown.StreamFormat is null)
@@ -906,6 +921,7 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
+        // 枚举值是否落在 AxiosCollectionFormat 的定义范围内。
         private static bool IsDefinedCollectionFormat(int value, WellKnownSymbols wellKnown)
         {
             if (wellKnown.CollectionFormat is null)
@@ -981,6 +997,7 @@ namespace AxiosNet.SourceGen
             return (anonymous, scheme, anonymous && authorize is not null);
         }
 
+        // 按符号相等在特性列表里找目标特性；特性类型符号缺失时直接返回 null。
         private static AttributeData? FindAttribute(ImmutableArray<AttributeData> attributes, INamedTypeSymbol? attributeType)
         {
             if (attributeType is null)
@@ -999,9 +1016,11 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        // 方法版重载：只是取一次 GetAttributes 再交给上面那个。
         private static AttributeData? FindAttribute(IMethodSymbol method, INamedTypeSymbol? attributeType)
             => FindAttribute(method.GetAttributes(), attributeType);
 
+        // 接口全名 → 代理类名：把命名空间分隔符与泛型符号都换成下划线，避免生成非法标识符。
         private static string BuildInterfaceClassName(INamedTypeSymbol symbol)
         {
             var display = symbol.ToDisplayString();

@@ -10,6 +10,7 @@ public sealed class Http2Example : IExample
 
     public string Title => "HTTP/2：默认 2.0（不支持时自动降级）、一行退回 1.1";
 
+    /// <summary>示例入口：HTTP/2：默认 2.0（不支持时自动降级）、一行退回 1.1。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

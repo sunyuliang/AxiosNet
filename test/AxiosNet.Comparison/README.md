@@ -40,7 +40,7 @@
 | 项 | 口径 |
 | --- | --- |
 | 服务器 | 与 `ConcurrencyPerformanceTests` 同一份 `PerfHttpServer`：HTTP/1.1、Keep-Alive、响应字节启动时预编码一次 |
-| 负载 | 每实现 `--concurrency` 个 worker 常驻，窗口内不停发请求；默认 8 并发 × 1s × 5 轮 |
+| 负载 | 每实现 `--concurrency` 个 worker 常驻，窗口内不停发请求；默认 8 并发 × 1s × 10 轮 |
 | 轮转 | 每轮把实现顺序整体旋转一位：机器负载漂移均摊到所有实现，而不是永远压在第一位的实现上 |
 | 预热 | 每实现一个 `--warmup` 窗口；随后 `--cooldown` 秒等分层编译在后台落地 |
 | 校准 | 预热后用 RawSocket 连续量窗口，最近 3 窗 RPS 极差 ≤ 中位 15% 才开测（最多 10 窗）；不收敛照常开测并提示 |

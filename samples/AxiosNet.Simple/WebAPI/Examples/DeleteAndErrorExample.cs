@@ -15,6 +15,7 @@ public sealed class DeleteAndErrorExample : IExample
 
     public string Title => "DELETE + 错误处理：非 2xx 抛 AxiosException（ERR_BAD_REQUEST，带 Response）";
 
+    /// <summary>示例入口：DELETE + 错误处理：非 2xx 抛 AxiosException（ERR_BAD_REQUEST，带 Response）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

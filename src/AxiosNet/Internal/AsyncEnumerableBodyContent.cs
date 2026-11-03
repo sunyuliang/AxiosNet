@@ -23,6 +23,7 @@ internal sealed class AsyncEnumerableBodyContent : HttpContent
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         => SerializeToStreamAsync(stream, context, CancellationToken.None);
 
+    /// <summary>写正文：把异步可枚举的块逐块写进流；长度不可知，只能分块传输。</summary>
     protected override async Task SerializeToStreamAsync(
         Stream stream,
         TransportContext? context,
@@ -52,6 +53,7 @@ internal sealed class AsyncEnumerableBodyContent : HttpContent
         return false;
     }
 
+    /// <summary>把 <c>byte[]</c> 序列转成 <c>ReadOnlyMemory&lt;byte&gt;</c> 序列，统一内部消费形态。</summary>
     private static async IAsyncEnumerator<ReadOnlyMemory<byte>> Forward(
         IAsyncEnumerable<byte[]> chunks,
         CancellationToken cancellationToken)

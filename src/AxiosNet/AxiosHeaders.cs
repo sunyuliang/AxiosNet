@@ -32,6 +32,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
             return (length << 16) | (Fold(name[0]) << 8) | Fold(name[length - 1]);
         }
 
+        // 字符折叠成大写：头名比较走这条，比 ToUpperInvariant 少一次分配。
         private static int Fold(char c) => c is >= 'a' and <= 'z' ? c - ('a' - 'A') : c;
     }
 
@@ -275,6 +276,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     public struct Enumerator : IEnumerator<KeyValuePair<string, string>>
     {
         private readonly Entry[] _items;
+        // 已用槽位数：追加写到尾，删除走 Copy-On-Write 换新数组。
         private int _index;
 
         internal Enumerator(Entry[] items)
@@ -354,6 +356,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
+    // 批量写入：先数要新增几条再一次性分配，覆盖与删除不改变长度。
     private static Entry[] ApplyOps(Entry[] current, List<(string Name, string? Value)> ops)
     {
         // 先过一遍：有没有实际变化、要新增几条（覆盖与删除不改变长度），一次分配到位。
@@ -455,6 +458,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         items.Add(new Entry(name, value));
     }
 
+    // 在待发布的副本上按键删项：只动副本，原版本不受影响。
     private static void Remove(List<Entry> items, string name)
     {
         var index = IndexOf(items, name);
@@ -464,6 +468,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
+    // 已发布数组上的查找：先比折叠后的判别位再比字符，命中通常一两次比较内结束。
     private static int IndexOf(Entry[] items, string name)
     {
         if (name.Length == 0)
@@ -483,6 +488,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return -1;
     }
 
+    // 副本列表上的同一个查找：写入时要边改边找，所以另给一份。
     private static int IndexOf(List<Entry> items, string name)
     {
         if (name.Length == 0)
@@ -502,6 +508,7 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return -1;
     }
 
+    // 头名只去首尾空白：中间的空格留给 ValidateName 判非法，而不是悄悄改掉。
     private static string NormalizeName(string name) => name.Trim();
 
     /// <summary>写入前的名称校验：RFC 7230 token（RFC 9110 §5.1 同）。</summary>

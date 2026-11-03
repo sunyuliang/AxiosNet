@@ -6,6 +6,7 @@ namespace AxiosNet.SourceGen
     /// <summary>把 <see cref="RequestModelInfo"/> 写成模块初始化器里的注册代码（只调用公开隐藏元数据 API，不碰 internal 类型）。</summary>
     internal static class RequestModelEmitter
     {
+        /// <summary>生成请求模型的元数据注册代码。</summary>
         public static string Emit(RequestModelInfo model)
         {
             var builder = new StringBuilder(2048);
@@ -75,6 +76,7 @@ namespace AxiosNet.SourceGen
             return builder.ToString();
         }
 
+        // 写一个成员的注册：名字、类型、取值表达式与绑定，全部是编译期算好的字符串。
         private static void EmitMember(StringBuilder builder, RequestMemberInfo member)
         {
             builder.Append("                    b.Member(")
@@ -146,6 +148,7 @@ namespace AxiosNet.SourceGen
             builder.Append("                    }, ").Append(Literal(member.Description)).AppendLine(");");
         }
 
+        // 带名字的绑定调用：名字为空时省掉实参，调用不带名字的重载。
         private static void EmitOptionalName(StringBuilder builder, string method, string? name)
         {
             if (string.IsNullOrEmpty(name))
@@ -157,8 +160,10 @@ namespace AxiosNet.SourceGen
             builder.Append("                        m.").Append(method).Append('(').Append(Literal(name!)).AppendLine(");");
         }
 
+        // 字符串转 C# 字面量：转义交给 Roslyn，别自己拼。
         private static string Literal(string value) => SymbolDisplay.FormatLiteral(value, quote: true);
 
+        // 可空字符串转字面量：null 写成 null。
         private static string OptionalLiteral(string? value) => value is null ? "null" : Literal(value);
     }
 }

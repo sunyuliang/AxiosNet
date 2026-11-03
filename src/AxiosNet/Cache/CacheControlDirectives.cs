@@ -211,6 +211,7 @@ public sealed class CacheControlDirectives
         }
     }
 
+    /// <summary>去掉指令值两侧的双引号；空值返回 null。</summary>
     private static string? Unquote(string value)
     {
         if (value.Length == 0)
@@ -226,6 +227,7 @@ public sealed class CacheControlDirectives
         return value;
     }
 
+    /// <summary>把 <c>max-age</c> 之类的秒数换成时长：非数字或负数返回 null，超出 <see cref="TimeSpan"/> 上限按无限长处理。</summary>
     private static TimeSpan? ParseSeconds(string? argument)
     {
         if (argument is null

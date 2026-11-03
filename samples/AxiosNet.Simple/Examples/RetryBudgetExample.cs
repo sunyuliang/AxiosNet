@@ -13,6 +13,7 @@ public sealed class RetryBudgetExample : IExample
 
     public string Title => "全局重试预算：RetryBudgetPolicy 限制整个实例的重试总量";
 
+    /// <summary>示例入口：全局重试预算：RetryBudgetPolicy 限制整个实例的重试总量。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

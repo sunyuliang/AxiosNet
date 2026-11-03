@@ -7,6 +7,7 @@ namespace AxiosNet.Internal;
 internal abstract class DelegatingStream : Stream
 {
     private readonly Stream _inner;
+    // 0/1：内层流只能释放一次。
     private int _disposed;
 
     protected DelegatingStream(Stream inner) => _inner = inner;
@@ -31,16 +32,21 @@ internal abstract class DelegatingStream : Stream
         set => _inner.Position = value;
     }
 
+    // 定位直接转给内层：本层只管读写，位置语义不叠加。
     public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
 
+    // 改长度直接转给内层，本层不缓存长度（缓存了就得以内层为准同步）。
     public override void SetLength(long value) => _inner.SetLength(value);
 
+    // 同步读复用异步核心再阻塞等待：包装流只维护一套逻辑，不写两遍。
     public override int Read(byte[] buffer, int offset, int count)
         => BlockingWait.Wait(ReadCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
 
+    // 旧版数组重载：转成 Memory 后和下面那条走同一个核心。
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
+    // 新版 Memory 重载：直接进核心，不再包一层 Task。
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         => ReadCoreAsync(buffer, cancellationToken);
 
@@ -48,12 +54,15 @@ internal abstract class DelegatingStream : Stream
     protected virtual ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         => _inner.ReadAsync(buffer, cancellationToken);
 
+    // 同步写同样复用异步核心再阻塞等待。
     public override void Write(byte[] buffer, int offset, int count)
         => BlockingWait.Wait(WriteCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None));
 
+    // 旧版数组重载：转成 Memory 后走同一个核心。
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => WriteCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
+    // 新版 Memory 重载：直接进核心。
     public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         => WriteCoreAsync(buffer, cancellationToken);
 
@@ -61,9 +70,11 @@ internal abstract class DelegatingStream : Stream
     protected virtual ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
         => _inner.WriteAsync(buffer, cancellationToken);
 
+    // 同步 Flush 复用异步核心再阻塞等待。
     public override void Flush()
         => BlockingWait.Wait(FlushCoreAsync(CancellationToken.None));
 
+    // 异步 Flush 转核心。
     public override Task FlushAsync(CancellationToken cancellationToken)
         => FlushCoreAsync(cancellationToken).AsTask();
 
@@ -71,6 +82,7 @@ internal abstract class DelegatingStream : Stream
     protected virtual ValueTask FlushCoreAsync(CancellationToken cancellationToken)
         => new ValueTask(_inner.FlushAsync(cancellationToken));
 
+    // 只在第一次释放时关内层并回调 OnReleased：Interlocked 换位保证重复 Dispose 不再触发。
     protected override void Dispose(bool disposing)
     {
         if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -91,6 +103,7 @@ internal abstract class DelegatingStream : Stream
         base.Dispose(disposing);
     }
 
+    // 异步释放：先异步关内层，同样只执行一次，最后交给基类。
     public override async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)

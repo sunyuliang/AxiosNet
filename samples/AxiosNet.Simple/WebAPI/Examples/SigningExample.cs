@@ -18,6 +18,7 @@ public sealed class SigningExample : IExample
 
     public string Title => "签名/验签：序列化器装饰器（请求体 HMAC 签名 + 响应验签）";
 
+    /// <summary>示例入口：签名/验签：序列化器装饰器（请求体 HMAC 签名 + 响应验签）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

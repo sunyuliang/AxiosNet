@@ -17,6 +17,7 @@ public sealed class AxiosCacheEntryPolicy
 {
     private readonly IReadOnlyDictionary<string, IEnumerable<string>>? _headers;
     private readonly DateTimeOffset _receivedAt;
+    // 缓存的 HTTP 缓存语义（懒解析一次）：null 表示响应头里没有任何缓存指令。
     private HttpCacheInfo? _http;
 
     /// <summary>解析模式直接带上算好的 HTTP 信息；<see cref="CacheFreshnessMode.Configured"/> 只带原始响应头，等被读取时再解析。</summary>
@@ -73,6 +74,7 @@ public sealed class AxiosCacheEntryPolicy
     /// <summary>HTTP 信息按需解析（与 <c>ResponseHeadersView</c> 同一套发布方式：并发首次访问可能各解析一次，只发布一份）。</summary>
     private HttpCacheInfo Http => Volatile.Read(ref _http) ?? ResolveHttp();
 
+    /// <summary>首次访问时解析 HTTP 缓存信息，并按「只发布一份」写回（并发各解析一次也不会互相覆盖）。</summary>
     private HttpCacheInfo ResolveHttp()
     {
         // _headers 只在 http 为 null 时才有值（Configured 模式），两者互为反证。

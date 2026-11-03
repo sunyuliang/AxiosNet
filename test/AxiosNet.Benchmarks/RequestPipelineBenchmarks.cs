@@ -33,10 +33,14 @@ namespace AxiosNet.Benchmarks;
 // 不能 sealed：BDN 会派生基准类来拦截调用（0.15 起对 sealed 直接报校验错误）。
 public class RequestPipelineBenchmarks
 {
+    // 回环服务器：固定一份小正文，只测客户端侧成本。
     private LoopbackHttpServer _server = null!;
+    // 被测实现，配置保持默认。
     private AxiosClient _axios = null!;
+    // 基线实现，连接池参数与库默认值逐项对齐。
     private HttpClient _http = null!;
 
+    /// <summary>起回环服务器并建两个客户端；两侧都用「基地址 + 相对路径」，字符串拼装成本不进任何一侧。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -48,6 +52,7 @@ public class RequestPipelineBenchmarks
         _http = new HttpClient(ComparableHttpClientHandler.Create()) { BaseAddress = new Uri(_server.Url) };
     }
 
+    /// <summary>先释放客户端再停服务器。</summary>
     [GlobalCleanup]
     public async Task CleanupAsync()
     {

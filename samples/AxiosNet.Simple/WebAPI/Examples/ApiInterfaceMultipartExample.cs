@@ -16,6 +16,7 @@ public sealed class ApiInterfaceMultipartExample : IExample
 
     public string Title => "接口级 multipart：[Multipart] + 参数 [Part]（参数即表单，服务器按字节解析回执）";
 
+    /// <summary>示例入口：接口级 multipart：[Multipart] + 参数 [Part]（参数即表单，服务器按字节解析回执）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

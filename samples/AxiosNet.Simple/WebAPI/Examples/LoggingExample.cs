@@ -15,6 +15,7 @@ public sealed class LoggingExample : IExample
 
     public string Title => "全局日志：AxiosClient 拦截器（请求 / 响应 / 错误三个分支）";
 
+    /// <summary>示例入口：全局日志：AxiosClient 拦截器（请求 / 响应 / 错误三个分支）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

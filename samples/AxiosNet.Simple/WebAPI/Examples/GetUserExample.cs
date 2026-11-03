@@ -14,6 +14,7 @@ public sealed class GetUserExample : IExample
 
     public string Title => "GET 详情：[Path] 绑定 + 泛型自动确定（api/users/{id}）";
 
+    /// <summary>示例入口：GET 详情：[Path] 绑定 + 泛型自动确定（api/users/{id}）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

@@ -21,12 +21,15 @@ internal sealed class FlurlTarget : ITarget
 
     public string Name => "Flurl";
 
+    /// <summary>为一个 worker 开一条会话；Flurl 客户端同样在实例上共享。</summary>
     public ITargetSession OpenSession() => new Session(_client, _url);
 
+    /// <summary>释放 Flurl 客户端及其内部 <see cref="HttpClient"/>。</summary>
     public void Dispose() => _client.Dispose();
 
     private sealed class Session(FlurlClient client, string url) : ITargetSession
     {
+        /// <summary>发一次 GET，用 Flurl 的 <c>GetJsonAsync</c> 读成 <c>User</c>；null 视为错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             var user = await client.Request(url)
@@ -38,6 +41,7 @@ internal sealed class FlurlTarget : ITarget
             }
         }
 
+        /// <summary>会话不独占资源，无需释放。</summary>
         public void Dispose()
         {
         }

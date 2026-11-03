@@ -296,6 +296,7 @@ public sealed partial class AxiosClient
         "Last-Modified"
     };
 
+    /// <summary>把配置里的头写进请求：<c>Content-*</c> 挂到正文上，其余挂到请求上；需要时临时造空正文承载它们。</summary>
     private static void ApplyHeaders(HttpRequestMessage request, AxiosConfig config)
     {
         var content = request.Content;
@@ -412,6 +413,7 @@ public sealed partial class AxiosClient
         config.RevalidationEntry = null;
     }
 
+    /// <summary>写一条条件请求头（<c>If-None-Match</c> / <c>If-Modified-Since</c>）；空值或含非法字符时跳过并返回 false。</summary>
     private static bool TryAddConditionalHeader(HttpRequestMessage request, string name, string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

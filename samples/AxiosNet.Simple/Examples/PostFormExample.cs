@@ -10,6 +10,7 @@ public sealed class PostFormExample : IExample
 
     public string Title => "POST 字典表单（显式 ContentType）";
 
+    /// <summary>示例入口：POST 字典表单（显式 ContentType）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

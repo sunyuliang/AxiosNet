@@ -10,6 +10,7 @@ namespace AxiosNet.Internal;
 /// </remarks>
 internal static class RuntimeSupport
 {
+    // 供 AOT / 裁剪测试强制关掉动态代码分支；生产恒为 false。
     private static volatile bool _forceNoDynamicCode;
 
     /// <summary>能力切换的附加失效回调：声明式 API 的元数据缓存在首次使用时挂上来（核心不认识它）。</summary>

@@ -7,11 +7,15 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class ShapeRegistry
 {
+    // 写入锁；读路径不加锁（写时复制 + Volatile.Read）。
     private static readonly object Gate = new();
 
+    // 冻结标志：冻结后任何注册都抛，读路径不受影响。
     private static volatile bool _frozen;
 
+    // 类型 → 对象形状（写时复制，整体替换）。
     private static Dictionary<Type, ObjectShape> _shapes = new();
+    // 类型 → 字符串键字典访问器（写时复制，整体替换）。
     private static Dictionary<Type, MapAccessor> _maps = new();
 
     /// <summary>注册表是否已冻结（冻结只影响写入，读路径不变）。</summary>
@@ -76,8 +80,10 @@ internal static class ShapeRegistry
             + "请把 Freeze() 移到所有程序集加载与手工注册完成之后，或去掉 Freeze()——它是可选加固，不调用也完全可用。");
     }
 
+    /// <summary>异常 / 日志里的类型名：全名优先，无名类型退回短名。</summary>
     internal static string Describe(Type type) => type.FullName ?? type.Name;
 
+    /// <summary>登记对象形状：写时复制换表并失效反射缓存；<paramref name="allowExisting"/> 为 true 时重复注册直接忽略（先注册者胜），否则按声明冲突抛出。</summary>
     private static void AddShape(ObjectShape shape, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(shape);
@@ -105,6 +111,7 @@ internal static class ShapeRegistry
         }
     }
 
+    /// <summary>登记映射访问器：写时复制换表并清掉 <see cref="QueryMap"/> 按类型的缓存；重复注册的两种处理同 <c>AddShape</c>。</summary>
     private static void AddMap(MapAccessor accessor, bool allowExisting)
     {
         ArgumentNullException.ThrowIfNull(accessor);

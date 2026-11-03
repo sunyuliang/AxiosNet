@@ -13,6 +13,7 @@ public sealed class BearerTokenExample : IExample
 
     public string Title => "Bearer Token：登录签发、自动携带、服务端验证、401 刷新重试";
 
+    /// <summary>示例入口：Bearer Token：登录签发、自动携带、服务端验证、401 刷新重试。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -112,11 +113,13 @@ public sealed class BearerTokenExample : IExample
             });
     }
 
+    /// <summary>从错误响应的 <c>error</c> 字段取出服务端给的原因；取不到就用异常消息本身。</summary>
     private static string Describe(AxiosException error)
         => error.Response?.Data is JsonElement element && element.TryGetProperty("error", out var reason)
             ? reason.GetString() ?? error.Message
             : error.Message;
 
+    /// <summary>跑一次预期失败的请求：抛错就打印错误码与原因，没抛就打印状态码。</summary>
     private static async Task ShowErrorAsync(Task<AxiosResponse> request)
     {
         try
@@ -142,6 +145,7 @@ public sealed class BearerTokenExample : IExample
 
         public TokenSession(AxiosClient http) => _http = http;
 
+        /// <summary>登录换令牌，<paramref name="ttlSeconds"/> 决定有效期；成功后写进会话并打印摘要。</summary>
         public async Task LoginAsync(int ttlSeconds = 300)
         {
             var response = await _http.PostAsync<JsonElement>($"{DemoAuthApi.LoginPath}?ttl={ttlSeconds}", new { username = "alice", password = "wonderland" });
@@ -152,6 +156,7 @@ public sealed class BearerTokenExample : IExample
                 + $"expiresIn={response.Data.GetProperty("expiresIn").GetInt32()}s");
         }
 
+        /// <summary>用刷新令牌换新的一对令牌；同一把信号量保证并发刷新串行，不会把同一个 refresh token 用两次。</summary>
         public async Task RefreshAsync()
         {
             await _gate.WaitAsync();
@@ -175,12 +180,14 @@ public sealed class BearerTokenExample : IExample
             }
         }
 
+        /// <summary>把响应里的两个令牌写进会话状态。</summary>
         private void Apply(JsonElement data)
         {
             AccessToken = data.GetProperty("accessToken").GetString();
             RefreshToken = data.GetProperty("refreshToken").GetString();
         }
 
+        /// <summary>打印用：只显示令牌前 8 位，避免刷屏。</summary>
         private static string Shorten(string? token) => token is null ? "<null>" : token[..8] + "…";
     }
 }

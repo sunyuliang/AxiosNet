@@ -6,6 +6,7 @@ namespace AxiosNet.SourceGen
     /// <summary>把 <see cref="ShapeInfo"/> 写成模块初始化器里的形状注册代码（命名类型用 <c>default(T)</c>、匿名类型用结构相同的样本推断类型参数）。</summary>
     internal static class ShapeEmitter
     {
+        /// <summary>生成对象形状的烘焙代码（运行时零反射）。</summary>
         public static string Emit(ShapeInfo shape)
         {
             var builder = new StringBuilder(1024);
@@ -85,6 +86,7 @@ namespace AxiosNet.SourceGen
             return builder.ToString();
         }
 
+        /// <summary>把字符串转成 C# 字面量（带引号并转义），直接拼进生成代码。</summary>
         private static string Literal(string value) => SymbolDisplay.FormatLiteral(value, quote: true);
     }
 }

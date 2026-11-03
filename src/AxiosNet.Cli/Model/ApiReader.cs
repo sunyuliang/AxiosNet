@@ -1460,6 +1460,10 @@ internal sealed class ApiReader
     }
 
     /// <summary>security 节点的解析结果：是否存在、是否显式匿名、是否要求授权、第一个方案名。</summary>
+    /// <param name="Present">文档里是否出现过 <c>security</c> 节点（空数组也算出现）。</param>
+    /// <param name="ExplicitlyEmpty">是否显式写成空数组，即声明「本操作匿名」。</param>
+    /// <param name="Required">是否要求授权（继承了全局 security 也算）。</param>
+    /// <param name="SchemeName">第一个方案名；匿名或没有方案时为 null。</param>
     private readonly record struct SecurityInfo(
         bool Present,
         bool ExplicitlyEmpty,

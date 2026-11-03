@@ -14,6 +14,7 @@ public sealed class ListUsersExample : IExample
 
     public string Title => "GET 列表：无标注属性默认 Query + 数组绑定（api/users?ids[]=1&ids[]=2&role=...）";
 
+    /// <summary>示例入口：GET 列表：无标注属性默认 Query + 数组绑定（api/users?ids[]=1&ids[]=2&role=...）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

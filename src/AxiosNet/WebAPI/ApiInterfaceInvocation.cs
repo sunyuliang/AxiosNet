@@ -4,6 +4,7 @@ namespace AxiosNet.WebAPI;
 public sealed class ApiInterfaceInvocation
 {
     private readonly object?[] _arguments;
+    // 实参数组的只读视图（首次访问时才建，稳态调用不分配）。
     private IReadOnlyList<object?>? _argumentsView;
 
     internal ApiInterfaceInvocation(Type interfaceType, string methodName, object?[] arguments)
@@ -31,6 +32,7 @@ public sealed class ApiInterfaceInvocation
     /// <summary>本次请求的 <c>Authorization</c> 头是否由 <see cref="ApiClient.AccessTokenProvider"/> 写入（401 重放的判定依据）。</summary>
     internal bool TokenManaged { get; set; }
 
+    /// <summary>参数只读视图按需创建，并发首次访问只发布一份（避免把可变数组直接交出去）。</summary>
     private IReadOnlyList<object?> CreateArgumentsView()
     {
         var view = Array.AsReadOnly(_arguments);

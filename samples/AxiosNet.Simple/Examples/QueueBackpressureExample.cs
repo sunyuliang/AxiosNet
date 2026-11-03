@@ -16,6 +16,7 @@ public sealed class QueueBackpressureExample : IExample
 
     public string Title => "排队上限 / 背压：MaxConcurrentRequests + MaxQueueLength，队列满立刻失败";
 
+    /// <summary>示例入口：排队上限 / 背压：MaxConcurrentRequests + MaxQueueLength，队列满立刻失败。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

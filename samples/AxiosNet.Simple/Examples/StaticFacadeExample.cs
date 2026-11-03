@@ -10,6 +10,7 @@ public sealed class StaticFacadeExample : IExample
 
     public string Title => "全局静态门面 Axios.GetAsync（等同 axios.get）/ Axios.Reset 重置全局状态";
 
+    /// <summary>示例入口：全局静态门面 Axios.GetAsync（等同 axios.get）/ Axios.Reset 重置全局状态。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

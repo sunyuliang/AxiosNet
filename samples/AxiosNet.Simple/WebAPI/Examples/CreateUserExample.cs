@@ -14,6 +14,7 @@ public sealed class CreateUserExample : IExample
 
     public string Title => "POST 创建：[Body] 请求体 + 模型 Configure 钩子（X-Trace 回显验证）";
 
+    /// <summary>示例入口：POST 创建：[Body] 请求体 + 模型 Configure 钩子（X-Trace 回显验证）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

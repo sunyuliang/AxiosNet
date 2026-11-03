@@ -49,6 +49,7 @@ public sealed class FormFile
     {
     }
 
+    /// <summary>把字节数组包成只读内存流：长度随即可知，调用方也写不进去。</summary>
     private static MemoryStream ToReadOnlyStream(byte[] content)
     {
         ArgumentNullException.ThrowIfNull(content);

@@ -17,12 +17,15 @@ internal sealed class AxiosNetTarget : ITarget
 
     public string Name => "AxiosNet";
 
+    /// <summary>为一个 worker 开一条会话；底层客户端与连接池都在实例上，各 worker 共用。</summary>
     public ITargetSession OpenSession() => new Session(_client);
 
+    /// <summary>释放客户端与它的连接池。</summary>
     public void Dispose() => _client.Dispose();
 
     private sealed class Session(AxiosClient client) : ITargetSession
     {
+        /// <summary>发一次 GET 并读成 <c>User</c>；数据为空就抛出，让窗口统计记成错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
             var response = await client.GetAsync<User>(Payloads.Route, cancellationToken).ConfigureAwait(false);
@@ -32,6 +35,7 @@ internal sealed class AxiosNetTarget : ITarget
             }
         }
 
+        /// <summary>会话不独占资源（连接池在共享客户端上），无需释放。</summary>
         public void Dispose()
         {
         }

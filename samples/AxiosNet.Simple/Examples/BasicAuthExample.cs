@@ -10,6 +10,7 @@ public sealed class BasicAuthExample : IExample
 
     public string Title => "config.auth 发送 HTTP Basic 认证";
 
+    /// <summary>示例入口：config.auth 发送 HTTP Basic 认证。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

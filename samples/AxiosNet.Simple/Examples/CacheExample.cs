@@ -15,6 +15,7 @@ public sealed class CacheExample : IExample
 
     public string Title => "响应缓存：命中不发请求 / 到期失效 / 同键并发只发一次 / 跟随服务器新鲜期 / 请求侧指令 / ETag 条件复用";
 
+    /// <summary>示例入口：响应缓存：命中不发请求 / 到期失效 / 同键并发只发一次 / 跟随服务器新鲜期 / 请求侧指令 / ETag 条件复用。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

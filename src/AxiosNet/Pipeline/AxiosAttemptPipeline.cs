@@ -140,6 +140,7 @@ public sealed class AxiosAttemptPipeline
         return handler;
     }
 
+    // 找锚点中间件的位置；找不到时报错要指出是哪个参数引用了不存在的锚点。
     private int IndexOf(AxiosAttemptMiddleware anchor, string paramName)
     {
         if (anchor is null)
@@ -160,6 +161,7 @@ public sealed class AxiosAttemptPipeline
         return index;
     }
 
+    // 插入并返回新实例：链不可变，改一次就复制一次。
     private AxiosAttemptPipeline Insert(int index, AxiosAttemptMiddleware middleware)
     {
         var copy = new AxiosAttemptMiddleware[_middleware.Length + 1];
@@ -170,6 +172,7 @@ public sealed class AxiosAttemptPipeline
         return new AxiosAttemptPipeline(copy);
     }
 
+    // 逐项复制成新数组：链一旦发布就不再被修改。
     private static AxiosAttemptMiddleware[] Copy(AxiosAttemptMiddleware[] middleware)
     {
         var copy = new AxiosAttemptMiddleware[middleware.Length];
@@ -182,6 +185,7 @@ public sealed class AxiosAttemptPipeline
         return copy;
     }
 
+    // 追加到末尾并返回新实例。
     private static AxiosAttemptMiddleware[] Append(AxiosAttemptMiddleware[] source, AxiosAttemptMiddleware middleware)
     {
         var copy = new AxiosAttemptMiddleware[source.Length + 1];
@@ -214,6 +218,7 @@ public sealed class AxiosAttemptPipeline
         }
     }
 
+    // 是否内置中间件：内置项恒在链上，只由配置决定干不干活，删不掉。
     private static bool IsBuiltIn(AxiosAttemptMiddleware middleware)
         => ReferenceEquals(middleware, Attempt.Retry)
            || ReferenceEquals(middleware, Attempt.Failover)

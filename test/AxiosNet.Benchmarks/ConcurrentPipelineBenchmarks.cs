@@ -28,12 +28,17 @@ namespace AxiosNet.Benchmarks;
 // 不能 sealed：BDN 会派生基准类来拦截调用（0.15 起对 sealed 直接报校验错误）。
 public class ConcurrentPipelineBenchmarks
 {
+    // 在飞请求数固定 8：与 ConcurrencyPerformanceTests 同一口径（该机器 P 核逻辑线程数）。
     private const int Concurrency = 8;
 
+    // 回环服务器：两侧打同一个端口、同一份正文。
     private LoopbackHttpServer _server = null!;
+    // 被测实现，配置保持默认，只改 BaseAddress。
     private AxiosClient _axios = null!;
+    // 基线实现：handler 与 AxiosNet 默认连接池逐项对齐。
     private HttpClient _http = null!;
 
+    /// <summary>起回环服务器并建好两个客户端：连接与连接池在测量区外完成。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -43,6 +48,7 @@ public class ConcurrentPipelineBenchmarks
         _http = new HttpClient(ComparableHttpClientHandler.Create()) { BaseAddress = new Uri(_server.Url) };
     }
 
+    /// <summary>先释放客户端再停服务器：客户端还持有连接时先停会多出异常关闭的噪声。</summary>
     [GlobalCleanup]
     public async Task CleanupAsync()
     {

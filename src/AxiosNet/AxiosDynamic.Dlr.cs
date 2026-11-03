@@ -29,6 +29,7 @@ public sealed partial class AxiosDynamic
     /// <summary>DLR 绑定用到的私有成员句柄：放在嵌套类里，只在 dynamic 语法首次绑定（JIT）时初始化。</summary>
     private static class Dlr
     {
+        // DLR 访问内部字段 / 方法的句柄，静态构造时解析一次。
         internal static readonly FieldInfo ShapeField =
             typeof(AxiosDynamic).GetField(nameof(_shape), BindingFlags.NonPublic | BindingFlags.Instance)!;
 
@@ -50,6 +51,7 @@ public sealed partial class AxiosDynamic
         {
         }
 
+        /// <summary>成员读：名字在绑定期解析成常量槽位，运行期只做一次数组索引；名字不存在时得 null。</summary>
         public override DynamicMetaObject BindGetMember(GetMemberBinder binder)
         {
             var self = Expression.Convert(Expression, typeof(AxiosDynamic));
@@ -67,6 +69,7 @@ public sealed partial class AxiosDynamic
             return new DynamicMetaObject(body, restrictions);
         }
 
+        /// <summary>成员写：转调私有 <c>SetValue</c> 复用同一套写入逻辑，并回传写入值以便链式赋值。</summary>
         public override DynamicMetaObject BindSetMember(SetMemberBinder binder, DynamicMetaObject value)
         {
             var self = Expression.Convert(Expression, typeof(AxiosDynamic));
@@ -80,6 +83,7 @@ public sealed partial class AxiosDynamic
             return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
         }
 
+        /// <summary>索引读：只接受单个参数，转调 <c>GetValue</c>；多参数索引交给 DLR 默认回退。</summary>
         public override DynamicMetaObject BindGetIndex(GetIndexBinder binder, DynamicMetaObject[] indexes)
         {
             if (indexes.Length != 1)
@@ -92,6 +96,7 @@ public sealed partial class AxiosDynamic
             return new DynamicMetaObject(body, BindingRestrictions.GetTypeRestriction(Expression, typeof(AxiosDynamic)));
         }
 
+        /// <summary>索引写：只接受单个参数，转调 <c>SetValue</c>；多参数索引交给 DLR 默认回退。</summary>
         public override DynamicMetaObject BindSetIndex(SetIndexBinder binder, DynamicMetaObject[] indexes, DynamicMetaObject value)
         {
             if (indexes.Length != 1)

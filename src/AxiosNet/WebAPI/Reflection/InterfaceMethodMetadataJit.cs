@@ -11,6 +11,7 @@ namespace AxiosNet.WebAPI.Reflection;
 /// </summary>
 internal static class InterfaceMethodMetadataJit
 {
+    // AOT 保留范围：接口方法与实现的接口。
     private const DynamicallyAccessedMemberTypes InterfaceMembers =
         DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.Interfaces;
 
@@ -91,12 +92,15 @@ internal static class InterfaceMethodMetadataJit
             _ => static (client, metadata, args, cancellationToken) => metadata.SendVoidAsync(client, args, cancellationToken),
         };
 
+    // 泛型核：闭包里直接调 SendResponseAsync<T>，响应类型在 JIT 期就固化。
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateResponseInvokerCore<T>()
         => static (client, metadata, args, cancellationToken) => metadata.SendResponseAsync<T>(client, args, cancellationToken);
 
+    // 泛型核：直接调 SendDataAsync<T>，调用点不再装箱或判断类型。
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateDataInvokerCore<T>()
         => static (client, metadata, args, cancellationToken) => metadata.SendDataAsync<T>(client, args, cancellationToken);
 
+    // 反射壳：把 Core 闭合到响应类型上取回委托；只有反射路径会走到，AOT 下不可达。
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -107,6 +111,7 @@ internal static class InterfaceMethodMetadataJit
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
 
+    // 反射壳：按返回类型闭合数据版调用器。
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -117,6 +122,7 @@ internal static class InterfaceMethodMetadataJit
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
 
+    // 反射壳：按帧类型闭合流式调用器，帧格式作为额外实参传进去（泛型实参表达不了它）。
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -129,6 +135,7 @@ internal static class InterfaceMethodMetadataJit
             .MakeGenericMethod(frameType)
             .Invoke(null, [format])!;
 
+    // 泛型核：带帧格式的流式调用，格式随闭包固化。
     private static Func<ApiClient, InterfaceMethodMetadata, object?[], CancellationToken, object> CreateStreamInvokerCore<TItem>(AxiosStreamFormat format)
         => (client, metadata, args, cancellationToken) => metadata.SendStreamAsync<TItem>(client, args, cancellationToken, format);
 
@@ -145,12 +152,15 @@ internal static class InterfaceMethodMetadataJit
             _ => CreateResponseFault(responseType!),
         };
 
+    // 故障核：异常包成 faulted Task，异常时序与真正的异步方法一致。
     private static Func<Exception, object> CreateResponseFaultCore<T>()
         => static error => Task.FromException<AxiosResponse<T>>(error);
 
+    // 故障核：数据形态的 faulted Task。
     private static Func<Exception, object> CreateDataFaultCore<T>()
         => static error => Task.FromException<T>(error);
 
+    // 反射壳：按响应类型闭合故障委托。
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -161,6 +171,7 @@ internal static class InterfaceMethodMetadataJit
             .MakeGenericMethod(responseType)
             .Invoke(null, null)!;
 
+    // 反射壳：按返回类型闭合数据版故障委托。
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",

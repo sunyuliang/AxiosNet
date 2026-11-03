@@ -344,6 +344,7 @@ internal static class FormBodyEncoder
     private static string EncodeKey(string value, Encoding encoding)
         => PercentEncode(value, encoding, keepBrackets: true);
 
+    /// <summary>字段值编码：方括号也转义（值上没有数组语义）。</summary>
     private static string EncodeValue(string value, Encoding encoding) => PercentEncode(value, encoding, keepBrackets: false);
 
     /// <summary>
@@ -399,15 +400,18 @@ internal static class FormBodyEncoder
         }
     }
 
+    /// <summary>字节可否原样输出：非保留字符总可以，字段名额外保留方括号。</summary>
     private static bool IsLiteral(byte b, bool keepBrackets)
         => IsUnreserved(b) || (keepBrackets && b is (byte)'[' or (byte)']');
 
+    /// <summary>RFC 3986 的 unreserved 集合（字母、数字、<c>-</c> <c>.</c> <c>_</c> <c>~</c>），其余一律百分号转义。</summary>
     private static bool IsUnreserved(byte b) =>
         (b >= (byte)'A' && b <= (byte)'Z')
         || (b >= (byte)'a' && b <= (byte)'z')
         || (b >= (byte)'0' && b <= (byte)'9')
         || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~';
 
+    /// <summary>单个半字节转大写十六进制字符（与 <c>FormUrlEncodedContent</c> 的输出一致）。</summary>
     private static char HexUpper(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
 }
 

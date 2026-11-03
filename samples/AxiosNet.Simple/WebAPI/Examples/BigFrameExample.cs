@@ -19,6 +19,7 @@ public sealed class BigFrameExample : IExample
 
     public string Title => "单帧上限：Limits.MaxStreamFrameLength（默认 8 MB / 放开到 12 MB）";
 
+    /// <summary>示例入口：单帧上限：Limits.MaxStreamFrameLength（默认 8 MB / 放开到 12 MB）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);

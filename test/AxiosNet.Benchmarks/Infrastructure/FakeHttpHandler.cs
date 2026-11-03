@@ -32,6 +32,7 @@ internal sealed class FakeHttpHandler : HttpMessageHandler
     {
     }
 
+    /// <summary>直接回固定正文的 200 响应，不走网络，让基准只测库自身开销。</summary>
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)

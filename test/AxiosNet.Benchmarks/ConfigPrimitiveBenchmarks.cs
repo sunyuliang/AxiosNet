@@ -30,10 +30,14 @@ namespace AxiosNet.Benchmarks;
 // 不能 sealed：BDN 会派生基准类来拦截调用（0.15 起对 sealed 直接报校验错误）。
 public class ConfigPrimitiveBenchmarks
 {
+    // 被测配置：10 个默认头 + 1 个幂等头，克隆成本随这个规模走。
     private AxiosConfig _config = null!;
+    // 指向 _config.Headers：读 / 写 / 克隆三条原语都打在它身上。
     private AxiosHeaders _headers = null!;
+    // 两次写入之间来回切取值：同值写会命中幂等快路径，就测不到发布新版本了。
     private bool _toggle;
 
+    /// <summary>造一份「有内容」的配置：头集合非空，Clone 才会走到复制分支。</summary>
     [GlobalSetup]
     public void Setup()
     {

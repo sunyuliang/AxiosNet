@@ -53,6 +53,7 @@ public class LargeBodyUploadBenchmarks
     private HttpClient _http = null!;
     private string _url = null!;
 
+    /// <summary>按档位预造整块正文与切块数组（切块在测量区外完成，真实生产者也不会每请求重切），响应固定是一个小 JSON。</summary>
     [GlobalSetup]
     public void Setup()
     {
@@ -79,6 +80,7 @@ public class LargeBodyUploadBenchmarks
         _http = new HttpClient(ComparableHttpClientHandler.Create());
     }
 
+    /// <summary>先释放客户端再停服务器。</summary>
     [GlobalCleanup]
     public async Task CleanupAsync()
     {
@@ -183,6 +185,7 @@ public class LargeBodyUploadBenchmarks
         }
     }
 
+    /// <summary>把预切好的块逐个产出，作为可枚举正文送进上传路径。</summary>
     private static async IAsyncEnumerable<byte[]> ByteChunks(
         byte[][] chunks,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)

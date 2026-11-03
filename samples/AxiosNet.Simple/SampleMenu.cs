@@ -5,15 +5,19 @@ namespace AxiosNet.Simple;
 /// </summary>
 internal sealed class SampleMenuItem(string group, int number, string name, string title, Func<Task> run)
 {
+    /// <summary>所属套件名：菜单在不同组之间插分隔标题，组内顺序即发现顺序。</summary>
     public string Group { get; } = group;
 
+    /// <summary>示例自己的固定编号（来自 <see cref="IExample.Number"/>）：只用于打印与口头指代，不参与排序。</summary>
     public int Number { get; } = number;
 
     /// <summary>示例类名（与源文件名一一对应，便于按菜单项定位代码）。</summary>
     public string Name { get; } = name;
 
+    /// <summary>示例的一句话标题，印在菜单项右侧。</summary>
     public string Title { get; } = title;
 
+    /// <summary>执行委托：演示服务器与上下文由创建方用闭包捕获，菜单本身不认识具体示例。</summary>
     public Func<Task> Run { get; } = run;
 }
 
@@ -84,6 +88,7 @@ internal static class SampleMenu
         return failed;
     }
 
+    /// <summary>按分组打印菜单：组内按声明顺序编号，类名列对齐。</summary>
     private static void Print(IReadOnlyList<SampleMenuItem> items)
     {
         Console.WriteLine();
@@ -110,6 +115,7 @@ internal static class SampleMenu
         }
     }
 
+    /// <summary>跑一个示例：打印标题与结果；单个示例失败只报告，不中断会话。</summary>
     private static async Task<bool> RunItemAsync(int index, SampleMenuItem item)
     {
         Console.WriteLine();

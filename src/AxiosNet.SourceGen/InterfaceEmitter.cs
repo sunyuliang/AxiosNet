@@ -15,6 +15,7 @@ namespace AxiosNet.SourceGen
         private const string Runtime = "global::AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime";
         private const string AxiosResponse = "global::AxiosNet.AxiosResponse";
 
+        /// <summary>生成接口代理的调用分派代码（每个方法一个 if 分支）。</summary>
         public static string Emit(InterfaceModelInfo model)
         {
             var builder = new StringBuilder(4096);
@@ -32,6 +33,7 @@ namespace AxiosNet.SourceGen
             return builder.ToString();
         }
 
+        // 写代理类本体：特性、继承的接口、构造函数，再逐个方法落到 EmitProxyMethod。
         private static void EmitProxy(StringBuilder builder, InterfaceModelInfo model)
         {
             builder.Append("    [global::System.CodeDom.Compiler.GeneratedCodeAttribute(\"")
@@ -71,6 +73,7 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("    }");
         }
 
+        // 写一个显式接口实现：签名照抄声明，方法体统一转成一次 ApiInterfaceInvocation。
         private static void EmitProxyMethod(StringBuilder builder, InterfaceMethodInfo method)
         {
             var parameters = BuildParameterList(method);
@@ -80,6 +83,7 @@ namespace AxiosNet.SourceGen
             builder.Append("            => __method").Append(method.Index).Append('.').Append(BuildCall(method)).AppendLine(";");
         }
 
+        // 拼形参表：类型与名字按原声明顺序（含默认值与 ref / out 修饰）。
         private static string BuildParameterList(InterfaceMethodInfo method)
         {
             if (method.Parameters.Length == 0)
@@ -101,6 +105,7 @@ namespace AxiosNet.SourceGen
             return builder.ToString();
         }
 
+        // 按返回形态给出代理方法自己的返回类型（Void → Task，Data → Task<T>）。
         private static string GetReturnType(InterfaceMethodInfo method)
             => method.ReturnKind switch
             {
@@ -110,6 +115,7 @@ namespace AxiosNet.SourceGen
                 _ => Task + "<" + AxiosResponse + "<" + method.ResponseTypeExpression + ">>"
             };
 
+        // 拼出真正发出的那次调用：方法、路由、参数数组与取消令牌，返回值按形态再包一层。
         private static string BuildCall(InterfaceMethodInfo method)
         {
             var arguments = BuildArgumentArray(method);
@@ -132,6 +138,7 @@ namespace AxiosNet.SourceGen
             };
         }
 
+        // 把实参装箱成 Invocation 需要的数组；没有参数时直接给 Array.Empty，省一次分配。
         private static string BuildArgumentArray(InterfaceMethodInfo method)
         {
             if (method.Parameters.Length == 0)
@@ -154,6 +161,7 @@ namespace AxiosNet.SourceGen
             return builder.ToString();
         }
 
+        // 写模块初始化器里的注册项：接口声明数据 + 代理工厂，进程启动时自动登记。
         private static void EmitRegistration(StringBuilder builder, InterfaceModelInfo model)
         {
             builder.Append("    [global::System.CodeDom.Compiler.GeneratedCodeAttribute(\"")
@@ -323,6 +331,7 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("    }");
         }
 
+        // 返回形态 → 校验器里的 Returns* 调用（ReturnsVoid / ReturnsData / ReturnsStream）。
         private static string GetReturnsCall(InterfaceMethodInfo method)
             => method.ReturnKind switch
             {
@@ -332,6 +341,7 @@ namespace AxiosNet.SourceGen
                 _ => "ReturnsResponse(typeof(" + method.ResponseTypeExpression + "))"
             };
 
+        // 把字符串集合写成 C# 集合表达式，逗号分隔、不产生尾逗号。
         private static void AppendStringList(StringBuilder builder, EquatableArray<string> values)
         {
             for (var i = 0; i < values.Length; i++)
@@ -345,10 +355,13 @@ namespace AxiosNet.SourceGen
             }
         }
 
+        // 字符串转 C# 字面量：转义与引号交给 Roslyn，别自己拼。
         private static string Literal(string value) => SymbolDisplay.FormatLiteral(value, quote: true);
 
+        // 可空字符串转字面量：null 写成 null，其余交给 Literal。
         private static string OptionalLiteral(string? value) => value is null ? "null" : Literal(value);
 
+        // 关键字标识符加 @ 前缀（接口方法名可能是关键字）。
         private static string EscapeIdentifier(string name)
             => SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None || SyntaxFacts.GetContextualKeywordKind(name) != SyntaxKind.None
                 ? "@" + name

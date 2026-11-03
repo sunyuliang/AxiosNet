@@ -9,6 +9,7 @@ public sealed class ResponseTypesExample : IExample
 
     public string Title => "responseType：text / arraybuffer";
 
+    /// <summary>示例入口：responseType：text / arraybuffer。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

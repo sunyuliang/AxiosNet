@@ -15,6 +15,7 @@ public sealed class GetUriAndLimitsExample : IExample
 
     public string Title => "getUri 预览 / maxContentLength / maxRedirects: 0";
 
+    /// <summary>示例入口：getUri 预览 / maxContentLength / maxRedirects: 0。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

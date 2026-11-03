@@ -17,6 +17,7 @@ public sealed class KeyedServicesExample : IExample
 
     public string Title => "键名服务（.NET 8+）：AddKeyedSingleton + [FromKeyedServices]";
 
+    /// <summary>示例入口：键名服务（.NET 8+）：AddKeyedSingleton + [FromKeyedServices]。</summary>
     public async Task RunAsync(string baseUrl)
     {
         var builder = Host.CreateApplicationBuilder();

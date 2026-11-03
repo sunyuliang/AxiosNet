@@ -16,6 +16,7 @@ public sealed class ContainerAuthorizationExample : IExample
 
     public string Title => "容器授权：IAuthorizationProvider 单例自动装配";
 
+    /// <summary>示例入口：容器授权：IAuthorizationProvider 单例自动装配。</summary>
     public async Task RunAsync(string baseUrl)
     {
         var builder = Host.CreateApplicationBuilder();

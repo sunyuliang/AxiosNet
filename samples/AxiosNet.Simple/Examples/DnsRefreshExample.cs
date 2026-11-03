@@ -15,6 +15,7 @@ public sealed class DnsRefreshExample : IExample
 
     public string Title => "DNS 变更：连接生命周期轮换 vs 手动清池（连接池如何收敛到新 IP）";
 
+    /// <summary>示例入口：DNS 变更：连接生命周期轮换 vs 手动清池（连接池如何收敛到新 IP）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -78,6 +79,7 @@ public sealed class DnsRefreshExample : IExample
         Console.WriteLine("    · 服务发现（Consul/Nacos/SRV）可像本例的 ConnectCallback 一样自己决定目标地址，每次建连都会重新查询");
     }
 
+    /// <summary>建池选项：只接管「怎么连」（ConnectCallback 查假 DNS），其余保持库默认。</summary>
     private static ConnectionPoolOptions CreateOptions(FakeDns dns, TimeSpan lifetime) => new()
     {
         PooledConnectionLifetime = lifetime,
@@ -110,6 +112,7 @@ public sealed class DnsRefreshExample : IExample
         }
     };
 
+    /// <summary>发一次请求并返回服务端自报的端口，用来观察这次连接落到了哪个实例。</summary>
     private static async Task<int> RequestAsync(AxiosClient client)
     {
         var response = await client.GetAsync<WhoAmI>(Url).ConfigureAwait(false);
@@ -125,6 +128,7 @@ public sealed class DnsRefreshExample : IExample
 
         public int Port => Volatile.Read(ref _port);
 
+        /// <summary>改「A 记录」：切换解析目标端口，等价于一次 DNS 记录变更。</summary>
         public void PointTo(int port) => Volatile.Write(ref _port, port);
     }
 

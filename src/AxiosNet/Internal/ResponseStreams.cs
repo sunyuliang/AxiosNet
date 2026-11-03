@@ -117,6 +117,7 @@ internal sealed class TimeoutStream : DelegatingStream
         }
     }
 
+    /// <summary>写：先查总预算，再把调用方令牌并进预算令牌后写入；取消与网络故障各归各的错误模型。</summary>
     protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken callerToken)
     {
         ThrowIfBudgetExhausted();
@@ -137,6 +138,7 @@ internal sealed class TimeoutStream : DelegatingStream
         }
     }
 
+    /// <summary>刷新：同样先查预算；取消按超时 / 取消翻译，IO 故障翻译成网络错误。</summary>
     protected override async ValueTask FlushCoreAsync(CancellationToken callerToken)
     {
         ThrowIfBudgetExhausted();

@@ -256,6 +256,7 @@ public sealed class ConnectionPoolOptions
         _transports = CloneTransports(_transports)
     };
 
+    /// <summary>深拷贝命名传输档字典（键区分大小写）：克隆后改一份不会串到另一份。</summary>
     private static Dictionary<string, ConnectionTransportOptions>? CloneTransports(
         Dictionary<string, ConnectionTransportOptions>? source)
     {

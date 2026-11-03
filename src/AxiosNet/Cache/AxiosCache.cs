@@ -268,6 +268,7 @@ public sealed class AxiosCache
             cacheControl.MaxAge);
     }
 
+    // 按方法名比较而不是枚举：自定义 HttpMethod 实例也要能匹配。
     private static bool IsMethod(HttpMethod method, string expected)
         => string.Equals(method.Method, expected, StringComparison.OrdinalIgnoreCase);
 
@@ -340,6 +341,7 @@ public sealed class AxiosCache
             timeToLive, _options.TimeToLive, mode, headers: null, receivedAt, http);
     }
 
+    // Vary 里有 * 表示按任意请求头都不可缓存，整条响应只能跳过。
     private static bool ContainsVaryStar(IReadOnlyList<string> vary)
     {
         foreach (var field in vary)
@@ -391,16 +393,19 @@ public sealed class AxiosCache
         return new HttpCacheInfo(freshness, age, cacheControl, date, expires, ParseVary(headers));
     }
 
+    // 取某个响应头的全部值；头不存在返回 null，与「头存在但为空」区分开。
     private static IEnumerable<string>? GetValues(
         IReadOnlyDictionary<string, IEnumerable<string>> headers,
         string name)
         => headers.TryGetValue(name, out var values) ? values : null;
 
+    // 取第一个非空白值：同名头出现多次时按声明顺序取。
     private static string? FirstValue(
         IReadOnlyDictionary<string, IEnumerable<string>> headers,
         string name)
         => GetValues(headers, name)?.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
+    // 解析 HTTP 日期；空白或不合法返回 null，缓存逻辑不该被脏头打断。
     private static DateTimeOffset? ParseHttpDate(string? value)
         => !string.IsNullOrWhiteSpace(value)
             && DateTimeOffset.TryParse(
@@ -411,6 +416,7 @@ public sealed class AxiosCache
             ? parsed
             : null;
 
+    // 解析 max-age 这类秒数；负数、带符号、非整数一律当无效。
     private static TimeSpan? ParseSeconds(string? value)
     {
         if (value is null
@@ -426,6 +432,7 @@ public sealed class AxiosCache
             : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
     }
 
+    // 把 Vary 拆成字段名列表并去重，条目键与命中校验共用这份结果。
     private static IReadOnlyList<string> ParseVary(IReadOnlyDictionary<string, IEnumerable<string>> headers)
     {
         var values = GetValues(headers, "Vary");
@@ -466,6 +473,7 @@ public sealed class AxiosCache
             ? TryGetCoreAsync(key, config, deadlineTimestamp, revalidation: true)
             : new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
 
+    // 命中判定核心：取条目 → 校验 Vary 与新鲜度 → 需要重验证时交给上层，否则直接短路上响应。
     private async ValueTask<AxiosShortCircuit?> TryGetCoreAsync(
         string key,
         AxiosConfig config,
@@ -626,6 +634,7 @@ public sealed class AxiosCache
         flight.Fail(error);
     }
 
+    // 先摘除再放行等待者：之后进来的请求要么重新发送、要么直接命中已落库的条目。
     private void RemoveFlight(string key, AxiosCacheFlight flight)
     {
         // 先摘再放行：之后进来的请求要么新建一次发送，要么直接命中已落库的条目。
@@ -665,13 +674,16 @@ internal sealed class AxiosCacheFlight
     /// <summary>跟随者：等领导者那一份结果。</summary>
     internal AxiosCacheFlight(Task<AxiosShortCircuit?> shared) => _shared = shared;
 
+    /// <summary>本次调用是否由自己发请求（跟随者只等领导者的结果）。</summary>
     internal bool IsLeader => _shared is null;
 
+    /// <summary>领导者等自己填结果，跟随者等共享的那一份。</summary>
     internal Task<AxiosShortCircuit?> Completion => _shared ?? _completion.Task;
 
     /// <summary>放行跟随者；<paramref name="reply"/> 为 <c>null</c> 表示这次没有可共享的字节，跟随者自己发。</summary>
     internal void Succeed(AxiosShortCircuit? reply) => _completion.TrySetResult(reply);
 
+    /// <summary>把失败转给跟随者；无人跟随时先观察一次，避免未观察任务的噪音。</summary>
     internal void Fail(Exception error)
     {
         if (!_completion.TrySetException(error))

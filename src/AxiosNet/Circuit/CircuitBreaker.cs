@@ -597,6 +597,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         }
     }
 
+    /// <summary>熔断已持续满 <see cref="BreakDuration"/>：可以进半开尝试探测。</summary>
     private bool IsCooledDown(HostState host) => Elapsed(host.OpenedAt) >= BreakDuration;
 
     /// <summary>半开态在途探测是否已超出 <see cref="ProbeTimeout"/>（没有在途探测时不算过期）。</summary>
@@ -605,6 +606,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
            && host.ProbesInFlight > 0
            && Elapsed(host.ProbeStartedAt) >= timeout;
 
+    /// <summary>切换状态：换一代票号（旧请求的回报按迟到处理）、跟着调整各维度计数，返回迁移记录。</summary>
     private static AxiosCircuitTransition MoveTo(HostState host, AxiosCircuitState next)
     {
         var previous = host.State;
@@ -626,6 +628,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         return new AxiosCircuitTransition(host.Key, previous, next);
     }
 
+    /// <summary>通知状态迁移监听者；观测代码抛异常不影响请求结果。</summary>
     private void Notify(AxiosCircuitTransition transition)
     {
         if (transition.IsEmpty || StateChanged is not { } handler)
@@ -691,6 +694,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         /// <summary>滚动窗口：<c>0</c> = 成功，<c>1</c> = 失败。惰性分配，<c>WindowSize</c> 改了就重建。</summary>
         private byte[]? _window;
 
+        // 滚动窗口游标 / 有效样本数 / 失败样本数（读写都在 HostState.Gate 内）。
         private int _windowIndex;
 
         private int _windowCount;

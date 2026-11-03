@@ -38,6 +38,7 @@ public sealed partial class AxiosConfig
             OnRetry = incoming.OnRetry ?? OnRetry;
         }
 
+        /// <summary>浅拷贝（合并层用）：策略与委托共用，不深克隆。</summary>
         internal RetrySettings Clone() => (RetrySettings)MemberwiseClone();
     }
 }

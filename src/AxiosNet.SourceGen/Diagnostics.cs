@@ -12,6 +12,7 @@ namespace AxiosNet.SourceGen
     /// </remarks>
     internal static class Diagnostics
     {
+        // 全部分析器诊断共用的分类与帮助链接。
         private const string Category = "AxiosNet.SourceGen";
         private const string HelpLink = "https://github.com/sunyuliang/AxiosNet#native-aot";
 

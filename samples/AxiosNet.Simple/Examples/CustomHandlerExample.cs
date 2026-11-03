@@ -11,6 +11,7 @@ public sealed class CustomHandlerExample : IExample
 
     public string Title => "HttpMethod 直用 + 自定义 Handler 注入";
 
+    /// <summary>示例入口：HttpMethod 直用 + 自定义 Handler 注入。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -82,6 +83,7 @@ public sealed class CustomHandlerExample : IExample
 
         public int Count => Volatile.Read(ref _count);
 
+        /// <summary>真正发出前加一个 <c>X-Trace-Id</c> 头（名字 + 序号），顺便记一次发送次数。</summary>
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var seq = Interlocked.Increment(ref _count);

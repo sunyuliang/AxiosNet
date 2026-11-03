@@ -16,6 +16,7 @@ public sealed class ShortCircuitExample : IExample
 
     public string Title => "短路响应：缓存命中不发请求 / 一份字节多形态 / 拦截器接缓存 / mock / 错误语义";
 
+    /// <summary>示例入口：短路响应：缓存命中不发请求 / 一份字节多形态 / 拦截器接缓存 / mock / 错误语义。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

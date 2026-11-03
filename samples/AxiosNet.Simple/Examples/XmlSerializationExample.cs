@@ -13,6 +13,7 @@ public sealed class XmlSerializationExample : IExample
 
     public string Title => "XML 序列化：内置 XmlContentSerializer";
 
+    /// <summary>示例入口：XML 序列化：内置 XmlContentSerializer。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);

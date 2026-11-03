@@ -10,6 +10,7 @@ namespace AxiosNet.Reflection;
 /// </summary>
 internal static class JsonSerializerJit
 {
+    /// <summary>net6 目标没有 <c>TypeInfoResolver</c>：直接走反射重载（调用方已确认允许动态代码）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
@@ -21,6 +22,7 @@ internal static class JsonSerializerJit
     public static string SerializeLegacy(object? value, Type type, JsonSerializerOptions options)
         => JsonSerializer.Serialize(value, type, options);
 
+    /// <summary>同一分支的字符串反序列化入口。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
@@ -32,6 +34,7 @@ internal static class JsonSerializerJit
     public static object? DeserializeLegacy(string json, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize(json, type, options);
 
+    /// <summary>同一分支的 UTF-8 字节反序列化入口（省一次字符串分配）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2026",
