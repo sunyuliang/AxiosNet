@@ -3,6 +3,7 @@ using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Internal;
 using static AxiosNet.Tests.WebAPI.StreamingTestKit;
 using System.Net.Http.Headers;

@@ -2,6 +2,7 @@
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using System.Net;
 using System.Text.Json.Serialization;
 using System.Text.Json;

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using AxiosNet.Internal;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;

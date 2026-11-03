@@ -23,9 +23,8 @@ public sealed class ParamsEdgeCaseTests
         });
 
         Assert.Contains("span=01%3A02%3A03", uri);
-        // DateOnly 没有独立分支，落到 IFormattable 的不变文化短日期（斜杠被百分号编码），
-        // 与 ModelBindingTests 记录的既有约定一致。
-        Assert.Contains("day=01%2F02%2F2024", uri);
+        // DateOnly 走独立分支的 ISO 短日期，与 TimeOnly 的 O 格式保持一致。
+        Assert.Contains("day=2024-01-02", uri);
         Assert.Contains("letter=x", uri);
         Assert.Contains("time=01%3A02%3A03", uri);
         Assert.Contains("flag=true", uri);

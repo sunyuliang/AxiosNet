@@ -1,3 +1,5 @@
+using AxiosNet.WebAPI.Attributes;
+
 namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>声明式模型的授权策略（来自 <see cref="AuthorizeAttribute"/> / <see cref="AllowAnonymousAttribute"/>）。</summary>

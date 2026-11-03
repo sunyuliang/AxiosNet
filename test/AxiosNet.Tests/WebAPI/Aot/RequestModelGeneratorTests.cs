@@ -503,6 +503,7 @@ public sealed class RequestModelGeneratorTests
             using System.Threading.Tasks;
             using AxiosNet;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -580,6 +581,7 @@ public sealed class RequestModelGeneratorTests
             using System.Threading.Tasks;
             using AxiosNet;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -700,6 +702,7 @@ public sealed class RequestModelGeneratorTests
         using System.Threading;
         using System.Threading.Tasks;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__
         {
@@ -737,6 +740,7 @@ public sealed class RequestModelGeneratorTests
     {
         var builder = new StringBuilder();
         builder.AppendLine("using AxiosNet.WebAPI;");
+        builder.AppendLine("using AxiosNet.WebAPI.Attributes;");
         builder.Append("namespace ").Append(ns).AppendLine(";");
         for (var i = 0; i < count; i++)
         {
@@ -808,6 +812,7 @@ public sealed class RequestModelGeneratorTests
         using System.IO;
         using System.Text.Json.Serialization;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -882,6 +887,7 @@ public sealed class RequestModelGeneratorTests
     private const string DiagnosticsModels = """
         using System.Net.Http;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -938,6 +944,7 @@ public sealed class RequestModelGeneratorTests
 
     private const string SimpleModel = """
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -953,6 +960,7 @@ public sealed class RequestModelGeneratorTests
         using System.Threading;
         using System.Threading.Tasks;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -972,6 +980,7 @@ public sealed class RequestModelGeneratorTests
 
     private const string StringRouteModel = """
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -986,6 +995,7 @@ public sealed class RequestModelGeneratorTests
     // 路由特性写在后一段声明上：生成器必须用合并后的符号，不能固定在 references[0] 上找特性。
     private const string PartialModel = """
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -1005,6 +1015,7 @@ public sealed class RequestModelGeneratorTests
 
     private const string HiddenAccessibilityModels = """
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -1044,6 +1055,7 @@ public sealed class RequestModelGeneratorTests
     private const string NestedDynamicModel = """
         using System.Collections.Generic;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -1058,6 +1070,7 @@ public sealed class RequestModelGeneratorTests
 
     private const string TupleHidingModel = """
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -1086,6 +1099,7 @@ public sealed class RequestModelGeneratorTests
 
     private const string GenericBaseModels = """
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 

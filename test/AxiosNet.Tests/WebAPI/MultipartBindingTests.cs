@@ -1,6 +1,7 @@
 ﻿
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using System.Collections;
 using System.Text.Json.Serialization;
 using System.Text;

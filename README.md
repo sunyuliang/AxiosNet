@@ -122,7 +122,7 @@ string url = http.GetUri(c =>
 
 ## 声明式 API
 
-端点一多，URL、参数、请求头散落在每个调用处就难管。声明式入口把每个端点写成**请求模型**或**接口**，调用只剩一句 `client.RequestAsync(request)` / `api.GetAsync(5)`；两种写法由同一个 `ApiClient` 承载，只是描述形式不同。命名空间 `AxiosNet.WebAPI`，与核心同包。
+端点一多，URL、参数、请求头散落在每个调用处就难管。声明式入口把每个端点写成**请求模型**或**接口**，调用只剩一句 `client.RequestAsync(request)` / `api.GetAsync(5)`；两种写法由同一个 `ApiClient` 承载，只是描述形式不同。命名空间 `AxiosNet.WebAPI`（特性在 `AxiosNet.WebAPI.Attributes`），与核心同包。
 
 | 写法 | 长什么样 | 适合 | 代价 |
 | --- | --- | --- | --- |
@@ -135,6 +135,7 @@ string url = http.GetUri(c =>
 
 ```csharp
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
 [Get("users/{id}")]
 [Headers("Accept: application/json")]                    // 类级静态头
@@ -2030,7 +2031,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + 池选项 / 统计 + Handler 注入
 │  │  ├─ Metadata/                    # 生成元数据注册入口（对象形状 / 字典映射 / 冻结）+ 形状构建器
-│  │  ├─ WebAPI/                      # 声明式 API 客户端（可选扩展，可整体删除；Metadata/ 公开注册入口，Internal/ 共享契约，Reflection/ 仅 JIT）
+│  │  ├─ WebAPI/                      # 声明式 API 客户端（可选扩展，可整体删除；Attributes/ 公开特性，Metadata/ 公开注册入口，Internal/ 共享契约，Reflection/ 仅 JIT）
 │  │  ├─ Reflection/                  # 对象形状与 STJ 的反射回退（只在 JIT 下可达，AOT 镜像里整块裁掉）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
@@ -2046,7 +2047,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
    └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```
 
-目录约定三条：领域目录（`Metadata/`、`Serialization/`、`Internal/`）按功能分家；**只在 JIT 下可达的反射实现一律放进 `Reflection/` 目录**，且只有两处——根级 `Reflection/` 装跨领域共用的底层（对象形状反射、STJ 反射回退），`WebAPI/Reflection/` 装属于声明式 API 这个领域的反射读取与 `DispatchProxy` 回退（不在 `Reflection/` 目录里的代码不直接碰反射）；**`WebAPI/` 是可整体删除的扩展**——删掉它，核心与原始 HTTP 照样编译、照样能用，所以核心不得反向引用它（对象形状、字典映射、生成注册表、AOT 守卫与异常都因此住在 `Metadata/` 与 `Internal/`）。
+目录约定三条：领域目录（`Metadata/`、`Serialization/`、`Internal/`）按功能分家；**只在 JIT 下可达的反射实现一律放进 `Reflection/` 目录**，且只有两处——根级 `Reflection/` 装跨领域共用的底层（对象形状反射、STJ 反射回退），`WebAPI/Reflection/` 装属于声明式 API 这个领域的反射读取与 `DispatchProxy` 回退（不在 `Reflection/` 目录里的代码不直接碰反射）；**`WebAPI/` 是可整体删除的扩展**——删掉它，核心与原始 HTTP 照样编译、照样能用，所以核心不得反向引用它（对象形状、字典映射、生成注册表、AOT 守卫与异常都因此住在 `Metadata/` 与 `Internal/`）。公开特性统一收在 `WebAPI/Attributes/`（命名空间 `AxiosNet.WebAPI.Attributes`），其余公开类型留在 `WebAPI/` 根。
 
 ## License
 

@@ -463,6 +463,7 @@ public sealed class ShapeGeneratorTests
             using System.Threading.Tasks;
             using AxiosNet;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -682,6 +683,7 @@ public sealed class ShapeGeneratorTests
         var (result, diagnostics, _) = RunGenerator("""
             using AxiosNet;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -960,6 +962,7 @@ public sealed class ShapeGeneratorTests
         using System.Threading.Tasks;
         using AxiosNet;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 

@@ -1,4 +1,5 @@
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.Simple.WebAPI;
 

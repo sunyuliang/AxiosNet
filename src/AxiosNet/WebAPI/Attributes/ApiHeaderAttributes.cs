@@ -1,4 +1,4 @@
-namespace AxiosNet.WebAPI;
+namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
 /// 声明级静态请求头：类 / 接口上是整份声明共用的静态头，接口方法上是该方法独有的静态头（覆盖接口级同名项）。

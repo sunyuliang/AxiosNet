@@ -127,7 +127,8 @@ internal sealed class CSharpEmitter
         builder.Append("using System.Threading;\n");
         builder.Append("using System.Threading.Tasks;\n");
         builder.Append("using AxiosNet;\n");
-        builder.Append("using AxiosNet.WebAPI;\n\n");
+        builder.Append("using AxiosNet.WebAPI;\n");
+        builder.Append("using AxiosNet.WebAPI.Attributes;\n\n");
     }
 
     /// <summary>写文件级命名空间声明（已由选项解析阶段校验过合法性）。</summary>

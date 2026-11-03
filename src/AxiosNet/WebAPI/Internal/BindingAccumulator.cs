@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using AxiosNet.Internal;
+using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.WebAPI.Internal;
 

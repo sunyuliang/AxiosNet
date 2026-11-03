@@ -22,6 +22,7 @@ public sealed class GeneratedDiRegistrationTests
     private const string ProbeSource = """
         using System.Threading.Tasks;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__
         {
@@ -90,6 +91,7 @@ public sealed class GeneratedDiRegistrationTests
         const string source = """
             using System.Threading.Tasks;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__
             {

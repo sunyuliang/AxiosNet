@@ -122,7 +122,7 @@ You can send requests already. Next up is the [declarative API](#declarative-api
 
 ## Declarative API
 
-Once endpoints multiply, URLs, parameters and headers scattered across call sites get hard to manage. The declarative entry point describes each endpoint as a **request model** or an **interface**, leaving calls as one-liners (`client.RequestAsync(request)` / `api.GetAsync(5)`); both forms are carried by the same `ApiClient`, only the description differs. Namespace `AxiosNet.WebAPI`, same package as the core.
+Once endpoints multiply, URLs, parameters and headers scattered across call sites get hard to manage. The declarative entry point describes each endpoint as a **request model** or an **interface**, leaving calls as one-liners (`client.RequestAsync(request)` / `api.GetAsync(5)`); both forms are carried by the same `ApiClient`, only the description differs. Namespace `AxiosNet.WebAPI` (attributes in `AxiosNet.WebAPI.Attributes`), same package as the core.
 
 | Style | What it looks like | Use for | Cost |
 | --- | --- | --- | --- |
@@ -135,6 +135,7 @@ Both forms share one kernel: path-template validation, duplicate detection, defa
 
 ```csharp
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
 [Get("users/{id}")]
 [Headers("Accept: application/json")]                    // class-level static headers
@@ -2030,7 +2031,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / statistics + handler injection
 │  │  ├─ Metadata/                    # metadata registration entry points (object shapes / dictionary maps / freeze) + shape builders
-│  │  ├─ WebAPI/                      # declarative API client (optional extension, removable as a whole; Metadata/ = public registration entry points, Internal/ = shared contract, Reflection/ = JIT-only)
+│  │  ├─ WebAPI/                      # declarative API client (optional extension, removable as a whole; Attributes/ = public attributes, Metadata/ = public registration entry points, Internal/ = shared contract, Reflection/ = JIT-only)
 │  │  ├─ Reflection/                  # object-shape and STJ reflection fallbacks (JIT-only, trimmed away entirely under AOT)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
@@ -2046,7 +2047,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
    └─ AxiosNet.Comparison/             # cross-implementation comparison (RPS / p99 / allocations, optional gate)
 ```
 
-Three folder rules: feature directories (`Metadata/`, `Serialization/`, `Internal/`) split by concern; **JIT-only reflection implementations always live under a `Reflection/` folder, of which there are exactly two** — the root `Reflection/` holds the cross-feature building blocks (object-shape reflection, the STJ reflection fallback), while `WebAPI/Reflection/` holds the reflection readers and `DispatchProxy` fallback that belong to the declarative API feature (code outside a `Reflection/` folder does not touch reflection directly); and **`WebAPI/` is an extension that can be deleted as a whole** — remove it and the core still compiles and plain HTTP still works, so the core must never reference it back (object shapes, dictionary maps, the generated-metadata registry and the AOT guards/exception therefore live in `Metadata/` and `Internal/`).
+Three folder rules: feature directories (`Metadata/`, `Serialization/`, `Internal/`) split by concern; **JIT-only reflection implementations always live under a `Reflection/` folder, of which there are exactly two** — the root `Reflection/` holds the cross-feature building blocks (object-shape reflection, the STJ reflection fallback), while `WebAPI/Reflection/` holds the reflection readers and `DispatchProxy` fallback that belong to the declarative API feature (code outside a `Reflection/` folder does not touch reflection directly); and **`WebAPI/` is an extension that can be deleted as a whole** — remove it and the core still compiles and plain HTTP still works, so the core must never reference it back (object shapes, dictionary maps, the generated-metadata registry and the AOT guards/exception therefore live in `Metadata/` and `Internal/`). Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAPI.Attributes`); other public types stay at the `WebAPI/` root.
 
 ## License
 

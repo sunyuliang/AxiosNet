@@ -1,5 +1,7 @@
-﻿using AxiosNet.Tests.Infrastructure;
+﻿
+using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Reflection;
 

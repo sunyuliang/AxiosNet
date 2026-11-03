@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using AxiosNet;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
 // Native AOT 示例：本地回环服务 + 两种调用方式（axios 风格 / 声明式）。
 // 发布：dotnet publish samples/AxiosNet.Aot -c Release -r win-x64

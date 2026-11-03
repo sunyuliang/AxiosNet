@@ -4,6 +4,7 @@ using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 

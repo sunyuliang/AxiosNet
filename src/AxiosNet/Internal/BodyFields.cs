@@ -29,24 +29,25 @@ internal static class BodyFields
             : dt).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
         DateTimeOffset dto => dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
         Enum e => e.ToString(),
+        DateOnly d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         TimeOnly t => t.ToString("O", CultureInfo.InvariantCulture),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? string.Empty
     };
 
-    /// <summary>请求体标量的文本形态（不进序列化器）：日期时间用往返格式 <c>O</c> 保留 Kind 与 tick。</summary>
+    /// <summary>
+    /// 请求体标量的文本形态（不进序列化器）：日期时间用往返格式 <c>O</c> 保留 Kind 与 tick。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ScalarToString"/> 只差日期时间族两条分支：请求体是「值本身」，折成 UTC 或截到毫秒都是失真；
+    /// 表单 / query 那边受既有线上约定约束。其余类型（含 <see cref="DateOnly"/> / <see cref="TimeOnly"/>，两者取 <c>O</c>
+    /// 与 <c>yyyy-MM-dd</c> 结果相同）共用同一份实现。
+    /// </remarks>
     public static string ScalarBodyText(object value) => value switch
     {
-        string s => s,
-        bool b => b ? "true" : "false",
-        char c => c.ToString(),
         DateTime dt => dt.ToString("O", CultureInfo.InvariantCulture),
         DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
-        DateOnly date => date.ToString("O", CultureInfo.InvariantCulture),
-        TimeOnly time => time.ToString("O", CultureInfo.InvariantCulture),
-        Enum e => e.ToString(),
-        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
-        _ => value.ToString() ?? string.Empty
+        _ => ScalarToString(value)
     };
 
     /// <summary>JSON 树叶子节点的文本（数值保留原始书写形式，不经过 double 往返）。</summary>

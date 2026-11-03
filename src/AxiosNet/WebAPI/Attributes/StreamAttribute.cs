@@ -1,4 +1,4 @@
-namespace AxiosNet.WebAPI;
+namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
 /// 接口级流式响应的帧格式声明：只用于返回 <c>Task&lt;AxiosResponse&lt;IAsyncEnumerable&lt;T&gt;&gt;&gt;</c> 的方法。

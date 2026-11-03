@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using AxiosNet.Internal;
 using AxiosNet.Metadata;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Metadata;
 using AxiosNet.WebAPI.Reflection;
 

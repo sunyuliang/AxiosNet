@@ -833,18 +833,18 @@ namespace AxiosNet.SourceGen
     {
         private WellKnownSymbols(Compilation compilation)
         {
-            HttpApi = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.HttpApiAttribute");
-            Headers = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.HeadersAttribute");
-            Multipart = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.MultipartAttribute");
-            Authorize = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.AuthorizeAttribute");
-            AllowAnonymous = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.AllowAnonymousAttribute");
-            Path = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.PathAttribute");
-            Query = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.QueryAttribute");
-            Header = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.HeaderAttribute");
-            HeaderCollection = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.HeaderCollectionAttribute");
-            Body = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.BodyAttribute");
-            Part = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.PartAttribute");
-            ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.ApiIgnoreAttribute");
+            HttpApi = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HttpApiAttribute");
+            Headers = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeadersAttribute");
+            Multipart = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.MultipartAttribute");
+            Authorize = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.AuthorizeAttribute");
+            AllowAnonymous = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute");
+            Path = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.PathAttribute");
+            Query = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.QueryAttribute");
+            Header = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeaderAttribute");
+            HeaderCollection = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute");
+            Body = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.BodyAttribute");
+            Part = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.PartAttribute");
+            ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute");
             ApiRequest = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.IApiRequest`1");
             JsonPropertyName = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonPropertyNameAttribute");
             JsonIgnore = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonIgnoreAttribute");
@@ -855,10 +855,10 @@ namespace AxiosNet.SourceGen
             AxiosResponseOfT = compilation.GetTypeByMetadataName("AxiosNet.AxiosResponse`1");
             AsyncEnumerable = compilation.GetTypeByMetadataName("System.Collections.Generic.IAsyncEnumerable`1");
             CancellationToken = compilation.GetTypeByMetadataName("System.Threading.CancellationToken");
-            Stream = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.StreamAttribute");
+            Stream = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.StreamAttribute");
             StreamFormat = compilation.GetTypeByMetadataName("AxiosNet.AxiosStreamFormat");
-            BodyContentType = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.BodyContentTypeAttribute");
-            QueryCollectionFormat = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.QueryCollectionFormatAttribute");
+            BodyContentType = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute");
+            QueryCollectionFormat = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute");
             CollectionFormat = compilation.GetTypeByMetadataName("AxiosNet.AxiosCollectionFormat");
             ApiClient = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.ApiClient");
             ApiInterfaceExtensions = compilation.GetTypeByMetadataName(
@@ -937,13 +937,13 @@ namespace AxiosNet.SourceGen
     {
         private static readonly Dictionary<string, string> Methods = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["AxiosNet.WebAPI.GetAttribute"] = "GET",
-            ["AxiosNet.WebAPI.PostAttribute"] = "POST",
-            ["AxiosNet.WebAPI.PutAttribute"] = "PUT",
-            ["AxiosNet.WebAPI.PatchAttribute"] = "PATCH",
-            ["AxiosNet.WebAPI.DeleteAttribute"] = "DELETE",
-            ["AxiosNet.WebAPI.HeadAttribute"] = "HEAD",
-            ["AxiosNet.WebAPI.OptionsAttribute"] = "OPTIONS"
+            ["AxiosNet.WebAPI.Attributes.GetAttribute"] = "GET",
+            ["AxiosNet.WebAPI.Attributes.PostAttribute"] = "POST",
+            ["AxiosNet.WebAPI.Attributes.PutAttribute"] = "PUT",
+            ["AxiosNet.WebAPI.Attributes.PatchAttribute"] = "PATCH",
+            ["AxiosNet.WebAPI.Attributes.DeleteAttribute"] = "DELETE",
+            ["AxiosNet.WebAPI.Attributes.HeadAttribute"] = "HEAD",
+            ["AxiosNet.WebAPI.Attributes.OptionsAttribute"] = "OPTIONS"
         };
 
         public static bool TryGetValue(string attributeName, out string method) => Methods.TryGetValue(attributeName, out method!);

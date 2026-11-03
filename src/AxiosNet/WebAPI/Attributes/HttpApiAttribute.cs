@@ -1,6 +1,6 @@
 using System.Net.Http;
 
-namespace AxiosNet.WebAPI;
+namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
 /// 路由声明：HTTP 方法 + 路径模板。请求模型标在类上、接口级声明标在接口方法上，每份声明必须且只能标注一个本特性或其子类。

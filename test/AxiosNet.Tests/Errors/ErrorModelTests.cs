@@ -3,6 +3,7 @@ using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;

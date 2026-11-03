@@ -1,5 +1,6 @@
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using System.Reflection;
 
 namespace AxiosNet.Tests.Errors;

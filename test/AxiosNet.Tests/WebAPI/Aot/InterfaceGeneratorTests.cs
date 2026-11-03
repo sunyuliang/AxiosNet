@@ -185,6 +185,7 @@ public sealed class InterfaceGeneratorTests
         using System.Threading.Tasks;
         using AxiosNet;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -267,6 +268,7 @@ public sealed class InterfaceGeneratorTests
             using System.Threading.Tasks;
             using AxiosNet;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -370,6 +372,7 @@ public sealed class InterfaceGeneratorTests
             using System.Threading;
             using System.Threading.Tasks;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -401,6 +404,7 @@ public sealed class InterfaceGeneratorTests
         var consumer = RunGenerator(
             """
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -426,6 +430,7 @@ public sealed class InterfaceGeneratorTests
             using System.Threading;
             using System.Threading.Tasks;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -478,6 +483,7 @@ public sealed class InterfaceGeneratorTests
             => RunGenerator(
                 """
                 using AxiosNet.WebAPI;
+                using AxiosNet.WebAPI.Attributes;
 
                 namespace __NS__;
 
@@ -497,6 +503,7 @@ public sealed class InterfaceGeneratorTests
             using System.Threading;
             using System.Threading.Tasks;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -574,6 +581,7 @@ public sealed class InterfaceGeneratorTests
             using System.Threading;
             using System.Threading.Tasks;
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -627,6 +635,7 @@ public sealed class InterfaceGeneratorTests
     {
         var source = """
             using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
 
             namespace __NS__;
 
@@ -797,6 +806,7 @@ public sealed class InterfaceGeneratorTests
         using System.Threading;
         using System.Threading.Tasks;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -850,6 +860,7 @@ public sealed class InterfaceGeneratorTests
         using System.Threading.Tasks;
         using AxiosNet;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -898,6 +909,7 @@ public sealed class InterfaceGeneratorTests
         using System.Threading;
         using System.Threading.Tasks;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -920,6 +932,7 @@ public sealed class InterfaceGeneratorTests
         using System.Threading.Tasks;
         using AxiosNet;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 
@@ -944,6 +957,7 @@ public sealed class InterfaceGeneratorTests
         using System.Threading.Tasks;
         using AxiosNet;
         using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
 
         namespace __NS__;
 

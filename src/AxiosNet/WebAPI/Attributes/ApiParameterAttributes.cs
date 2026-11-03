@@ -1,4 +1,4 @@
-namespace AxiosNet.WebAPI;
+namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / HeaderCollection / Part / Body 同用直接报错。</summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]

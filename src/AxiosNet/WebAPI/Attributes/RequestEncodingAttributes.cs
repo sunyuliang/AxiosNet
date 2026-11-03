@@ -1,4 +1,4 @@
-namespace AxiosNet.WebAPI;
+namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
 /// 指定接口方法请求体的媒体类型（写入 <c>config.ContentType</c>）：用于 JSON 以外的正文，例如

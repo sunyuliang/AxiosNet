@@ -3,6 +3,7 @@ using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Net;
@@ -58,9 +59,9 @@ public sealed class ModelBindingTests
 
         var received = Assert.Single(server.Received);
 
-        // DateOnly 走 IFormattable 的不变文化短日期（10/22/2026，斜杠被百分号编码）；
+        // DateOnly 走独立分支的 ISO 短日期（2026-10-22）；
         // 要点是路由去向：查询参数而非请求体。
-        Assert.Equal("When=10%2F22%2F2026", received.Query);
+        Assert.Equal("When=2026-10-22", received.Query);
         Assert.Empty(received.Body);
     }
 
@@ -87,7 +88,7 @@ public sealed class ModelBindingTests
         await client.RequestAsync(new DateOnlyPathRequest { Day = new DateOnly(2026, 10, 22) });
 
         var received = Assert.Single(server.Received);
-        Assert.Equal("/reports/10%2F22%2F2026", received.Path);
+        Assert.Equal("/reports/2026-10-22", received.Path);
     }
 
     // ------------------------------------------------------------------

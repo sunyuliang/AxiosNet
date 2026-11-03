@@ -1,6 +1,7 @@
 ﻿using AxiosNet.Tests.Infrastructure;
 using AxiosNet.Tests.WebAPI;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection;
 

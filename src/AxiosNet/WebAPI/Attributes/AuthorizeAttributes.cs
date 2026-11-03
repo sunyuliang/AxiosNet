@@ -1,4 +1,4 @@
-namespace AxiosNet.WebAPI;
+namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
 /// 标记请求模型 / 接口 / 接口方法需要授权：按 <see cref="Scheme"/> 与令牌拼出 <c>Authorization: {scheme} {token}</c>。
