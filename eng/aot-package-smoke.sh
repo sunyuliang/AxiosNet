@@ -133,6 +133,7 @@ using System.Text.Json.Serialization;
 using AxiosNet;
 using AxiosNet.Serialization;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
 using var client = new ApiClient("https://example.com/");
 
@@ -212,6 +213,7 @@ cat > "$PROJ/NuGet.config" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <configuration>
   <packageSources>
+    <clear />
     <add key="local-smoke" value="$FEED" />
     <!-- 运行时包（Microsoft.NETCore.App.Runtime.*）得从 nuget.org 来：不写死就会继承构建机上的用户级配置，
          换台机器行为就变。 -->
