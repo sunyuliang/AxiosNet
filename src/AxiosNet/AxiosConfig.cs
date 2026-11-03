@@ -279,6 +279,7 @@ public sealed partial class AxiosConfig
     /// 设在 <see cref="AxiosClient.Defaults"/> 上对整个客户端生效（声明式请求与直接调用同一口径），直接调用时也可在单次请求的配置里覆盖。
     /// 声明式层的路径 / 查询 / 请求头 / 正文在绑定参数时就要用到它，所以那里取的是客户端默认值：
     /// 在 <c>ApiClient</c> 的按请求 <c>configure</c> 里改它会抛 <c>ERR_BAD_OPTION_VALUE</c>（绑定已完成，改了不会重算）。
+    /// 回放 <see cref="AxiosResponse.Config"/> 时按实例级项处理：取目标实例的默认值，来源实例的钩子不跟过来。
     /// </remarks>
     public Func<object?, ValueTextChannel, string?>? ValueFormatter { get; set; }
 

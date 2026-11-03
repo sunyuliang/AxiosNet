@@ -13,7 +13,7 @@ using AxiosNet.WebAPI.Serialization;
 namespace AxiosNet.Tests.Regression;
 
 /// <summary>
-/// 枚举矩阵驱动的格式化审查（对应 docs/audit/format-matrix.md）。
+/// 枚举矩阵驱动的格式化审查（对应 README「值格式化」的通道 × 形态矩阵）。
 /// 每个 Fact 覆盖矩阵中的一个通道 × 全部适用形态；失败即定位到具体通道/形态。
 /// </summary>
 public sealed class FormatMatrixTests

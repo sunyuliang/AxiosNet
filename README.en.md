@@ -2,9 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2334%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2249%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2335%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2250%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -585,6 +585,7 @@ var again = await b.RequestAsync(first.Config!);    // b's instance-level settin
 | `Connection.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `PoolOptions` / `MaxRedirects` | The current instance's defaults (the previous call's per-request `Auth` is not carried over) |
 | `Limits.MaxConcurrentRequests` / `Limits.MaxQueueLength` | The current instance's defaults |
 | `Serialization.ContentSerializers` | The current instance's registry (media types registered on the source instance do not travel) |
+| `ValueFormatter` | The current instance's default (the source instance's hook is its own instance-level setting and does not travel with the config; pass a hook per request through a direct call's `configure`) |
 | `ShortCircuit` | Not applied (a short-circuit response belongs to that call only) |
 
 Everything else is copied as per-request items, in three groups:
@@ -1923,6 +1924,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `ContentType` | `application/json` | Decides how `Data` is encoded |
 | `RequestCompression` | `null` (off) | Compress the body: `Gzip` / `Deflate` / `Brotli`; `None` overrides an instance default |
 | `Data` | `null` | Request body |
+| `ValueFormatter` | `null` | Instance-level value-formatting hook `(object? value, ValueTextChannel channel) => string?` for path / query / headers / form / multipart text parts / scalar body (see [Value formatting](#value-formatting)) |
 | `Timeout` | `Zero` (no timeout) | Per-attempt budget (connect + headers + body) |
 | `TotalTimeout` | `null` (none) | Whole-request budget: shared across retries / endpoints / hedges, `min` with `Timeout` |
 | `ResponseType` | `Json` | `Json` / `Text` / `ArrayBuffer` / `Stream` / `Dynamic` |
@@ -2118,10 +2120,10 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2194 / 2183 | `net8.0` / `net6.0` | 4377 |
+| `AxiosNet.Tests` (core + declarative) | 2195 / 2184 | `net8.0` / `net6.0` | 4379 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| **Total** | **2334 / 2249** | | **4583** |
+| **Total** | **2335 / 2250** | | **4585** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

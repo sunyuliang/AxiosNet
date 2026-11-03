@@ -2,9 +2,9 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2334%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2249%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.7%25_(branch_87.3%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2335%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2250%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -586,6 +586,7 @@ var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + fi
 | `Connection.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `PoolOptions` / `MaxRedirects` | 当前实例的默认值（上一次的按请求 `Auth` 不会被带走） |
 | `Limits.MaxConcurrentRequests` / `Limits.MaxQueueLength` | 当前实例的默认值 |
 | `Serialization.ContentSerializers` | 当前实例的注册表（来源实例登记的媒体类型不会带过来） |
+| `ValueFormatter` | 当前实例的默认值（来源实例的钩子是它的实例级设置，不跟着配置搬过来；按请求显式给钩子请走直接调用的 `configure`） |
 | `ShortCircuit` | 不生效（短路响应只属于那一次调用） |
 
 其余按请求项照搬，分三组：
@@ -1279,7 +1280,7 @@ breaker.Reset();                                                 // 运维手工
 - 被拒请求**不发出**：不建连、不占租约，直接抛 `ERR_CIRCUIT_OPEN`，`AxiosException.RetryAfter` 给建议等待。
 - 与重试同时开：闸门在**每次尝试之前**，熔断打开后重试的下一轮会被立刻拦下；`ERR_CIRCUIT_OPEN` 本身不重试。
 - 开着重试时**每次尝试各记一笔**：3 次重试 + 首败 = 4 笔。
-- **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ByteArray` 让整段正文进入记账范围。
+- **流式响应只按响应头记账**：正文读取发生在记账之后，中途断流（`IOException` / 连接重置）会以 `ERR_NETWORK` 抛给调用方，但不回补熔断失败、也不会触发重试。需要把「正文完整性」纳入失败统计时请在消费方自行处理，或改用 `ResponseType.ArrayBuffer` 让整段正文进入记账范围。
 - 状态表有上限（`MaxTrackedHosts`，默认 512，**硬上限**）：满员时先淘汰「丢了不改变判定」的维度（闭合态里优先丢窗口中没有失败样本的那条；连续失败数可能已被一次成功清零，但失败率台账仍然有效）；仍放不下就**不再登记**新维度，新维度按闭合态直通（不参与熔断判定、不记账），已有维度的判定不受影响——熔断保护失效总好过状态表无界增长。未登记的次数见 `circuit.untracked_host` 指标。
 - 自定义策略：实现 `IAxiosCircuitPolicy`（`ShouldAllow(ctx)` / `GetRetryAfter(ctx)` / `Record(ctx)`）；`ctx` 提供 `Host` / `Uri` / `Config` / `Exception` / `StatusCode` / `ErrorCode` / `Method` / `IsSuccess` / `IsFailure` / `TotalTimeoutExpiredBeforeSend`。
 - 策略**有状态**且被并发共享，需自己保证线程安全。用装饰器包住内置 `CircuitBreaker` 时拿不到准入票（接口上没有票号），迟到结果会按旧口径记账 —— 与 `RetryBudgetPolicy` 被装饰器包住时认不出退费同类的保守偏差。
@@ -1923,6 +1924,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `ContentType` | `application/json` | 决定 `Data` 的编码方式 |
 | `RequestCompression` | `null`（不压缩） | 请求体压缩：`Gzip` / `Deflate` / `Brotli`，`None` 覆盖实例默认 |
 | `Data` | `null` | 请求体 |
+| `ValueFormatter` | `null` | 实例级值格式化钩子 `(object? value, ValueTextChannel channel) => string?`：作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文（见[值格式化](#值格式化)） |
 | `Timeout` | `Zero`（不超时） | 单次尝试的预算（建连 + 响应头 + 正文） |
 | `TotalTimeout` | `null`（不设） | 整条请求的总预算：跨重试 / 端点 / 对冲共享，并与 `Timeout` 取小 |
 | `ResponseType` | `Json` | `Json` / `Text` / `ArrayBuffer` / `Stream` / `Dynamic` |
@@ -2118,10 +2120,10 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2194 / 2183 | `net8.0` / `net6.0` | 4377 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2195 / 2184 | `net8.0` / `net6.0` | 4379 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2334 / 2249** | | **4583** |
+| **合计** | **2335 / 2250** | | **4585** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

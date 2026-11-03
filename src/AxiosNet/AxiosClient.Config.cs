@@ -47,7 +47,13 @@ public sealed partial class AxiosClient
         }
 
         // 格式化钩子是实例级默认值：按请求没写就保留（写 null 不能把它冲掉，否则实例级钩子被任何按请求配置静默摘除）。
-        merged.ValueFormatter = perCall.ValueFormatter ?? merged.ValueFormatter;
+        // 库产出的配置（回放 response.Config / 快捷方法产物）按「实例来源」处理：钩子描述的是来源实例的默认值，
+        // 不能跟着配置搬到目标实例上（否则回放会把来源实例的闭包 / 租户上下文泄漏到另一条客户端）。
+        // 调用方自己 new 的配置不受此限：写了就用，仍是「写什么用什么」。
+        if (!instanceSourced && perCall.ValueFormatter is { } perCallFormatter)
+        {
+            merged.ValueFormatter = perCallFormatter;
+        }
 
         // 短路响应只按请求意图生效，回放生效配置时不命中。
         if (!perCall.EffectiveMerged)

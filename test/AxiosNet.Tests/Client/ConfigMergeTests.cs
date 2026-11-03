@@ -102,6 +102,33 @@ public sealed class ConfigMergeTests
     }
 
     [Fact]
+    public async Task ReplayingResponseConfig_UsesTargetInstanceValueFormatter()
+    {
+        await using var sourceServer = TestHttpServer.Start(req => TestJson.Echo(req));
+        await using var targetServer = TestHttpServer.Start(req => TestJson.Echo(req));
+
+        using var source = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = sourceServer.Url,
+            ValueFormatter = (value, _) => value is int number ? "src" + number : null
+        });
+
+        var response = await source.GetAsync("x", c => c.Params = new { n = 1 });
+        Assert.Equal("n=src1", Assert.Single(sourceServer.Received).Query);
+
+        using var target = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = targetServer.Url,
+            ValueFormatter = (value, _) => value is int number ? "dst" + number : null
+        });
+
+        // 回放语义：格式化钩子是实例级默认值，回放取目标实例的，来源实例的闭包不跟过来。
+        await target.RequestAsync(response.Config!);
+
+        Assert.Equal("n=dst1", Assert.Single(targetServer.Received).Query);
+    }
+
+    [Fact]
     public void ConfigClone_ListIsolation_HoldsInBothDirections()
     {
         var source = new AxiosConfig();
