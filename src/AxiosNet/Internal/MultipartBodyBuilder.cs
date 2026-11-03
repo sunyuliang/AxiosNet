@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal;
 
@@ -77,7 +78,8 @@ internal static class MultipartBodyBuilder
         AxiosConfig config,
         HashSet<object>? visited,
         HashSet<Stream> claimed,
-        PartOverride partOverride = default)
+        PartOverride partOverride = default,
+        ValueFormat? memberFormat = null)
     {
         // 字段名选择器从 config 读取（含实例默认值）。
         var nameSelector = config.SerializationOrNull?.FormFieldNameSelector;
@@ -152,6 +154,7 @@ internal static class MultipartBodyBuilder
             {
                 // 含 ExpandoObject（dynamic）；声明式表单的覆盖按字段名登记，在这里随值一起下传
                 var overrides = (genericDictionary as DeclaredForm)?.Overrides;
+                var formats = (genericDictionary as DeclaredForm)?.Formats;
                 visited = ObjectGraph.Enter(visited, genericDictionary);
                 try
                 {
@@ -160,6 +163,9 @@ internal static class MultipartBodyBuilder
                         var entryOverride = overrides is not null && overrides.TryGetValue(entry.Key, out var declared)
                             ? declared
                             : default;
+                        var entryFormat = formats is not null && formats.TryGetValue(entry.Key, out var declaredFormat)
+                            ? declaredFormat
+                            : memberFormat;
 
                         CollectParts(
                             BodyFields.CombineName(nameSelector, name, entry.Key),
@@ -169,7 +175,8 @@ internal static class MultipartBodyBuilder
                             config,
                             visited,
                             claimed,
-                            entryOverride);
+                            entryOverride,
+                            entryFormat);
                     }
                 }
                 finally
@@ -195,7 +202,8 @@ internal static class MultipartBodyBuilder
                             encoding,
                             config,
                             visited,
-                            claimed);
+                            claimed,
+                            memberFormat: memberFormat);
                     }
                 }
                 finally
@@ -225,7 +233,8 @@ internal static class MultipartBodyBuilder
                             encoding,
                             config,
                             visited,
-                            claimed);
+                            claimed,
+                            memberFormat: memberFormat);
                     }
                 }
                 finally
@@ -238,9 +247,11 @@ internal static class MultipartBodyBuilder
         }
 
         var type = value.GetType();
-        if (BodyFields.IsScalar(type))
+        if (ScalarTypes.IsScalarType(type))
         {
-            content.Add(new StringContent(BodyFields.ScalarToString(value), encoding), RequireName(name));
+            content.Add(
+                new StringContent(ValueText.Format(value, ValueTextChannel.Multipart, memberFormat, config.ValueFormatter)!, encoding),
+                RequireName(name));
             return;
         }
 
@@ -259,7 +270,8 @@ internal static class MultipartBodyBuilder
                         encoding,
                         config,
                         visited,
-                        claimed);
+                        claimed,
+                        memberFormat: memberFormat);
                 }
             }
             finally
@@ -278,7 +290,7 @@ internal static class MultipartBodyBuilder
                 foreach (var item in enumerable)
                 {
                     // 集合逐项应用同一份声明（同名重复部件）
-                    CollectParts(name, item, content, encoding, config, visited, claimed, partOverride);
+                    CollectParts(name, item, content, encoding, config, visited, claimed, partOverride, memberFormat);
                 }
             }
             finally
@@ -308,7 +320,8 @@ internal static class MultipartBodyBuilder
                     encoding,
                     config,
                     visited,
-                    claimed);
+                    claimed,
+                    memberFormat: member.Format);
             }
         }
         finally
@@ -347,7 +360,7 @@ internal static class MultipartBodyBuilder
             case JsonValueKind.Number:
             case JsonValueKind.True:
             case JsonValueKind.False:
-                content.Add(new StringContent(BodyFields.ScalarText(element), encoding), RequireName(name));
+                content.Add(new StringContent(ValueText.JsonScalar(element), encoding), RequireName(name));
                 break;
 
             default:

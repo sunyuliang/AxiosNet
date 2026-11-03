@@ -260,6 +260,12 @@ public sealed partial class AxiosConfig
     internal bool CacheCaptureRawBody { get; set; }
 
     /// <summary>
+    /// 声明式 API 的实例级格式化钩子（<see cref="AxiosNet.WebAPI.ApiClient.ValueFormatter"/>）：
+    /// 由绑定层写入，作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文；普通调用不设置。
+    /// </summary>
+    internal Func<object?, string?>? ValueFormatter { get; set; }
+
+    /// <summary>
     /// 本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，
     /// 终端收到 <c>304 Not Modified</c> 时用它合并出完整响应。只属于这一次请求，<see cref="Clone"/> 不复制。
     /// </summary>

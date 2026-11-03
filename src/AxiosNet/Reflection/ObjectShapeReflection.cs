@@ -42,7 +42,8 @@ internal static class ObjectShapeReflection
                 ReflectionCache.GetFieldName(property),
                 ReflectionCache.IsIgnoredProperty(property),
                 property.PropertyType,
-                target => PropertyAccessor.GetValue(captured, target)));
+                target => PropertyAccessor.GetValue(captured, target),
+                ShapeFormatReader.Reader?.Invoke(property)));
         }
 
         return new ObjectShape(type, [.. members]);

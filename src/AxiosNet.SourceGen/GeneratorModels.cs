@@ -31,6 +31,7 @@ namespace AxiosNet.SourceGen
         string TypeOfExpression,
         string GetterExpression,
         bool Ignore,
+        string? FormatExpression,
         EquatableArray<MemberBindingInfo> Bindings);
 
     /// <summary>一个请求模型的完整生成数据；<see cref="Emit"/> 为 false 时只携带诊断。</summary>
@@ -58,6 +59,7 @@ namespace AxiosNet.SourceGen
         string Name,
         string TypeOfExpression,
         string Description,
+        string? FormatExpression,
         bool Ignore,
         bool Path,
         string? PathName,
@@ -101,8 +103,13 @@ namespace AxiosNet.SourceGen
         int CancellationTokenIndex,
         EquatableArray<InterfaceParameterInfo> Parameters);
 
-    /// <summary>对象形状的一个成员：展平时的名字与直接取值委托（生成代码里的 lambda 文本）。</summary>
-    internal sealed record ShapeMemberInfo(string Name, string FieldName, bool Ignored, string GetterExpression);
+    /// <summary>对象形状的一个成员：展平时的名字、直接取值委托（生成代码里的 lambda 文本）与成员级格式化。</summary>
+    internal sealed record ShapeMemberInfo(
+        string Name,
+        string FieldName,
+        bool Ignored,
+        string GetterExpression,
+        string? FormatExpression);
 
     /// <summary>
     /// 一个可注册的对象形状：命名类型用 <c>default(T)</c> 推断类型参数，匿名类型用结构相同的样本推断；

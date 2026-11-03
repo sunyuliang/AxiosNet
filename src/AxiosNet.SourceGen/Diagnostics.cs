@@ -148,5 +148,15 @@ namespace AxiosNet.SourceGen
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
+
+        /// <summary>[Format] 的格式化函数签名非法：模型成员、接口参数与对象形状成员共用。</summary>
+        public static readonly DiagnosticDescriptor FormatInvalid = new DiagnosticDescriptor(
+            "AXA015",
+            "[Format] 声明无效",
+            "{0} 的 [Format] 无效：{1}。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
     }
 }

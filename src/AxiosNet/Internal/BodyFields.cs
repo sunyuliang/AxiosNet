@@ -1,64 +1,16 @@
-using System.Globalization;
-using System.Text.Json;
-
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 请求体展平（表单 / multipart）共用的「值分类 + 字段命名」：哪些类型算标量、标量怎么取文本、嵌套字段名怎么拼。
+/// 请求体展平（表单 / multipart）共用的字段名拼装：默认 <c>prefix[key]</c>，可被
+/// <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖。
+/// 值分类归 <see cref="ScalarTypes"/>，值 → 文本归 <see cref="ValueText"/>，本类不持有这两套规则。
 /// </summary>
 /// <remarks>
 /// 字段名默认取 <see cref="ShapeMember.FieldName"/>（构建期已按 <c>[JsonPropertyName]</c> 定好），
-/// 可被 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖；成员是否忽略由 <see cref="ShapeMember.Ignored"/> 决定。
+/// 成员是否忽略由 <see cref="ShapeMember.Ignored"/> 决定。
 /// </remarks>
 internal static class BodyFields
 {
-    /// <summary>表单 / multipart 的标量判定，转调 <see cref="ScalarTypes.IsScalarType"/>（唯一权威清单）。</summary>
-    public static bool IsScalar(Type type) => ScalarTypes.IsScalarType(type);
-
-    /// <summary>
-    /// 表单 / multipart 的标量文本：日期时间折成 UTC 毫秒（与 query 序列化约定一致），
-    /// <see cref="DateTimeKind.Unspecified"/> 按 UTC 解释。
-    /// </summary>
-    public static string ScalarToString(object value) => value switch
-    {
-        string s => s,
-        bool b => b ? "true" : "false",
-        char c => c.ToString(),
-        DateTime dt => (dt.Kind == DateTimeKind.Unspecified
-            ? DateTime.SpecifyKind(dt, DateTimeKind.Utc)
-            : dt).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
-        DateTimeOffset dto => dto.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
-        Enum e => e.ToString(),
-        DateOnly d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        TimeOnly t => t.ToString("O", CultureInfo.InvariantCulture),
-        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
-        _ => value.ToString() ?? string.Empty
-    };
-
-    /// <summary>
-    /// 请求体标量的文本形态（不进序列化器）：日期时间用往返格式 <c>O</c> 保留 Kind 与 tick。
-    /// </summary>
-    /// <remarks>
-    /// 与 <see cref="ScalarToString"/> 只差日期时间族两条分支：请求体是「值本身」，折成 UTC 或截到毫秒都是失真；
-    /// 表单 / query 那边受既有线上约定约束。其余类型（含 <see cref="DateOnly"/> / <see cref="TimeOnly"/>，两者取 <c>O</c>
-    /// 与 <c>yyyy-MM-dd</c> 结果相同）共用同一份实现。
-    /// </remarks>
-    public static string ScalarBodyText(object value) => value switch
-    {
-        DateTime dt => dt.ToString("O", CultureInfo.InvariantCulture),
-        DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
-        _ => ScalarToString(value)
-    };
-
-    /// <summary>JSON 树叶子节点的文本（数值保留原始书写形式，不经过 double 往返）。</summary>
-    public static string ScalarText(JsonElement element) => element.ValueKind switch
-    {
-        JsonValueKind.String => element.GetString() ?? string.Empty,
-        JsonValueKind.True => "true",
-        JsonValueKind.False => "false",
-        _ => element.GetRawText()
-    };
-
     /// <summary>字段名生成：默认 <c>prefix[key]</c>，可通过 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖。</summary>
     public static string CombineName(Func<string?, string, string>? selector, string? prefix, string name)
         => selector is not null

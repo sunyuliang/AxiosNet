@@ -23,12 +23,21 @@ public sealed class ShapeBuilder<T>
 
     /// <summary>声明一个成员；顺序即展平顺序（生成形状必须与反射形状一致，忽略的成员也要保留位置）。</summary>
     public ShapeBuilder<T> Member(string name, string fieldName, bool ignored, Func<T, object?> getValue)
+        => Member(name, fieldName, ignored, getValue, format: null);
+
+    /// <summary>声明一个成员并带成员级格式化（<c>[Format]</c> 的烘焙形态）。</summary>
+    /// <param name="name">成员名。</param>
+    /// <param name="fieldName">表单 / multipart 字段名。</param>
+    /// <param name="ignored">是否整体忽略（等价于 <c>[JsonIgnore(Always)]</c>）。</param>
+    /// <param name="getValue">成员取值委托。</param>
+    /// <param name="format">成员级格式化；<c>null</c> 表示走通道默认规则。</param>
+    public ShapeBuilder<T> Member(string name, string fieldName, bool ignored, Func<T, object?> getValue, ValueFormat? format)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(fieldName);
         ArgumentNullException.ThrowIfNull(getValue);
 
-        _members.Add(new ShapeMemberDraft(name, fieldName, ignored, getValue));
+        _members.Add(new ShapeMemberDraft(name, fieldName, ignored, getValue, format));
         return this;
     }
 
@@ -43,11 +52,12 @@ public sealed class ShapeBuilder<T>
                 draft.FieldName,
                 draft.Ignored,
                 typeof(object),
-                target => draft.GetValue((T)target));
+                target => draft.GetValue((T)target),
+                draft.Format);
         }
 
         return new ObjectShape(type, members);
     }
 
-    private sealed record ShapeMemberDraft(string Name, string FieldName, bool Ignored, Func<T, object?> GetValue);
+    private sealed record ShapeMemberDraft(string Name, string FieldName, bool Ignored, Func<T, object?> GetValue, ValueFormat? Format);
 }

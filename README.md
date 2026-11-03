@@ -27,7 +27,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 分组 | 章节 |
 | --- | --- |
-| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api) / [OpenAPI 导入](#从-openapi-导入)） · [能力地图](#能力地图) · [令牌管理](#令牌管理) |
+| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api) / [值格式化](#值格式化) / [OpenAPI 导入](#从-openapi-导入)） · [能力地图](#能力地图) · [令牌管理](#令牌管理) |
 | 请求与响应 | [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) · [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [发送前钩子](#发送前钩子签名--最终请求) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性与治理 | [重试](#重试) · [全局重试预算](#全局重试预算retrybudgetpolicy) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) · [响应缓存](#响应缓存) |
@@ -170,6 +170,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 | 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头（同名 `[Header]` 属性 / 参数仍会把它写回来）；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
 | 请求体 | `[Body]` | 每个模型最多一个；`null` 不发请求体 |
+| 值格式化 | `[Format]`（属性 / 参数） | 格式串或静态函数；集合逐元素、字典逐值（见「值格式化」） |
 | 编码 | `[BodyContentType]` / `[QueryCollectionFormat]`（接口方法） | 正文媒体类型（决定怎么编码）/ 查询集合格式；覆盖实例默认值 |
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
 
@@ -179,7 +180,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 - 模型定义非法（缺路由、占位符未绑定、多个 Body…）首次调用抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateModels(typeof(A), ...)` 或 `ValidateModels(assembly)`（返回全部错误消息，不抛）。按类型重载在 Native AOT 下同样可用（已生成的声明直接走注册表）；`ValidateModels(assembly)` 依赖反射枚举，AOT 下改调生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`。
 - 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；`IAuthorizationProvider` 是扩展点，内置 `BearerAuthorizationProvider`。
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
-- 其它：`client.UrlParameterFormatter` 接管 `[Path]` / `[Query]` 文本形态；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
+- 其它：`client.ValueFormatter` 接管路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文的文本形态（优先级低于成员上的 `[Format]`，见「值格式化」）；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
 
 ### 接口式 API
 
@@ -241,6 +242,58 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 - 方法级编码：`[BodyContentType(...)]` 写入 `config.ContentType`（决定正文编码，而不是只加一个头），用于表单、XML 或自定义媒体类型；它与 `[Multipart]` 互斥（multipart 的媒体类型固定）。`[QueryCollectionFormat(...)]` 写入 `config.Serialization.CollectionFormat`，覆盖实例默认值；OpenAPI 的 `explode: true` 对应 `AxiosCollectionFormat.Multi`。
 - 接口方法不支持方法级 `configure` 钩子，需要逐请求微调时用请求模型。
 - **Native AOT**：接口所在程序集启用源生成器即生成真实代理（内部接口同样支持）；闭合泛型接口（如 `IRepo<User>`）在调用点 `Create<T>()` / `AddApiInterface<T>()` 出现时生成，只有开放泛型声明本身会给出 `AXA011` 警告。未生成 / 未注册时 AOT 下 `Create<T>()` 抛 `AxiosAotMetadataException`（带修复指引），JIT 下回退 `DispatchProxy`（需 public 接口）。生成路径不要求 `TrimmerRootAssembly`，也不再需要 root 接口类型。
+
+### 值格式化
+
+值写进 URL、请求头或表单时最终都是文本。库把「值 → 文本」收敛成**一条**路径，两层声明按优先级叠加：
+
+1. 成员上的 `[Format]`（模型属性 / 接口参数）—— 最具体；
+2. 实例上的 `ValueFormatter` —— 成员没声明时生效；
+3. 通道默认规则（日期时间折 UTC 毫秒、枚举取名字、`byte[]` 取 base64、`IFormattable` 按不变文化…）。
+
+```csharp
+[Get("users/{id}")]
+public sealed class ListRequest : IApiRequest<User[]>
+{
+    [Path, Format("0000")] public int Id { get; set; }                  // /users/0002
+    [Query, Format("yyyy-MM-dd")] public DateTime Since { get; set; }   // since=2024-01-02
+    [Query, Format("X2")] public int[] Codes { get; set; } = [];        // codes[]=0B&codes[]=FF
+
+    [Query("amounts"), Format(typeof(Formats), nameof(Formats.Money))]  // amounts[min]=12.50
+    public Dictionary<string, decimal> Amounts { get; set; } = new();
+}
+
+public static class Formats
+{
+    // 签名固定：public static string? M(object? value)；返回 null = 本次不处理，回落默认规则。
+    public static string? Money(object? value)
+        => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
+}
+
+var client = new ApiClient(url)
+{
+    ValueFormatter = value => value is DateTime date
+        ? date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+        : null
+};
+```
+
+- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文（`data` 本身是标量，含 `byte[]` 等二进制形态）。同一套规则，不存在「查询里能格式化、表单里不能」；查询里的嵌套对象 / 字典按叶子应用（成员声明优先，其次实例钩子）。
+- **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
+- **格式串**要求值实现 `IFormattable`，区域固定为不变文化（不跟随 `CurrentCulture`）；需要区域相关的形态就写格式化函数。
+- **结构化正文内部不归它管**：`[Body]` + 结构化类型上标 `[Format]` 在构建期报错（文档内部由序列化器负责）。要让 JSON 里的成员也按 `[Format]` 输出，挂可选桥：
+
+```csharp
+using AxiosNet.WebAPI.Serialization;
+
+// net7.0+，Native AOT 下不可用（桥按属性类型构造泛型转换器）
+config.Serialization.JsonSerializerOptions =
+    AxiosJsonFormat.ApplyTo(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+```
+
+- **构建期报错**（不留到运行期静默回落）：`[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `FormFile` / `HttpContent`）同用；格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；标在非标量（POCO）的查询参数上。模型属性与接口参数走同一套校验。
+- **写错怎么发现**（都不必等到发请求）：方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；签名不对（非 `public static` / 泛型 / 参数不是 `object` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `InvalidOperationException`。没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
+- **Native AOT**：源生成器把格式化委托直接烘焙进元数据（签名不合法报 `AXA015`），运行期不需要反射。手动 `RegisterShape<T>()` 的形状没有烘焙，AOT 下用 `[Format(typeof(...), nameof(...))]` 会显式报错并指向「启用源生成器或改用格式串」，不会静默丢格式化。
 
 ### 从 OpenAPI 导入
 
@@ -477,7 +530,7 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 - 集合形态由 `Serialization.CollectionFormat` 决定：`Brackets`（默认）/ `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`。
 - 键与值走 `Uri.EscapeDataString`（空格 `%20`）；手写在 `Url` 里的查询串不二次编码。
 - `Params` 传标量抛 `ERR_BAD_OPTION_VALUE`（没有键名）。完全自定义：`c.Serialization.ParamsSerializer = p => "a=1&b=2"`。
-- 标量文本形态（`Params` / `[Path]` / `[Header]` / 表单共用）：`bool` → `true`/`false`，枚举 → 名字，`DateTime`/`DateTimeOffset` → UTC 毫秒 ISO（`Unspecified` 按 UTC），其它走 `IFormattable` + `InvariantCulture`。
+- 标量文本形态（`Params` / `[Path]` / `[Header]` / 表单 / multipart / 裸标量正文共用同一条路径）：`bool` → `true`/`false`，枚举 → 名字，`DateTime`/`DateTimeOffset` → UTC 毫秒 ISO（`Unspecified` 按 UTC；裸标量正文例外，用往返格式 `"O"`），`DateOnly` → `yyyy-MM-dd`，`byte[]` → base64，其它走 `IFormattable` + `InvariantCulture`。按成员改写形态用 `[Format]`，按实例改写的钩子是 `ApiClient.ValueFormatter`（见「值格式化」）。
 
 ### 请求体 data 与 ContentType
 
@@ -1781,7 +1834,7 @@ dotnet run --project samples/AxiosNet.Simple
 | 套件 | 项数 | 覆盖 |
 | --- | ---: | --- |
 | 核心 | 37 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档 |
-| 声明式 | 16 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
+| 声明式 | 17 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、值格式化（`[Format]` / `ValueFormatter` 优先级）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
 
 另有两个示例：
 
@@ -1837,6 +1890,7 @@ dotnet run --project samples/AxiosNet.Simple
 | `AXA012` | Warning | `PublishAot` 下设置了 `AxiosNetSourceGen=false` |
 | `AXA013` | Warning | 形状类型的访问级别对生成代码不可见（已跳过形状；AOT 下展平到该类型会显式失败） |
 | `AXA014` | Error | 接口方法的编码声明无效：`[BodyContentType]` 为空白 / 含控制字符、`[QueryCollectionFormat]` 值未定义，或与 `[Multipart]` 同用 |
+| `AXA015` | Error | `[Format]` 声明无效：格式化字符串为空白，或格式化函数不存在 / 不是 `public static`、参数不是单个 `object`、返回值不是 `string` |
 
 `System.Text.Json` 的序列化元数据仍需要按需注册（源生成 `JsonSerializerContext`）：
 
@@ -1860,6 +1914,8 @@ var client = new AxiosClient(new AxiosConfig
 
 `JsonSerializerDefaults.Web` 不能省：换成裸 `new JsonSerializerOptions()` 会把 camelCase 换成属性原名，请求 / 响应字段名跟着变，而源生成上下文里的 `JsonSourceGenerationOptions` 不会替你补回来（`AxiosJson.Options` 的默认值就是 Web）。
 
+`[Format]` 的 JSON 桥（`AxiosJsonFormat.ApplyTo`）同样不可用：它按属性类型构造泛型 `JsonConverter` 并读取属性特性，方法上已标注 `[RequiresDynamicCode]` / `[RequiresUnreferencedCode]`。AOT 下用 `[Format]` 只能作用于库自己转文本的通道（路径 / 查询 / 请求头 / 表单 / multipart / 裸标量正文），JSON 文档内部请改用自定义 `JsonConverter` 或直接换个 DTO。
+
 AOT 下缺少元数据不会静默丢字段，而是抛出带修复指引的异常：请求模型 / 接口缺元数据时抛 `AxiosAotMetadataException`（消息含类型名与修复方式；也可用隐藏 API `AxiosApiMetadata.RegisterRequestModel` / `RegisterInterface` 手工注册声明兜底）；`System.Text.Json` 缺类型元数据时抛 `NotSupportedException`，提示把类型加入 `JsonSerializerContext` 并设置 `TypeInfoResolver`（匿名类型无法写入 `[JsonSerializable]`，消息会直接建议改用命名类型或 params / 表单）；`XmlContentSerializer` 与 `AxiosDynamic` 的 dynamic 成员语法抛 `PlatformNotSupportedException`（`AxiosDynamic` 的索引访问与 `IDictionary` 接口仍可用）。
 
 AOT 下不可用：`dynamic` 成员语法（`data.name`）、运行期才确定的类型、`XmlContentSerializer`、程序集扫描（`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` 依赖反射枚举，AOT 下抛 `PlatformNotSupportedException`；改用生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`，它覆盖本程序集里源生成器生成过元数据的全部请求模型与接口，或按类型调用 `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)`）、接口代理的回退路径（未生成 / 未注册时的 `DispatchProxy` 依赖 Reflection.Emit，仅 JIT）。生成的类名把程序集名里的非标识符字符换成 `_`（`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`）；本程序集没有任何可生成的模型 / 接口时不会生成该类。匿名对象作为 params / 表单值不需要额外配置：生成器会为结构烘焙样本（见上文「对象形状」）。
@@ -1878,12 +1934,12 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2022 / 2015 | `net8.0` / `net6.0` | 4037 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2070 / 2061 | `net8.0` / `net6.0` | 4131 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2162 / 2155** | | **4243** |
+| **合计** | **2210 / 2201** | | **4337** |
 
-表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。`net8.0` 比 `net6.0` 净多 7 条：`AotJsonTests` 9 条只在 net8 分支编译（`JsonSerializerOptions.TypeInfoResolver` 是 .NET 7+ API），`net6.0` 独有 2 条 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。`AxiosNet.Cli.Tests` 只在本地跑——CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
+表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。`net8.0` 比 `net6.0` 净多 9 条：`AotJsonTests` 9 条与 `FormatAttributeTests` 里 JSON 桥 2 条只在 net8 分支编译（`JsonSerializerOptions.TypeInfoResolver` / `JsonTypeInfo.Properties` 是 .NET 7+ API），`net6.0` 独有 2 条 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。`AxiosNet.Cli.Tests` 只在本地跑——CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
 
 测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
 

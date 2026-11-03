@@ -1,3 +1,5 @@
+using System.IO;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using AxiosNet.Internal;
 using AxiosNet.WebAPI.Attributes;
@@ -38,6 +40,8 @@ internal sealed class BindingAccumulator
     /// <summary>路径绑定：占位符名称大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
     public void AddPath(IValueSource source, string explicitName)
     {
+        EnsureFormat(source, "Path");
+
         var name = ResolveName(explicitName, source.Name);
         if (!_pathNames.Add(name))
         {
@@ -50,6 +54,8 @@ internal sealed class BindingAccumulator
     /// <summary>请求头绑定：头名大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
     public void AddHeader(IValueSource source, string explicitName)
     {
+        EnsureFormat(source, "Header");
+
         var name = ResolveName(explicitName, source.Name);
         if (!_headerNames.Add(name))
         {
@@ -61,6 +67,13 @@ internal sealed class BindingAccumulator
 
     public void AddHeaderCollection(IValueSource source)
     {
+        if (source.Format is not null)
+        {
+            throw new InvalidOperationException(
+                $"{_owner} 的{_memberKind} {source.Name} 同时标注了 [Format] 与 [HeaderCollection]："
+                + "[HeaderCollection] 的值必须是字符串字典，逐项格式化没有意义。");
+        }
+
         if (_headers.Any(h => ReferenceEquals(h.Source, source)))
         {
             throw new InvalidOperationException(
@@ -80,6 +93,19 @@ internal sealed class BindingAccumulator
     /// <summary>请求体唯一：重复的 <see cref="BodyAttribute"/> 绑定在构建期报错。</summary>
     public void AddBody(IValueSource source)
     {
+        if (source.Format is not null)
+        {
+            if (!ScalarTypes.IsScalarBodyType(source.ValueType))
+            {
+                throw new InvalidOperationException(
+                    $"{_owner} 的{_memberKind} {source.Name} 同时标注了 [Format] 与 [Body]，但类型 {source.ValueType.Name} 是结构化对象："
+                    + "结构化正文内部的格式化归序列化器（JsonConverter / XmlElement 等），库不进入文档内部改写。"
+                    + "要让 JSON 文档内部也按 [Format] 输出，请额外用 AxiosJsonFormat.ApplyTo 包装 JsonSerializerOptions。");
+            }
+
+            EnsureFormat(source, "Body");
+        }
+
         if (_body is not null)
         {
             throw new InvalidOperationException(
@@ -92,6 +118,7 @@ internal sealed class BindingAccumulator
     /// <summary>未标注任何参数特性的成员：默认 Query；字符串键字典未命名时平铺。</summary>
     public void AddUnannotated(IValueSource source)
     {
+        EnsureFormat(source, "Query");
         _unannotated.Add(source);
 
         if (QueryMap.IsMapType(source.ValueType))
@@ -113,6 +140,8 @@ internal sealed class BindingAccumulator
     /// <summary>显式 <see cref="QueryAttribute"/> 绑定：字典 + 未显式命名 → 平铺，显式命名保留嵌套（?name[key]=v）。</summary>
     public void AddQuery(IValueSource source, string explicitName)
     {
+        EnsureFormat(source, "Query");
+
         if (string.IsNullOrWhiteSpace(explicitName) && QueryMap.IsMapType(source.ValueType))
         {
             _queryMaps.Add((source.Name, source));
@@ -273,6 +302,32 @@ internal sealed class BindingAccumulator
             }
         }
     }
+
+    /// <summary>校验部件上的成员级格式化：文件类部件按字节发送，没有文本格式。</summary>
+    public void ValidatePartFormat(IValueSource source)
+    {
+        if (source.Format is null)
+        {
+            return;
+        }
+
+        var type = Nullable.GetUnderlyingType(source.ValueType) ?? source.ValueType;
+        if (type == typeof(byte[])
+            || typeof(Stream).IsAssignableFrom(type)
+            || type == typeof(FormFile)
+            || typeof(HttpContent).IsAssignableFrom(type))
+        {
+            throw new InvalidOperationException(
+                $"{_owner} 的{_memberKind} {source.Name} 标注了 [Format]，但 {type.Name} 是文件部件"
+                + "（Stream / byte[] / FormFile / HttpContent）：文件按字节发送，没有文本格式。");
+        }
+
+        EnsureFormat(source, "Part");
+    }
+
+    /// <summary>成员级格式化与通道的兼容性校验（<see cref="FormatRules"/> 是唯一权威）。</summary>
+    private void EnsureFormat(IValueSource source, string target)
+        => FormatRules.EnsureApplicable(source.Format, source.ValueType, _owner, source.Name, target);
 
     private InvalidOperationException DuplicateBinding(string name, string kind)
         => new($"{_owner} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个{_memberKind}（集合值走 AxiosNet 的数组规则）。");

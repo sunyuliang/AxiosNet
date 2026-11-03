@@ -22,8 +22,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// </summary>
     public IAccessTokenProvider? AccessTokenProvider { get; set; }
 
-    /// <summary>URL 参数格式化钩子：绑定 <c>[Path]</c> 与 <c>[Query]</c> 的值时调用，返回的字符串直接作为该参数的文本（路径段仍会被 URL 转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。</summary>
-    public Func<object, string?>? UrlParameterFormatter { get; set; }
+    /// <summary>
+    /// 实例级格式化钩子：绑定 <c>[Path]</c> / <c>[Query]</c> / <c>[Header]</c> / <c>[Part]</c> / 表单字段与裸标量正文的值时调用，
+    /// 返回的字符串直接作为该值的线上文本（路径段仍会被 URL 转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。
+    /// 优先级低于成员上的 <see cref="FormatAttribute"/>。
+    /// </summary>
+    public Func<object?, string?>? ValueFormatter { get; set; }
 
     /// <summary>
     /// 收到 401 时用新令牌重放一次，默认开启（只在 <see cref="AccessTokenProvider"/> 真的写了 <c>Authorization</c> 头时生效；
@@ -115,19 +119,21 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken)
     {
+        var formatter = ValueFormatter;
         var config = new AxiosConfig
         {
             Method = metadata.Method,
-            Url = metadata.ResolveUrl(request, UrlParameterFormatter)
+            Url = metadata.ResolveUrl(request, formatter),
+            ValueFormatter = formatter
         };
 
         // 没有查询参数时不写：合并层把显式 null 当成摘掉实例默认值。
-        if (metadata.ResolveQuery(request, UrlParameterFormatter) is { } query)
+        if (metadata.ResolveQuery(request, formatter) is { } query)
         {
             config.Params = query;
         }
 
-        var body = ResolveBody(metadata, request, config);
+        var body = ResolveBody(metadata, request, config, formatter);
         if (body is not null)
         {
             config.Data = body;
@@ -135,7 +141,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
         // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项
         metadata.ApplyStaticHeaders(config);
-        metadata.ApplyHeaders(request, config);
+        metadata.ApplyHeaders(request, config, formatter);
 
         // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌
         if (cancellationToken.CanBeCanceled)
@@ -156,11 +162,15 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>取请求体（<c>[Body]</c> 的值 / <c>[Multipart]</c> 装配好的表单）；取值失败归 <c>ERR_BAD_REQUEST</c>。</summary>
-    private static object? ResolveBody(RequestModelMetadata metadata, object request, AxiosConfig config)
+    private static object? ResolveBody(
+        RequestModelMetadata metadata,
+        object request,
+        AxiosConfig config,
+        Func<object?, string?>? formatter)
     {
         try
         {
-            return metadata.ResolveBody(request);
+            return metadata.ResolveBody(request, formatter);
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {

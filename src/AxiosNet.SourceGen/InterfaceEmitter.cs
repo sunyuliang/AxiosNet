@@ -250,6 +250,11 @@ namespace AxiosNet.SourceGen
                         .Append(parameter.TypeOfExpression)
                         .AppendLine("))");
 
+                    if (parameter.FormatExpression is { } format)
+                    {
+                        builder.Append("                        .Format(").Append(format).AppendLine(")");
+                    }
+
                     if (parameter.Ignore)
                     {
                         builder.AppendLine("                        .Ignore()");

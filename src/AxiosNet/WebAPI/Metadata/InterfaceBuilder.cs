@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI.Metadata;
@@ -197,6 +198,15 @@ public sealed class InterfaceParameterBuilder
     {
         _owner = owner;
         _parameter = parameter;
+    }
+
+    /// <summary><c>[Format]</c>：参数级值格式化（只影响库转文本的通道，结构化正文内部归序列化器）。</summary>
+    /// <param name="format">格式化；生成器把 <c>[Format]</c> 的两种形态都烘焙成这里的调用。</param>
+    public InterfaceParameterBuilder Format(ValueFormat format)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        _parameter.Format = format;
+        return this;
     }
 
     /// <summary><c>[Path]</c>；省略名字时用参数名。</summary>

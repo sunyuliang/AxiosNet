@@ -1,3 +1,5 @@
+using AxiosNet.Metadata;
+
 namespace AxiosNet.Internal;
 
 /// <summary>对象形状：params / 表单 / multipart 展平所需的属性清单（生成期烘焙或反射产出）。</summary>
@@ -20,7 +22,7 @@ internal sealed class ObjectShape
     public string? Error { get; }
 }
 
-/// <summary>对象形状里的单个成员：取值委托 + 各种展平形态下的键名。</summary>
+/// <summary>对象形状里的单个成员：取值委托 + 各种展平形态下的键名 + 成员级格式化。</summary>
 internal readonly struct ShapeMember
 {
     public ShapeMember(
@@ -28,13 +30,15 @@ internal readonly struct ShapeMember
         string fieldName,
         bool ignored,
         Type valueType,
-        Func<object, object?> getValue)
+        Func<object, object?> getValue,
+        ValueFormat? format = null)
     {
         Name = name;
         FieldName = fieldName;
         Ignored = ignored;
         ValueType = valueType;
         GetValue = getValue;
+        Format = format;
         EscapedName = ParamsSerializer.EscapeKey(name);
         BracketSuffix = "[" + EscapedName + "]";
     }
@@ -59,6 +63,9 @@ internal readonly struct ShapeMember
 
     /// <summary>从实例取成员值：生成期烘焙的强类型委托，或反射构造的委托。</summary>
     public Func<object, object?> GetValue { get; }
+
+    /// <summary>成员级格式化（<c>[Format]</c>）；<c>null</c> 表示走通道默认规则。</summary>
+    public ValueFormat? Format { get; }
 }
 
 /// <summary>自定义只读字典的枚举访问器（生成期烘焙；反射路径见 <see cref="QueryMap"/>）。</summary>

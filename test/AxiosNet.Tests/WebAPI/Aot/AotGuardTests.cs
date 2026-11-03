@@ -19,6 +19,28 @@ namespace AxiosNet.Tests.WebAPI.Aot;
 public sealed class AotGuardTests
 {
     [Fact]
+    public void FormatSpecReader_WhenDynamicCodeIsDisabled_GivesGeneratorGuidance()
+    {
+        RuntimeSupport.ForceNoDynamicCode = true;
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(
+                () => AxiosNet.WebAPI.Reflection.FormatSpecReader.Read(
+                    new FormatAttribute(typeof(FormatHelpers), nameof(FormatHelpers.Money)),
+                    "请求模型 X",
+                    "Amount"));
+
+            // AOT 下手动注册的形状没有烘焙：错误必须指向「用生成器」而不是说方法不存在。
+            Assert.Contains("Native AOT", error.Message);
+            Assert.Contains("源生成器", error.Message);
+        }
+        finally
+        {
+            RuntimeSupport.ForceNoDynamicCode = false;
+        }
+    }
+
+    [Fact]
     public void XmlSerializer_WhenDynamicCodeIsDisabled_ThrowsPlatformNotSupported()
     {
         RuntimeSupport.ForceNoDynamicCode = true;

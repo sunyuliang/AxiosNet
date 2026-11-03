@@ -168,7 +168,7 @@ public sealed class RequestModelDeclarationTests
         var request = new DeclaredDefaultBodyRequest { Payload = new Person("n", 1) };
         var metadata = RequestModelMetadata.Get(typeof(DeclaredDefaultBodyRequest));
 
-        Assert.Same(request.Payload, metadata.ResolveBody(request));
+        Assert.Same(request.Payload, metadata.ResolveBody(request, formatter: null));
         Assert.Null(metadata.ResolveQuery(request, formatter: null));
     }
 
@@ -196,7 +196,7 @@ public sealed class RequestModelDeclarationTests
         Assert.Equal("yes", config.Headers["X-Static"]);
         Assert.Contains("X-Removed", config.RemoveHeaders);
 
-        metadata.ApplyHeaders(new DeclaredHeadersRequest { Token = "t" }, config);
+        metadata.ApplyHeaders(new DeclaredHeadersRequest { Token = "t" }, config, formatter: null);
         Assert.Equal("t", config.Headers["X-Static"]);
     }
 

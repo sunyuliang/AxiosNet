@@ -209,10 +209,18 @@ internal static class RequestBodyFactory
             mediaType = declared.Trim();
         }
 
-        // 基础类型不经过序列化器，直接取文本。
-        if (BodyFields.IsScalar(type))
+        // 声明成员带 [Format] 的裸标量：文本已由绑定层产出，媒体类型与下面的标量分支完全一致。
+        if (data is FormattedScalarBody formatted)
         {
-            var scalar = CreateText(BodyFields.ScalarBodyText(data), mediaType, encoding, appendCharset, config);
+            var formattedContent = CreateText(formatted.Text, mediaType, encoding, appendCharset, config);
+            ValidateDeclaredCharset(formattedContent, config, encoding);
+            return formattedContent;
+        }
+
+        // 基础类型不经过序列化器，直接取文本。
+        if (ScalarTypes.IsScalarType(type))
+        {
+            var scalar = CreateText(ValueText.Format(data, ValueTextChannel.ScalarBody)!, mediaType, encoding, appendCharset, config);
             ValidateDeclaredCharset(scalar, config, encoding);
             return scalar;
         }
@@ -290,9 +298,11 @@ internal static class RequestBodyFactory
             or IAsyncEnumerable<byte[]>
             or IAsyncEnumerable<ReadOnlyMemory<byte>>;
 
-    /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string 与结构化数据）。</summary>
+    /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string / 已格式化的标量 / 结构化数据）。</summary>
     private static bool EncodesText(object data)
         => data is string
+            // 兜底条件对它已返回 true；这里显式列出，避免将来收紧兜底时把它误判成二进制。
+            || data is FormattedScalarBody
             || (data is not HttpContent
                 && data is not byte[]
                 && data is not ReadOnlyMemory<byte>

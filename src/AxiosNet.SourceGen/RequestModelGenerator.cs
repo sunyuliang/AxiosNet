@@ -300,6 +300,12 @@ namespace AxiosNet.SourceGen
                     ? name
                     : property.Name;
 
+            var formatExpression = BuildFormatExpression(
+                FindInOverrideChain(property, wellKnown.Format),
+                $"属性 {model.Name}.{property.Name}",
+                GetLocation(property),
+                diagnostics.Add);
+
             return new RequestMemberInfo(
                 property.Name,
                 fieldName,
@@ -308,6 +314,7 @@ namespace AxiosNet.SourceGen
                 "typeof(" + TypeFormats.Display(property.Type) + ")",
                 "static o => ((" + TypeFormats.Display(property.ContainingType) + ")o)." + EscapeIdentifier(property.Name),
                 ignored,
+                formatExpression,
                 new EquatableArray<MemberBindingInfo>(bindings.ToImmutable()));
         }
 
@@ -729,6 +736,68 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        /// <summary>
+        /// 把 <c>[Format]</c> 展开成 <c>ValueFormat</c> 的构造表达式：生成期直接把格式化委托写死，AOT 下不需要反射。
+        /// 函数签名非法时记 AXA015 并返回 null（声明照常生成，该成员按无格式化处理）。
+        /// </summary>
+        private static string? BuildFormatExpression(
+            AttributeData? attribute,
+            string owner,
+            Location location,
+            Action<DiagnosticInfo> onInvalid)
+        {
+            if (attribute is null || attribute.ConstructorArguments.Length == 0)
+            {
+                return null;
+            }
+
+            var arguments = attribute.ConstructorArguments;
+
+            if (arguments[0].Value is string format)
+            {
+                return "global::AxiosNet.Metadata.ValueFormat.FromFormat(" + SymbolDisplay.FormatLiteral(format, quote: true) + ")";
+            }
+
+            if (arguments[0].Value is INamedTypeSymbol formatterType
+                && arguments.Length > 1
+                && arguments[1].Value is string methodName)
+            {
+                if (!IsValidFormatMethod(formatterType, methodName))
+                {
+                    // 「方法不存在」与「签名不对」是两种修法，消息必须分开：混在一起会把拼错的名字说成签名问题。
+                    var reason = HasMember(formatterType, methodName)
+                        ? $"函数 {formatterType.Name}.{methodName} 必须是 public static string? {methodName}(object? value)"
+                        : $"函数 {formatterType.Name}.{methodName} 不存在：请检查方法名（写 nameof(...) 时编译器会先帮你查）";
+
+                    onInvalid(new DiagnosticInfo(Diagnostics.FormatInvalid, ToEquatable([owner, reason]), location));
+                    return null;
+                }
+
+                // Display 已经带 global:: 前缀（FullyQualifiedFormat），这里不能再拼一次。
+                return "global::AxiosNet.Metadata.ValueFormat.FromDelegate(static v => "
+                    + TypeFormats.Display(formatterType) + "." + methodName + "(v))";
+            }
+
+            return null;
+        }
+
+        /// <summary>该类型是否有同名成员（区分「名字写错」与「签名不对」）。</summary>
+        private static bool HasMember(INamedTypeSymbol type, string methodName)
+            => type.GetMembers(methodName).Length > 0;
+
+        /// <summary>格式化函数的签名判定：public static、非泛型、非抽象、单个 object 参数、返回 string。</summary>
+        private static bool IsValidFormatMethod(INamedTypeSymbol type, string methodName)
+            => type.GetMembers(methodName).OfType<IMethodSymbol>().Any(IsFormatSignature);
+
+        private static bool IsFormatSignature(IMethodSymbol method)
+            => method.IsStatic
+                && !method.IsGenericMethod
+                && !method.IsAbstract
+                && method.DeclaredAccessibility == Accessibility.Public
+                && method.Parameters.Length == 1
+                && method.Parameters[0].Type.SpecialType == SpecialType.System_Object
+                && method.ReturnType.SpecialType == SpecialType.System_String;
+
         private static AttributeData? FindInOverrideChain(IPropertySymbol property, INamedTypeSymbol? attributeType)
         {
             if (attributeType is null)
@@ -845,6 +914,7 @@ namespace AxiosNet.SourceGen
             Body = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.BodyAttribute");
             Part = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.PartAttribute");
             ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute");
+            Format = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.FormatAttribute");
             ApiRequest = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.IApiRequest`1");
             JsonPropertyName = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonPropertyNameAttribute");
             JsonIgnore = compilation.GetTypeByMetadataName("System.Text.Json.Serialization.JsonIgnoreAttribute");
@@ -888,6 +958,8 @@ namespace AxiosNet.SourceGen
         public INamedTypeSymbol? Part { get; }
 
         public INamedTypeSymbol? ApiIgnore { get; }
+
+        public INamedTypeSymbol? Format { get; }
 
         public INamedTypeSymbol? ApiRequest { get; }
 

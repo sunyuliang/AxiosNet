@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI.Metadata;
@@ -135,6 +136,15 @@ public sealed class RequestModelMemberBuilder
     public RequestModelMemberBuilder FieldName(string fieldName)
     {
         _member.FieldName = fieldName;
+        return this;
+    }
+
+    /// <summary><c>[Format]</c>：成员级值格式化（只影响库转文本的通道，结构化正文内部归序列化器）。</summary>
+    /// <param name="format">格式化；生成器把 <c>[Format]</c> 的两种形态都烘焙成这里的调用。</param>
+    public RequestModelMemberBuilder Format(ValueFormat format)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        _member.Format = format;
         return this;
     }
 

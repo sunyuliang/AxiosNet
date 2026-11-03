@@ -82,13 +82,15 @@ internal sealed partial class InterfaceMethodMetadata
     /// <summary>把参数绑定成配置：URL / 查询 / 请求体（含 multipart）→ 声明级静态头 → 参数头（后者覆盖同名项）。</summary>
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
+        var formatter = client.ValueFormatter;
         var config = new AxiosConfig
         {
             Method = _method!,
-            Url = _plan!.ResolveUrl(_pathTemplate!, args, client.UrlParameterFormatter)
+            Url = _plan!.ResolveUrl(_pathTemplate!, args, formatter),
+            ValueFormatter = formatter
         };
 
-        if (_plan.ResolveQuery(args, client.UrlParameterFormatter) is { } query)
+        if (_plan.ResolveQuery(args, formatter) is { } query)
         {
             config.Params = query;
         }
@@ -117,7 +119,7 @@ internal sealed partial class InterfaceMethodMetadata
                 config.ContentType = AxiosContentType.MultipartFormData;
             }
         }
-        else if (_plan.ResolveBodyValue(args) is { } body)
+        else if (_plan.ResolveBodyValue(args, formatter) is { } body)
         {
             config.Data = body;
         }
@@ -135,7 +137,7 @@ internal sealed partial class InterfaceMethodMetadata
 
         // 声明级静态头先写，参数上的 [Header] / [HeaderCollection] 覆盖同名项
         _plan.ApplyStaticHeaders(config);
-        _plan.ApplyHeaders(args, config);
+        _plan.ApplyHeaders(args, config, formatter);
 
         return config;
     }
@@ -153,6 +155,11 @@ internal sealed partial class InterfaceMethodMetadata
                 if (value is null)
                 {
                     continue;
+                }
+
+                if (binding.Source.Format is { } format)
+                {
+                    form.Formats[binding.Name] = format;
                 }
 
                 var partOverride = new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);

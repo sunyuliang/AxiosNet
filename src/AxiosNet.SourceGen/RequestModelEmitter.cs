@@ -87,6 +87,11 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("                    {");
             builder.Append("                        m.FieldName(").Append(Literal(member.FieldName)).AppendLine(");");
 
+            if (member.FormatExpression is { } format)
+            {
+                builder.Append("                        m.Format(").Append(format).AppendLine(");");
+            }
+
             if (member.Ignore)
             {
                 builder.AppendLine("                        m.Ignore();");

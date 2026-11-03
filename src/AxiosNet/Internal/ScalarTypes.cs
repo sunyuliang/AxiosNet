@@ -23,4 +23,17 @@ internal static class ScalarTypes
             || t == typeof(Guid)
             || t == typeof(Uri);
     }
+
+    /// <summary>
+    /// 二进制形态（<see cref="byte"/> 的四种表示）：没有格式串语义，但可以自定义编码，
+    /// 也能作为裸标量正文（默认 base64）。
+    /// </summary>
+    public static bool IsBinaryType(Type type)
+        => type == typeof(byte[])
+            || type == typeof(ReadOnlyMemory<byte>)
+            || type == typeof(Memory<byte>)
+            || type == typeof(ArraySegment<byte>);
+
+    /// <summary>可作裸标量正文的类型：标量或二进制形态（两者都能转成一段文本）。</summary>
+    public static bool IsScalarBodyType(Type type) => IsScalarType(type) || IsBinaryType(type);
 }

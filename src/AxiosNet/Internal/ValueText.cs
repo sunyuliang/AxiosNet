@@ -1,0 +1,101 @@
+using System.Globalization;
+using System.Text.Json;
+using AxiosNet.Metadata;
+
+namespace AxiosNet.Internal;
+
+/// <summary>值转线上文本的通道：只影响日期时间族的默认形态，其余规则全通道一致。</summary>
+internal enum ValueTextChannel
+{
+    /// <summary>路径占位符（值随后由调用方 URL 转义）。</summary>
+    Path,
+
+    /// <summary>查询串。</summary>
+    Query,
+
+    /// <summary>请求头。</summary>
+    Header,
+
+    /// <summary><c>application/x-www-form-urlencoded</c> 字段值。</summary>
+    Form,
+
+    /// <summary>multipart 文本部件。</summary>
+    Multipart,
+
+    /// <summary>裸标量请求体（<c>data</c> 本身就是标量）。</summary>
+    ScalarBody
+}
+
+/// <summary>
+/// 值 → 线上文本的<b>唯一出口</b>：路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文共用。
+/// 本类只产出原始文本，不做任何转义——URL 转义与表单编码由各通道自己完成。
+/// </summary>
+/// <remarks>优先级：成员级 <see cref="ValueFormat"/> &gt; 实例级格式化钩子 &gt; 通道默认。</remarks>
+internal static class ValueText
+{
+    /// <summary>取值的线上文本；<c>null</c> 值返回 <c>null</c>，由调用方决定跳过还是报错。</summary>
+    public static string? Format(
+        object? value,
+        ValueTextChannel channel,
+        ValueFormat? memberFormat = null,
+        Func<object?, string?>? formatter = null)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        // 成员级声明最具体，压过实例级钩子（与请求头覆盖声明级静态头同一条优先级）。
+        if (memberFormat?.TryFormat(value) is { } declared)
+        {
+            return declared;
+        }
+
+        if (formatter is not null && formatter(value) is { } hooked)
+        {
+            return hooked;
+        }
+
+        return Default(value, channel);
+    }
+
+    /// <summary>JSON 树叶子节点的文本（数值保留原始书写形式，不经过 double 往返）。</summary>
+    public static string JsonScalar(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString() ?? string.Empty,
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => element.GetRawText()
+    };
+
+    /// <summary>通道默认形态：只有日期时间族分两档（正文保真用往返格式，其余折 UTC 毫秒）。</summary>
+    private static string Default(object value, ValueTextChannel channel) => value switch
+    {
+        // 查询串 / 表单没有二进制表示，用 base64（可逆）；multipart 的二进制由通道当文件处理，不经过这里。
+        byte[] bytes => Convert.ToBase64String(bytes),
+        ReadOnlyMemory<byte> memory => Convert.ToBase64String(memory.Span),
+        Memory<byte> memory => Convert.ToBase64String(memory.Span),
+        ArraySegment<byte> segment => Convert.ToBase64String(segment.AsSpan()),
+        string text => text,
+        bool flag => flag ? "true" : "false",
+        char character => character.ToString(),
+        DateTime dateTime => channel == ValueTextChannel.ScalarBody
+            ? dateTime.ToString("O", CultureInfo.InvariantCulture)
+            : ToUtcMillis(dateTime),
+        DateTimeOffset dateTimeOffset => channel == ValueTextChannel.ScalarBody
+            ? dateTimeOffset.ToString("O", CultureInfo.InvariantCulture)
+            : dateTimeOffset.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+        DateOnly date => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        TimeOnly time => time.ToString("O", CultureInfo.InvariantCulture),
+        Enum enumValue => enumValue.ToString(),
+        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? string.Empty
+    };
+
+    /// <summary><see cref="DateTimeKind.Unspecified"/> 按 UTC 解释，再折成毫秒精度（查询 / 表单的既有线上约定）。</summary>
+    private static string ToUtcMillis(DateTime value)
+    {
+        var utc = value.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(value, DateTimeKind.Utc) : value;
+        return utc.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+    }
+}

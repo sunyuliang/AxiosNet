@@ -90,7 +90,8 @@ internal sealed partial class InterfaceMethodMetadata
                 parameter.Index,
                 parameter.Name,
                 parameter.ValueType,
-                parameter.Description ?? $"{interfaceType.Name}.{methodName}.{parameter.Name}");
+                parameter.Description ?? $"{interfaceType.Name}.{methodName}.{parameter.Name}",
+                parameter.Format);
 
             if (parameter.Path)
             {
@@ -114,6 +115,8 @@ internal sealed partial class InterfaceMethodMetadata
                     throw new InvalidOperationException(
                         $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 标注了 [Part]，但方法没有 [Multipart]：请在方法上声明 [Multipart]。");
                 }
+
+                accumulator.ValidatePartFormat(source);
 
                 var display = $"参数 {source.Description}";
                 var explicitName = DeclarationNormalization.OptionalPartValue(parameter.PartName, display, nameof(PartAttribute.Name));

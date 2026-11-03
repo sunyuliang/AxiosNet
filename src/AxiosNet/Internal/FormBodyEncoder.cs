@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal;
 
@@ -20,9 +21,10 @@ internal static class FormBodyEncoder
         bool appendCharset)
     {
         var pairs = new List<KeyValuePair<string, string>>(8);
+        var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldNameSelector, config.ValueFormatter);
         try
         {
-            CollectFormPairs(null, data, pairs, encoding, config.SerializationOrNull?.FormFieldNameSelector, visited: null);
+            CollectFormPairs(null, data, pairs, options, visited: null, memberFormat: null);
         }
         catch (DataCycleException ex)
         {
@@ -80,9 +82,9 @@ internal static class FormBodyEncoder
         string? prefix,
         object? value,
         List<KeyValuePair<string, string>> pairs,
-        Encoding encoding,
-        Func<string?, string, string>? nameSelector,
-        HashSet<object>? visited)
+        FormFlattenOptions options,
+        HashSet<object>? visited,
+        ValueFormat? memberFormat)
     {
         switch (value)
         {
@@ -90,28 +92,28 @@ internal static class FormBodyEncoder
                 return;
 
             case JsonElement element:
-                Flatten(prefix, element, pairs, encoding, nameSelector);
+                Flatten(prefix, element, pairs, options);
                 return;
 
             case string text:
-                AddPair(prefix, text, pairs, encoding);
+                AddPair(prefix, ValueText.Format(text, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
 
-            // urlencoded 没有二进制表示：用 base64。
+            // urlencoded 没有二进制表示：用 base64（与查询串同一条规则，见 ValueText）。
             case byte[] bytes:
-                AddPair(prefix, Convert.ToBase64String(bytes), pairs, encoding);
+                AddPair(prefix, ValueText.Format(bytes, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
 
             case ReadOnlyMemory<byte> memory:
-                AddPair(prefix, Convert.ToBase64String(memory.Span), pairs, encoding);
+                AddPair(prefix, ValueText.Format(memory, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
 
             case Memory<byte> memory:
-                AddPair(prefix, Convert.ToBase64String(memory.Span), pairs, encoding);
+                AddPair(prefix, ValueText.Format(memory, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
 
             case ArraySegment<byte> segment:
-                AddPair(prefix, Convert.ToBase64String(segment.AsSpan()), pairs, encoding);
+                AddPair(prefix, ValueText.Format(segment, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
                 return;
 
             // 文件类内容在 urlencoded 里无法表达。
@@ -129,12 +131,12 @@ internal static class FormBodyEncoder
                     foreach (var entry in genericDictionary)
                     {
                         CollectFormPairs(
-                            BodyFields.CombineName(nameSelector, prefix, entry.Key),
+                            BodyFields.CombineName(options.NameSelector, prefix, entry.Key),
                             entry.Value,
                             pairs,
-                            encoding,
-                            nameSelector,
-                            visited);
+                            options,
+                            visited,
+                            memberFormat);
                     }
                 }
                 finally
@@ -154,12 +156,12 @@ internal static class FormBodyEncoder
                     foreach (var entry in readOnlyDictionary)
                     {
                         CollectFormPairs(
-                            BodyFields.CombineName(nameSelector, prefix, entry.Key),
+                            BodyFields.CombineName(options.NameSelector, prefix, entry.Key),
                             entry.Value,
                             pairs,
-                            encoding,
-                            nameSelector,
-                            visited);
+                            options,
+                            visited,
+                            memberFormat);
                     }
                 }
                 finally
@@ -183,12 +185,12 @@ internal static class FormBodyEncoder
                         }
 
                         CollectFormPairs(
-                            BodyFields.CombineName(nameSelector, prefix, entry.Key.ToString() ?? string.Empty),
+                            BodyFields.CombineName(options.NameSelector, prefix, entry.Key.ToString() ?? string.Empty),
                             entry.Value,
                             pairs,
-                            encoding,
-                            nameSelector,
-                            visited);
+                            options,
+                            visited,
+                            memberFormat);
                     }
                 }
                 finally
@@ -208,12 +210,12 @@ internal static class FormBodyEncoder
                     foreach (var entry in QueryMap.Enumerate(map))
                     {
                         CollectFormPairs(
-                            BodyFields.CombineName(nameSelector, prefix, entry.Key),
+                            BodyFields.CombineName(options.NameSelector, prefix, entry.Key),
                             entry.Value,
                             pairs,
-                            encoding,
-                            nameSelector,
-                            visited);
+                            options,
+                            visited,
+                            memberFormat);
                     }
                 }
                 finally
@@ -226,9 +228,9 @@ internal static class FormBodyEncoder
         }
 
         var type = value.GetType();
-        if (BodyFields.IsScalar(type))
+        if (ScalarTypes.IsScalarType(type))
         {
-            AddPair(prefix, BodyFields.ScalarToString(value), pairs, encoding);
+            AddPair(prefix, ValueText.Format(value, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
             return;
         }
 
@@ -242,7 +244,7 @@ internal static class FormBodyEncoder
                 {
                     // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
                     var name = prefix is null ? "[" + index + "]" : prefix + "[]";
-                    CollectFormPairs(name, item, pairs, encoding, nameSelector, visited);
+                    CollectFormPairs(name, item, pairs, options, visited, memberFormat);
                     index++;
                 }
             }
@@ -266,12 +268,12 @@ internal static class FormBodyEncoder
                 }
 
                 CollectFormPairs(
-                    BodyFields.CombineName(nameSelector, prefix, member.FieldName),
+                    BodyFields.CombineName(options.NameSelector, prefix, member.FieldName),
                     member.GetValue(value),
                     pairs,
-                    encoding,
-                    nameSelector,
-                    visited);
+                    options,
+                    visited,
+                    member.Format);
             }
         }
         finally
@@ -296,15 +298,14 @@ internal static class FormBodyEncoder
         string? prefix,
         JsonElement element,
         List<KeyValuePair<string, string>> pairs,
-        Encoding encoding,
-        Func<string?, string, string>? nameSelector)
+        FormFlattenOptions options)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    Flatten(BodyFields.CombineName(nameSelector, prefix, property.Name), property.Value, pairs, encoding, nameSelector);
+                    Flatten(BodyFields.CombineName(options.NameSelector, prefix, property.Name), property.Value, pairs, options);
                 }
 
                 break;
@@ -314,7 +315,7 @@ internal static class FormBodyEncoder
                 var index = 0;
                 foreach (var item in element.EnumerateArray())
                 {
-                    Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, encoding, nameSelector);
+                    Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, options);
                     index++;
                 }
 
@@ -330,7 +331,7 @@ internal static class FormBodyEncoder
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, encoding), EncodeValue(BodyFields.ScalarText(element), encoding)));
+                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, options.Encoding), EncodeValue(ValueText.JsonScalar(element), options.Encoding)));
                 break;
 
             default:
@@ -408,6 +409,26 @@ internal static class FormBodyEncoder
         || b is (byte)'-' or (byte)'.' or (byte)'_' or (byte)'~';
 
     private static char HexUpper(int value) => (char)(value < 10 ? '0' + value : 'A' + value - 10);
+}
+
+/// <summary>表单展平的共享参数：编码、字段名选择器与实例级格式化钩子。</summary>
+internal readonly struct FormFlattenOptions
+{
+    public FormFlattenOptions(Encoding encoding, Func<string?, string, string>? nameSelector, Func<object?, string?>? formatter)
+    {
+        Encoding = encoding;
+        NameSelector = nameSelector;
+        Formatter = formatter;
+    }
+
+    /// <summary>百分号编码使用的字符编码。</summary>
+    public Encoding Encoding { get; }
+
+    /// <summary>字段名生成器（<see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/>）。</summary>
+    public Func<string?, string, string>? NameSelector { get; }
+
+    /// <summary>实例级格式化钩子（<c>ApiClient.ValueFormatter</c>）。</summary>
+    public Func<object?, string?>? Formatter { get; }
 }
 
 /// <summary>

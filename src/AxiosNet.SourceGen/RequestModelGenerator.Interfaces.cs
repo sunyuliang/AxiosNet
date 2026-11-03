@@ -562,11 +562,12 @@ namespace AxiosNet.SourceGen
                                 ParameterName(parameter),
                                 TypeFormats.Display(parameter.Type),
                                 $"{symbol.Name}.{method.Name}.{ParameterName(parameter)}",
+                                null,
                                 false, false, null, false, null, false, null, false, false, false, null, null, null));
                             continue;
                         }
 
-                        parameters.Add(ReadParameter(parameter, method, symbol, wellKnown));
+                        parameters.Add(ReadParameter(parameter, method, symbol, wellKnown, diagnostics));
                     }
 
                     if (parameterBlocked)
@@ -626,7 +627,8 @@ namespace AxiosNet.SourceGen
             IParameterSymbol parameter,
             IMethodSymbol method,
             INamedTypeSymbol owner,
-            WellKnownSymbols wellKnown)
+            WellKnownSymbols wellKnown,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics)
         {
             var attributes = parameter.GetAttributes();
             var name = ParameterName(parameter);
@@ -654,11 +656,20 @@ namespace AxiosNet.SourceGen
                 }
             }
 
+            var formatExpression = BuildFormatExpression(
+                FindAttribute(attributes, wellKnown.Format),
+                $"参数 {owner.Name}.{method.Name}.{name}",
+                parameter.Locations.FirstOrDefault(static location => location.IsInSource)
+                    ?? method.Locations.FirstOrDefault()
+                    ?? Location.None,
+                diagnostics.Add);
+
             return new InterfaceParameterInfo(
                 parameter.Ordinal,
                 name,
                 TypeFormats.Display(parameter.Type),
                 $"{owner.Name}.{method.Name}.{name}",
+                formatExpression,
                 ignore,
                 path is not null,
                 path is null ? null : GetStringArgument(path, 0),

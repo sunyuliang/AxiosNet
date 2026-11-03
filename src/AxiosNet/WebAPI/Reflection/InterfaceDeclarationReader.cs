@@ -115,6 +115,11 @@ internal static class InterfaceDeclarationReader
             declaration.Body = parameter.GetCustomAttribute<BodyAttribute>() is not null;
             declaration.Ignore = parameter.GetCustomAttribute<ApiIgnoreAttribute>() is not null;
 
+            if (parameter.GetCustomAttribute<FormatAttribute>() is { } format)
+            {
+                declaration.Format = FormatSpecReader.Read(format, $"接口 {interfaceType.Name}.{method.Name}", name);
+            }
+
             if (parameter.GetCustomAttribute<PartAttribute>() is { } part)
             {
                 declaration.Part = true;

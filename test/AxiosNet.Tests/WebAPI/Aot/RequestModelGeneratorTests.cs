@@ -80,11 +80,60 @@ public sealed class RequestModelGeneratorTests
 
         var config = new AxiosConfig();
         metadata.ApplyStaticHeaders(config);
-        metadata.ApplyHeaders(request, config);
+        metadata.ApplyHeaders(request, config, formatter: null);
         Assert.Equal("base", config.Headers["X-Base"]);
         Assert.Equal("derived", config.Headers["X-Shared"]);
         Assert.Equal("1", config.Headers["X-Derived"]);
         Assert.Equal("base-header", config.Headers["X-Base-Member"]);
+    }
+
+    /// <summary>
+    /// <c>[Format]</c> 的两种形态都要烘焙成 <c>ValueFormat</c>：格式串与静态函数在生成代码里同样可用，
+    /// 且与反射路径产出的文本逐字符相同。
+    /// </summary>
+    [Fact]
+    public void Format_EmitsBothForms_WithSameTextAsReflection()
+    {
+        var ns = UniqueNamespace();
+        var (_, diagnostics, output) = RunGenerator(FormatModels.Replace("__NS__", ns));
+        Assert.Empty(diagnostics);
+
+        var assembly = LoadEmitted(output);
+        var modelType = assembly.GetType(ns + ".Formatted", throwOnError: true)!;
+        var metadata = RequestModelMetadata.Get(modelType);
+
+        var request = Activator.CreateInstance(modelType)!;
+        SetProperty(request, "When", new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+        SetProperty(request, "Amount", 12.5m);
+
+        var query = metadata.ResolveQuery(request, formatter: null);
+        Assert.NotNull(query);
+        Assert.Equal("2024-01-02", query["when"]);
+        Assert.Equal("12.50", query["amount"]);
+    }
+
+    [Fact]
+    public void InvalidFormatMethod_ReportsAXA015()
+    {
+        var ns = UniqueNamespace();
+        var (_, diagnostics, _) = RunGenerator(BrokenFormatModels.Replace("__NS__", ns));
+        DiagnosticCatalogTests.AssertNoUnrenderedPlaceholders(diagnostics);
+
+        var messages = diagnostics
+            .Where(static diagnostic => diagnostic.Id == "AXA015")
+            .Select(static diagnostic => diagnostic.GetMessage())
+            .ToArray();
+
+        Assert.Equal(3, messages.Length);
+
+        // 签名不对：消息直接给出正确签名，照着改就行。
+        Assert.Contains(messages, static message => message.Contains("Bad.Money") && message.Contains("public static string?"));
+
+        // 名字不存在：必须与「签名不对」分开，否则拼错的名字会被说成签名问题。
+        Assert.Contains(messages, static message => message.Contains("Bad.Mony") && message.Contains("不存在"));
+
+        // 泛型方法：生成 Type.Generic(v) 推不出类型参数，只能报「签名不对」。
+        Assert.Contains(messages, static message => message.Contains("Bad.Generic") && message.Contains("public static string?"));
     }
 
     [Fact]
@@ -881,6 +930,72 @@ public sealed class RequestModelGeneratorTests
         public class HiddenTypeDerived : HiddenTypeBase
         {
             public new object? Value { get; set; }
+        }
+        """;
+
+    private const string FormatModels = """
+        using System;
+        using System.Globalization;
+        using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
+
+        namespace __NS__;
+
+        public static class Fmt
+        {
+            public static string? Money(object? value)
+                => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
+        }
+
+        /// <summary>普通 POCO 形状：形状管线的 Member(..., format) 也要能编译。</summary>
+        public sealed class ShapePayload
+        {
+            [Format("yyyy-MM-dd")]
+            public DateTime When { get; set; }
+        }
+
+        [Get("fmt")]
+        public sealed class Formatted : IApiRequest<string>
+        {
+            [Query("when"), Format("yyyy-MM-dd")]
+            public DateTime When { get; set; }
+
+            [Query("amount"), Format(typeof(Fmt), nameof(Fmt.Money))]
+            public decimal Amount { get; set; }
+
+            [Query]
+            public ShapePayload? Nested { get; set; }
+        }
+        """;
+
+    private const string BrokenFormatModels = """
+        using System.Globalization;
+        using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
+
+        namespace __NS__;
+
+        public static class Bad
+        {
+            // 签名必须是 string? M(object? value)：参数类型不对时格式串形态无处可用。
+            public static string? Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);
+
+            // 泛型静态方法：生成 Type.Generic(v) 推不出类型参数，必须按「签名不对」在编译期拦下。
+            public static string? Generic<T>(object? value) => null;
+        }
+
+        [Get("broken")]
+        public sealed class Broken : IApiRequest<string>
+        {
+            [Query("amount"), Format(typeof(Bad), nameof(Bad.Money))]
+            public decimal Amount { get; set; }
+
+            // 名字写错且绕过了 nameof：只剩生成器兜底，消息不能说成「签名不对」。
+            [Query("ghost"), Format(typeof(Bad), "Mony")]
+            public decimal Ghost { get; set; }
+
+            [Query("generic"), Format(typeof(Bad), nameof(Bad.Generic))]
+            public decimal GenericValue { get; set; }
         }
         """;
 

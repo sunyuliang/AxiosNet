@@ -516,6 +516,11 @@ namespace AxiosNet.SourceGen
                 }
 
                 var members = ImmutableArray.CreateBuilder<ShapeMemberInfo>();
+
+                // 请求模型成员的 [Format] 由模型管线报 AXA015：同一处声明只报一次，
+                // 形状这边只覆盖「不是请求模型、但会被展平」的普通类型。
+                var reportFormat = HasRouteAttribute(type) ? IgnoreFormatDiagnostic : AddFormatDiagnostic;
+
                 foreach (var property in EnumerateProperties(type))
                 {
                     var getter = property.GetMethod;
@@ -549,7 +554,12 @@ namespace AxiosNet.SourceGen
                         fieldName,
                         IsIgnored(property),
                         "static x => (object)((" + TypeFormats.Display(property.ContainingType) + ")x)."
-                            + EscapeIdentifier(property.Name)));
+                            + EscapeIdentifier(property.Name),
+                        BuildFormatExpression(
+                            FindInOverrideChain(property, _wellKnown.Format),
+                            $"属性 {type.Name}.{property.Name}",
+                            location,
+                            reportFormat)));
 
                     AddSeed(property.Type, location);
                 }
@@ -643,7 +653,8 @@ namespace AxiosNet.SourceGen
                         property.Name,
                         property.Name,
                         false,
-                        "static x => (object)x." + EscapeIdentifier(property.Name)));
+                        "static x => (object)x." + EscapeIdentifier(property.Name),
+                        null));
                     keyParts.Add(property.Name + ":" + TypeFormats.Display(property.Type));
 
                     // 匿名对象的成员类型同样参与展平（嵌套对象 / 字典值），必须一起生成形状。
@@ -758,6 +769,27 @@ namespace AxiosNet.SourceGen
                 {
                     DiagnosticItems.Add(new DiagnosticInfo(descriptor, new EquatableArray<string>(args.ToImmutableArray()), location));
                 }
+            }
+
+            /// <summary>请求模型的成员由模型管线报 <c>[Format]</c> 诊断：形状这边不再重复报。</summary>
+            private static readonly Action<DiagnosticInfo> IgnoreFormatDiagnostic = static _ => { };
+
+            /// <summary><c>[Format]</c> 的构建期诊断也走同一份去重表（同一个属性被多次收集时只报一条）。</summary>
+            private void AddFormatDiagnostic(DiagnosticInfo diagnostic)
+                => AddDiagnostic(diagnostic.Descriptor, diagnostic.Location, diagnostic.MessageArgs.ToArray());
+
+            /// <summary>该类型是否带路由特性（即由模型管线负责报 <c>[Format]</c> 诊断）。</summary>
+            private bool HasRouteAttribute(INamedTypeSymbol type)
+            {
+                foreach (var attribute in type.GetAttributes())
+                {
+                    if (DerivesFrom(attribute.AttributeClass, _wellKnown.HttpApi))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             private static string BuildShapeClassName(string key)

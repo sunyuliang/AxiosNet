@@ -40,7 +40,8 @@ public sealed class ObjectShapeBuilder
             draft.FieldName,
             draft.Ignored,
             draft.ValueType,
-            draft.GetValue))]);
+            draft.GetValue,
+            draft.Format))]);
 
     internal sealed class ShapeMemberDraft
     {
@@ -53,6 +54,8 @@ public sealed class ObjectShapeBuilder
         public Type ValueType { get; init; } = typeof(object);
 
         public Func<object, object?> GetValue { get; init; } = static _ => null;
+
+        public ValueFormat? Format { get; set; }
     }
 }
 
@@ -80,6 +83,14 @@ public sealed class ObjectShapeMemberBuilder
     public ObjectShapeBuilder Ignore()
     {
         _draft.Ignored = true;
+        return _owner;
+    }
+
+    /// <summary>成员级格式化（等价于 <c>[Format]</c>）：只影响库转文本的通道。</summary>
+    /// <param name="format">格式化；<c>null</c> 表示走通道默认规则。</param>
+    public ObjectShapeBuilder Format(ValueFormat? format)
+    {
+        _draft.Format = format;
         return _owner;
     }
 }

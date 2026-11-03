@@ -10,7 +10,7 @@ using System.Text;
 namespace AxiosNet.Tests.WebAPI;
 
 /// <summary>
-/// 声明式特性：静态头、`HeaderCollection`、`QueryMap`、`CollectionFormat`、`UrlParameterFormatter`。
+/// 声明式特性：静态头、`HeaderCollection`、`QueryMap`、`CollectionFormat`、`ValueFormatter`。
 /// </summary>
 public sealed class BindingAttributesTests
 {
@@ -223,12 +223,12 @@ public sealed class BindingAttributesTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task UrlParameterFormatter_AppliesToPathAndQuery()
+    public async Task ValueFormatter_AppliesToPathAndQuery()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url)
         {
-            UrlParameterFormatter = value => value switch
+            ValueFormatter = value => value switch
             {
                 int id => "p" + id,
                 DateTime date => date.ToString("yyyyMMdd"),

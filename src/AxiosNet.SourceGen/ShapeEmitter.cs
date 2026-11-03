@@ -41,8 +41,14 @@ namespace AxiosNet.SourceGen
                         .Append(", ")
                         .Append(member.Ignored ? "true" : "false")
                         .Append(", ")
-                        .Append(member.GetterExpression)
-                        .AppendLine(");");
+                        .Append(member.GetterExpression);
+
+                    if (member.FormatExpression is { } format)
+                    {
+                        builder.Append(", ").Append(format);
+                    }
+
+                    builder.AppendLine(");");
                 }
 
                 builder.AppendLine("                });");

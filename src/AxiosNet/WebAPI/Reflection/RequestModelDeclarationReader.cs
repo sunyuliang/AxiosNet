@@ -140,6 +140,12 @@ internal static class RequestModelDeclarationReader
         {
             member.Body = true;
         }
+
+        if (property.GetCustomAttribute<FormatAttribute>(inherit) is { } format)
+        {
+            var owner = $"请求模型 {property.DeclaringType?.Name ?? property.ReflectedType?.Name ?? "未知类型"}";
+            member.Format = FormatSpecReader.Read(format, owner, property.Name);
+        }
     }
 
     /// <summary>本属性自身（不含基类继承）声明了几个参数特性。</summary>

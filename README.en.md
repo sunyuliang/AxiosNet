@@ -27,7 +27,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api) / [OpenAPI import](#openapi-import)) · [Capability map](#capability-map) · [Token management](#token-management) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api) / [value formatting](#value-formatting) / [OpenAPI import](#openapi-import)) · [Capability map](#capability-map) · [Token management](#token-management) |
 | Requests and responses | [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) · [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience and governance | [Retries](#retries) · [Global retry budget](#global-retry-budget-retrybudgetpolicy) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
@@ -170,6 +170,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 | Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header (a same-name `[Header]` property / parameter still writes it back); method level overrides interface level |
 | Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
 | Body | `[Body]` | At most one per model; `null` sends no body |
+| Value formatting | `[Format]` (property / parameter) | Format string or static method; per element for collections, per value for dictionaries (see "Value formatting") |
 | Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` (interface methods) | Body media type (decides encoding) / query collection format; overrides instance defaults |
 | Skip | `[ApiIgnore]` | Not bound at all |
 
@@ -179,7 +180,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 - Invalid models (missing route, unbound placeholder, multiple bodies…) throw `InvalidOperationException` on first call; validate at startup with `ApiClient.ValidateModels(typeof(A), ...)` or `ValidateModels(assembly)` (returns all messages, never throws). The type-based overloads work under Native AOT too (generated declarations go straight to the registry); `ValidateModels(assembly)` relies on reflection enumeration — under AOT call the generated `AxiosNet.Generated.AxiosNetValidation_<AssemblyName>.ValidateAll()` instead.
 - Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; `IAuthorizationProvider` is the extension point, with `BearerAuthorizationProvider` built in.
 - Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
-- Also: `client.UrlParameterFormatter` overrides `[Path]` / `[Query]` text form; `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
+- Also: `client.ValueFormatter` overrides the text form of path / query / header / form field / multipart text part / raw scalar body (lower priority than a member's `[Format]` — see "Value formatting"); `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work); streaming bodies follow the client's `Timeout` / `TotalTimeout` — there is no separate idle-timeout knob.
 
 ### Interface-based API
 
@@ -241,6 +242,58 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 - Method-level encoding: `[BodyContentType(...)]` writes `config.ContentType` (it drives body encoding, not just the header) for forms, XML or custom media types; it is mutually exclusive with `[Multipart]` (whose media type is fixed). `[QueryCollectionFormat(...)]` writes `config.Serialization.CollectionFormat` and overrides instance defaults; OpenAPI `explode: true` maps to `AxiosCollectionFormat.Multi`.
 - Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
 - **Native AOT**: as long as the assembly declaring the interface runs the source generator, a real proxy is emitted (internal interfaces included); closed generic interfaces (e.g. `IRepo<User>`) are generated at the call site — `Create<T>()` / `AddApiInterface<T>()` — and only an open generic declaration itself reports warning `AXA011`. Without generated metadata, `Create<T>()` throws `AxiosAotMetadataException` (with repair guidance) under AOT and falls back to `DispatchProxy` (requires a public interface) on JIT. The generated path needs no `TrimmerRootAssembly` and no longer roots the interface type.
+
+### Value formatting
+
+A value written into a URL, a header or a form always ends up as text. The library funnels "value → text" through **one** path, with two declaration layers stacked by priority:
+
+1. `[Format]` on the member (model property / interface parameter) — the most specific;
+2. `ValueFormatter` on the instance — applies when the member declares nothing;
+3. Channel defaults (date-time folded to UTC milliseconds, enums by name, `byte[]` as base64, `IFormattable` with the invariant culture…).
+
+```csharp
+[Get("users/{id}")]
+public sealed class ListRequest : IApiRequest<User[]>
+{
+    [Path, Format("0000")] public int Id { get; set; }                  // /users/0002
+    [Query, Format("yyyy-MM-dd")] public DateTime Since { get; set; }   // since=2024-01-02
+    [Query, Format("X2")] public int[] Codes { get; set; } = [];        // codes[]=0B&codes[]=FF
+
+    [Query("amounts"), Format(typeof(Formats), nameof(Formats.Money))]  // amounts[min]=12.50
+    public Dictionary<string, decimal> Amounts { get; set; } = new();
+}
+
+public static class Formats
+{
+    // Fixed signature: public static string? M(object? value); returning null means "not mine", fall back to the default rule.
+    public static string? Money(object? value)
+        => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
+}
+
+var client = new ApiClient(url)
+{
+    ValueFormatter = value => value is DateTime date
+        ? date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+        : null
+};
+```
+
+- **Channels covered**: path segment / query string / header / form field / multipart text part / raw scalar body (when `data` itself is a scalar, including binary forms such as `byte[]`). One rule set — there is no "works in the query but not in the form"; nested objects and dictionaries inside the query apply it per leaf (member declaration first, then the instance hook).
+- **Collections and dictionaries**: on a collection it applies per element, on a dictionary per value (keys untouched). Declarations on dictionaries skip the build-time type check — the value type is only known at runtime.
+- **Format strings** require `IFormattable` and always use the invariant culture (never `CurrentCulture`); use a formatter method when you need culture-aware output.
+- **Structured bodies are out of scope**: `[Format]` on a structured `[Body]` is a build-time error (the serializer owns the document). To apply `[Format]` inside JSON as well, opt into the bridge:
+
+```csharp
+using AxiosNet.WebAPI.Serialization;
+
+// net7.0+; unavailable under Native AOT (the bridge builds generic converters per property type)
+config.Serialization.JsonSerializerOptions =
+    AxiosJsonFormat.ApplyTo(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+```
+
+- **Build-time errors** (never a silent runtime fallback): `[Format]` combined with a structured `[Body]` / `[HeaderCollection]` / file part (`Stream` / `byte[]` / `FormFile` / `HttpContent`); a format string on a non-`IFormattable` scalar (e.g. `bool`) or on a binary form (`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`); `[Format]` on a non-scalar (POCO) query parameter. Model properties and interface parameters share the same validation.
+- **Catching mistakes** (none of these waits for a request): with `nameof(...)` a typo is an ordinary compile error (`CS0117`); a wrong signature (not `public static` / generic / parameter is not `object` / return is not `string`) is reported at compile time as `AXA015`, with the correct signature spelled out in the message; a value shape that does not fit the channel (a format string on `bool` / a binary form, `[Format]` on a structured `[Body]` or a file part) throws `InvalidOperationException` while the binding plan is built. Without the source generator `AXA015` does not run — use `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` to surface these at startup instead.
+- **Native AOT**: the source generator bakes the formatter delegate into the metadata (an invalid signature reports `AXA015`), so nothing reflects at runtime. Shapes registered by hand via `RegisterShape<T>()` are not baked: `[Format(typeof(...), nameof(...))]` on them fails explicitly under AOT with a pointer to "enable the source generator or use a format string" instead of silently dropping the format.
 
 ### OpenAPI import
 
@@ -476,7 +529,7 @@ c.Params = new[] { 1, 2 };            // root collection: [0]=1&[1]=2
 - Collection shape comes from `Serialization.CollectionFormat`: `Brackets` (default) / `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`.
 - Keys and values go through `Uri.EscapeDataString` (space → `%20`); a query string written into `Url` is not re-encoded.
 - Passing a scalar as `Params` throws `ERR_BAD_OPTION_VALUE` (no key to express). Full control: `c.Serialization.ParamsSerializer = p => "a=1&b=2"`.
-- Scalar text form (shared by `Params` / `[Path]` / `[Header]` / forms): `bool` → `true`/`false`, enums → name, `DateTime`/`DateTimeOffset` → UTC ISO with milliseconds (`Unspecified` treated as UTC), everything else `IFormattable` + `InvariantCulture`.
+- Scalar text form (one path shared by `Params` / `[Path]` / `[Header]` / forms / multipart / raw scalar body): `bool` → `true`/`false`, enums → name, `DateTime`/`DateTimeOffset` → UTC ISO with milliseconds (`Unspecified` treated as UTC; the raw scalar body is the one exception and uses the round-trip `"O"` form), `DateOnly` → `yyyy-MM-dd`, `byte[]` → base64, everything else `IFormattable` + `InvariantCulture`. Override per member with `[Format]`, or per instance with `ApiClient.ValueFormatter` (see "Value formatting").
 
 ### Body and ContentType
 
@@ -1781,7 +1834,7 @@ It opens an interactive menu (reflection lists every sample; type a number to ru
 | Suite | Items | Coverage |
 | --- | ---: | --- |
 | Core | 37 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles |
-| Declarative | 16 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
+| Declarative | 17 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), value formatting (`[Format]` / `ValueFormatter` priority), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
 
 Two more samples:
 
@@ -1837,6 +1890,7 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA012` | Warning | `AxiosNetSourceGen=false` with `PublishAot` enabled |
 | `AXA013` | Warning | Shape type is not accessible to generated code (shape skipped; flattening to it fails explicitly under AOT) |
 | `AXA014` | Error | Invalid encoding declaration on an interface method: blank / control-character `[BodyContentType]`, undefined `[QueryCollectionFormat]` value, or combined with `[Multipart]` |
+| `AXA015` | Error | Invalid `[Format]` declaration: blank format string, or a formatter that does not exist / is not `public static` / does not take a single `object` / does not return `string` |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
@@ -1860,6 +1914,8 @@ var client = new AxiosClient(new AxiosConfig
 
 Do not drop `JsonSerializerDefaults.Web`: a bare `new JsonSerializerOptions()` switches property names to their declared casing, so request and response fields change shape, and the `JsonSourceGenerationOptions` on your context will not put camelCase back (`AxiosJson.Options` defaults to Web).
 
+The `[Format]` JSON bridge (`AxiosJsonFormat.ApplyTo`) is unavailable for the same reason: it builds generic `JsonConverter` instances per property type and reads property attributes, so it carries `[RequiresDynamicCode]` / `[RequiresUnreferencedCode]`. Under AOT, `[Format]` only affects the channels where the library itself produces text (path / query / header / form / multipart / raw scalar body); for JSON document internals use a custom `JsonConverter` or a dedicated DTO.
+
 Missing metadata under AOT never silently drops fields; it throws an exception with repair guidance: request models and interfaces throw `AxiosAotMetadataException` (the message names the type and the fixes, and the hidden `AxiosApiMetadata.RegisterRequestModel` / `RegisterInterface` APIs can register declarations manually); `System.Text.Json` throws `NotSupportedException` for an unknown type and tells you to add it to a `JsonSerializerContext` and set `TypeInfoResolver` (anonymous types cannot be listed in `[JsonSerializable]`, so the message points at named types or params / form instead); `XmlContentSerializer` and `AxiosDynamic`'s dynamic member syntax throw `PlatformNotSupportedException` (index access and the `IDictionary` interface on `AxiosDynamic` still work).
 
 Not available under AOT: dynamic member syntax (`data.name`), runtime-determined types, `XmlContentSerializer`, assembly scanning (`ValidateModels(Assembly)` / `ValidateInterfaces(Assembly)` rely on reflection enumeration and throw `PlatformNotSupportedException` under AOT; use the generated `AxiosNet.Generated.AxiosNetValidation_<AssemblyName>.ValidateAll()`, which covers every request model and interface the generator produced metadata for in this assembly, or call `ValidateModels(typeof(A), ...)` / `ValidateInterfaces(typeof(IA), ...)` by type), and the interface-proxy fallback path (the `DispatchProxy` used when nothing was generated / registered relies on Reflection.Emit and is JIT-only). The generated class name replaces every non-identifier character of the assembly name with `_` (`AxiosNet.Aot` → `AxiosNetValidation_AxiosNet_Aot`), and the class is emitted only when the assembly has at least one emittable model / interface. Anonymous objects as params / form values need no extra configuration: the generator bakes a sample for their structure (see "Object shapes" above).
@@ -1878,12 +1934,12 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2022 / 2015 | `net8.0` / `net6.0` | 4037 |
+| `AxiosNet.Tests` (core + declarative) | 2070 / 2061 | `net8.0` / `net6.0` | 4131 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| **Total** | **2162 / 2155** | | **4243** |
+| **Total** | **2210 / 2201** | | **4337** |
 
-Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed". `net8.0` has 7 more cases than `net6.0`: the nine `AotJsonTests` only compile on the net8 branch (`JsonSerializerOptions.TypeInfoResolver` is a .NET 7+ API), while `net6.0` alone has the two `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*` cases, which assert the error raised when no `TypeInfoResolver` exists. `AxiosNet.Cli.Tests` runs locally only — CI's `TEST_PROJECTS` lists just the first two projects, so generator snapshots and CLI fixtures are not part of the gate.
+Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed". `net8.0` has 9 more cases than `net6.0`: the nine `AotJsonTests` and the two JSON-bridge cases in `FormatAttributeTests` only compile on the net8 branch (`JsonSerializerOptions.TypeInfoResolver` / `JsonTypeInfo.Properties` are .NET 7+ APIs), while `net6.0` alone has the two `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*` cases, which assert the error raised when no `TypeInfoResolver` exists. `AxiosNet.Cli.Tests` runs locally only — CI's `TEST_PROJECTS` lists just the first two projects, so generator snapshots and CLI fixtures are not part of the gate.
 
 Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling, transport profiles and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints and endpoint health memory, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
 

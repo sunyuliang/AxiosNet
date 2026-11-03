@@ -240,6 +240,9 @@ internal static class ParamsSerializer
         {
             var pairs = new List<KeyValuePair<string, string>>(8);
             var format = config?.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
+
+            // 实例级钩子：嵌套对象的叶子也要用同一份钩子，否则「查询里能格式化」只对顶层成立。
+            var formatter = config?.ValueFormatter;
             if (paramsObj is JsonElement rootElement)
             {
                 // JsonElement 按 JSON 树展开，不走反射。
@@ -256,7 +259,7 @@ internal static class ParamsSerializer
                 // ExpandoObject（dynamic）等仅实现泛型字典的类型
                 foreach (var entry in stringKeyedDictionary)
                 {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
                 }
             }
             else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
@@ -264,7 +267,7 @@ internal static class ParamsSerializer
                 // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
                 foreach (var entry in readOnlyDictionary)
                 {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
                 }
             }
             else if (paramsObj is IDictionary dictionary)
@@ -276,7 +279,7 @@ internal static class ParamsSerializer
                         continue;
                     }
 
-                    Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null, format);
+                    Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
                 }
             }
             else if (QueryMap.CanEnumerate(paramsObj))
@@ -284,7 +287,7 @@ internal static class ParamsSerializer
                 // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
                 foreach (var entry in QueryMap.Enumerate(paramsObj))
                 {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format);
+                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
                 }
             }
             else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
@@ -293,7 +296,7 @@ internal static class ParamsSerializer
                 var index = 0;
                 foreach (var item in items)
                 {
-                    Append("[" + index + "]", item, pairs, visited: null, format);
+                    Append("[" + index + "]", item, pairs, visited: null, format, memberFormat: null, formatter);
                     index++;
                 }
             }
@@ -305,10 +308,11 @@ internal static class ParamsSerializer
             else
             {
                 // 根对象：形状决定成员顺序与键名；query 展平不跳过 [JsonIgnore]（与表单不同）。
+                // 成员级格式化来自形状自身（与嵌套对象同一条规则），否则根对象上的 [Format] 会被静默忽略。
                 var shape = ShapeCache.Get(paramsObj.GetType());
                 foreach (var member in shape.Members)
                 {
-                    Append(member.EscapedName, member.GetValue(paramsObj), pairs, visited: null, format);
+                    Append(member.EscapedName, member.GetValue(paramsObj), pairs, visited: null, format, member.Format, formatter);
                 }
             }
 
@@ -358,12 +362,21 @@ internal static class ParamsSerializer
     }
 
     /// <summary>把单个值按实际形态展平成查询键值对：null 跳过，字典 / 集合 / JSON 树 / 标量 / 嵌套对象分别处理。</summary>
+    /// <param name="prefix">已转义的键前缀。</param>
+    /// <param name="value">待展平的值。</param>
+    /// <param name="pairs">输出键值对。</param>
+    /// <param name="visited">环检测栈。</param>
+    /// <param name="format">集合编码形态。</param>
+    /// <param name="memberFormat">当前成员级格式化：只作用于标量叶子，集合逐元素继承，嵌套对象改用成员自己的声明。</param>
+    /// <param name="formatter">实例级格式化钩子：标量叶子在成员声明缺失时生效（嵌套对象同样下传）。</param>
     private static void Append(
         string prefix,
         object? value,
         List<KeyValuePair<string, string>> pairs,
         HashSet<object>? visited,
-        AxiosCollectionFormat format)
+        AxiosCollectionFormat format,
+        ValueFormat? memberFormat,
+        Func<object?, string?>? formatter)
     {
         // 与 axios 一致：null 直接跳过
         if (value is null)
@@ -385,7 +398,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in stringKeyedNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -404,7 +417,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in readOnlyNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -427,7 +440,7 @@ internal static class ParamsSerializer
                         continue;
                     }
 
-                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs, visited, format);
+                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -446,7 +459,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in QueryMap.Enumerate(mapValue))
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -461,7 +474,7 @@ internal static class ParamsSerializer
         {
             if (format != AxiosCollectionFormat.Brackets)
             {
-                AppendCollection(prefix, enumerable, pairs, visited, format);
+                AppendCollection(prefix, enumerable, pairs, visited, format, memberFormat, formatter);
                 return;
             }
 
@@ -470,7 +483,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in enumerable)
                 {
-                    Append($"{prefix}[]", item, pairs, visited, format);
+                    Append($"{prefix}[]", item, pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -483,7 +496,9 @@ internal static class ParamsSerializer
 
         if (IsScalar(value))
         {
-            pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ScalarToString(value))));
+            pairs.Add(new KeyValuePair<string, string>(
+                prefix,
+                EscapeValue(ValueText.Format(value, ValueTextChannel.Query, memberFormat, formatter)!)));
             return;
         }
 
@@ -494,8 +509,8 @@ internal static class ParamsSerializer
             var shape = ShapeCache.Get(value.GetType(), prefix);
             foreach (var member in shape.Members)
             {
-                // 后缀（含转义）在形状里预计算，这里只需一次前缀拼接。
-                Append(prefix + member.BracketSuffix, member.GetValue(value), pairs, visited, format);
+                // 后缀（含转义）在形状里预计算，这里只需一次前缀拼接；成员级格式化来自形状自身。
+                Append(prefix + member.BracketSuffix, member.GetValue(value), pairs, visited, format, member.Format, formatter);
             }
         }
         finally
@@ -513,7 +528,9 @@ internal static class ParamsSerializer
         IEnumerable enumerable,
         List<KeyValuePair<string, string>> pairs,
         HashSet<object>? visited,
-        AxiosCollectionFormat format)
+        AxiosCollectionFormat format,
+        ValueFormat? memberFormat,
+        Func<object?, string?>? formatter)
     {
         visited = ObjectGraph.Enter(visited, enumerable);
         try
@@ -523,7 +540,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in enumerable)
                 {
-                    Append(prefix, item, pairs, visited, format);
+                    Append(prefix, item, pairs, visited, format, memberFormat, formatter);
                 }
 
                 return;
@@ -549,13 +566,13 @@ internal static class ParamsSerializer
                 {
                     foreach (var fallback in items)
                     {
-                        Append($"{prefix}[]", fallback, pairs, visited, format);
+                        Append($"{prefix}[]", fallback, pairs, visited, format, memberFormat, formatter);
                     }
 
                     return;
                 }
 
-                parts.Add(ScalarToString(item));
+                parts.Add(ValueText.Format(item, ValueTextChannel.Query, memberFormat, formatter)!);
             }
 
             if (parts.Count > 0)
@@ -623,7 +640,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(JsonScalarText(element))));
+                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ValueText.JsonScalar(element))));
                 break;
 
             default:
@@ -668,7 +685,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                parts.Add(JsonScalarText(item));
+                parts.Add(ValueText.JsonScalar(item));
             }
 
             if (parts is { Count: > 0 })
@@ -691,25 +708,9 @@ internal static class ParamsSerializer
         }
     }
 
-    private static string JsonScalarText(JsonElement element) => element.ValueKind switch
-    {
-        JsonValueKind.String => element.GetString() ?? string.Empty,
-        JsonValueKind.True => "true",
-        JsonValueKind.False => "false",
-        _ => element.GetRawText()
-    };
-
     private static bool IsScalar(object value)
         // byte[] 也算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
         => value is byte[] || ScalarTypes.IsScalarType(value.GetType());
-
-    /// <summary>标量 → 线上文本：bool 是 <c>true</c> / <c>false</c>，日期时间是 UTC 毫秒 ISO 8601。</summary>
-    internal static string ScalarToString(object value) => value switch
-    {
-        // query 里没有 byte[] 的标准形态，用 base64（可逆）。
-        byte[] bytes => Convert.ToBase64String(bytes),
-        _ => BodyFields.ScalarToString(value)
-    };
 
     /// <summary>
     /// 键名转义：同 axios 默认 encoder（<c>encodeURIComponent</c>），但把 <c>%5B</c> / <c>%5D</c> 还原成 <c>[</c> <c>]</c>，

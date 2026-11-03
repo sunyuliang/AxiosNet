@@ -1,5 +1,6 @@
 using System.Net.Http;
 using AxiosNet.Internal;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -52,6 +53,9 @@ internal sealed class RequestModelMemberDeclaration
     public string? Description { get; set; }
 
     public bool Ignore { get; set; }
+
+    /// <summary>成员级格式化（<c>[Format]</c>）；null 表示走通道默认规则。</summary>
+    public ValueFormat? Format { get; set; }
 
     public bool Path { get; set; }
 
@@ -154,6 +158,9 @@ internal sealed class InterfaceParameterDeclaration
     public string? Description { get; set; }
 
     public bool Ignore { get; set; }
+
+    /// <summary>参数级格式化（<c>[Format]</c>）；null 表示走通道默认规则。</summary>
+    public ValueFormat? Format { get; set; }
 
     public bool Path { get; set; }
 

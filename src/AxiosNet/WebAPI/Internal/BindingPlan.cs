@@ -1,5 +1,6 @@
 using System.Collections;
 using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.WebAPI.Internal;
@@ -7,6 +8,7 @@ namespace AxiosNet.WebAPI.Internal;
 /// <summary>
 /// 一份声明（类模型 / 接口方法）的绑定计划：构建期完成全部校验，运行期只做数组遍历。
 /// 取值的来源由 <see cref="IValueSource"/> 抽象，类模型传模型实例，接口模型传参数数组。
+/// 值 → 文本统一走 <see cref="ValueText"/>，本类只决定通道。
 /// </summary>
 internal sealed class BindingPlan
 {
@@ -52,11 +54,29 @@ internal sealed class BindingPlan
 
     public string? BodyName => _body?.Name;
 
-    /// <summary>请求体的原始值（普通声明取 <see cref="BodyAttribute"/> 绑定的来源）。</summary>
-    public object? ResolveBodyValue(object target) => _body?.GetValue(target);
+    /// <summary>
+    /// 请求体的原始值（普通声明取 <see cref="BodyAttribute"/> 绑定的来源）。
+    /// 标量 + 成员级格式化 / 实例钩子时返回 <see cref="FormattedScalarBody"/>，让正文工厂按标量正文处理而不是当字符串透传。
+    /// </summary>
+    /// <param name="target">请求模型实例或方法参数数组。</param>
+    /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
+    public object? ResolveBodyValue(object target, Func<object?, string?>? formatter)
+    {
+        var value = _body?.GetValue(target);
+        if (value is null
+            || (_body!.Format is null && formatter is null)
+            || !ScalarTypes.IsScalarBodyType(value.GetType()))
+        {
+            return value;
+        }
+
+        return ValueText.Format(value, ValueTextChannel.ScalarBody, _body.Format, formatter) is { } text
+            ? new FormattedScalarBody(text)
+            : value;
+    }
 
     /// <summary>把路径模板里的 <c>{name}</c> 替换成值（URL 转义），返回最终请求 URL。</summary>
-    public string ResolveUrl(string pathTemplate, object target, Func<object, string?>? formatter)
+    public string ResolveUrl(string pathTemplate, object target, Func<object?, string?>? formatter)
     {
         if (_pathTokens.Length == 0)
         {
@@ -71,7 +91,11 @@ internal sealed class BindingPlan
                 ?? throw new InvalidOperationException(
                     $"路径参数 {source.Description}（占位符 {{{token}}}）为 null：路径缺段无法成行。");
 
-            url = url.Replace("{" + token + "}", Uri.EscapeDataString(ToText(FormatValue(value, formatter)!)));
+            var text = ValueText.Format(value, ValueTextChannel.Path, source.Format, formatter)
+                ?? throw new InvalidOperationException(
+                    $"路径参数 {source.Description}（占位符 {{{token}}}）无法转成文本：格式化函数返回了 null，且值本身没有默认形态。");
+
+            url = url.Replace("{" + token + "}", Uri.EscapeDataString(text));
         }
 
         return url;
@@ -81,7 +105,7 @@ internal sealed class BindingPlan
     /// 汇总全部查询参数；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
     /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。
     /// </summary>
-    public Dictionary<string, object?>? ResolveQuery(object target, Func<object, string?>? formatter)
+    public Dictionary<string, object?>? ResolveQuery(object target, Func<object?, string?>? formatter)
     {
         if (_queryBindings.Length == 0 && _queryMaps.Length == 0)
         {
@@ -92,7 +116,7 @@ internal sealed class BindingPlan
 
         foreach (var binding in _queryBindings)
         {
-            var value = FormatValue(binding.Source.GetValue(target), formatter);
+            var value = FormatQueryValue(binding.Source.GetValue(target), binding.Source.Format, formatter);
 
             // 与 axios params 一致：null 参数跳过
             if (value is not null)
@@ -111,7 +135,7 @@ internal sealed class BindingPlan
 
             foreach (var entry in QueryMap.Enumerate(dictionary))
             {
-                var value = FormatValue(entry.Value, formatter);
+                var value = FormatQueryValue(entry.Value, map.Source.Format, formatter);
                 if (value is not null)
                 {
                     // 与具名参数同名时映射值覆盖。
@@ -127,7 +151,7 @@ internal sealed class BindingPlan
     /// 把全部请求头绑定写进配置；没有任何头绑定时不动配置。
     /// 属性 / 参数上的头压过声明级同名项（含「只写名字 = 删除」的声明）：写值时撤销待删除项。
     /// </summary>
-    public void ApplyHeaders(object target, AxiosConfig config)
+    public void ApplyHeaders(object target, AxiosConfig config, Func<object?, string?>? formatter)
     {
         foreach (var binding in _headerBindings)
         {
@@ -139,7 +163,9 @@ internal sealed class BindingPlan
                 // 静态头先写、参数头后写，所以这里必须撤销声明级的待删除项：
                 // 否则合并层最后统一 Delete，会把刚写进去的签名 / 鉴权头静默摘掉。
                 ClearPendingRemoval(config, binding.Name);
-                config.Headers.Set(binding.Name, ToText(value));
+                config.Headers.Set(
+                    binding.Name,
+                    ValueText.Format(value, ValueTextChannel.Header, binding.Source.Format, formatter) ?? string.Empty);
             }
         }
 
@@ -179,6 +205,60 @@ internal sealed class BindingPlan
         }
     }
 
+    /// <summary>
+    /// 查询参数的文本化：标量取文本、集合逐元素取文本、其余（嵌套对象）原样交给 <see cref="ParamsSerializer"/> 展开。
+    /// 集合在这里就折成文本列表，是因为查询串不需要再区分元素原始类型。
+    /// </summary>
+    private static object? FormatQueryValue(object? value, ValueFormat? format, Func<object?, string?>? formatter)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        // 没有任何格式化声明：原样返回，保持既有形态（自定义 ParamsSerializer 仍拿得到原始对象）。
+        if (format is null && formatter is null)
+        {
+            return value;
+        }
+
+        if (value is string || ScalarTypes.IsScalarType(value.GetType()) || ScalarTypes.IsBinaryType(value.GetType()))
+        {
+            return ValueText.Format(value, ValueTextChannel.Query, format, formatter);
+        }
+
+        // 字典保持键结构（显式命名的映射要展开成 a[key]=v），只把值文本化。
+        if (value is IEnumerable && QueryMap.CanEnumerate(value))
+        {
+            var map = new Dictionary<string, object?>();
+            foreach (var entry in QueryMap.Enumerate(value))
+            {
+                if (entry.Value is not null && FormatQueryValue(entry.Value, format, formatter) is { } mapped)
+                {
+                    map[entry.Key] = mapped;
+                }
+            }
+
+            return map;
+        }
+
+        if (value is IEnumerable items)
+        {
+            var texts = new List<string>();
+            foreach (var item in items)
+            {
+                if (item is not null && ValueText.Format(item, ValueTextChannel.Query, format, formatter) is { } text)
+                {
+                    texts.Add(text);
+                }
+            }
+
+            return texts;
+        }
+
+        return value;
+    }
+
     /// <summary>从待删除集合里摘掉匹配的名字（头名大小写不敏感）；没有匹配项时不动集合。</summary>
     /// <remarks>
     /// 同名声明可能重复出现（<see cref="AxiosConfig.RemoveHeaders"/> 只是 <c>ICollection</c>，不去重：
@@ -211,11 +291,4 @@ internal sealed class BindingPlan
 
         return false;
     }
-
-    /// <summary>基础类型的线上文本：转调查询串 / 表单的同一份规则。</summary>
-    private static string ToText(object value) => ParamsSerializer.ScalarToString(value);
-
-    /// <summary>URL 参数格式化钩子：<paramref name="formatter"/> 返回 null 时回落到默认规则。</summary>
-    private static object? FormatValue(object? value, Func<object, string?>? formatter)
-        => value is null || formatter is null ? value : formatter(value) ?? value;
 }
