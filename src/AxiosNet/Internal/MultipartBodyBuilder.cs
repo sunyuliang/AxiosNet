@@ -126,7 +126,11 @@ internal static class MultipartBodyBuilder
                 return;
 
             case string text:
-                content.Add(new StringContent(text, encoding), RequireName(name));
+                content.Add(
+                    new StringContent(
+                        ValueText.Format(text, ValueTextChannel.Multipart, memberFormat, config.ValueFormatter)!,
+                        encoding),
+                    RequireName(name));
                 return;
 
             case byte[] bytes:

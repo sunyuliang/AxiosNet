@@ -63,14 +63,14 @@ internal sealed class BindingPlan
     public object? ResolveBodyValue(object target, Func<object?, string?>? formatter)
     {
         var value = _body?.GetValue(target);
-        if (value is null
-            || (_body!.Format is null && formatter is null)
-            || !ScalarTypes.IsScalarBodyType(value.GetType()))
+        if (value is null || !ScalarTypes.IsScalarBodyType(value.GetType()))
         {
             return value;
         }
 
-        return ValueText.Format(value, ValueTextChannel.ScalarBody, _body.Format, formatter) is { } text
+        // 只有两层声明真的产出文本时才改成文本正文：二进制正文的默认形态是原始字节，
+        // 不能因为配置了「对其它类型生效、对 byte[] 返回 null」的实例钩子就退化成 base64 文本。
+        return ValueText.TryCustomFormat(value, _body!.Format, formatter) is { } text
             ? new FormattedScalarBody(text)
             : value;
     }
@@ -224,7 +224,11 @@ internal sealed class BindingPlan
 
         if (value is string || ScalarTypes.IsScalarType(value.GetType()) || ScalarTypes.IsBinaryType(value.GetType()))
         {
-            return ValueText.Format(value, ValueTextChannel.Query, format, formatter);
+            var text = ValueText.Format(value, ValueTextChannel.Query, format, formatter);
+
+            // 有实例钩子时把结果封存：ParamsSerializer 不能再对这段文本套第二遍钩子，
+            // 否则成员级 [Format] 的结果会被钩子覆盖（优先级链被打破）。
+            return formatter is null || text is null ? text : new FormattedQueryValue(text);
         }
 
         // 字典保持键结构（显式命名的映射要展开成 a[key]=v），只把值文本化。
@@ -244,6 +248,34 @@ internal sealed class BindingPlan
 
         if (value is IEnumerable items)
         {
+            // 有实例钩子时只文本化标量叶子：结构化元素原样保留，继续交给 ParamsSerializer 展开
+            // （否则列表里的对象会被 ToString() 压成一行，嵌套结构静默丢失）。
+            if (formatter is not null)
+            {
+                var mixed = new List<object?>();
+                foreach (var item in items)
+                {
+                    if (item is null)
+                    {
+                        continue;
+                    }
+
+                    if (item is string || ScalarTypes.IsScalarType(item.GetType()) || ScalarTypes.IsBinaryType(item.GetType()))
+                    {
+                        if (ValueText.Format(item, ValueTextChannel.Query, format, formatter) is { } text)
+                        {
+                            mixed.Add(new FormattedQueryValue(text));
+                        }
+                    }
+                    else
+                    {
+                        mixed.Add(item);
+                    }
+                }
+
+                return mixed;
+            }
+
             var texts = new List<string>();
             foreach (var item in items)
             {

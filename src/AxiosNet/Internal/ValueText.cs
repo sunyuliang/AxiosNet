@@ -45,18 +45,32 @@ internal static class ValueText
             return null;
         }
 
+        if (TryCustomFormat(value, memberFormat, formatter) is { } custom)
+        {
+            return custom;
+        }
+
+        return Default(value, channel);
+    }
+
+    /// <summary>
+    /// 只应用两层声明（成员级 <see cref="ValueFormat"/> &gt; 实例钩子），不计算通道默认。
+    /// 需要区分「自定义文本」与「通道默认」的调用方（如裸标量正文：二进制默认按字节发送而非 base64）用这个。
+    /// </summary>
+    public static string? TryCustomFormat(object? value, ValueFormat? memberFormat, Func<object?, string?>? formatter)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
         // 成员级声明最具体，压过实例级钩子（与请求头覆盖声明级静态头同一条优先级）。
         if (memberFormat?.TryFormat(value) is { } declared)
         {
             return declared;
         }
 
-        if (formatter is not null && formatter(value) is { } hooked)
-        {
-            return hooked;
-        }
-
-        return Default(value, channel);
+        return formatter?.Invoke(value);
     }
 
     /// <summary>JSON 树叶子节点的文本（数值保留原始书写形式，不经过 double 往返）。</summary>

@@ -101,10 +101,12 @@ public sealed class ModelBindingTests
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var api = new ApiClient(server.Url);
 
-        // 头名来自 [Header("...")]，非法名在配置构建期就抛（与直接 Set 同一类异常），一个字节都不发
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        // 头名来自 [Header("...")]，非法名在配置构建期就抛：声明式装配统一 ERR_BAD_REQUEST，一个字节都不发
+        var error = await Assert.ThrowsAsync<AxiosException>(() =>
             api.RequestAsync(new ProbeBadHeaderNameRequest { Value = "1" }));
 
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.IsType<ArgumentException>(error.Cause);
         Assert.Empty(server.Received);
     }
 
@@ -264,10 +266,12 @@ public sealed class ModelBindingTests
 
         using var client = CreateClient(server);
 
-        // CRLF 注入：AxiosHeaders 拦截（ArgumentException），请求一个字节都不出
-        await Assert.ThrowsAsync<ArgumentException>(
+        // CRLF 注入：AxiosHeaders 拦截，声明式装配统一归 ERR_BAD_REQUEST（内层仍是 ArgumentException），请求一个字节都不出
+        var error = await Assert.ThrowsAsync<AxiosException>(
             () => client.RequestAsync(new EvilHeaderRequest { Evil = "a\r\nX-Evil: injected" }));
 
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.IsType<ArgumentException>(error.Cause);
         Assert.Empty(server.Received);
     }
 

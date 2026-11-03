@@ -312,17 +312,36 @@ internal sealed class BindingAccumulator
         }
 
         var type = Nullable.GetUnderlyingType(source.ValueType) ?? source.ValueType;
-        if (type == typeof(byte[])
-            || typeof(Stream).IsAssignableFrom(type)
-            || type == typeof(FormFile)
-            || typeof(HttpContent).IsAssignableFrom(type))
+
+        // 集合部件逐元素装配（同名重复部件）：元素是文件形态时同样没有文本格式，
+        // 否则 [Format] 在运行期会被文件分支静默跳过。
+        var fileType = IsFilePartType(type) ? type : null;
+        if (fileType is null && FormatRules.TryGetElementType(type, out var element) && IsFilePartType(element))
+        {
+            fileType = element;
+        }
+
+        if (fileType is not null)
         {
             throw new InvalidOperationException(
-                $"{_owner} 的{_memberKind} {source.Name} 标注了 [Format]，但 {type.Name} 是文件部件"
-                + "（Stream / byte[] / FormFile / HttpContent）：文件按字节发送，没有文本格式。");
+                $"{_owner} 的{_memberKind} {source.Name} 标注了 [Format]，但 {fileType.Name} 是文件部件"
+                + "（Stream / byte[] / Memory<byte> / ArraySegment<byte> / FormFile / HttpContent）：文件按字节发送，没有文本格式。");
         }
 
         EnsureFormat(source, "Part");
+    }
+
+    private static bool IsFilePartType(Type type)
+    {
+        type = Nullable.GetUnderlyingType(type) ?? type;
+
+        return type == typeof(byte[])
+            || type == typeof(Memory<byte>)
+            || type == typeof(ReadOnlyMemory<byte>)
+            || type == typeof(ArraySegment<byte>)
+            || typeof(Stream).IsAssignableFrom(type)
+            || type == typeof(FormFile)
+            || typeof(HttpContent).IsAssignableFrom(type);
     }
 
     /// <summary>成员级格式化与通道的兼容性校验（<see cref="FormatRules"/> 是唯一权威）。</summary>

@@ -389,6 +389,18 @@ public class AxiosException : Exception
             inner);
     }
 
+    /// <summary>声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化）：统一 <c>ERR_BAD_REQUEST</c>。</summary>
+    internal static AxiosException RequestBindingFailed(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
+    {
+        return new AxiosException(
+            $"Request could not be built from '{targetName}': {inner.Message}",
+            ErrBadRequest,
+            config,
+            request,
+            null,
+            inner);
+    }
+
     /// <summary>响应侧 <c>transformResponse</c> 抛错，原始异常在 <see cref="Cause"/> 里。</summary>
     internal static AxiosException ResponseTransformFailed(AxiosConfig? config, HttpRequestMessage? request, Exception inner)
     {

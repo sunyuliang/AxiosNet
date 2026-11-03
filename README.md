@@ -178,6 +178,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 - 一个属性可同时标多个绑定特性（`[Path]` + `[Header]`），值只读一次、分别应用。
 - 按请求微调：继承 `ApiRequest<T>` 覆写 `Configure(config)`，或 `RequestAsync(request, config => ...)`。
 - 模型定义非法（缺路由、占位符未绑定、多个 Body…）首次调用抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateModels(typeof(A), ...)` 或 `ValidateModels(assembly)`（返回全部错误消息，不抛）。按类型重载在 Native AOT 下同样可用（已生成的声明直接走注册表）；`ValidateModels(assembly)` 依赖反射枚举，AOT 下改调生成的 `AxiosNet.Generated.AxiosNetValidation_<程序集名>.ValidateAll()`。
+- 声明本身合法、但运行时取值 / 格式化失败（路径值为 null、格式化函数抛错、非法头名 / 头值等）属于请求装配失败，统一抛 `AxiosException`（`ERR_BAD_REQUEST`），原异常在 `Cause`；与正文 / multipart 装配同口径。
 - 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；`IAuthorizationProvider` 是扩展点，内置 `BearerAuthorizationProvider`。
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
 - 其它：`client.ValueFormatter` 接管路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文的文本形态（优先级低于成员上的 `[Format]`，见「值格式化」）；`client.Axios` 直接进底层 `AxiosClient`（拦截器、池、Handler 全可用）；流式正文的超时口径跟随该客户端配置的 `Timeout` / `TotalTimeout`，没有独立的空闲超时旋钮。
@@ -233,7 +234,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 ```
 
 - 每个方法必须标注且只标注一个路由特性。返回类型有四种：`Task<AxiosResponse<T>>`（完整响应）/ `Task<AxiosResponse>`（正文按 `JsonElement` 原样交付）/ `Task<T>`（只交付 `Data`）/ `Task`（只完成请求，不解析正文——非 JSON 正文不会变成解析错误）。不支持同步返回 / `ValueTask` / 泛型方法 / `ref`·`out`。返回 `Task<AxiosResponse<IAsyncEnumerable<T>>>` 即流式方法（裸 `Task<IAsyncEnumerable<T>>` 缺少响应元数据与释放归属，启动期校验即报错）。
-- 四种形态的失败口径一致：非 2xx 抛 `AxiosException`，配置了 `ErrorFactory` 时照常替换/包装；用 `Task` 形态时 `ErrorFactory` 仍能拿到响应（只是正文被丢弃）。
+- 四种形态的失败口径一致：非 2xx 抛 `AxiosException`，配置了 `ErrorFactory` 时照常替换/包装；用 `Task` 形态时 `ErrorFactory` 仍能拿到响应（只是正文被丢弃）。声明式装配失败（路径 / 查询 / 请求头 / 正文的取值或格式化抛错）统一为 `ERR_BAD_REQUEST`，原异常在 `Cause`。
 - `CancellationToken` 参数按名字识别（最多一个），不参与绑定；其余参数按 `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` 或「未标注」规则处理，默认 Body 推断同样生效。
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口或接口方法上；继承基接口时，静态头与授权按**当前派生接口作用域**合并（同一基方法在不同派生接口下可以有不同静态头）。方法级声明压过接口级：静态头同名项覆盖、`[AllowAnonymous]` 可让接口里单个方法匿名、`[Authorize("Basic")]` 可让单个方法换 scheme；方法上同标 `[Authorize]` 与 `[AllowAnonymous]` 属二义性（`Create<T>()` / `ValidateInterfaces` 报错）。
 - 接口写在非法（缺路由、多个 Body、`[Part]` 未配 `[Multipart]`、`[Multipart]` 与 `[Body]` / `[BodyContentType]` 同用、`[Stream]` 用在非流式方法、参数重名…）时，`Create<T>()` 抛 `InvalidOperationException`；启动期体检用 `ApiClient.ValidateInterfaces(typeof(IA), ...)` 或 `ValidateInterfaces(assembly)`（返回全部错误消息，不抛；同一接口的多个方法错误会聚合，而不是只报第一条）。按类型重载在 Native AOT 下同样可用；`ValidateInterfaces(assembly)` 在 AOT 下抛 `PlatformNotSupportedException`，改调生成的 `ValidateAll()`。
@@ -278,7 +279,7 @@ var client = new ApiClient(url)
 };
 ```
 
-- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文（`data` 本身是标量，含 `byte[]` 等二进制形态）。同一套规则，不存在「查询里能格式化、表单里不能」；查询里的嵌套对象 / 字典按叶子应用（成员声明优先，其次实例钩子）。
+- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文（`data` 本身是标量，含 `byte[]` 等二进制形态；二进制正文只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64）。同一套规则，不存在「查询里能格式化、表单里不能」；查询里的嵌套对象 / 字典按叶子应用（成员声明优先，其次实例钩子）。
 - **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
 - **格式串**要求值实现 `IFormattable`，区域固定为不变文化（不跟随 `CurrentCulture`）；需要区域相关的形态就写格式化函数。
 - **结构化正文内部不归它管**：`[Body]` + 结构化类型上标 `[Format]` 在构建期报错（文档内部由序列化器负责）。要让 JSON 里的成员也按 `[Format]` 输出，挂可选桥：
@@ -291,7 +292,7 @@ config.Serialization.JsonSerializerOptions =
     AxiosJsonFormat.ApplyTo(new JsonSerializerOptions(JsonSerializerDefaults.Web));
 ```
 
-- **构建期报错**（不留到运行期静默回落）：`[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `FormFile` / `HttpContent`）同用；格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；标在非标量（POCO）的查询参数上。模型属性与接口参数走同一套校验。
+- **构建期报错**（不留到运行期静默回落）：`[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合部件的元素同此判定）同用；格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；标在非标量（POCO）的查询参数上。模型属性与接口参数走同一套校验。
 - **写错怎么发现**（都不必等到发请求）：方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；签名不对（非 `public static` / 泛型 / 参数不是 `object` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `InvalidOperationException`。没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
 - **Native AOT**：源生成器把格式化委托直接烘焙进元数据（签名不合法报 `AXA015`），运行期不需要反射。手动 `RegisterShape<T>()` 的形状没有烘焙，AOT 下用 `[Format(typeof(...), nameof(...))]` 会显式报错并指向「启用源生成器或改用格式串」，不会静默丢格式化。
 
@@ -873,7 +874,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | 触发场景 |
 | --- | --- |
-| `ERR_BAD_REQUEST` | 4xx；请求体超 `MaxBodyLength`；请求体序列化失败；上传进度回调抛异常 |
+| `ERR_BAD_REQUEST` | 4xx；请求体超 `MaxBodyLength`；请求体序列化失败；上传进度回调抛异常；声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化） |
 | `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `MaxContentLength`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调 / `transformResponse` 抛异常 |
 | `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `TotalTimeout` 总预算已耗尽 |
 | `ERR_NETWORK` | 连接被拒 / DNS 失败 / 连接中断 / 正文截断 |
@@ -1817,7 +1818,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 4. 实例级选项按请求写**不同的值**会立即抛 `ERR_BAD_OPTION_VALUE`（axios 是静默不生效）。
 5. `params` 用 `Uri.EscapeDataString` 严格编码（空格 `%20`，不是 `+`）。
 6. `transformRequest` / `transformResponse` 的元素类型是 `object?`（C# 无法像 JS 那样丢失类型再收窄）。
-7. 请求头写入即校验（RFC 7230 token、禁止 CR/LF），非法直接抛 `ArgumentException`。
+7. 请求头写入即校验（RFC 7230 token、禁止 CR/LF），非法直接抛 `ArgumentException`（声明式绑定中的同类错误统一包装为 `ERR_BAD_REQUEST`，原异常在 `Cause`）。
 8. `MaxRate` / 进度回调实现在 `HttpContent` 与 `Stream` 层（BCL 无原生支持）。
 9. `Timeout` 上限约 49.7 天，超出收敛到上限；真正无限超时用 `Timeout = Zero`。
 

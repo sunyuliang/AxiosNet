@@ -120,28 +120,30 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var formatter = ValueFormatter;
+        var target = request.GetType().Name;
         var config = new AxiosConfig
         {
             Method = metadata.Method,
-            Url = metadata.ResolveUrl(request, formatter),
             ValueFormatter = formatter
         };
 
+        // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
+        config.Url = BindingErrors.Run(config, target, () => metadata.ResolveUrl(request, formatter));
+
         // 没有查询参数时不写：合并层把显式 null 当成摘掉实例默认值。
-        if (metadata.ResolveQuery(request, formatter) is { } query)
+        if (BindingErrors.Run(config, target, () => metadata.ResolveQuery(request, formatter)) is { } query)
         {
             config.Params = query;
         }
 
-        var body = ResolveBody(metadata, request, config, formatter);
-        if (body is not null)
+        if (BindingErrors.Run(config, target, () => metadata.ResolveBody(request, formatter)) is { } body)
         {
             config.Data = body;
         }
 
         // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项
-        metadata.ApplyStaticHeaders(config);
-        metadata.ApplyHeaders(request, config, formatter);
+        BindingErrors.Run(config, target, () => metadata.ApplyStaticHeaders(config));
+        BindingErrors.Run(config, target, () => metadata.ApplyHeaders(request, config, formatter));
 
         // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌
         if (cancellationToken.CanBeCanceled)
@@ -159,23 +161,6 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
 
         return config;
-    }
-
-    /// <summary>取请求体（<c>[Body]</c> 的值 / <c>[Multipart]</c> 装配好的表单）；取值失败归 <c>ERR_BAD_REQUEST</c>。</summary>
-    private static object? ResolveBody(
-        RequestModelMetadata metadata,
-        object request,
-        AxiosConfig config,
-        Func<object?, string?>? formatter)
-    {
-        try
-        {
-            return metadata.ResolveBody(request, formatter);
-        }
-        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-        {
-            throw AxiosException.BadRequestPayload(config, request: null, request.GetType().Name, ex);
-        }
     }
 
     /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 跳过；<see cref="AccessTokenProvider"/> 先写头，<see cref="Authorization"/> 最后执行（可覆盖前者）。</summary>

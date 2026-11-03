@@ -83,32 +83,24 @@ internal sealed partial class InterfaceMethodMetadata
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
         var formatter = client.ValueFormatter;
+        var target = $"{_interfaceType!.Name}.{_methodName}";
         var config = new AxiosConfig
         {
             Method = _method!,
-            Url = _plan!.ResolveUrl(_pathTemplate!, args, formatter),
             ValueFormatter = formatter
         };
 
-        if (_plan.ResolveQuery(args, formatter) is { } query)
+        // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
+        config.Url = BindingErrors.Run(config, target, () => _plan!.ResolveUrl(_pathTemplate!, args, formatter));
+
+        if (BindingErrors.Run(config, target, () => _plan!.ResolveQuery(args, formatter)) is { } query)
         {
             config.Params = query;
         }
 
         if (_isMultipart)
         {
-            object? resolved;
-            try
-            {
-                resolved = ResolveMultipartBody(args);
-            }
-            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-            {
-                // 表单装配失败（延迟迭代器抛错等）归 ERR_BAD_REQUEST。
-                throw AxiosException.BadRequestPayload(config, request: null, $"{_interfaceType!.Name}.{_methodName}", ex);
-            }
-
-            if (resolved is not null)
+            if (BindingErrors.Run(config, target, () => ResolveMultipartBody(args)) is { } resolved)
             {
                 config.Data = resolved;
             }
@@ -119,7 +111,7 @@ internal sealed partial class InterfaceMethodMetadata
                 config.ContentType = AxiosContentType.MultipartFormData;
             }
         }
-        else if (_plan.ResolveBodyValue(args, formatter) is { } body)
+        else if (BindingErrors.Run(config, target, () => _plan!.ResolveBodyValue(args, formatter)) is { } body)
         {
             config.Data = body;
         }
@@ -136,8 +128,8 @@ internal sealed partial class InterfaceMethodMetadata
         }
 
         // 声明级静态头先写，参数上的 [Header] / [HeaderCollection] 覆盖同名项
-        _plan.ApplyStaticHeaders(config);
-        _plan.ApplyHeaders(args, config, formatter);
+        BindingErrors.Run(config, target, () => _plan!.ApplyStaticHeaders(config));
+        BindingErrors.Run(config, target, () => _plan!.ApplyHeaders(args, config, formatter));
 
         return config;
     }

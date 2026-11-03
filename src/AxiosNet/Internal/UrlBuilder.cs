@@ -217,6 +217,19 @@ internal static class UrlBuilder
 }
 
 /// <summary>
+/// 绑定层已经定型的查询文本：成员格式化 / 实例钩子的结果在此封存，
+/// 后续 <see cref="ParamsSerializer"/> 不再对它套第二遍钩子（否则成员声明会被钩子覆盖）。
+/// </summary>
+internal sealed class FormattedQueryValue
+{
+    public FormattedQueryValue(string text) => Text = text;
+
+    public string Text { get; }
+
+    public override string ToString() => Text;
+}
+
+/// <summary>
 /// params 序列化（buildURL 的默认实现）：对象 / 字典 / 集合 / JSON 树展平成查询串，
 /// null 跳过，键按 encodeURIComponent 转义且保留方括号。
 /// </summary>
@@ -381,6 +394,13 @@ internal static class ParamsSerializer
         // 与 axios 一致：null 直接跳过
         if (value is null)
         {
+            return;
+        }
+
+        // 绑定层已经定型的文本：直接写入，不能再让实例钩子对「文本」套第二遍。
+        if (value is FormattedQueryValue formatted)
+        {
+            pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(formatted.Text)));
             return;
         }
 
@@ -572,7 +592,9 @@ internal static class ParamsSerializer
                     return;
                 }
 
-                parts.Add(ValueText.Format(item, ValueTextChannel.Query, memberFormat, formatter)!);
+                parts.Add(item is FormattedQueryValue formatted
+                    ? formatted.Text
+                    : ValueText.Format(item, ValueTextChannel.Query, memberFormat, formatter)!);
             }
 
             if (parts.Count > 0)
@@ -710,7 +732,8 @@ internal static class ParamsSerializer
 
     private static bool IsScalar(object value)
         // byte[] 也算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
-        => value is byte[] || ScalarTypes.IsScalarType(value.GetType());
+        // FormattedQueryValue 是绑定层定型的文本，同样按叶子处理（否则会被集合逻辑回落到方括号形态）。
+        => value is FormattedQueryValue || value is byte[] || ScalarTypes.IsScalarType(value.GetType());
 
     /// <summary>
     /// 键名转义：同 axios 默认 encoder（<c>encodeURIComponent</c>），但把 <c>%5B</c> / <c>%5D</c> 还原成 <c>[</c> <c>]</c>，

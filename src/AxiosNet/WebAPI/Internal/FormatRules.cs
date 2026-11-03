@@ -1,11 +1,13 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using AxiosNet.Internal;
 using AxiosNet.Metadata;
 
-namespace AxiosNet.Internal;
+namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
 /// <c>[Format]</c> 的构建期校验：值与格式串的形态必须在声明构建期就对得上，不能留到运行期静默回落。
+/// 本校验只服务于声明式 API（<c>[Format]</c> 属于 WebAPI 扩展），不参与 Axios 核心的请求发送。
 /// </summary>
 internal static class FormatRules
 {
@@ -82,8 +84,8 @@ internal static class FormatRules
     [UnconditionalSuppressMessage(
         "Trimming",
         "IL2070",
-        Justification = "只在「支持动态代码」的正体里调用（AOT 下 EnsureApplicable 直接返回）；类型来自已注册的声明。")]
-    private static bool TryGetElementType(Type type, [NotNullWhen(true)] out Type? elementType)
+        Justification = "正体校验只在支持动态代码时调用；<c>[Part]</c> 的文件部件校验在 AOT 下也只依赖已保留的接口元数据，判不出来就放行。")]
+    internal static bool TryGetElementType(Type type, [NotNullWhen(true)] out Type? elementType)
     {
         elementType = null;
 

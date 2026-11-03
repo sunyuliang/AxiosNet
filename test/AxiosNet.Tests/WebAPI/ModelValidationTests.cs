@@ -131,9 +131,10 @@ public sealed class ModelValidationTests
     [Fact]
     public void NullPathValue_ThrowsWithPropertyName()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new NullablePathRequest()));
 
+        Assert.Equal("ERR_BAD_REQUEST", ex.Code);
         Assert.Contains("PathValue", ex.Message);
         Assert.Contains("为 null", ex.Message);
     }

@@ -307,6 +307,47 @@ public sealed class FormatAttributeTests
     }
 
     // ------------------------------------------------------------------
+    // 运行期装配失败：声明式绑定与正文同口径（统一 ERR_BAD_REQUEST）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ModelPathFormatterFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new ThrowingPathRequest { Id = 7 }));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task ModelQueryFormatterFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new ThrowingQueryRequest { Name = "abc" }));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public void ModelHeaderFormatterFailure_GetUri_IsBadRequest()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        var error = Assert.Throws<AxiosException>(
+            () => client.GetUri(new ThrowingHeaderRequest { Code = "abc" }));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+    }
+
+    // ------------------------------------------------------------------
     // 接口式：参数上的声明走同一套规则
     // ------------------------------------------------------------------
 
@@ -321,6 +362,45 @@ public sealed class FormatAttributeTests
         var received = Assert.Single(server.Received);
         Assert.Equal("/fmt/007", received.Path);
         Assert.Equal("when=2024-01-02", Uri.UnescapeDataString(received.Query ?? string.Empty));
+    }
+
+    [Fact]
+    public async Task InterfaceParameter_BodyFormatterFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.Create<IThrowingBodyFormatApi>().SubmitAsync("payload"));
+
+        Assert.Equal("ERR_BAD_REQUEST", error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task InterfaceParameter_PathFormatterFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.Create<IThrowingPathFormatApi>().GetAsync(7));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task InterfaceParameter_QueryFormatterFailure_IsBadRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.Create<IThrowingQueryFormatApi>().GetAsync("abc"));
+
+        Assert.Equal(AxiosException.ErrBadRequest, error.Code);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -497,6 +577,27 @@ public sealed class FormatAttributeTests
         public Person Payload { get; set; } = new("x", 1);
     }
 
+    [Get("throw/{id}")]
+    private sealed class ThrowingPathRequest : IApiRequest<Person>
+    {
+        [Path, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))]
+        public int Id { get; set; }
+    }
+
+    [Get("throw")]
+    private sealed class ThrowingQueryRequest : IApiRequest<Person>
+    {
+        [Query, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))]
+        public string? Name { get; set; }
+    }
+
+    [Get("throw-header")]
+    private sealed class ThrowingHeaderRequest : IApiRequest<Person>
+    {
+        [Header("X-Code"), Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))]
+        public string? Code { get; set; }
+    }
+
     [Get("nested")]
     private sealed class NestedQueryRequest : IApiRequest<Person>
     {
@@ -558,6 +659,30 @@ public sealed class FormatAttributeTests
             CancellationToken cancellationToken = default);
     }
 
+    public interface IThrowingBodyFormatApi
+    {
+        [Post("body")]
+        Task<AxiosResponse<Person>> SubmitAsync(
+            [Body, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] string payload,
+            CancellationToken cancellationToken = default);
+    }
+
+    public interface IThrowingPathFormatApi
+    {
+        [Get("throw/{id}")]
+        Task<AxiosResponse<Person>> GetAsync(
+            [Path, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] int id,
+            CancellationToken cancellationToken = default);
+    }
+
+    public interface IThrowingQueryFormatApi
+    {
+        [Get("throw")]
+        Task<AxiosResponse<Person>> GetAsync(
+            [Query, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] string name,
+            CancellationToken cancellationToken = default);
+    }
+
     /// <summary>表单正文的载荷：一个成员靠实例钩子、一个成员靠成员声明。</summary>
     public sealed class FormPayload
     {
@@ -598,6 +723,8 @@ internal static class FormatHelpers
 
     public static string? Money(object? value)
         => value is decimal amount ? amount.ToString("0.00", CultureInfo.InvariantCulture) : null;
+
+    public static string? Throwing(object? value) => throw new InvalidOperationException("formatter failed");
 
     public static string? Hex(object? value)
         => value is byte[] bytes ? Convert.ToHexString(bytes) : null;

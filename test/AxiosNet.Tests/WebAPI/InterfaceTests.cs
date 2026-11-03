@@ -148,7 +148,8 @@ public sealed class InterfaceTests
 
         // 调用本身不抛：异常进入返回的 Task，与异步方法语义一致
         Assert.NotNull(task);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => task);
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => task);
+        Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("为 null", ex.Message);
         Assert.Empty(server.Received);
     }
