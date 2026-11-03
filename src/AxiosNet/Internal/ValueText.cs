@@ -82,6 +82,32 @@ internal static class ValueText
         _ => element.GetRawText()
     };
 
+    /// <summary>
+    /// JSON 树叶子节点的文本：先让实例钩子按 CLR 标量（string / long / double / bool）尝试一次，
+    /// 声明层不处理（返回 null）时回落到原始书写形式。成员级 [Format] 不接受 JSON 树，故没有成员参数。
+    /// </summary>
+    public static string JsonScalar(JsonElement element, Func<object?, string?>? formatter)
+    {
+        if (formatter is not null)
+        {
+            object? scalar = element.ValueKind switch
+            {
+                JsonValueKind.String => element.GetString(),
+                JsonValueKind.Number => element.TryGetInt64(out var number) ? number : element.GetDouble(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                _ => null
+            };
+
+            if (scalar is not null && TryCustomFormat(scalar, memberFormat: null, formatter) is { } custom)
+            {
+                return custom;
+            }
+        }
+
+        return JsonScalar(element);
+    }
+
     /// <summary>通道默认形态：只有日期时间族分两档（正文保真用往返格式，其余折 UTC 毫秒）。</summary>
     private static string Default(object value, ValueTextChannel channel) => value switch
     {

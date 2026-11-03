@@ -122,7 +122,7 @@ internal static class MultipartBodyBuilder
             }
 
             case JsonElement element:
-                CollectJsonElementParts(name, element, content, encoding, nameSelector);
+                CollectJsonElementParts(name, element, content, encoding, nameSelector, config.ValueFormatter);
                 return;
 
             case string text:
@@ -340,14 +340,15 @@ internal static class MultipartBodyBuilder
         JsonElement element,
         MultipartFormDataContent content,
         Encoding encoding,
-        Func<string?, string, string>? nameSelector)
+        Func<string?, string, string>? nameSelector,
+        Func<object?, string?>? formatter)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    CollectJsonElementParts(BodyFields.CombineName(nameSelector, name, property.Name), property.Value, content, encoding, nameSelector);
+                    CollectJsonElementParts(BodyFields.CombineName(nameSelector, name, property.Name), property.Value, content, encoding, nameSelector, formatter);
                 }
 
                 break;
@@ -355,7 +356,7 @@ internal static class MultipartBodyBuilder
             case JsonValueKind.Array:
                 foreach (var item in element.EnumerateArray())
                 {
-                    CollectJsonElementParts(name, item, content, encoding, nameSelector);
+                    CollectJsonElementParts(name, item, content, encoding, nameSelector, formatter);
                 }
 
                 break;
@@ -364,7 +365,7 @@ internal static class MultipartBodyBuilder
             case JsonValueKind.Number:
             case JsonValueKind.True:
             case JsonValueKind.False:
-                content.Add(new StringContent(ValueText.JsonScalar(element), encoding), RequireName(name));
+                content.Add(new StringContent(ValueText.JsonScalar(element, formatter), encoding), RequireName(name));
                 break;
 
             default:

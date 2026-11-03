@@ -92,6 +92,12 @@ public class AxiosException : Exception
     internal bool TimedOutOnTotalBudget { get; private init; }
 
     /// <summary>
+    /// 是否属于「请求构造阶段失败」（默认查询串展平时的取值 / 格式化抛错）。这是与具体 API 分层无关的中性分类：
+    /// 核心直调保持 <c>ERR_BAD_OPTION_VALUE</c>，外层可以据此改判自己的错误码。
+    /// </summary>
+    internal bool IsRequestConstructionFailure { get; private init; }
+
+    /// <summary>
     /// 供派生类型（如 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c>）构造异常；调用方应当读取库抛出的实例，而不是自己创建。
     /// <paramref name="code"/> 决定 <see cref="ErrorCode"/>，取值请用 <see cref="ErrBadRequest"/> 等常量。
     /// </summary>
@@ -387,6 +393,24 @@ public class AxiosException : Exception
             request,
             null,
             inner);
+    }
+
+    /// <summary>
+    /// 请求构造阶段失败（默认查询串展平时的取值 / 格式化）。错误码仍是 <c>ERR_BAD_OPTION_VALUE</c>，
+    /// 原始异常留在 <see cref="Cause"/>；<see cref="IsRequestConstructionFailure"/> 供外层改判。
+    /// </summary>
+    internal static AxiosException RequestConstructionFailed(AxiosConfig? config, Exception inner)
+    {
+        return new AxiosException(
+            $"paramsSerializer 抛出了异常，查询串无法生成：{inner.Message}",
+            ErrBadOptionValue,
+            config,
+            request: null,
+            response: null,
+            innerException: inner)
+        {
+            IsRequestConstructionFailure = true
+        };
     }
 
     /// <summary>声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化）：统一 <c>ERR_BAD_REQUEST</c>。</summary>

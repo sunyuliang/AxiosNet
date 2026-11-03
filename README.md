@@ -279,7 +279,7 @@ var client = new ApiClient(url)
 };
 ```
 
-- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文（`data` 本身是标量，含 `byte[]` 等二进制形态；二进制正文只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64）。同一套规则，不存在「查询里能格式化、表单里不能」；查询里的嵌套对象 / 字典按叶子应用（成员声明优先，其次实例钩子）。
+- **覆盖的通道**：路径段 / 查询串 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文（`data` 本身是标量，含 `byte[]` 等二进制形态；二进制正文只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64）。同一套规则，不存在「查询里能格式化、表单里不能」；查询里的嵌套对象 / 字典 / `JsonElement` 树按叶子应用（成员声明优先，其次实例钩子）。
 - **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
 - **格式串**要求值实现 `IFormattable`，区域固定为不变文化（不跟随 `CurrentCulture`）；需要区域相关的形态就写格式化函数。
 - **结构化正文内部不归它管**：`[Body]` + 结构化类型上标 `[Format]` 在构建期报错（文档内部由序列化器负责）。要让 JSON 里的成员也按 `[Format]` 输出，挂可选桥：
@@ -292,7 +292,7 @@ config.Serialization.JsonSerializerOptions =
     AxiosJsonFormat.ApplyTo(new JsonSerializerOptions(JsonSerializerDefaults.Web));
 ```
 
-- **构建期报错**（不留到运行期静默回落）：`[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合部件的元素同此判定）同用；格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；标在非标量（POCO）的查询参数上。模型属性与接口参数走同一套校验。
+- **构建期报错**（不留到运行期静默回落）：`[Format]` 与结构化 `[Body]` / `[HeaderCollection]` / 文件部件（`Stream` / `byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>` / `FormFile` / `HttpContent`，集合元素 / 字典值同此判定）同用；格式串用在非 `IFormattable` 的标量（如 `bool`）或二进制形态（`byte[]` / `Memory<byte>` / `ReadOnlyMemory<byte>` / `ArraySegment<byte>`）上；标在非标量（POCO）的查询参数上。模型属性与接口参数走同一套校验。
 - **写错怎么发现**（都不必等到发请求）：方法名写成 `nameof(...)` 时拼错是普通编译错误（`CS0117`）；签名不对（非 `public static` / 泛型 / 参数不是 `object` / 返回不是 `string`）由源生成器在编译期报 `AXA015`，消息里直接给出正确签名；值形态与通道不匹配（格式串用在 `bool` / 二进制形态上、`[Format]` 标在结构化 `[Body]` 或文件部件上）在构建绑定计划时抛 `InvalidOperationException`。没启用源生成器时 `AXA015` 不生效，改用 `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` 在启动期扫出来。
 - **Native AOT**：源生成器把格式化委托直接烘焙进元数据（签名不合法报 `AXA015`），运行期不需要反射。手动 `RegisterShape<T>()` 的形状没有烘焙，AOT 下用 `[Format(typeof(...), nameof(...))]` 会显式报错并指向「启用源生成器或改用格式串」，不会静默丢格式化。
 
@@ -530,7 +530,7 @@ c.Params = new[] { 1, 2 };            // 根集合：[0]=1&[1]=2
 
 - 集合形态由 `Serialization.CollectionFormat` 决定：`Brackets`（默认）/ `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`。
 - 键与值走 `Uri.EscapeDataString`（空格 `%20`）；手写在 `Url` 里的查询串不二次编码。
-- `Params` 传标量抛 `ERR_BAD_OPTION_VALUE`（没有键名）。完全自定义：`c.Serialization.ParamsSerializer = p => "a=1&b=2"`。
+- `Params` 传标量抛 `ERR_BAD_OPTION_VALUE`（没有键名）。完全自定义：`c.Serialization.ParamsSerializer = p => "a=1&b=2"`（设置 `ValueFormatter` 时，回调里看到的仍是定型后的文本，内部封套已剥离）。
 - 标量文本形态（`Params` / `[Path]` / `[Header]` / 表单 / multipart / 裸标量正文共用同一条路径）：`bool` → `true`/`false`，枚举 → 名字，`DateTime`/`DateTimeOffset` → UTC 毫秒 ISO（`Unspecified` 按 UTC；裸标量正文例外，用往返格式 `"O"`），`DateOnly` → `yyyy-MM-dd`，`byte[]` → base64，其它走 `IFormattable` + `InvariantCulture`。按成员改写形态用 `[Format]`，按实例改写的钩子是 `ApiClient.ValueFormatter`（见「值格式化」）。
 
 ### 请求体 data 与 ContentType

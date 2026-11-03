@@ -46,7 +46,7 @@ public sealed partial class AxiosClient
             merged.Data = perCall.Data;
         }
 
-        // 声明式绑定层写入的格式化钩子：表单 / multipart / 裸标量正文在管线内组装，合并时必须带过去。
+        // 绑定层写入的格式化钩子：表单 / multipart / 裸标量正文在管线内组装，合并时必须带过去。
         merged.ValueFormatter = perCall.ValueFormatter;
 
         // 短路响应只按请求意图生效，回放生效配置时不命中。

@@ -478,7 +478,7 @@ public sealed class HedgingTests
             return TestJson.Response(new { branch }) with
             {
                 Headers = BranchHeader(branch),
-                BodyDelay = TimeSpan.FromMilliseconds(400)
+                BodyDelay = TimeSpan.FromMilliseconds(900)
             };
         });
 
@@ -537,11 +537,11 @@ public sealed class HedgingTests
         var arrivals = new ConcurrentQueue<TimeSpan>();
         var clock = Stopwatch.StartNew();
 
-        // 每条分支都要 600ms 才回：第 2、3 条分别在 200ms / 400ms 起跑，首发 600ms 时胜出。
+        // 每条分支都要 1000ms 才回：第 2、3 条分别在 200ms / 400ms 起跑，三条都必然到达服务端。
         await using var server = TestHttpServer.Start(async _ =>
         {
             arrivals.Enqueue(clock.Elapsed);
-            await Task.Delay(TimeSpan.FromMilliseconds(600));
+            await Task.Delay(TimeSpan.FromMilliseconds(1000));
             return TestJson.Response(new { ok = true });
         });
 

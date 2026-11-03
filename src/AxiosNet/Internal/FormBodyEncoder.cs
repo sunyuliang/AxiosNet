@@ -331,7 +331,7 @@ internal static class FormBodyEncoder
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, options.Encoding), EncodeValue(ValueText.JsonScalar(element), options.Encoding)));
+                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, options.Encoding), EncodeValue(ValueText.JsonScalar(element, options.Formatter), options.Encoding)));
                 break;
 
             default:

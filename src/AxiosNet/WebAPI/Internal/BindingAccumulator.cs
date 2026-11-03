@@ -313,13 +313,9 @@ internal sealed class BindingAccumulator
 
         var type = Nullable.GetUnderlyingType(source.ValueType) ?? source.ValueType;
 
-        // 集合部件逐元素装配（同名重复部件）：元素是文件形态时同样没有文本格式，
+        // 集合 / 字典部件都可能逐元素、逐值装配成文件（同名重复部件）：文件形态没有文本格式，
         // 否则 [Format] 在运行期会被文件分支静默跳过。
-        var fileType = IsFilePartType(type) ? type : null;
-        if (fileType is null && FormatRules.TryGetElementType(type, out var element) && IsFilePartType(element))
-        {
-            fileType = element;
-        }
+        var fileType = FindFilePartType(type, depth: 0);
 
         if (fileType is not null)
         {
@@ -329,6 +325,62 @@ internal sealed class BindingAccumulator
         }
 
         EnsureFormat(source, "Part");
+    }
+
+    /// <summary>在集合元素 / 字典值里递归找文件部件类型（深度上限防自引用类型图）。</summary>
+    private static Type? FindFilePartType(Type type, int depth)
+    {
+        if (IsFilePartType(type))
+        {
+            return type;
+        }
+
+        if (depth >= 8)
+        {
+            return null;
+        }
+
+        if (FormatRules.TryGetElementType(type, out var element)
+            && FindFilePartType(element, depth + 1) is { } fromElement)
+        {
+            return fromElement;
+        }
+
+        if (TryGetStringMapValueType(type, out var valueType)
+            && valueType is not null
+            && FindFilePartType(valueType, depth + 1) is { } fromValue)
+        {
+            return fromValue;
+        }
+
+        return null;
+    }
+
+    /// <summary>字符串键字典的值类型（<c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>）。</summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2070",
+        Justification = "与 FormatRules.TryGetElementType 同口径：只依赖已保留的接口元数据，判不出来就放行。")]
+    private static bool TryGetStringMapValueType(Type type, out Type? valueType)
+    {
+        foreach (var contract in type.GetInterfaces())
+        {
+            if (!contract.IsGenericType)
+            {
+                continue;
+            }
+
+            var definition = contract.GetGenericTypeDefinition();
+            if ((definition == typeof(IDictionary<,>) || definition == typeof(IReadOnlyDictionary<,>))
+                && contract.GetGenericArguments()[0] == typeof(string))
+            {
+                valueType = contract.GetGenericArguments()[1];
+                return true;
+            }
+        }
+
+        valueType = null;
+        return false;
     }
 
     private static bool IsFilePartType(Type type)

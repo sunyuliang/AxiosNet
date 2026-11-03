@@ -110,7 +110,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
         var metadata = RequestModelMetadata.Get(request.GetType());
-        return Axios.GetUri(BuildConfig(metadata, request, configure: null, cancellationToken: default));
+        var config = BuildConfig(metadata, request, configure: null, cancellationToken: default);
+        return BindingErrors.Run(config, request.GetType().Name, () => Axios.GetUri(config));
     }
 
     private AxiosConfig BuildConfig(
@@ -345,6 +346,15 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         {
             return await send().ConfigureAwait(false);
         }
+        catch (AxiosException error) when (error.IsRequestConstructionFailure)
+        {
+            // 查询展平阶段的取值 / 格式化失败：声明式口径是「请求装配失败」，改判 ERR_BAD_REQUEST，原因保留原始异常。
+            throw AxiosException.RequestBindingFailed(
+                error.Config,
+                request: null,
+                InvocationTargetName(request),
+                error.Cause ?? error);
+        }
         catch (AxiosException error) when (ErrorFactory is not null && error.Response is not null)
         {
             // 只接管「服务端给了响应」的错误；工厂返回 null 时原样再抛。
@@ -360,6 +370,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             throw;
         }
     }
+
+    /// <summary>错误消息里的目标名：请求模型类型名，或接口调用的 <c>接口.方法</c>。</summary>
+    private static string InvocationTargetName(object request)
+        => request is ApiInterfaceInvocation invocation
+            ? $"{invocation.InterfaceType.Name}.{invocation.MethodName}"
+            : request.GetType().Name;
 
     /// <summary>释放底层 AxiosClient（仅当本门面拥有它）。</summary>
     public void Dispose()

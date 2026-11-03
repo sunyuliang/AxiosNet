@@ -35,16 +35,21 @@ internal static class UrlBuilder
         var combined = Combine(baseAddress, url);
 
         // 自定义序列化器返回的串允许带前导 ?/&，这里统一去掉；回调异常统一成 ERR_BAD_OPTION_VALUE。
+        // 自定义序列化器只应看到「最终文本 / 原始值」，绑定层内部的已格式化封套在这里剥掉。
         string query;
         try
         {
             query = serializer is null
                 ? ParamsSerializer.Serialize(queryParams, config)
-                : NormalizeQuery(serializer(queryParams));
+                : NormalizeQuery(serializer(UnwrapFormattedValues(queryParams)));
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException and not AxiosAotMetadataException)
         {
-            throw AxiosException.InvalidOption($"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
+            // 只有默认展平会触碰调用方的值（取值 / 格式化）。这里抛中性的「请求构造失败」分类：
+            // 核心直调的对外错误码仍是 ERR_BAD_OPTION_VALUE；外层可据此改判自己的错误码（不感知分层概念）。
+            throw serializer is null
+                ? AxiosException.RequestConstructionFailed(config, ex)
+                : AxiosException.InvalidOption($"paramsSerializer 抛出了异常，查询串无法生成：{ex.Message}", config, ex);
         }
 
         // 查询串必须拼在 fragment 之前，否则会落进 fragment 发不到服务端；一次成串，不做切片后再拼接。
@@ -214,6 +219,64 @@ internal static class UrlBuilder
 
         return query.Trim().TrimStart('?', '&');
     }
+
+    /// <summary>
+    /// 自定义 ParamsSerializer 只应看到公开形态：绑定层用 <see cref="FormattedQueryValue"/> 标记「已定型文本」，
+    /// 这是内部实现细节，不能漏进用户回调（否则常见写法 <c>(string)value</c> 会 InvalidCast）。
+    /// 容器只在真的含封套时复制，普通调用（无绑定层封套）保持原引用。
+    /// </summary>
+    private static object? UnwrapFormattedValues(object? value)
+    {
+        switch (value)
+        {
+            case FormattedQueryValue formatted:
+                return formatted.Text;
+
+            case Dictionary<string, object?> map:
+            {
+                Dictionary<string, object?>? copy = null;
+                foreach (var entry in map)
+                {
+                    var unwrapped = UnwrapFormattedValues(entry.Value);
+                    if (!ReferenceEquals(unwrapped, entry.Value))
+                    {
+                        copy ??= new Dictionary<string, object?>(map.Count);
+                        foreach (var original in map)
+                        {
+                            if (!copy.ContainsKey(original.Key))
+                            {
+                                copy[original.Key] = original.Value;
+                            }
+                        }
+                    }
+
+                    copy?[entry.Key] = unwrapped;
+                }
+
+                return copy ?? value;
+            }
+
+            case List<object?> list:
+            {
+                List<object?>? copy = null;
+                for (var index = 0; index < list.Count; index++)
+                {
+                    var unwrapped = UnwrapFormattedValues(list[index]);
+                    if (!ReferenceEquals(unwrapped, list[index]))
+                    {
+                        copy ??= new List<object?>(list);
+                    }
+
+                    copy?[index] = unwrapped;
+                }
+
+                return copy ?? value;
+            }
+
+            default:
+                return value;
+        }
+    }
 }
 
 /// <summary>
@@ -265,7 +328,7 @@ internal static class ParamsSerializer
                     throw InvalidParamsRoot(paramsObj, config);
                 }
 
-                AppendJsonElement(null, rootElement, pairs, format);
+                AppendJsonElement(null, rootElement, pairs, format, formatter);
             }
             else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
             {
@@ -404,9 +467,19 @@ internal static class ParamsSerializer
             return;
         }
 
+        // 二进制族的叶子语义：查询串里取 base64，与表单 / ValueText 同口径。
+        // 必须在 IEnumerable 分支之前：ArraySegment<byte> 同时实现 IEnumerable；Memory 族则不能被当作嵌套对象反射。
+        if (ScalarTypes.IsBinaryType(value.GetType()))
+        {
+            pairs.Add(new KeyValuePair<string, string>(
+                prefix,
+                EscapeValue(ValueText.Format(value, ValueTextChannel.Query, memberFormat, formatter)!)));
+            return;
+        }
+
         if (value is JsonElement element)
         {
-            AppendJsonElement(prefix, element, pairs, format);
+            AppendJsonElement(prefix, element, pairs, format, formatter);
             return;
         }
 
@@ -622,14 +695,15 @@ internal static class ParamsSerializer
         string? prefix,
         JsonElement element,
         List<KeyValuePair<string, string>> pairs,
-        AxiosCollectionFormat format)
+        AxiosCollectionFormat format,
+        Func<object?, string?>? formatter)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    AppendJsonElement(prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]", property.Value, pairs, format);
+                    AppendJsonElement(prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]", property.Value, pairs, format, formatter);
                 }
 
                 break;
@@ -638,14 +712,14 @@ internal static class ParamsSerializer
             {
                 if (format != AxiosCollectionFormat.Brackets)
                 {
-                    AppendJsonArray(prefix, element, pairs, format);
+                    AppendJsonArray(prefix, element, pairs, format, formatter);
                     break;
                 }
 
                 var index = 0;
                 foreach (var item in element.EnumerateArray())
                 {
-                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format);
+                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format, formatter);
                     index++;
                 }
 
@@ -662,7 +736,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ValueText.JsonScalar(element))));
+                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ValueText.JsonScalar(element, formatter))));
                 break;
 
             default:
@@ -678,7 +752,8 @@ internal static class ParamsSerializer
         string? prefix,
         JsonElement element,
         List<KeyValuePair<string, string>> pairs,
-        AxiosCollectionFormat format)
+        AxiosCollectionFormat format,
+        Func<object?, string?>? formatter)
     {
         if (prefix is not null)
         {
@@ -686,7 +761,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in element.EnumerateArray())
                 {
-                    AppendJsonElement(prefix, item, pairs, format);
+                    AppendJsonElement(prefix, item, pairs, format, formatter);
                 }
 
                 return;
@@ -707,7 +782,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                parts.Add(ValueText.JsonScalar(item));
+                parts.Add(ValueText.JsonScalar(item, formatter));
             }
 
             if (parts is { Count: > 0 })
@@ -725,15 +800,15 @@ internal static class ParamsSerializer
         var index = 0;
         foreach (var item in element.EnumerateArray())
         {
-            AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format);
+            AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format, formatter);
             index++;
         }
     }
 
     private static bool IsScalar(object value)
-        // byte[] 也算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
+        // 二进制族（byte[] / Memory / ReadOnlyMemory / ArraySegment）都算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
         // FormattedQueryValue 是绑定层定型的文本，同样按叶子处理（否则会被集合逻辑回落到方括号形态）。
-        => value is FormattedQueryValue || value is byte[] || ScalarTypes.IsScalarType(value.GetType());
+        => value is FormattedQueryValue || ScalarTypes.IsBinaryType(value.GetType()) || ScalarTypes.IsScalarType(value.GetType());
 
     /// <summary>
     /// 键名转义：同 axios 默认 encoder（<c>encodeURIComponent</c>），但把 <c>%5B</c> / <c>%5D</c> 还原成 <c>[</c> <c>]</c>，

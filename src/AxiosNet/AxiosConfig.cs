@@ -260,8 +260,7 @@ public sealed partial class AxiosConfig
     internal bool CacheCaptureRawBody { get; set; }
 
     /// <summary>
-    /// 声明式 API 的实例级格式化钩子（<see cref="AxiosNet.WebAPI.ApiClient.ValueFormatter"/>）：
-    /// 由绑定层写入，作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文；普通调用不设置。
+    /// 实例级格式化钩子：由绑定层写入，作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文；普通调用不设置。
     /// </summary>
     internal Func<object?, string?>? ValueFormatter { get; set; }
 

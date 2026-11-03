@@ -44,6 +44,60 @@ public class WebApiRemovabilityTests
             "核心不得引用 WebAPI 扩展（删掉 WebAPI/ 后核心必须仍能编译）：" + string.Join("、", offenders));
     }
 
+    /// <summary>
+    /// 核心代码里不得出现 WebAPI 专属概念（声明式绑定 / 门面类型）。这条防的是「字段或标识符」级回归：
+    /// 编译与既有测试都发现不了，但拆包时会立刻变成硬依赖。
+    /// </summary>
+    [Fact]
+    public void CoreDoesNotCarryWebApiOnlyConcepts()
+    {
+        var libraryRoot = Path.Combine(RepositoryRoot(), "src", "AxiosNet");
+        var offenders = new List<string>();
+        foreach (var file in EnumerateSources(libraryRoot))
+        {
+            var relative = Path.GetRelativePath(libraryRoot, file).Replace('\\', '/');
+            if (relative.StartsWith("WebAPI/", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var line in File.ReadLines(file))
+            {
+                var trimmed = line.TrimStart();
+                if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'))
+                {
+                    continue;
+                }
+
+                if (DeclarativeIdentifier.IsMatch(trimmed) || ApiClientIdentifier.IsMatch(trimmed))
+                {
+                    offenders.Add($"{relative}: {trimmed}");
+                }
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            "核心代码不得出现 WebAPI 专属标识符（Declarative* / ApiClient）：" + Environment.NewLine
+                + string.Join(Environment.NewLine, offenders));
+    }
+
+    /// <summary>配置对象上也不得出现声明式专属成员：反射面比源码扫描更严，能拦住编译后新增的字段。</summary>
+    [Fact]
+    public void CoreConfigSurfaceHasNoDeclarativeMembers()
+    {
+        var offenders = typeof(AxiosNet.AxiosConfig)
+            .GetMembers(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .Select(member => member.Name)
+            .Where(name => DeclarativeIdentifier.IsMatch(name) || ApiClientIdentifier.IsMatch(name))
+            .ToList();
+
+        Assert.True(offenders.Count == 0, "AxiosConfig 不得承载 WebAPI 专属语义：" + string.Join("、", offenders));
+    }
+
+    private static readonly Regex DeclarativeIdentifier = new(@"\bDeclarative\w*", RegexOptions.CultureInvariant);
+    private static readonly Regex ApiClientIdentifier = new(@"\bApiClient\b", RegexOptions.CultureInvariant);
+
     /// <summary>代码行（去掉注释）里出现 <c>AxiosNet.WebAPI</c> 即算引用；注释里的说明文字不算。</summary>
     private static bool ReferencesWebApi(string file)
     {

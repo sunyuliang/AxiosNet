@@ -16,6 +16,11 @@ internal static class BindingErrors
         {
             return bind();
         }
+        catch (AxiosException ex) when (ex.IsRequestConstructionFailure)
+        {
+            // 核心的「请求构造阶段失败」分类：声明式口径改判为 ERR_BAD_REQUEST，原因保留原始异常。
+            throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex.Cause ?? ex);
+        }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
             throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex);
@@ -28,6 +33,10 @@ internal static class BindingErrors
         try
         {
             bind();
+        }
+        catch (AxiosException ex) when (ex.IsRequestConstructionFailure)
+        {
+            throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex.Cause ?? ex);
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
