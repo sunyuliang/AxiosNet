@@ -296,6 +296,22 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
+    public async Task MaxBodyLength_UnknownLengthChunkedBody_IsSent()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient();
+
+        // 清掉 Content-Length 强制 chunked：长度不可知，MaxBodyLength 按文档只对可算出长度的正文生效。
+        using var content = new StreamContent(new MemoryStream(new byte[2048]));
+        content.Headers.ContentLength = null;
+
+        await client.PostAsync(server.Url + "chunked", content, c => c.Limits.MaxBodyLength = 16);
+
+        Assert.Single(server.Received);
+        Assert.Equal(2048, server.Received[0].Body.Length);
+    }
+
+    [Fact]
     public async Task ExplicitInstanceContentType_IsAppliedToRawHttpContent()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));

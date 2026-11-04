@@ -57,11 +57,15 @@ public sealed class AxiosAttemptPipeline
     }
 
     /// <summary>
-    /// 追加到最内层（并发闸门之后、真正的发送之前）：<b>每次尝试各调用一次</b>，重试 N 次就是 N+1 次；
+    /// 追加到链尾（并发闸门与审计之后、真正的发送之前）：<b>每次尝试各调用一次</b>，重试 N 次就是 N+1 次；
     /// 它落在备用端点与对冲之内，所以每个端点、每条对冲分支都会重新走一遍，调用次数是
     /// <c>(N+1) × (端点数+1) × (1 + MaxHedges)</c>，因此必须能并发执行、不共享可变状态。
     /// 这是绝大多数自定义中间件（每次尝试的观测、审计、指标）该待的位置。
     /// </summary>
+    /// <remarks>
+    /// 默认链上它排在 <see cref="Attempt.Audit"/> 之内（索引更大 = 更靠近终端），所以审计的事件耗时会包含本中间件的
+    /// 执行时间；闸门排队与退避等待仍在审计之外，不计入。
+    /// </remarks>
     public AxiosAttemptPipeline Append(AxiosAttemptMiddleware middleware)
     {
         ArgumentNullException.ThrowIfNull(middleware);

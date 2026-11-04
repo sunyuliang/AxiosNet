@@ -5,13 +5,13 @@ using AxiosNet.Retry;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>31. 尝试管线：一次尝试抽象成可组合中间件（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送），可插、可重排。</summary>
+/// <summary>31. 尝试管线：一次尝试抽象成可组合中间件（重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 审计 → 发送），可插、可重排。</summary>
 public sealed class AttemptPipelineExample : IExample
 {
     /// <summary>探针记录：每次运行开始清空，静态复用的客户端共用同一份。</summary>
     private static readonly List<string> ProbeLog = new();
 
-    /// <summary>带探针的尝试管线：探针落在最内层（闸门之后、发送之前），静态复用避免按运行重建客户端。</summary>
+    /// <summary>带探针的尝试管线：探针落在链尾（闸门之后、审计之内），静态复用避免按运行重建客户端。</summary>
     private static readonly AxiosAttemptPipeline Probed = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
     {
         var clock = Stopwatch.StartNew();
@@ -42,11 +42,11 @@ public sealed class AttemptPipelineExample : IExample
 
         var tag = Guid.NewGuid().ToString("N")[..8];
 
-        // 1) 默认链：重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 发送。五个内置项永远在链上，
+        // 1) 默认链：重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 审计 → 发送。六个内置项永远在链上，
         //    是否真的干活由它们自己看本次请求的生效配置决定（没配策略 / 端点 / 分支数就是纯直通）。
         Console.WriteLine($"  默认链: {string.Join(" → ", AxiosAttemptPipeline.Default.Middleware.Select(Describe))} + 发送");
 
-        // 2) 插一个「每次尝试」的探针：Append 落在最内层（闸门之后、发送之前），重试 N 次就调用 N+1 次。
+        // 2) 插一个「每次尝试」的探针：Append 落在链尾（闸门之后、审计之内），重试 N 次就调用 N+1 次。
         ProbeLog.Clear();
 
         var retrying = _retrying ??= new AxiosClient(

@@ -801,6 +801,7 @@ await File.WriteAllBytesAsync(@"D:\downloads\icon.png", bytes);
 - 流**必须释放**：读完或释放后连接才回池；只读一半就释放，这条 TCP 连接会被丢弃。
 - 下载期间该 origin 的租约保持占用，空闲驱逐不会打断长下载。
 - 流式请求遇非 2xx 会立即丢弃响应体并归还连接（`ex.Response.Data` 为 `null`，`Status` / `Headers` 仍可用）。
+- **错误里的响应上下文**：只要状态码与响应头已到手——5xx、反序列化失败、`MaxContentLength` 声明预检 / 段式超限、`ResponseTooLarge`、`OnRawResponse` / `OnDownloadProgress` 回调失败、短路正文超限——`AxiosException.Response` 都非 `null`。例外是流式消费期（`ReadAsync` 返回后调用方自己读流时触发的上限错误），这时没有上下文可补，`Response` 保持 `null`。
 
 ### 流式响应
 
@@ -834,6 +835,7 @@ await foreach (var order in pages.Data!)
 - **超时**：正文与响应头共用同一份预算——流式响应的正文读取也计入 `Timeout`（`TotalTimeout` 生效时是它的剩余额度），读到一半到点即 `ECONNABORTED`；不设超时时正文不限时，靠取消令牌退出。
 - **单帧上限**：默认 8 MB，合法 1–64 MB（`Limits.MaxStreamFrameLength`），越界发送前抛 `ERR_BAD_OPTION_VALUE`。没有「不限制」语义，峰值内存约为上限的 2–4 倍。
 - **编码**：NDJSON / SSE 要求 ASCII 兼容 charset，宽字符编码取流时报 `ERR_BAD_RESPONSE`；`JsonArray` 必须 UTF-8。UTF-8 BOM 会跳过。
+- **SSE 空帧**：`:` 心跳与空 `data:` 一并跳过——单条空 `data:` 不产生事件；多条 `data:` 以 LF 连接，首条为空时不补前导 LF（SSE 在本库只用于 JSON 反序列化，空事件本来也无法交付）。
 - **所有权**：流只能枚举一次；`await foreach` 结束或 `break` 自动释放，手动 `MoveNextAsync` 需自己 `DisposeAsync`。
 - **错误**：状态码错误在 `await` 抛出；帧解析失败 `ERR_BAD_RESPONSE`，中途断流 `ERR_NETWORK`，取消 `ERR_CANCELED`。
 
@@ -851,6 +853,7 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 - `Timeout` 是**单次尝试**的预算（建连 + 等响应头 + 读正文），默认 `Zero` 表示不超时；上限约 49.7 天，超出收敛到上限。
 - `TotalTimeout` 是**整条逻辑请求**的预算（从调用开始，含拦截器、排队、重试等待、对冲分支）：`Timeout` 会被重试 / 备用端点 / 对冲各自复制一份，`TotalTimeout` 只有一份，每次尝试实际拿到 `min(Timeout, 剩余)`。
 - 超时抛 `ECONNABORTED`（消息可用 `Callbacks.TimeoutMessage` 覆盖），取消抛 `ERR_CANCELED`，原始 `OperationCanceledException` 留在 `Cause`。
+- **流读取消分层**：直接对 `Response.Data` 流调用 `ReadAsync` / `CopyToAsync` 并传入自己的令牌时，按 .NET Stream 契约抛原始 `OperationCanceledException`；只有请求令牌（方法参数 / `config.CancellationToken`）取消与 `IAsyncEnumerable` 枚举取消才映射成 `ERR_CANCELED`（原始 OCE 留在 `Cause`）。
 
 ```csharp
 // 调用方承诺「15 秒内一定给出结果」：重试 5 次 × 单次 10s 也不再是上界
@@ -1384,7 +1387,7 @@ await client.PostAsync("orders", order, c => c.Idempotency.Key = "upstream-7f3a"
 ```csharp
 using AxiosNet.Pipeline;
 
-// 插一个「每次尝试」的探针：Append 落在最内层（审计之后、发送之前），重试 N 次就调用 N+1 次
+// 插一个「每次尝试」的探针：Append 落在链尾（审计之内、发送之前），重试 N 次就调用 N+1 次
 var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
 {
     var clock = Stopwatch.StartNew();
@@ -1405,7 +1408,7 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 - 它是结构体而不是类，因为中间件链构造期编译一次、每次尝试零分配，且并发类中间件需要按分支拷贝上下文。
 - **两个编号分开走**：`AttemptNumber` 由重试推进，`EndpointIndex` 由备用端点推进（`0` = 请求自己的地址）。换端点不推进尝试号，所以同一个尝试号下可能有多条尝试事件。
 - **中间件恒在链上，是否干活由它自己看 `ctx.Config` 决定**：没配重试策略时重试中间件就是纯直通。链因此可以在构造时固化，不必每次请求重建。
-- **审计默认在链上**：`Attempt.Audit` 是默认链第 6 项（闸门之后、终端之前），订阅 `AxiosNet.Attempt` 就能拿到每次尝试的耗时 / 状态码 / 错误码，不订阅时只做一次开关判定、不建状态机。它已在链上，再 `Append(Attempt.Audit)` 会被当作重复内置项拒绝。
+- **审计默认在链上**：`Attempt.Audit` 是默认链第 6 项（闸门之后、终端之前），订阅 `AxiosNet.Attempt` 就能拿到每次尝试的耗时 / 状态码 / 错误码，不订阅时只做一次开关判定、不建状态机。它已在链上，再 `Append(Attempt.Audit)` 会被当作重复内置项拒绝。`Append` 的自定义项排在它内侧（更靠近终端），因此它们的执行时间计入审计的事件耗时。
 - **顺序是契约**：重试在最外层，于是每次尝试都会重过一遍备用端点、熔断、对冲与闸门；备用端点在熔断之外，于是每个端点各自过熔断；熔断在对冲之外，于是整组分支只记一笔；熔断排在闸门之前，被拒的请求不占槽位。
 - **重排与摘除**：`AxiosAttemptPipeline.Create(...)` 显式列出全部中间件（第一个最外层），`Remove(Attempt.Gate)` 摘掉某项；不可变，每次编辑返回新实例。内置项重复出现会报错。
 - **不提供「放到最外层」的入口**：那个位置每次请求只调用一次，与响应拦截器完全同构。`InsertBefore(Attempt.Retry, ...)` 会明确拒绝并指向 `client.Interceptors.Response`——它还有 `OnRejected`、运行时增删、覆盖短路三个额外好处。
@@ -1552,7 +1555,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 - **请求指令照常生效**：`no-store` 不读不写；`no-cache` / `max-age=0` 不发新鲜查询，但会拿旧条目做条件请求（RFC 9111 §5.2.1.4），304 时仍交付缓存的正文。
 - **遥测**：304 复用记 `cache.revalidations`（无标签）并在 span 上打 `axiosnet.cache.revalidated=true`；它按未命中计入命中率（请求确实发出去了），单独看这条才知道省了多少带宽。
 
-库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`；`Vary: *` 在解析模式下不落库）；不支持 `stale-while-revalidate` 之类的 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
+库按**私有缓存**解释：`private` / `public` 不改变落库判定，`s-maxage` 不采用，`Vary` 不参与键（分区仍用 `KeySelector`；`Vary: *` 在解析模式下不落库）；**内置 `MemoryCacheStore` 不按 `Vary` 分区，命中时也不校验 `Vary`**——同一 URL 的不同变体会共用同一条条目，需要该语义请用 `KeySelector`，或在自建存储里按 `AxiosCacheEntryPolicy.Vary` 自行分区；不支持 `stale-while-revalidate` 之类的 `stale-*` 服务。这些信息不会丢——它们都在 `AxiosCacheEntryPolicy` 里交给存储。
 
 | | 短路响应 | 响应缓存 |
 | --- | --- | --- |
@@ -1835,6 +1838,7 @@ builder.Services.AddOpenTelemetry()
 | `axiosnet.client.cache.revalidations` | `Counter<long>` | `{request}` | 无 |
 
 - 缓存命中率 = `cache.hits / (cache.hits + cache.misses)`（跟随者拿到共享结果计命中；请求侧 `no-cache` / `no-store` 绕开新鲜查询的请求两边都不计，`no-cache` 走成条件请求时只计入 `cache.revalidations`；条件请求拿到 304 计一次未命中）；`cache.store_failures` 单独看，别混进命中率。
+- `cache.stores` 记的是「写入完成」，不是「条目已落库」：内置存储容量满时会静默拒收新键（文档化策略，见 `MemoryCacheStore`），这次写入**仍然计入** `cache.stores`；`cache.store_failures` 只统计存储抛错、写超时与总预算耗尽。命中率与 `stores` 对不上时，先看容量上限。
 - 指标只用低基数标签；URL 路径只进 span。**池指标不带 host / port**：网关 / 爬虫 / 多租户场景下一个 host 一条时间序列会把后端打爆；要定位到具体 origin 看 span 的 `server.address` / `server.port` 与 `axiosnet.pool.endpoint.reused`。
 - `axiosnet.retry.reason` 取值有界：有状态码统一报 `status`（具体码在 `error.type`），否则是库错误码（`ECONNABORTED` / `ERR_NETWORK` …）——「该调策略（429）」和「该修下游（5xx）」在面板上直接分得开。
 - `gate.queue_depth` 是此刻正在等槽位的请求数（进程级）；`gate.rejections` 是入口拒绝计数（排队超时 / 队列满）；`circuit.state` 是「多少个熔断维度处于该状态」（熔断器实例 × key）；`circuit.untracked_host` 是「状态表满员后按闭合态直通」的次数；`retry.budget_exhausted` 是「想重试但被共享预算拦下」的次数。

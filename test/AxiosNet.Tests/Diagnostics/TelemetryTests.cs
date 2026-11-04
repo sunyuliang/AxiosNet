@@ -388,6 +388,31 @@ public sealed class TelemetryTests
     }
 
     [Fact]
+    public async Task Metrics_Cache_CapacityFullStillCountsAsStored()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var path = UniquePath("cache-capacity");
+        using var probe = new TelemetryProbe(server.Port, path);
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            // 只留一个条目：第二条不同 URL 必然撞容量上限。
+            Cache = new AxiosCache(new AxiosCacheOptions { MaxEntries = 1 })
+        });
+
+        await client.GetAsync(server.Url + path);
+        await client.GetAsync(server.Url + path + "/second");
+
+        // 容量满静默拒收仍计一次 store；store_failures 只统计抛错 / 写超时 / 预算耗尽。
+        Assert.Equal(2d, probe.MeasurementsOf(AxiosTelemetry.CacheStoresInstrumentName).Sum(m => m.Value));
+        Assert.Empty(probe.MeasurementsOf(AxiosTelemetry.CacheStoreFailuresInstrumentName));
+
+        // 第二条确实没落库：再请求一次仍然打到服务器。
+        await client.GetAsync(server.Url + path + "/second");
+        Assert.Equal(3, server.Received.Count);
+    }
+
+    [Fact]
     public async Task Metrics_Cache_FollowersCountAsHits()
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

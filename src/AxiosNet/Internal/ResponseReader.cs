@@ -275,53 +275,63 @@ internal static class ResponseReader
         long? bodyBytes = null;
         // 原始正文字节：只在启用缓存时留给管线，其余情况读完即弃。
         byte[]? rawBody = null;
-        if (config.ResponseType == ResponseType.Stream)
+        try
         {
-            var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            data = WrapDownloadStream(responseStream, message, request, config);
-        }
-        else
-        {
-            Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            var downloadStream = WrapDownloadStream(responseStream, message, request, config);
-            var declared = message.Content.Headers.ContentLength;
-            byte[] bytes;
-            try
+            if (config.ResponseType == ResponseType.Stream)
             {
-                bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared).ConfigureAwait(false);
+                var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                data = WrapDownloadStream(responseStream, message, request, config);
             }
-            finally
+            else
             {
-                // 释放由这一层负责，读失败同样要还连接。
-                downloadStream.Dispose();
-            }
-
-            bodyBytes = bytes.Length;
-            rawBody = bytes;
-
-            // 原始字节钩子：在字符集解码 / 反序列化 / transformResponse 之前触发，正文仍是 HttpClient 交付的原样字节。
-            // 不复制：回调期间零拷贝借用；需要长期持有由调用方自行复制。
-            if (config.CallbacksOrNull?.OnRawResponse is { } onRawResponse)
-            {
+                Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                var downloadStream = WrapDownloadStream(responseStream, message, request, config);
+                var declared = message.Content.Headers.ContentLength;
+                byte[] bytes;
                 try
                 {
-                    onRawResponse(config.Response!, bytes.AsMemory());
+                    bytes = await ReadAllBytesAsync(downloadStream, config, request, cancellationToken, declared).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                finally
                 {
-                    throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.CallbackSettings.OnRawResponse), ex, upload: false);
+                    // 释放由这一层负责，读失败同样要还连接。
+                    downloadStream.Dispose();
                 }
-            }
 
-            data = ConvertBody(
-                config,
-                request,
-                dataType,
-                bytes,
-                contentType?.MediaType,
-                contentType?.CharSet,
-                lenient,
-                out rawText);
+                bodyBytes = bytes.Length;
+                rawBody = bytes;
+
+                // 原始字节钩子：在字符集解码 / 反序列化 / transformResponse 之前触发，正文仍是 HttpClient 交付的原样字节。
+                // 不复制：回调期间零拷贝借用；需要长期持有由调用方自行复制。
+                if (config.CallbacksOrNull?.OnRawResponse is { } onRawResponse)
+                {
+                    try
+                    {
+                        onRawResponse(config.Response!, bytes.AsMemory());
+                    }
+                    catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                    {
+                        throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.CallbackSettings.OnRawResponse), ex, upload: false);
+                    }
+                }
+
+                data = ConvertBody(
+                    config,
+                    request,
+                    dataType,
+                    bytes,
+                    contentType?.MediaType,
+                    contentType?.CharSet,
+                    lenient,
+                    out rawText);
+            }
+        }
+        catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadResponse && ex.Response is null)
+        {
+            // 只要状态码与响应头已经到手，错误就必须能读到响应上下文：声明的长度预检、段式读取超限、
+            // 响应过大、原始字节 / 下载进度回调失败都走这里；流式消费期（ReadAsync 返回之后）没有上下文可补。
+            AttachResponseContext(ex, config, request, target, status, statusText, message.Version, headers, lenient ? rawText : null);
+            throw;
         }
 
         // 泛型调用方传入的目标响应对象就地填充，避免每请求多造一个响应对象。
@@ -340,6 +350,33 @@ internal static class ResponseReader
         response.Config = config;
         response.Request = request;
         return response;
+    }
+
+    /// <summary>
+    /// 响应已经存在、但正文解析失败时，把响应上下文补进错误里（<see cref="AxiosException.Response"/> 的契约：
+    /// 反序列化失败等「有响应」的错误必须能读到状态码与响应头）。网络路径与短路 / 缓存命中路径共用这一份口径。
+    /// </summary>
+    private static void AttachResponseContext(
+        AxiosException exception,
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        AxiosResponse? target,
+        int status,
+        string statusText,
+        Version? protocolVersion,
+        IReadOnlyDictionary<string, IEnumerable<string>> headers,
+        string? rawText)
+    {
+        var failed = target ?? new AxiosResponse();
+        failed.Data = null;
+        failed.RawText = rawText;
+        failed.Status = status;
+        failed.StatusText = statusText;
+        failed.ProtocolVersion = protocolVersion;
+        failed.Headers = headers;
+        failed.Config = config;
+        failed.Request = request;
+        exception.Response = failed;
     }
 
     /// <summary>是否需要把响应字节解码成文本：arraybuffer / stream / byte[] 以及非文本媒体类型只要字节，其余都要文本。</summary>
@@ -501,28 +538,37 @@ internal static class ResponseReader
 
         if (reply.Body is { } body)
         {
-            // 体积上限同样生效：与网络路径同口径，超限直接失败。
-            if (config.LimitsOrNull?.MaxContentLength is long maxLength && body.Length > maxLength)
+            try
             {
-                throw AxiosException.MaxContentLength(config, null, body.Length, maxLength);
-            }
-
-            bodyBytes = body.Length;
-
-            if (config.ResponseType == ResponseType.Stream)
-            {
-                // 流式：正文以流交出，底层字节数组必须复制。
-                data = new MemoryStream((byte[])body.Clone(), writable: false);
-            }
-            else
-            {
-                data = ConvertBody(config, null, dataType, body, mediaType, charSet, lenient, out rawText);
-
-                // 字节形态原样交出，这里必须复制，保证每份响应都是独立对象。
-                if (ReferenceEquals(data, body))
+                // 体积上限同样生效：与网络路径同口径，超限直接失败。
+                if (config.LimitsOrNull?.MaxContentLength is long maxLength && body.Length > maxLength)
                 {
-                    data = (byte[])body.Clone();
+                    throw AxiosException.MaxContentLength(config, null, body.Length, maxLength);
                 }
+
+                bodyBytes = body.Length;
+
+                if (config.ResponseType == ResponseType.Stream)
+                {
+                    // 流式：正文以流交出，底层字节数组必须复制。
+                    data = new MemoryStream((byte[])body.Clone(), writable: false);
+                }
+                else
+                {
+                    data = ConvertBody(config, null, dataType, body, mediaType, charSet, lenient, out rawText);
+
+                    // 字节形态原样交出，这里必须复制，保证每份响应都是独立对象。
+                    if (ReferenceEquals(data, body))
+                    {
+                        data = (byte[])body.Clone();
+                    }
+                }
+            }
+            catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadResponse && ex.Response is null)
+            {
+                // 与网络路径同口径：短路 / 缓存命中的正文超限与解析失败同样把状态码与响应头带进错误。
+                AttachResponseContext(ex, config, null, target, status, statusText, reply.ProtocolVersion, headers, lenient ? rawText : null);
+                throw;
             }
         }
         else

@@ -151,6 +151,13 @@ public sealed partial class AxiosClient
                 hookedRequest = Attempt.CloneRequest(request);
                 request = hookedRequest;
 
+                // 正文对象是共享的（复制请求只复制头），因此 request.Content.Headers 也是共享的：
+                // 用一层头隔离外壳再交给钩子，钩子对内容头的改写才不会叠到下一次尝试 / 另一条对冲分支上。
+                if (templateContent is not null)
+                {
+                    request.Content = new HeaderIsolatedContent(templateContent);
+                }
+
                 try
                 {
                     await onSendingRequest(request, config, budget.Token).ConfigureAwait(false);

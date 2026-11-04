@@ -70,7 +70,7 @@ public class AxiosException : Exception
     public HttpRequestMessage? Request { get; }
 
     /// <summary>有响应时可用（5xx、状态码非法、反序列化失败等）；结构性错误（URL 非法、网络失败、取消）为 <c>null</c>。</summary>
-    public AxiosResponse? Response { get; }
+    public AxiosResponse? Response { get; internal set; }
 
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
     public int? Status => Response?.Status;

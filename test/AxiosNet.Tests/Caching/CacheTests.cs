@@ -785,6 +785,35 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task CacheHit_DoesNotPartitionByVary()
+    {
+        // 钉住现状：内置存储与 AxiosCache 都不按 Vary 分区，命中时也不校验 Vary。
+        await using var server = TestHttpServer.Start(request =>
+        {
+            var language = request.Headers.TryGetValue("Accept-Language", out var value) ? value : "none";
+            return TestJson.Response(
+                new Person(language, 1),
+                headers: new Dictionary<string, string>
+                {
+                    ["Cache-Control"] = "max-age=600",
+                    ["Vary"] = "Accept-Language"
+                });
+        });
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Server)
+        });
+
+        var first = await client.GetAsync<Person>(server.Url + "x", c => c.Headers.Set("Accept-Language", "zh"));
+        var second = await client.GetAsync<Person>(server.Url + "x", c => c.Headers.Set("Accept-Language", "en"));
+
+        Assert.Equal("zh", first.Data!.Name);
+        Assert.Equal("zh", second.Data!.Name);
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
     public async Task ConfiguredMode_StoreStillGetsHttpDetails_OnDemand()
     {
         // Configured 落库前不解析响应头；存储读到策略里的 HTTP 字段时才解析，内容与解析模式一致。

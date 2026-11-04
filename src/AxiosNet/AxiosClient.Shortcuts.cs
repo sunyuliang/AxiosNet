@@ -293,8 +293,14 @@ public sealed partial class AxiosClient
         {
             DataCast.EnsureCompatible<T>(typed.RawData, typed.Config, typed.Request);
         }
-        catch
+        catch (Exception ex)
         {
+            // 响应已经成型（状态码 / 头 / 请求都在）：按 AxiosException.Response 的契约把它带进错误里。
+            if (ex is AxiosException axios && axios.Response is null)
+            {
+                axios.Response = typed;
+            }
+
             // 正文交不到调用方手里：流式正文必须在此释放，短路响应（Request == null）除外。
             if (typed.Request is not null)
             {
@@ -315,8 +321,14 @@ public sealed partial class AxiosClient
         {
             return response.AsTyped<T>();
         }
-        catch
+        catch (Exception ex)
         {
+            // 响应已经成型：类型不匹配同样属于「有响应」的解析失败，错误里要能读到状态码与响应头。
+            if (ex is AxiosException axios && axios.Response is null)
+            {
+                axios.Response = response;
+            }
+
             // 泛型参数与 responseType 不匹配（如 stream + GetAsync<byte[]>）：流式正文必须在此释放，
             // 短路响应除外（Data 归调用方）。
             if (response.Request is not null)

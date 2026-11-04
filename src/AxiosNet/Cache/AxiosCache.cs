@@ -432,7 +432,8 @@ public sealed class AxiosCache
             : TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
     }
 
-    // 把 Vary 拆成字段名列表并去重，条目键与命中校验共用这份结果。
+    // 把 Vary 拆成字段名列表并去重：只通过 AxiosCacheEntryPolicy 交给自建存储做分区 / 校验；
+    // 库自身的条目键与命中判定不读它（见 TryGetCoreAsync 注释）。
     private static IReadOnlyList<string> ParseVary(IReadOnlyDictionary<string, IEnumerable<string>> headers)
     {
         var values = GetValues(headers, "Vary");
@@ -473,7 +474,8 @@ public sealed class AxiosCache
             ? TryGetCoreAsync(key, config, deadlineTimestamp, revalidation: true)
             : new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
 
-    // 命中判定核心：取条目 → 校验 Vary 与新鲜度 → 需要重验证时交给上层，否则直接短路上响应。
+    // 命中判定核心：取条目 → 交给上层做新鲜度 / 条件请求判定，否则直接短路上响应。
+    // Vary 不参与键，命中时也不校验（分区由 KeySelector 或自建存储负责）。
     private async ValueTask<AxiosShortCircuit?> TryGetCoreAsync(
         string key,
         AxiosConfig config,

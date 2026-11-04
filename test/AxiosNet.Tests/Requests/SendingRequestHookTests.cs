@@ -82,6 +82,60 @@ public sealed class SendingRequestHookTests
         Assert.NotEqual(requests[0].Headers["X-Nonce"], requests[1].Headers["X-Nonce"]);
     }
 
+    /// <summary>
+    /// 对冲的多条分支共享同一个正文对象：钩子写内容头必须落在各自分支的隔离副本上，
+    /// 否则一条请求的线上头会带上别的分支写的值。
+    /// </summary>
+    [Fact]
+    public async Task ContentHeaderRewrites_AreIsolatedPerHedgeBranch()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Hedging = { MaxHedges = 2, Delay = TimeSpan.Zero }
+        });
+
+        await client.PutAsync("hedge", new { name = "x" }, c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        {
+            request.Content!.Headers.TryAddWithoutValidation("X-Branch-Sign", "v");
+            return default;
+        });
+
+        Assert.NotEmpty(server.Received);
+        foreach (var recorded in server.Received)
+        {
+            Assert.Equal("v", recorded.Headers["X-Branch-Sign"]);
+        }
+    }
+
+    [Fact]
+    public async Task ContentHeaderRewrites_DoNotLeakIntoTheNextAttempt()
+    {
+        var calls = 0;
+        await using var server = TestHttpServer.Start(_ => Interlocked.Increment(ref calls) == 1
+            ? TestJson.Response(new { error = "boom" }, statusCode: 500)
+            : TestJson.Response(new { ok = true }));
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+        });
+
+        await client.PutAsync("retry", new { name = "x" }, c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        {
+            request.Content!.Headers.TryAddWithoutValidation("X-Body-Sign", "v");
+            return default;
+        });
+
+        var requests = server.Received;
+        Assert.Equal(2, requests.Count);
+        Assert.Equal("v", requests[0].Headers["X-Body-Sign"]);
+        Assert.Equal("v", requests[1].Headers["X-Body-Sign"]);
+    }
+
     [Fact]
     public async Task CanReplaceTheBody_AndEveryAttemptStartsFromTheOriginal()
     {

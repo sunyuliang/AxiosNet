@@ -26,8 +26,12 @@ public sealed partial class AxiosConfig
 
         private long? _maxBodyLength;
 
-        /// <summary>对应 axios maxBodyLength：请求体最大字节数，null 不限；仅在长度可确定时校验，超出抛 <see cref="AxiosException"/>。
-        /// 开启 <see cref="AxiosConfig.RequestCompression"/> 时按压缩后（实际发送）的字节数校验。</summary>
+        /// <summary>
+        /// 对应 axios maxBodyLength：请求体最大字节数，<c>null</c> 不限；超出抛 <see cref="AxiosException"/>。
+        /// 只对能算出长度的正文生效（JSON / 表单 / <c>byte[]</c> / 可 seek 流）；
+        /// 不可 seek 流、<c>IAsyncEnumerable&lt;byte[]&gt;</c>、multipart 等未知长度正文不拦截，需要硬上限请在调用方自行限制。
+        /// 开启 <see cref="AxiosConfig.RequestCompression"/> 时按压缩后（实际发送）的字节数校验。
+        /// </summary>
         public long? MaxBodyLength
         {
             get => _maxBodyLength;

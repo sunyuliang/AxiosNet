@@ -393,6 +393,26 @@ public sealed class ResponseParsingTests
             $"http://127.0.0.1:{server.Port}/",
             c => c.Serialization.ContentSerializer = new ThrowingSerializer()));
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        // Characterization：未定义枚举值由 ConvertData 抛出，本来就在读取段的补上下文范围内。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
+    }
+
+    [Fact]
+    public async Task GetAsync_TransformResponseThrows_ExposesResponseContext()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { name = "ada" }));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<object>(
+            $"http://127.0.0.1:{server.Port}/",
+            c => c.TransformResponse.Add((_, _) => throw new InvalidOperationException("boom"))));
+
+        // Characterization：transformResponse 失败同样是「有响应」的 ERR_BAD_RESPONSE，且必须带上下文。
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
     }
 
     [Fact]

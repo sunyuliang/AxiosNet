@@ -104,6 +104,10 @@ public sealed class RawResponseHookTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
         Assert.Contains("OnRawResponse", ex.Message);
+
+        // 原始字节回调在读取段内失败：状态码与响应头已到手，必须带回上下文。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
     }
 
     [Fact]

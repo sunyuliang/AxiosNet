@@ -114,6 +114,27 @@ public sealed class ErrorModelTests
         Assert.Equal("ERR_BAD_RESPONSE", ex.Code);
     }
 
+    /// <summary>
+    /// 契约：反序列化失败时响应已存在，调用方应能从错误上读到状态码与响应头（见 AxiosException.Response 文档）。
+    /// </summary>
+    [Fact]
+    public async Task DeserializationFailure_ExposesResponseContext()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            "OK",
+            Encoding.UTF8.GetBytes("{\"name\":\"ok\",\"age\":\"not-an-int\"}"),
+            "application/json; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Person>(server.Url));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
+        Assert.Equal("application/json", ex.Response.GetHeader("Content-Type")?.Split(';')[0]);
+    }
+
     // ------------------------------------------------------------------
     // validateStatus 只判定一次
     // ------------------------------------------------------------------

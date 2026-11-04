@@ -227,6 +227,40 @@ public sealed class StreamingTests
     }
 
     [Fact]
+    public async Task Sse_EmptyDataFrame_IsSkipped()
+    {
+        // 空 `data:` 帧与 `:` 心跳同口径：不产生事件，也不让默认 JSON 序列化器看到空串。
+        var body = string.Concat(
+            ": keep-alive\n\n",
+            "data:\n\n",
+            "data: {\"n\":1}\n\n");
+
+        using var client = CreateClient(
+            new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes(body) }));
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
+
+        var items = await CollectAsync(response.Data!);
+        Assert.Equal(1, Assert.Single(items).N);
+    }
+
+    [Fact]
+    public async Task Sse_LeadingEmptyDataLine_DoesNotPrefixNewline()
+    {
+        // 首条 data 为空时，实现不补规范里的前导 LF：第二条 data 原样交付（干净 JSON），而不是 "\n{...}"。
+        var serializer = new RecordingFrameSerializer();
+        using var client = CreateClient(
+            new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("data:\ndata: {\"n\":1}\n\n") }),
+            c => c.Serialization.ContentSerializer = serializer);
+
+        var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
+
+        await CollectAsync(response.Data!);
+        var frame = Assert.Single(serializer.Frames);
+        Assert.Equal("{\"n\":1}", Encoding.UTF8.GetString(frame.Span));
+    }
+
+    [Fact]
     public async Task Sse_LeadingUtf8Bom_IsSkipped()
     {
         // 流开头的 UTF-8 BOM 不能留在首行行首，否则 `data:` 字段名比对失败、整帧被丢弃。
@@ -1492,6 +1526,23 @@ public sealed class StreamingTests
     private static byte[] InvalidUtf8Frame(string before, string after)
         => [.. Encoding.UTF8.GetBytes(before), 0xFF, .. Encoding.UTF8.GetBytes(after)];
 
+
+    /// <summary>记录每帧原始字节的序列化器：用来钉住「首条空 data 不补前导 LF」这类字节级行为。</summary>
+    private sealed class RecordingFrameSerializer : IContentSerializer
+    {
+        public List<ReadOnlyMemory<byte>> Frames { get; } = new();
+
+        public string Serialize(object? value, Type type, AxiosConfig config) => string.Empty;
+
+        public object? Deserialize(string text, Type type, AxiosConfig config) => text;
+
+        public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
+        {
+            // 帧缓冲由分帧器复用，记录时必须复制。
+            Frames.Add(data.ToArray());
+            return new StreamFrame(0, null);
+        }
+    }
 
     /// <summary>永远返回 string 的序列化器：用于制造「非 null 但类型不符」的帧值。</summary>
     private sealed class WrongTypeSerializer : IContentSerializer

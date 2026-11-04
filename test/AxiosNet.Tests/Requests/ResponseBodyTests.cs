@@ -76,6 +76,11 @@ public sealed class ResponseBodyTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Contains("maxContentLength", ex.Message);
         Assert.Single(server.Received);
+
+        // 状态与响应头已经到手：错误里必须能读到响应上下文（流式消费期的错误才是例外）。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
+        Assert.NotNull(ex.Response.GetHeader("Content-Type"));
     }
 
     [Fact]
@@ -92,6 +97,10 @@ public sealed class ResponseBodyTests
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.Contains("maxContentLength", ex.Message);
+
+        // 拒绝发生在交回流之前，状态码与响应头已经拿到。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
     }
 
     // 流式响应也执行 maxContentLength（含未声明长度的 chunked）
@@ -109,6 +118,9 @@ public sealed class ResponseBodyTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => stream.CopyToAsync(Stream.Null));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        // 例外：流式消费期发生在 ReadAsync 返回之后，没有响应上下文可回填。
+        Assert.Null(ex.Response);
     }
 
     [Fact]
@@ -121,6 +133,10 @@ public sealed class ResponseBodyTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        // 段式读取超限同样发生在响应头到手之后。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
     }
 
     // ---------------------------------------------------------------
@@ -146,6 +162,9 @@ public sealed class ResponseBodyTests
 
         var ex = Assert.Throws<AxiosException>(() => { stream.ReadByte(); });
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        // 流式消费期例外：异常发生在响应交付之后。
+        Assert.Null(ex.Response);
     }
 
     // ---------------------------------------------------------------

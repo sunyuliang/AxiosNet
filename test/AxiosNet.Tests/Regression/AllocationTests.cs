@@ -1,5 +1,6 @@
 ﻿
 using AxiosNet.Internal;
+using AxiosNet.Retry;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -57,6 +58,85 @@ public sealed class AllocationTests
         Assert.Equal("X-Trace", Assert.Single(source.RemoveHeaders));
         Assert.Single(source.TransformRequest);
         Assert.Single(source.TransformResponse);
+    }
+
+    [Fact]
+    public void SendingRequestHook_AddsOneIsolatedShellPerAttempt()
+    {
+        // 正文特意取 1KB：外壳本身不复制正文，若有人把它改成复制，增量会明显顶穿护栏。
+        var body = new byte[1024];
+
+        // 对照组：同一请求、同一次数，只是不开钩子。
+        using var noHook = new AxiosClient(
+            new AxiosConfig { BaseAddress = "http://units.test/" },
+            handler: new AlwaysOkHandler(),
+            disposeHandler: true);
+
+        using var hooked = new AxiosClient(
+            new AxiosConfig
+            {
+                BaseAddress = "http://units.test/",
+                Callbacks =
+                {
+                    OnSendingRequest = (request, _, _) =>
+                    {
+                        request.Content!.Headers.TryAddWithoutValidation("X-Hook", "v");
+                        return default;
+                    }
+                }
+            },
+            handler: new AlwaysOkHandler(),
+            disposeHandler: true);
+
+        var baseline1 = MinimumBytes(50, () => RunPut(noHook, body));
+        var hooked1 = MinimumBytes(50, () => RunPut(hooked, body));
+        var shell1 = hooked1 - baseline1;
+
+        // 两次尝试（首次 503、重试 200）：外壳必须随尝试次数线性增加。
+        using var noHookRetry = new AxiosClient(
+            new AxiosConfig
+            {
+                BaseAddress = "http://units.test/",
+                Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
+            },
+            handler: new FailOnceThenOkHandler(),
+            disposeHandler: true);
+
+        using var hookedRetry = new AxiosClient(
+            new AxiosConfig
+            {
+                BaseAddress = "http://units.test/",
+                Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
+                Callbacks =
+                {
+                    OnSendingRequest = (request, _, _) =>
+                    {
+                        request.Content!.Headers.TryAddWithoutValidation("X-Hook", "v");
+                        return default;
+                    }
+                }
+            },
+            handler: new FailOnceThenOkHandler(),
+            disposeHandler: true);
+
+        var baseline2 = MinimumBytes(50, () => RunPut(noHookRetry, body));
+        var hooked2 = MinimumBytes(50, () => RunPut(hookedRetry, body));
+        var shell2 = hooked2 - baseline2;
+
+        Assert.True(
+            shell1 > 0,
+            $"启用 OnSendingRequest 后每次尝试应至少分配 1 个隔离外壳，实测增量 {shell1} B。");
+
+        // 单个外壳是「1 个对象 + 复制内容头」；实测约 920 B，护栏给运行时差异留余量。
+        // 若有人把外壳改成复制 1KB 正文，增量会直接顶穿 1600 B。
+        Assert.True(
+            shell1 < 1600,
+            $"单个隔离外壳实测 {shell1} B/次，超出 1600 B 护栏——疑似改成了复制正文或每尝试套多层。");
+
+        // 2 次尝试的外壳成本约是 1 次的 2 倍（允许 ±30% 噪声）。
+        Assert.True(
+            shell2 >= shell1 * 1.4 && shell2 <= shell1 * 2.6,
+            $"1 次尝试外壳 {shell1} B、2 次尝试 {shell2} B——增量未随尝试次数线性增长（外壳可能被复用或每请求只包一次）。");
     }
 
     [Fact]
@@ -305,6 +385,53 @@ public sealed class AllocationTests
         }
 
         return (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;
+    }
+
+    /// <summary>取多个测量窗口里的最小值：分配护栏用它压掉并发 / GC 噪声，只看最干净的一轮。</summary>
+    private static long MinimumBytes(int iterations, Action action, int windows = 3)
+    {
+        action();
+        var best = long.MaxValue;
+        for (var window = 0; window < windows; window++)
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < iterations; i++)
+            {
+                action();
+            }
+
+            best = Math.Min(best, (GC.GetAllocatedBytesForCurrentThread() - before) / iterations);
+        }
+
+        return best;
+    }
+
+    private static void RunPut(AxiosClient client, byte[] body)
+        => client.PutAsync("fixed", body).GetAwaiter().GetResult();
+
+    private sealed class AlwaysOkHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(Array.Empty<byte>())
+            });
+    }
+
+    /// <summary>第一次 503、第二次 200，让每个请求恰好产生两次尝试。</summary>
+    private sealed class FailOnceThenOkHandler : HttpMessageHandler
+    {
+        private bool _failNext = true;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var status = _failNext ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
+            _failNext = !_failNext;
+            return Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new ByteArrayContent(Array.Empty<byte>())
+            });
+        }
     }
 
     /// <summary>固定形状的 JSON 数组（元素 = 整数 / 10 字符字符串 / 浮点），让两条 JSON 护栏的量尺可比。</summary>

@@ -1382,7 +1382,7 @@ One attempt (a single send) is modelled as a composable middleware chain. The de
 ```csharp
 using AxiosNet.Pipeline;
 
-// A per-attempt probe: Append lands innermost (after the audit, before the send),
+// A per-attempt probe: Append lands at the chain tail (inside the audit, before the send),
 // so it runs N+1 times when the request is retried N times.
 var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) =>
 {
@@ -1404,7 +1404,7 @@ using var client = Axios.Create(c => c.Retry.Policy = new RetryPolicy(2), pipeli
 - It is a struct, not a class, because the chain is compiled once at construction (zero allocation per attempt) and concurrent middleware need to copy the context per branch.
 - **Two independent counters**: retries advance `AttemptNumber`, failover advances `EndpointIndex` (`0` = the request's own URL). Failover does not advance the attempt number, so one attempt number can carry several attempt events.
 - **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through. That is what lets the chain be frozen at construction instead of rebuilt per request.
-- **Auditing is on by default**: `Attempt.Audit` is the sixth link (after the gate, before the terminal), so subscribing to `AxiosNet.Attempt` gives you every attempt's duration / status / error code; with no subscriber it only evaluates the switch and builds no state machine. It is already on the chain — `Append(Attempt.Audit)` is rejected as a duplicate built-in.
+- **Auditing is on by default**: `Attempt.Audit` is the sixth link (after the gate, before the terminal), so subscribing to `AxiosNet.Attempt` gives you every attempt's duration / status / error code; with no subscriber it only evaluates the switch and builds no state machine. It is already on the chain — `Append(Attempt.Audit)` is rejected as a duplicate built-in. Links added with `Append` sit inside it (closer to the terminal), so their execution time is counted in the audit event.
 - **Order is the contract**: retry sits outermost, so failover, the breaker, hedging and the gate run again on every attempt; failover sits outside the breaker, so each endpoint gets its own breaker accounting; the breaker sits outside hedging, so a whole branch group records once; the breaker sits before the gate, so a rejected request never occupies a slot.
 - **Reorder and remove**: `AxiosAttemptPipeline.Create(...)` lists the whole chain explicitly (first = outermost); `Remove(Attempt.Gate)` drops one. The pipeline is immutable — every edit returns a new instance. Duplicating a built-in throws.
 - **There is no "put it outermost" API**: that position runs once per request and is exactly what response interceptors already do. `InsertBefore(Attempt.Retry, ...)` refuses explicitly and points at `client.Interceptors.Response`, which additionally offers `OnRejected`, runtime add/remove, and short-circuit coverage.

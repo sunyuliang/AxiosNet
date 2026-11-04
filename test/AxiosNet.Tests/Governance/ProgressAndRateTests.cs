@@ -83,6 +83,10 @@ public sealed class ProgressAndRateTests
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
         Assert.Contains("OnDownloadProgress", ex.Message);
+
+        // 下载阶段回调失败发生在读取段内：状态码与响应头已到手，必须带回上下文。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
     }
 
     [Fact]

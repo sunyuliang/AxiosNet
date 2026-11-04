@@ -349,6 +349,10 @@ public sealed class ShortCircuitTests
             }));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+
+        // 短路路径同样有状态与响应头，必须带回错误上下文。
+        Assert.NotNull(ex.Response);
+        Assert.Equal(200, ex.Response!.Status);
     }
 
     [Fact]
@@ -425,6 +429,29 @@ public sealed class ShortCircuitTests
             c => c.ShortCircuit = AxiosShortCircuit.From("not a person")));
 
         Assert.Equal(AxiosException.ErrBadResponse, failed.Code);
+
+        // 契约：类型不匹配也是「有响应」的解析失败，错误里必须带状态码（见 AxiosException.Response 文档）。
+        Assert.NotNull(failed.Response);
+        Assert.Equal(200, failed.Response!.Status);
+    }
+
+    /// <summary>
+    /// 契约：短路 / 缓存命中同样「有响应」，正文解析失败时错误里必须带状态码与响应头
+    /// （见 <see cref="AxiosException.Response"/> 文档）。
+    /// </summary>
+    [Fact]
+    public async Task DeserializationFailure_OnShortCircuit_ExposesResponseContext()
+    {
+        using var client = new AxiosClient();
+
+        var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Person>(
+            "http://127.0.0.1:9/never",
+            c => c.ShortCircuit = AxiosShortCircuit.Json("""{"name":"ok","age":"not-an-int"}""")));
+
+        Assert.Equal(AxiosException.ErrBadResponse, failed.Code);
+        Assert.NotNull(failed.Response);
+        Assert.Equal(200, failed.Response!.Status);
+        Assert.Equal("application/json", failed.Response.GetHeader("Content-Type")?.Split(';')[0]);
     }
 
     [Fact]
