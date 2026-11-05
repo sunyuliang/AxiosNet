@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Collections;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using AxiosNet.Serialization;
 
@@ -60,7 +61,7 @@ internal static class ResponseReader
     /// 读取整个响应体：声明长度在信任上限内时按声明值预分配，否则段式累积；两条路径都按真实字节数执行 maxContentLength。
     /// 本方法只管读，不释放流。
     /// </summary>
-    private static Task<byte[]> ReadAllBytesAsync(
+    private static ValueTask<byte[]> ReadAllBytesAsync(
         Stream stream,
         AxiosConfig config,
         HttpRequestMessage request,
@@ -74,7 +75,9 @@ internal static class ResponseReader
     /// 已知长度（≤ 信任上限）的读取：按声明值预分配；读满后再探一次确认没有尾部数据，
     /// 多出数据时转段式累积，恰好命中时零拷贝交出。
     /// </summary>
-    private static async Task<byte[]> ReadDeclaredLengthAsync(
+    /// <remarks>池化状态机：正文读取会在 I/O 上挂起；返回值由唯一调用点 <c>ReadAllBytesAsync</c> 立即 await 一次。</remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<byte[]> ReadDeclaredLengthAsync(
         Stream stream,
         AxiosConfig config,
         HttpRequestMessage request,
@@ -143,7 +146,9 @@ internal static class ResponseReader
     /// <paramref name="prefix"/> 是所有权已交出的预分配数组（不归还池）；
     /// <paramref name="current"/> / <paramref name="filled"/> 允许调用方交进一段已读过若干字节的池化段。
     /// </summary>
-    private static async Task<byte[]> ReadSegmentedAsync(
+    /// <remarks>池化状态机：返回值只被一处立即 await（<c>ReadAllBytesAsync</c> 或 <c>ReadDeclaredLengthAsync</c> 的转交）。</remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<byte[]> ReadSegmentedAsync(
         Stream stream,
         AxiosConfig config,
         HttpRequestMessage request,
@@ -249,7 +254,13 @@ internal static class ResponseReader
     /// 读响应并转成 <see cref="AxiosResponse"/>：状态码与响应头 → 正文（流式交出包装流，其余读全量字节）
     /// → 按 responseType 与目标类型分派为 Data。<paramref name="lenient"/> 为 true 时解析失败回退原始内容。
     /// </summary>
-    public static async Task<AxiosResponse> ReadAsync(
+    /// <remarks>
+    /// 状态机用 <c>PoolingAsyncValueTaskMethodBuilder</c> 池化：正文读取几乎总要在 I/O 上挂起，
+    /// 普通 <c>async Task</c> 每次会分配状态机盒，池化后稳态复用。返回的 <see cref="ValueTask{TResult}"/>
+    /// 必须且只被 await 一次：唯一调用点是 <c>ReadResponseAsync</c>，拿到后立即等待，不外传、不缓存。
+    /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    public static async ValueTask<AxiosResponse> ReadAsync(
         HttpResponseMessage message,
         HttpRequestMessage request,
         AxiosConfig config,

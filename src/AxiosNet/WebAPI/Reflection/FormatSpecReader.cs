@@ -42,7 +42,7 @@ internal static class FormatSpecReader
                 modifiers: null);
 
             if (method is null)
-            {
+            {               
                 throw new InvalidOperationException(
                     $"{owner} 的成员 {member} 标注了 [Format(typeof({type.Name}), \"{methodName}\")]，"
                     + $"但 {type.Name} 没有可用的格式化函数：签名必须是 public static string? {methodName}(object? value, ValueTextChannel channel)。");

@@ -79,6 +79,21 @@ public sealed class MethodAndUrlTests
         Assert.Empty(server.Received);
     }
 
+    // 网格：URL × 边界输入 × 错误码一致性。空串与 "   " 同属空白，必须同样 fail-fast，
+    // 否则 RequestAsync(new AxiosConfig { Url = "" }) 会静默打到 baseAddress（POST 会误建资源）。
+    [Fact]
+    public async Task RequestAsync_EmptyUrl_ThrowsInvalidUrl()
+    {
+        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestAsync(new AxiosConfig { Url = string.Empty, Method = HttpMethod.Post }));
+
+        Assert.Equal(AxiosException.ErrInvalidUrl, ex.Code);
+        Assert.Empty(server.Received);
+    }
+
     [Fact]
     public async Task NonHttpScheme_ThrowsInvalidUrl()
     {

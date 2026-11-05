@@ -1,6 +1,7 @@
 ﻿using System.Buffers;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
@@ -118,6 +119,12 @@ public sealed partial class AxiosClient
     /// 这里只负责在所有失败路径归还它；流式成功路径把它随正文转交给调用方。
     /// 连接租约同理：非流式在这里归还，流式随正文走。
     /// </summary>
+    /// <remarks>
+    /// 状态机用 <c>PoolingAsyncValueTaskMethodBuilder</c> 池化：每次尝试都要在发送 / 读取上挂起，
+    /// 池化后稳态复用、不再为它分配状态机盒。返回值沿尝试中间件链只被 await 一次（契约见
+    /// <see cref="AxiosAttemptHandler"/>）。
+    /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<AxiosAttemptResult> SendTerminalAsync(
         HttpRequestMessage request,
         AxiosAttemptContext ctx)
@@ -309,7 +316,14 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>阶段 4 —— 发送：只到响应头（<see cref="HttpCompletionOption.ResponseHeadersRead"/>），正文留给读取阶段；取消 / 超时、网络与库异常都在这里翻译成统一错误模型。</summary>
-    private static async Task<HttpResponseMessage> SendRequestAsync(
+    /// <remarks>
+    /// 状态机用 <c>PoolingAsyncValueTaskMethodBuilder</c> 池化：真实网络下这一跳每次请求都会挂起，
+    /// 普通 <c>async Task</c> 每次会分配「状态机盒 + Task」，池化后稳态复用、两个都不再分配。
+    /// 返回的 <see cref="ValueTask{TResult}"/> 必须且只被 await 一次：唯一调用点是 <see cref="SendTerminalAsync"/>，
+    /// 拿到后立即等待，不外传、不缓存、不并发消费。
+    /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<HttpResponseMessage> SendRequestAsync(
         HttpClient client,
         HttpRequestMessage request,
         AxiosAttemptContext ctx,
@@ -345,7 +359,14 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>阶段 5 —— 读取：先判定状态码接受性，再把正文读成 <see cref="AxiosResponse"/>；接受性只判一次，不合法时按宽松口径解析，任何失败路径都先释放响应消息。</summary>
-    private static async Task<(AxiosResponse Response, bool StatusAccepted)> ReadResponseAsync(
+    /// <remarks>
+    /// 状态机用 <c>PoolingAsyncValueTaskMethodBuilder</c> 池化：正文读取每次请求都会挂起，
+    /// 普通 <c>async Task</c> 每次会分配「状态机盒 + Task」，池化后稳态复用、两个都不再分配。
+    /// 返回的 <see cref="ValueTask{TResult}"/> 必须且只被 await 一次：唯一调用点是 <see cref="SendTerminalAsync"/>，
+    /// 拿到后立即解构等待，不外传、不缓存、不并发消费。
+    /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<(AxiosResponse Response, bool StatusAccepted)> ReadResponseAsync(
         HttpResponseMessage responseMessage,
         HttpRequestMessage request,
         AxiosAttemptContext ctx,

@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using AxiosNet.Cache;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
@@ -11,7 +12,20 @@ namespace AxiosNet;
 public sealed partial class AxiosClient
 {
     /// <summary>请求入口：按固定顺序驱动整条管线 —— 合并 → 校验（实例级）→ 拦截 → 规范化 / 范围校验 →（短路响应 | 编码 → 缓存查询 → 尝试管线 → 缓存落库）→ 收尾。</summary>
-    private async Task<AxiosResponse> SendAsync(
+    /// <remarks>公开入口要返回真正的 <see cref="Task{TResult}"/>（可多次 await / 交给调用方保存），这一步只做适配。</remarks>
+    private Task<AxiosResponse> SendAsync(
+        AxiosConfig perCallConfig,
+        Type? dataType,
+        AxiosResponse? target = null)
+        => SendAsyncCore(perCallConfig, dataType, target).AsTask();
+
+    /// <summary>管线核心：与 <see cref="SendAsync"/> 同一条流程，状态机用池化 builder。</summary>
+    /// <remarks>
+    /// <c>PoolingAsyncValueTaskMethodBuilder</c> 复用状态机盒；返回的 <c>ValueTask</c> 由 <c>AsTask()</c>
+    /// 一次性转成 Task 后交给调用方，池化源只被消费一次。
+    /// </remarks>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<AxiosResponse> SendAsyncCore(
         AxiosConfig perCallConfig,
         Type? dataType,
         AxiosResponse? target = null)

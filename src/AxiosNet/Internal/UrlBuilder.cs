@@ -27,7 +27,7 @@ internal static class UrlBuilder
         }
 
         // 空白（非 null）url 视为调用失误；null 才表示请求 baseAddress 本身。
-        if (url is { Length: > 0 } && string.IsNullOrWhiteSpace(url))
+        if (url is not null && string.IsNullOrWhiteSpace(url))
         {
             throw AxiosException.InvalidUrl(url, config, message: "url 不能为空白字符串：要请求 baseAddress 本身请显式传 \"/\"（或把 Url 置为 null）。");
         }
