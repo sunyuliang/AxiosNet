@@ -82,12 +82,13 @@ dotnet run -c Release -- --min-ratio 0.85 --max-alloc-ratio 2 --tag nightly
 | --- | --- | --- |
 | `--concurrency <n>` | 8 | 每实现的并发 worker 数 |
 | `--duration <秒>` | 1 | 每轮测量窗口 |
-| `--rounds <n>` | 5 | 测量轮数（每轮轮转顺序） |
+| `--rounds <n>` | 10 | 测量轮数（每轮轮转顺序） |
 | `--warmup <秒>` | 3 | 每实现预热窗口 |
 | `--cooldown <秒>` | 2 | 预热后等待分层编译 |
 | `--libs <a,b,...>` | 全部客户端 | 可选 `HttpClient` / `Refit` / `RestSharp` / `Flurl` / `AxiosNet` / `RawSocket`；RawSocket 不在清单里时自动追加为基线 |
 | `--min-ratio <比值>` | 不设 | RPS 门禁：AxiosNet / HttpClient 低于该值退出码 1（需同时包含两个实现；0.85 = 85%） |
 | `--max-alloc-ratio <x>` | 不设 | 分配门禁：AxiosNet / HttpClient 净分配高于该值退出码 1 |
+| `--min-cpu-share <比值>` | 0.42 | CPU 份额门槛：任一实现低于该值时，其吞吐/比值标注为不可判定（表内带 `*`），RPS 门禁**跳过而不是判负**；`0` = 关闭判定 |
 | `--out <目录>` | `results` | 报告输出目录（相对当前工作目录） |
 | `--tag <名字>` | 无 | 报告文件名后缀，便于归档 |
 
@@ -114,7 +115,7 @@ RawSocket   73,859        98       222    16,316      131 B          0 B  49%   
 
 文件：
 
-- `results/comparison-<时间戳>.md`：完整口径 + 汇总表 + 每轮原始 RPS；
+- `results/comparison-<时间戳>.md`：完整口径 + 汇总表 + CPU 份额门槛判定 + 离散度（各轮最小 ~ 最大）+ 每轮原始 RPS；
 - `results/comparison-<时间戳>.csv`：一行一个 `(实现, 轮次)`，便于画图或做趋势对比。
 
 ## 怎么读这些数字
@@ -128,6 +129,10 @@ RawSocket   73,859        98       222    16,316      131 B          0 B  49%   
 - **分配是进程级口径**：「净分配」减掉了 RawSocket 基线（服务端 + 裸 socket 客户端的成本），
   仍含各实现自己的 HttpClient 栈开销；不要把这里的数字与 BenchmarkDotNet 的单操作分配直接对比。
 - **CPU 是整进程**（含同进程服务端）：它只用来判断「这一窗测得可信不可信」，不是实现自身的 CPU 成本。
+  默认门槛 **42%**（`--min-cpu-share`，与 `ConcurrencyPerformanceTests` 的约定一致）：低于门槛的行在表里带 `*`，
+  该实现的吞吐与比值**不可判定**，RPS 门禁会跳过而不是判负。
+- **看中位数，也看离散度**：汇总列是轮中位数；控制台与 Markdown 另附「离散度」表（各轮最小 ~ 最大、RPS 相对波动）。
+  波动大（例如 RPS ±10% 以上）时，任何单次比值结论都要打折扣。
 - **RawSocket 行不是客户端**：它是这台回环服务器的上限与固定成本；若某个客户端接近它，说明瓶颈已转移到服务器，
   该实现的 RPS 被低估。
 

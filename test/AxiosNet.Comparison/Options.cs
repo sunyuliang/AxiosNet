@@ -9,11 +9,11 @@ internal sealed class Options
     /// <summary>每个实现同时压测的 worker 数（<c>--concurrency</c>，默认 8）；与轮次无关，恒为常驻连接数。</summary>
     public int Concurrency { get; private set; } = 8;
 
-    /// <summary>每轮测量窗口的秒数（<c>--duration</c>，默认 1）；下限 0.2，窗口再短 p99 只是在测抖动。</summary>
-    public double DurationSeconds { get; private set; } = 1;
+    /// <summary>每轮测量窗口的秒数（<c>--duration</c>下限 0.2，窗口再短 p99 只是在测抖动。</summary>
+    public double DurationSeconds { get; private set; } = 2;
 
-    /// <summary>测量轮数（<c>--rounds</c>，默认 10）；每轮轮转实现顺序，汇总取轮中位数。</summary>
-    public int Rounds { get; private set; } = 10;
+    /// <summary>测量轮数（<c>--rounds</c>每轮轮转实现顺序，汇总取轮中位数。</summary>
+    public int Rounds { get; private set; } = 6;
 
     /// <summary>每个实现的预热秒数（<c>--warmup</c>，默认 3）：让分层编译、连接池与 TLS 先到位，预热数据不计入结果。</summary>
     public double WarmupSeconds { get; private set; } = 3;
@@ -29,6 +29,12 @@ internal sealed class Options
 
     /// <summary>AxiosNet 净分配 / HttpClient 净分配的上限；null 表示不做门禁。</summary>
     public double? MaxAllocRatio { get; private set; }
+
+    /// <summary>
+    /// CPU 份额判定门槛（<c>--min-cpu-share</c>，默认 0.42，与 <c>ConcurrencyPerformanceTests</c> 的约定一致）：
+    /// 窗口 CPU 低于它说明机器没被压满（或外部负载抢核），该实现的吞吐与比值不可判定，RPS 门禁会被跳过；设为 0 关闭判定。
+    /// </summary>
+    public double MinCpuShare { get; private set; } = 0.42;
 
     /// <summary>报告输出目录（<c>--out</c>，默认 results，相对当前工作目录）。</summary>
     public string OutputDirectory { get; private set; } = "results";
@@ -81,6 +87,9 @@ internal sealed class Options
                 case "--max-alloc-ratio":
                     options.MaxAllocRatio = ParseDouble(name, Value(), min: 0);
                     break;
+                case "--min-cpu-share":
+                    options.MinCpuShare = ParseDouble(name, Value(), min: 0);
+                    break;
                 case "--out":
                     // 空串经 Path.GetFullPath 会落到当前目录，等于用户以为自己指定了目录、其实写进了 cwd。
                     options.OutputDirectory = Value().Trim() is { Length: > 0 } directory
@@ -118,6 +127,8 @@ internal sealed class Options
                                        RawSocket 会自动追加为服务端基线
               --min-ratio <比值>       RPS 门禁：AxiosNet / HttpClient 低于该值退出码 1（0.85 = 85%）
               --max-alloc-ratio <x>    分配门禁：AxiosNet / HttpClient 净分配高于该值退出码 1
+              --min-cpu-share <比值>   CPU 份额门槛（默认 0.42）：低于它时吞吐/比值不可判定，
+                                       RPS 门禁跳过而不是判负；0 = 关闭判定
               --out <目录>             报告输出目录（默认 results）
               --tag <名字>             报告文件名后缀，便于归档
               -h, --help               显示本帮助
@@ -132,6 +143,8 @@ internal sealed class Options
             口径提示：
               · 每轮轮转实现顺序；预热后用 RawSocket 校准机器状态（最近 3 窗 RPS 极差 ≤ 15% 才开测）。
               · 分配是进程级（含同进程回环服务端），报告里的「净分配」已减掉 RawSocket 基线。
+              · 汇总列是轮中位数；另附「离散度」表给出各轮最小~最大与 RPS 波动。
+              · CPU 份额低于 --min-cpu-share 的行在表里带 *：该实现吞吐与比值不可判定。
               · 绝对值随机器负载漂移，跨版本比较请看比值与同一窗口内的相对关系。
             """);
     }

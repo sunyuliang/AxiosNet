@@ -110,8 +110,11 @@ internal static class ComparisonProgram
 
             Console.WriteLine();
             Console.WriteLine("结果（各列取轮中位数）：");
-            Console.WriteLine(Report.ConsoleTable(set));
+            Console.WriteLine(Report.ConsoleTable(set, options.MinCpuShare));
             Console.WriteLine($"  测量窗口内服务器收到 {served:N0} 个请求 / 客户端完成 {measured:N0} 个；{DescribeEnvironment()}");
+            Console.WriteLine();
+            Console.WriteLine("离散度（各轮最小 ~ 最大）：");
+            Console.WriteLine(Report.ConsoleSpreadTable(set));
 
             if (served < measured)
             {
@@ -222,7 +225,8 @@ internal static class ComparisonProgram
                 options.WarmupSeconds,
                 started,
                 DescribeEnvironment(),
-                serverRequests));
+                serverRequests,
+                options.MinCpuShare));
 
         File.WriteAllText(csvPath, Report.BuildCsv(set));
         return [markdownPath, csvPath];
@@ -264,10 +268,33 @@ internal static class ComparisonProgram
 
         var gateFailed = false;
 
+        var cpuJudgeable = true;
+        if (options.MinCpuShare > 0)
+        {
+            // 与 ConcurrencyPerformanceTests 的 42% 约定一致：机器没被压满时，吞吐比值不代表实现能力上限。
+            foreach (var summary in set.Targets)
+            {
+                var ok = summary.CpuShare >= options.MinCpuShare;
+                Console.WriteLine(
+                    $"CPU 份额：{summary.Target.Name} {Report.FormatPercent(summary.CpuShare)}"
+                    + $"（门槛 {Report.FormatPercent(options.MinCpuShare)}）→ {(ok ? "达标" : "未达标，吞吐与比值不可判定")}");
+            }
+
+            cpuJudgeable = set.AxiosNet is null
+                || set.HttpClient is null
+                || (set.AxiosNet.CpuShare >= options.MinCpuShare
+                    && set.HttpClient.CpuShare >= options.MinCpuShare);
+        }
+
         if (options.MinRatio is { } minRatio)
         {
+            if (!cpuJudgeable)
+            {
+                // 机器未压满时比值被排队与漂移主导，判过/判负都不诚实；跳过而不是算通过。
+                Console.WriteLine("门禁 RPS：CPU 份额未达门槛，吞吐比值不可判定，跳过该门禁。");
+            }
             // 与分配门禁对称：基数为 0 时比值不是「通过」而是「没有比较对象」。
-            if (set.HttpClient!.Rps <= 0)
+            else if (set.HttpClient!.Rps <= 0)
             {
                 Console.WriteLine("门禁 RPS：HttpClient 没有完成任何请求（基线不可用），跳过该门禁。");
             }

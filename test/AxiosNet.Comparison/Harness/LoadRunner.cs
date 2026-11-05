@@ -214,7 +214,7 @@ internal sealed class LoadRunner
 /// <param name="P99Microseconds">延迟 99 分位，单位微秒。</param>
 /// <param name="MaxMicroseconds">最大延迟，单位微秒。</param>
 /// <param name="AllocatedBytesPerRequest">每请求分摊的托管分配字节数。</param>
-/// <param name="CpuShare">该窗口占用的 CPU 时间与墙钟之比（1.0 = 占满一核）。</param>
+/// <param name="CpuShare">该窗口占用的 CPU 时间与墙钟之比再除以核数（1.0 = 占满全部逻辑核）。</param>
 /// <param name="SamplesDropped">超出采样预算而没进延迟统计的请求数（只影响分位精度，不影响吞吐与分配）。</param>
 internal readonly record struct WindowResult(
     string Target,

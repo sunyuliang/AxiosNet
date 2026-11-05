@@ -20,7 +20,15 @@ internal sealed class TargetSummary
         Completed = windows.Sum(w => w.Completed);
         Errors = windows.Sum(w => w.Errors);
         SamplesDropped = windows.Sum(w => w.SamplesDropped);
+        (RpsMin, RpsMax) = Range(windows, w => w.Rps);
+        (P50Min, P50Max) = Range(windows, w => w.P50Microseconds);
+        (AllocatedMin, AllocatedMax) = Range(windows, w => w.AllocatedBytesPerRequest);
+        (CpuShareMin, CpuShareMax) = Range(windows, w => w.CpuShare);
     }
+
+    /// <summary>逐窗口的最小/最大值；空窗口（不会发生，轮数下限是 1）按 0 兜底。</summary>
+    private static (double Min, double Max) Range(IReadOnlyList<WindowResult> windows, Func<WindowResult, double> select)
+        => windows.Count == 0 ? (0, 0) : (windows.Min(select), windows.Max(select));
 
     /// <summary>被汇总的实现：报告里的名字与它自己的计数口径同源。</summary>
     public ITarget Target { get; }
@@ -57,6 +65,30 @@ internal sealed class TargetSummary
 
     /// <summary>超出样本上限被丢弃的延迟记录数：只影响 p99 精度，不影响吞吐与分配。</summary>
     public int SamplesDropped { get; }
+
+    /// <summary>各轮 RPS 的最小 / 最大值：中位数之外的离散度证据。</summary>
+    public double RpsMin { get; }
+
+    /// <inheritdoc cref="RpsMin" />
+    public double RpsMax { get; }
+
+    /// <summary>各轮 p50 的最小 / 最大值。</summary>
+    public double P50Min { get; }
+
+    /// <inheritdoc cref="P50Min" />
+    public double P50Max { get; }
+
+    /// <summary>各轮「分配/请求」的最小 / 最大值。</summary>
+    public double AllocatedMin { get; }
+
+    /// <inheritdoc cref="AllocatedMin" />
+    public double AllocatedMax { get; }
+
+    /// <summary>各轮 CPU 份额的最小 / 最大值。</summary>
+    public double CpuShareMin { get; }
+
+    /// <inheritdoc cref="CpuShareMin" />
+    public double CpuShareMax { get; }
 }
 
 /// <summary>全部实现 + 服务端基线。</summary>
@@ -94,8 +126,8 @@ internal sealed class SummarySet
 /// <summary>把汇总结果渲染成三种形态：控制台表、Markdown、CSV。</summary>
 internal static class Report
 {
-    /// <summary>控制台宽表：按显示宽度对齐（中文按两列算），列内右对齐。</summary>
-    public static string ConsoleTable(SummarySet set)
+    /// <summary>控制台宽表：按显示宽度对齐（中文按两列算），列内右对齐。CPU 份额低于 <paramref name="minCpuShare"/> 的行带 * 并附脚注。</summary>
+    public static string ConsoleTable(SummarySet set, double minCpuShare)
     {
         string[] headers =
             ["实现", "RPS", "p50 (µs)", "p99 (µs)", "max (µs)", "分配/请求", "净分配/请求", "CPU", "vs HttpClient"];
@@ -116,15 +148,43 @@ internal static class Report
                 summary.MaxMicroseconds.ToString("N0", CultureInfo.InvariantCulture),
                 FormatBytes(summary.AllocatedBytesPerRequest),
                 FormatBytes(summary.NetAllocatedBytesPerRequest),
-                FormatPercent(summary.CpuShare),
+                FormatCpuShare(summary, minCpuShare),
                 ratio
+            ]);
+        }
+
+        var table = FormatTable(headers, rows);
+        if (minCpuShare > 0 && set.Targets.Any(t => t.CpuShare < minCpuShare))
+        {
+            table += CpuGateFootnote(minCpuShare) + "\n";
+        }
+
+        return table;
+    }
+
+    /// <summary>离散度表：每列的轮最小 ~ 最大与 RPS 相对波动，补上「只有中位数」看不到的抖动幅度。</summary>
+    public static string ConsoleSpreadTable(SummarySet set)
+    {
+        string[] headers = ["实现", "RPS 最小 ~ 最大", "RPS 波动", "分配/请求 最小 ~ 最大", "p50 (µs) 最小 ~ 最大", "CPU 最小 ~ 最大"];
+
+        var rows = new List<string[]>();
+        foreach (var summary in set.Targets)
+        {
+            rows.Add(
+            [
+                summary.Target.Name,
+                FormatRange(summary.RpsMin, summary.RpsMax, v => v.ToString("N0", CultureInfo.InvariantCulture)),
+                FormatHalfRange(summary.RpsMin, summary.RpsMax, summary.Rps),
+                FormatRange(summary.AllocatedMin, summary.AllocatedMax, FormatBytes),
+                FormatRange(summary.P50Min, summary.P50Max, v => v.ToString("N0", CultureInfo.InvariantCulture)),
+                FormatRange(summary.CpuShareMin, summary.CpuShareMax, v => FormatPercent(v))
             ]);
         }
 
         return FormatTable(headers, rows);
     }
 
-    /// <summary>Markdown 报告：先写清口径（并发/轮数/分配是进程级），再给汇总表与每轮原始 RPS，便于贴进 PR 或归档。</summary>
+    /// <summary>Markdown 报告：先写清口径（并发/轮数/分配是进程级），再给汇总表、CPU 门槛判定、离散度与每轮原始 RPS，便于贴进 PR 或归档。</summary>
     public static string BuildMarkdown(
         SummarySet set,
         int concurrency,
@@ -133,7 +193,8 @@ internal static class Report
         double warmupSeconds,
         DateTimeOffset started,
         string environment,
-        long serverRequests)
+        long serverRequests,
+        double minCpuShare)
     {
         var md = new StringBuilder();
         md.AppendLine("# 跨实现横向基准");
@@ -143,7 +204,8 @@ internal static class Report
         md.AppendLine($"- 负载：每实现 {concurrency} 并发 × {durationSeconds:0.#}s × {rounds} 轮（每轮轮转实现顺序），预热 {warmupSeconds:0.#}s；同一回环服务器、同一 `User` JSON。");
         md.AppendLine("- 对齐：HttpClient / Refit / RestSharp / Flurl 注入与 AxiosNet 默认连接池逐项对齐的 `SocketsHttpHandler`；Refit 只走 source-generated 模式。");
         md.AppendLine($"- 分配是进程级口径（含同进程回环服务端；本次运行服务器共回复 {serverRequests:N0} 个请求）：`净分配` = 总分配 − RawSocket 行。");
-        md.AppendLine("- p50 / p99 为客户端观察值，含服务端处理、回环 RTT 与 JSON 反序列化；各列为轮中位数。");
+        md.AppendLine("- p50 / p99 为客户端观察值，含服务端处理、回环 RTT 与 JSON 反序列化；各列为轮中位数，各轮最小 ~ 最大见「离散度」节。");
+        md.AppendLine($"- CPU 列带 * 的行份额低于门槛 {FormatPercent(minCpuShare)}：该实现的吞吐与比值**不可判定**（机器未打满或外部负载抢核）。");
         md.AppendLine();
         md.AppendLine("| 实现 | RPS | p50 (µs) | p99 (µs) | max (µs) | 分配/请求 | 净分配/请求 | CPU | RPS vs HttpClient |");
         md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
@@ -151,14 +213,48 @@ internal static class Report
         foreach (var summary in set.Targets)
         {
             var ratio = set.HttpClient is null || ReferenceEquals(summary, set.HttpClient)
-                ? "—"
+                ? "100%"
                 : FormatRatio(summary.Rps / set.HttpClient.Rps);
 
             md.AppendLine(
                 $"| {summary.Target.Name} | {summary.Rps:N0} | {summary.P50Microseconds:N0} | "
                 + $"{summary.P99Microseconds:N0} | {summary.MaxMicroseconds:N0} | "
                 + $"{FormatBytes(summary.AllocatedBytesPerRequest)} | "
-                + $"{FormatBytes(summary.NetAllocatedBytesPerRequest)} | {FormatPercent(summary.CpuShare)} | {ratio} |");
+                + $"{FormatBytes(summary.NetAllocatedBytesPerRequest)} | {FormatCpuShare(summary, minCpuShare)} | {ratio} |");
+        }
+
+        if (minCpuShare > 0)
+        {
+            md.AppendLine();
+            md.AppendLine(CpuGateFootnote(minCpuShare));
+            md.AppendLine();
+            md.AppendLine($"## CPU 份额门槛（{FormatPercent(minCpuShare)}）");
+            md.AppendLine();
+            foreach (var summary in set.Targets)
+            {
+                var ok = summary.CpuShare >= minCpuShare;
+                md.AppendLine(
+                    $"- {summary.Target.Name}：{FormatPercent(summary.CpuShare)} → "
+                    + (ok ? "达标" : "**未达标**，该实现的吞吐与比值不可判定"));
+            }
+
+            md.AppendLine();
+            md.AppendLine("> 与 `ConcurrencyPerformanceTests` 的 42% 约定一致：低于门槛说明机器未被压满（或外部负载抢核），此时 RPS 门禁应跳过而不是判负。");
+        }
+
+        md.AppendLine();
+        md.AppendLine("## 离散度（各轮最小 ~ 最大）");
+        md.AppendLine();
+        md.AppendLine("| 实现 | RPS | RPS 波动 | 分配/请求 | p50 (µs) | CPU |");
+        md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: |");
+        foreach (var summary in set.Targets)
+        {
+            md.AppendLine(
+                $"| {summary.Target.Name} | {summary.RpsMin:N0} ~ {summary.RpsMax:N0} | "
+                + $"{FormatHalfRange(summary.RpsMin, summary.RpsMax, summary.Rps)} | "
+                + $"{FormatBytes(summary.AllocatedMin)} ~ {FormatBytes(summary.AllocatedMax)} | "
+                + $"{summary.P50Min:N0} ~ {summary.P50Max:N0} | "
+                + $"{FormatPercent(summary.CpuShareMin)} ~ {FormatPercent(summary.CpuShareMax)} |");
         }
 
         md.AppendLine();
@@ -250,6 +346,24 @@ internal static class Report
     /// <summary>比值转百分比文本；<paramref name="decimals"/> 控制小数位，默认取整。</summary>
     public static string FormatPercent(double ratio, int decimals = 0)
         => (ratio * 100).ToString("F" + decimals, CultureInfo.InvariantCulture) + "%";
+
+    /// <summary>CPU 份额的单元格文本：低于门槛时带 *，由脚注解释「不可判定」。</summary>
+    private static string FormatCpuShare(TargetSummary summary, double minCpuShare)
+        => FormatPercent(summary.CpuShare) + (minCpuShare > 0 && summary.CpuShare < minCpuShare ? "*" : string.Empty);
+
+    /// <summary>CPU 门槛脚注：控制台与 Markdown 共用同一句，避免两处口径漂移。</summary>
+    private static string CpuGateFootnote(double minCpuShare)
+        => $"* CPU 份额低于门槛 {FormatPercent(minCpuShare)}：该实现的吞吐与比值不可判定（机器未打满或外部负载抢核）。";
+
+    /// <summary>「最小 ~ 最大」的区间文本，格式化器由调用方按列的单位给。</summary>
+    private static string FormatRange(double min, double max, Func<double, string> format)
+        => $"{format(min)} ~ {format(max)}";
+
+    /// <summary>相对波动 = (最大 − 最小) / 2 / 中位数；中位数为 0 时没有意义，显示 —。</summary>
+    private static string FormatHalfRange(double min, double max, double median)
+        => median <= 0
+            ? "—"
+            : "±" + (((max - min) / 2 / median) * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
 
     /// <summary>
     /// 按显示宽度对齐（中文占两列），列内右对齐。表头也用同一套宽度，
