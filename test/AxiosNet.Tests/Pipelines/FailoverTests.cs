@@ -254,10 +254,16 @@ public sealed class FailoverTests
     [Fact]
     public async Task Failover_SwitchesOnTimeout()
     {
-        // 主端点把响应头压到超时之后：单次尝试的时间预算耗尽 → ECONNABORTED → 换端点。
+        // 主端点收到请求后就被门控挡住、绝不主动返回：单次尝试预算必然先到点 → ECONNABORTED → 换端点。
+        // 不用「延迟 600ms」这种墙钟绝对值，慢机上不会出现主端点抢在超时之前返回的竞态。
+        // 预算给 500ms 而不是 150ms：换端点之后镜像那一次也要在同一份预算里跑完一次完整回环请求，
+        // 150ms 在共享 runner 上偶尔会连镜像一起判超时（CI 那条失败就是这种形态）——本用例判的是
+        // 「超时是否触发换端点」，不是「150ms 这个具体数值」。
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         await using var primary = TestHttpServer.Start(async _ =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(600));
+            await release.Task;
             return TestJson.Response(new { primary = true });
         });
         await using var mirror = TestHttpServer.Start(_ => TestJson.Response(new { mirror = true }));
@@ -265,16 +271,28 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Timeout = TimeSpan.FromMilliseconds(150),
+            Timeout = TimeSpan.FromMilliseconds(500),
             Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
         });
 
-        var response = await client.GetAsync("x");
+        try
+        {
+            // 兜底：门控放行或服务器收尾出问题时，5s 内必须失败，而不是把整套用例挂住。
+            var response = await client.GetAsync("x").WaitAsync(TimeSpan.FromSeconds(5));
 
-        // 每个端点各有自己的 Timeout 预算：主端点耗光之后，镜像仍拿到完整的一份。
-        Assert.Equal(200, response.Status);
-        Assert.True(Assert.IsType<JsonElement>(response.Data).GetProperty("mirror").GetBoolean());
-        Assert.Equal(mirror.Url + "x", response.Request!.RequestUri!.AbsoluteUri);
+            // 每个端点各有自己的 Timeout 预算：主端点耗光之后，镜像仍拿到完整的一份。
+            Assert.Equal(200, response.Status);
+            Assert.True(Assert.IsType<JsonElement>(response.Data).GetProperty("mirror").GetBoolean());
+            Assert.Equal(mirror.Url + "x", response.Request!.RequestUri!.AbsoluteUri);
+
+            // 换端点确实发生过：镜像收到且只收到这一条请求。
+            Assert.Single(mirror.Received);
+        }
+        finally
+        {
+            // 放行主端点的在途请求：服务器 Dispose 要等它收尾。
+            release.SetResult(true);
+        }
     }
 
     [Fact]
