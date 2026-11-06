@@ -25,7 +25,7 @@ public sealed class SelfBuiltApiClientExample : IExample
         // configureDefaults 配底层 AxiosClient 默认值；configure 配 ApiClient 自身（授权等）
         builder.Services.AddApiClient(baseUrl,
             configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-            configure: client => client.Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken));
+            configure: client => client.CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken));
 
         builder.Services.AddSingleton<DeclarativeConsumerService>();
 

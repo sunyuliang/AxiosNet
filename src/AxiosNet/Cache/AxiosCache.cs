@@ -196,7 +196,7 @@ public sealed class AxiosCache
     }
 
     /// <summary>默认键：方法 + 绝对 URL，带凭据时再拼一段凭据摘要（不同用户的同名接口不会串用同一条缓存）。</summary>
-    /// <remarks>凭据只以摘要进键——键会一直留在存储里，原值不该跟着存活。用 Cookie 或自定义头区分身份时请给 <see cref="AxiosCacheOptions.KeySelector"/>。</remarks>
+    /// <remarks>凭据只以摘要进键——键会一直留在存储里，原值不该跟着存活。用 Cookie 或自定义头区分身份时请给 <see cref="AxiosCacheOptions.KeySelector"/>。查询串里的令牌会原样以明文进键（敏感令牌请勿放查询串，或用 KeySelector 只取摘要）；<c>OnSendingRequest</c> 在发送前才执行，晚于建键，其中写的头进不了键。</remarks>
     public static string CreateKey(AxiosConfig config, Uri uri)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -646,7 +646,7 @@ public sealed class AxiosCache
         }
     }
 
-    /// <summary>身份来源：显式 <c>Authorization</c> 头优先，其次连接级 Basic 凭据；两者都只以摘要进键。</summary>
+    /// <summary>身份来源：显式 <c>Authorization</c> 头优先，其次连接级 Basic 凭据；两者都只以摘要进键（只在建键时读配置，发送钩子里追加的头看不到）。</summary>
     private static string? ResolveIdentity(AxiosConfig config)
     {
         if (config.HasHeaders && config.Headers.Get("Authorization") is { } authorization)

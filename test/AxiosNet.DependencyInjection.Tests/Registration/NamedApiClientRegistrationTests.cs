@@ -181,19 +181,19 @@ public sealed class NamedApiClientRegistrationTests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new Person("alice", 18)));
 
-        var fromContainer = new BearerAuthorizationProvider("token-from-di");
+        var fromContainer = CredentialProviders.Fixed("token-from-di");
 
         using var provider = BuildProvider(services =>
         {
-            services.AddSingleton<IAuthorizationProvider>(fromContainer);
+            services.AddSingleton<IApiCredentialProvider>(fromContainer);
             services.AddApiClient("a", server.Url);
             services.AddApiClient("b", server.Url);
         });
 
         var resolver = provider.GetRequiredService<IApiClientResolver>();
 
-        Assert.Same(fromContainer, resolver.Get("a").Authorization);
-        Assert.Same(fromContainer, resolver.Get("b").Authorization);
+        Assert.Same(fromContainer, resolver.Get("a").CredentialProvider);
+        Assert.Same(fromContainer, resolver.Get("b").CredentialProvider);
 
         await resolver.Get("a").RequestAsync(new GetUserRequest { Id = 5 });
         await resolver.Get("b").RequestAsync(new GetUserRequest { Id = 6 });
@@ -209,15 +209,15 @@ public sealed class NamedApiClientRegistrationTests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new Person("alice", 18)));
 
-        var fromContainer = new BearerAuthorizationProvider("from-container");
+        var fromContainer = CredentialProviders.Fixed("from-container");
 
         using var provider = BuildProvider(services =>
         {
-            services.AddSingleton<IAuthorizationProvider>(fromContainer);
+            services.AddSingleton<IApiCredentialProvider>(fromContainer);
             services.AddApiClient("a", server.Url,
-                configure: client => client.Authorization = new BearerAuthorizationProvider("token-a"));
+                configure: client => client.CredentialProvider = CredentialProviders.Fixed("token-a"));
             services.AddApiClient("b", server.Url,
-                configure: client => client.Authorization = new BearerAuthorizationProvider("token-b"));
+                configure: client => client.CredentialProvider = CredentialProviders.Fixed("token-b"));
         });
 
         var resolver = provider.GetRequiredService<IApiClientResolver>();
@@ -252,7 +252,7 @@ public sealed class NamedApiClientRegistrationTests
             services.AddAxiosClient(config => config.BaseAddress = "https://registered.example.com");
             services.AddApiClient("a", "https://a.example.com");
             services.AddApiClient(configure: client =>
-                client.Authorization = new BearerAuthorizationProvider("facade-token"));
+                client.CredentialProvider = CredentialProviders.Fixed("facade-token"));
         });
 
         var facade = provider.GetRequiredService<ApiClient>();

@@ -49,7 +49,7 @@ public sealed class InterfaceGeneratorTests
                 ContentType: "text/event-stream")
             : new TestResponse(StatusCode: 200, Body: Encoding.UTF8.GetBytes("""{"name":"alice"}""")));
 
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = new FixedTokenProvider() };
+        using var client = new ApiClient(server.Url) { CredentialProvider = new FixedTokenProvider() };
         var proxy = CreateProxy(client, richType);
 
         var fetched = await InvokeAsync(richType, proxy, "GetAsync", 7, "x1", new Dictionary<string, string> { ["X-Extra"] = "1" }, default(CancellationToken));
@@ -545,7 +545,7 @@ public sealed class InterfaceGeneratorTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(
             StatusCode: 200,
             Body: Encoding.UTF8.GetBytes("ok")));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = new FixedTokenProvider() };
+        using var client = new ApiClient(server.Url) { CredentialProvider = new FixedTokenProvider() };
 
         var generated = CreateProxy(client, rootType);
         var reflected = ApiInterfaceProxy.Create(rootType, client);
@@ -846,10 +846,10 @@ public sealed class InterfaceGeneratorTests
             => _values.TryGetValue(key, out value!);
     }
 
-    private sealed class FixedTokenProvider : IAccessTokenProvider
+    private sealed class FixedTokenProvider : IApiCredentialProvider
     {
-        public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
-            => new ValueTask<string?>("tok");
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+            => new ValueTask<ApiCredential>(ApiCredential.Token("tok"));
     }
 
     private const string RichInterface = """

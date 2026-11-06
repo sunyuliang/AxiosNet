@@ -65,7 +65,8 @@ AxiosNet 与 axios 写法同构，并额外提供「模型式 / 接口式 / Open
 | 上传/下载进度 | 需自定义 | 无 | 有进度事件 | 无 | 回调内置 |
 | 字节限速 / 体积上限 | 无 | 无 | 无 | 无 | `Limits.MaxRate` / 大小上限 |
 | 请求体压缩（gzip/deflate/br） | 手写 | 无 | 无 | 无 | `RequestCompression` |
-| 令牌缓存 / 提前刷新 / 401 重放 | 无 | 部分（授权头） | 部分（OAuth 助手） | 无 | `AccessTokenManager` |
+| 统一凭据扩展点 + 令牌缓存 / 提前刷新 / 401 重放 | 无 | 部分（授权头） | 部分（OAuth 助手） | 无 | `IApiCredentialProvider` / `AccessTokenManager` |
+| 声明式鉴权（`[Authorize]` / `[AllowAnonymous]` + 401 自动重放） | 无 | 无 | 无 | 无 | 模型 / 接口级特性 + `ApiClient.CredentialProvider` |
 
 ### 3.2 弹性与治理（本表是差距最大的一块）
 
@@ -247,6 +248,8 @@ var response = await http.GetAsync<List<User>>("users", c =>
     c.Headers.Set("Authorization", $"Bearer {token}");
 }, ct);
 ```
+
+声明式客户端还能把这一步收进实例：设置 `ApiClient.CredentialProvider`（`IApiCredentialProvider`），由库按 `[Authorize]` 的 scheme 写 `Authorization` 头；配 `AccessTokenManager` 时自动刷新，401 后用新凭据重放一次。标了 `[AllowAnonymous]` 的登录接口跳过整条凭据链路，因此取令牌可以直接调同一个 `ApiClient`。
 
 再看上传文件，差距更明显：
 

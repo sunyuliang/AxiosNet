@@ -30,7 +30,7 @@ public sealed class NamedSitesExample : IExample
                 config.Timeout = TimeSpan.FromSeconds(10);
                 config.Headers.Set("X-Site", "a");
             },
-            configure: client => client.Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken));
+            configure: client => client.CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken));
 
         // 站点 b：另一个站点，授权各自独立（这里故意不配，演示服务器返回 401）
         builder.Services.AddApiClient("b", baseUrl,

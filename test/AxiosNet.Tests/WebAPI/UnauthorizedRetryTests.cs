@@ -17,7 +17,7 @@ public sealed class UnauthorizedRetryTests
 
         using var tokens = new AccessTokenManager(new AccessTokenOptions(_ =>
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
         var response = await client.RequestAsync(new SecureRequest());
 
@@ -29,6 +29,26 @@ public sealed class UnauthorizedRetryTests
     }
 
     [Fact]
+    public async Task Replay_InvalidatesWithTheRejectedTokenValue()
+    {
+        await using var server = SecureServer("Bearer tok-2");
+
+        string? staleSeen = null;
+        var calls = 0;
+        var provider = CredentialProviders.Create(
+            (_, _) => ValueTask.FromResult(ApiCredential.Token("tok-" + Interlocked.Increment(ref calls))),
+            invalidate: stale => staleSeen = stale);
+
+        using var client = new ApiClient(server.Url) { CredentialProvider = provider };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        // staleToken 必须是头里去掉 scheme 后的令牌本体，否则管理器的「按值作废」永远不命中。
+        Assert.Equal("tok-1", staleSeen);
+    }
+
+    [Fact]
     public async Task SecondCall401_Throws_NoInfiniteLoop()
     {
         await using var server = TestHttpServer.Start(_ =>
@@ -37,7 +57,7 @@ public sealed class UnauthorizedRetryTests
         var calls = 0;
         using var tokens = new AccessTokenManager(new AccessTokenOptions(_ =>
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
 
@@ -55,7 +75,7 @@ public sealed class UnauthorizedRetryTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
         using var client = new ApiClient(server.Url)
         {
-            AccessTokenProvider = tokens,
+            CredentialProvider = tokens,
             RetryOnUnauthorized = false
         };
 
@@ -70,7 +90,7 @@ public sealed class UnauthorizedRetryTests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
-        using var client = new ApiClient(server.Url) { Authorization = new BearerAuthorizationProvider("fixed") };
+        using var client = new ApiClient(server.Url) { CredentialProvider = CredentialProviders.Fixed("fixed") };
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
 
@@ -84,7 +104,7 @@ public sealed class UnauthorizedRetryTests
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
         // 静态令牌：刷新后值不变，重放没有意义。
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = new StaticTokenProvider("same") };
+        using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("same") };
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
 
@@ -97,7 +117,7 @@ public sealed class UnauthorizedRetryTests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = new StaticTokenProvider("tok") };
+        using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("tok") };
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AnonymousSecureRequest()));
 
@@ -110,7 +130,7 @@ public sealed class UnauthorizedRetryTests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = new StaticTokenProvider("tok") };
+        using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("tok") };
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new ExplicitAuthRequest()));
 
@@ -125,7 +145,7 @@ public sealed class UnauthorizedRetryTests
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
         using var tokens = new AccessTokenManager(new AccessTokenOptions(_ => ValueTask.FromResult(new AccessToken("tok"))));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var body = new NonSeekableStream(new byte[] { 1, 2, 3 });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new StreamBodyRequest { Payload = body }));
@@ -141,7 +161,7 @@ public sealed class UnauthorizedRetryTests
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
         using var tokens = new AccessTokenManager(new AccessTokenOptions(_ => ValueTask.FromResult(new AccessToken("tok"))));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
         using var body = new MemoryStream(new byte[] { 1, 2, 3 });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new StreamBodyRequest { Payload = body }));
@@ -156,7 +176,7 @@ public sealed class UnauthorizedRetryTests
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = new StaticTokenProvider("tok") };
+        using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("tok") };
 
         await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new MultipartSecureRequest { Name = "bob" }));
 
@@ -176,7 +196,7 @@ public sealed class UnauthorizedRetryTests
             BaseAddress = server.Url,
             Idempotency = { Enabled = true }
         });
-        using var client = new ApiClient(axios, ownsAxiosClient: false) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(axios, ownsAxiosClient: false) { CredentialProvider = tokens };
 
         await client.RequestAsync(new SecureRequest());
 
@@ -192,7 +212,7 @@ public sealed class UnauthorizedRetryTests
 
         using var tokens = new AccessTokenManager(new AccessTokenOptions(_ =>
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
         var response = await client.Create<ISecureApi>().GetAsync();
 
@@ -214,7 +234,7 @@ public sealed class UnauthorizedRetryTests
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
         using var client = new ApiClient(server.Url)
         {
-            AccessTokenProvider = tokens,
+            CredentialProvider = tokens,
             ErrorFactory = new CountingErrorFactory(() => factoryCalls++)
         };
 
@@ -225,16 +245,72 @@ public sealed class UnauthorizedRetryTests
         Assert.Equal(2, server.Received.Count);
     }
 
+    [Fact]
+    public async Task HeaderCredential_RefreshesAndReplaysOn401()
+    {
+        await using var server = SecureServer("Basic v2");
+
+        var issued = 0;
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Create((_, _) =>
+                ValueTask.FromResult(ApiCredential.Header("Basic v" + Interlocked.Increment(ref issued))))
+        };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("Basic v1", server.Received[0].Headers["Authorization"]);
+        Assert.Equal("Basic v2", server.Received[1].Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task HeaderCredential_InvalidatesWithoutTokenValue()
+    {
+        await using var server = SecureServer("Basic v2");
+
+        var issued = 0;
+        string? staleSeen = "未被调用";
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Create(
+                (_, _) => ValueTask.FromResult(ApiCredential.Header("Basic v" + Interlocked.Increment(ref issued))),
+                invalidate: stale => staleSeen = stale)
+        };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        // 完整头值形态拿不到「令牌本体」，只能无条件作废 —— 传 null，不能把头里切出来的碎片当 staleToken。
+        Assert.Null(staleSeen);
+    }
+
+    [Fact]
+    public async Task FixedProvider_On401_ThrowsAxiosExceptionNotNullReference()
+    {
+        await using var server = TestHttpServer.Start(_ =>
+            TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+
+        // Fixed 走的是没给 invalidate 委托的路径：作废必须是空操作，不能 NRE。
+        using var client = new ApiClient(server.Url) { CredentialProvider = CredentialProviders.Fixed("same") };
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+
+        Assert.Equal(401, ex.Status);
+        Assert.Single(server.Received); // 静态令牌刷新后不变，不重放
+    }
+
     private static TestHttpServer SecureServer(string acceptedAuthorization)
         => TestHttpServer.Start(request =>
             request.Headers.TryGetValue("authorization", out var auth) && auth == acceptedAuthorization
                 ? TestJson.Response(new Person("ok", 1))
                 : TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
-    private sealed class StaticTokenProvider(string token) : IAccessTokenProvider
+    private sealed class StaticTokenProvider(string token) : IApiCredentialProvider
     {
-        public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
-            => ValueTask.FromResult<string?>(token);
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+            => ValueTask.FromResult(ApiCredential.Token(token));
     }
 
     private sealed class CountingErrorFactory(Action onCall) : IApiErrorFactory

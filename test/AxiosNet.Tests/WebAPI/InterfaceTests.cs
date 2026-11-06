@@ -116,7 +116,7 @@ public sealed class InterfaceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url)
         {
-            Authorization = new BearerAuthorizationProvider("tok-1")
+            CredentialProvider = CredentialProviders.Fixed("tok-1")
         };
 
         await client.Create<IAuthorizedApi>().GetAsync();
@@ -130,7 +130,7 @@ public sealed class InterfaceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url)
         {
-            Authorization = new BearerAuthorizationProvider("tok-1")
+            CredentialProvider = CredentialProviders.Fixed("tok-1")
         };
 
         await client.Create<IAnonymousApi>().GetAsync();

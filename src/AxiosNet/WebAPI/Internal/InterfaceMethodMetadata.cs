@@ -191,7 +191,7 @@ internal sealed partial class InterfaceMethodMetadata
 
         var invocation = new ApiInterfaceInvocation(_interfaceType!, _methodName!, args);
 
-        invocation.TokenManaged = await client.ApplyAuthorizationAsync(_authorization, invocation, config, cancellationToken).ConfigureAwait(false);
+        invocation.CredentialKind = (await client.ApplyAuthorizationAsync(_authorization, invocation, config, cancellationToken).ConfigureAwait(false)).Kind;
 
         return invocation;
     }
@@ -202,7 +202,7 @@ internal sealed partial class InterfaceMethodMetadata
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
 
-        return await client.SendAsync<T>(invocation, config, invocation.TokenManaged, cancellationToken).ConfigureAwait(false);
+        return await client.SendAsync<T>(invocation, config, invocation.CredentialKind, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary><c>Task&lt;AxiosResponse&gt;</c>：交付响应，正文按 JsonElement 原样给。</summary>
@@ -211,7 +211,7 @@ internal sealed partial class InterfaceMethodMetadata
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
 
-        return await client.SendUntypedAsync(invocation, config, invocation.TokenManaged, cancellationToken).ConfigureAwait(false);
+        return await client.SendUntypedAsync(invocation, config, invocation.CredentialKind, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
@@ -227,7 +227,7 @@ internal sealed partial class InterfaceMethodMetadata
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
 
-        await client.SendWithoutBodyAsync(invocation, config, invocation.TokenManaged, cancellationToken).ConfigureAwait(false);
+        await client.SendWithoutBodyAsync(invocation, config, invocation.CredentialKind, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>接口侧流式发送：绑定配置后把授权交给客户端内核统一执行。</summary>

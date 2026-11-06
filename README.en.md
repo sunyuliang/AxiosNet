@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2335%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2250%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2371%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2286%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -27,7 +27,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api) / [value formatting](#value-formatting) / [OpenAPI import](#openapi-import)) · [Capability map](#capability-map) · [Token management](#token-management) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [Declarative API](#declarative-api) ([model-based](#model-based-api) / [interface-based](#interface-based-api) / [value formatting](#value-formatting) / [OpenAPI import](#openapi-import)) · [Capability map](#capability-map) · [Credentials and token management](#credentials-and-token-management) |
 | Requests and responses | [Clients](#clients) · [Replaying response.Config](#replaying-responseconfig) · [Methods and URLs](#methods-and-urls) · [Query parameters](#query-parameters) · [Body and ContentType](#body-and-contenttype) · [Request body compression](#request-body-compression) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Data and errors | [Errors](#errors) · [Interceptors](#interceptors) · [Data transforms](#data-transforms) · [Serialization](#serialization) |
 | Resilience and governance | [Retries](#retries) · [Global retry budget](#global-retry-budget-retrybudgetpolicy) · [Circuit breaker](#circuit-breaker) · [Concurrent hedging](#concurrent-hedging) · [Backup endpoints](#backup-endpoints) · [Idempotency keys](#idempotency-keys) · [Attempt pipeline](#attempt-pipeline) · [Short circuit](#short-circuit) · [Response cache](#response-cache) |
@@ -156,7 +156,7 @@ public sealed class CreateUserRequest : IApiRequest<User>
 
 var client = new ApiClient("https://api.example.com/")
 {
-    Authorization = new BearerAuthorizationProvider(ct => GetTokenAsync(ct))
+    CredentialProvider = CredentialProviders.Fixed("token")
 };
 
 var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
@@ -192,7 +192,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 
 **Authorization and typed errors**
 
-- Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; `IAuthorizationProvider` is the extension point, with `BearerAuthorizationProvider` built in.
+- Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; the single extension point is `ApiClient.CredentialProvider` (`IApiCredentialProvider`), whose `ApiCredential` result decides how the header is written (see [credentials and token management](#credentials-and-token-management)).
 - Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
 
 **Lower-level entry points**
@@ -270,7 +270,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface or on an interface method; with base interfaces, static headers and authorization merge in the **derived interface's scope** — the same base method can carry different static headers per derived interface.
 - Method-level declarations win over interface level: same-name static headers are overridden, `[AllowAnonymous]` makes a single method anonymous, `[Authorize("Basic")]` switches the scheme for one method.
 - Declaring both `[Authorize]` and `[AllowAnonymous]` on one method is ambiguous (`Create<T>()` / `ValidateInterfaces` reports it).
-- Authorization callbacks and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
+- The credential provider (via `ApiAuthContext.Request`) and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
 
 **Declaration validation**
 
@@ -479,7 +479,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [Response types](#response-types-and-downloads) | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
 | [Streaming responses](#streaming-responses) | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
 | [Timeouts and cancellation](#timeouts-and-cancellation) | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
-| [Token management](#token-management) | Token cache, refresh-ahead, single-flight refresh, 401 replay | `AccessTokenManager` / `AccessTokenProvider` |
+| [Credentials and token management](#credentials-and-token-management) | One credential extension point, token cache, refresh-ahead, single-flight refresh, 401 replay | `ApiClient.CredentialProvider` / `AccessTokenManager` |
 
 **Traffic control**
 
@@ -517,9 +517,34 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [Dependency injection](#dependency-injection) | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
 | [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings); built-in request-model / interface-proxy source generator, no `TrimmerRootAssembly` needed | On by reference; configure `JsonSerializerContext` for serialization |
 
-## Token management
+## Credentials and token management
 
-`IAccessTokenProvider` is only a "fetch a token per request" callback. When you want caching and automatic refresh, use the built-in `AccessTokenManager`: it decides **when to refresh and keeps concurrent refreshes to one**, while the HTTP call that actually exchanges a token stays yours (the library never calls a token endpoint for you).
+A declarative client has exactly one authorization extension point: `ApiClient.CredentialProvider` (`IApiCredentialProvider`). It runs once before every send, and the `ApiCredential` it returns decides how the header is written; `[AllowAnonymous]` skips the whole chain.
+
+```csharp
+var client = new ApiClient("https://api.example.com/")
+{
+    CredentialProvider = CredentialProviders.Fixed("token")
+};
+```
+
+| Return value | How the header is written | 401 replay |
+| --- | --- | --- |
+| `ApiCredential.Token(token)` | Writes `Authorization: {scheme} {token}` using the `[Authorize]` scheme (`Bearer` by default) | Yes |
+| `ApiCredential.Header(value)` | Sends `value` verbatim as the full `Authorization` header value | Yes |
+| `ApiCredential.Custom()` | The provider already wrote any headers it needs (signature, cookie, ...); the library touches no header | No |
+| `ApiCredential.None` (or `Token(null)`) | Sends no credential | No |
+
+- **Explicit headers win**: when the model or instance defaults already set `Authorization`, **the whole credential chain is skipped** (the provider is not called) — no wasted token fetch, and a failing token endpoint cannot break a request that already carries its own header.
+- **`Token` always prefixes the scheme**: the token form carries the token only; use `ApiCredential.Header` for complete values such as `Basic xxx` / `Signature xxx`. The library recovers the stale token back by the deterministic `scheme + space + token` shape before calling `Invalidate`, so mixing the two breaks value-based invalidation.
+- **Custom credentials**: inside `CredentialProviders.Create((ctx, ct) => ...)` you can write `ctx.Config.Headers` directly (model bindings have already been merged) and return `ApiCredential.Custom()`; branch per request with `ctx.Request` (an `ApiInterfaceInvocation` for interface-based calls). Pass `invalidate:` to `Create` when you want a forced refresh after 401.
+- **`Fixed` rejects blanks**: `CredentialProviders.Fixed(" ")` throws `ArgumentException` (use `Fixed(ApiCredential.None)` to mean "this request carries no credential"), so a misconfiguration never degrades silently into an anonymous request.
+- **Invalidation on 401**: the library calls `IApiCredentialProvider.Invalidate(staleToken)` after a 401; the default implementation does nothing, and passing the stale value avoids discarding a token another request just refreshed.
+- Register `IApiCredentialProvider` in the container and every `ApiClient` picks it up (see [dependency injection](#dependency-injection)).
+
+### Built-in token manager
+
+`AccessTokenManager` implements the same interface. It decides **when to refresh and keeps concurrent refreshes to one**, while the HTTP call that actually exchanges a token stays yours (the library never calls a token endpoint for you).
 
 ```csharp
 using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
@@ -529,7 +554,7 @@ using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
     RefreshTimeout = TimeSpan.FromSeconds(10)           // 30 seconds by default
 });
 
-using var client = new ApiClient("https://api.example.com/") { AccessTokenProvider = tokens };
+using var client = new ApiClient("https://api.example.com/") { CredentialProvider = tokens };
 
 // Both callbacks return the token plus its expiry (ExpiresAt = null means "never expires")
 static ValueTask<AccessToken> AcquireAsync(CancellationToken ct) { ... }
@@ -541,8 +566,35 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 - **Refreshes ignore caller cancellation**: one client disconnecting neither fails the other waiters nor wastes a refresh (the refresh itself is bounded by `RefreshTimeout`, which throws `TimeoutException`).
 - **Refresh-ahead is clamped**: the effective lead is min(`RefreshAhead`, half the token lifetime), so short-lived tokens are not refreshed the moment they arrive.
 - **Forced refresh after 401**: `tokens.Invalidate(staleToken)` drops the current token (passing the stale value avoids discarding a token another request just refreshed); the next call must refresh.
-- **Automatic replay on 401**: when the response is 401 and this request's `Authorization` header came from the token provider, the token is refreshed and the request is replayed **once** (a second 401 goes through the normal error path). Bodies that cannot be replayed (streams / streaming bodies / multipart), declarations with an explicit `Authorization` header, and `[AllowAnonymous]` are never replayed; the replay keeps the same idempotency key. Turn it off with `ApiClient.RetryOnUnauthorized = false`.
-- Register `IAccessTokenProvider` in the container and every `ApiClient` picks it up (see [dependency injection](#dependency-injection)).
+- **Automatic replay on 401**: when the response is 401 and the library wrote this request's `Authorization` header, the credential is invalidated, fetched again, and the request is replayed **once** (a second 401 goes through the normal error path; an unchanged credential means no replay). Bodies that cannot be replayed (streams / streaming bodies / multipart), declarations with an explicit `Authorization` header, and `[AllowAnonymous]` are never replayed; the replay keeps the same idempotency key. Turn it off with `ApiClient.RetryOnUnauthorized = false`.
+
+### Bootstrap the token through the same client
+
+Fetching a token is usually just another endpoint on the same client. Mark the login / token request `[AllowAnonymous]` so it skips the credential chain and cannot recurse into `AccessTokenManager`; the acquire and refresh callbacks can then call that very `ApiClient`:
+
+```csharp
+[Post("login")]
+[AllowAnonymous]
+public sealed class LoginRequest : IApiRequest<TokenResponse>
+{
+    [Body] public LoginPayload Credentials { get; set; } = null!;
+}
+
+ApiClient? api = null;
+using var tokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
+{
+    var r = await api!.RequestAsync(new LoginRequest
+    {
+        Credentials = new LoginPayload("alice", "wonderland")
+    }, cancellationToken: ct);
+    return new AccessToken(r.Data!.Token, DateTimeOffset.UtcNow.AddSeconds(r.Data.ExpiresIn));
+}));
+
+api = new ApiClient("https://api.example.com/") { CredentialProvider = tokens };
+using var client = api;
+```
+
+The `/login` request carries no `Authorization` header, and 401 refresh replays go through the same anonymous endpoint. Regression test: `test/AxiosNet.Tests/WebAPI/SelfHostedTokenEndpointTests.cs`.
 
 ## Clients
 
@@ -1512,6 +1564,8 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 
 **Key = method + absolute URL (+ credential digest)**: credentials (`Authorization` header or `Connection.Auth`) are part of the key, and only as a 64-bit digest — two users hitting the same endpoint on one instance never share an entry. Use `KeySelector` when identity lives in cookies or a custom header, or when you want per-tenant / per-language partitions.
 
+**Two boundaries**: a query-string token such as `?token=` does not collide (the URL differs), but it enters the cache key **in plain text** (and the audit event URI), whereas `Authorization` enters only as a digest — keep sensitive tokens out of the query string, or have `KeySelector` contribute only a digest. Identity headers written in `OnSendingRequest` are **not part of the key** (the key is computed before that hook runs); write them in the per-request config or a request interceptor instead.
+
 **What is stored is the raw body bytes**, re-parsed per call with the current `ResponseType` and generic argument: the same bytes feed `GetAsync<User>` and `GetAsync<string>` and each gets the shape it asked for.
 
 **An entry shares the body with the response whenever it can**: for JSON / text shapes `Data` is a separate object, so the caller never holds that array and the entry points at the very same memory instead of cloning it.
@@ -1885,13 +1939,13 @@ builder.Services.AddAxiosClient(                             // ...and swap the 
 
 builder.Services.AddApiClient("https://api.example.com",     // declarative client with its own transport
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
 builder.Services.AddApiClient(                               // declarative facade over the AxiosClient singleton
-    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
-builder.Services.AddApiClient("a", "https://a.example.com", configure: c => c.Authorization = providerA);   // multi-site
-builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Authorization = providerB);
+builder.Services.AddApiClient("a", "https://a.example.com", configure: c => c.CredentialProvider = providerA);   // multi-site
+builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.CredentialProvider = providerB);
 ```
 
 | Extension | Registers |
@@ -1903,7 +1957,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | Singleton interface proxy (default / named site) |
 
 - TryAdd semantics: already registered means not registered twice, so no second pool is created.
-- `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` from the container attach automatically; explicit values in `configure` win.
+- `IApiCredentialProvider` / `IApiErrorFactory` from the container attach automatically; explicit values in `configure` win.
 - Lifetime belongs to the container: disposing an injected `ApiClient` does not dispose the shared underlying client.
 - Multi-site via `IApiClientResolver.Get(name)` / `TryGet` / `Names`; on .NET 8+ keyed services (`AddKeyedSingleton` + `[FromKeyedServices]`) work too.
 - Interface declarations register directly: `services.AddApiInterface<IUserApi>()` (unkeyed `ApiClient`) or `AddApiInterface<IUserApi>("a")` (named site); the proxy is reused as a singleton and comes from the source generator (same path for JIT and Native AOT). Without generated metadata it falls back to `DispatchProxy` under JIT, and under AOT resolution fails explicitly.
@@ -1967,6 +2021,7 @@ Ten sub-objects (created lazily on first access):
 | `responseType: 'json' / 'text' / 'arraybuffer' / 'stream'` | `ResponseType.Json` / `Text` / `ArrayBuffer` / `Stream` |
 | `validateStatus` / `timeout` / `AbortController` | `c.Callbacks.ValidateStatus` / `c.Timeout` / `c.CancellationToken` |
 | `auth: { username, password }` | `c.Connection.Auth = new AxiosAuth(user, pass)` |
+| — (token refresh / 401 replay needs a hand-written interceptor) | Declarative `ApiClient.CredentialProvider` + `AccessTokenManager` (auto refresh / 401 replay) |
 | `withCredentials` / `proxy` / `maxRedirects` | Same-named properties on `Connection` (instance-level) |
 | `maxContentLength` / `maxBodyLength` / `maxRate` | Same-named properties on `Limits` |
 | `onUploadProgress` / `onDownloadProgress` / `timeoutMessage` | Same-named properties on `Callbacks` |
@@ -2005,7 +2060,7 @@ It opens an interactive menu (reflection lists every sample; type a number to ru
 | Suite | Items | Coverage |
 | --- | ---: | --- |
 | Core | 37 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles |
-| Declarative | 17 | GET detail / list, POST create, authorization with `[AllowAnonymous]`, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), value formatting (`[Format]` / `ValueFormatter` priority), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
+| Declarative | 17 | GET detail / list, POST create, the unified credential provider with `[AllowAnonymous]` / same-client token bootstrap, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), value formatting (`[Format]` / `ValueFormatter` priority), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
 
 Two more samples:
 
@@ -2120,10 +2175,10 @@ dotnet build AxiosNet.sln -c Release
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2195 / 2184 | `net8.0` / `net6.0` | 4379 |
+| `AxiosNet.Tests` (core + declarative) | 2231 / 2220 | `net8.0` / `net6.0` | 4451 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| **Total** | **2335 / 2250** | | **4585** |
+| **Total** | **2371 / 2286** | | **4657** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

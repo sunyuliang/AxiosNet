@@ -4,8 +4,8 @@ namespace AxiosNet.WebAPI.Attributes;
 /// 标记请求模型 / 接口 / 接口方法需要授权：按 <see cref="Scheme"/> 与令牌拼出 <c>Authorization: {scheme} {token}</c>。
 /// </summary>
 /// <remarks>
-/// 客户端配了 <see cref="ApiClient.AccessTokenProvider"/> 时按 <see cref="Scheme"/> 写头，随后 <see cref="ApiClient.Authorization"/> 仍会执行。
-/// 未标注授权特性的声明只要客户端配了授权钩子也会执行；方法级声明压过接口 / 类上的声明；与 <see cref="AllowAnonymousAttribute"/> 同标一层属二义性。
+/// 客户端配了 <see cref="ApiClient.CredentialProvider"/> 且返回托管凭据时按 <see cref="Scheme"/> 写头。
+/// 未标注授权特性的声明只要客户端配了凭据提供方也会取凭据；方法级声明压过接口 / 类上的声明；与 <see cref="AllowAnonymousAttribute"/> 同标一层属二义性。
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class AuthorizeAttribute : Attribute
@@ -38,7 +38,7 @@ public sealed class AuthorizeAttribute : Attribute
 }
 
 /// <summary>
-/// 标记请求模型 / 接口 / 接口方法不做授权：跳过 <see cref="ApiClient.AccessTokenProvider"/> 与 <see cref="ApiClient.Authorization"/>。
+/// 标记请求模型 / 接口 / 接口方法不做授权：跳过 <see cref="ApiClient.CredentialProvider"/>。
 /// 声明里显式写的 <c>Authorization</c> 头照常发送；方法级声明压过接口 / 类上的声明；与 <see cref="AuthorizeAttribute"/> 同标一层属二义性。
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Method, Inherited = true, AllowMultiple = false)]

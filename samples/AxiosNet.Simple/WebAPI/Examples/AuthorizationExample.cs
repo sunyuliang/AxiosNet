@@ -3,16 +3,16 @@ using AxiosNet.WebAPI;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 4. 授权：<c>[AllowAnonymous]</c> / <c>[Authorize]</c> 声明 + <see cref="IAccessTokenProvider"/> 取令牌
-/// （拼头交给库）、<see cref="AccessTokenManager"/> 的缓存与刷新，以及与完全自定义的 <see cref="IAuthorizationProvider"/> 叠加对比。
+/// 4. 授权：<c>[AllowAnonymous]</c> / <c>[Authorize]</c> 声明 + <see cref="IApiCredentialProvider"/> 的托管凭据与自定义凭据、
+/// <see cref="AccessTokenManager"/> 的缓存与刷新，以及用同一个客户端的匿名登录接口自举取令牌。
 /// </summary>
 public sealed class AuthorizationExample : IExample
 {
-    /// <summary>令牌提供方客户端：客户端静态复用，提供方按运行重新挂载。</summary>
+    /// <summary>会话令牌客户端：客户端静态复用，提供方按运行重新挂载。</summary>
     private static ApiClient? _tokenClient;
 
-    /// <summary>叠加自定义授权客户端：客户端静态复用，两个提供方按运行重新挂载。</summary>
-    private static ApiClient? _layered;
+    /// <summary>自定义凭据客户端：客户端静态复用，提供方按运行重新挂载。</summary>
+    private static ApiClient? _customClient;
 
     /// <summary>固定令牌客户端：令牌固定，首次运行创建后跨运行复用。</summary>
     private static ApiClient? _fixedToken;
@@ -25,19 +25,18 @@ public sealed class AuthorizationExample : IExample
 
     public int Number => 4;
 
-    public string Title => "授权：[AllowAnonymous] / [Authorize] + 令牌提供方 / AccessTokenManager（对比自定义 IAuthorizationProvider）";
+    public string Title => "授权：[AllowAnonymous] / [Authorize] + 统一凭据提供方 / AccessTokenManager / 本客户端自举取令牌";
 
-    /// <summary>示例入口：授权：[AllowAnonymous] / [Authorize] + 令牌提供方 / AccessTokenManager（对比自定义 IAuthorizationProvider）。</summary>
+    /// <summary>示例入口：统一凭据提供方的四种形态、令牌缓存与 401 重放，以及自举取令牌。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
 
-        // 令牌提供方只负责「取令牌」，Authorization: Bearer xxx 由库按 scheme 拼
-        var tokens = new SessionTokenProvider();
+        // 托管凭据只负责「取令牌」，Authorization: Bearer xxx 由库按 scheme 拼
+        var tokens = new SessionCredentialProvider();
 
-        // 三个客户端都静态复用（首次运行创建）；授权提供方每轮新建，运行前重新挂上
         var client = _tokenClient ??= new ApiClient(context.BaseUrl);
-        client.AccessTokenProvider = tokens;
+        client.CredentialProvider = tokens;
 
         // 1) 登录模型标了 [AllowAnonymous]：整条授权链路跳过（提供方不会被调用），也不带 Authorization 头
         var login = await client.RequestAsync(new LoginRequest
@@ -47,7 +46,7 @@ public sealed class AuthorizationExample : IExample
 
         Console.WriteLine($"  登录（[AllowAnonymous]）-> token = {login.Data!.Token}");
         Console.WriteLine($"    实际头 Authorization = {Header(login.Request, "Authorization")}，"
-            + $"令牌提供方被调用 {tokens.Calls} 次");
+            + $"凭据提供方被调用 {tokens.Calls} 次");
 
         tokens.SetToken(login.Data.Token);
 
@@ -67,24 +66,23 @@ public sealed class AuthorizationExample : IExample
             Console.WriteLine($"  令牌为空 -> {ex.Code} / HTTP {ex.Status}（未写 Authorization 头）");
         }
 
-        // 4) 叠加自定义 IAuthorizationProvider：它最后执行，能看到令牌提供方写的头，也可以覆盖
-        tokens.SetToken(DemoApiServer.DemoToken);
-        var observer = new HeaderObserver();
-        var layered = _layered ??= new ApiClient(context.BaseUrl);
-        layered.AccessTokenProvider = tokens;
-        layered.Authorization = observer;
+        // 4) 自定义凭据：提供方自己写任意头（签名等），返回 Custom() 后库不再碰头、也不做 401 重放
+        var custom = new CustomCredentialProvider();
+        var customClient = _customClient ??= new ApiClient(context.BaseUrl);
+        customClient.CredentialProvider = custom;
 
-        await layered.RequestAsync(new SecureProfileRequest());
-        Console.WriteLine($"  IAuthorizationProvider 最后执行，看到的 Authorization = {observer.Seen}");
+        var signed = await customClient.RequestAsync(new SecureProfileRequest());
+        Console.WriteLine($"  自定义凭据 -> {signed.Status}，实际头 Authorization = {Header(signed.Request, "Authorization")}，"
+            + $"X-Signed = {Header(signed.Request, "X-Signed")}");
 
-        // 5) 固定令牌的最短写法：不需要任何提供方（令牌固定，创建一次即可）
+        // 5) 固定凭据的最短写法：不需要自己实现提供方
         var fixedClient = _fixedToken ??= new ApiClient(context.BaseUrl)
         {
-            Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
+            CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken)
         };
 
         var same = await fixedClient.RequestAsync(new SecureProfileRequest());
-        Console.WriteLine($"  固定令牌写法 -> {same.Status} {same.Data!.User}");
+        Console.WriteLine($"  固定凭据写法 -> {same.Status} {same.Data!.User}");
 
         // 6) 令牌管理器：缓存 + 到期前刷新 + 并发刷新单飞；取令牌的 HTTP 调用仍由调用方提供
         var acquires = 0;
@@ -95,7 +93,7 @@ public sealed class AuthorizationExample : IExample
         }));
 
         var managedClient = _managedClient ??= new ApiClient(context.BaseUrl);
-        managedClient.AccessTokenProvider = managed;
+        managedClient.CredentialProvider = managed;
         await managedClient.RequestAsync(new SecureProfileRequest());
         await managedClient.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  令牌管理器：两次请求只取令牌 {acquires} 次（未进刷新窗口时直接走缓存）");
@@ -105,10 +103,31 @@ public sealed class AuthorizationExample : IExample
         using var rotating = new AccessTokenManager(new AccessTokenOptions(_ =>
             ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref rotateCalls)))));
         var rotatingClient = _rotatingClient ??= new ApiClient(context.BaseUrl);
-        rotatingClient.AccessTokenProvider = rotating;
+        rotatingClient.CredentialProvider = rotating;
 
         var rotated = await rotatingClient.RequestAsync(new RotatingProfileRequest());
         Console.WriteLine($"  401 重放 -> {rotated.Status} {rotated.Data!.IssuedBy}（取令牌 {rotateCalls} 次，只重放一次）");
+
+        // 8) 自举取令牌：登录接口与业务接口共用一个 ApiClient，[AllowAnonymous] 让取令牌不会重入凭据链路
+        ApiClient? selfHosted = null;
+        var logins = 0;
+        using var selfHostedTokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
+        {
+            var result = await selfHosted!.RequestAsync(new LoginRequest
+            {
+                Credentials = new LoginPayload("alice", "wonderland")
+            }, cancellationToken: ct);
+            Interlocked.Increment(ref logins);
+            return new AccessToken(result.Data!.Token, DateTimeOffset.UtcNow.AddSeconds(result.Data.ExpiresIn));
+        }));
+
+        selfHosted = new ApiClient(context.BaseUrl) { CredentialProvider = selfHostedTokens };
+        using var selfHostedClient = selfHosted;
+
+        var bootstrapped = await selfHostedClient.RequestAsync(new SecureProfileRequest());
+        await selfHostedClient.RequestAsync(new SecureProfileRequest());
+        Console.WriteLine($"  自举取令牌 -> {bootstrapped.Status} {bootstrapped.Data!.User}"
+            + $"（登录 {logins} 次，第二次请求走缓存）");
     }
 
     /// <summary>读请求消息上的某个头；短路响应没有请求消息，返回 <c>none</c>。</summary>
@@ -117,11 +136,8 @@ public sealed class AuthorizationExample : IExample
             ? string.Join(",", values!)
             : "none";
 
-    /// <summary>
-    /// 演示用的会话令牌：登录前返回 null（不写头），登录后返回服务端下发的令牌。
-    /// 令牌的缓存与刷新由实现方负责，库不缓存令牌。
-    /// </summary>
-    private sealed class SessionTokenProvider : IAccessTokenProvider
+    /// <summary>演示用的会话凭据：登录前返回空白（不写头），登录后返回服务端下发的令牌。</summary>
+    private sealed class SessionCredentialProvider : IApiCredentialProvider
     {
         // 当前会话令牌；登录前为 null，此时不写 Authorization 头。
         private volatile string? _token;
@@ -130,27 +146,26 @@ public sealed class AuthorizationExample : IExample
         /// <summary>被调用次数（用于证明 [AllowAnonymous] 真的跳过了授权链路）。</summary>
         public int Calls => Volatile.Read(ref _calls);
 
-        /// <summary>换会话令牌：下一次取令牌就返回新值（volatile 写，读侧不会缓存旧值）。</summary>
+        /// <summary>换会话令牌：下一次取凭据就返回新值。</summary>
         public void SetToken(string? token) => _token = token;
 
-        /// <summary>取当前会话令牌并计一次调用；未登录时返回 null，库据此不写 <c>Authorization</c> 头。</summary>
-        public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        /// <summary>取当前会话凭据并计一次调用。</summary>
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _calls);
-            return new ValueTask<string?>(_token);
+            return ValueTask.FromResult(ApiCredential.Token(_token));
         }
     }
 
-    /// <summary>只观察不修改：证明 <see cref="IAuthorizationProvider"/> 在令牌提供方之后执行。</summary>
-    private sealed class HeaderObserver : IAuthorizationProvider
+    /// <summary>自定义凭据：自己写 Authorization 与签名头，库不托管也不重放。</summary>
+    private sealed class CustomCredentialProvider : IApiCredentialProvider
     {
-        public string? Seen { get; private set; }
-
-        /// <summary>只把当前的 <c>Authorization</c> 头记下来，用来证明授权提供方在令牌提供方之后执行。</summary>
-        public ValueTask ApplyAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        /// <summary>取凭据时写任意头，再返回 Custom()。</summary>
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
         {
-            Seen = context.Config.Headers.Get("Authorization");
-            return ValueTask.CompletedTask;
+            context.Config.Headers.Set("Authorization", "Bearer " + DemoApiServer.DemoToken);
+            context.Config.Headers.Set("X-Signed", "sha256=demo");
+            return ValueTask.FromResult(ApiCredential.Custom());
         }
     }
 }

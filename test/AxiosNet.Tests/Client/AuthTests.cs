@@ -7,9 +7,9 @@ namespace AxiosNet.Tests.Client;
 /// <summary>
 /// Basic 认证与 Bearer token（核心层）：编码、覆盖顺序、非法凭据。
 /// <para>
-/// 声明式层（<c>ApiClient</c> + <c>BearerAuthorizationProvider</c>）的授权语义归
-/// <c>WebAPI/AuthorizationTests</c>——那边 <c>Bearer_StaticToken_SetsAuthorizationHeader</c> 与
-/// <c>Bearer_TokenWithScheme_IsSentAsIs</c> 就是本文件原先那条「带不带 scheme 都照发」的用例，且拆得更细。
+/// 声明式层（<c>ApiClient</c> + <c>IApiCredentialProvider</c>）的授权语义归
+/// <c>WebAPI/AuthorizationTests</c>——那边 <c>FixedToken_SetsAuthorizationHeader</c> 与
+/// <c>TokenWithScheme_IsSentAsIs</c> 就是本文件原先那条「带不带 scheme 都照发」的用例，且拆得更细。
 /// </para>
 /// </summary>
 public sealed class AuthTests

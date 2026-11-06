@@ -9,7 +9,7 @@ using AxiosNet.Simple.DependencyInjection.Examples;
 //   1) AddAxiosClient                   核心客户端单例
 //   2) AddApiClient 自建模式            自带 BaseAddress 自建底层客户端
 //   3) AddApiClient 门面模式            复用 AddAxiosClient 注册的单例
-//   4) 容器授权                         IAuthorizationProvider 单例自动装配
+//   4) 容器授权                         IApiCredentialProvider 单例自动装配
 //   5) AddApiClient(name, ...) 多站点   命名注册 + IApiClientResolver 按站点名取用
 //   6) 键名服务（.NET 8+ 官方机制）      AddKeyedSingleton + [FromKeyedServices] / GetRequiredKeyedService
 // 示例自带本地 HTTP/1.1 Keep-Alive 演示服务器，按首次选择懒启动、退出时释放，离线即可运行：

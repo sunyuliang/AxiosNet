@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2335%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2250%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2371%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2286%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -27,7 +27,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 分组 | 章节 |
 | --- | --- |
-| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api) / [值格式化](#值格式化) / [OpenAPI 导入](#从-openapi-导入)） · [能力地图](#能力地图) · [令牌管理](#令牌管理) |
+| 入门 | [安装](#安装) · [快速上手](#快速上手) · [声明式 API](#声明式-api)（[模型式](#模型式-api) / [接口式](#接口式-api) / [值格式化](#值格式化) / [OpenAPI 导入](#从-openapi-导入)） · [能力地图](#能力地图) · [凭据与令牌管理](#凭据与令牌管理) |
 | 请求与响应 | [客户端](#客户端) · [回放 response.Config](#回放-responseconfig) · [方法与 URL](#方法与-url) · [查询参数 params](#查询参数-params) · [请求体 data 与 ContentType](#请求体-data-与-contenttype) · [请求体压缩](#请求体压缩) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [发送前钩子](#发送前钩子签名--最终请求) · [原始响应字节](#原始响应字节) · [在途并发上限](#在途并发上限) |
 | 数据与错误 | [错误处理](#错误处理) · [拦截器](#拦截器) · [数据转换](#数据转换) · [序列化](#序列化) |
 | 弹性与治理 | [重试](#重试) · [全局重试预算](#全局重试预算retrybudgetpolicy) · [熔断](#熔断) · [并发对冲](#并发对冲) · [备用端点](#备用端点) · [幂等键](#幂等键) · [尝试管线](#尝试管线) · [短路响应](#短路响应) · [响应缓存](#响应缓存) |
@@ -156,7 +156,7 @@ public sealed class CreateUserRequest : IApiRequest<User>
 
 var client = new ApiClient("https://api.example.com/")
 {
-    Authorization = new BearerAuthorizationProvider(ct => GetTokenAsync(ct))
+    CredentialProvider = CredentialProviders.Fixed("token")
 };
 
 var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
@@ -192,7 +192,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // 只拼 URL
 
 **授权与强类型错误**
 
-- 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；`IAuthorizationProvider` 是扩展点，内置 `BearerAuthorizationProvider`。
+- 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；唯一扩展点是 `ApiClient.CredentialProvider`（`IApiCredentialProvider`），返回的 `ApiCredential` 决定怎么落头（见[凭据与令牌管理](#凭据与令牌管理)）。
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
 
 **底层入口**
@@ -270,7 +270,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 - `[Headers]` / `[Authorize]` / `[AllowAnonymous]` 可标在接口或接口方法上；继承基接口时，静态头与授权按**当前派生接口作用域**合并——同一基方法在不同派生接口下可以有不同静态头。
 - 方法级声明压过接口级：静态头同名项覆盖、`[AllowAnonymous]` 可让接口里单个方法匿名、`[Authorize("Basic")]` 可让单个方法换 scheme。
 - 方法上同标 `[Authorize]` 与 `[AllowAnonymous]` 属二义性（`Create<T>()` / `ValidateInterfaces` 报错）。
-- 授权回调与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
+- 凭据提供方（`ApiAuthContext.Request`）与错误工厂拿到的是 `ApiInterfaceInvocation`（接口类型、方法名、参数快照），不是模型实例；需要按请求分支时用这三项。
 
 **声明校验**
 
@@ -479,7 +479,7 @@ dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
 | [响应类型](#响应类型与下载) | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
 | [流式响应](#流式响应) | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
 | [超时与取消](#超时与取消) | 单次尝试预算 + 整条请求总预算 + `CancellationToken` | `c.Timeout = ...` / `c.TotalTimeout = ...` / `cancellationToken:` |
-| [令牌管理](#令牌管理) | 令牌缓存、提前刷新、并发刷新单飞、401 重放 | `AccessTokenManager` / `AccessTokenProvider` |
+| [凭据与令牌管理](#凭据与令牌管理) | 统一凭据扩展点、令牌缓存、提前刷新、并发刷新单飞、401 重放 | `ApiClient.CredentialProvider` / `AccessTokenManager` |
 
 **流量治理**
 
@@ -518,9 +518,34 @@ dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
 | [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
 | [Native AOT](#运行时与-aot) | 已声明 `IsTrimmable`（裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`（AOT 分析器 0 警告），内置请求模型 / 接口代理源生成器，零 `TrimmerRootAssembly` | 引用即生效；序列化另配 `JsonSerializerContext` |
 
-## 令牌管理
+## 凭据与令牌管理
 
-`IAccessTokenProvider` 只是「每次请求取一次令牌」的回调。需要缓存与自动刷新时，用内置的 `AccessTokenManager`：它负责**何时刷新、并发刷新只发一次**，而「怎么换令牌」的 HTTP 调用仍由你给（库不替你调 token 端点）。
+声明式客户端只有一个授权扩展点：`ApiClient.CredentialProvider`（`IApiCredentialProvider`）。每次请求发送前调用一次，返回的 `ApiCredential` 决定库怎么落头；`[AllowAnonymous]` 跳过整条链路。
+
+```csharp
+var client = new ApiClient("https://api.example.com/")
+{
+    CredentialProvider = CredentialProviders.Fixed("token")
+};
+```
+
+| 返回值 | 落头方式 | 401 重放 |
+| --- | --- | --- |
+| `ApiCredential.Token(token)` | 按 `[Authorize]` 的 scheme（默认 `Bearer`）写 `Authorization: {scheme} {token}` | 支持 |
+| `ApiCredential.Header(value)` | `value` 作为完整 `Authorization` 头值原样发送 | 支持 |
+| `ApiCredential.Custom()` | 提供方已自行写任意头（签名、Cookie 等），库不碰头 | 不重放 |
+| `ApiCredential.None`（或 `Token(null)`） | 本次不写头 | 不重放 |
+
+- **显式头优先**：模型或实例默认值里已显式写了 `Authorization` 时**整条凭据链路都不执行**（提供方不会被调用）——既不白取一次令牌，也不会因为取令牌失败把原本能发的请求拖挂。
+- **`Token` 永远拼 scheme**：令牌形态只负责「令牌本体」，要发 `Basic xxx` / `Signature xxx` 这类完整头值请用 `ApiCredential.Header`。库靠「scheme + 空格 + 令牌」的确定性反解出旧令牌值传给 `Invalidate`，混用会让按值作废失效。
+- **自定义凭据**：`CredentialProviders.Create((ctx, ct) => ...)` 里可直接写 `ctx.Config.Headers`（此时配置已合并模型绑定结果），返回 `ApiCredential.Custom()`；按请求分支用 `ctx.Request`（接口式调用是 `ApiInterfaceInvocation`）。需要 401 后强制刷新，给 `Create` 传 `invalidate:` 委托。
+- **`Fixed` 不信空白**：`CredentialProviders.Fixed(" ")` 抛 `ArgumentException`（要表达「本次不带」用 `Fixed(ApiCredential.None)`），避免配置错误静默退化成匿名请求。
+- **401 作废**：`IApiCredentialProvider.Invalidate(staleToken)` 由库在 401 后调用，默认空实现；带旧令牌值可避免并发下把别人刚刷新的新令牌也作废。
+- 容器里注册 `IApiCredentialProvider` 即可自动挂到每个 `ApiClient`（见[依赖注入](#依赖注入)）。
+
+### 内置令牌管理器
+
+`AccessTokenManager` 实现了同一个接口，负责**何时刷新、并发刷新只发一次**，而「怎么换令牌」的 HTTP 调用仍由你给（库不替你调 token 端点）。
 
 ```csharp
 using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
@@ -530,7 +555,7 @@ using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync)
     RefreshTimeout = TimeSpan.FromSeconds(10)           // 默认 30 秒
 });
 
-using var client = new ApiClient("https://api.example.com/") { AccessTokenProvider = tokens };
+using var client = new ApiClient("https://api.example.com/") { CredentialProvider = tokens };
 
 // 两个回调都返回令牌与过期时间（ExpiresAt 为 null 表示不过期）
 static ValueTask<AccessToken> AcquireAsync(CancellationToken ct) { ... }
@@ -542,8 +567,35 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 - **刷新不跟随调用方取消**：一个请求断开不会让同批等待者一起失败，也不会白刷一次（刷新自身受 `RefreshTimeout` 约束，超时抛 `TimeoutException`）。
 - **提前量自动收敛**：实际提前量 = min(`RefreshAhead`, 令牌寿命的一半)，短寿命令牌不会「刚拿到就该刷」。
 - **401 后强制刷新**：`tokens.Invalidate(staleToken)` 作废当前令牌（带旧令牌值可避免并发下把别人刚刷新的新令牌也作废），下一次取令牌必然刷新。
-- **401 自动重放**：收到 401 且本次 `Authorization` 头由令牌提供方写入时，刷新令牌后重放**一次**（第二次仍 401 就按错误模型抛出）。正文不可重放（流 / 流式请求体 / multipart）、声明里显式写了 `Authorization`、`[AllowAnonymous]` 一律不重放；重放沿用同一个幂等键。用 `ApiClient.RetryOnUnauthorized = false` 关掉。
-- 容器里注册 `IAccessTokenProvider` 即可自动挂到每个 `ApiClient`（见[依赖注入](#依赖注入)）。
+- **401 自动重放**：收到 401 且本次 `Authorization` 头由库托管写入时，作废凭据、重新取一次并重放**一次**（第二次仍 401 就按错误模型抛出；新凭据与旧值相同则不重放）。正文不可重放（流 / 流式请求体 / multipart）、声明里显式写了 `Authorization`、`[AllowAnonymous]` 一律不重放；重放沿用同一个幂等键。用 `ApiClient.RetryOnUnauthorized = false` 关掉。
+
+### 用同一个客户端自举取令牌
+
+取令牌通常就是本客户端的另一个接口。给登录 / token 请求标 `[AllowAnonymous]`，它会跳过凭据链路，不会递归回到 `AccessTokenManager`；因此取令牌与刷新回调可以直接调同一个 `ApiClient`：
+
+```csharp
+[Post("login")]
+[AllowAnonymous]
+public sealed class LoginRequest : IApiRequest<TokenResponse>
+{
+    [Body] public LoginPayload Credentials { get; set; } = null!;
+}
+
+ApiClient? api = null;
+using var tokens = new AccessTokenManager(new AccessTokenOptions(async ct =>
+{
+    var r = await api!.RequestAsync(new LoginRequest
+    {
+        Credentials = new LoginPayload("alice", "wonderland")
+    }, cancellationToken: ct);
+    return new AccessToken(r.Data!.Token, DateTimeOffset.UtcNow.AddSeconds(r.Data.ExpiresIn));
+}));
+
+api = new ApiClient("https://api.example.com/") { CredentialProvider = tokens };
+using var client = api;
+```
+
+`/login` 请求不带 `Authorization` 头；401 刷新重放同样走这个匿名接口。回归测试见 `test/AxiosNet.Tests/WebAPI/SelfHostedTokenEndpointTests.cs`。
 
 ## 客户端
 
@@ -1515,6 +1567,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 
 **键 = 方法 + 绝对 URL（+ 凭据摘要）**：凭据（`Authorization` 头或 `Connection.Auth`）参与键，且只以 64 位摘要进键——同一实例上不同用户的同名接口不会串用同一条缓存。用 Cookie 或自定义头区分身份、或要按租户 / 语言分区时，给 `KeySelector`。
 
+**两条边界**：`?token=` 这类查询串令牌虽然因为 URL 不同不会串用，但令牌会**明文**进缓存键（还会进审计事件的 URI），而 `Authorization` 只以摘要进键——敏感令牌不要放查询串，或由 `KeySelector` 只取摘要；`OnSendingRequest` 里写的身份头**不参与键**（键早于钩子计算），要按身份分区请挪到按请求配置或请求拦截器里写。
+
 **存的是原始正文字节**，命中时按本次调用的 `ResponseType` 与泛型参数重新解析：同一份字节喂给 `GetAsync<User>` 与 `GetAsync<string>` 各得该有的形态。
 
 **条目尽量与响应共用正文**：JSON / 文本形态的 `Data` 是另建的对象，调用方拿不到这块数组，条目就直接与响应共用同一块内存，不再克隆。否则调用方一次改写就污染后续命中。
@@ -1889,13 +1943,13 @@ builder.Services.AddAxiosClient(                             // 顺带换掉尝�
 
 builder.Services.AddApiClient("https://api.example.com",     // 声明式，自建底层客户端
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
 builder.Services.AddApiClient(                               // 声明式做门面，复用上面的 AxiosClient 单例
-    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
-builder.Services.AddApiClient("a", "https://a.example.com", configure: c => c.Authorization = providerA);   // 多站点
-builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Authorization = providerB);
+builder.Services.AddApiClient("a", "https://a.example.com", configure: c => c.CredentialProvider = providerA);   // 多站点
+builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.CredentialProvider = providerB);
 ```
 
 | 扩展方法 | 注册内容 |
@@ -1907,7 +1961,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | 单例接口代理（默认 / 命名站点） |
 
 - TryAdd 语义：已注册不重复注册，不会建出第二条池。
-- 容器里的 `IAuthorizationProvider` / `IAccessTokenProvider` / `IApiErrorFactory` 自动挂到 `ApiClient`，`configure` 里显式设置的优先。
+- 容器里的 `IApiCredentialProvider` / `IApiErrorFactory` 自动挂到 `ApiClient`，`configure` 里显式设置的优先。
 - 生命周期归容器：`using` 掉注入的 `ApiClient` 不会释放共享的底层客户端。
 - 多站点用 `IApiClientResolver.Get(name)` / `TryGet` / `Names`；.NET 8+ 也可用键名服务（`AddKeyedSingleton` + `[FromKeyedServices]`）。
 - 接口级声明可直接注册：`services.AddApiInterface<IUserApi>()`（取未命名 `ApiClient`）或 `AddApiInterface<IUserApi>("a")`（取命名站点）；代理按单例复用，来自源生成器烘焙的代理（JIT 与 Native AOT 同一路径），未生成时才在 JIT 下回退 `DispatchProxy`，AOT 下解析即显式失败。
@@ -1971,6 +2025,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Au
 | `responseType: 'json' / 'text' / 'arraybuffer' / 'stream'` | `ResponseType.Json` / `Text` / `ArrayBuffer` / `Stream` |
 | `validateStatus` / `timeout` / `AbortController` | `c.Callbacks.ValidateStatus` / `c.Timeout` / `c.CancellationToken` |
 | `auth: { username, password }` | `c.Connection.Auth = new AxiosAuth(user, pass)` |
+| —（令牌 / 401 刷新靠自己写拦截器） | 声明式 `ApiClient.CredentialProvider` + `AccessTokenManager`（自动刷新 / 401 重放） |
 | `withCredentials` / `proxy` / `maxRedirects` | `Connection` 子对象同名属性（仅实例级） |
 | `maxContentLength` / `maxBodyLength` / `maxRate` | `Limits` 子对象同名属性 |
 | `onUploadProgress` / `onDownloadProgress` / `timeoutMessage` | `Callbacks` 子对象同名属性 |
@@ -2009,7 +2064,7 @@ dotnet run --project samples/AxiosNet.Simple
 | 套件 | 项数 | 覆盖 |
 | --- | ---: | --- |
 | 核心 | 37 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档 |
-| 声明式 | 17 | GET 详情 / 列表、POST 创建、授权与 `[AllowAnonymous]`、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、值格式化（`[Format]` / `ValueFormatter` 优先级）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
+| 声明式 | 17 | GET 详情 / 列表、POST 创建、统一凭据扩展点与 `[AllowAnonymous]` / 本客户端自举取令牌、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、值格式化（`[Format]` / `ValueFormatter` 优先级）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
 
 另有两个示例：
 
@@ -2124,10 +2179,10 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2195 / 2184 | `net8.0` / `net6.0` | 4379 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2231 / 2220 | `net8.0` / `net6.0` | 4451 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2335 / 2250** | | **4585** |
+| **合计** | **2371 / 2286** | | **4657** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

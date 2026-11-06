@@ -24,7 +24,7 @@ public sealed class ApiInterfaceContractExample : IExample
 
         var client = _client ??= new ApiClient(context.BaseUrl)
         {
-            Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
+            CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken)
         };
 
         // 1) [AllowAnonymous]：整条授权链路跳过，不写 Authorization 头（登录本身不需要凭据）

@@ -288,7 +288,7 @@ public sealed class AccessTokenManagerTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var tokens = new AccessTokenManager(Options(_ => new AccessToken("managed")));
-        using var client = new ApiClient(server.Url) { AccessTokenProvider = tokens };
+        using var client = new ApiClient(server.Url) { CredentialProvider = tokens };
 
         await client.RequestAsync(new GetUserRequest { Id = 1 });
 

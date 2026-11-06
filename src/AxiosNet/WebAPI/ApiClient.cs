@@ -14,18 +14,11 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>底层 AxiosNet 客户端（实例默认值、拦截器、连接池都从它进入）。</summary>
     public AxiosClient Axios { get; }
 
-    /// <summary>授权提供方：每次请求发送前调用，把凭据写进最终配置；null 表示匿名访问。标注了 <see cref="AllowAnonymousAttribute"/> 的声明会跳过它。</summary>
-    public IAuthorizationProvider? Authorization { get; set; }
+    /// <summary>凭据提供方：每次请求发送前调用一次，返回的凭据描述决定怎么落头；null 表示匿名访问。<see cref="AllowAnonymousAttribute"/> 声明会跳过它。</summary>
+    public IApiCredentialProvider? CredentialProvider { get; set; }
 
     /// <summary>
-    /// 访问令牌来源：在 <see cref="Authorization"/> 之前调用，按 <c>Authorization: {scheme} {token}</c> 写头
-    /// （scheme 取 <see cref="AuthorizeAttribute"/>，默认 <c>Bearer</c>）。令牌为 null / 空白时不写头，模型或实例默认值已显式写该头时不覆盖。
-    /// </summary>
-    public IAccessTokenProvider? AccessTokenProvider { get; set; }
-
-    /// <summary>
-    /// 收到 401 时用新令牌重放一次，默认开启（只在 <see cref="AccessTokenProvider"/> 真的写了 <c>Authorization</c> 头时生效；
-    /// 另配了 <see cref="Authorization"/> 时不重放，它可能覆盖该头）。
+    /// 收到 401 时用新凭据重放一次，默认开启（只在提供方返回托管凭据、由库写入 <c>Authorization</c> 头时生效）。
     /// 关掉后 401 直接按错误模型抛出。正文不可重放（流 / 流式请求体 / multipart）时一律不重放。
     /// </summary>
     public bool RetryOnUnauthorized { get; set; } = true;
@@ -87,9 +80,9 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         var metadata = RequestModelMetadata.Get(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
-        var tokenManaged = await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
+        var credential = await ApplyAuthorizationAsync(metadata.Authorization, request, config, cancellationToken).ConfigureAwait(false);
 
-        return await SendAsync<TResponse>(request, config, tokenManaged, cancellationToken).ConfigureAwait(false);
+        return await SendAsync<TResponse>(request, config, credential.Kind, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>按请求模型拼出最终 URL（含路径替换、查询参数与 BaseAddress 合并），不发请求。可用于日志与签名；返回实际发送形态（已转义）。</summary>
@@ -171,73 +164,89 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return config;
     }
 
-    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 跳过；<see cref="AccessTokenProvider"/> 先写头，<see cref="Authorization"/> 最后执行（可覆盖前者）。</summary>
-    /// <returns><c>Authorization</c> 头是否由 <see cref="AccessTokenProvider"/> 写入（401 重放的判定依据）。</returns>
-    internal async ValueTask<bool> ApplyAuthorizationAsync(
+    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 跳过；显式 <c>Authorization</c> 头优先（不调用提供方）；托管凭据由库写头。</summary>
+    /// <param name="authorization">声明的授权策略（模式与 scheme）。</param>
+    /// <param name="request">请求载荷（模型实例或 <see cref="ApiInterfaceInvocation"/>），原样交给提供方。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="cancellationToken">调用方的取消令牌。</param>
+    /// <returns>库实际写入的凭据；<see cref="ApiCredential.None"/> 表示本次没写头（也就没有 401 重放的余地）。</returns>
+    internal async ValueTask<ApiCredential> ApplyAuthorizationAsync(
         ApiAuthorization authorization,
         object request,
         AxiosConfig config,
         CancellationToken cancellationToken)
     {
-        if (authorization.Mode == ApiAuthorizationMode.Anonymous)
+        if (authorization.Mode == ApiAuthorizationMode.Anonymous
+            || CredentialProvider is null
+            || HasExplicitAuthorization(config))
         {
-            return false;
+            return ApiCredential.None;
         }
 
-        var context = new ApiAuthContext(request, config);
+        var credential = await CredentialProvider
+            .GetCredentialAsync(new ApiAuthContext(request, config), cancellationToken).ConfigureAwait(false);
 
-        if (AccessTokenProvider is not null && !HasExplicitAuthorization(config))
+        // 只有托管形态（Token / Header）由库写头：Custom 是「提供方已自己写好」，None 是「本次不带」。
+        if (credential.Kind is not (ApiCredentialKind.Token or ApiCredentialKind.Header)
+            || string.IsNullOrWhiteSpace(credential.Value))
         {
-            var token = await AccessTokenProvider.GetTokenAsync(context, cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                config.Headers.Set("Authorization", authorization.Scheme + " " + token);
-
-                // 自定义授权提供方随后可能覆盖这个头：那种情况不归令牌提供方管，401 也不重放。
-                if (Authorization is null)
-                {
-                    return true;
-                }
-            }
+            return ApiCredential.None;
         }
 
-        if (Authorization is not null)
-        {
-            await Authorization.ApplyAsync(context, cancellationToken).ConfigureAwait(false);
-        }
-
-        return false;
+        config.Headers.Set("Authorization", BuildHeaderValue(credential, authorization.Scheme));
+        return credential;
     }
 
-    /// <summary>模型或实例默认值里是否已经写了 <c>Authorization</c> 头（显式配置优先于令牌提供方）。</summary>
+    /// <summary>按凭据形态拼出 <c>Authorization</c> 头值。</summary>
+    /// <param name="credential">库要写入的凭据（<see cref="ApiCredentialKind.Token"/> 或 <see cref="ApiCredentialKind.Header"/>）。</param>
+    /// <param name="scheme">令牌形态要拼的 scheme（<c>null</c> 时按 <c>Bearer</c>）；完整头值形态忽略它。</param>
+    internal static string BuildHeaderValue(ApiCredential credential, string? scheme)
+        => credential.Kind == ApiCredentialKind.Header
+            ? credential.Value!
+            : (scheme ?? "Bearer") + " " + credential.Value;
+
+    /// <summary>模型或实例默认值里是否已经写了 <c>Authorization</c> 头：写了就整条凭据链路都不进（显式配置优先）。</summary>
+    /// <param name="config">本次请求的生效配置。</param>
     private bool HasExplicitAuthorization(AxiosConfig config)
         => (config.HasHeaders && config.Headers.Has("Authorization"))
             || (Axios.Defaults.HasHeaders && Axios.Defaults.Headers.Has("Authorization"));
 
     /// <summary>发送请求；「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>。</summary>
+    /// <param name="request">请求载荷。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="credentialKind">授权链路实际写入的凭据形态（401 重放的判定依据）。</param>
+    /// <param name="cancellationToken">调用方的取消令牌。</param>
     internal Task<AxiosResponse<TResponse>> SendAsync<TResponse>(
         object request,
         AxiosConfig config,
-        bool tokenManaged,
+        ApiCredentialKind credentialKind,
         CancellationToken cancellationToken)
-        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.RequestAsync<TResponse>(config)));
+        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, credentialKind, cancellationToken, () => Axios.RequestAsync<TResponse>(config)));
 
     /// <summary>发送请求并交付非泛型响应（正文按 <see cref="System.Text.Json.JsonElement"/>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
+    /// <param name="request">请求载荷。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="credentialKind">授权链路实际写入的凭据形态。</param>
+    /// <param name="cancellationToken">调用方的取消令牌。</param>
     internal Task<AxiosResponse> SendUntypedAsync(
         object request,
         AxiosConfig config,
-        bool tokenManaged,
+        ApiCredentialKind credentialKind,
         CancellationToken cancellationToken)
-        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.SendInternalAsync(config, dataType: null, target: null)));
+        => GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, credentialKind, cancellationToken, () => Axios.SendInternalAsync(config, dataType: null, target: null)));
 
     /// <summary>只完成请求、不装配正文（接口声明返回 <c>Task</c>）；错误处理同 <see cref="SendAsync{TResponse}"/>。</summary>
+    /// <param name="request">请求载荷。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="credentialKind">授权链路实际写入的凭据形态。</param>
+    /// <param name="cancellationToken">调用方的取消令牌。</param>
     internal async Task SendWithoutBodyAsync(
         object request,
         AxiosConfig config,
-        bool tokenManaged,
+        ApiCredentialKind credentialKind,
         CancellationToken cancellationToken)
     {
-        var response = await GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, tokenManaged, cancellationToken, () => Axios.SendInternalAsync(config, typeof(void), target: null)))
+        var response = await GuardAsync(request, cancellationToken, () => SendWithAuthRetryAsync(request, config, credentialKind, cancellationToken, () => Axios.SendInternalAsync(config, typeof(void), target: null)))
             .ConfigureAwait(false);
 
         // 显式把 responseType 配成 Stream 时正文归我们：Task 方法的调用方拿不到这个响应对象。
@@ -248,11 +257,16 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>发送一次；401 且本次令牌由提供方写入时，刷新令牌后重放一次（重放同样只有一次）。</summary>
+    /// <summary>发送一次；401 且本次凭据由库写入时，刷新令牌后重放一次（重放同样只有一次）。</summary>
+    /// <param name="request">请求载荷。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="credentialKind">授权链路实际写入的凭据形态。</param>
+    /// <param name="cancellationToken">调用方的取消令牌。</param>
+    /// <param name="send">真正发送的委托（重放时再调一次）。</param>
     private async Task<TResult> SendWithAuthRetryAsync<TResult>(
         object request,
         AxiosConfig config,
-        bool tokenManaged,
+        ApiCredentialKind credentialKind,
         CancellationToken cancellationToken,
         Func<Task<TResult>> send)
     {
@@ -260,7 +274,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         {
             return await send().ConfigureAwait(false);
         }
-        catch (AxiosException error) when (CanReplayForAuth(error, config, tokenManaged))
+        catch (AxiosException error) when (CanReplayForAuth(error, config, credentialKind))
         {
             // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
             if (error.Config?.IdempotencyOrNull is { Enabled: true, GeneratedKey: { } key })
@@ -268,7 +282,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 config.Idempotency.Key = key;
             }
 
-            if (!await ReauthorizeAsync(request, config, cancellationToken).ConfigureAwait(false))
+            if (!await ReauthorizeAsync(request, config, credentialKind, cancellationToken).ConfigureAwait(false))
             {
                 throw;
             }
@@ -277,42 +291,59 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
     }
 
-    /// <summary>这次 401 值不值得重放：开关、令牌归属、状态码、正文可重放四项都满足。</summary>
-    private bool CanReplayForAuth(AxiosException error, AxiosConfig config, bool tokenManaged)
+    /// <summary>这次 401 值不值得重放：开关、凭据归属、状态码、正文可重放四项都满足。</summary>
+    /// <param name="error">本次失败。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="credentialKind">授权链路实际写入的凭据形态。</param>
+    private bool CanReplayForAuth(AxiosException error, AxiosConfig config, ApiCredentialKind credentialKind)
         => RetryOnUnauthorized
-            && tokenManaged
-            && AccessTokenProvider is not null
+            && credentialKind is ApiCredentialKind.Token or ApiCredentialKind.Header
             && error.Status == 401
             && IsReplayableBody(config);
 
-    /// <summary>401 后重新取令牌并写回头；返回 <c>false</c> 表示没拿到新令牌（重放没有意义）。</summary>
-    private async ValueTask<bool> ReauthorizeAsync(object request, AxiosConfig config, CancellationToken cancellationToken)
+    /// <summary>401 后重新取凭据并写回头；返回 <c>false</c> 表示没拿到新值（重放没有意义）。</summary>
+    /// <param name="request">请求载荷。</param>
+    /// <param name="config">本次请求的生效配置。</param>
+    /// <param name="credentialKind">上次由库写入的凭据形态。</param>
+    /// <param name="cancellationToken">调用方的取消令牌。</param>
+    private async ValueTask<bool> ReauthorizeAsync(
+        object request,
+        AxiosConfig config,
+        ApiCredentialKind credentialKind,
+        CancellationToken cancellationToken)
     {
-        var previous = config.Headers.Get("Authorization");
-        var scheme = ResolveScheme(previous);
-        var staleToken = previous is not null && previous.Length > scheme.Length + 1
-            ? previous[(scheme.Length + 1)..]
-            : null;
+        var previousValue = config.Headers.Get("Authorization");
 
-        // 让管理器把当前令牌判为失效，下一次取令牌必然刷新。
-        (AccessTokenProvider as IAccessTokenRefresher)?.Invalidate(staleToken);
+        // 令牌形态的头一定按「scheme + 空格 + 令牌」写出，反解才有确定性；
+        // 完整头值形态拿不到令牌本体，按无条件作废（传 null），重拼时也不再加 scheme。
+        string? scheme = null;
+        string? staleToken = null;
+        if (credentialKind == ApiCredentialKind.Token && previousValue is not null)
+        {
+            scheme = ResolveScheme(previousValue);
+            staleToken = previousValue.Length > scheme.Length + 1 ? previousValue[(scheme.Length + 1)..] : null;
+        }
+
+        CredentialProvider!.Invalidate(staleToken);
 
         config.Headers.Delete("Authorization");
 
-        var token = await AccessTokenProvider!.GetTokenAsync(new ApiAuthContext(request, config), cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(token))
+        var credential = await CredentialProvider
+            .GetCredentialAsync(new ApiAuthContext(request, config), cancellationToken).ConfigureAwait(false);
+        if (credential.Kind is not (ApiCredentialKind.Token or ApiCredentialKind.Header)
+            || string.IsNullOrWhiteSpace(credential.Value))
         {
             return false;
         }
 
-        // 已含空格的令牌视为「scheme + 参数」完整形态，原样发送（与 BearerAuthorizationProvider 一致）。
-        var value = token.Contains(' ') ? token : scheme + " " + token;
+        var value = BuildHeaderValue(credential, scheme);
         config.Headers.Set("Authorization", value);
 
-        return !string.Equals(value, previous, StringComparison.Ordinal);
+        return !string.Equals(value, previousValue, StringComparison.Ordinal);
     }
 
     /// <summary>从已有的 <c>Authorization</c> 头取 scheme；拿不到时按 <c>Bearer</c>。</summary>
+    /// <param name="authorization">上次实际发出的头值。</param>
     private static string ResolveScheme(string? authorization)
     {
         if (authorization is not null)

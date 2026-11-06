@@ -282,7 +282,7 @@ internal static class HolderDisposal
     }
 }
 
-/// <summary>创建 <see cref="ApiClient"/>：显式设置的 Authorization / AccessTokenProvider / ErrorFactory 优先，未设置时才取容器里的单例。</summary>
+/// <summary>创建 <see cref="ApiClient"/>：显式设置的 CredentialProvider / ErrorFactory 优先，未设置时才取容器里的单例。</summary>
 internal static class ApiClientFactory
 {
     /// <summary>按注册数据造一个站点的客户端（底层 <see cref="AxiosClient"/> 由调用方持有）。</summary>
@@ -292,8 +292,7 @@ internal static class ApiClientFactory
         configure?.Invoke(client);
 
         // 回填发生在 configure 之后，所以显式设置天然优先；未设置的才取容器里的单例。
-        client.Authorization ??= services.GetService<IAuthorizationProvider>();
-        client.AccessTokenProvider ??= services.GetService<IAccessTokenProvider>();
+        client.CredentialProvider ??= services.GetService<IApiCredentialProvider>();
         client.ErrorFactory ??= services.GetService<IApiErrorFactory>();
         return client;
     }

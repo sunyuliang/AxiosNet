@@ -2,7 +2,7 @@ namespace AxiosNet.WebAPI;
 
 /// <summary>
 /// 访问令牌管理器：缓存令牌、到期前刷新、并发刷新只发一次（单飞）。
-/// 实现 <see cref="IAccessTokenProvider"/>，直接挂到 <see cref="ApiClient.AccessTokenProvider"/> 即可。
+/// 实现 <see cref="IApiCredentialProvider"/>，直接挂到 <see cref="ApiClient.CredentialProvider"/> 即可。
 /// </summary>
 /// <remarks>
 /// <para>刷新任务不跟随调用方的取消令牌：一个调用方断开不会让同批等待者一起失败，也不会白刷一次。</para>
@@ -17,10 +17,10 @@ namespace AxiosNet.WebAPI;
 ///     RefreshAhead = TimeSpan.FromSeconds(30)
 /// });
 ///
-/// using var client = new ApiClient(baseAddress) { AccessTokenProvider = tokens };
+/// using var client = new ApiClient(baseAddress) { CredentialProvider = tokens };
 /// </code>
 /// </example>
-public sealed class AccessTokenManager : IAccessTokenProvider, IAccessTokenRefresher, IDisposable
+public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
 {
     private readonly AccessTokenOptions _options;
     private readonly Func<DateTimeOffset> _clock;
@@ -47,6 +47,10 @@ public sealed class AccessTokenManager : IAccessTokenProvider, IAccessTokenRefre
         _options = options;
         _clock = clock ?? (static () => DateTimeOffset.UtcNow);
     }
+
+    /// <summary>取当前可用凭据：托管令牌，401 后由库刷新并重放。</summary>
+    public async ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        => ApiCredential.Token(await GetTokenAsync(context, cancellationToken).ConfigureAwait(false));
 
     /// <summary>取当前可用令牌：缓存有效时直接返回，否则触发（或等待正在进行的）刷新。</summary>
     /// <exception cref="ObjectDisposedException">管理器已释放。</exception>

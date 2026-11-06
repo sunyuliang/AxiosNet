@@ -1,4 +1,5 @@
 
+using System.Security.Cryptography;
 using System.Text;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -16,6 +17,9 @@ public sealed class CacheTests
         configure?.Invoke(options);
         return new AxiosCache(options);
     }
+
+    private static string Digest(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 8));
 
     [Fact]
     public async Task Disabled_ByDefault_SendsEveryTime()
@@ -1007,6 +1011,128 @@ public sealed class CacheTests
         Assert.Equal("Basic YWxpY2U6cHc=", first.Data?["auth"]);
         Assert.Equal("Basic Ym9iOnB3", second.Data?["auth"]);
         Assert.Equal("Basic YWxpY2U6cHc=", third.Data?["auth"]);
+    }
+
+    [Fact]
+    public async Task CustomHeader_IsNotPartOfTheDefaultKey_Characterization()
+    {
+        // 契约（固定现状，不是推荐用法）：默认键只认 Authorization / Connection.Auth。
+        // X-Api-Key 这类自定义身份头不进键，同 URL 的不同身份会共用同一条缓存；
+        // 要隔离必须像下一条用例那样配 KeySelector。
+        await using var server = TestHttpServer.Start(request => TestJson.Response(new
+        {
+            apiKey = request.Headers.TryGetValue("X-Api-Key", out var value) ? value : null
+        }));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+
+        var first = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Headers.Set("X-Api-Key", "alice"));
+        var second = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Headers.Set("X-Api-Key", "bob"));
+        var third = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Headers.Set("X-Api-Key", "alice"));
+
+        Assert.Single(server.Received);
+        Assert.Equal("alice", first.Data?["apiKey"]);
+        // bob 命中了 alice 的条目（串用），第三次则正常命中。
+        Assert.Equal("alice", second.Data?["apiKey"]);
+        Assert.Equal("alice", third.Data?["apiKey"]);
+    }
+
+    [Fact]
+    public async Task CustomHeader_WithKeySelector_IsolatesEntries()
+    {
+        // 契约：把自定义身份头摘要进 KeySelector 后，同 URL 的不同身份不再共用条目。
+        await using var server = TestHttpServer.Start(request => TestJson.Response(new
+        {
+            apiKey = request.Headers.TryGetValue("X-Api-Key", out var value) ? value : null
+        }));
+
+        var cache = NewCache(options => options.KeySelector = (config, uri) =>
+        {
+            var apiKey = config.HasHeaders ? config.Headers.Get("X-Api-Key") : null;
+            return string.IsNullOrWhiteSpace(apiKey)
+                ? AxiosCache.CreateKey(config, uri)
+                : AxiosCache.CreateKey(config, uri) + " ak:" + Digest(apiKey);
+        });
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = cache });
+
+        var first = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Headers.Set("X-Api-Key", "alice"));
+        var second = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Headers.Set("X-Api-Key", "bob"));
+        var third = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config => config.Headers.Set("X-Api-Key", "alice"));
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("alice", first.Data?["apiKey"]);
+        Assert.Equal("bob", second.Data?["apiKey"]);
+        Assert.Equal("alice", third.Data?["apiKey"]);
+    }
+
+    [Fact]
+    public async Task IdentityHeader_WrittenInOnSendingRequest_DoesNotReachTheKey()
+    {
+        // 契约（钉死时序）：键在管线阶段 5.5 计算，OnSendingRequest 在每次尝试发送前才执行。
+        // 因此只在钩子里写的身份头对默认键和 KeySelector 都不可见，两个身份仍会共用一条缓存。
+        await using var server = TestHttpServer.Start(request => TestJson.Response(new
+        {
+            apiKey = request.Headers.TryGetValue("X-Api-Key", out var value) ? value : null
+        }));
+
+        var cache = NewCache(options => options.KeySelector = (config, uri) =>
+        {
+            var apiKey = config.HasHeaders ? config.Headers.Get("X-Api-Key") : null;
+            return string.IsNullOrWhiteSpace(apiKey)
+                ? AxiosCache.CreateKey(config, uri)
+                : AxiosCache.CreateKey(config, uri) + " ak:" + Digest(apiKey);
+        });
+
+        AxiosConfig Hooked(string apiKey)
+        {
+            var config = new AxiosConfig();
+            config.Callbacks.OnSendingRequest = (request, _, _) =>
+            {
+                request.Headers.Remove("X-Api-Key");
+                request.Headers.TryAddWithoutValidation("X-Api-Key", apiKey);
+                return ValueTask.CompletedTask;
+            };
+            return config;
+        }
+
+        var uri = new Uri(server.Url + "x");
+        Assert.Equal(cache.KeyFor(Hooked("alice"), uri), cache.KeyFor(Hooked("bob"), uri));
+
+        using var client = new AxiosClient(new AxiosConfig { Cache = cache });
+
+        var first = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config =>
+            {
+                config.Callbacks.OnSendingRequest = (request, _, _) =>
+                {
+                    request.Headers.Remove("X-Api-Key");
+                    request.Headers.TryAddWithoutValidation("X-Api-Key", "alice");
+                    return ValueTask.CompletedTask;
+                };
+            });
+        var second = await client.GetAsync<Dictionary<string, string>>(
+            server.Url + "x", config =>
+            {
+                config.Callbacks.OnSendingRequest = (request, _, _) =>
+                {
+                    request.Headers.Remove("X-Api-Key");
+                    request.Headers.TryAddWithoutValidation("X-Api-Key", "bob");
+                    return ValueTask.CompletedTask;
+                };
+            });
+
+        Assert.Single(server.Received);
+        Assert.Equal("alice", server.Received[0].Headers["X-Api-Key"]);
+        Assert.Equal("alice", first.Data?["apiKey"]);
+        // bob 的钩子来不及参与建键，直接命中 alice 的条目。
+        Assert.Equal("alice", second.Data?["apiKey"]);
     }
 
     [Fact]

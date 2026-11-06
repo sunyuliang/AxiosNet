@@ -41,7 +41,7 @@ var api = new ApiClient(server.BaseAddress, defaults =>
 {
     defaults.Serialization.JsonSerializerOptions = jsonOptions;
 });
-api.AccessTokenProvider = new FixedTokenProvider();
+api.CredentialProvider = new FixedTokenProvider();
 
 var fetched = await api.RequestAsync(new GetPersonRequest
 {
@@ -455,11 +455,11 @@ internal interface IFeedApi<T>
 }
 
 /// <summary>固定令牌提供者：AOT 示例不演示登录流程，只要让 <c>[Authorize]</c> 拿得到令牌。</summary>
-internal sealed class FixedTokenProvider : IAccessTokenProvider
+internal sealed class FixedTokenProvider : IApiCredentialProvider
 {
     /// <summary>固定返回一个示例令牌：AOT 示例不演示登录流程，只为让 <c>[Authorize]</c> 拿得到令牌。</summary>
-    public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
-        => new ValueTask<string?>("aot-token");
+    public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        => new ValueTask<ApiCredential>(ApiCredential.Token("aot-token"));
 }
 
 // STJ 源生成上下文：覆盖请求/响应用到的全部类型。

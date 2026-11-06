@@ -27,7 +27,7 @@ public sealed class OpenApiGeneratedExample : IExample
         // 生成的请求模型由源生成器在编译期烘焙声明（Native AOT 同样可用），这里只负责发请求。
         var client = _client ??= new ApiClient(context.BaseUrl)
         {
-            Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
+            CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken)
         };
 
         // 1) tag=users → UsersRequests.g.cs：查询数组按 explode=true 生成，类上 [Authorize] 自动带 Bearer 头

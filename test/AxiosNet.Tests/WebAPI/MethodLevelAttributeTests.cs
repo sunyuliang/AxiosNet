@@ -53,7 +53,7 @@ public sealed class MethodLevelAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
-        client.AccessTokenProvider = new StaticTokenProvider("tok");
+        client.CredentialProvider = new StaticTokenProvider("tok");
 
         await client.Create<IMethodLevelApi>().AnonymousAsync();
 
@@ -66,7 +66,7 @@ public sealed class MethodLevelAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
-        client.AccessTokenProvider = new StaticTokenProvider("tok");
+        client.CredentialProvider = new StaticTokenProvider("tok");
 
         await client.Create<IAnonymousBaseApi>().RequiredAsync();
 
@@ -79,7 +79,7 @@ public sealed class MethodLevelAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
-        client.AccessTokenProvider = new StaticTokenProvider("tok");
+        client.CredentialProvider = new StaticTokenProvider("tok");
 
         await client.Create<IMethodLevelApi>().BasicAsync();
 
@@ -123,10 +123,10 @@ public sealed class MethodLevelAttributeTests
 
     private static ApiClient CreateClient(TestHttpServer server) => new(server.Url);
 
-    private sealed class StaticTokenProvider(string token) : IAccessTokenProvider
+    private sealed class StaticTokenProvider(string token) : IApiCredentialProvider
     {
-        public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
-            => ValueTask.FromResult<string?>(token);
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+            => ValueTask.FromResult(ApiCredential.Token(token));
     }
 }
 

@@ -26,7 +26,7 @@ public sealed class KeyedServicesExample : IExample
         // 键名注册：同类型可按键注册多个单例
         builder.Services.AddKeyedSingleton<ApiClient>("a", (_, _) => new ApiClient(baseUrl)
         {
-            Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken)
+            CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken)
         });
         builder.Services.AddKeyedSingleton<ApiClient>("b", (_, _) => new ApiClient(baseUrl));
 

@@ -1382,27 +1382,27 @@ public sealed class StreamingTests
         public string? Code { get; set; }
     }
 
-    private sealed class StaticTokenProvider : IAccessTokenProvider
+    private sealed class StaticTokenProvider : IApiCredentialProvider
     {
         private readonly string? _token;
 
         public StaticTokenProvider(string? token) => _token = token;
 
-        public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
-            => new(_token);
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+            => new(ApiCredential.Token(_token));
     }
 
 
-    private sealed class OverridingAuthorizationProvider : IAuthorizationProvider
+    private sealed class OverridingAuthorizationProvider : IApiCredentialProvider
     {
         private readonly string _value;
 
         public OverridingAuthorizationProvider(string value) => _value = value;
 
-        public ValueTask ApplyAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
         {
             context.Config.Headers.Set("Authorization", _value);
-            return default;
+            return ValueTask.FromResult(ApiCredential.Custom());
         }
     }
 

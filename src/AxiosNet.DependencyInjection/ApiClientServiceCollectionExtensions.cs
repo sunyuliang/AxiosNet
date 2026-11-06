@@ -21,11 +21,11 @@ public static class ApiClientServiceCollectionExtensions
     /// <param name="services">服务集合。</param>
     /// <param name="baseAddress">API 基地址（合并规则与 <see cref="AxiosConfig.BaseAddress"/> 一致）。</param>
     /// <param name="configureDefaults">底层客户端实例默认值（超时、头、序列化器、连接池选项等）。</param>
-    /// <param name="configure">对 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.Authorization"/>）。</param>
+    /// <param name="configure">对 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.CredentialProvider"/>）。</param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
     /// TryAdd 语义：已注册过 <see cref="ApiClient"/> 时本次调用不生效（保留首次注册）。
-    /// 容器中注册的 <see cref="IAuthorizationProvider"/> / <see cref="IAccessTokenProvider"/> / <see cref="IApiErrorFactory"/> 单例，在对应属性未显式设置时自动采用。
+    /// 容器中注册的 <see cref="IApiCredentialProvider"/> / <see cref="IApiErrorFactory"/> 单例，在对应属性未显式设置时自动采用。
     /// </remarks>
     public static IServiceCollection AddApiClient(
         this IServiceCollection services,
@@ -60,7 +60,7 @@ public static class ApiClientServiceCollectionExtensions
     /// <param name="name">站点名（区分大小写，同一容器内必须唯一）。</param>
     /// <param name="baseAddress">该站点的 API 基地址（合并规则与 <see cref="AxiosConfig.BaseAddress"/> 一致）。</param>
     /// <param name="configureDefaults">该站点底层客户端的实例默认值（超时、头、序列化器、连接池选项等）。</param>
-    /// <param name="configure">对该站点 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.Authorization"/>）。</param>
+    /// <param name="configure">对该站点 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.CredentialProvider"/>）。</param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
     /// 命名站点只经 <see cref="IApiClientResolver"/> 暴露，不注册未命名的 <see cref="ApiClient"/>；站点名重复时注册期即抛 <see cref="InvalidOperationException"/>。
@@ -109,7 +109,7 @@ public static class ApiClientServiceCollectionExtensions
     /// （连接池、拦截器、实例默认值全部共享，需先 <see cref="AxiosClientServiceCollectionExtensions.AddAxiosClient"/>）。
     /// </summary>
     /// <param name="services">服务集合。</param>
-    /// <param name="configure">对 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.Authorization"/>）。</param>
+    /// <param name="configure">对 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.CredentialProvider"/>）。</param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
     /// 容器中没有 <see cref="AxiosClient"/> 注册时，解析 <see cref="ApiClient"/> 抛

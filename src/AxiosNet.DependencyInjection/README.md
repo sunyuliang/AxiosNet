@@ -36,11 +36,11 @@ using AxiosNet.WebAPI.DependencyInjection;
 // 自建模式：自带 BaseAddress 自建底层客户端（与容器里的 AxiosClient 注册互不相干）
 builder.Services.AddApiClient("https://api.example.com",
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
 // 门面模式：复用容器中已注册的 AxiosClient 单例（需先 AddAxiosClient）
 builder.Services.AddApiClient(configure: client =>
-    client.Authorization = new BearerAuthorizationProvider(token));
+    client.CredentialProvider = CredentialProviders.Fixed(token));
 
 // 命名模式：多站点（a/b/c）各注册一次，经 IApiClientResolver 按站点名取用（详见下节）
 builder.Services.AddApiClient("a", "https://a.example.com");
@@ -57,10 +57,10 @@ using AxiosNet.WebAPI.DependencyInjection;
 // 注册：每站点自带 BaseAddress、默认值（超时/头/序列化器/连接池）与授权，互不干扰
 builder.Services.AddApiClient("a", "https://a.example.com",
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-    configure: client => client.Authorization = new BearerAuthorizationProvider(tokenA));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(tokenA));
 
 builder.Services.AddApiClient("b", "https://b.example.com",
-    configure: client => client.Authorization = new BearerAuthorizationProvider(tokenB));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(tokenB));
 
 // 消费：站点名运行时才知道（来自配置 / 数据库）时用解析器
 public sealed class Dispatcher(IApiClientResolver resolver)
@@ -78,7 +78,7 @@ if (resolver.TryGet("b", out var b)) { /* b 站点已注册 */ }
 - `Names`：已注册站点名，按注册顺序排列（只读副本，外部无法改写解析器状态）
 - 命名站点**只经解析器暴露**，不注册未命名的 `ApiClient`（单站点场景用不带 name 的重载）
 - 站点名重复在**注册期**即抛 `InvalidOperationException`；各站点的底层客户端由解析器持有，随容器退出统一释放
-- 解析器**释放后**调 `Get` / `TryGet` 抛 `ObjectDisposedException`（已解析与未解析过的站点一致）；站点创建失败（`configure` 抛错、授权提供方解析失败）当场释放已建的连接池并原样透出异常
+- 解析器**释放后**调 `Get` / `TryGet` 抛 `ObjectDisposedException`（已解析与未解析过的站点一致）；站点创建失败（`configure` 抛错、凭据提供方解析失败）当场释放已建的连接池并原样透出异常
 - .NET 8+ 消费方也可完全用官方键名服务（`AddKeyedSingleton<ApiClient>("a", ...)` + `[FromKeyedServices("a")]` / `GetRequiredKeyedService`），示例场景 6 有完整演示；两种方案可共存
 
 ### AddApiInterface：接口级声明注册
@@ -107,16 +107,19 @@ public sealed class UsersService(IUserApi api)
 - **一个接口只能绑一个站点**：`AddApiInterface<IUserApi>()` 之后再用另一个 name 注册（或反过来）在**注册期**抛 `InvalidOperationException`，而不是让第二条被 `TryAddSingleton` 静默丢弃、请求悄悄打到先注册的站点。同一站点重复注册保持幂等；两个站点要共用同一组方法时定义派生接口（`interface IUserApiForB : IUserApi`）再注册到另一个站点（继承来的方法同样被代理）
 - 依赖 Reflection.Emit，**仅 JIT**：Native AOT 下解析即抛 `PlatformNotSupportedException`
 
-### 容器授权：IAuthorizationProvider 单例自动装配
+### 容器凭据：IApiCredentialProvider 单例自动装配
 
 ```csharp
-// 授权提供方本身也走 DI（真实系统里可从其它服务取令牌 / 刷新）
-builder.Services.AddSingleton<IAuthorizationProvider>(
-    new BearerAuthorizationProvider(() => TokenService.GetAsync()));
+// 凭据提供方本身也走 DI（真实系统里可从其它服务取令牌 / 刷新）
+builder.Services.AddSingleton<IApiCredentialProvider>(
+    CredentialProviders.Create(async (_, ct) =>
+        ApiCredential.Token(await TokenService.GetAsync(ct))));
 
-// 未显式设置 Authorization 时自动采用它；configure 里显式设置的优先
+// 未显式设置 CredentialProvider 时自动采用它；configure 里显式设置的优先
 builder.Services.AddApiClient("https://api.example.com");
 ```
+
+托管令牌由库按 `[Authorize]` 的 scheme 写头；提供方也可以自己写任意头再返回 `ApiCredential.Custom()`，或直接给完整头值 `ApiCredential.Header(...)`。
 
 ### 语义要点
 
@@ -157,11 +160,11 @@ using AxiosNet.WebAPI.DependencyInjection;
 // Self-built mode: carries its own BaseAddress, independent of any registered AxiosClient
 builder.Services.AddApiClient("https://api.example.com",
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-    configure: client => client.Authorization = new BearerAuthorizationProvider(token));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
 // Facade mode: reuses the registered AxiosClient singleton (call AddAxiosClient first)
 builder.Services.AddApiClient(configure: client =>
-    client.Authorization = new BearerAuthorizationProvider(token));
+    client.CredentialProvider = CredentialProviders.Fixed(token));
 
 // Named mode: register each site (a/b/c) once and resolve by name via IApiClientResolver (see below)
 builder.Services.AddApiClient("a", "https://a.example.com");
@@ -178,10 +181,10 @@ using AxiosNet.WebAPI.DependencyInjection;
 // Registration: each site carries its own BaseAddress, defaults (timeout/headers/serializer/pool) and authorization
 builder.Services.AddApiClient("a", "https://a.example.com",
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
-    configure: client => client.Authorization = new BearerAuthorizationProvider(tokenA));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(tokenA));
 
 builder.Services.AddApiClient("b", "https://b.example.com",
-    configure: client => client.Authorization = new BearerAuthorizationProvider(tokenB));
+    configure: client => client.CredentialProvider = CredentialProviders.Fixed(tokenB));
 
 // Consumption: when the site is only known at runtime (config / database), use the resolver
 public sealed class Dispatcher(IApiClientResolver resolver)
@@ -227,14 +230,17 @@ public sealed class UsersService(IUserApi api)
 - **One interface, one site**: registering `AddApiInterface<IUserApi>()` and then another name (or the other way round) throws `InvalidOperationException` **at registration time**, instead of letting the second `TryAddSingleton` be dropped and requests silently hitting the first site. Repeating the same site is idempotent; to share one method set across two sites, declare a derived interface (`interface IUserApiForB : IUserApi`) and register it against the other site (inherited methods are proxied too)
 - Relies on Reflection.Emit, so it is **JIT-only**: resolution throws `PlatformNotSupportedException` under Native AOT
 
-### Authorization from the container
+### Credentials from the container
 
 ```csharp
-builder.Services.AddSingleton<IAuthorizationProvider>(
-    new BearerAuthorizationProvider(() => TokenService.GetAsync()));
+builder.Services.AddSingleton<IApiCredentialProvider>(
+    CredentialProviders.Create(async (_, ct) =>
+        ApiCredential.Token(await TokenService.GetAsync(ct))));
 
 builder.Services.AddApiClient("https://api.example.com");
 ```
+
+Managed tokens are written by the library using the `[Authorize]` scheme; a provider may instead write its own headers and return `ApiCredential.Custom()`, or supply a full header value with `ApiCredential.Header(...)`.
 
 ### Semantics
 

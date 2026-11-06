@@ -30,7 +30,7 @@ public sealed class FacadeApiClientExample : IExample
             config.Timeout = TimeSpan.FromSeconds(10);
         });
         builder.Services.AddApiClient(configure: client =>
-            client.Authorization = new BearerAuthorizationProvider(DemoApiServer.DemoToken));
+            client.CredentialProvider = CredentialProviders.Fixed(DemoApiServer.DemoToken));
 
         using var host = builder.Build();
 
