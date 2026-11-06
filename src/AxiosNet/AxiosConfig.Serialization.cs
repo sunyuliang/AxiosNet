@@ -56,10 +56,44 @@ public sealed partial class AxiosConfig
         internal bool TextEncodingSet => _textEncodingSet;
 
         /// <summary>对应 axios paramsSerializer：自定义 query string 生成方式，返回不含前导 <c>?</c> 的查询串；null 时使用内置规则。</summary>
-        public Func<object?, string>? QueryEncoder { get; set; }
+        public Func<object?, string>? QueryEncoder
+        {
+            get => _valueTextState?.QueryEncoder;
+            set
+            {
+                if (value is null)
+                {
+                    if (_valueTextState is not null)
+                    {
+                        _valueTextState.QueryEncoder = null;
+                    }
+
+                    return;
+                }
+
+                (_valueTextState ??= new ValueTextState()).QueryEncoder = value;
+            }
+        }
 
         /// <summary>表单 / multipart 字段名生成规则：参数为（父级前缀，键名），默认 <c>prefix[key]</c>；表单不走序列化器，这是字段命名的唯一入口。</summary>
-        public Func<string?, string, string>? FormFieldName { get; set; }
+        public Func<string?, string, string>? FormFieldName
+        {
+            get => _valueTextState?.FormFieldName;
+            set
+            {
+                if (value is null)
+                {
+                    if (_valueTextState is not null)
+                    {
+                        _valueTextState.FormFieldName = null;
+                    }
+
+                    return;
+                }
+
+                (_valueTextState ??= new ValueTextState()).FormFieldName = value;
+            }
+        }
 
         private AxiosCollectionFormat _collectionFormat = AxiosCollectionFormat.Brackets;
 
@@ -88,18 +122,32 @@ public sealed partial class AxiosConfig
         /// </remarks>
         public Func<object?, ValueTextChannel, string?>? ValueText
         {
-            get => _valueText;
+            get => _valueTextState?.ValueText;
             set
             {
-                _valueText = value;
-                ValueTextSet = true;
+                // 显式赋值（含 null）都要记 ValueTextSet，因此这里必须保证状态存在。
+                var state = _valueTextState ??= new ValueTextState();
+                state.ValueText = value;
+                state.ValueTextSet = true;
             }
         }
 
-        private Func<object?, ValueTextChannel, string?>? _valueText;
+        // 值格式化 / 查询串 / 表单命名的按需状态：默认请求三项都不碰，收进一个懒 holder 后
+        // 每次克隆（每请求一次）只付一个指针，而不是三个指针加一个标记位。
+        private ValueTextState? _valueTextState;
+
+        private sealed class ValueTextState
+        {
+            internal Func<object?, ValueTextChannel, string?>? ValueText;
+            internal bool ValueTextSet;
+            internal Func<object?, string>? QueryEncoder;
+            internal Func<string?, string, string>? FormFieldName;
+
+            internal ValueTextState Clone() => (ValueTextState)MemberwiseClone();
+        }
 
         /// <summary>是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
-        internal bool ValueTextSet { get; private set; }
+        internal bool ValueTextSet => _valueTextState?.ValueTextSet ?? false;
 
         /// <summary>对应 axios transformRequest：拦截器之后、请求体编码之前依次作用于 <see cref="Body"/>。列表线程安全，枚举走快照。</summary>
         public IList<Func<object?, AxiosConfig, object?>> TransformRequest
@@ -179,12 +227,9 @@ public sealed partial class AxiosConfig
                 _requestEncoding = _requestEncoding,
                 _responseEncoding = _responseEncoding,
                 _textEncodingSet = _textEncodingSet,
-                QueryEncoder = QueryEncoder,
-                FormFieldName = FormFieldName,
                 _collectionFormat = _collectionFormat,
                 CollectionFormatSet = CollectionFormatSet,
-                _valueText = _valueText,
-                ValueTextSet = ValueTextSet,
+                _valueTextState = _valueTextState?.Clone(),
             };
             clone._transformRequest = _transformRequest?.ShareIfNotEmpty();
             clone._transformResponse = _transformResponse?.ShareIfNotEmpty();

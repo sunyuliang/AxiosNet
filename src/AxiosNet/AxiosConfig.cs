@@ -216,21 +216,103 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
     internal bool BodySet { get; private set; }
 
+    // 短路 / 缓存相关的四个字段同样只在用到时才分配：默认请求既不短路也不缓存，
+    // 每次请求克隆出来的配置也就不再背这四个字段（它们此前是三个指针加一个标记位）。
+    private CacheState? _cacheState;
+
+    private sealed class CacheState
+    {
+        internal AxiosShortCircuit? ShortCircuit;
+        internal AxiosCache? Caching;
+        internal bool CacheCaptureRawBody;
+        internal AxiosShortCircuit? RevalidationEntry;
+
+        internal CacheState Clone() => (CacheState)MemberwiseClone();
+    }
+
     /// <summary>短路响应：设置后本次请求不发送，直接以这份结果作为响应；只属于本次请求，<see cref="Clone"/> 不复制它（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。</summary>
-    public AxiosShortCircuit? ShortCircuit { get; set; }
+    public AxiosShortCircuit? ShortCircuit
+    {
+        get => _cacheState?.ShortCircuit;
+        set
+        {
+            if (value is null)
+            {
+                if (_cacheState is not null)
+                {
+                    _cacheState.ShortCircuit = null;
+                }
+
+                return;
+            }
+
+            (_cacheState ??= new CacheState()).ShortCircuit = value;
+        }
+    }
 
     /// <summary>响应缓存：设置后命中的请求不发出去，直接交付缓存里的那份响应（细节见 <see cref="AxiosNet.Cache.AxiosCache"/>）。</summary>
     /// <remarks>与 <see cref="ShortCircuit"/> 不同，它是实例级的共享状态：<see cref="Clone"/> 保留同一个实例，挂在 Defaults 上对整个实例生效。</remarks>
-    public AxiosCache? Caching { get; set; }
+    public AxiosCache? Caching
+    {
+        get => _cacheState?.Caching;
+        set
+        {
+            if (value is null)
+            {
+                if (_cacheState is not null)
+                {
+                    _cacheState.Caching = null;
+                }
+
+                return;
+            }
+
+            (_cacheState ??= new CacheState()).Caching = value;
+        }
+    }
 
     /// <summary>本次请求是否要留原始响应字节：缓存阶段决定，响应读取据此决定留不留（不留时字节读完即弃）。</summary>
-    internal bool CacheCaptureRawBody { get; set; }
+    internal bool CacheCaptureRawBody
+    {
+        get => _cacheState is { CacheCaptureRawBody: true };
+        set
+        {
+            if (!value)
+            {
+                if (_cacheState is not null)
+                {
+                    _cacheState.CacheCaptureRawBody = false;
+                }
+
+                return;
+            }
+
+            (_cacheState ??= new CacheState()).CacheCaptureRawBody = true;
+        }
+    }
 
     /// <summary>
     /// 本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，
     /// 终端收到 <c>304 Not Modified</c> 时用它合并出完整响应。只属于这一次请求，<see cref="Clone"/> 不复制。
     /// </summary>
-    internal AxiosShortCircuit? RevalidationEntry { get; set; }
+    internal AxiosShortCircuit? RevalidationEntry
+    {
+        get => _cacheState?.RevalidationEntry;
+        set
+        {
+            if (value is null)
+            {
+                if (_cacheState is not null)
+                {
+                    _cacheState.RevalidationEntry = null;
+                }
+
+                return;
+            }
+
+            (_cacheState ??= new CacheState()).RevalidationEntry = value;
+        }
+    }
 
     private TimeSpan _timeout;
 
@@ -271,17 +353,67 @@ public sealed partial class AxiosConfig
     /// <summary>这份配置里的实例级选项（WithCredentials / MaxRedirects / Proxy / Credentials / PoolOptions）是实例的生效值，合并时沿用本实例默认值；随 <see cref="Clone"/> 继承。</summary>
     internal bool InstanceOptionsInherited { get; set; }
 
+    // 401 重放与凭据解析的按请求状态：默认请求从不触碰，故只在真正用到时才分配。
+    // 它们曾经是四个顶层字段，每个配置对象（包括每次请求合并出来的那份）都要背着 32 字节；
+    // 改成懒存储后，普通请求的克隆不再为它们付钱。
+    private AuthReplayState? _authReplay;
+
+    private sealed class AuthReplayState
+    {
+        internal bool RetainBodyContent;
+        internal HttpContent? RetainedReplayContent;
+        internal string? ResolvedAuthorization;
+        internal IAxiosCredentialProvider? InternalCredentialProvider;
+
+        internal AuthReplayState Clone() => (AuthReplayState)MemberwiseClone();
+    }
+
     /// <summary>
     /// 本次发送收尾不释放模板正文：WebAPI 401 重放需要在第二次发送前继续持有调用方提供的 <c>HttpContent</c>。
     /// 只在首次发送前设置（合并时显式搬运），<see cref="Clone"/> 不继承。
     /// </summary>
-    internal bool RetainBodyContent { get; set; }
+    internal bool RetainBodyContent
+    {
+        get => _authReplay is { RetainBodyContent: true };
+        set
+        {
+            // 写 false 不得创建状态：合并层每次请求都会把它置 false。
+            if (!value)
+            {
+                if (_authReplay is not null)
+                {
+                    _authReplay.RetainBodyContent = false;
+                }
+
+                return;
+            }
+
+            (_authReplay ??= new AuthReplayState()).RetainBodyContent = true;
+        }
+    }
 
     /// <summary>
     /// 被发送管线保留下来、供 401 重放使用的正文。仅当 <see cref="RetainBodyContent"/> 为 <c>true</c>
     /// 且本次确实是 401 时写入失败配置；门面读走后负责释放。<see cref="Clone"/> 不继承。
     /// </summary>
-    internal HttpContent? RetainedReplayContent { get; set; }
+    internal HttpContent? RetainedReplayContent
+    {
+        get => _authReplay?.RetainedReplayContent;
+        set
+        {
+            if (value is null)
+            {
+                if (_authReplay is not null)
+                {
+                    _authReplay.RetainedReplayContent = null;
+                }
+
+                return;
+            }
+
+            (_authReplay ??= new AuthReplayState()).RetainedReplayContent = value;
+        }
+    }
 
     /// <summary>transform 链里继承自实例默认的前缀长度（库产出的配置才有，调用方 new 的为 0），合并层据此去重；随 <see cref="Clone"/> 继承。</summary>
     internal int TransformInheritedRequest { get; set; }
@@ -293,13 +425,47 @@ public sealed partial class AxiosConfig
     internal bool AuthSet => _transport?.AuthSet ?? false;
 
     /// <summary>本次请求由凭据槽位解析出的 <c>Authorization</c> 头值（静态形态或提供方返回值），发送前写入请求头。</summary>
-    internal string? ResolvedAuthorization { get; set; }
+    internal string? ResolvedAuthorization
+    {
+        get => _authReplay?.ResolvedAuthorization;
+        set
+        {
+            if (value is null)
+            {
+                if (_authReplay is not null)
+                {
+                    _authReplay.ResolvedAuthorization = null;
+                }
+
+                return;
+            }
+
+            (_authReplay ??= new AuthReplayState()).ResolvedAuthorization = value;
+        }
+    }
 
     /// <summary>
     /// 门面（WebAPI）挂进来的凭据提供方：不占 <see cref="TransportSettings.Auth"/> 槽位，
     /// 省掉每请求一个槽位组与包装对象；显式设置的槽位（含显式清空）优先，<see cref="Clone"/> 不继承。
     /// </summary>
-    internal IAxiosCredentialProvider? InternalCredentialProvider { get; set; }
+    internal IAxiosCredentialProvider? InternalCredentialProvider
+    {
+        get => _authReplay?.InternalCredentialProvider;
+        set
+        {
+            if (value is null)
+            {
+                if (_authReplay is not null)
+                {
+                    _authReplay.InternalCredentialProvider = null;
+                }
+
+                return;
+            }
+
+            (_authReplay ??= new AuthReplayState()).InternalCredentialProvider = value;
+        }
+    }
 
     private ResponseType _responseType = ResponseType.Json;
 
@@ -430,6 +596,16 @@ public sealed partial class AxiosConfig
         clone._hedging = _hedging?.Clone();
         clone._failover = _failover?.Clone();
         clone._idempotency = _idempotency?.Clone();
+
+        // 并发闸门的懒存储同样是可变状态，克隆体不能与来源共享。
+        clone._concurrencyState = _concurrencyState?.Clone();
+
+        // 401 重放 / 凭据解析的懒状态：来源没有时为 null（普通请求克隆不分配）；
+        // 有则复制一份，随后由下面的清理语句把「只属于那一次发送」的三项归零。
+        clone._authReplay = _authReplay?.Clone();
+
+        // 短路 / 缓存的懒状态：同样只复制不共享，`Caching` 保留，其余三项随后清空。
+        clone._cacheState = _cacheState?.Clone();
 
         // 分组 facade 持有「创建它的那份配置」的引用，克隆侧必须重建，否则读写会落到来源配置上。
         clone._resilienceFacade = null;

@@ -209,10 +209,25 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         }
 
         var effective = _pool.EffectiveOptions;
+        var maxRedirects = effective.AllowAutoRedirect ? effective.MaxAutomaticRedirections : 0;
+
+        // 池的出口与「未写过的 defaults」完全一致时不回写：让 Defaults 继续保持没有 Transport 分组。
+        // 一旦回写，Defaults.Clone()（每次 MergeConfig 一次）就多复制一份 TransportSettings（约 160 B/请求）；
+        // 而这份回写的值本来就等于 TransportSettings 的默认值（Proxy / Credentials 为 null、MaxRedirects 5、WithCredentials false），
+        // getter 读到的结果完全一样。调用方自己写过 Transport 时（TransportOrNull 非空）仍照常回写，不能悄悄丢掉它的值。
+        if (Defaults.TransportOrNull is null
+            && effective.Proxy is null
+            && effective.Credentials is null
+            && !effective.UseCookies
+            && maxRedirects == AxiosConfig.DefaultMaxRedirects)
+        {
+            return;
+        }
+
         var transport = Defaults.Transport;
         transport.Proxy = effective.Proxy;
         transport.Credentials = effective.Credentials;
-        transport.MaxRedirects = effective.AllowAutoRedirect ? effective.MaxAutomaticRedirections : 0;
+        transport.MaxRedirects = maxRedirects;
         transport.WithCredentials = effective.UseCookies;
 
         // 回写不是「显式设置」：清标记，避免被当成按请求写过的实例级选项。

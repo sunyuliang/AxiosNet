@@ -30,9 +30,7 @@ public sealed partial class AxiosConfig
             || _idempotency is not null
             || _allowUnsafeRetrySet
             || _totalTimeoutSet
-            || _maxInFlightSet
-            || _maxQueueSet
-            || _queueTimeoutSet;
+            || _concurrencyState is { MaxInFlightSet: true } or { MaxQueueSet: true } or { QueueTimeoutSet: true };
 
     private bool _allowUnsafeRetry;
 
@@ -41,13 +39,21 @@ public sealed partial class AxiosConfig
 
     private bool _allowUnsafeRetrySet;
 
-    /// <summary>并发闸门的三项存储（唯一入口是 <see cref="ResilienceSettings.Concurrency"/>）：闸门是实例级状态，变更请新建客户端。</summary>
-    private int? _maxInFlight;
-    private bool _maxInFlightSet;
-    private int? _maxQueue;
-    private bool _maxQueueSet;
-    private TimeSpan? _queueTimeout;
-    private bool _queueTimeoutSet;
+    // 并发闸门的三项存储：只在真正碰过闸门设置时才分配。它们曾经是三个顶层字段，
+    // 每个配置对象（包括每次请求合并出来的那份）都要背着这几十字节；改成懒分配后默认请求不再支付。
+    private ConcurrencyState? _concurrencyState;
+
+    private sealed class ConcurrencyState
+    {
+        internal int? MaxInFlight;
+        internal bool MaxInFlightSet;
+        internal int? MaxQueue;
+        internal bool MaxQueueSet;
+        internal TimeSpan? QueueTimeout;
+        internal bool QueueTimeoutSet;
+
+        internal ConcurrencyState Clone() => (ConcurrencyState)MemberwiseClone();
+    }
 
     private ConcurrencySettings? _concurrencyFacade;
 
@@ -156,19 +162,22 @@ public sealed partial class AxiosConfig
             }
 
             // 并发三项（实例级）在这里合并；「库产出的配置不搬运实例级项」由调用方在合并后还原。
-            if (source._maxInFlightSet)
+            if (source._concurrencyState is { } incomingConcurrency)
             {
-                Concurrency.MaxInFlight = source._maxInFlight;
-            }
+                if (incomingConcurrency.MaxInFlightSet)
+                {
+                    Concurrency.MaxInFlight = incomingConcurrency.MaxInFlight;
+                }
 
-            if (source._maxQueueSet)
-            {
-                Concurrency.MaxQueue = source._maxQueue;
-            }
+                if (incomingConcurrency.MaxQueueSet)
+                {
+                    Concurrency.MaxQueue = incomingConcurrency.MaxQueue;
+                }
 
-            if (source._queueTimeoutSet)
-            {
-                Concurrency.QueueTimeout = source._queueTimeout;
+                if (incomingConcurrency.QueueTimeoutSet)
+                {
+                    Concurrency.QueueTimeout = incomingConcurrency.QueueTimeout;
+                }
             }
 
             if (source._totalTimeoutSet)
@@ -193,48 +202,59 @@ public sealed partial class AxiosConfig
         /// <summary>实例内在途请求上限，<c>null</c>（默认）不限；闸门在首个受限请求时创建并固定。</summary>
         public int? MaxInFlight
         {
-            get => _owner._maxInFlight;
+            get => _owner._concurrencyState?.MaxInFlight;
             set
             {
-                _owner._maxInFlight = value;
-                _owner._maxInFlightSet = true;
+                var state = _owner._concurrencyState ??= new ConcurrencyState();
+                state.MaxInFlight = value;
+                state.MaxInFlightSet = true;
             }
         }
 
         /// <summary>等待槽位的请求条数上限，只在设置 <see cref="MaxInFlight"/> 时有意义。</summary>
         public int? MaxQueue
         {
-            get => _owner._maxQueue;
+            get => _owner._concurrencyState?.MaxQueue;
             set
             {
-                _owner._maxQueue = value;
-                _owner._maxQueueSet = true;
+                var state = _owner._concurrencyState ??= new ConcurrencyState();
+                state.MaxQueue = value;
+                state.MaxQueueSet = true;
             }
         }
 
         /// <summary>等待并发槽位的上限，只在设置 <see cref="MaxInFlight"/> 时有意义。</summary>
         public TimeSpan? QueueTimeout
         {
-            get => _owner._queueTimeout;
+            get => _owner._concurrencyState?.QueueTimeout;
             set
             {
-                _owner._queueTimeout = value;
-                _owner._queueTimeoutSet = true;
+                var state = _owner._concurrencyState ??= new ConcurrencyState();
+                state.QueueTimeout = value;
+                state.QueueTimeoutSet = true;
             }
         }
 
         /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-        internal bool MaxQueueSet => _owner._maxQueueSet;
+        internal bool MaxQueueSet => _owner._concurrencyState?.MaxQueueSet ?? false;
 
         /// <summary>库产出的配置不搬运实例级并发项：把三项连同 *Set 标记整体还原到 <paramref name="source"/> 的值。</summary>
         internal void ResetFrom(AxiosConfig source)
         {
-            _owner._maxInFlight = source._maxInFlight;
-            _owner._maxInFlightSet = source._maxInFlightSet;
-            _owner._maxQueue = source._maxQueue;
-            _owner._maxQueueSet = source._maxQueueSet;
-            _owner._queueTimeout = source._queueTimeout;
-            _owner._queueTimeoutSet = source._queueTimeoutSet;
+            if (source._concurrencyState is not { } incoming)
+            {
+                // 来源没有闸门设置：连同标记一起清空（等同于把三项与 *Set 全设为默认值）。
+                _owner._concurrencyState = null;
+                return;
+            }
+
+            var state = _owner._concurrencyState ??= new ConcurrencyState();
+            state.MaxInFlight = incoming.MaxInFlight;
+            state.MaxInFlightSet = incoming.MaxInFlightSet;
+            state.MaxQueue = incoming.MaxQueue;
+            state.MaxQueueSet = incoming.MaxQueueSet;
+            state.QueueTimeout = incoming.QueueTimeout;
+            state.QueueTimeoutSet = incoming.QueueTimeoutSet;
         }
     }
 }
