@@ -338,7 +338,8 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 
 - `Timeout` is the budget of a **single attempt** (connect + headers + body), default `Zero` meaning no timeout; capped at ~49.7 days, larger values clamp instead of throwing.
 - `Resilience.TotalTimeout` is the budget of the **whole logical request** (from the call, including interceptors, queueing, backoff and hedge branches). `Timeout` is copied per retry / endpoint / hedge; `Resilience.TotalTimeout` is a single shared deadline, and each attempt gets `min(Timeout, remaining)`.
-- Timeouts throw `ECONNABORTED` (message overridable via `Observability.TimeoutMessage`), cancellation throws `ERR_CANCELED`; the original `OperationCanceledException` is kept in `Cause`.
+- Timeouts throw `ECONNABORTED` (message overridable via `Observability.TimeoutMessage`), cancellation throws `ERR_CANCELED`; the original `OperationCanceledException` is kept in `Cause`. Buffered and streaming reads share the same exit.
+- **`ResponseType.Stream` cancellation also throws `ERR_CANCELED`**: cancelling a stream read — a caller-supplied token passed to `ReadAsync` / `CopyToAsync` / `Read` on `Response.Data`, or the request token (method argument / `config.CancellationToken`) — always surfaces as an `AxiosException` with `ERR_CANCELED` (the original OCE stays in `Cause`); timeouts remain `ECONNABORTED`. The classification order stays fixed at `Caller → Canceled → Timeout → None`; it only decides attribution and the error code, and no path throws a raw OCE anymore. **Do not use `catch (OperationCanceledException)` to detect stream-read cancellation** — check `AxiosException.Code`.
 
 ```csharp
 // "Give me an answer within 15s" — 5 retries x 10s is no longer the upper bound
@@ -2402,6 +2403,7 @@ Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAP
 | `[Authorize("Token")]` with a static slot of a different scheme (previously the slot silently won) | Throws `ERR_BAD_OPTION_VALUE`; the declared scheme and `Transport.Auth`'s scheme must match |
 | 401 replay body scope (previously only a few rebuildable shapes could replay) | Data bodies are rebuilt; whitelisted in-memory content is snapshotted before the first send (bounded by `Limits.MaxRequestBytes`; over the limit no replay); `Stream` / streaming multipart never replay |
 | `RequestStreamAsync` / `[Stream]` with an explicit non-`Stream` `ResponseType` (previously silently overridden) | Throws `ERR_BAD_OPTION_VALUE` before sending; `Stream` is only auto-selected when `ResponseType` was not explicitly set |
+| Stream-read cancellation (previously a caller-supplied token passed to `ReadAsync` / `CopyToAsync` on the `Response.Data` stream threw a raw `OperationCanceledException`) | Always throws an `AxiosException` with `ERR_CANCELED`, keeping the original OCE in `Cause`; timeouts remain `ECONNABORTED` |
 | Declarative extension entry points (previously created a fresh facade per call, dropping `CredentialProvider` / `ErrorFactory`) | Cache one `ApiClient` per `AxiosClient`; state configured beforehand keeps applying |
 | Streaming frame implementation location | NDJSON / SSE / JSON array framing moved into the kernel internals; `AxiosStreamFormat` / `Limits.MaxStreamFrameBytes` / `AxiosException.Stream*` remain public capabilities, while WebAPI keeps only the declarative entry points |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |

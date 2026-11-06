@@ -127,8 +127,12 @@ public sealed partial class AxiosClient
             merged.ResponseType = perCall.ResponseType;
         }
 
-        // 请求体压缩属按请求项；显式 None 用于关掉实例默认的压缩。
-        merged.Compression = perCall.Compression ?? merged.Compression;
+        // 请求体压缩属按请求项；显式 None 或显式 null 都用于关掉实例默认的压缩。
+        // 压缩与正文 / 令牌 / Content-Type 同一口径：显式赋 null 也会摘掉实例默认值。
+        if (perCall.CompressionSet)
+        {
+            merged.Compression = perCall.Compression;
+        }
 
         // 取消令牌同属「实例来源」，不搬到目标实例；setter 会置 CancellationTokenSet，故只在显式设置时赋值。
         if (!instanceSourced && perCall.CancellationTokenSet)

@@ -6,9 +6,10 @@ namespace AxiosNet.Internal;
 /// 流式响应的正文包装：把本次尝试的剩余预算延续到正文读取阶段，并统一正文阶段的取消 / IO 异常。
 /// </summary>
 /// <remarks>
-/// 用剩余预算建 CTS 并与外部取消链接：超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>，
-/// 调用方自己的令牌取消则原样抛出。无条件包装（<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>），
-/// 令牌交给底层那一次 I/O；同步入口实现为对异步核心的阻塞等待。
+/// 用剩余预算建 CTS 并与外部取消链接：超时 → <c>ECONNABORTED</c>，其余取消（外部令牌 / 调用方自备令牌 /
+/// 无已知令牌的 OCE）一律 → <c>ERR_CANCELED</c>，原始异常留在 <c>Cause</c>。无条件包装
+/// （<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>），令牌交给底层那一次 I/O；
+/// 同步入口实现为对异步核心的阻塞等待。
 /// </remarks>
 internal sealed class TimeoutStream : DelegatingStream
 {
@@ -71,7 +72,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// </summary>
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken callerToken)
     {
-        ThrowIfBudgetExhausted();
+        ThrowIfBudgetExhausted(callerToken);
 
         var token = Link(callerToken);
 
@@ -120,7 +121,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>写：先查总预算，再把调用方令牌并进预算令牌后写入；取消与网络故障各归各的错误模型。</summary>
     protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken callerToken)
     {
-        ThrowIfBudgetExhausted();
+        ThrowIfBudgetExhausted(callerToken);
 
         var token = Link(callerToken);
         try
@@ -141,7 +142,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// <summary>刷新：同样先查预算；取消按超时 / 取消翻译，IO 故障翻译成网络错误。</summary>
     protected override async ValueTask FlushCoreAsync(CancellationToken callerToken)
     {
-        ThrowIfBudgetExhausted();
+        ThrowIfBudgetExhausted(callerToken);
 
         var token = Link(callerToken);
         try
@@ -187,32 +188,48 @@ internal sealed class TimeoutStream : DelegatingStream
         return cts.Token;
     }
 
-    /// <summary>预算在构造时即耗尽：确定性失败，不与「已到达的字节」赛跑。</summary>
-    private void ThrowIfBudgetExhausted()
+    /// <summary>
+    /// 预算在构造时即耗尽：确定性失败，不与「已到达的字节」赛跑；归属仍按
+    /// <c>Caller → Canceled → Timeout</c> 的同一优先级判定，但最终交给调用方的一律是带库错误码的
+    /// <see cref="AxiosException"/>：取消（含调用方自备令牌）→ <c>ERR_CANCELED</c>，
+    /// 超时 → <c>ECONNABORTED</c>。取消分支保留一个以对应令牌构造的原始 OCE 作 <c>Cause</c>。
+    /// </summary>
+    private void ThrowIfBudgetExhausted(CancellationToken callerToken)
     {
-        if (_budgetExhausted)
+        if (!_budgetExhausted)
         {
-            throw AxiosException.Timeout(_config, _request, null, _effectiveTimeout);
+            return;
+        }
+
+        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts.Token, callerToken))
+        {
+            case CancellationKind.Caller:
+                // 调用方自己的令牌已取消：优先级最高，但最终仍是 ERR_CANCELED（与普通请求路径同一出口）。
+                throw AxiosException.Canceled(_config, _request, new OperationCanceledException(callerToken));
+
+            case CancellationKind.Canceled:
+                throw AxiosException.Canceled(_config, _request);
+
+            default:
+                throw AxiosException.Timeout(_config, _request, null, _effectiveTimeout);
         }
     }
 
     /// <summary>
-    /// 把取消翻译成库的错误码：超时 → <c>ECONNABORTED</c>，外部取消 → <c>ERR_CANCELED</c>；
-    /// 调用方自己的令牌取消时什么也不做，由调用处的 <c>throw;</c> 原样抛出。
+    /// 把取消统一翻译成库的错误码：超时 → <c>ECONNABORTED</c>，其余（外部取消 / 调用方自备令牌取消 /
+    /// 无已知令牌的内部 OCE）→ <c>ERR_CANCELED</c>，原始异常留在 <c>Cause</c>。
+    /// 流式读取不再原样抛出 <see cref="OperationCanceledException"/>，调用方只按 <c>Code</c> 判断取消。
     /// </summary>
     private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken, Exception inner)
     {
         switch (CancellationClassifier.Classify(_externalToken, _timeoutCts.Token, callerToken))
         {
-            case CancellationKind.Canceled:
-                throw AxiosException.Canceled(_config, _request, inner);
-
             case CancellationKind.Timeout:
                 throw AxiosException.Timeout(_config, _request, inner, _effectiveTimeout);
 
             default:
-                // Caller / None：由调用处原样抛出。
-                return;
+                // Caller / Canceled / None：都归一为 ERR_CANCELED。
+                throw AxiosException.Canceled(_config, _request, inner);
         }
     }
 

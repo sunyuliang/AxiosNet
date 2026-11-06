@@ -129,10 +129,14 @@ public sealed class RedirectTests
         // AxiosClient.Defaults 的 XML 文档：连接级选项构造后修改不生效，但不会有任何报错。
         client.Defaults.Transport.MaxRedirects = 3;
 
+        // 「不生效」必须落在池上可证伪：池仍是默认的 5，而不是改后的 3。
+        Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
+
         var response = await client.GetAsync(server.Url + "items");
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
+        Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
     }
 
     [Fact]
@@ -144,6 +148,8 @@ public sealed class RedirectTests
         // 构造之后再改：与快捷方法入口是同一个根因（*Set 标记随 Clone 泄漏进生效配置）
         client.Defaults.Transport.MaxRedirects = 2;
 
+        Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
+
         var response = await client.RequestAsync(new AxiosConfig
         {
             Url = server.Url + "items",
@@ -151,6 +157,8 @@ public sealed class RedirectTests
         });
 
         Assert.Equal(200, response.Status);
+        Assert.Single(server.Received);
+        Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
     }
 
     [Fact]

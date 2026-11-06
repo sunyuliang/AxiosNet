@@ -53,7 +53,11 @@ public sealed partial class AxiosClient
         /// </summary>
         public TimeSpan? EffectiveTimeout => _clampedByTotalTimeout ? _timeout : null;
 
-        /// <summary>取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>，否则本次尝试超时 → <c>ECONNABORTED</c>。</summary>
+        /// <summary>
+        /// 取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>，本次尝试超时 → <c>ECONNABORTED</c>；
+        /// 其余 OCE（含没有已知令牌的）在普通请求路径归一为 <c>ERR_CANCELED</c>（既有契约：
+        /// 自定义序列化器 / 连接被池清理打断等都不能被误报成解析或网络失败）。
+        /// </summary>
         public AxiosException Translate(
             OperationCanceledException exception,
             AxiosConfig config,

@@ -3,10 +3,10 @@ namespace AxiosNet.Internal;
 /// <summary>取消类异常的归属。</summary>
 internal enum CancellationKind
 {
-    /// <summary>没有已知令牌取消：异常不是本库产生的取消，调用处应原样抛出。</summary>
+    /// <summary>没有已知令牌取消：不是本库产生的取消；仍归一成 <c>ERR_CANCELED</c>，不能被误报成解析 / 网络失败。</summary>
     None,
 
-    /// <summary>读取 / 写调用自备的令牌取消：调用方自己的令牌，原样抛出。</summary>
+    /// <summary>读取 / 写调用自备的令牌取消：优先级最高；最终同样归一成 <c>ERR_CANCELED</c>，原始 OCE 留在 <c>Cause</c>。</summary>
     Caller,
 
     /// <summary>本次请求的外部令牌取消：统一映射成 <c>ERR_CANCELED</c>。</summary>
@@ -30,7 +30,8 @@ internal static class CancellationClassifier
         CancellationToken? timeoutToken,
         CancellationToken readToken)
     {
-        // 调用方自己的令牌最具体：它取消时由调用方处理异常，库不改写错误码。
+        // 调用方自己的令牌最具体，归属优先级最高；最终交给调用方的错误码仍统一由调用处翻译
+        // （普通请求路径与流读路径都归一成 ERR_CANCELED）。
         if (readToken.IsCancellationRequested)
         {
             return CancellationKind.Caller;

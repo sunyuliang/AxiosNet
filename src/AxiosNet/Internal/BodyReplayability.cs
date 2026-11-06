@@ -63,15 +63,19 @@ internal static class BodyReplayability
         return Classify(config) switch
         {
             BodyReplayKind.None => false,
-            BodyReplayKind.Streamed => false,
+
+            // 可回拨的流只在同一请求内顺序重放成立：对冲的两条分支会同时读到同一份流。
+            BodyReplayKind.Streamed => mode == ReplayMode.Sequential,
 
             // 数据正文由 <see cref="RequestBodyFactory"/> 装配成内存字节内容；multipart 除外（部件带共享可变状态）。
             // 没有正文时与 multipart 媒体类型无关。
             BodyReplayKind.Rebuild => config.Body is null
                 || !MediaTypes.Is(config.ContentType, AxiosContentType.MultipartFormData),
 
-            // 调用方自备的 HttpContent：只有内存字节内容能被两条分支同时读；JsonContent 等顺序可重放但不并行。
-            BodyReplayKind.Content => config.Body is ByteArrayContent or ReadOnlyMemoryContent,
+            // 调用方自备的 HttpContent：顺序重放接受白名单内的全部内存内容；
+            // 对冲只有内存字节内容能被两条分支同时读，JsonContent 等只能顺序重放。
+            BodyReplayKind.Content => mode == ReplayMode.Sequential
+                || config.Body is ByteArrayContent or ReadOnlyMemoryContent,
 
             _ => false,
         };

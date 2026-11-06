@@ -189,12 +189,25 @@ public sealed partial class AxiosConfig
     internal bool ContentTypeSet { get; private set; }
 
     /// <summary>
-    /// 请求体压缩算法（默认 <c>null</c> = 不压缩；<see cref="AxiosCompression.None"/> 用于按请求关掉实例默认的压缩）：
-    /// 作用于按字节缓冲出来的正文（文本 / 二进制 / 表单），压缩后自动补 <c>Content-Encoding</c>。
+    /// 请求体压缩算法（默认 <c>null</c> = 不压缩；按请求显式赋 <c>null</c> 或 <see cref="AxiosCompression.None"/>
+    /// 都会关掉实例默认的压缩）：作用于按字节缓冲出来的正文（文本 / 二进制 / 表单），压缩后自动补 <c>Content-Encoding</c>。
     /// 流式正文（<see cref="Stream"/>、<c>IAsyncEnumerable&lt;byte[]&gt;</c>）、调用方自带的 <see cref="HttpContent"/>
     /// 与 multipart 正文不压缩（会直接报 <c>ERR_BAD_OPTION_VALUE</c>）。
     /// </summary>
-    public AxiosCompression? Compression { get; set; }
+    public AxiosCompression? Compression
+    {
+        get => _compression;
+        set
+        {
+            _compression = value;
+            CompressionSet = true;
+        }
+    }
+
+    private AxiosCompression? _compression;
+
+    /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
+    internal bool CompressionSet { get; private set; }
 
     private object? _data;
 

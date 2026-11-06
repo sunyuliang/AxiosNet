@@ -228,11 +228,12 @@ public sealed class AllocationTests
         Assert.Equal(64, await stream.ReadAsync(buffer, first.Token));
 
         // 换 second（已取消）：必须取消，而不是复用 first 的链接。
-        // 传输层取消抛的是 TaskCanceledException（OperationCanceledException 的子类），
-        // 与 StreamCancellationTests 的既有断言一致用 ThrowsAnyAsync。
+        // 调用方自备令牌取消在流读路径同样归一为 ERR_CANCELED（原始 OCE 留在 Cause）。
         second.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        var canceled = await Assert.ThrowsAsync<AxiosException>(async () =>
             await stream.ReadAsync(buffer, second.Token));
+        Assert.Equal(AxiosException.ErrCanceled, canceled.Code);
+        Assert.IsAssignableFrom<OperationCanceledException>(canceled.Cause);
 
         // first 的链接源被替换时释放，但流本身不受影响：不传令牌仍走预建链接源正常读
         Assert.Equal(64, await stream.ReadAsync(buffer));

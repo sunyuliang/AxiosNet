@@ -340,8 +340,8 @@ cts.CancelAfter(TimeSpan.FromSeconds(1));
 
 - `Timeout` 是**单次尝试**的预算（建连 + 等响应头 + 读正文），默认 `Zero` 表示不超时；上限约 49.7 天，超出收敛到上限。
 - `Resilience.TotalTimeout` 是**整条逻辑请求**的预算（从调用开始，含拦截器、排队、重试等待、对冲分支）：`Timeout` 会被重试 / 备用端点 / 对冲各自复制一份，`Resilience.TotalTimeout` 只有一份，每次尝试实际拿到 `min(Timeout, 剩余)`。
-- 超时抛 `ECONNABORTED`（消息可用 `Observability.TimeoutMessage` 覆盖），取消抛 `ERR_CANCELED`，原始 `OperationCanceledException` 留在 `Cause`。
-- **流读取消分层**：直接对 `Response.Data` 流调用 `ReadAsync` / `CopyToAsync` 并传入自己的令牌时，按 .NET Stream 契约抛原始 `OperationCanceledException`；只有请求令牌（方法参数 / `config.CancellationToken`）取消与 `IAsyncEnumerable` 枚举取消才映射成 `ERR_CANCELED`（原始 OCE 留在 `Cause`）。
+- 超时抛 `ECONNABORTED`（消息可用 `Observability.TimeoutMessage` 覆盖），取消抛 `ERR_CANCELED`，原始 `OperationCanceledException` 留在 `Cause`；普通请求与流式读取同一出口。
+- **`ResponseType.Stream` 取消同样抛 `ERR_CANCELED`**：直接对 `Response.Data` 流调用 `ReadAsync` / `CopyToAsync` / `Read` 并传入自己的令牌，或请求令牌（方法参数 / `config.CancellationToken`）取消，最终交给调用方的都是带 `ERR_CANCELED` 的 `AxiosException`（原始 OCE 留在 `Cause`）；超时仍为 `ECONNABORTED`。归属判定顺序固定为 `Caller → Canceled → Timeout → None`，只影响归属与错误码，不再有任何一路原样抛出 OCE。**不要用 `catch (OperationCanceledException)` 判断流读取消**，请检查 `AxiosException.Code`。
 
 ```csharp
 // 调用方承诺「15 秒内一定给出结果」：重试 5 次 × 单次 10s 也不再是上界
@@ -2407,6 +2407,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | `[Authorize("Token")]` 与静态槽位 scheme 不一致（旧行为静默以槽位为准） | 报 `ERR_BAD_OPTION_VALUE`；声明与 `Transport.Auth` 的 scheme 必须一致 |
 | 401 重放的正文范围（旧行为只有少数可重建形态能重放） | 数据型正文重新装配；白名单内存内容首次发送前快照（受 `Limits.MaxRequestBytes` 约束，超限不重放）；`Stream` / 流式 multipart 不重放 |
 | `RequestStreamAsync` / `[Stream]` 遇到显式非 `Stream` 的 `ResponseType`（旧行为静默覆盖） | 发出前报 `ERR_BAD_OPTION_VALUE`；只有未显式设置时才自动切到 `Stream` |
+| 流读取消（旧行为：直接对 `Response.Data` 流调用 `ReadAsync` / `CopyToAsync` 并传入自己的令牌时抛原始 `OperationCanceledException`） | 统一抛带 `ERR_CANCELED` 的 `AxiosException`，原始 OCE 留在 `Cause`；超时仍为 `ECONNABORTED` |
 | 声明式扩展入口（旧行为每次调用新建门面，丢掉 `CredentialProvider` / `ErrorFactory`） | 按 `AxiosClient` 缓存同一个 `ApiClient`，先配好的状态照常生效 |
 | 流式分帧实现位置 | NDJSON / SSE / JSON 数组分帧下沉到内核内部，`AxiosStreamFormat` / `Limits.MaxStreamFrameBytes` / `AxiosException.Stream*` 仍是公共能力；WebAPI 只保留声明式入口 |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |

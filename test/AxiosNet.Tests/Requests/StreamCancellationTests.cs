@@ -211,11 +211,12 @@ public sealed class StreamCancellationTests
     }
 
     /// <summary>
-    /// 调用方在 ReadAsync 上自己传的令牌取消时，异常原样抛出：
-    /// 既不翻译成 ECONNABORTED，也不包装成 AxiosException（那是「请求被取消」的语义，这里是「这次读被取消」）。
+    /// 调用方在 ReadAsync 上自己传的令牌取消时，与普通请求路径同一出口：
+    /// 抛带 <c>ERR_CANCELED</c> 的 <see cref="AxiosException"/>，原始 OCE 留在 <c>Cause</c>；
+    /// 不翻译成 <c>ECONNABORTED</c>（那是超时），也不再原样抛出 OCE。
     /// </summary>
     [Fact]
-    public async Task StreamReadAsync_WithCallerToken_ThrowsRawOperationCanceled()
+    public async Task StreamReadAsync_WithCallerToken_MapsToCanceled()
     {
         using var client = ClientWith(new StreamContent(new AsyncOnlyHangingStream()));
         await using var stream = await OpenHangingStreamAsync(client, LongTimeout);
@@ -223,10 +224,11 @@ public sealed class StreamCancellationTests
         using var callerCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
         var buffer = new byte[16];
 
-        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+        var ex = await Assert.ThrowsAsync<AxiosException>(
             () => stream.ReadAsync(buffer, 0, buffer.Length, callerCts.Token));
 
-        Assert.IsNotType<AxiosException>(ex);
+        Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+        Assert.IsAssignableFrom<OperationCanceledException>(ex.Cause);
         Assert.True(callerCts.IsCancellationRequested);
     }
 

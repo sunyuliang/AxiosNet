@@ -229,6 +229,9 @@ public sealed class ClientInstanceTests
 
         client.Defaults.Transport.WithCredentials = true;
 
+        // 「静默不生效」落在池上可证伪：池没有因为构造后的赋值打开 Cookie 容器。
+        Assert.False(client.Pool!.Options.UseCookies);
+
         // 构造后改 defaults 的承诺是「静默不生效」，不是「每个请求都炸」
         var response = await client.GetAsync(server.Url + "x");
 
