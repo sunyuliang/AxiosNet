@@ -30,7 +30,9 @@ public sealed partial class AxiosConfig
             || _idempotency is not null
             || _allowUnsafeRetrySet
             || _totalTimeoutSet
-            || (_limits is { MaxConcurrentRequestsSet: true } or { MaxQueueLengthSet: true } or { QueueTimeoutSet: true });
+            || _maxInFlightSet
+            || _maxQueueSet
+            || _queueTimeoutSet;
 
     private bool _allowUnsafeRetry;
 
@@ -42,7 +44,14 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过（含显式 false），用于合并配置时区分「未设置」与「显式关闭」。</summary>
     internal bool AllowUnsafeRetrySet => _allowUnsafeRetrySet;
 
-    /// <summary>并发闸门（原 <see cref="Limits"/> 的三项）：闸门是实例级状态，变更请新建客户端。</summary>
+    /// <summary>并发闸门的三项存储（唯一入口是 <see cref="ResilienceSettings.Concurrency"/>）：闸门是实例级状态，变更请新建客户端。</summary>
+    private int? _maxInFlight;
+    private bool _maxInFlightSet;
+    private int? _maxQueue;
+    private bool _maxQueueSet;
+    private TimeSpan? _queueTimeout;
+    private bool _queueTimeoutSet;
+
     private ConcurrencySettings? _concurrencyFacade;
 
     /// <summary>治理分组：重试 / 熔断 / 对冲 / 备用端点 / 并发闸门 / 幂等键。</summary>
@@ -155,7 +164,21 @@ public sealed partial class AxiosConfig
                 Idempotency.MergeFrom(source._idempotency);
             }
 
-            // 并发项仍由 Limits 合并块处理（实例级项不搬运的规则在那里），这里不重复搬。
+            // 并发三项（实例级）在这里合并；「库产出的配置不搬运实例级项」由调用方在合并后还原。
+            if (source._maxInFlightSet)
+            {
+                Concurrency.MaxInFlight = source._maxInFlight;
+            }
+
+            if (source._maxQueueSet)
+            {
+                Concurrency.MaxQueue = source._maxQueue;
+            }
+
+            if (source._queueTimeoutSet)
+            {
+                Concurrency.QueueTimeout = source._queueTimeout;
+            }
 
             if (source._totalTimeoutSet)
             {
@@ -169,7 +192,7 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>并发闸门（<see cref="ResilienceSettings.Concurrency"/>）：底层即 <see cref="LimitSettings"/> 的三项并发设置。</summary>
+    /// <summary>并发闸门（<see cref="ResilienceSettings.Concurrency"/>）：三项直接读写 <see cref="AxiosConfig"/> 上的存储。</summary>
     public sealed class ConcurrencySettings
     {
         private readonly AxiosConfig _owner;
@@ -179,25 +202,54 @@ public sealed partial class AxiosConfig
         /// <summary>实例内在途请求上限，<c>null</c>（默认）不限；闸门在首个受限请求时创建并固定。</summary>
         public int? MaxInFlight
         {
-            get => _owner.Limits.MaxConcurrentRequests;
-            set => _owner.Limits.MaxConcurrentRequests = value;
+            get => _owner._maxInFlight;
+            set
+            {
+                _owner._maxInFlight = value;
+                _owner._maxInFlightSet = true;
+            }
         }
 
         /// <summary>等待槽位的请求条数上限，只在设置 <see cref="MaxInFlight"/> 时有意义。</summary>
         public int? MaxQueue
         {
-            get => _owner.Limits.MaxQueueLength;
-            set => _owner.Limits.MaxQueueLength = value;
+            get => _owner._maxQueue;
+            set
+            {
+                _owner._maxQueue = value;
+                _owner._maxQueueSet = true;
+            }
         }
 
         /// <summary>等待并发槽位的上限，只在设置 <see cref="MaxInFlight"/> 时有意义。</summary>
         public TimeSpan? QueueTimeout
         {
-            get => _owner.Limits.QueueTimeout;
-            set => _owner.Limits.QueueTimeout = value;
+            get => _owner._queueTimeout;
+            set
+            {
+                _owner._queueTimeout = value;
+                _owner._queueTimeoutSet = true;
+            }
         }
 
-        /// <summary>把 <paramref name="incoming"/> 里显式设置过的并发项覆盖到本实例。</summary>
-        internal void MergeFrom(LimitSettings incoming) => _owner.Limits.MergeFrom(incoming);
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool MaxInFlightSet => _owner._maxInFlightSet;
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool MaxQueueSet => _owner._maxQueueSet;
+
+        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+        internal bool QueueTimeoutSet => _owner._queueTimeoutSet;
+
+        /// <summary>库产出的配置不搬运实例级并发项：把三项连同 *Set 标记整体还原到 <paramref name="source"/> 的值。</summary>
+        internal void ResetFrom(AxiosConfig source)
+        {
+            _owner._maxInFlight = source._maxInFlight;
+            _owner._maxInFlightSet = source._maxInFlightSet;
+            _owner._maxQueue = source._maxQueue;
+            _owner._maxQueueSet = source._maxQueueSet;
+            _owner._queueTimeout = source._queueTimeout;
+            _owner._queueTimeoutSet = source._queueTimeoutSet;
+        }
     }
 }

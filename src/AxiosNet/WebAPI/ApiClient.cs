@@ -128,7 +128,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
         if (BindingErrors.Run(config, target, () => metadata.ResolveBody(request, formatter)) is { } body)
         {
-            config.Data = body;
+            config.Body = body;
         }
 
         // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项
@@ -364,7 +364,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// 流式正文与 multipart 的流部件也拿不到第二份，一律按不可重放。
     /// </summary>
     private static bool IsReplayableBody(AxiosConfig config)
-        => config.Data switch
+        => config.Body switch
         {
             null => true,
             Stream => false,

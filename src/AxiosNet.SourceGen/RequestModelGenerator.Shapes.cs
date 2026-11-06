@@ -102,8 +102,8 @@ namespace AxiosNet.SourceGen
             return false;
         }
 
-        // 只有 Params / Data 两个槽位承载会被序列化的值，其它配置项不产形状。
-        private static bool IsConfigSlot(string name) => name == "Params" || name == "Data";
+        // 只有 Params / Body 两个槽位承载会被序列化的值，其它配置项不产形状。
+        private static bool IsConfigSlot(string name) => name == "Params" || name == "Body";
 
         // 把一个语法种子的收集结果折成批次；没引用 AxiosNet 时直接返回（不可能有调用点）。
         private static ShapeBatchInfo? TransformShapeSeeds(GeneratorSyntaxContext context, CancellationToken cancellationToken)
@@ -412,7 +412,7 @@ namespace AxiosNet.SourceGen
                 }
             }
 
-            // 从一批赋值里挑出 Params / Data（成员访问与裸标识符两种写法）并登记其右侧表达式。
+            // 从一批赋值里挑出 Params / Body（成员访问与裸标识符两种写法）并登记其右侧表达式。
             private void SeedConfigSlots(IEnumerable<AssignmentExpressionSyntax> assignments)
             {
                 foreach (var assignment in assignments)

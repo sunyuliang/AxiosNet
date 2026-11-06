@@ -29,7 +29,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// </summary>
     private readonly AxiosAttemptHandler _attemptPipeline;
 
-    /// <summary>在途并发闸门（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>）：首个受限请求时按当时上限创建并固定，之后改上限会抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
+    /// <summary>在途并发闸门（<c>Resilience.Concurrency.MaxInFlight</c>）：首个受限请求时按当时上限创建并固定，之后改上限会抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
     private ConcurrencyGate? _gate;
 
     /// <summary>
@@ -40,7 +40,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// 对应 axios instance.defaults。连接级选项（WithCredentials / MaxRedirects / Proxy / Credentials / PoolOptions）
-    /// 构造时已固化，改后不生效；MaxConcurrentRequests 的闸门在首个受限请求时创建，此后改会抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 构造时已固化，改后不生效；<c>Resilience.Concurrency.MaxInFlight</c> 的闸门在首个受限请求时创建，此后改会抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
     public AxiosConfig Defaults { get; }
 

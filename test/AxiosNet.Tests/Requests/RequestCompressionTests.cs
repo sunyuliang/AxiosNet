@@ -102,7 +102,7 @@ public sealed class CompressionTests
     }
 
     [Fact]
-    public async Task MaxBodyLength_IsMeasuredOnTheCompressedBody()
+    public async Task MaxRequestBytes_IsMeasuredOnTheCompressedBody()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -115,7 +115,7 @@ public sealed class CompressionTests
             c =>
             {
                 c.Compression = AxiosCompression.Gzip;
-                c.Limits.MaxBodyLength = 1024;
+                c.Limits.MaxRequestBytes = 1024;
             });
 
         Assert.Single(server.Received);

@@ -239,7 +239,7 @@ public sealed class AxiosCache
         ArgumentNullException.ThrowIfNull(config);
 
         return config.ShortCircuit is null
-            && config.Data is null
+            && config.Body is null
             && config.ResponseType != ResponseType.Stream
             && (IsMethod(config.Method, "GET") || IsMethod(config.Method, "HEAD"))
             && !(config.HasHeaders && config.Headers.Has("Range"));

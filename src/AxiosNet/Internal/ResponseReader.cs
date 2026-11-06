@@ -28,15 +28,15 @@ internal static class ResponseReader
         var limits = config.LimitsOrNull;
         var callbacks = config.ObservabilityOrNull;
 
-        if (limits?.MaxContentLength is long limit && declared is long length && length > limit)
+        if (limits?.MaxResponseBytes is long limit && declared is long length && length > limit)
         {
             stream.Dispose();
-            throw AxiosException.MaxContentLength(config, request, length, limit);
+            throw AxiosException.MaxResponseBytes(config, request, length, limit);
         }
 
         var maxRate = config.TransportOrNull?.MaxRate;
 
-        if (callbacks?.OnDownloadProgress is null && maxRate is not > 0 && limits?.MaxContentLength is null)
+        if (callbacks?.OnDownloadProgress is null && maxRate is not > 0 && limits?.MaxResponseBytes is null)
         {
             return stream;
         }
@@ -46,7 +46,7 @@ internal static class ResponseReader
             declared,
             callbacks?.OnDownloadProgress,
             maxRate,
-            limits?.MaxContentLength,
+            limits?.MaxResponseBytes,
             config,
             request);
     }
@@ -180,9 +180,9 @@ internal static class ResponseReader
             while (true)
             {
                 // 上限按真实字节数判（含预分配前缀与探测块），声明长度不参与。
-                if (config.LimitsOrNull?.MaxContentLength is long limit && total > limit)
+                if (config.LimitsOrNull?.MaxResponseBytes is long limit && total > limit)
                 {
-                    throw AxiosException.MaxContentLength(config, request, total, limit);
+                    throw AxiosException.MaxResponseBytes(config, request, total, limit);
                 }
 
                 if (filled == current.Length)
@@ -554,9 +554,9 @@ internal static class ResponseReader
             try
             {
                 // 体积上限同样生效：与网络路径同口径，超限直接失败。
-                if (config.LimitsOrNull?.MaxContentLength is long maxLength && body.Length > maxLength)
+                if (config.LimitsOrNull?.MaxResponseBytes is long maxLength && body.Length > maxLength)
                 {
-                    throw AxiosException.MaxContentLength(config, null, body.Length, maxLength);
+                    throw AxiosException.MaxResponseBytes(config, null, body.Length, maxLength);
                 }
 
                 bodyBytes = body.Length;

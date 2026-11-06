@@ -4,7 +4,7 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 按 <see cref="AxiosConfig.Data"/> 的实际形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。
+/// 按 <see cref="AxiosConfig.Body"/> 的实际形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。
 /// </summary>
 /// <remarks>
 /// 生效 Content-Type 由 <see cref="AxiosConfig.ContentType"/> 决定，未显式设置时采用生效序列化器自报的

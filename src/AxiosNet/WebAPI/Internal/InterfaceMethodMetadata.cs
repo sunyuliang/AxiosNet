@@ -103,7 +103,7 @@ internal sealed partial class InterfaceMethodMetadata
         {
             if (BindingErrors.Run(config, target, () => ResolveMultipartBody(args)) is { } resolved)
             {
-                config.Data = resolved;
+                config.Body = resolved;
             }
 
             // 与请求模型一致：multipart 方法默认 content-type，显式配置优先。
@@ -114,7 +114,7 @@ internal sealed partial class InterfaceMethodMetadata
         }
         else if (BindingErrors.Run(config, target, () => _plan!.ResolveBodyValue(args, formatter)) is { } body)
         {
-            config.Data = body;
+            config.Body = body;
         }
 
         // 声明级编码：媒体类型决定正文编码（不只是头），集合格式覆盖实例配置。

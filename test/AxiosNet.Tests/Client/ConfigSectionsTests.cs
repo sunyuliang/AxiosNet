@@ -21,8 +21,7 @@ public sealed class ConfigSectionsTests
         {
             BaseAddress = "https://example.com/",
             Timeout = TimeSpan.FromSeconds(7),
-            MaxResponseBytes = 4096,
-            MaxRequestBytes = 2048,
+            Limits = { MaxResponseBytes = 4096, MaxRequestBytes = 2048 },
             Transport = { MaxRedirects = 2 },
             Resilience = { AllowUnsafeRetry = true, Retry = new() { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5)) }, Circuit = new() { Policy = new CircuitBreaker(3, TimeSpan.FromSeconds(1)) }, Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(7) }, Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api") } } },
             Observability = { Capture = TelemetryCapture.Off, TimeoutMessage = "custom-timeout" },
@@ -37,8 +36,8 @@ public sealed class ConfigSectionsTests
         Assert.Equal("custom-timeout", clone.Observability.TimeoutMessage);
         Assert.NotNull(clone.ValidateStatus);
         Assert.Equal(2, clone.Transport.MaxRedirects);
-        Assert.Equal(4096, clone.MaxResponseBytes);
-        Assert.Equal(2048, clone.MaxRequestBytes);
+        Assert.Equal(4096, clone.Limits.MaxResponseBytes);
+        Assert.Equal(2048, clone.Limits.MaxRequestBytes);
         Assert.NotNull(clone.Resilience.Retry.Policy);
         Assert.NotNull(clone.Resilience.Circuit.Policy);
         Assert.Equal(2, clone.Resilience.Hedging.MaxHedges);

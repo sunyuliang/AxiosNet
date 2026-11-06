@@ -381,7 +381,7 @@ public sealed partial class AxiosClient
 
         if (data is not null)
         {
-            config.Data = data;
+            config.Body = data;
         }
 
         configure?.Invoke(config);

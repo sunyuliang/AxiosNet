@@ -129,49 +129,49 @@ public sealed partial class AxiosClient
 
         if (maxRate is < 0)
         {
-            throw AxiosException.InvalidOption($"MaxRate 不能为负（当前 {maxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
+            throw AxiosException.InvalidOption($"Transport.MaxRate 不能为负（当前 {maxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
         }
 
-        if (limits?.MaxContentLength is < 0)
+        if (limits?.MaxResponseBytes is < 0)
         {
-            throw AxiosException.InvalidOption($"MaxContentLength 不能为负（当前 {limits.MaxContentLength}）：不限制请设为 null。", config);
+            throw AxiosException.InvalidOption($"Limits.MaxResponseBytes 不能为负（当前 {limits.MaxResponseBytes}）：不限制请设为 null。", config);
         }
 
-        if (limits?.MaxBodyLength is < 0)
+        if (limits?.MaxRequestBytes is < 0)
         {
-            throw AxiosException.InvalidOption($"MaxBodyLength 不能为负（当前 {limits.MaxBodyLength}）：不限制请设为 null。", config);
+            throw AxiosException.InvalidOption($"Limits.MaxRequestBytes 不能为负（当前 {limits.MaxRequestBytes}）：不限制请设为 null。", config);
         }
 
         // 并发上限：0 与负数都没有语义，一律报错。
-        if (limits?.MaxConcurrentRequests is int maxConcurrency && maxConcurrency < 1)
+        if (config.ResilienceOrNull?.Concurrency.MaxInFlight is int maxConcurrency && maxConcurrency < 1)
         {
             throw AxiosException.InvalidOption(
-                $"MaxConcurrentRequests 必须是正整数（当前 {maxConcurrency}）：不限制请设为 null，"
+                $"Resilience.Concurrency.MaxInFlight 必须是正整数（当前 {maxConcurrency}）：不限制请设为 null，"
                 + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
         }
 
         // 排队深度上限：0 与负数都没有语义（「不排队」由 QueueTimeout = Zero 表达）。
-        if (limits?.MaxQueueLength is int maxQueueLength && maxQueueLength < 1)
+        if (config.ResilienceOrNull?.Concurrency.MaxQueue is int maxQueue && maxQueue < 1)
         {
             throw AxiosException.InvalidOption(
-                $"MaxQueueLength 必须是正整数（当前 {maxQueueLength}）：不限制排队深度请设为 null，"
+                $"Resilience.Concurrency.MaxQueue 必须是正整数（当前 {maxQueue}）：不限制排队深度请设为 null，"
                 + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
         }
 
-        if (limits?.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
+        if (config.ResilienceOrNull?.Concurrency.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
         {
-            throw AxiosException.InvalidOption($"QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
+            throw AxiosException.InvalidOption($"Resilience.Concurrency.QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
         }
 
         // 分帧上限：0 没有「不限制」语义，越界在发送前就报。
-        if (limits?.MaxStreamFrameLength is int frameLength
-            && (frameLength < AxiosConfig.LimitSettings.MinStreamFrameLength
-                || frameLength > AxiosConfig.LimitSettings.MaxStreamFrameLengthLimit))
+        if (limits?.MaxStreamFrameBytes is int frameLength
+            && (frameLength < AxiosConfig.MinStreamFrameBytes
+                || frameLength > AxiosConfig.MaxStreamFrameBytesLimit))
         {
             throw AxiosException.InvalidOption(
-                $"MaxStreamFrameLength 超出范围（当前 {frameLength} 字节）：合法区间 "
-                + $"{AxiosConfig.LimitSettings.MinStreamFrameLength}–{AxiosConfig.LimitSettings.MaxStreamFrameLengthLimit} 字节（1–64 MB），"
-                + $"默认 {AxiosConfig.LimitSettings.DefaultStreamFrameLength} 字节（8 MB）。"
+                $"Limits.MaxStreamFrameBytes 超出范围（当前 {frameLength} 字节）：合法区间 "
+                + $"{AxiosConfig.MinStreamFrameBytes}–{AxiosConfig.MaxStreamFrameBytesLimit} 字节（1–64 MB），"
+                + $"默认 {AxiosConfig.DefaultStreamFrameBytes} 字节（8 MB）。"
                 + "分帧器必须把整帧读进内存才能交给序列化器，因此没有「不限制」语义；更大的正文请用 ResponseType.Stream 自行分块处理。",
                 config);
         }
@@ -411,11 +411,12 @@ public sealed partial class AxiosClient
     /// <summary>解析（必要时懒创建）本实例的并发闸门：容量在创建时固定，本次生效上限与已建闸门不一致就报错；本次没要求上限时沿用已有闸门（没有则不建），排队上限只有显式写过（*Set）才参与比较。</summary>
     private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
     {
-        var requested = config.LimitsOrNull?.MaxConcurrentRequests;
-        var requestedQueueLength = config.LimitsOrNull?.MaxQueueLength;
+        var concurrency = config.ResilienceOrNull?.Concurrency;
+        var requested = concurrency?.MaxInFlight;
+        var requestedQueue = concurrency?.MaxQueue;
 
         // 排队上限按 *Set 判断，不看值。
-        var queueLengthStated = config.LimitsOrNull?.MaxQueueLengthSet ?? false;
+        var queueStated = concurrency?.MaxQueueSet ?? false;
         var existing = Volatile.Read(ref _gate);
 
         if (existing is not null)
@@ -425,9 +426,9 @@ public sealed partial class AxiosClient
                 throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
             }
 
-            if (queueLengthStated && requestedQueueLength != existing.MaxQueueLength)
+            if (queueStated && requestedQueue != existing.MaxQueue)
             {
-                throw QueueLengthMismatch(config, requestedQueueLength, existing.MaxQueueLength);
+                throw QueueMismatch(config, requestedQueue, existing.MaxQueue);
             }
 
             return existing;
@@ -438,7 +439,7 @@ public sealed partial class AxiosClient
             return null;
         }
 
-        var created = new ConcurrencyGate(limit, requestedQueueLength);
+        var created = new ConcurrencyGate(limit, requestedQueue);
 
         // 并发首请求：输的一方用赢家的闸门，容量不同则报错。
         var winner = Interlocked.CompareExchange(ref _gate, created, null);
@@ -452,9 +453,9 @@ public sealed partial class AxiosClient
             throw ConcurrencyMismatch(config, limit, winner.MaxConcurrency);
         }
 
-        if (queueLengthStated && winner.MaxQueueLength != requestedQueueLength)
+        if (queueStated && winner.MaxQueue != requestedQueue)
         {
-            throw QueueLengthMismatch(config, requestedQueueLength, winner.MaxQueueLength);
+            throw QueueMismatch(config, requestedQueue, winner.MaxQueue);
         }
 
         return winner;
@@ -464,19 +465,19 @@ public sealed partial class AxiosClient
     private static AxiosException ConcurrencyMismatch(AxiosConfig config, int requested, int effective)
     {
         return AxiosException.InvalidOption(
-            $"MaxConcurrentRequests 是实例级配置（并发闸门在首个受限请求时创建并固定为 {effective}），"
+            $"Resilience.Concurrency.MaxInFlight 是实例级配置（并发闸门在首个受限请求时创建并固定为 {effective}），"
             + $"本次生效配置要求 {requested}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
             + "要改变上限请新建 AxiosClient 并在 defaults 上设置。",
             config);
     }
 
     /// <summary>排队上限与已建闸门不一致时的报错（null 在消息里显示为「不限」）。</summary>
-    private static AxiosException QueueLengthMismatch(AxiosConfig config, int? requested, int? effective)
+    private static AxiosException QueueMismatch(AxiosConfig config, int? requested, int? effective)
     {
         static string Text(int? value) => value is int v ? v.ToString() : "null（不限）";
 
         return AxiosException.InvalidOption(
-            $"MaxQueueLength 是实例级配置（排队上限与并发闸门一起在首个受限请求时创建并固定为 {Text(effective)}），"
+            $"Resilience.Concurrency.MaxQueue 是实例级配置（排队上限与并发闸门一起在首个受限请求时创建并固定为 {Text(effective)}），"
             + $"本次生效配置要求 {Text(requested)}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
             + "要改变排队上限请新建 AxiosClient 并在 defaults 上设置。",
             config);

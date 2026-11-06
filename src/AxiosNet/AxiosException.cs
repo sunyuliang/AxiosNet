@@ -31,13 +31,13 @@ public class AxiosException : Exception
     public const string ErrBadOptionValue = "ERR_BAD_OPTION_VALUE";
 
     /// <summary>
-    /// 并发闸门排队超时：等不到空闲槽位（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/> +
-    /// <see cref="AxiosConfig.LimitSettings.QueueTimeout"/>），请求没有发出去。
+    /// 并发闸门排队超时：等不到空闲槽位（<c>Resilience.Concurrency.MaxInFlight</c> +
+    /// <c>Resilience.Concurrency.QueueTimeout</c>），请求没有发出去。
     /// </summary>
     public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
 
     /// <summary>
-    /// 并发闸门的排队队列已满（<see cref="AxiosConfig.LimitSettings.MaxQueueLength"/>）：请求<b>没有发出</b>，
+    /// 并发闸门的排队队列已满（<c>Resilience.Concurrency.MaxQueue</c>）：请求<b>没有发出</b>，
     /// 与 <see cref="ErrQueueTimeout"/> 的区别是「连排队名额都没有」。
     /// </summary>
     public const string ErrQueueFull = "ERR_QUEUE_FULL";
@@ -239,13 +239,13 @@ public class AxiosException : Exception
             inner);
     }
 
-    /// <summary>并发闸门排队超时：在 <see cref="AxiosConfig.LimitSettings.QueueTimeout"/> 之内没等到空闲槽位。</summary>
+    /// <summary>并发闸门排队超时：在 <c>Resilience.Concurrency.QueueTimeout</c> 之内没等到空闲槽位。</summary>
     internal static AxiosException QueueTimeout(AxiosConfig config, HttpRequestMessage? request, TimeSpan waited, int maxConcurrency, Exception? inner = null)
     {
         return new AxiosException(
             $"no free concurrency slot within {waited.TotalMilliseconds:0}ms "
-            + $"(MaxConcurrentRequests = {maxConcurrency}): "
-            + "reduce parallelism, raise Limits.MaxConcurrentRequests / Limits.QueueTimeout, "
+            + $"(Resilience.Concurrency.MaxInFlight = {maxConcurrency}): "
+            + "reduce parallelism, raise Resilience.Concurrency.MaxInFlight / Resilience.Concurrency.QueueTimeout, "
             + "or back off and retry on ERR_QUEUE_TIMEOUT",
             ErrQueueTimeout,
             config,
@@ -254,12 +254,12 @@ public class AxiosException : Exception
             inner);
     }
 
-    /// <summary>并发闸门的排队队列已满：超过 <c>Limits.MaxQueueLength</c>，请求没有发出。</summary>
-    internal static AxiosException QueueFull(AxiosConfig config, HttpRequestMessage? request, int maxQueueLength, int maxConcurrency)
+    /// <summary>并发闸门的排队队列已满：超过 <c>Resilience.Concurrency.MaxQueue</c>，请求没有发出。</summary>
+    internal static AxiosException QueueFull(AxiosConfig config, HttpRequestMessage? request, int maxQueue, int maxConcurrency)
     {
         return new AxiosException(
-            $"concurrency queue is full (MaxQueueLength = {maxQueueLength}, MaxConcurrentRequests = {maxConcurrency}): "
-            + "reduce parallel callers, raise Limits.MaxQueueLength / Limits.MaxConcurrentRequests, "
+            $"concurrency queue is full (Resilience.Concurrency.MaxQueue = {maxQueue}, MaxInFlight = {maxConcurrency}): "
+            + "reduce parallel callers, raise Resilience.Concurrency.MaxQueue / Resilience.Concurrency.MaxInFlight, "
             + "or back off and retry on ERR_QUEUE_FULL",
             ErrQueueFull,
             config,
@@ -312,7 +312,7 @@ public class AxiosException : Exception
         return new AxiosException(
             $"connection pool origin capacity exhausted (MaxEndpointCount = {max}): no idle node to evict "
             + "and all nodes are in use. Raise ConnectionPoolOptions.MaxEndpointCount, "
-            + "cap fan-out with Limits.MaxConcurrentRequests / Limits.QueueTimeout, call Clear() to reclaim, "
+            + "cap fan-out with Resilience.Concurrency.MaxInFlight / Resilience.Concurrency.QueueTimeout, call Clear() to reclaim, "
             + "or back off and retry on ERR_POOL_EXHAUSTED",
             ErrPoolExhausted,
             config,
@@ -452,11 +452,11 @@ public class AxiosException : Exception
             inner);
     }
 
-    /// <summary>响应体超过 <c>Limits.MaxContentLength</c>；<paramref name="request"/> 允许为 <c>null</c>（短路响应）。</summary>
-    internal static AxiosException MaxContentLength(AxiosConfig config, HttpRequestMessage? request, long actual, long limit)
+    /// <summary>响应体超过 <c>Limits.MaxResponseBytes</c>；<paramref name="request"/> 允许为 <c>null</c>（短路响应）。</summary>
+    internal static AxiosException MaxResponseBytes(AxiosConfig config, HttpRequestMessage? request, long actual, long limit)
     {
         return new AxiosException(
-            $"maxContentLength size of {limit} exceeded (got {actual} bytes)",
+            $"MaxResponseBytes limit of {limit} exceeded (got {actual} bytes)",
             ErrBadResponse,
             config,
             request,
@@ -470,7 +470,7 @@ public class AxiosException : Exception
         return new AxiosException(
             $"Response body of {actual} bytes exceeds the maximum array length ({Array.MaxLength}): "
             + "Response.Data cannot hold it as a single byte[]. "
-            + "Set MaxContentLength to fail earlier, or use ResponseType.Stream to read it incrementally.",
+            + "Set Limits.MaxResponseBytes to fail earlier, or use ResponseType.Stream to read it incrementally.",
             ErrBadResponse,
             config,
             request,
@@ -478,11 +478,11 @@ public class AxiosException : Exception
             null);
     }
 
-    /// <summary>请求体超过 <c>MaxBodyLength</c>（<c>ERR_BAD_REQUEST</c>）：发出前拦下，不带副作用。</summary>
-    internal static AxiosException MaxBodyLength(AxiosConfig config, HttpRequestMessage request, long actual, long limit)
+    /// <summary>请求体超过 <c>Limits.MaxRequestBytes</c>（<c>ERR_BAD_REQUEST</c>）：发出前拦下，不带副作用。</summary>
+    internal static AxiosException MaxRequestBytes(AxiosConfig config, HttpRequestMessage request, long actual, long limit)
     {
         return new AxiosException(
-            $"Request body larger than maxBodyLength limit ({actual} > {limit} bytes)",
+            $"Request body larger than MaxRequestBytes limit ({actual} > {limit} bytes)",
             ErrBadRequest,
             config,
             request,

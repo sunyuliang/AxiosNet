@@ -274,7 +274,7 @@ public sealed class RequestBodyTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task MaxBodyLength_WithUploadProgressWrapper_IsStillEnforced()
+    public async Task MaxRequestBytes_WithUploadProgressWrapper_IsStillEnforced()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -285,7 +285,7 @@ public sealed class RequestBodyTests
         // 一旦复制漏了，content.Headers.ContentLength 为 null，这个上限就静默失效了。
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "up", payload, c =>
         {
-            c.Limits.MaxBodyLength = 16;
+            c.Limits.MaxRequestBytes = 16;
             c.Observability.OnUploadProgress = _ => { };
         }));
 
@@ -296,16 +296,16 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task MaxBodyLength_UnknownLengthChunkedBody_IsSent()
+    public async Task MaxRequestBytes_UnknownLengthChunkedBody_IsSent()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // 清掉 Content-Length 强制 chunked：长度不可知，MaxBodyLength 按文档只对可算出长度的正文生效。
+        // 清掉 Content-Length 强制 chunked：长度不可知，MaxRequestBytes 按文档只对可算出长度的正文生效。
         using var content = new StreamContent(new MemoryStream(new byte[2048]));
         content.Headers.ContentLength = null;
 
-        await client.PostAsync(server.Url + "chunked", content, c => c.Limits.MaxBodyLength = 16);
+        await client.PostAsync(server.Url + "chunked", content, c => c.Limits.MaxRequestBytes = 16);
 
         Assert.Single(server.Received);
         Assert.Equal(2048, server.Received[0].Body.Length);
@@ -331,7 +331,7 @@ public sealed class RequestBodyTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task MaxBodyLength_ExactlyAtLimit_SendsBody()
+    public async Task MaxRequestBytes_ExactlyAtLimit_SendsBody()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -339,13 +339,13 @@ public sealed class RequestBodyTests
         const string body = """{"name":"bob"}""";
         var limit = Encoding.UTF8.GetByteCount(body);
 
-        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxBodyLength = limit);
+        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxRequestBytes = limit);
 
         Assert.Equal(body, Encoding.UTF8.GetString(server.Received[0].Body));
     }
 
     [Fact]
-    public async Task MaxBodyLength_OneByteOverLimit_ThrowsBeforeSending()
+    public async Task MaxRequestBytes_OneByteOverLimit_ThrowsBeforeSending()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -354,7 +354,7 @@ public sealed class RequestBodyTests
         var limit = Encoding.UTF8.GetByteCount(body) - 1;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxBodyLength = limit));
+            client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxRequestBytes = limit));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Empty(server.Received);
@@ -484,7 +484,7 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task MaxBodyLength_ExceedsLimit_Throws()
+    public async Task MaxRequestBytes_ExceedsLimit_Throws()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -492,20 +492,20 @@ public sealed class RequestBodyTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             server.Url + "echo",
             new { name = new string('x', 4096) },
-            c => c.Limits.MaxBodyLength = 512));
+            c => c.Limits.MaxRequestBytes = 512));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
-        Assert.Contains("maxBodyLength", ex.Message);
+        Assert.Contains("MaxRequestBytes", ex.Message);
         Assert.Empty(server.Received);
     }
 
     [Fact]
-    public async Task MaxBodyLength_WithinLimit_SendsBody()
+    public async Task MaxRequestBytes_WithinLimit_SendsBody()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxBodyLength = 4096);
+        await client.PostAsync(server.Url + "echo", new { name = "bob" }, c => c.Limits.MaxRequestBytes = 4096);
 
         Assert.Equal("""{"name":"bob"}""", Encoding.UTF8.GetString(server.Received[0].Body));
     }

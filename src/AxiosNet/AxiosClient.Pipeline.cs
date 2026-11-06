@@ -339,7 +339,7 @@ public sealed partial class AxiosClient
         {
             try
             {
-                config.Data = transform(config.Data, config);
+                config.Body = transform(config.Body, config);
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
@@ -404,7 +404,7 @@ public sealed partial class AxiosClient
             HttpContent? content;
             try
             {
-                content = RequestBodyFactory.Create(config.Data, config);
+                content = RequestBodyFactory.Create(config.Body, config);
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
@@ -412,9 +412,9 @@ public sealed partial class AxiosClient
                 throw AxiosException.BadRequestPayload(
                     config,
                     template,
-                    config.Data is FormData declared
+                    config.Body is FormData declared
                         ? declared.SourceName ?? declared.GetType().Name
-                        : config.Data?.GetType().Name ?? "null",
+                        : config.Body?.GetType().Name ?? "null",
                     ex);
             }
 
@@ -428,12 +428,12 @@ public sealed partial class AxiosClient
 
             if (content is not null)
             {
-                if (config.LimitsOrNull?.MaxBodyLength is long maxBody
+                if (config.LimitsOrNull?.MaxRequestBytes is long maxBody
                     && content.Headers.ContentLength is long bodyLength
                     && bodyLength > maxBody)
                 {
                     content.Dispose();
-                    throw AxiosException.MaxBodyLength(config, template, bodyLength, maxBody);
+                    throw AxiosException.MaxRequestBytes(config, template, bodyLength, maxBody);
                 }
 
                 template.Content = content;

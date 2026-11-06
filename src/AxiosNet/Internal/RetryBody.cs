@@ -18,7 +18,7 @@ internal sealed class RetryBody
     /// <exception cref="AxiosException">正文不可重放（<c>ERR_BAD_OPTION_VALUE</c>）。</exception>
     public static RetryBody? Prepare(AxiosConfig config)
     {
-        var data = config.Data;
+        var data = config.Body;
 
         switch (data)
         {

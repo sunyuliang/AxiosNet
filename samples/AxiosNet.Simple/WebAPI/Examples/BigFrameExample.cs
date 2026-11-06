@@ -3,7 +3,7 @@ using AxiosNet.WebAPI;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 10. 单帧上限：默认 8 MB 会拒掉 9 MB 的单个元素，把 <c>Limits.MaxStreamFrameLength</c>
+/// 10. 单帧上限：默认 8 MB 会拒掉 9 MB 的单个元素，把 <c>Limits.MaxStreamFrameBytes</c>
 /// 放大到 12 MB 后同一个端点可以正常逐帧读完。
 /// 上限只是天花板，不按上限预分配；要处理更大的正文应改用 <c>ResponseType.Stream</c> 自己分块。
 /// </summary>
@@ -17,9 +17,9 @@ public sealed class BigFrameExample : IExample
 
     public int Number => 10;
 
-    public string Title => "单帧上限：Limits.MaxStreamFrameLength（默认 8 MB / 放开到 12 MB）";
+    public string Title => "单帧上限：Limits.MaxStreamFrameBytes（默认 8 MB / 放开到 12 MB）";
 
-    /// <summary>示例入口：单帧上限：Limits.MaxStreamFrameLength（默认 8 MB / 放开到 12 MB）。</summary>
+    /// <summary>示例入口：单帧上限：Limits.MaxStreamFrameBytes（默认 8 MB / 放开到 12 MB）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
@@ -44,7 +44,7 @@ public sealed class BigFrameExample : IExample
         // 2) 放开到 12 MB：同一端点可以逐帧读完（这里只打印长度，不把 9 MB 正文打到控制台）
         var relaxed = _relaxed ??= new ApiClient(
             context.BaseUrl,
-            defaults => defaults.MaxStreamFrameBytes = 12 * 1024 * 1024);
+            defaults => defaults.Limits.MaxStreamFrameBytes = 12 * 1024 * 1024);
 
         var relaxedResponse = await relaxed.RequestStreamAsync(new StreamBigFrameRequest(), AxiosStreamFormat.JsonArray);
 

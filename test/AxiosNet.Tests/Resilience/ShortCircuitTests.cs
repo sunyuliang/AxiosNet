@@ -116,7 +116,7 @@ public sealed class ShortCircuitTests
         using var client = new AxiosClient(new AxiosConfig
         {
             // QueueTimeout = 0：名额被占时排队请求立刻失败 —— 短路要是也走闸门，这个用例就会抛错
-            Limits = { MaxConcurrentRequests = 1, QueueTimeout = TimeSpan.Zero }
+            Resilience = { Concurrency = { MaxInFlight = 1, QueueTimeout = TimeSpan.Zero } }
         });
 
         var held = client.GetAsync(server.Url + "slow");
@@ -337,7 +337,7 @@ public sealed class ShortCircuitTests
     }
 
     [Fact]
-    public async Task BodyOverMaxContentLength_IsRejected()
+    public async Task BodyOverMaxResponseBytes_IsRejected()
     {
         using var client = new AxiosClient();
         const string url = "http://127.0.0.1:9/never";
@@ -350,7 +350,7 @@ public sealed class ShortCircuitTests
             c =>
             {
                 c.ShortCircuit = reply;
-                c.Limits.MaxContentLength = 3;
+                c.Limits.MaxResponseBytes = 3;
             }));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);

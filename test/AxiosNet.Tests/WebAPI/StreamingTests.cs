@@ -1129,16 +1129,16 @@ public sealed class StreamingTests
 
     [Fact]
     public void DefaultStreamFrameLength_IsEightMegabytes()
-        => Assert.Equal(8 * Mb, AxiosConfig.LimitSettings.DefaultStreamFrameLength);
+        => Assert.Equal(8 * Mb, AxiosConfig.DefaultStreamFrameBytes);
 
     [Fact]
     public void FrameLengthBounds_AreConsistent()
     {
         // 三个边界值是一组（默认 / 下界 / 上界），公开给调用方引用后就必须自洽：
         // 默认值落在区间内、下界小于上界。改其中一个而忘了另外两个，这里先红。
-        var min = AxiosConfig.LimitSettings.MinStreamFrameLength;
-        var max = AxiosConfig.LimitSettings.MaxStreamFrameLengthLimit;
-        var @default = AxiosConfig.LimitSettings.DefaultStreamFrameLength;
+        var min = AxiosConfig.MinStreamFrameBytes;
+        var max = AxiosConfig.MaxStreamFrameBytesLimit;
+        var @default = AxiosConfig.DefaultStreamFrameBytes;
 
         Assert.True(min < max, $"下界 {min} 必须小于上界 {max}");
         Assert.InRange(@default, min, max);
@@ -1163,7 +1163,7 @@ public sealed class StreamingTests
     [Fact]
     public async Task ConfiguredLimit_AllowsNdjsonFrameAboveDefault()
     {
-        using var client = CreateFrameLimitClient(NdjsonFrame(9 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameLength = 12 * Mb);
+        using var client = CreateFrameLimitClient(NdjsonFrame(9 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameBytes = 12 * Mb);
 
         var items = await ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson);
 
@@ -1173,7 +1173,7 @@ public sealed class StreamingTests
     [Fact]
     public async Task ConfiguredLimit_AllowsSseFrameAboveDefault()
     {
-        using var client = CreateFrameLimitClient(SseFrame(9 * Mb), SseMediaType, c => c.Limits.MaxStreamFrameLength = 12 * Mb);
+        using var client = CreateFrameLimitClient(SseFrame(9 * Mb), SseMediaType, c => c.Limits.MaxStreamFrameBytes = 12 * Mb);
 
         var items = await ReadAllAsync(client, AxiosStreamFormat.ServerSentEvents);
 
@@ -1183,7 +1183,7 @@ public sealed class StreamingTests
     [Fact]
     public async Task ConfiguredLimit_AllowsJsonArrayElementAboveDefault()
     {
-        using var client = CreateFrameLimitClient(JsonArrayElement(9 * Mb), JsonMediaType, c => c.Limits.MaxStreamFrameLength = 12 * Mb);
+        using var client = CreateFrameLimitClient(JsonArrayElement(9 * Mb), JsonMediaType, c => c.Limits.MaxStreamFrameBytes = 12 * Mb);
 
         var items = await ReadAllAsync(client, AxiosStreamFormat.JsonArray);
 
@@ -1199,7 +1199,7 @@ public sealed class StreamingTests
     {
         // 2 MB 的帧在默认 8 MB 下完全合法；把上限收到 1 MB 后必须失败 ——
         // 否则「配了但没生效」和「服务端发太大」会混在一起。
-        using var client = CreateFrameLimitClient(NdjsonFrame(2 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameLength = 1 * Mb);
+        using var client = CreateFrameLimitClient(NdjsonFrame(2 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameBytes = 1 * Mb);
 
         var error = await Assert.ThrowsAsync<AxiosException>(
             () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson));
@@ -1215,12 +1215,12 @@ public sealed class StreamingTests
     [Fact]
     public async Task PerRequestValue_OverridesInstanceDefault()
     {
-        using var client = CreateFrameLimitClient(NdjsonFrame(9 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameLength = 1 * Mb);
+        using var client = CreateFrameLimitClient(NdjsonFrame(9 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameBytes = 1 * Mb);
 
         var items = await ReadAllAsync(
             client,
             AxiosStreamFormat.NewlineDelimitedJson,
-            c => c.Limits.MaxStreamFrameLength = 12 * Mb);
+            c => c.Limits.MaxStreamFrameBytes = 12 * Mb);
 
         Assert.Equal(9 * Mb, Assert.Single(items).Length);
     }
@@ -1229,10 +1229,10 @@ public sealed class StreamingTests
     public async Task PerRequestValue_CanTightenInstanceDefault()
     {
         // 反方向同样要生效：只验证「放大」会漏掉「按请求收紧被实例默认盖住」这类合并错误。
-        using var client = CreateFrameLimitClient(NdjsonFrame(2 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameLength = 12 * Mb);
+        using var client = CreateFrameLimitClient(NdjsonFrame(2 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameBytes = 12 * Mb);
 
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson, c => c.Limits.MaxStreamFrameLength = 1 * Mb));
+            () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson, c => c.Limits.MaxStreamFrameBytes = 1 * Mb));
 
         Assert.Equal(AxiosException.ErrBadResponse, error.Code);
         Assert.Contains("1048576", error.Message);
@@ -1246,7 +1246,7 @@ public sealed class StreamingTests
         using var client = CreateFrameLimitClient(
             NdjsonFrame(9 * Mb),
             NdjsonMediaType,
-            c => c.Limits.MaxContentLength = 64 * Mb);
+            c => c.Limits.MaxResponseBytes = 64 * Mb);
 
         var error = await Assert.ThrowsAsync<AxiosException>(
             () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson));
@@ -1260,10 +1260,10 @@ public sealed class StreamingTests
     {
         // 实例默认放到 12 MB，按请求显式设 null 表示「回到默认 8 MB」：
         // 合并层必须看 *Set 标记，否则「未设置」与「显式 null」会被混为一谈。
-        using var client = CreateFrameLimitClient(NdjsonFrame(9 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameLength = 12 * Mb);
+        using var client = CreateFrameLimitClient(NdjsonFrame(9 * Mb), NdjsonMediaType, c => c.Limits.MaxStreamFrameBytes = 12 * Mb);
 
         var error = await Assert.ThrowsAsync<AxiosException>(
-            () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson, c => c.Limits.MaxStreamFrameLength = null));
+            () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson, c => c.Limits.MaxStreamFrameBytes = null));
 
         Assert.Equal(AxiosException.ErrBadResponse, error.Code);
         Assert.Contains("8388608", error.Message);
@@ -1273,10 +1273,10 @@ public sealed class StreamingTests
     public void Clone_PreservesConfiguredValue()
     {
         var config = new AxiosConfig {
-            MaxStreamFrameBytes = 12 * Mb
+            Limits = { MaxStreamFrameBytes = 12 * Mb }
         };
 
-        Assert.Equal(12 * Mb, config.Clone().Limits.MaxStreamFrameLength);
+        Assert.Equal(12 * Mb, config.Clone().Limits.MaxStreamFrameBytes);
     }
 
     // ------------------------------------------------------------------
@@ -1291,13 +1291,13 @@ public sealed class StreamingTests
     public async Task OutOfRangeValue_FailsBeforeSending(int frameLength)
     {
         var handler = new ScriptedStreamHandler(NdjsonFrame(16), contentType: NdjsonMediaType);
-        using var client = CreateClient(handler, c => c.Limits.MaxStreamFrameLength = frameLength);
+        using var client = CreateClient(handler, c => c.Limits.MaxStreamFrameBytes = frameLength);
 
         var error = await Assert.ThrowsAsync<AxiosException>(
             () => ReadAllAsync(client, AxiosStreamFormat.NewlineDelimitedJson));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
-        Assert.Contains("MaxStreamFrameLength", error.Message);
+        Assert.Contains("MaxStreamFrameBytes", error.Message);
         Assert.Equal(0, handler.Calls);
     }
 

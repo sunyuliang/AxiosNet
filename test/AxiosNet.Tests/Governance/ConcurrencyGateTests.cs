@@ -25,7 +25,7 @@ public sealed class ConcurrencyGateTests
     }
 
     [Fact]
-    public async Task MaxConcurrentRequests_CapsInFlightRequests()
+    public async Task MaxInFlight_CapsInFlightRequests()
     {
         await using var server = SlowServer();
         using var client = LimitedClient(maxConcurrency: 2);
@@ -53,12 +53,12 @@ public sealed class ConcurrencyGateTests
         await WaitUntilAsync(() => server.Received.Count >= 1, "第一条请求占住槽位");
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "queued", c => c.Limits.QueueTimeout = TimeSpan.FromMilliseconds(100)));
+            client.GetAsync(server.Url + "queued", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromMilliseconds(100)));
 
         // 队列超时不是请求超时：请求根本没发出去，处置方式（降速 / 扩容 / 退避）完全不同
         Assert.Equal(AxiosException.ErrQueueTimeout, ex.Code);
         Assert.NotEqual(AxiosException.ErrConnAborted, ex.Code);
-        Assert.Contains("MaxConcurrentRequests = 1", ex.Message);
+        Assert.Contains("MaxInFlight = 1", ex.Message);
 
         // 请求没发出去：错误里带的是待发请求（用于定位是哪条请求没排上队）
         Assert.Equal(server.Url + "queued", ex.Request?.RequestUri?.ToString());
@@ -86,7 +86,7 @@ public sealed class ConcurrencyGateTests
 
         var stopwatch = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "queued", c => c.Limits.QueueTimeout = TimeSpan.Zero));
+            client.GetAsync(server.Url + "queued", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.Zero));
         stopwatch.Stop();
 
         Assert.Equal(AxiosException.ErrQueueTimeout, ex.Code);
@@ -192,7 +192,7 @@ public sealed class ConcurrencyGateTests
         {
             // 正文还没读完：槽位仍被这条下载占着
             var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-                client.GetAsync(server.Url + "other", c => c.Limits.QueueTimeout = TimeSpan.FromMilliseconds(100)));
+                client.GetAsync(server.Url + "other", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromMilliseconds(100)));
             Assert.Equal(AxiosException.ErrQueueTimeout, ex.Code);
         }
         finally
@@ -201,12 +201,12 @@ public sealed class ConcurrencyGateTests
         }
 
         // 释放正文流即归还槽位
-        var after = await client.GetAsync(server.Url + "after", c => c.Limits.QueueTimeout = TimeSpan.FromSeconds(5));
+        var after = await client.GetAsync(server.Url + "after", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(5));
         Assert.Equal(200, after.Status);
     }
 
     [Fact]
-    public async Task MaxQueueLength_WhenQueueFull_ThrowsQueueFullWithoutWaiting()
+    public async Task MaxQueue_WhenQueueFull_ThrowsQueueFullWithoutWaiting()
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = TestHttpServer.Start(async _ =>
@@ -229,8 +229,8 @@ public sealed class ConcurrencyGateTests
 
         // 队列满是「连排队资格都没有」：必须立刻失败，而不是先等 QueueTimeout 再报排队超时
         Assert.Equal(AxiosException.ErrQueueFull, ex.Code);
-        Assert.Contains("MaxQueueLength = 1", ex.Message);
-        Assert.Contains("MaxConcurrentRequests = 1", ex.Message);
+        Assert.Contains("MaxQueue = 1", ex.Message);
+        Assert.Contains("MaxInFlight = 1", ex.Message);
         Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"耗时 {stopwatch.ElapsedMilliseconds}ms");
 
         // 被拒的请求没发出去，也不该占住排队水位
@@ -315,7 +315,7 @@ public sealed class ConcurrencyGateTests
     }
 
     [Fact]
-    public async Task PerRequestDifferentMaxQueueLength_ThrowsBadOptionValue()
+    public async Task PerRequestDifferentMaxQueue_ThrowsBadOptionValue()
     {
         await using var server = SlowServer(delayMs: 0);
         using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 2);
@@ -324,26 +324,26 @@ public sealed class ConcurrencyGateTests
         await client.GetAsync(server.Url + "warmup");
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = 3));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = 3));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Contains("MaxQueueLength", ex.Message);
+        Assert.Contains("MaxQueue", ex.Message);
 
         // 复述实例的值放行
-        var ok = await client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = 2);
+        var ok = await client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = 2);
         Assert.Equal(200, ok.Status);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public async Task InvalidMaxQueueLength_ThrowsBadOptionValue(int value)
+    public async Task InvalidMaxQueue_ThrowsBadOptionValue(int value)
     {
         await using var server = SlowServer(delayMs: 0);
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = value));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = value));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -359,26 +359,26 @@ public sealed class ConcurrencyGateTests
         await client.GetAsync(server.Url + "warmup");
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Limits.MaxConcurrentRequests = 8));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 8));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Contains("MaxConcurrentRequests", ex.Message);
+        Assert.Contains("MaxInFlight", ex.Message);
 
         // 复述实例的值放行（与 Proxy / MaxRedirects 同一策略）
-        var ok = await client.GetAsync(server.Url + "x", c => c.Limits.MaxConcurrentRequests = 2);
+        var ok = await client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 2);
         Assert.Equal(200, ok.Status);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public async Task InvalidMaxConcurrentRequests_ThrowsBadOptionValue(int value)
+    public async Task InvalidMaxInFlight_ThrowsBadOptionValue(int value)
     {
         await using var server = SlowServer(delayMs: 0);
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Limits.MaxConcurrentRequests = value));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = value));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -391,7 +391,7 @@ public sealed class ConcurrencyGateTests
         using var client = LimitedClient(maxConcurrency: 1);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Limits.QueueTimeout = TimeSpan.FromMilliseconds(-1)));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromMilliseconds(-1)));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -405,7 +405,7 @@ public sealed class ConcurrencyGateTests
         // 无上限时先跑一条：闸门是「首个受限请求」才建的，不该被这条提前固化
         await client.GetAsync(server.Url + "before");
 
-        client.Defaults.Limits.MaxConcurrentRequests = 1;
+        client.Defaults.Resilience.Concurrency.MaxInFlight = 1;
 
         await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => client.GetAsync(server.Url + "x")));
 
@@ -429,9 +429,9 @@ public sealed class ConcurrencyGateTests
         Assert.Equal(200, replayed.Status);
 
         // 目标实例的闸门仍是 2：可以复述、写 1 会报错
-        await target.GetAsync(server.Url + "x", c => c.Limits.MaxConcurrentRequests = 2);
+        await target.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 2);
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            target.GetAsync(server.Url + "x", c => c.Limits.MaxConcurrentRequests = 1));
+            target.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 1));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
@@ -451,10 +451,10 @@ public sealed class ConcurrencyGateTests
         Assert.Equal(200, replayed.Status);
 
         // 目标闸门仍是 (2, 3)
-        await target.GetAsync(server.Url + "restate", c => c.Limits.MaxQueueLength = 3);
+        await target.GetAsync(server.Url + "restate", c => c.Resilience.Concurrency.MaxQueue = 3);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            target.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = 1));
+            target.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = 1));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
@@ -471,10 +471,10 @@ public sealed class ConcurrencyGateTests
         Assert.Equal(200, (await target.RequestAsync(first.Config!)).Status);
 
         // 目标闸门是 (2, 不限)：显式要「不限」放行，显式写 1 报错
-        await target.GetAsync(server.Url + "y", c => c.Limits.MaxQueueLength = null);
+        await target.GetAsync(server.Url + "y", c => c.Resilience.Concurrency.MaxQueue = null);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            target.GetAsync(server.Url + "z", c => c.Limits.MaxQueueLength = 1));
+            target.GetAsync(server.Url + "z", c => c.Resilience.Concurrency.MaxQueue = 1));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
@@ -489,12 +489,12 @@ public sealed class ConcurrencyGateTests
             Resilience = { Concurrency = {  MaxInFlight = 2  } }
         });
 
-        await client.GetAsync(server.Url + "first", c => c.Limits.MaxQueueLength = 1);
+        await client.GetAsync(server.Url + "first", c => c.Resilience.Concurrency.MaxQueue = 1);
 
         // 后续请求没提排队上限不等于「要求不限」：闸门照用
         await client.GetAsync(server.Url + "plain");
-        await client.GetAsync(server.Url + "concurrency-only", c => c.Limits.MaxConcurrentRequests = 2);
-        await client.GetAsync(server.Url + "restate", c => c.Limits.MaxQueueLength = 1);
+        await client.GetAsync(server.Url + "concurrency-only", c => c.Resilience.Concurrency.MaxInFlight = 2);
+        await client.GetAsync(server.Url + "restate", c => c.Resilience.Concurrency.MaxQueue = 1);
     }
 
     [Fact]
@@ -507,7 +507,7 @@ public sealed class ConcurrencyGateTests
 
         // 显式 null 是「要求不限排队」：与实例级的 1 不一致，照样报错，不能当成「没表态」静默放行
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Limits.MaxQueueLength = null));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = null));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
@@ -530,7 +530,7 @@ public sealed class ConcurrencyGateTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.GetAsync(server.Url + "queued", c =>
             {
-                c.Limits.QueueTimeout = TimeSpan.FromMilliseconds(50);
+                c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromMilliseconds(50);
                 c.Resilience.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.Zero);
                 c.Resilience.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
             }));
@@ -552,7 +552,7 @@ public sealed class ConcurrencyGateTests
 
         await client.GetAsync(server.Url + "warmup");
 
-        client.Defaults.Limits.MaxConcurrentRequests = 4;
+        client.Defaults.Resilience.Concurrency.MaxInFlight = 4;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -567,7 +567,7 @@ public sealed class ConcurrencyGateTests
         await client.GetAsync(server.Url + "warmup");
 
         // 实例默认表过态（1），构造后改成 3 同样撞上已固化的闸门：不能因为「本次没按请求写」就静默放过
-        client.Defaults.Limits.MaxQueueLength = 3;
+        client.Defaults.Resilience.Concurrency.MaxQueue = 3;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);

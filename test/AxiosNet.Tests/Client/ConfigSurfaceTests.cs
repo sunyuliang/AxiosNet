@@ -3,7 +3,7 @@ using AxiosNet.Tests.Infrastructure;
 namespace AxiosNet.Tests.Client;
 
 /// <summary>
-/// 2.0 配置面（六组）：收敛后的合并 / 克隆语义。
+/// 2.0 配置面（七组）：收敛后的合并 / 克隆语义。
 /// <para>
 /// 这里压的是「组搬了位置，语义没变」：同一份状态必须仍然只有一处真源，
 /// 实例级项（序列化器表、格式化钩子）不随库产出的配置搬运。
@@ -16,9 +16,7 @@ public sealed class ConfigSurfaceTests
     {
         var config = new AxiosConfig
         {
-            MaxResponseBytes = 4096,
-            MaxRequestBytes = 2048,
-            MaxStreamFrameBytes = 1024,
+            Limits = { MaxResponseBytes = 4096, MaxRequestBytes = 2048, MaxStreamFrameBytes = 1024 },
             Transport = { MaxRate = 4096, Profile = "backup" },
             Observability = { Capture = TelemetryCapture.Query },
             Serialization = { ValueText = (value, _) => value?.ToString() },
@@ -27,9 +25,9 @@ public sealed class ConfigSurfaceTests
 
         var clone = config.Clone();
 
-        Assert.Equal(4096, clone.MaxResponseBytes);
-        Assert.Equal(2048, clone.MaxRequestBytes);
-        Assert.Equal(1024, clone.MaxStreamFrameBytes);
+        Assert.Equal(4096, clone.Limits.MaxResponseBytes);
+        Assert.Equal(2048, clone.Limits.MaxRequestBytes);
+        Assert.Equal(1024, clone.Limits.MaxStreamFrameBytes);
         Assert.Equal(4096, clone.Transport.MaxRate);
         Assert.Equal("backup", clone.Transport.Profile);
         Assert.Equal(TelemetryCapture.Query, clone.Observability.Capture);
@@ -37,13 +35,13 @@ public sealed class ConfigSurfaceTests
         Assert.True(clone.Resilience.Idempotency.Enabled);
 
         // 改克隆不能回写源：每个叶子都必须落在自己的组实例里。
-        clone.MaxResponseBytes = 9;
+        clone.Limits.MaxResponseBytes = 9;
         clone.Transport.MaxRate = 8;
         clone.Transport.Profile = "other";
         clone.Observability.Capture = TelemetryCapture.Off;
         clone.Resilience.Idempotency.Enabled = false;
 
-        Assert.Equal(4096, config.MaxResponseBytes);
+        Assert.Equal(4096, config.Limits.MaxResponseBytes);
         Assert.Equal(4096, config.Transport.MaxRate);
         Assert.Equal("backup", config.Transport.Profile);
         Assert.Equal(TelemetryCapture.Query, config.Observability.Capture);
@@ -77,7 +75,7 @@ public sealed class ConfigSurfaceTests
     }
 
     [Fact]
-    public void ConcurrencyFacade_WritesTheSameLimitStorage()
+    public void Concurrency_HasItsOwnStorage()
     {
         var config = new AxiosConfig
         {
@@ -92,12 +90,14 @@ public sealed class ConfigSurfaceTests
             }
         };
 
-        Assert.Equal(3, config.Limits.MaxConcurrentRequests);
-        Assert.Equal(7, config.Limits.MaxQueueLength);
-        Assert.Equal(TimeSpan.FromMilliseconds(250), config.Limits.QueueTimeout);
+        Assert.Equal(3, config.Resilience.Concurrency.MaxInFlight);
+        Assert.Equal(7, config.Resilience.Concurrency.MaxQueue);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), config.Resilience.Concurrency.QueueTimeout);
 
-        // 同一份存储：改底层字段，门面读到的就是新值。
-        config.Limits.MaxConcurrentRequests = 5;
+        // 并发三项不再借 Limits 存储：没碰 Limits 时它保持未设置。
+        Assert.Null(config.LimitsOrNull);
+
+        config.Resilience.Concurrency.MaxInFlight = 5;
         Assert.Equal(5, config.Resilience.Concurrency.MaxInFlight);
     }
 

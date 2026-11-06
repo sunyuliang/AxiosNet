@@ -3,7 +3,7 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 在途请求并发闸门（<see cref="AxiosConfig.LimitSettings.MaxConcurrentRequests"/>）：每个 <see cref="AxiosClient"/> 一个。
+/// 在途请求并发闸门（<c>Resilience.Concurrency.MaxInFlight</c>）：每个 <see cref="AxiosClient"/> 一个。
 /// 限速管字节速度，本闸门管同时在途的请求条数；排队可取消、可限深，超时抛 <c>ERR_QUEUE_TIMEOUT</c>，
 /// 队列满抛 <c>ERR_QUEUE_FULL</c>。
 /// </summary>
@@ -22,11 +22,11 @@ internal sealed class ConcurrencyGate
     /// </summary>
     internal static long QueueDepth => Volatile.Read(ref _queued);
 
-    /// <summary>创建闸门并在此时固定上限；<paramref name="maxQueueLength"/> 为 <c>null</c> 表示不限排队深度。</summary>
-    public ConcurrencyGate(int maxConcurrency, int? maxQueueLength = null)
+    /// <summary>创建闸门并在此时固定上限；<paramref name="maxQueue"/> 为 <c>null</c> 表示不限排队深度。</summary>
+    public ConcurrencyGate(int maxConcurrency, int? maxQueue = null)
     {
         MaxConcurrency = maxConcurrency;
-        MaxQueueLength = maxQueueLength;
+        MaxQueue = maxQueue;
         _slots = new SemaphoreSlim(maxConcurrency, maxConcurrency);
     }
 
@@ -34,7 +34,7 @@ internal sealed class ConcurrencyGate
     public int MaxConcurrency { get; }
 
     /// <summary>闸门创建时固定的排队深度上限（<c>null</c> = 不限；之后不再变）。</summary>
-    public int? MaxQueueLength { get; }
+    public int? MaxQueue { get; }
 
     /// <summary>
     /// 取一个并发槽位；返回的租约必须释放（<see cref="IDisposable.Dispose"/> 幂等，重复归还是安全的）。
@@ -106,11 +106,11 @@ internal sealed class ConcurrencyGate
         // 排队容量：先占本地水位再判，保证「放行数 ≤ 上限」在并发下也成立（每个放行者都计入了同一个计数）。
         // 被拒的请求减回去，也不进进程级水位 —— 它没有真的等过。
         var depth = Interlocked.Increment(ref _queuedLocal);
-        if (MaxQueueLength is int maxQueueLength && depth > maxQueueLength)
+        if (MaxQueue is int maxQueue && depth > maxQueue)
         {
             Interlocked.Decrement(ref _queuedLocal);
             AxiosTelemetry.GateRejected(config, AxiosTelemetry.GateRejectQueueFull);
-            throw AxiosException.QueueFull(config, request, maxQueueLength, MaxConcurrency);
+            throw AxiosException.QueueFull(config, request, maxQueue, MaxConcurrency);
         }
 
         // 从这里开始是真的在等：排队深度 +1，无论等到、超时还是被取消都要减回去。

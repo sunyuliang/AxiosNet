@@ -48,14 +48,14 @@ public sealed class ResponseBodyTests
     [Theory]
     [InlineData(4)]    // 恰好等于上限：必须放行（判定是 ≤，不是 <）
     [InlineData(1024)] // 上限远大于正文
-    public async Task MaxContentLength_WithinOrAtLimit_ReturnsBody(int limit)
+    public async Task MaxResponseBytes_WithinOrAtLimit_ReturnsBody(int limit)
     {
         var payload = new byte[] { 1, 2, 3, 4 };
         await using var server = TestHttpServer.Start(_ =>
             new TestResponse(Body: payload, ContentType: "application/octet-stream"));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<byte[]>(server.Url + "small", c => c.Limits.MaxContentLength = limit);
+        var response = await client.GetAsync<byte[]>(server.Url + "small", c => c.Limits.MaxResponseBytes = limit);
 
         Assert.Equal(payload, response.Data);
     }
@@ -63,7 +63,7 @@ public sealed class ResponseBodyTests
     [Theory]
     [InlineData(4, 3)]      // 边界：只超 1 字节也要拒（判定是 >，不是 >=）
     [InlineData(4096, 1024)]
-    public async Task MaxContentLength_DeclaredLengthExceedsLimit_RejectsWithLimitError(int size, int limit)
+    public async Task MaxResponseBytes_DeclaredLengthExceedsLimit_RejectsWithLimitError(int size, int limit)
     {
         var payload = new byte[size];
         await using var server = TestHttpServer.Start(_ =>
@@ -71,10 +71,10 @@ public sealed class ResponseBodyTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<byte[]>(server.Url + "big", c => c.Limits.MaxContentLength = limit));
+            client.GetAsync<byte[]>(server.Url + "big", c => c.Limits.MaxResponseBytes = limit));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
-        Assert.Contains("maxContentLength", ex.Message);
+        Assert.Contains("MaxResponseBytes", ex.Message);
         Assert.Single(server.Received);
 
         // 状态与响应头已经到手：错误里必须能读到响应上下文（流式消费期的错误才是例外）。
@@ -84,7 +84,7 @@ public sealed class ResponseBodyTests
     }
 
     [Fact]
-    public async Task MaxContentLength_DeclaredLengthExceedsLimit_StreamResponseRejectsBeforeReturning()
+    public async Task MaxResponseBytes_DeclaredLengthExceedsLimit_StreamResponseRejectsBeforeReturning()
     {
         // responseType=Stream 的判据不同：拒绝必须发生在「把响应交回调用方」之前。
         // 只靠读时计数是过不了这条的——那样调用方已经拿到流，上限要等它自己去读才炸（此前已当成功）。
@@ -93,26 +93,26 @@ public sealed class ResponseBodyTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync<Stream>(server.Url + "big", c => c.Limits.MaxContentLength = 1024));
+            client.GetAsync<Stream>(server.Url + "big", c => c.Limits.MaxResponseBytes = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
-        Assert.Contains("maxContentLength", ex.Message);
+        Assert.Contains("MaxResponseBytes", ex.Message);
 
         // 拒绝发生在交回流之前，状态码与响应头已经拿到。
         Assert.NotNull(ex.Response);
         Assert.Equal(200, ex.Response!.Status);
     }
 
-    // 流式响应也执行 maxContentLength（含未声明长度的 chunked）
+    // 流式响应也执行 Limits.MaxResponseBytes（含未声明长度的 chunked）
 
     [Fact]
-    public async Task StreamingResponse_WithoutDeclaredLength_EnforcesMaxContentLength()
+    public async Task StreamingResponse_WithoutDeclaredLength_EnforcesMaxResponseBytes()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[64 * 1024], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024);
+        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.Limits.MaxResponseBytes = 1024);
         await using var stream = response.Data!;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => stream.CopyToAsync(Stream.Null));
@@ -124,13 +124,13 @@ public sealed class ResponseBodyTests
     }
 
     [Fact]
-    public async Task BufferedResponse_WithoutDeclaredLength_EnforcesMaxContentLength()
+    public async Task BufferedResponse_WithoutDeclaredLength_EnforcesMaxResponseBytes()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[64 * 1024], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(server.Url + "chunked", c => c.Limits.MaxContentLength = 1024));
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(server.Url + "chunked", c => c.Limits.MaxResponseBytes = 1024));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
 
@@ -144,14 +144,14 @@ public sealed class ResponseBodyTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task StreamResponse_ReadByte_EnforcesMaxContentLength()
+    public async Task StreamResponse_ReadByte_EnforcesMaxResponseBytes()
     {
         // chunked：服务端不声明长度，上限只能靠「边读边计数」生效
         await using var server = TestHttpServer.Start(_ => new TestResponse(Body: new byte[64], ContentType: "application/octet-stream", Chunked: true));
 
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.Limits.MaxContentLength = 4);
+        var response = await client.GetAsync<Stream>(server.Url + "chunked", c => c.Limits.MaxResponseBytes = 4);
         await using var stream = response.Data!;
 
         // ReadByte 不覆写，靠基类换算成 Read(byte[],int,int)：必须落到同一条计数路径上
@@ -211,7 +211,7 @@ public sealed class ResponseBodyTests
     }
 
     [Fact]
-    public async Task DeclaredLength_ShorterThanBody_StillEnforcesMaxContentLength()
+    public async Task DeclaredLength_ShorterThanBody_StillEnforcesMaxResponseBytes()
     {
         var payload = Payload(200_000, seed: 4);
         using var client = new AxiosClient(handler: new BodyHandler(payload, declaredLength: 1024));
@@ -222,11 +222,11 @@ public sealed class ResponseBodyTests
             c =>
             {
                 c.ResponseType = ResponseType.ArrayBuffer;
-                c.Limits.MaxContentLength = 4096;
+                c.Limits.MaxResponseBytes = 4096;
             }));
 
         Assert.Equal(AxiosException.ErrBadResponse, error.Code);
-        Assert.Contains("maxContentLength", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MaxResponseBytes", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

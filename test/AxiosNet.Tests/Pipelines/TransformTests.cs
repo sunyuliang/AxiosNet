@@ -309,7 +309,7 @@ public sealed class TransformTests
 
         // 调用方 new 的 config（非库产出）：两次追加与默认链同引用的委托是「有意重复」，
         // 合并后应执行 3 次（默认 1 + 本次 2）—— 去重只覆盖 perCall 登记的继承段。
-        var config = new AxiosConfig { Data = new { x = 1 } };
+        var config = new AxiosConfig { Body = new { x = 1 } };
         config.Serialization.TransformRequest.Add(log);
         config.Serialization.TransformRequest.Add(log);
         await client.PostAsync("http://localhost/a", config);
@@ -359,7 +359,7 @@ public sealed class TransformTests
         var response = await client.RequestAsync(new AxiosConfig
         {
             Url = "http://localhost/a",
-            Data = new { x = 1 }
+            Body = new { x = 1 }
         });
         Assert.Equal(1, calls);
 

@@ -185,9 +185,9 @@ public sealed class MultipartBindingTests
                 Extra = new byte[] { 2 },
                 Tags = new Dictionary<string, string> { ["k"] = "v" }
             },
-            c => seen = c.Data);
+            c => seen = c.Body);
 
-        // 公开的 config.Data 里不能出现内部包装：有声明的部件也只登记覆盖，值保持原样
+        // 公开的 config.Body 里不能出现内部包装：有声明的部件也只登记覆盖，值保持原样
         var data = Assert.IsAssignableFrom<IDictionary<string, object?>>(seen);
         Assert.Equal("t", data["Title"]);
         Assert.IsType<byte[]>(data["Blob"]);
@@ -274,7 +274,7 @@ public sealed class MultipartBindingTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        // 装配期（config.Data 已只剩表单）失败也要能指出是哪个请求模型，而不是内部容器类型名
+        // 装配期（config.Body 已只剩表单）失败也要能指出是哪个请求模型，而不是内部容器类型名
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.RequestAsync(new LazyThrowingPartRequest()));
 
@@ -663,7 +663,7 @@ public sealed class MultipartBindingTests
     [Multipart]
     private sealed class LazyThrowingPartRequest : IApiRequest<object>
     {
-        /// <summary>装配到这一项才枚举并抛错：失败发生在 builder 里，config.Data 已只剩表单。</summary>
+        /// <summary>装配到这一项才枚举并抛错：失败发生在 builder 里，config.Body 已只剩表单。</summary>
         public IEnumerable<int> Values => ThrowingValues();
 
         private static IEnumerable<int> ThrowingValues()

@@ -277,7 +277,7 @@ public sealed class SendingRequestHookTests
     }
 
     [Fact]
-    public async Task BodyReplacement_StillObeysMaxBodyLength()
+    public async Task BodyReplacement_StillObeysMaxRequestBytes()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
@@ -285,7 +285,7 @@ public sealed class SendingRequestHookTests
         // 模板正文 {"a":1} 只有 7 字节，10 的上限能放行；钩子换成 100 字节后必须重新校验。
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync("x", new { a = 1 }, c =>
         {
-            c.Limits.MaxBodyLength = 10;
+            c.Limits.MaxRequestBytes = 10;
             c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Content = new ByteArrayContent(new byte[100]);

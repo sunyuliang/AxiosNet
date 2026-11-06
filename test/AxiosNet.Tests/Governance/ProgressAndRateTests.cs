@@ -207,12 +207,12 @@ public sealed class ProgressAndRateTests
         Assert.Equal(
             AxiosException.ErrBadOptionValue,
             (await Assert.ThrowsAsync<AxiosException>(() =>
-                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxContentLength = -1))).Code);
+                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxResponseBytes = -1))).Code);
 
         Assert.Equal(
             AxiosException.ErrBadOptionValue,
             (await Assert.ThrowsAsync<AxiosException>(() =>
-                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxBodyLength = -1))).Code);
+                client.GetAsync("http://127.0.0.1:1/x", c => c.Limits.MaxRequestBytes = -1))).Code);
     }
 
     [Fact]

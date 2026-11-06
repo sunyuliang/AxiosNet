@@ -228,7 +228,7 @@ await http.PostAsync<UploadResult>("ingest", ReadChunks(file), c =>
 });
 ```
 
-- **Unknown length**: nothing is pre-read and no total is computed; the transport uses `Transfer-Encoding: chunked` (HTTP/1.1; under the default policy plain `http://` falls back to 1.1) or HTTP/2 DATA frames. Consequently `MaxRequestBytes` cannot stop it — that cap only applies to bodies with a computable length.
+- **Unknown length**: nothing is pre-read and no total is computed; the transport uses `Transfer-Encoding: chunked` (HTTP/1.1; under the default policy plain `http://` falls back to 1.1) or HTTP/2 DATA frames. Consequently `Limits.MaxRequestBytes` cannot stop it — that cap only applies to bodies with a computable length.
 - **Single use**: the sequence cannot be rewound, so enabling retries or backup endpoints throws `ERR_BAD_OPTION_VALUE` **before sending** (turn them off when you do not need resends). Concurrent hedging does not throw: it only kicks in when the body can be replayed concurrently (in-memory buffers), so a streaming body is simply sent once. For replayable bodies use `byte[]` or a seekable stream.
 - **Chunk size is yours**: each chunk is written as-is, never split or merged; 64–256 KB is the usual sweet spot, and tiny chunks amplify the chunked-framing overhead.
 - **Byte chunks only**: an `IAsyncEnumerable<T>` (say `IAsyncEnumerable<Order>`) is not a body and fails with `ERR_BAD_OPTION_VALUE` plus guidance; write JSON arrays to a `Stream` or `byte[]` first.
@@ -301,7 +301,7 @@ await foreach (var order in pages.Data!)
 ```
 
 - **Timeout**: headers and body share one budget — streaming body reads count against `Timeout` too (or against the remaining `Resilience.TotalTimeout` when set), so a body that runs past it fails with `ECONNABORTED`. With no timeout configured the body is unbounded; exit via a cancellation token.
-- **Frame cap**: 8 MB default, valid range 1–64 MB (`MaxStreamFrameBytes`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap.
+- **Frame cap**: 8 MB default, valid range 1–64 MB (`Limits.MaxStreamFrameBytes`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap.
 - **Encoding**: NDJSON / SSE require an ASCII-compatible charset, wide-char encodings throw `ERR_BAD_RESPONSE` when taking the stream; `JsonArray` must be UTF-8. A UTF-8 BOM is skipped.
 - **Ownership**: the stream can be enumerated once; `await foreach` (including `break`) disposes it, manual `MoveNextAsync` callers must `DisposeAsync` themselves.
 - **Errors**: status errors throw at `await`; frame parse failures are `ERR_BAD_RESPONSE`, mid-stream disconnects `ERR_NETWORK`, cancellation `ERR_CANCELED`.
@@ -318,7 +318,7 @@ await client.PostAsync(url, data, c => c.Compression = AxiosCompression.None);  
 ```
 
 - Algorithms: `Gzip` / `Deflate` / `Brotli` (`br`), always at `CompressionLevel.Fastest` — HTTP is usually network-bound, so saving CPU beats squeezing the last byte. `Deflate` emits the RFC 1950 zlib wrapper (which is what RFC 7230 means by `deflate`), not raw DEFLATE — Java / Tomcat and most gateways only accept zlib.
-- Only bodies the library buffers as bytes are compressed: objects / primitives / `string` / `byte[]` / `Memory<byte>` / form encoding. `Content-Length` (and the `MaxRequestBytes` check) then reflect the compressed size.
+- Only bodies the library buffers as bytes are compressed: objects / primitives / `string` / `byte[]` / `Memory<byte>` / form encoding. `Content-Length` (and the `Limits.MaxRequestBytes` check) then reflect the compressed size.
 - Rejected with `ERR_BAD_OPTION_VALUE`: `Stream` and streaming bodies (no full length to compress — compress upstream instead), caller-supplied `HttpContent` (encoding belongs to the content), multipart (parts may stream files), and a hand-written `Content-Encoding` header (mutually exclusive with `Compression`).
 - The server must decompress request bodies by `Content-Encoding` itself (ASP.NET Core and most frameworks don't do it by default); don't enable this against a peer that can't.
 
@@ -366,8 +366,8 @@ await http.PostAsync("upload", payload, c =>
     c.Observability.OnUploadProgress   = e => Console.WriteLine($"↑ {e.Progress:P0} {e.Rate / 1024:F1} KB/s ETA {e.Estimated}");
     c.Observability.OnDownloadProgress = e => Console.WriteLine($"↓ {e.Progress:P0} {e.Rate / 1024:F1} KB/s");
     c.Transport.MaxRate = 1024 * 1024;                 // 1 MB/s per direction
-    c.MaxRequestBytes = 50 * 1024 * 1024;      // request body cap, checked before sending
-    c.MaxResponseBytes = 10 * 1024 * 1024;   // response body cap, counted while reading
+    c.Limits.MaxRequestBytes = 50 * 1024 * 1024;      // request body cap, checked before sending
+    c.Limits.MaxResponseBytes = 10 * 1024 * 1024;   // response body cap, counted while reading
 });
 ```
 
@@ -375,10 +375,10 @@ await http.PostAsync("upload", payload, c =>
 
 - Callbacks run **synchronously**; offload expensive work yourself. Reports are throttled to one per 50 ms.
 - A throwing callback aborts the request: upload phase → `ERR_BAD_REQUEST`, download phase → `ERR_BAD_RESPONSE`, original exception in `Cause`.
-- `MaxContentLength`: plain responses are counted while reading and aborted on overflow; `ResponseType.Stream` pre-checks the declared length and keeps counting while reading.
-- `MaxContentLength` defaults to `null` (unlimited, matching axios's `maxContentLength = -1`) and the library emits no warning or log about it: a buffered response (anything other than `ResponseType.Stream`) holds the whole body in memory, so set an explicit cap in production for untrusted or unknown-size downstreams.
-- `Content-Length` is a hint, never a cut-off: when the declared value is shorter than the real body (rewritten by a proxy, a custom `HttpContent`, or a handler that does not truncate), the body is still read to the end — no tail loss and no bypass of `MaxContentLength`.
-- `MaxBodyLength` only applies when the body length is computable (JSON / form / `byte[]` / seekable stream); multipart and unknown-length bodies (non-seekable streams, `IAsyncEnumerable`) are not intercepted.
+- `Limits.MaxResponseBytes`: plain responses are counted while reading and aborted on overflow; `ResponseType.Stream` pre-checks the declared length and keeps counting while reading.
+- `Limits.MaxResponseBytes` defaults to `null` (unlimited, matching axios's `maxContentLength = -1`) and the library emits no warning or log about it: a buffered response (anything other than `ResponseType.Stream`) holds the whole body in memory, so set an explicit cap in production for untrusted or unknown-size downstreams.
+- `Content-Length` is a hint, never a cut-off: when the declared value is shorter than the real body (rewritten by a proxy, a custom `HttpContent`, or a handler that does not truncate), the body is still read to the end — no tail loss and no bypass of `Limits.MaxResponseBytes`.
+- `Limits.MaxRequestBytes` only applies when the body length is computable (JSON / form / `byte[]` / seekable stream); multipart and unknown-length bodies (non-seekable streams, `IAsyncEnumerable`) are not intercepted.
 - Negative values throw `ERR_BAD_OPTION_VALUE`; `MaxRate = 0` means unlimited.
 - `MaxRate` timing starts at the **first transferred byte**: the gap between receiving the response and starting to read (thread pool queueing, doing other work first) is not treated as spent budget, so reading later never loosens the cap.
 
@@ -408,7 +408,7 @@ await client.PostAsync<OrderResult>("orders", order, c =>
 - Rewrites apply to that one send: the library clones the message for the attempt before firing (sharing the body), so headers written on the first attempt are not copied into later attempts.
 - Cost of reading the body: buffered bodies (JSON / form / `byte[]` / `string`) hand over their bytes directly; streaming bodies (`IAsyncEnumerable<byte[]>` or a non-seekable `Stream`) get consumed, and a body wrapped for progress / rate limiting is serialized a second time — for signing, stick to buffered bodies or sign the headers only.
 - A thrown exception aborts the request (`ERR_BAD_REQUEST`, original exception in `Cause`) without leasing a connection, so nothing is sent; cancellation / timeout thrown by the hook is attributed to the attempt (`ERR_CANCELED` / `ECONNABORTED`).
-- A body swapped in by the hook still obeys `MaxRequestBytes`: if its length is known and over the cap, it is rejected with `ERR_BAD_REQUEST` (bodies of unknown length are not intercepted, as described under size caps above).
+- A body swapped in by the hook still obeys `Limits.MaxRequestBytes`: if its length is known and over the cap, it is rejected with `ERR_BAD_REQUEST` (bodies of unknown length are not intercepted, as described under size caps above).
 - A per-request value replaces the instance default, like every other `Observability` item.
 
 ### Raw response bytes
@@ -505,8 +505,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | Triggered by |
 | --- | --- |
-| `ERR_BAD_REQUEST` | 4xx; request body larger than `MaxBodyLength`; request body serialization failure; upload progress callback threw; declarative request assembly failure (path / query / header / body read or formatting) |
-| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `MaxContentLength`; generic argument vs `ResponseType` mismatch; download progress callback, raw response callback or `transformResponse` threw |
+| `ERR_BAD_REQUEST` | 4xx; request body larger than `Limits.MaxRequestBytes`; request body serialization failure; upload progress callback threw; declarative request assembly failure (path / query / header / body read or formatting) |
+| `ERR_BAD_RESPONSE` | 5xx; response cannot be deserialized into the target type; body larger than `Limits.MaxResponseBytes`; generic argument vs `ResponseType` mismatch; download progress callback, raw response callback or `transformResponse` threw |
 | `ECONNABORTED` | `Timeout` exceeded (including the streaming body phase), or the `Resilience.TotalTimeout` budget is exhausted |
 | `ERR_NETWORK` | Connection refused / DNS failure / connection dropped / truncated body |
 | `ERR_CANCELED` | `CancellationToken` cancelled, or the client was disposed |
@@ -539,7 +539,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 
 ## Configuration
 
-`AxiosConfig` top level is the request itself; everything else is grouped into five sub-objects: `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`. Instance defaults and per-request overrides use the same properties.
+`AxiosConfig` top level is the request itself (13 configurable leaves); everything else is grouped into six groups: `Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`. That is 7 groups and 70 leaves in total (13 + 3 + 9 + 19 + 10 + 6 + 10); each leaf has exactly one storage field, one doc comment and one entry point, and instance defaults and per-request overrides use the same properties.
 
 ### Configuration reference
 
@@ -561,12 +561,19 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |
 | `ShortCircuit` | `null` | Deliver a response without sending (this request only) |
 | `ValidateStatus` | `null` (2xx) | Returning `false` throws `AxiosException` |
-| `MaxResponseBytes` | `null` (unlimited) | Response body cap, counted while reading (was `MaxContentLength`) |
-| `MaxRequestBytes` | `null` (unlimited) | Request body cap, checked before sending (was `MaxBodyLength`) |
-| `MaxStreamFrameBytes` | `null` (= 8 MB) | Streaming frame cap, valid range 1–64 MB (was `MaxStreamFrameLength`) |
-| `Caching` | `null` | Response cache (`AxiosCache`): hits send nothing and are reused across requests |
+| `Caching` | `null` | Response cache (`AxiosCache`): hits send nothing and are reused across requests (options live in `AxiosCacheOptions`) |
 
-Four sub-objects (created lazily on first access):
+> `Response` is read-only outside the response phase, and `Caching` is a group entry (its `AxiosCacheOptions` hold 10 leaves); neither counts toward the 13 top-level configurable leaves.
+
+`Limits` sub-object (body and frame caps, the single entry point for all three; created lazily on first access):
+
+| Member | Default | Notes |
+| --- | --- | --- |
+| `Limits.MaxResponseBytes` | `null` (unlimited) | Response body cap, counted while reading (was `Limits.MaxContentLength`) |
+| `Limits.MaxRequestBytes` | `null` (unlimited) | Request body cap, checked before sending (was `Limits.MaxBodyLength`) |
+| `Limits.MaxStreamFrameBytes` | `null` (= 8 MB) | Streaming frame cap, valid range 1–64 MB (was `Limits.MaxStreamFrameLength`) |
+
+The other four sub-objects (created lazily on first access):
 
 | Sub-object | Key members (default / notes) |
 | --- | --- |
@@ -2069,7 +2076,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | `auth: { username, password }` | `c.Transport.BasicAuth = new AxiosAuth(user, pass)` |
 | — (token refresh / 401 replay needs a hand-written interceptor) | Declarative `ApiClient.CredentialProvider` + `AccessTokenManager` (auto refresh / 401 replay) |
 | `withCredentials` / `proxy` / `maxRedirects` | Same-named properties on `Transport` (instance-level) |
-| `maxContentLength` / `maxBodyLength` / `maxRate` | top-level `MaxResponseBytes` / `MaxRequestBytes` / `Transport.MaxRate` |
+| `maxContentLength` / `maxBodyLength` / `maxRate` | `Limits.MaxResponseBytes` / `Limits.MaxRequestBytes` / `Transport.MaxRate` |
 | `onUploadProgress` / `onDownloadProgress` / `timeoutMessage` | Same-named properties on `Observability` |
 | `paramsSerializer` / `formSerializer` | `Serialization.QueryEncoder` / `Serialization.FormFieldName` |
 | `transformRequest` / `transformResponse` | Same-named properties |
@@ -2246,7 +2253,7 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 
 | Folder | What it covers |
 | --- | --- |
-| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the ten sub-objects |
+| `Client/` | Static facade `Axios`, instance options and defaults, default headers, config merging and the six config groups |
 | `Requests/` | URLs and params, request bodies (JSON / form / multipart), response parsing and buffering, streaming, timeouts and cancellation, Content-Type parsing |
 | `Governance/` | Concurrency gate, progress callbacks and rate limiting |
 | `Resilience/` | Retry policies and timing, whole-request budget (`Resilience.TotalTimeout`), circuit-breaker state machine, short circuits |
@@ -2325,7 +2332,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  ├─ AxiosNet/                       # library (dual target net6.0 / net8.0)
 │  │  ├─ Axios.cs                     # static facade
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
-│  │  ├─ AxiosConfig*.cs              # configuration (top level + ten sub-objects)
+│  │  ├─ AxiosConfig*.cs              # configuration (top level + six groups)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
 │  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs (top-level public types)
@@ -2368,20 +2375,26 @@ Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAP
 | --- | --- |
 | `Callbacks` | `Observability` + top-level `ValidateStatus` |
 | `Connection` | `Transport` |
-| `Limits` | top-level `MaxResponseBytes` / `MaxRequestBytes` / `MaxStreamFrameBytes` + `Resilience.Concurrency` |
+| `Limits` | stays a public group (a real group): three leaves under `Limits` — `MaxResponseBytes` / `MaxRequestBytes` / `MaxStreamFrameBytes`; `MaxRate` → `Transport.MaxRate`, the three concurrency items → `Resilience.Concurrency` |
+| `Limits.MaxBodyLength` / `MaxContentLength` / `MaxStreamFrameLength` | `Limits.MaxRequestBytes` / `Limits.MaxResponseBytes` / `Limits.MaxStreamFrameBytes` |
+| `Limits.MaxRate` | `Transport.MaxRate` |
+| `Limits.MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` | `Resilience.Concurrency.MaxInFlight` / `MaxQueue` / `QueueTimeout` |
+| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `BasicAuth` / `Profile` |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
 | top-level `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
 | `Cache` | `Caching` |
 | `Data` | `Body` |
 | `RequestCompression` | `Compression` |
 | `ValueFormatter` | `Serialization.ValueText` |
-| `ContentSerializers` | `Serialization.BodySerializers` |
+| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` / `client.BodySerializers` |
+| `Serialization.ContentSerializer` | removed; use `Serialization.BodySerializers.Default` or the global `AxiosContent.Serializer` / `Register` |
 | `RequestEncoding` / `ResponseEncoding` | `Serialization.TextEncoding` |
 | `ParamsSerializer` | `Serialization.QueryEncoder` |
 | `FormFieldNameSelector` | `Serialization.FormFieldName` |
 | `JsonSerializerOptions` | `Serialization.JsonOptions` |
 | `RetryNonIdempotentMethods` / `HedgeNonIdempotentMethods` | `Resilience.AllowUnsafeRetry` (the only switch for non-idempotent methods) |
 | `RemoveHeaders` | no longer public |
+| `AxiosConfig.LimitSettings` (public nested type) | becomes the public real group `AxiosConfig.LimitsSettings` (reached via `AxiosConfig.Limits`; both the type name and the access path changed); default-value constants stay on `AxiosConfig.DefaultStreamFrameBytes` / `MinStreamFrameBytes` / `MaxStreamFrameBytesLimit` |
 | — | new `Axios.Create(baseAddress)` and `client.Create<T>()` |
 
 `AxiosNet.WebAPI` is still part of the same package: there is no separate package, and the declarative extension methods only need `using AxiosNet.WebAPI;`; use `AxiosNetOmitWebApi` to leave it out of the build when needed.

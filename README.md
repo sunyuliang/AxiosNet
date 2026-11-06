@@ -228,7 +228,7 @@ await http.PostAsync<UploadResult>("ingest", ReadChunks(file), c =>
 });
 ```
 
-- **长度未知**：不预读、不算总长，传输层按 `Transfer-Encoding: chunked`（HTTP/1.1；默认策略下明文 `http://` 落在 1.1）或 HTTP/2 DATA 帧发送。因此 `MaxRequestBytes` 拦不住它——该上限只对能算出长度的正文生效。
+- **长度未知**：不预读、不算总长，传输层按 `Transfer-Encoding: chunked`（HTTP/1.1；默认策略下明文 `http://` 落在 1.1）或 HTTP/2 DATA 帧发送。因此 `Limits.MaxRequestBytes` 拦不住它——该上限只对能算出长度的正文生效。
 - **一次性**：序列被消费后无法回拨，所以开启重试或备用端点时在**发出前**抛 `ERR_BAD_OPTION_VALUE`（不需要重发就关掉它们）。并发对冲不报错：它只在正文能安全并发重放（内存缓冲）时才生效，流式正文按单次发送处理。要可重放，请改用 `byte[]` 或可 seek 的流。
 - **块大小由调用方定**：库把每块原样写出，不再切分或合并；64–256 KB 是常见甜点，过小的块会放大 chunked 框架自身开销。
 - **只认字节块**：`IAsyncEnumerable<T>`（如 `IAsyncEnumerable<Order>`）不是正文，直接报 `ERR_BAD_OPTION_VALUE` 并给出指引；要发 JSON 数组请先写成 `Stream` 或 `byte[]`。
@@ -270,7 +270,7 @@ await File.WriteAllBytesAsync(@"D:\downloads\icon.png", bytes);
 - 流**必须释放**：读完或释放后连接才回池；只读一半就释放，这条 TCP 连接会被丢弃。
 - 下载期间该 origin 的租约保持占用，空闲驱逐不会打断长下载。
 - 流式请求遇非 2xx 会立即丢弃响应体并归还连接（`ex.Response.Data` 为 `null`，`Status` / `Headers` 仍可用）。
-- **错误里的响应上下文**：只要状态码与响应头已到手——5xx、反序列化失败、`MaxContentLength` 声明预检 / 段式超限、`ResponseTooLarge`、`OnRawResponse` / `OnDownloadProgress` 回调失败、短路正文超限——`AxiosException.Response` 都非 `null`。例外是流式消费期（`ReadAsync` 返回后调用方自己读流时触发的上限错误），这时没有上下文可补，`Response` 保持 `null`。
+- **错误里的响应上下文**：只要状态码与响应头已到手——5xx、反序列化失败、`Limits.MaxResponseBytes` 声明预检 / 段式超限、`ResponseTooLarge`、`OnRawResponse` / `OnDownloadProgress` 回调失败、短路正文超限——`AxiosException.Response` 都非 `null`。例外是流式消费期（`ReadAsync` 返回后调用方自己读流时触发的上限错误），这时没有上下文可补，`Response` 保持 `null`。
 
 ### 流式响应
 
@@ -302,7 +302,7 @@ await foreach (var order in pages.Data!)
 ```
 
 - **超时**：正文与响应头共用同一份预算——流式响应的正文读取也计入 `Timeout`（`Resilience.TotalTimeout` 生效时是它的剩余额度），读到一半到点即 `ECONNABORTED`；不设超时时正文不限时，靠取消令牌退出。
-- **单帧上限**：默认 8 MB，合法 1–64 MB（`MaxStreamFrameBytes`），越界发送前抛 `ERR_BAD_OPTION_VALUE`。没有「不限制」语义，峰值内存约为上限的 2–4 倍。
+- **单帧上限**：默认 8 MB，合法 1–64 MB（`Limits.MaxStreamFrameBytes`），越界发送前抛 `ERR_BAD_OPTION_VALUE`。没有「不限制」语义，峰值内存约为上限的 2–4 倍。
 - **编码**：NDJSON / SSE 要求 ASCII 兼容 charset，宽字符编码取流时报 `ERR_BAD_RESPONSE`；`JsonArray` 必须 UTF-8。UTF-8 BOM 会跳过。
 - **SSE 空帧**：`:` 心跳与空 `data:` 一并跳过——单条空 `data:` 不产生事件；多条 `data:` 以 LF 连接，首条为空时不补前导 LF（SSE 在本库只用于 JSON 反序列化，空事件本来也无法交付）。
 - **所有权**：流只能枚举一次；`await foreach` 结束或 `break` 自动释放，手动 `MoveNextAsync` 需自己 `DisposeAsync`。
@@ -320,7 +320,7 @@ await client.PostAsync(url, data, c => c.Compression = AxiosCompression.None);  
 ```
 
 - 算法：`Gzip` / `Deflate` / `Brotli`（`br`），压缩级别固定 `Fastest`——HTTP 的瓶颈通常在网络，省 CPU 比压到最小更划算。`Deflate` 发的是 RFC 1950 的 zlib 包装（RFC 7230 里的 `deflate` 指的就是它），不是裸 DEFLATE：Java / Tomcat 与多数网关只认 zlib。
-- 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`MaxRequestBytes` 也按压缩后字节数校验。
+- 只作用于**库按字节缓冲出来的正文**：对象 / 标量 / `string` / `byte[]` / `Memory<byte>` / 表单编码。压缩后 `Content-Length` 是压缩后长度，`Limits.MaxRequestBytes` 也按压缩后字节数校验。
 - 拒绝（`ERR_BAD_OPTION_VALUE`）：`Stream` 与流式正文（没有完整长度可压，要压缩请先压好再传）、调用方自带的 `HttpContent`（压缩与编码归内容自己）、multipart（部件里可能含流式文件）、以及同时手写 `Content-Encoding` 头（与 `Compression` 二选一）。
 - 服务端必须自己按 `Content-Encoding` 解压请求体（ASP.NET Core 等框架默认不解压请求体）；对端不支持时不要开启。
 
@@ -369,8 +369,8 @@ await http.PostAsync("upload", payload, c =>
     c.Observability.OnUploadProgress   = e => Console.WriteLine($"↑ {e.Progress:P0} {e.Rate / 1024:F1} KB/s 剩余 {e.Estimated}");
     c.Observability.OnDownloadProgress = e => Console.WriteLine($"↓ {e.Progress:P0} {e.Rate / 1024:F1} KB/s");
     c.Transport.MaxRate = 1024 * 1024;                 // 单向限速 1 MB/s
-    c.MaxRequestBytes = 50 * 1024 * 1024;      // 请求体上限，发送前拦截
-    c.MaxResponseBytes = 10 * 1024 * 1024;   // 响应体上限，边读边计数
+    c.Limits.MaxRequestBytes = 50 * 1024 * 1024;      // 请求体上限，发送前拦截
+    c.Limits.MaxResponseBytes = 10 * 1024 * 1024;   // 响应体上限，边读边计数
 });
 ```
 
@@ -378,10 +378,10 @@ await http.PostAsync("upload", payload, c =>
 
 - 回调**同步**执行，耗时逻辑自行转后台；报告节流 50 ms 一次。
 - 回调抛异常会中断请求：上传阶段 `ERR_BAD_REQUEST`、下载阶段 `ERR_BAD_RESPONSE`，原异常在 `Cause`。
-- `MaxContentLength`：普通响应边读边累计越界即中止；`ResponseType.Stream` 先按声明长度预检，再读取时累计。
-- `MaxContentLength` 默认 `null`（不限，与 axios 的 `maxContentLength = -1` 同口径），库不会为此发告警或日志：缓冲型响应（非 `ResponseType.Stream`）会把整个正文读进内存，对不可信或体量未知的下游，生产环境请显式设上限。
-- `Content-Length` 只是提示，不是截断依据：声明值比实际正文短时（代理改头、自定义 `HttpContent`、注入的 Handler 不按声明截断）照样读到流结束，既不丢尾部也不算漏 `MaxContentLength`。
-- `MaxBodyLength` 只对能算出长度的正文生效（JSON / 表单 / `byte[]` / 可 seek 流）；multipart 与长度未知的正文（不可 seek 的流、`IAsyncEnumerable` 异步序列）不拦截。
+- `Limits.MaxResponseBytes`：普通响应边读边累计越界即中止；`ResponseType.Stream` 先按声明长度预检，再读取时累计。
+- `Limits.MaxResponseBytes` 默认 `null`（不限，与 axios 的 `maxContentLength = -1` 同口径），库不会为此发告警或日志：缓冲型响应（非 `ResponseType.Stream`）会把整个正文读进内存，对不可信或体量未知的下游，生产环境请显式设上限。
+- `Content-Length` 只是提示，不是截断依据：声明值比实际正文短时（代理改头、自定义 `HttpContent`、注入的 Handler 不按声明截断）照样读到流结束，既不丢尾部也不算漏 `Limits.MaxResponseBytes`。
+- `Limits.MaxRequestBytes` 只对能算出长度的正文生效（JSON / 表单 / `byte[]` / 可 seek 流）；multipart 与长度未知的正文（不可 seek 的流、`IAsyncEnumerable` 异步序列）不拦截。
 - 负值一律 `ERR_BAD_OPTION_VALUE`；`MaxRate = 0` 等于不限速。
 - `MaxRate` 的计时从**实际传输首字节**起算：拿到响应到开始读之间的空档（线程排队、业务先做别的事）不算已消耗预算，晚读不会让限速变松。
 
@@ -411,7 +411,7 @@ await client.PostAsync<OrderResult>("orders", order, c =>
 - 改写只作用于本次发送：库在触发前给本次尝试复制一份请求消息（正文共享），第一次尝试写进头里的内容不会被后续尝试复制叠加。
 - 读正文的代价：已缓冲的正文（JSON / 表单 / `byte[]` / `string`）直接取字节；流式请求体（`IAsyncEnumerable<byte[]>`、不可 seek 的 `Stream`）会被读走，包了进度 / 限速的内容会再序列化一遍 —— 签名这类场景请只对已缓冲的正文下手，或只签请求头。
 - 抛异常即中断请求（`ERR_BAD_REQUEST`，原异常在 `Cause`），此时不占连接、请求没有发出；钩子里抛出的取消 / 超时按本次尝试归属（`ERR_CANCELED` / `ECONNABORTED`）。
-- 钩子换掉正文同样受 `MaxRequestBytes` 约束：换上的内容长度已知且超限时按 `ERR_BAD_REQUEST` 拒绝（长度未知的正文同上面 大小上限所述，不拦截）。
+- 钩子换掉正文同样受 `Limits.MaxRequestBytes` 约束：换上的内容长度已知且超限时按 `ERR_BAD_REQUEST` 拒绝（长度未知的正文同上面 大小上限所述，不拦截）。
 - 按请求设置会整体覆盖实例默认，与其余 `Observability` 项一致。
 
 ### 原始响应字节
@@ -508,8 +508,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 
 | Code | 触发场景 |
 | --- | --- |
-| `ERR_BAD_REQUEST` | 4xx；请求体超 `MaxBodyLength`；请求体序列化失败；上传进度回调抛异常；声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化） |
-| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `MaxContentLength`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调 / `transformResponse` 抛异常 |
+| `ERR_BAD_REQUEST` | 4xx；请求体超 `Limits.MaxRequestBytes`；请求体序列化失败；上传进度回调抛异常；声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化） |
+| `ERR_BAD_RESPONSE` | 5xx；响应无法反序列化为目标类型；响应体超 `Limits.MaxResponseBytes`；泛型与 `ResponseType` 不匹配；下载进度回调 / 原始字节回调 / `transformResponse` 抛异常 |
 | `ECONNABORTED` | 超过 `Timeout`（含流式正文阶段），或 `Resilience.TotalTimeout` 总预算已耗尽 |
 | `ERR_NETWORK` | 连接被拒 / DNS 失败 / 连接中断 / 正文截断 |
 | `ERR_CANCELED` | `CancellationToken` 取消，或客户端已释放 |
@@ -542,7 +542,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 
 ## 配置
 
-`AxiosConfig` 顶层是请求本身，其余按领域收进五个子对象：`Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。实例默认值与按请求覆盖写同一组属性。
+`AxiosConfig` 顶层是请求本身（13 个可配置叶子），其余按领域收进六个分组：`Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。连同顶层共 7 组、70 个叶子（13 + 3 + 9 + 19 + 10 + 6 + 10）；每个叶子只有一份存储、一份注释、一个入口，实例默认值与按请求覆盖写同一组属性。
 
 ### 配置速查
 
@@ -564,12 +564,19 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `Response` | `null` | 响应阶段可读（状态码 / 头 / 媒体类型） |
 | `ShortCircuit` | `null` | 短路响应：不发请求直接交付（只对本次请求生效） |
 | `ValidateStatus` | `null`（2xx） | 返回 `false` 抛 `AxiosException` |
-| `MaxResponseBytes` | `null`（不限） | 响应体上限，边读边计数（原 `MaxContentLength`） |
-| `MaxRequestBytes` | `null`（不限） | 请求体上限，发送前拦截（原 `MaxBodyLength`） |
-| `MaxStreamFrameBytes` | `null`（= 8 MB） | 流式单帧上限，合法 1–64 MB（原 `MaxStreamFrameLength`） |
-| `Caching` | `null` | 响应缓存（`AxiosCache`）：命中不发请求，跨请求复用 |
+| `Caching` | `null` | 响应缓存（`AxiosCache`）：命中不发请求，跨请求复用（配置项见 `AxiosCacheOptions`） |
 
-四个子对象（首次访问才创建）：
+> 表中 `Response` 只在响应阶段可读、`Caching` 是分组入口（`AxiosCacheOptions` 下另有 10 个叶子），二者都不计入顶层的 13 个可配置叶子。
+
+`Limits` 子对象（体积与分帧上限，三项的唯一入口；首次访问才创建）：
+
+| 成员 | 默认 | 说明 |
+| --- | --- | --- |
+| `Limits.MaxResponseBytes` | `null`（不限） | 响应体上限，边读边计数（原 `Limits.MaxContentLength`） |
+| `Limits.MaxRequestBytes` | `null`（不限） | 请求体上限，发送前拦截（原 `Limits.MaxBodyLength`） |
+| `Limits.MaxStreamFrameBytes` | `null`（= 8 MB） | 流式单帧上限，合法 1–64 MB（原 `Limits.MaxStreamFrameLength`） |
+
+其余四个子对象（首次访问才创建）：
 
 | 子对象 | 关键成员（默认值 / 说明） |
 | --- | --- |
@@ -2073,7 +2080,7 @@ AOT 下不可用的能力：
 | `auth: { username, password }` | `c.Transport.BasicAuth = new AxiosAuth(user, pass)` |
 | —（令牌 / 401 刷新靠自己写拦截器） | 声明式 `ApiClient.CredentialProvider` + `AccessTokenManager`（自动刷新 / 401 重放） |
 | `withCredentials` / `proxy` / `maxRedirects` | `Transport` 子对象同名属性（仅实例级） |
-| `maxContentLength` / `maxBodyLength` / `maxRate` | 顶层 `MaxResponseBytes` / `MaxRequestBytes` / `Transport.MaxRate` |
+| `maxContentLength` / `maxBodyLength` / `maxRate` | `Limits.MaxResponseBytes` / `Limits.MaxRequestBytes` / `Transport.MaxRate` |
 | `onUploadProgress` / `onDownloadProgress` / `timeoutMessage` | `Observability` 子对象同名属性 |
 | `paramsSerializer` / `formSerializer` | `Serialization.QueryEncoder` / `Serialization.FormFieldName` |
 | `transformRequest` / `transformResponse` | 同名属性 |
@@ -2251,7 +2258,7 @@ bash eng/aot-package-smoke.sh
 
 | 目录 | 覆盖范围 |
 | --- | --- |
-| `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与十个子对象 |
+| `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与六个配置分组 |
 | `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
 | `Governance/` | 并发闸门、进度回调与限速 |
 | `Resilience/` | 重试策略与计时、总预算（`Resilience.TotalTimeout`）、熔断状态机、短路响应 |
@@ -2330,7 +2337,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  ├─ AxiosNet/                       # 类库（net6.0 / net8.0 双目标）
 │  │  ├─ Axios.cs                     # 静态门面
 │  │  ├─ AxiosClient*.cs              # 实例 + 请求管线 + 快捷方法
-│  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 十个子对象）
+│  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 六个分组）
 │  │  ├─ AxiosHeaders.cs              # 请求头
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
 │  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs（顶层公共类型）
@@ -2373,20 +2380,26 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | --- | --- |
 | `Callbacks` | `Observability` + 顶层 `ValidateStatus` |
 | `Connection` | `Transport` |
-| `Limits` | 顶层 `MaxResponseBytes` / `MaxRequestBytes` / `MaxStreamFrameBytes` + `Resilience.Concurrency` |
+| `Limits` | 保持公共分组（真分组）：`Limits` 下三个叶子 `MaxResponseBytes` / `MaxRequestBytes` / `MaxStreamFrameBytes`；`MaxRate` → `Transport.MaxRate`，并发三项 → `Resilience.Concurrency` |
+| `Limits.MaxBodyLength` / `MaxContentLength` / `MaxStreamFrameLength` | `Limits.MaxRequestBytes` / `Limits.MaxResponseBytes` / `Limits.MaxStreamFrameBytes` |
+| `Limits.MaxRate` | `Transport.MaxRate` |
+| `Limits.MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` | `Resilience.Concurrency.MaxInFlight` / `MaxQueue` / `QueueTimeout` |
+| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `BasicAuth` / `Profile` |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
 | 顶层 `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
 | `Cache` | `Caching` |
 | `Data` | `Body` |
 | `RequestCompression` | `Compression` |
 | `ValueFormatter` | `Serialization.ValueText` |
-| `ContentSerializers` | `Serialization.BodySerializers` |
+| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` / `client.BodySerializers` |
+| `Serialization.ContentSerializer` | 删除；改用 `Serialization.BodySerializers.Default` 或全局 `AxiosContent.Serializer` / `Register` |
 | `RequestEncoding` / `ResponseEncoding` | `Serialization.TextEncoding` |
 | `ParamsSerializer` | `Serialization.QueryEncoder` |
 | `FormFieldNameSelector` | `Serialization.FormFieldName` |
 | `JsonSerializerOptions` | `Serialization.JsonOptions` |
 | `RetryNonIdempotentMethods` / `HedgeNonIdempotentMethods` | `Resilience.AllowUnsafeRetry`（非幂等放行的唯一开关） |
 | `RemoveHeaders` | 不再公开 |
+| `AxiosConfig.LimitSettings`（公共嵌套类型） | 成为公共真分组 `AxiosConfig.LimitsSettings`（经 `AxiosConfig.Limits` 访问，类型名与访问路径同时更名）；默认值常量仍在 `AxiosConfig.DefaultStreamFrameBytes` / `MinStreamFrameBytes` / `MaxStreamFrameBytesLimit` |
 | — | 新增 `Axios.Create(baseAddress)` 与 `client.Create<T>()` |
 
 `AxiosNet.WebAPI` 仍是同一个包：没有独立包，声明式扩展方法只需 `using AxiosNet.WebAPI;`；需要时可用 `AxiosNetOmitWebApi` 排除构建。

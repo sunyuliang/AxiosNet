@@ -307,7 +307,7 @@ public static partial class Attempt
             ctx.Config,
             request,
             ctx.AttemptToken,
-            ctx.Config.LimitsOrNull?.QueueTimeout,
+            ctx.Config.ResilienceOrNull?.Concurrency.QueueTimeout,
 
             // 总预算比排队上限更紧时由它封顶：TotalTimeout 不约束排队就等于没约束「整条请求」。
             ctx.RemainingTotalTimeout,

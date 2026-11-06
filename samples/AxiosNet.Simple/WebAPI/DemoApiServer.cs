@@ -104,7 +104,7 @@ public sealed class DemoApiServer : IDisposable
                         break;
                     }
 
-                    // 大帧端点：单个元素约 9 MB，超过默认 8 MB 单帧上限（演示 MaxStreamFrameLength）
+                    // 大帧端点：单个元素约 9 MB，超过默认 8 MB 单帧上限（演示 Limits.MaxStreamFrameBytes）
                     if (method == "GET" && path == "/api/stream/big-frame")
                     {
                         await WriteBigFrameStreamAsync(stream);
@@ -461,7 +461,7 @@ public sealed class DemoApiServer : IDisposable
     /// <summary>
     /// 流式响应（JSON 数组，单个超大元素）：一个元素约 9 MB，超过默认 8 MB 单帧上限 ——
     /// 默认配置下客户端在读完这一帧前就报 <c>ERR_BAD_RESPONSE</c>；
-    /// 把 <c>Limits.MaxStreamFrameLength</c> 放大到 12 MB 后可正常逐帧读取。
+    /// 把 <c>Limits.MaxStreamFrameBytes</c> 放大到 12 MB 后可正常逐帧读取。
     /// </summary>
     private static async Task WriteBigFrameStreamAsync(NetworkStream stream)
     {

@@ -12,7 +12,7 @@ public sealed partial class AxiosConfig
     // 按领域分组的可选设置：首次读取才分配，Clone 时各自复制。
     private SerializationSettings? _serialization;
     private TransportSettings? _transport;
-    private LimitSettings? _limits;
+    private LimitsSettings? _limits;
     private ObservabilitySettings? _observability;
     private RetrySettings? _retry;
     private CircuitSettings? _circuit;
@@ -51,7 +51,7 @@ public sealed partial class AxiosConfig
     internal string? ProfileOrNull => _transport?.Profile;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
-    internal LimitSettings? LimitsOrNull => _limits;
+    internal LimitsSettings? LimitsOrNull => _limits;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal ObservabilitySettings? ObservabilityOrNull => _observability;
@@ -71,8 +71,15 @@ public sealed partial class AxiosConfig
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal FailoverSettings? FailoverOrNull => _failover;
 
-    /// <summary>限额组存储（不再是独立分组，项分别落在 <see cref="MaxResponseBytes"/> / <see cref="MaxRequestBytes"/> 等位置）。</summary>
-    internal LimitSettings Limits => _limits ??= new LimitSettings();
+    /// <summary>
+    /// 体积与流式分帧上限（真分组）：<see cref="LimitsSettings.MaxRequestBytes"/> / <see cref="LimitsSettings.MaxResponseBytes"/> /
+    /// <see cref="LimitsSettings.MaxStreamFrameBytes"/> 的唯一入口；首次读取时懒创建。
+    /// </summary>
+    public LimitsSettings Limits
+    {
+        get => _limits ??= new LimitsSettings();
+        set => _limits = value;
+    }
 
     /// <summary>对应 axios baseURL。</summary>
     public string? BaseAddress { get; set; }
@@ -152,7 +159,7 @@ public sealed partial class AxiosConfig
     private string _contentType = JsonContentType;
 
     /// <summary>
-    /// 请求体媒体类型（Content-Type），默认 <c>application/json</c>；编码格式由本项决定，与 <see cref="Data"/> 的运行时类型无关。
+    /// 请求体媒体类型（Content-Type），默认 <c>application/json</c>；编码格式由本项决定，与 <see cref="Body"/> 的运行时类型无关。
     /// 未显式设置时由序列化器自报（见 <see cref="IContentSerializer.MediaType"/>）。
     /// </summary>
     public string ContentType
@@ -208,17 +215,6 @@ public sealed partial class AxiosConfig
 
     /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
     internal bool BodySet { get; private set; }
-
-    /// <summary>库内沿用 axios 命名读取请求体（等价于 <see cref="Body"/>）。</summary>
-    internal object? Data
-    {
-        get => _data;
-        set
-        {
-            _data = value;
-            BodySet = true;
-        }
-    }
 
     /// <summary>短路响应：设置后本次请求不发送，直接以这份结果作为响应；只属于本次请求，<see cref="Clone"/> 不复制它（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。</summary>
     public AxiosShortCircuit? ShortCircuit { get; set; }
@@ -329,46 +325,16 @@ public sealed partial class AxiosConfig
     internal bool MaxRedirectsSet => _transport?.MaxRedirectsSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxResponseBytesSet => _limits?.MaxContentLengthSet ?? false;
-
-    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxRequestBytesSet => _limits?.MaxBodyLengthSet ?? false;
-
-    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MaxRateSet => _transport?.MaxRateSet ?? false;
 
-    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxStreamFrameBytesSet => _limits?.MaxStreamFrameLengthSet ?? false;
+    /// <summary>流式单帧上限的默认值（8 MB），与设为 <c>null</c> 等价。</summary>
+    public const int DefaultStreamFrameBytes = 8 * 1024 * 1024;
 
-    /// <summary>
-    /// 响应体最大字节数，<c>null</c>（默认）不限；超出抛 <see cref="AxiosException"/>，按请求显式设为 <c>null</c> 可清除实例默认上限。
-    /// </summary>
-    public long? MaxResponseBytes
-    {
-        get => Limits.MaxContentLength;
-        set => Limits.MaxContentLength = value;
-    }
+    /// <summary>流式单帧上限的下界（1 MB）。</summary>
+    public const int MinStreamFrameBytes = 1024 * 1024;
 
-    /// <summary>
-    /// 请求体最大字节数，<c>null</c> 不限；超出抛 <see cref="AxiosException"/>。
-    /// 只对能算出长度的正文生效（JSON / 表单 / <c>byte[]</c> / 可 seek 流）；未知长度正文不拦截。
-    /// 开启 <see cref="Compression"/> 时按压缩后（实际发送）的字节数校验。
-    /// </summary>
-    public long? MaxRequestBytes
-    {
-        get => Limits.MaxBodyLength;
-        set => Limits.MaxBodyLength = value;
-    }
-
-    /// <summary>
-    /// 流式分帧的单帧上限（字节）：NDJSON 一行 / SSE 一帧 / JSON 数组的一个顶层元素。
-    /// <c>null</c>（默认）等于 <see cref="LimitSettings.DefaultStreamFrameLength"/>（8 MB），合法区间 1–64 MB。
-    /// </summary>
-    public int? MaxStreamFrameBytes
-    {
-        get => Limits.MaxStreamFrameLength;
-        set => Limits.MaxStreamFrameLength = value;
-    }
+    /// <summary>流式单帧上限的上界（64 MB）。</summary>
+    public const int MaxStreamFrameBytesLimit = 64 * 1024 * 1024;
 
     private Func<int, bool>? _validateStatus;
 
@@ -501,7 +467,7 @@ public sealed partial class AxiosConfig
     }
 
     /// <summary>
-    /// 把 <see cref="Params"/> / <see cref="Data"/> 里调用方持有的可变字典复制一份，避免克隆体与实例默认值指向同一对象；
+    /// 把 <see cref="Params"/> / <see cref="Body"/> 里调用方持有的可变字典复制一份，避免克隆体与实例默认值指向同一对象；
     /// 其余类型（匿名对象 / 集合 / 流 / 字符串）原样共享。
     /// </summary>
     /// <remarks>字符串键字典按原类型 + 原 comparer 复制；其余 <see cref="IDictionary{TKey,TValue}"/> 退化成 <see cref="Dictionary{TKey,TValue}"/>（内容与顺序不变，运行时类型会变）。</remarks>

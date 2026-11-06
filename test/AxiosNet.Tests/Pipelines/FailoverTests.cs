@@ -460,7 +460,7 @@ public sealed class FailoverTests
         {
             if (ctx.EndpointIndex > 0)
             {
-                throw AxiosException.QueueFull(ctx.Config, request, maxQueueLength: 1, maxConcurrency: 1);
+                throw AxiosException.QueueFull(ctx.Config, request, maxQueue: 1, maxConcurrency: 1);
             }
 
             return await next(request, ctx);

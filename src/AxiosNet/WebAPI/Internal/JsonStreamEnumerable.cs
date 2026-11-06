@@ -10,7 +10,7 @@ namespace AxiosNet.WebAPI.Internal;
 /// </summary>
 /// <remarks>
 /// NDJSON / SSE 在字节层按 CR / LF 分帧，JSON 数组由 <see cref="Utf8JsonReader"/> 增量定位顶层元素的字节区间。
-/// 单帧上限默认 8 MB，可由 <see cref="AxiosConfig.LimitSettings.MaxStreamFrameLength"/> 调整；响应流只能读一次，重复枚举直接报错。
+/// 单帧上限默认 8 MB，可由 <see cref="AxiosConfig.LimitsSettings.MaxStreamFrameBytes"/> 调整；响应流只能读一次，重复枚举直接报错。
 /// </remarks>
 internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnumerator<T>
 {
@@ -120,7 +120,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         _format = format;
 
         // 单帧上限随配置（按请求可覆盖实例默认）：null = 默认 8 MB；合法范围已在发送前拦下。
-        _maxFrameBytes = config.LimitsOrNull?.MaxStreamFrameLength ?? AxiosConfig.LimitSettings.DefaultStreamFrameLength;
+        _maxFrameBytes = config.LimitsOrNull?.MaxStreamFrameBytes ?? AxiosConfig.DefaultStreamFrameBytes;
 
         // 复用 framing 校验解析出的生效编码；数组模式固定 UTF-8，与 Utf8JsonReader 的解释一致。
         _encoding = format == AxiosStreamFormat.JsonArray ? Encoding.UTF8 : framingEncoding;

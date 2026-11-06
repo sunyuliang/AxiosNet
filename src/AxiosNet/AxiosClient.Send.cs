@@ -181,11 +181,11 @@ public sealed partial class AxiosClient
 
                 // 模板的长度上限检查在钩子之前：钩子把正文换得更大时，这里对已知长度再判一次。
                 if (!ReferenceEquals(request.Content, templateContent)
-                    && config.LimitsOrNull?.MaxBodyLength is long maxBody
+                    && config.LimitsOrNull?.MaxRequestBytes is long maxBody
                     && request.Content?.Headers.ContentLength is long replacementLength
                     && replacementLength > maxBody)
                 {
-                    throw AxiosException.MaxBodyLength(config, request, replacementLength, maxBody);
+                    throw AxiosException.MaxRequestBytes(config, request, replacementLength, maxBody);
                 }
             }
 
@@ -433,7 +433,7 @@ public sealed partial class AxiosClient
     /// <summary>流式失败响应保留的错误体上限。</summary>
     private const int StreamErrorBodyLimit = 64 * 1024;
 
-    /// <summary>把流式失败响应的正文读成文本（上限取 <see cref="StreamErrorBodyLimit"/> 与 <c>MaxContentLength</c> 的较小值）；读取失败 / 超时 / 超限都只保留已读部分。</summary>
+    /// <summary>把流式失败响应的正文读成文本（上限取 <see cref="StreamErrorBodyLimit"/> 与 <c>Limits.MaxResponseBytes</c> 的较小值）；读取失败 / 超时 / 超限都只保留已读部分。</summary>
     private static async Task<string?> ReadStreamErrorBodyAsync(
         Stream? body,
         AxiosConfig config,
@@ -444,7 +444,7 @@ public sealed partial class AxiosClient
             return null;
         }
 
-        var limit = config.LimitsOrNull?.MaxContentLength is long max && max < StreamErrorBodyLimit
+        var limit = config.LimitsOrNull?.MaxResponseBytes is long max && max < StreamErrorBodyLimit
             ? (int)max
             : StreamErrorBodyLimit;
         if (limit <= 0)

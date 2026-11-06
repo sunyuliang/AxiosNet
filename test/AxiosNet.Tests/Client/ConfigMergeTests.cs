@@ -339,43 +339,43 @@ public sealed class ConfigMergeTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task PerRequestMaxContentLengthNull_ClearsInstanceDefault()
+    public async Task PerRequestMaxResponseBytesNull_ClearsInstanceDefault()
     {
         var payload = new byte[4096];
         await using var server = TestHttpServer.Start(_ => new TestResponse(Body: payload, ContentType: "application/octet-stream"));
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            MaxResponseBytes = 16
+            Limits = { MaxResponseBytes = 16 }
         });
 
         // 实例默认上限对 4KB 响应生效（声明了长度 → 读正文前就拒绝）
         var blocked = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<byte[]>(server.Url + "file"));
         Assert.Equal(AxiosException.ErrBadResponse, blocked.Code);
 
-        // 按请求显式设 null 必须清掉它：这条路径完全依赖 MaxContentLengthSet，
+        // 按请求显式设 null 必须清掉它：这条路径完全依赖 MaxResponseBytesSet，
         // 一旦合并退化成「null 即未设置」，这里会继续被实例默认拦住。
-        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Limits.MaxContentLength = null);
+        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Limits.MaxResponseBytes = null);
 
         Assert.Equal(payload.Length, response.Data!.Length);
     }
 
     [Fact]
-    public async Task PerRequestMaxBodyLengthNull_ClearsInstanceDefault()
+    public async Task PerRequestMaxRequestBytesNull_ClearsInstanceDefault()
     {
         var payload = new byte[1024];
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            MaxRequestBytes = 16
+            Limits = { MaxRequestBytes = 16 }
         });
 
         var blocked = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "up", payload));
         Assert.Equal(AxiosException.ErrBadRequest, blocked.Code);
         Assert.Empty(server.Received);
 
-        var response = await client.PostAsync(server.Url + "up", payload, c => c.Limits.MaxBodyLength = null);
+        var response = await client.PostAsync(server.Url + "up", payload, c => c.Limits.MaxRequestBytes = null);
 
         Assert.Equal(200, response.Status);
         Assert.Equal(payload.Length, server.Received[^1].Body.Length);
@@ -450,16 +450,16 @@ public sealed class ConfigMergeTests
         var defaults = new AxiosConfig
         {
             Params = new Dictionary<string, object?> { ["p"] = sentinel },
-            Data = new Dictionary<string, object?> { ["d"] = 1 }
+            Body = new Dictionary<string, object?> { ["d"] = 1 }
         };
 
         var clone = defaults.Clone();
 
         ((Dictionary<string, object?>)clone.Params!)["added"] = 2;
-        ((Dictionary<string, object?>)clone.Data!)["added"] = 2;
+        ((Dictionary<string, object?>)clone.Body!)["added"] = 2;
 
         Assert.Single((Dictionary<string, object?>)defaults.Params!);
-        Assert.Single((Dictionary<string, object?>)defaults.Data!);
+        Assert.Single((Dictionary<string, object?>)defaults.Body!);
 
         // 元素仍按引用共享。
         Assert.Same(sentinel, ((Dictionary<string, object?>)clone.Params!)["p"]);
@@ -471,7 +471,7 @@ public sealed class ConfigMergeTests
         var defaults = new AxiosConfig
         {
             Params = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["Api_Key"] = 1 },
-            Data = new SortedDictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["A"] = 1 }
+            Body = new SortedDictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["A"] = 1 }
         };
 
         var clone = defaults.Clone();
@@ -479,7 +479,7 @@ public sealed class ConfigMergeTests
         var parameters = Assert.IsType<Dictionary<string, object?>>(clone.Params);
         Assert.True(parameters.ContainsKey("api_key"));
 
-        var body = Assert.IsType<SortedDictionary<string, object?>>(clone.Data);
+        var body = Assert.IsType<SortedDictionary<string, object?>>(clone.Body);
         Assert.True(body.ContainsKey("a"));
 
         parameters["added"] = 2;
@@ -500,12 +500,12 @@ public sealed class ConfigMergeTests
     }
 
     [Fact]
-    public async Task NullParamsAndData_ClearInheritedDefaults()
+    public async Task NullParamsAndBody_ClearInheritedDefaults()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Data = new { inherited = true },
+            Body = new { inherited = true },
             Params = new { inherited = 1 }
         });
 
@@ -514,7 +514,7 @@ public sealed class ConfigMergeTests
         {
             Url = server.Url + "x",
             Method = HttpMethod.Post,
-            Data = null,
+            Body = null,
             Params = null
         });
 

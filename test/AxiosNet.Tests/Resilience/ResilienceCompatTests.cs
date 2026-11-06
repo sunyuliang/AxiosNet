@@ -32,9 +32,9 @@ public sealed class ResilienceCompatTests
         var config = new AxiosConfig();
 
         config.Resilience.Concurrency.MaxInFlight = 4;
-        Assert.Equal(4, config.Limits.MaxConcurrentRequests);
+        Assert.Equal(4, config.Resilience.Concurrency.MaxInFlight);
 
-        config.Limits.MaxQueueLength = 16;
+        config.Resilience.Concurrency.MaxQueue = 16;
         Assert.Equal(16, config.Resilience.Concurrency.MaxQueue);
     }
 

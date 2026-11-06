@@ -35,7 +35,7 @@ public sealed partial class AxiosClient
 
         merged.Url = perCall.Url ?? merged.Url;
 
-        // Params / Data 按「是否显式赋值」合并，写 null 表示摘掉实例默认值。
+        // Params / Body 按「是否显式赋值」合并，写 null 表示摘掉实例默认值。
         if (perCall.ParamsSet)
         {
             merged.Params = perCall.Params;
@@ -142,6 +142,12 @@ public sealed partial class AxiosClient
             merged.Resilience.MergeFrom(incomingResilience);
         }
 
+        // 并发三项属实例级：库产出的配置（回放 response.Config 等）不搬运，连同 *Set 标记还原本实例默认值。
+        if (instanceSourced)
+        {
+            merged.Resilience.Concurrency.ResetFrom(Defaults);
+        }
+
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
             // 注册表属实例级：库产出的配置（回放 response.Config 等）沿用本实例的登记，不搬来源实例的。
@@ -158,17 +164,6 @@ public sealed partial class AxiosClient
         if (perCall.LimitsOrNull is { } incomingLimits)
         {
             merged.Limits.MergeFrom(incomingLimits);
-
-            // 并发与排队上限同属实例级，库产出的配置不搬过来；其余限制项照常合并。
-            // *Set 标记需一并还原：闸门校验按它区分「本次没表态」与「显式要求 null」。
-            if (instanceSourced)
-            {
-                var ownLimits = Defaults.LimitsOrNull;
-                merged.Limits.MaxConcurrentRequests = ownLimits?.MaxConcurrentRequests;
-                merged.Limits.MaxConcurrentRequestsSet = ownLimits?.MaxConcurrentRequestsSet ?? false;
-                merged.Limits.MaxQueueLength = ownLimits?.MaxQueueLength;
-                merged.Limits.MaxQueueLengthSet = ownLimits?.MaxQueueLengthSet ?? false;
-            }
         }
 
         var perCallTransport = perCall.TransportOrNull;

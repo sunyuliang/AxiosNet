@@ -143,7 +143,7 @@ internal sealed class TrafficMeter
 }
 
 /// <summary>
-/// 下载侧流量包装：统计已读字节、回报进度、按 MaxRate 限速，并在累计字节超出 MaxContentLength 时中断。
+/// 下载侧流量包装：统计已读字节、回报进度、按 MaxRate 限速，并在累计字节超出 Limits.MaxResponseBytes 时中断。
 /// </summary>
 internal sealed class ProgressReadStream : DelegatingStream
 {
@@ -240,7 +240,7 @@ internal sealed class ProgressReadStream : DelegatingStream
         var total = _meter.Loaded + read;
         if (total > limit)
         {
-            throw AxiosException.MaxContentLength(_config, _request, total, limit);
+            throw AxiosException.MaxResponseBytes(_config, _request, total, limit);
         }
     }
 

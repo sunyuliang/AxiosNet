@@ -181,13 +181,13 @@ public sealed class AxiosFacadeTests
         {
             Url = server.Url + "r2",
             Method = HttpMethod.Post,
-            Data = new Person("replay", 2)
+            Body = new Person("replay", 2)
         });
         var configured = await Axios.RequestAsync(c => c.Url = server.Url + "r3");
         var configuredTyped = await Axios.RequestAsync<Person>(c =>
         {
             c.Url = server.Url + "r4";
-            c.Data = new Person("cfg", 4);
+            c.Body = new Person("cfg", 4);
         });
 
         Assert.Equal(200, plain.Status);

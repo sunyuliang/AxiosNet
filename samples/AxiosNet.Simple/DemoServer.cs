@@ -340,13 +340,13 @@ public sealed class DemoServer : IDisposable
 
             case "GET" when path == "/big":
             {
-                // 8 MB：用于演示 maxContentLength 拦截
+                // 8 MB：用于演示 Limits.MaxResponseBytes 拦截
                 var file = new byte[8 * 1024 * 1024];
                 return (200, file, "application/octet-stream", null, null, null);
             }
 
             case "GET" when path == "/redirect":
-                // 302：用于演示 maxRedirects / 是否跟随重定向
+                // 302：用于演示 Transport.MaxRedirects / 是否跟随重定向
                 return (302, Array.Empty<byte>(), "text/plain", null, "/users/1", null);
 
             case "GET" when path == "/headers":

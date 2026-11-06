@@ -1,6 +1,4 @@
-﻿#pragma warning disable CS0618 // 本文件刻意保留旧入口，验证「旁路已删除」后的回落顺序
-
-using System.Text;
+﻿using System.Text;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 

@@ -276,12 +276,12 @@ public sealed class StreamingRequestBodyTests
     }
 
     [Fact]
-    public async Task MaxBodyLength_DoesNotApplyToUnknownLengthStreamingBody()
+    public async Task MaxRequestBytes_DoesNotApplyToUnknownLengthStreamingBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        // 文档口径：MaxBodyLength 只对能算出长度的正文生效。流式正文长度未知，
+        // 文档口径：MaxRequestBytes 只对能算出长度的正文生效。流式正文长度未知，
         // 既拿不到长度可拦，也不该在发送中途失败——收齐比拦下更重要（拦下的其实是「已知长度」那条路）。
         await client.PostAsync(
             server.Url + "x",
@@ -289,7 +289,7 @@ public sealed class StreamingRequestBodyTests
             c =>
             {
                 c.ContentType = AxiosContentType.OctetStream;
-                c.Limits.MaxBodyLength = 4;
+                c.Limits.MaxRequestBytes = 4;
             });
 
         var request = Assert.Single(server.Received);

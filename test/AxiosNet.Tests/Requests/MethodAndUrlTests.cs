@@ -252,8 +252,8 @@ public sealed class MethodAndUrlTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(204, "No Content"));
         using var client = new AxiosClient();
 
-        var put = await client.PutAsync(server.Url + "x", new AxiosConfig { Data = new { n = 1 } });
-        var patch = await client.PatchAsync(server.Url + "x", new AxiosConfig { Data = new { n = 2 } });
+        var put = await client.PutAsync(server.Url + "x", new AxiosConfig { Body = new { n = 1 } });
+        var patch = await client.PatchAsync(server.Url + "x", new AxiosConfig { Body = new { n = 2 } });
         var options = await client.OptionsAsync(server.Url + "x", new AxiosConfig());
         var head = await client.HeadAsync(server.Url + "x", new AxiosConfig());
 

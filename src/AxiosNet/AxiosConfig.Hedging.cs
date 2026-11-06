@@ -17,7 +17,7 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 额外的并发分支数，<c>0</c>（默认）表示不对冲；<c>1</c> 表示首发 + 一条对冲分支，依此类推。
-        /// 每条分支各占一个并发槽位（熔断只记一笔），<see cref="LimitSettings.MaxConcurrentRequests"/> 要按 <c>1 + MaxHedges</c> 倍预留。
+        /// 每条分支各占一个并发槽位（熔断只记一笔），<c>Resilience.Concurrency.MaxInFlight</c> 要按 <c>1 + MaxHedges</c> 倍预留。
         /// </summary>
         public int MaxHedges
         {
