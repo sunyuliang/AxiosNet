@@ -1,3 +1,5 @@
+using AxiosNet.Internal;
+
 namespace AxiosNet.Circuit;
 
 /// <summary>
@@ -106,13 +108,8 @@ public readonly struct AxiosCircuitContext
                 return false;
             }
 
-            return Exception switch
-            {
-                AxiosException { Code: AxiosException.ErrNetwork or AxiosException.ErrConnAborted } => true,
-                HttpRequestException => true,
-                IOException => true,
-                _ => false
-            };
+            // 与重试判据共用同一张分类表（ERR_NETWORK / ECONNABORTED / HttpRequestException / IOException）。
+            return FailureClassifier.IsNetworkFailure(Exception);
         }
     }
 }

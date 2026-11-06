@@ -114,6 +114,38 @@ public sealed class ClientInstanceTests
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
+    [Fact]
+    public void Constructor_WritesOwnedPoolEffectiveConnectionOptionsBackToDefaults()
+    {
+        var proxy = new WebProxy("http://127.0.0.1:10");
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
+        {
+            Proxy = proxy,
+            AllowAutoRedirect = false,
+            UseCookies = true,
+        });
+
+        // 连接层由 poolOptions 定型：Defaults 的 getter 要反映真正生效的值，而不是调用方没写的那份。
+        var transport = client.Defaults.Transport;
+        Assert.Same(proxy, transport.Proxy);
+        Assert.Equal(0, transport.MaxRedirects);
+        Assert.True(transport.WithCredentials);
+
+        // 回写不是调用方显式设置：标记要清掉，合并层继续按「未设置」处理。
+        Assert.False(transport.MaxRedirectsSet);
+        Assert.False(transport.WithCredentialsSet);
+    }
+
+    [Fact]
+    public void Constructor_WritesSharedPoolEffectiveConnectionOptionsBackToDefaults()
+    {
+        var proxy = new WebProxy("http://127.0.0.1:10");
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions { Proxy = proxy });
+        using var client = new AxiosClient(pool: pool);
+
+        Assert.Same(proxy, client.Defaults.Transport.Proxy);
+    }
+
     // ===============================================================
     // M4：ConnectTimeout 超过 SocketsHttpHandler 上限时必须走统一错误模型
     // ===============================================================

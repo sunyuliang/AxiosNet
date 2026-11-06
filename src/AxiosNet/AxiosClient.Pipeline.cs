@@ -59,11 +59,40 @@ public sealed partial class AxiosClient
             // 阶段 2：校验（实例级选项）—— 构造期已固化进连接池，判在拦截器之前。
             ValidatePerRequestOptions(config);
 
-            // 阶段 2.5：凭据 —— 槽位在拦截器之前解析成 Authorization 头值，提供方每请求只在这里调用一次。
+            // 阶段 2.5：凭据 —— 槽位在拦截器之前解析成 Authorization 头值；拦截器后只在槽位变化时补解析，
+            // 提供方在本次请求内不会被无谓地调用第二次。
+            var authBeforeIntercept = config.TransportOrNull?.Auth;
+            var resolvedBeforeIntercept = config.ResolvedAuthorization;
+            var explicitHeaderBeforeResolve = HasAuthorizationHeader(config);
             await ResolveCredentialAsync(config).ConfigureAwait(false);
+
+            // 提供方可以在解析时自己写 Authorization 头（自定义凭据形态）：那不算「显式头与槽位并存」的冲突。
+            var headerFromProvider = HasAuthorizationHeader(config);
 
             // 阶段 3：拦截 —— 请求拦截器按注册逆序执行（与 axios 一致）。
             config = await InterceptRequestAsync(config).ConfigureAwait(false);
+
+            // 阶段 3.5：拦截器可能换掉配置、改凭据槽位或加上显式 Authorization 头：
+            // 冲突校验与解析补到拦截器之后，判的是最终要发出的那份配置。
+            // 只在「配置本身已有显式头」或「拦截器新加了头」时校验；提供方解析时自己写的头不算冲突。
+            if (explicitHeaderBeforeResolve || (HasAuthorizationHeader(config) && !headerFromProvider))
+            {
+                ValidateCredentialConflict(config);
+            }
+
+            if (ReferenceEquals(authBeforeIntercept, config.TransportOrNull?.Auth))
+            {
+                // 槽位没变：沿用拦截器前的解析结果（拦截器换出的新配置不会带走内部解析值）。
+                if (config.ResolvedAuthorization is null && resolvedBeforeIntercept is not null)
+                {
+                    config.ResolvedAuthorization = resolvedBeforeIntercept;
+                }
+            }
+            else
+            {
+                // 槽位被换掉 / 清空：按最终槽位重新解析（清空时同时作废旧头值）。
+                await ResolveCredentialAsync(config).ConfigureAwait(false);
+            }
 
             // 阶段 4a ~ 4d 都必须使用拦截器之后的配置。
             ApplyAutoResponseType(config, dataType);

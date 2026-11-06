@@ -8,10 +8,6 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class ResponseTextDecoder
 {
-    private const string Utf8Name = "utf-8";
-    private const string AsciiName = "us-ascii";
-    private const string Latin1Name = "iso-8859-1";
-
     /// <summary>字节数组入口：按 <c>forced → charset → BOM → UTF-8</c> 解析编码并剥离匹配的 BOM。</summary>
     public static string Decode(byte[] bytes, string? charSet, Encoding? forced)
         => Decode(bytes.AsSpan(), charSet, forced);
@@ -103,42 +99,7 @@ internal static class ResponseTextDecoder
     }
 
     /// <summary>解析 charset 名对应的编码；空白、未知或平台不支持的 charset 返回 <c>null</c>（交给 BOM / UTF-8 兜底）。</summary>
-    internal static Encoding? ResolveFromCharset(string? charSet)
-    {
-        if (string.IsNullOrWhiteSpace(charSet))
-        {
-            return null;
-        }
-
-        // 允许 charset="utf-8" 这种带引号的写法。
-        var name = charSet.AsSpan().Trim().Trim('"');
-
-        // 常见 charset 直接用内置实例。
-        if (name.Equals(Utf8Name, StringComparison.OrdinalIgnoreCase))
-        {
-            return Encoding.UTF8;
-        }
-
-        if (name.Equals(AsciiName, StringComparison.OrdinalIgnoreCase))
-        {
-            return Encoding.ASCII;
-        }
-
-        if (name.Equals(Latin1Name, StringComparison.OrdinalIgnoreCase))
-        {
-            return Encoding.Latin1;
-        }
-
-        try
-        {
-            return Encoding.GetEncoding(name.ToString());
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
-        {
-            // 未知 charset / 未注册的代码页：交由 BOM / 默认编码兜底。
-            return null;
-        }
-    }
+    internal static Encoding? ResolveFromCharset(string? charSet) => EncodingResolver.TryResolve(charSet);
 
     /// <summary>按 BOM 识别编码：UTF-8 / UTF-32（BE、LE）/ UTF-16（BE、LE）；无 BOM 返回 <c>null</c>。</summary>
     internal static Encoding? DetectFromBom(ReadOnlySpan<byte> bytes)

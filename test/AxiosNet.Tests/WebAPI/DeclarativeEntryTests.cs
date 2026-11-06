@@ -141,6 +141,56 @@ public sealed class DeclarativeEntryTests
         Assert.Empty(server.Received);
     }
 
+    [Fact]
+    public async Task DeclarativeEntry_ReusesFacadeWithCredentialProvider()
+    {
+        await using var server = TestHttpServer.Start(request =>
+            request.Headers.TryGetValue("authorization", out var authorization) && authorization == "Bearer reused"
+                ? TestJson.Response(new Person("alice", 18))
+                : TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+        using var client = Axios.Create(server.Url);
+        // 先构造门面并设置凭据提供方，再走扩展入口：扩展必须复用同一门面，不能静默变匿名。
+        using var facade = new ApiClient(client);
+        facade.CredentialProvider = new StaticTokenProvider("reused");
+
+        var response = await client.Create<IAuthorizedApi>().GetAsync();
+
+        Assert.Equal("alice", response.Data!.Name);
+        Assert.Equal("Bearer reused", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task DeclarativeEntry_ReusesFacadeWithErrorFactory()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(
+            new { code = "E42", message = "bad request" },
+            statusCode: 400));
+        using var client = Axios.Create(server.Url);
+        using var facade = new ApiClient(client) { ErrorFactory = new ApiErrorFactory<FacadeProblem>() };
+
+        var error = await Assert.ThrowsAsync<ApiError<FacadeProblem>>(
+            () => client.RequestAsync(new EntryGetUserRequest { Id = 1 }));
+
+        Assert.Equal("E42", error.Error?.Code);
+    }
+
+    [Fact]
+    public async Task DeclarativeEntry_TwoExtensionCallsShareFacade()
+    {
+        await using var server = TestHttpServer.Start(request =>
+            request.Headers.TryGetValue("authorization", out var authorization) && authorization == "Bearer once"
+                ? TestJson.Response(new Person("alice", 18))
+                : TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+        using var client = new ApiClient(server.Url);
+        client.CredentialProvider = new StaticTokenProvider("once");
+
+        await client.Axios.Create<IAuthorizedApi>().GetAsync();
+        await client.Axios.RequestAsync(new EntryAuthorizedRequest());
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.All(server.Received, request => Assert.Equal("Bearer once", request.Headers["Authorization"]));
+    }
+
     [Get("users/{id}")]
     private sealed class EntryGetUserRequest : IApiRequest<Person>
     {
@@ -153,5 +203,18 @@ public sealed class DeclarativeEntryTests
     [Get("secure")]
     private sealed class EntryAuthorizedRequest : IApiRequest<Person>
     {
+    }
+
+    private sealed class FacadeProblem
+    {
+        public string? Code { get; set; }
+
+        public string? Message { get; set; }
+    }
+
+    private sealed class StaticTokenProvider(string token) : IApiCredentialProvider
+    {
+        public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
+            => ValueTask.FromResult(ApiCredential.Token(token));
     }
 }

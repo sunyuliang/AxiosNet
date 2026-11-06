@@ -518,12 +518,7 @@ public sealed partial class AxiosClient
     /// <summary>凭据槽位与显式 <c>Authorization</c> 头同时设置属于配置冲突：凭据只有一个来源，不做二选一静默压制。</summary>
     private static void ValidateCredentialConflict(AxiosConfig config)
     {
-        if (config.TransportOrNull?.Auth is null)
-        {
-            return;
-        }
-
-        if (!config.HasHeaders || !config.Headers.Has(AuthorizationHeader.Name))
+        if (config.TransportOrNull?.Auth is null || !HasAuthorizationHeader(config))
         {
             return;
         }
@@ -533,6 +528,9 @@ public sealed partial class AxiosClient
             + "保留其中一个：要自己写头就把 Transport.Auth 设为 null，要用凭据槽位就删掉显式 Authorization 头。",
             config);
     }
+
+    private static bool HasAuthorizationHeader(AxiosConfig config)
+        => config.HasHeaders && config.Headers.Has(AuthorizationHeader.Name);
 
     /// <summary>
     /// 命名档与默认档的出口设置互斥：选中命名档后实际 Handler 只取该档的 Proxy / Credentials，
@@ -626,7 +624,7 @@ public sealed partial class AxiosClient
         var options = _pool!.EffectiveOptions;
         var effective = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
 
-        var requestedMaxRedirects = config.TransportOrNull?.MaxRedirects ?? 5;
+        var requestedMaxRedirects = config.TransportOrNull?.MaxRedirects ?? AxiosConfig.DefaultMaxRedirects;
 
         if (requestedMaxRedirects == effective)
         {

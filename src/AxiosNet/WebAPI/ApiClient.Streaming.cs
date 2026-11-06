@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using AxiosNet.Internal;
 using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
@@ -21,6 +22,7 @@ public sealed partial class ApiClient
     /// <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 压过）：超出抛 <c>ECONNABORTED</c>；
     /// 不设超时时正文不限时，靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求响应是 UTF-8。
     /// 响应流只能枚举一次；帧解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。
+    /// 未显式设置 <c>ResponseType</c> 时自动切到 <c>Stream</c>；显式设成非 <c>Stream</c> 抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </remarks>
     /// <typeparam name="TItem">每个帧反序列化后的类型。</typeparam>
     /// <param name="request">请求模型实例。</param>
@@ -55,9 +57,30 @@ public sealed partial class ApiClient
         CancellationToken cancellationToken,
         AxiosStreamFormat format)
     {
-        // 正文按帧消费：responseType 固定 Stream。正文超时与响应头同一份预算
-        // （本次尝试的 Timeout，已被 TotalTimeout 压过），不设超时时正文不限时、靠取消令牌退出。
-        config.SetResponseTypeAuto(ResponseType.Stream);
+        // 正文按帧消费：未显式设置时才自动切到 Stream。按请求与实例默认都算「显式」；
+        // 显式设成别的类型直接报配置错误，不能静默覆盖调用方的选择（那会让 Data 类型与调用方预期不符）。
+        var declaredResponseType = config.ResponseTypeSet
+            ? config.ResponseType
+            : Axios.Defaults.ResponseTypeSet
+                ? Axios.Defaults.ResponseType
+                : (ResponseType?)null;
+
+        if (declaredResponseType is { } declared)
+        {
+            if (declared != ResponseType.Stream)
+            {
+                throw AxiosException.InvalidOption(
+                    $"流式读取要求 ResponseType = Stream，但本次请求显式设成了 {declared}："
+                    + "删掉显式设置（由流式入口自动切到 Stream），或改用非流式 RequestAsync。",
+                    config);
+            }
+        }
+        else
+        {
+            // 正文超时与响应头同一份预算（本次尝试的 Timeout，已被 TotalTimeout 压过），
+            // 不设超时时正文不限时、靠取消令牌退出。
+            config.SetResponseTypeAuto(ResponseType.Stream);
+        }
 
         var auth = ApplyAuthorization(authorization, request, config);
 

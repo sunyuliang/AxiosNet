@@ -79,6 +79,8 @@ var api = client.Create<IUserApi>();
 var user = await api.GetAsync(1);
 ```
 
+The extension entry points share the same facade as `ApiClient` (cached per `AxiosClient`): construct `new ApiClient(client)`, set `CredentialProvider` / `ErrorFactory`, then use `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync` — that state still applies instead of silently becoming a separate anonymous facade.
+
 Five concepts:
 
 | Concept | Type | Responsibility |
@@ -304,6 +306,7 @@ await foreach (var order in pages.Data!)
 - **Frame cap**: 8 MB default, valid range 1–64 MB (`Limits.MaxStreamFrameBytes`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap.
 - **Encoding**: NDJSON / SSE require an ASCII-compatible charset, wide-char encodings throw `ERR_BAD_RESPONSE` when taking the stream; `JsonArray` must be UTF-8. A UTF-8 BOM is skipped.
 - **Ownership**: the stream can be enumerated once; `await foreach` (including `break`) disposes it, manual `MoveNextAsync` callers must `DisposeAsync` themselves.
+- **Explicit `ResponseType`**: the streaming entry points switch to `Stream` only when `ResponseType` was not explicitly set; an explicit non-`Stream` value (per request or instance default) throws `ERR_BAD_OPTION_VALUE` before sending instead of silently overriding the caller's choice.
 - **Errors**: status errors throw at `await`; frame parse failures are `ERR_BAD_RESPONSE`, mid-stream disconnects `ERR_NETWORK`, cancellation `ERR_CANCELED`.
 
 ### Request body compression
@@ -1734,6 +1737,7 @@ var client = new ApiClient("https://api.example.com/")
 - **One slot, one source**: credentials live in the single `Transport.Auth` slot, taking exactly one of four forms (static Basic / static token / complete header value / provider). `CredentialProvider` is an adapter for the provider form; `Transport.BasicAuth` has been folded into this slot.
 - **Conflicts error, never silently suppressed**: an explicit `Authorization` header together with the credential slot, or `CredentialProvider` together with an already-set `Transport.Auth`, throws `ERR_BAD_OPTION_VALUE` before sending. With only one of them set, that source applies. The credential → header mapping exists once in the kernel; WebAPI only supplies values and the 401 replay policy.
 - **401 replay only covers managed credentials**: only `Token` / `Header` shapes (written by the library) are refreshed and replayed after a 401; static Basic / static token / complete header value never participate — use `CredentialProvider` when you need refresh (the kernel exposes `IsRefreshable` for the source).
+- **Declared scheme must match the static slot**: when a declaration such as `[Authorize("Token")]` carries a scheme, a static `Transport.Auth` credential with a different scheme throws `ERR_BAD_OPTION_VALUE` before sending instead of silently deferring to the slot. With a static Basic credential the declaration must say `[Authorize("Basic")]`; a token configured as `AxiosCredential.Bearer(token, "Token")` matches `[Authorize("Token")]`.
 - **No wasted token fetch**: an explicit header with a provider is rejected first, so the provider is never called.
 - **`Token` always prefixes the scheme**: the token form carries the token only; use `ApiCredential.Header` for complete values such as `Basic xxx` / `Signature xxx`. The library recovers the stale token back by the deterministic `scheme + space + token` shape before calling `Invalidate`, so mixing the two breaks value-based invalidation.
 - **Custom credentials**: inside `CredentialProviders.Create((ctx, ct) => ...)` you can write `ctx.Config.Headers` directly (model bindings have already been merged) and return `ApiCredential.Custom()`; branch per request with `ctx.Request` (an `ApiInterfaceInvocation` for interface-based calls). Pass `invalidate:` to `Create` when you want a forced refresh after 401.
@@ -1765,7 +1769,9 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 - **Refreshes ignore caller cancellation**: one client disconnecting neither fails the other waiters nor wastes a refresh (the refresh itself is bounded by `RefreshTimeout`, which throws `TimeoutException`).
 - **Refresh-ahead is clamped**: the effective lead is min(`RefreshAhead`, half the token lifetime), so short-lived tokens are not refreshed the moment they arrive.
 - **Forced refresh after 401**: `tokens.Invalidate(staleToken)` drops the current token (passing the stale value avoids discarding a token another request just refreshed); the next call must refresh.
-- **Automatic replay on 401**: when the response is 401 and the library wrote this request's `Authorization` header, the credential is invalidated, fetched again, and the request is replayed **once** (a second 401 goes through the normal error path; an unchanged credential means no replay). Bodies that cannot be replayed (streams / streaming bodies / multipart), declarations with an explicit `Authorization` header, and `[AllowAnonymous]` are never replayed; the replay keeps the same idempotency key. Turn it off with `ApiClient.RetryOnUnauthorized = false`.
+- **Automatic replay on 401**: when the response is 401 and the library wrote this request's `Authorization` header, the credential is invalidated, fetched again, and the request is replayed **once** (a second 401 goes through the normal error path; an unchanged credential means no replay). The replay keeps the same idempotency key; non-idempotent methods require `Resilience.AllowUnsafeRetry` (the same switch as kernel retries). Turn it off with `ApiClient.RetryOnUnauthorized = false`.
+- **401 is owned by one layer only**: when the credential slot is in provider form, the kernel stops retrying 401 (even if 401 is listed in `RetryStatusCodes`); refresh and replay belong to the declarative layer alone, so there is no double loop.
+- **Bodies during replay**: data bodies (`null` / `byte[]` / `string` / business objects / stream-free `FormData`) are rebuilt by the request model; whitelisted in-memory content (`ByteArrayContent` / `StringContent` / `FormUrlEncodedContent` / `ReadOnlyMemoryContent` / `JsonContent` / fully replayable `MultipartContent`) is snapshotted before the first send, bounded by `Limits.MaxRequestBytes` — over the limit no snapshot is taken and this request is not replayed (never a silent second send with an empty body). `Stream`, multipart with stream parts, `StreamContent` and custom content are never replayed; declarations with an explicit `Authorization` header or `[AllowAnonymous]` are never replayed either.
 
 #### Bootstrap the token through the same client
 
@@ -2393,6 +2399,11 @@ Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAP
 | `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `Auth` / `Profile` |
 | `Transport.BasicAuth` (and the legacy `Connection.Auth`) | `Transport.Auth = AxiosCredential.Basic(...)`; the same slot also accepts `Bearer` / `Header` / `Provider`, exactly one form per request |
 | Explicit `Authorization` header together with a credential (previously the explicit header silently won) | Throws `ERR_BAD_OPTION_VALUE`; `CredentialProvider` together with an already-set `Transport.Auth` errors too |
+| `[Authorize("Token")]` with a static slot of a different scheme (previously the slot silently won) | Throws `ERR_BAD_OPTION_VALUE`; the declared scheme and `Transport.Auth`'s scheme must match |
+| 401 replay body scope (previously only a few rebuildable shapes could replay) | Data bodies are rebuilt; whitelisted in-memory content is snapshotted before the first send (bounded by `Limits.MaxRequestBytes`; over the limit no replay); `Stream` / streaming multipart never replay |
+| `RequestStreamAsync` / `[Stream]` with an explicit non-`Stream` `ResponseType` (previously silently overridden) | Throws `ERR_BAD_OPTION_VALUE` before sending; `Stream` is only auto-selected when `ResponseType` was not explicitly set |
+| Declarative extension entry points (previously created a fresh facade per call, dropping `CredentialProvider` / `ErrorFactory`) | Cache one `ApiClient` per `AxiosClient`; state configured beforehand keeps applying |
+| Streaming frame implementation location | NDJSON / SSE / JSON array framing moved into the kernel internals; `AxiosStreamFormat` / `Limits.MaxStreamFrameBytes` / `AxiosException.Stream*` remain public capabilities, while WebAPI keeps only the declarative entry points |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
 | top-level `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
 | `Cache` | `Caching` |

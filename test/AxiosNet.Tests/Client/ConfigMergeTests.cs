@@ -525,6 +525,52 @@ public sealed class ConfigMergeTests
     }
 
     [Fact]
+    public async Task Shortcut_ExplicitNullBody_ClearsInheritedDefault()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Body = new { inherited = true },
+        });
+
+        // 快捷方法的 data 参数是显式传入的（null 也算）：与通用入口写 Body = null 同义。
+        // 必须用命名实参：位置上的 null 会优先绑定到 configure 重载（那是另一层语义）。
+        await client.PostAsync(server.Url + "x", data: null);
+
+        Assert.Empty(Assert.Single(server.Received).Body);
+    }
+
+    [Fact]
+    public async Task Shortcut_OmittedBody_KeepsInheritedDefault()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Body = new { inherited = true },
+        });
+
+        // 没有 data 参数的快捷方法不表达「本次没有正文」：实例默认正文仍然生效。
+        await client.DeleteAsync(server.Url + "x");
+
+        Assert.NotEmpty(Assert.Single(server.Received).Body);
+    }
+
+    [Fact]
+    public async Task Shortcut_ExplicitNoneToken_ClearsInheritedDefault()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        using var client = new AxiosClient(new AxiosConfig { CancellationToken = canceled.Token });
+
+        // 显式令牌重载传入 CancellationToken.None：与通用入口写 None 同义，摘掉实例默认令牌。
+        var response = await client.GetAsync(server.Url + "x", CancellationToken.None);
+
+        Assert.Equal(200, response.Status);
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
     public void Clone_AfterFailedNullAssignment_StillWorks()
     {
         var config = new AxiosConfig { BaseAddress = "http://a.com" };

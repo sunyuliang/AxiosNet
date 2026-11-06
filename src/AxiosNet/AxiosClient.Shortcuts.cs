@@ -20,11 +20,11 @@ public sealed partial class AxiosClient
 
     /// <summary>GET 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse> GetAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Get, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Get, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>GET 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse<T>> GetAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.get，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> GetAsync(string url, AxiosConfig config)
@@ -44,11 +44,11 @@ public sealed partial class AxiosClient
 
     /// <summary>DELETE 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse> DeleteAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Delete, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Delete, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>DELETE 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse<T>> DeleteAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.delete，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> DeleteAsync(string url, AxiosConfig config)
@@ -68,11 +68,11 @@ public sealed partial class AxiosClient
 
     /// <summary>HEAD 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse> HeadAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>HEAD 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.head，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> HeadAsync(string url, AxiosConfig config)
@@ -92,11 +92,11 @@ public sealed partial class AxiosClient
 
     /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>OPTIONS 携带请求体。data 支持全部类型（对象/字典/dynamic/string/byte[]/Stream/HttpContent）。</summary>
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, object? data, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.options，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, AxiosConfig config)
@@ -108,11 +108,11 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.post 携带请求体，返回非泛型响应。</summary>
     public Task<AxiosResponse> PostAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios.post 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PostAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Post, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.post，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> PostAsync(string url, AxiosConfig config)
@@ -124,11 +124,11 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.put 携带请求体，返回非泛型响应。</summary>
     public Task<AxiosResponse> PutAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios.put 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PutAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.put，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> PutAsync(string url, AxiosConfig config)
@@ -140,11 +140,11 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.patch 携带请求体，返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data), null);
+        => SendAsync(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios.patch 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.patch，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchAsync(string url, AxiosConfig config)
@@ -160,27 +160,27 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios postForm：默认按 multipart/form-data 发送（字段 + FormFile 文件部件）。</summary>
     public Task<AxiosResponse> PostFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Post, configure, cancellationToken, data), null);
+        => SendAsync(FormShortcut(url, HttpMethod.Post, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios postForm。</summary>
     public Task<AxiosResponse<T>> PostFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Post, configure, cancellationToken, data));
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Post, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios putForm。</summary>
     public Task<AxiosResponse> PutFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Put, configure, cancellationToken, data), null);
+        => SendAsync(FormShortcut(url, HttpMethod.Put, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios putForm。</summary>
     public Task<AxiosResponse<T>> PutFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Put, configure, cancellationToken, data));
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Put, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios patchForm。</summary>
     public Task<AxiosResponse> PatchFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data), null);
+        => SendAsync(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios patchForm。</summary>
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data));
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true));
 
     // ------------------------------------------------------------------
     // CancellationToken 显式重载（令牌不再走 data 参数）。
@@ -188,83 +188,83 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.get 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> GetAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Get, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Get, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.get 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> GetAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Get, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.delete 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> DeleteAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Delete, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Delete, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.delete 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> DeleteAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Delete, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.head 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> HeadAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Head, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Head, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.head 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> HeadAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Head, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.options 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> OptionsAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Options, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Options, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.options 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> OptionsAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Options, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.post 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PostAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Post, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Post, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.post 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PostAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Post, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Post, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.put 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PutAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Put, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Put, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.put 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PutAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Put, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.patch 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Patch, null, cancellationToken), null);
+        => SendAsync(Shortcut(url, HttpMethod.Patch, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.patch 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, null, cancellationToken));
+        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.postForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PostFormAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(FormShortcut(url, HttpMethod.Post, null, cancellationToken, null), null);
+        => SendAsync(FormShortcut(url, HttpMethod.Post, null, cancellationToken, null, bodyProvided: true), null);
 
     /// <summary>对应 axios.postForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PostFormAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Post, null, cancellationToken, null));
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Post, null, cancellationToken, null, bodyProvided: true));
 
     /// <summary>对应 axios.putForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PutFormAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(FormShortcut(url, HttpMethod.Put, null, cancellationToken, null), null);
+        => SendAsync(FormShortcut(url, HttpMethod.Put, null, cancellationToken, null, bodyProvided: true), null);
 
     /// <summary>对应 axios.putForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PutFormAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Put, null, cancellationToken, null));
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Put, null, cancellationToken, null, bodyProvided: true));
 
     /// <summary>对应 axios.patchForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchFormAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null), null);
+        => SendAsync(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null, bodyProvided: true), null);
 
     /// <summary>对应 axios.patchForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null));
+        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null, bodyProvided: true));
 
     /// <summary>表单快捷方法入口：默认 multipart/form-data，实例默认已是表单编码时保留实例值。</summary>
     private AxiosConfig FormShortcut(
@@ -272,8 +272,9 @@ public sealed partial class AxiosClient
         HttpMethod method,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken,
-        object? data)
-        => Shortcut(url, method, configure, cancellationToken, data, AxiosContentType.MultipartFormData);
+        object? data,
+        bool bodyProvided = false)
+        => Shortcut(url, method, configure, cancellationToken, data, AxiosContentType.MultipartFormData, bodyProvided: bodyProvided);
 
     /// <summary>按目标类型跑一次请求：预造强类型响应让管线就地填充；拦截器换掉响应对象时改走复制路径。</summary>
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
@@ -341,14 +342,20 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>组装一次快捷调用的<b>生效配置</b>：在实例默认值的副本上填写本次请求项，并标记 <see cref="AxiosConfig.EffectiveMerged"/>。</summary>
+    /// <summary>
+    /// 组装一次快捷调用的<b>生效配置</b>：在实例默认值的副本上填写本次请求项，并标记 <see cref="AxiosConfig.EffectiveMerged"/>。
+    /// <paramref name="bodyProvided"/> / <paramref name="tokenProvided"/> 区分「参数没给」与「给了 null / None」：
+    /// 后者与通用入口显式写 <c>Body = null</c> / <c>CancellationToken = None</c> 同义，会摘掉实例默认值。
+    /// </summary>
     private AxiosConfig Shortcut(
         string url,
         HttpMethod method,
         Action<AxiosConfig>? configure,
         CancellationToken cancellationToken,
         object? data = null,
-        string? defaultContentType = null)
+        string? defaultContentType = null,
+        bool bodyProvided = false,
+        bool? tokenProvided = null)
     {
         var config = NewEffectiveConfig();
 
@@ -367,20 +374,22 @@ public sealed partial class AxiosClient
             config.ContentType = defaultContentType;
         }
 
-        // 仅在令牌可取消时写入，避免覆盖实例默认令牌。
-        if (cancellationToken.CanBeCanceled)
+        // 显式给令牌（含 CancellationToken.None）时写回：与通用入口写 None 同义。
+        // 没给令牌时仍以「可取消」为界，避免普通快捷调用把实例默认令牌冲掉。
+        if (tokenProvided ?? cancellationToken.CanBeCanceled)
         {
             config.CancellationToken = cancellationToken;
         }
 
-        // 令牌落到 data 上时直接报错。
-        if (data is CancellationToken)
+        if (bodyProvided)
         {
-            throw AxiosException.InvalidOption("CancellationToken 不能作为请求体传入，请使用 cancellationToken 参数。", config);
-        }
+            // 令牌落到 data 上时直接报错。
+            if (data is CancellationToken)
+            {
+                throw AxiosException.InvalidOption("CancellationToken 不能作为请求体传入，请使用 cancellationToken 参数。", config);
+            }
 
-        if (data is not null)
-        {
+            // 显式 data（含 null）一律写回：null 表示「本次没有正文」，与通用入口写 Body = null 同义。
             config.Body = data;
         }
 

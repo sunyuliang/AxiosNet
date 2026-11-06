@@ -117,46 +117,60 @@ internal static class RequestContentType
                 return null;
             }
 
-            try
-            {
-                return Encoding.GetEncoding(name);
-            }
-            catch (ArgumentException)
+            var resolved = EncodingResolver.TryResolve(name);
+            if (resolved is null)
             {
                 // 平台不识别的 charset 名不在此判定：要不要报错由调用点（ResolveCharset）决定。
                 unresolvedName = name;
-                return null;
             }
+
+            return resolved;
         }
 
         return null;
     }
 
-    /// <summary>从媒体类型参数里取 boundary（支持带引号的形式）；没有则返回 <c>null</c>。</summary>
+    /// <summary>
+    /// 从媒体类型参数里取 boundary；没有则返回 <c>null</c>。
+    /// 统一走 <see cref="MediaTypeHeaderValue.TryParse"/>：参数顺序、<c>boundary = abc</c> 的空格、引号都按 RFC 规则处理，
+    /// 不用字符串查找，避免「声明了边界却按没有处理」的静默替换。
+    /// </summary>
     public static string? ExtractBoundary(string mediaType)
     {
-        const string marker = "boundary=";
-        var index = mediaType.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (index < 0)
+        // 无法解析的媒体类型按「没有声明 boundary」处理：是否合法由写头 / 构建内容处决定。
+        if (!MediaTypeHeaderValue.TryParse(mediaType, out var parsed))
         {
             return null;
         }
 
-        var value = mediaType[(index + marker.Length)..].Trim();
-        if (value.StartsWith('"'))
+        foreach (var parameter in parsed.Parameters)
         {
-            var end = value.IndexOf('"', 1);
-            return end > 1 ? value[1..end] : null;
+            if (!parameter.Name.Equals("boundary", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = parameter.Value?.Trim();
+            if (string.IsNullOrEmpty(value))
+            {
+                return null;
+            }
+
+            // 引号包裹的边界：引号本身不进 boundary；未闭合的引号视为没有声明。
+            if (value[0] == '"')
+            {
+                if (value.Length < 2 || value[^1] != '"')
+                {
+                    return null;
+                }
+
+                value = value[1..^1].Trim();
+            }
+
+            return value.Length == 0 ? null : value;
         }
 
-        var separator = value.IndexOf(';');
-        if (separator >= 0)
-        {
-            value = value[..separator];
-        }
-
-        value = value.Trim();
-        return value.Length == 0 ? null : value;
+        return null;
     }
 
     /// <summary>内容自身是否已带 multipart boundary。</summary>

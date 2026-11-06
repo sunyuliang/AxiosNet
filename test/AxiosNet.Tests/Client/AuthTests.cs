@@ -145,6 +145,65 @@ public sealed class AuthTests
         Assert.Equal("Bearer tok", server.Received[0].Headers["authorization"]);
     }
 
+    [Fact]
+    public async Task Auth_ProviderSlot_WithInterceptedClone_IsStillCalledOnce()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+        var provider = new CountingCredentialProvider();
+
+        // 拦截器换出一份克隆配置：槽位引用没变，解析结果跟着走，不能因此再调一次提供方。
+        client.Interceptors.Request.Use(
+            (Func<AxiosConfig, Task<AxiosConfig>>)(config => Task.FromResult(config.Clone())));
+
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Provider(provider));
+
+        Assert.Equal(1, provider.Calls);
+        Assert.Equal("Bearer tok", server.Received[0].Headers["authorization"]);
+    }
+
+    [Fact]
+    public async Task Auth_InterceptorSetsSlotAfterBinding_IsResolved()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        // 绑定后槽位才出现：拦截器之后再补一次解析，头要落出去。
+        client.Interceptors.Request.Use(
+            (Func<AxiosConfig, Task<AxiosConfig>>)(config =>
+            {
+                config.Transport.Auth = AxiosCredential.Bearer("late");
+                return Task.FromResult(config);
+            }));
+
+        await client.GetAsync("x");
+
+        Assert.Equal("Bearer late", server.Received[0].Headers["authorization"]);
+    }
+
+    [Fact]
+    public async Task Auth_InterceptorAddsExplicitHeader_WithSlot_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Transport = new() { Auth = AxiosCredential.Bearer("tok") },
+        });
+        client.Interceptors.Request.Use(
+            (Func<AxiosConfig, Task<AxiosConfig>>)(config =>
+            {
+                config.Headers.Set("Authorization", "Bearer manual");
+                return Task.FromResult(config);
+            }));
+
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
+
+        // 冲突校验补到拦截器之后：凭据槽位与显式头仍然只能留一个，且请求没有发出。
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
     private sealed class CountingCredentialProvider : IAxiosCredentialProvider
     {
         internal int Calls { get; private set; }

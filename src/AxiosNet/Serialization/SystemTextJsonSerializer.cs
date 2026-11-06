@@ -65,7 +65,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             return Deserialize(ResponseTextDecoder.Decode(span, charSet, forced), type, config);
         }
 
-        if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF)
+        if (BomDetection.HasUtf8Bom(span))
         {
             span = span[3..];
         }

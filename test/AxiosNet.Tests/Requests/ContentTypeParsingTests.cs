@@ -90,6 +90,10 @@ public sealed class ContentTypeParsingTests
 
         // boundary 之后还有别的参数
         Assert.Equal("abc", RequestContentType.ExtractBoundary("multipart/form-data; boundary=abc; charset=utf-8"));
+
+        // 参数按 RFC 允许 '=' 两侧留空格：不能当成「没有 boundary」而静默生成新边界
+        Assert.Equal("abc", RequestContentType.ExtractBoundary("multipart/form-data; boundary = abc"));
+        Assert.Equal("abc", RequestContentType.ExtractBoundary("multipart/form-data; boundary = \"abc\""));
     }
 
     [Fact]

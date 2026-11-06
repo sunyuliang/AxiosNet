@@ -1,14 +1,27 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 namespace AxiosNet.WebAPI;
 
 /// <summary>
 /// 声明式入口：<c>Axios.Create(url).Create&lt;IUserApi&gt;()</c> / <c>client.RequestAsync(request)</c>。
 /// 一个客户端实例既是原始 HTTP 入口，也是声明式入口，不需要再单独构造门面。
-/// 需要凭据提供方 / 强类型错误工厂时，仍用 <see cref="ApiClient"/>（本扩展每次调用按需包装同一个客户端）。
+/// 需要凭据提供方 / 强类型错误工厂时，先构造 <see cref="ApiClient"/> 并设置状态；
+/// 同一个 <see cref="AxiosClient"/> 的门面按需创建并缓存，后续扩展调用复用同一个门面，状态不会丢。
 /// </summary>
 public static class AxiosClientDeclarativeExtensions
 {
+    // 按 AxiosClient 缓存门面：凭据提供方 / 错误工厂 / RetryOnUnauthorized 都在门面上，
+    // 每次扩展调用临时 new 一个会让这些状态静默失效。弱键表同时不延长客户端寿命。
+    private static readonly ConditionalWeakTable<AxiosClient, ApiClient> Wrappers = new();
+
+    /// <summary>登记调用方自建的门面：同一个客户端只保留第一个登记的门面。</summary>
+    internal static void Register(AxiosClient client, ApiClient wrapper)
+    {
+        // 已有登记时保留原门面（GetValue 的工厂返回值会被忽略），不覆盖调用方已设置的状态。
+        Wrappers.GetValue(client, _ => wrapper);
+    }
+
     /// <summary>为接口创建代理实现，底层复用当前客户端（默认值、拦截器、连接池全部生效）。</summary>
     /// <remarks>语义与 <see cref="ApiClient.Create{T}"/> 完全一致。</remarks>
     public static T Create<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods
@@ -78,10 +91,11 @@ public static class AxiosClientDeclarativeExtensions
         CancellationToken cancellationToken = default)
         => Wrap(client).RequestStreamAsync(request, format, configure, cancellationToken);
 
-    // 声明式门面只是同一客户端的一层包装，不拥有客户端，也不缓存任何状态。
+    // 门面只是同一客户端的一层包装，不拥有客户端；按客户端缓存，首次使用时创建。
+    // 工厂用 register: false 避免在缓存工厂里重入登记。
     private static ApiClient Wrap(AxiosClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
-        return new ApiClient(client, ownsAxiosClient: false);
+        return Wrappers.GetValue(client, static owner => new ApiClient(owner, ownsAxiosClient: false, register: false));
     }
 }

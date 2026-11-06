@@ -94,6 +94,28 @@ public sealed class AxiosCredential
     public bool IsRefreshable
         => _form == Form.Provider && _provider!.CanRefresh;
 
+    /// <summary>槽位是否是提供方形态：内核据此把 401 的重试交给上层（不需要认识声明式层的提供方类型）。</summary>
+    internal bool IsProvider => _form == Form.Provider;
+
+    /// <summary>
+    /// 静态形态的认证方案名（Basic 固定 <c>Basic</c>，令牌用显式 scheme 或默认 <c>Bearer</c>，
+    /// 完整头值取第一段）；提供方形态返回 <c>null</c>，由提供方在解析后决定。
+    /// </summary>
+    internal string? Scheme
+        => _form switch
+        {
+            Form.Basic => "Basic",
+            Form.Bearer => _scheme ?? "Bearer",
+            Form.Header => HeaderScheme(_headerValue!),
+            _ => null,
+        };
+
+    private static string? HeaderScheme(string value)
+    {
+        var separator = value.IndexOf(' ');
+        return separator > 0 ? value[..separator] : null;
+    }
+
     /// <summary>取本次请求实际生效的凭据：静态形态原样返回，提供方形态调用一次提供方。</summary>
     /// <param name="context">本次请求的配置上下文。</param>
     /// <param name="cancellationToken">调用方的取消令牌。</param>

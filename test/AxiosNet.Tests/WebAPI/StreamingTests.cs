@@ -1,4 +1,5 @@
 
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -36,6 +37,57 @@ public sealed class StreamingTests
         var items = await CollectAsync(response.Data!);
 
         Assert.Equal(new[] { 1, 2 }, items.Select(i => i.N));
+    }
+
+    // ------------------------------------------------------------------
+    // 显式 ResponseType：流式入口只在未显式设置时自动切到 Stream
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task RequestStreamAsync_ExplicitNonStreamResponseType_IsRejected()
+    {
+        var handler = new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n") });
+        using var client = CreateClient(handler);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+            client.RequestStreamAsync(
+                new StreamRequest(),
+                AxiosStreamFormat.NewlineDelimitedJson,
+                config => config.ResponseType = ResponseType.Text));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        // 配置在发出前就被拦下：不能静默覆盖成 Stream。
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task StreamDeclaration_InstanceDefaultNonStreamResponseType_IsRejected()
+    {
+        var handler = new ScriptedStreamHandler(
+            new[] { Encoding.UTF8.GetBytes("data: {\"n\":1}\r\n\r\n") },
+            contentType: "text/event-stream");
+        using var client = CreateClient(handler, config => config.ResponseType = ResponseType.Text);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.Create<IStreamApi>().SseAsync());
+
+        // [Stream] 与 RequestStreamAsync 共用同一份判定：实例默认显式设置也算显式。
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task RequestStreamAsync_ExplicitStreamResponseType_Works()
+    {
+        var handler = new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n") });
+        using var client = CreateClient(handler);
+
+        var response = await client.RequestStreamAsync(
+            new StreamRequest(),
+            AxiosStreamFormat.NewlineDelimitedJson,
+            config => config.ResponseType = ResponseType.Stream);
+
+        var items = await CollectAsync(response.Data!);
+        Assert.Equal(new[] { 1 }, items.Select(i => i.N));
     }
 
     [Fact]

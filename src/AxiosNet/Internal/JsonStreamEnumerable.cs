@@ -1,9 +1,8 @@
 using System.Text;
 using System.Text.Json;
-using AxiosNet.Internal;
 using AxiosNet.Serialization;
 
-namespace AxiosNet.WebAPI.Internal;
+namespace AxiosNet.Internal;
 
 /// <summary>
 /// 把响应流切成帧、逐帧反序列化成 <typeparamref name="T"/>（NDJSON / SSE / JSON 数组）。
@@ -631,7 +630,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     private void SkipArrayBom()
     {
         var span = _buffer.AsSpan(_start, _end - _start);
-        if (span.Length >= 3 && span[0] == 0xEF && span[1] == 0xBB && span[2] == 0xBF)
+        if (BomDetection.HasUtf8Bom(span))
         {
             _start += 3;
             return;
@@ -697,7 +696,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
     /// <summary>行首的 UTF-8 BOM 不进入帧内容（与解码路径一致）；<paramref name="length"/> 是原始字节数，另计。</summary>
     private void SkipLineBom(ref int offset, ref int length)
     {
-        if (length >= 3 && _buffer[offset] == 0xEF && _buffer[offset + 1] == 0xBB && _buffer[offset + 2] == 0xBF)
+        if (BomDetection.HasUtf8Bom(_buffer.AsSpan(offset, length)))
         {
             offset += 3;
             length -= 3;

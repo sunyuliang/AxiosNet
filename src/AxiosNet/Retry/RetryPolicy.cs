@@ -1,4 +1,5 @@
 using System.Globalization;
+using AxiosNet.Internal;
 
 namespace AxiosNet.Retry;
 
@@ -134,17 +135,18 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         // 有响应：按状态码判定（408 / 429 / 5xx）。
         if (context.StatusCode is int status)
         {
+            // 401 的刷新与重放只归一层：凭据槽位是提供方形态时，内核不再重试 401 ——
+            // 否则用户把 401 写进 RetryStatusCodes 后，内核的重试与上层（WebAPI）的刷新重放会叠成两层循环。
+            if (status == 401 && IsCredentialProvider(context.Config))
+            {
+                return false;
+            }
+
             return RetryStatusCodes(status);
         }
 
-        // 没有响应：网络层失败或超时。
-        return context.Exception switch
-        {
-            AxiosException { Code: AxiosException.ErrNetwork or AxiosException.ErrConnAborted } => true,
-            HttpRequestException => true,
-            IOException => true,
-            _ => false
-        };
+        // 没有响应：网络层失败或超时（与熔断计数共用同一张分类表）。
+        return FailureClassifier.IsNetworkFailure(context.Exception);
     }
 
     /// <inheritdoc />
@@ -215,6 +217,10 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
 
         return false;
     }
+
+    /// <summary>本次请求的凭据槽位是否是提供方形态（只看槽位形态，不引用声明式层类型）。</summary>
+    private static bool IsCredentialProvider(AxiosConfig? config)
+        => config?.TransportOrNull?.Auth is { IsProvider: true };
 
     /// <summary>幂等方法：重发不会改变服务端状态（或结果与发一次相同）；对冲复用同一判定。</summary>
     internal static bool IsIdempotent(HttpMethod method)

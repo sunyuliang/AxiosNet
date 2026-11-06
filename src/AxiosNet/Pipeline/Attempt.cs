@@ -381,8 +381,7 @@ public static partial class Attempt
     /// </remarks>
     internal static bool IsCleanupCancellation(Exception exception, in AxiosAttemptContext ctx)
         => !ctx.ExternalToken.IsCancellationRequested
-           && (exception is OperationCanceledException
-               || exception is AxiosException { Code: AxiosException.ErrCanceled });
+           && FailureClassifier.IsCancellation(exception);
 
     /// <summary>库级别的「不该重试」：次数到顶、调用方已取消、错误即取消、被熔断 / 闸门拦下、配置错误。</summary>
     /// <remarks>
@@ -401,12 +400,7 @@ public static partial class Attempt
             return false;
         }
 
-        if (context.Exception is OperationCanceledException)
-        {
-            return false;
-        }
-
-        if (context.Exception is AxiosException { Code: AxiosException.ErrCanceled })
+        if (FailureClassifier.IsCancellation(context.Exception))
         {
             return false;
         }

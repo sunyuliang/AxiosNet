@@ -202,19 +202,17 @@ internal sealed class TimeoutStream : DelegatingStream
     /// </summary>
     private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken, Exception inner)
     {
-        if (callerToken.IsCancellationRequested)
+        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts.Token, callerToken))
         {
-            return;
-        }
+            case CancellationKind.Canceled:
+                throw AxiosException.Canceled(_config, _request, inner);
 
-        if (_externalToken.IsCancellationRequested)
-        {
-            throw AxiosException.Canceled(_config, _request, inner);
-        }
+            case CancellationKind.Timeout:
+                throw AxiosException.Timeout(_config, _request, inner, _effectiveTimeout);
 
-        if (_timeoutCts.IsCancellationRequested)
-        {
-            throw AxiosException.Timeout(_config, _request, inner, _effectiveTimeout);
+            default:
+                // Caller / None：由调用处原样抛出。
+                return;
         }
     }
 

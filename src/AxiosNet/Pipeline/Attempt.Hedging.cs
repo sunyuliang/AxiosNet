@@ -54,24 +54,8 @@ public static partial class Attempt
         }
 
         // 正文必须能并发重放：流 / multipart / 进度包装都带共享可变状态。
-        return IsParallelSafeBody(request.Content);
+        return BodyReplayability.CanReplay(ctx.Config, ReplayMode.Hedge);
     }
-
-    /// <summary>正文是否可被两条分支同时序列化：只有内存缓冲形态才是安全的。</summary>
-    private static bool IsParallelSafeBody(HttpContent? content)
-        => content switch
-        {
-            null => true,
-
-            // string / byte[] / form-urlencoded / JSON 文本都落在 ByteArrayContent 上。
-            ByteArrayContent => true,
-
-            // ReadOnlyMemory 的零拷贝正文。
-            ReadOnlyMemoryContent => true,
-
-            // StreamContent / MultipartContent / ProgressHttpContent / 调用方自备内容：一律按不安全处理。
-            _ => false
-        };
 
     /// <summary>
     /// 放出各条分支并等待第一个成功结果。失败分支的异常先记账；全部失败时抛第一条失败，
@@ -232,7 +216,7 @@ public static partial class Attempt
 
     /// <summary>
     /// 第 <paramref name="index"/> 条分支：先按 <c>index × delay</c> 等待，再换一条自己的请求消息发送。
-    /// 第 0 条直接用模板；其余按模板复制（正文沿用同一份，已由 <see cref="IsParallelSafeBody"/> 保证可并发重放）。
+    /// 第 0 条直接用模板；其余按模板复制（正文沿用同一份，已由 <see cref="BodyReplayability.CanReplay(AxiosConfig, ReplayMode)"/> 保证可并发重放）。
     /// </summary>
     private static async Task<AxiosAttemptResult> SendHedgeBranchAsync(
         AxiosAttemptHandler next,

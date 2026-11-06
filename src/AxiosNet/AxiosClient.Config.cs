@@ -10,6 +10,14 @@ public sealed partial class AxiosClient
     // 配置合并 / Header 处理
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// 把调用方传入的按请求配置落到实例默认值上；产物不带 <see cref="AxiosConfig.EffectiveMerged"/>（它描述的是调用方输入，不是库产出）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="PreparePerCall"/> 互逆、<b>不可合并</b>：本方法只处理调用方自己传入的普通配置
+    /// （<c>EffectiveMerged</c> 为 <c>false</c>）；库产出的已合并配置（<c>true</c>，如回放 <c>response.Config</c>）
+    /// 由 <see cref="PreparePerCall"/> 先重新合并。两处判断条件方向相反，删掉任意一个都会让另一半配置得不到合并。
+    /// </remarks>
     private AxiosConfig MergeConfig(AxiosConfig? perCall)
     {
         var merged = Defaults.Clone();
@@ -92,13 +100,7 @@ public sealed partial class AxiosClient
             }
         }
 
-        if (merged.HasHeaders && merged.RemoveHeadersSnapshot is { } removeHeaders)
-        {
-            foreach (var name in removeHeaders)
-            {
-                merged.Headers.Delete(name);
-            }
-        }
+        ApplyRemoveHeaders(merged);
 
         // 只在显式设置时赋值。
         if (perCall.ContentTypeSet)
@@ -248,6 +250,8 @@ public sealed partial class AxiosClient
     {
         if (config.TransportOrNull?.Auth is not { } auth)
         {
+            // 槽位为空（例如拦截器显式清空）：之前解析出的头值一并作废。
+            config.ResolvedAuthorization = null;
             return;
         }
 

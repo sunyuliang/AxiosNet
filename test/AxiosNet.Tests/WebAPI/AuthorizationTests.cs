@@ -260,6 +260,107 @@ public sealed class AuthorizationTests
     }
 
     [Fact]
+    public async Task StaticScheme_MismatchedWithAuthorizeScheme_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Transport = new() { Auth = AxiosCredential.Basic("user", "pass") },
+        });
+
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new TokenAuthorizedRequest()));
+
+        // 不能静默以槽位为准：声明与头值不一致属于配置错误，发出前拦下。
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task StaticScheme_MatchingAuthorizeScheme_IsSent()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Transport = new() { Auth = AxiosCredential.Basic("user", "pass") },
+        });
+
+        await client.RequestAsync(new BasicAuthorizedRequest());
+
+        Assert.StartsWith("Basic ", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task StaticBearer_CustomSchemeMatchingAuthorizeScheme_IsSent()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Transport = new() { Auth = AxiosCredential.Bearer("tok-1", "Token") },
+        });
+
+        await client.RequestAsync(new TokenAuthorizedRequest());
+
+        Assert.Equal("Token tok-1", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task AllowAnonymous_ClearsInstanceAuthSlot()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        var recorder = new RecordingCredentialProvider();
+        using var client = new ApiClient(
+            server.Url,
+            defaults => defaults.Transport.Auth = AxiosCredential.Bearer("tok-default"))
+        {
+            CredentialProvider = recorder
+        };
+
+        // 匿名 = 无凭据：实例默认的静态槽位也被清掉，而不是只跳过 CredentialProvider。
+        await client.RequestAsync(new AnonymousRequest());
+
+        Assert.False(Assert.Single(server.Received).Headers.ContainsKey("Authorization"));
+        Assert.Equal(0, recorder.Calls);
+    }
+
+    [Fact]
+    public async Task AllowAnonymous_RequestScopedAuthSlot_IsKept()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = new RecordingCredentialProvider()
+        };
+
+        // 按请求显式设置的槽位属于调用方显式覆盖，优先于 [AllowAnonymous] 的「清空默认值」。
+        await client.RequestAsync(
+            new AnonymousRequest(),
+            config => config.Transport.Auth = AxiosCredential.Basic("u", "p"));
+
+        Assert.Equal("Basic dTpw", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task CredentialProvider_WithRequestScopedClearedAuthSlot_IsAllowed()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(
+            server.Url,
+            defaults => defaults.Transport.Auth = AxiosCredential.Bearer("tok-default"))
+        {
+            CredentialProvider = new StaticCredentialProvider("tok-1")
+        };
+
+        // 按请求显式清空默认槽位（AuthSet）：本次不用静态凭据，提供方可以接管。
+        await client.RequestAsync(new AuthorizedRequest(), config => config.Transport.Auth = null);
+
+        Assert.Equal("Bearer tok-1", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
     public async Task ExplicitAuthorizationHeader_WithProvider_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
@@ -404,7 +505,8 @@ public sealed class AuthorizationTests
             server.Url,
             defaults => defaults.Transport.Auth = AxiosCredential.Basic("u", "p"));
 
-        await client.RequestAsync(new AuthorizedRequest());
+        // 声明写的是 Basic，静态槽位也是 Basic：scheme 一致才照常落头。
+        await client.RequestAsync(new BasicAuthorizedRequest());
 
         Assert.Equal("Basic dTpw", Assert.Single(server.Received).Headers["Authorization"]);
     }
@@ -516,6 +618,12 @@ public sealed class AuthorizationTests
     [Get("secure")]
     [Authorize("Basic")]
     private sealed class BasicAuthorizedRequest : IApiRequest<Person>
+    {
+    }
+
+    [Get("secure")]
+    [Authorize("Token")]
+    private sealed class TokenAuthorizedRequest : IApiRequest<Person>
     {
     }
 

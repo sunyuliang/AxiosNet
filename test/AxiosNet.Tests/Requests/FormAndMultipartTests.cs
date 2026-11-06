@@ -825,6 +825,23 @@ public sealed class FormAndMultipartTests
     }
 
     [Fact]
+    public async Task Multipart_CustomBoundaryWithSpaces_IsNotReplaced()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+
+        // '=' 两侧带空格是合法写法：必须沿用声明的边界，不能静默换成库生成的边界。
+        await client.PostAsync(
+            "upload",
+            new { name = "alice" },
+            c => c.ContentType = "multipart/form-data; boundary = spaced-net");
+
+        var received = Assert.Single(server.Received);
+        Assert.Contains("spaced-net", received.Headers["Content-Type"]);
+        Assert.Contains("--spaced-net", BodyOf(received));
+    }
+
+    [Fact]
     public async Task Multipart_LaterPartFails_StillReleasesUntouchedStreams()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));

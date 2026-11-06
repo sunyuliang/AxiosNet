@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Runtime.InteropServices;
 
 namespace AxiosNet;
 
@@ -468,8 +469,8 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         }
     }
 
-    // 已发布数组上的查找：先比折叠后的判别位再比字符，命中通常一两次比较内结束。
-    private static int IndexOf(Entry[] items, string name)
+    // 已发布数组 / 副本列表上的统一查找：先比折叠后的判别位再比字符，命中通常一两次比较内结束。
+    private static int IndexOf(ReadOnlySpan<Entry> items, string name)
     {
         if (name.Length == 0)
         {
@@ -488,25 +489,9 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return -1;
     }
 
-    // 副本列表上的同一个查找：写入时要边改边找，所以另给一份。
+    // 副本列表上写入时要边改边找：AsSpan 直接看列表底层数组，不复制、不分配。
     private static int IndexOf(List<Entry> items, string name)
-    {
-        if (name.Length == 0)
-        {
-            return -1;
-        }
-
-        var meta = Entry.MetaOf(name);
-        for (var i = 0; i < items.Count; i++)
-        {
-            if (items[i].Meta == meta && string.Equals(items[i].Name, name, StringComparison.OrdinalIgnoreCase))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
+        => IndexOf(CollectionsMarshal.AsSpan(items), name);
 
     // 头名只去首尾空白：中间的空格留给 ValidateName 判非法，而不是悄悄改掉。
     private static string NormalizeName(string name) => name.Trim();

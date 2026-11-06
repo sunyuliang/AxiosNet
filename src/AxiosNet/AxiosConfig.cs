@@ -327,6 +327,9 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MaxRateSet => _transport?.MaxRateSet ?? false;
 
+    /// <summary>未显式设置 <c>MaxRedirects</c> 时的生效值（与 <see cref="AxiosNet.Pooling.ConnectionPoolOptions"/> 的默认一致）。</summary>
+    internal const int DefaultMaxRedirects = 5;
+
     /// <summary>流式单帧上限的默认值（8 MB），与设为 <c>null</c> 等价。</summary>
     public const int DefaultStreamFrameBytes = 8 * 1024 * 1024;
 

@@ -79,6 +79,8 @@ var api = client.Create<IUserApi>();
 var user = await api.GetAsync(1);
 ```
 
+扩展入口与 `ApiClient` 共用同一个门面（按 `AxiosClient` 缓存）：先 `new ApiClient(client)` 配好 `CredentialProvider` / `ErrorFactory`，再走 `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync`，这些状态照常生效，不会静默变成另一个匿名门面。
+
 五个概念：
 
 | 概念 | 类型 | 职责 |
@@ -306,6 +308,7 @@ await foreach (var order in pages.Data!)
 - **编码**：NDJSON / SSE 要求 ASCII 兼容 charset，宽字符编码取流时报 `ERR_BAD_RESPONSE`；`JsonArray` 必须 UTF-8。UTF-8 BOM 会跳过。
 - **SSE 空帧**：`:` 心跳与空 `data:` 一并跳过——单条空 `data:` 不产生事件；多条 `data:` 以 LF 连接，首条为空时不补前导 LF（SSE 在本库只用于 JSON 反序列化，空事件本来也无法交付）。
 - **所有权**：流只能枚举一次；`await foreach` 结束或 `break` 自动释放，手动 `MoveNextAsync` 需自己 `DisposeAsync`。
+- **显式 `ResponseType`**：流式入口在未显式设置 `ResponseType` 时自动切到 `Stream`；按请求或实例默认显式设成非 `Stream` 时，发出前抛 `ERR_BAD_OPTION_VALUE`，不静默覆盖调用方的选择。
 - **错误**：状态码错误在 `await` 抛出；帧解析失败 `ERR_BAD_RESPONSE`，中途断流 `ERR_NETWORK`，取消 `ERR_CANCELED`。
 
 ### 请求体压缩
@@ -1737,6 +1740,7 @@ var client = new ApiClient("https://api.example.com/")
 - **一个槽位，一个来源**：凭据只有 `Transport.Auth` 一个槽位，形态四选一（静态 Basic / 静态令牌 / 完整头值 / 提供方）。`CredentialProvider` 是提供方形态的适配器，`Transport.BasicAuth` 已并入本槽位。
 - **冲突报错，不静默压制**：显式 `Authorization` 头与凭据槽位同时设置、或 `CredentialProvider` 与已设置的 `Transport.Auth` 同时存在，都在发出前抛 `ERR_BAD_OPTION_VALUE`；只设其一时按该来源落头。「凭据 → 头值」映射只有内核一份实现，WebAPI 只提供值与 401 重放策略。
 - **401 重放只认托管凭据**：只有 `Token` / `Header` 形态（由库写入头）才会在 401 后刷新重放；静态 Basic / 静态令牌 / 完整头值不参与重放，需要刷新请改用 `CredentialProvider`（内核通过 `IsRefreshable` 暴露该来源是否可刷新）。
+- **声明里的 scheme 与静态槽位必须一致**：`[Authorize("Token")]` 这类带 scheme 的声明，与已设置的 `Transport.Auth` 静态凭据 scheme 不一致时，发出前抛 `ERR_BAD_OPTION_VALUE`，不静默以槽位为准。比如静态配了 Basic，声明就要写 `[Authorize("Basic")]`；令牌配成 `AxiosCredential.Bearer(token, "Token")` 才能匹配 `[Authorize("Token")]`。
 - **不白取令牌**：显式头与提供方并存时先报冲突，提供方一次都不会被调用。
 - **`Token` 永远拼 scheme**：令牌形态只负责「令牌本体」，要发 `Basic xxx` / `Signature xxx` 这类完整头值请用 `ApiCredential.Header`。库靠「scheme + 空格 + 令牌」的确定性反解出旧令牌值传给 `Invalidate`，混用会让按值作废失效。
 - **自定义凭据**：`CredentialProviders.Create((ctx, ct) => ...)` 里可直接写 `ctx.Config.Headers`（此时配置已合并模型绑定结果），返回 `ApiCredential.Custom()`；按请求分支用 `ctx.Request`（接口式调用是 `ApiInterfaceInvocation`）。需要 401 后强制刷新，给 `Create` 传 `invalidate:` 委托。
@@ -1768,7 +1772,9 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 - **刷新不跟随调用方取消**：一个请求断开不会让同批等待者一起失败，也不会白刷一次（刷新自身受 `RefreshTimeout` 约束，超时抛 `TimeoutException`）。
 - **提前量自动收敛**：实际提前量 = min(`RefreshAhead`, 令牌寿命的一半)，短寿命令牌不会「刚拿到就该刷」。
 - **401 后强制刷新**：`tokens.Invalidate(staleToken)` 作废当前令牌（带旧令牌值可避免并发下把别人刚刷新的新令牌也作废），下一次取令牌必然刷新。
-- **401 自动重放**：收到 401 且本次 `Authorization` 头由库托管写入时，作废凭据、重新取一次并重放**一次**（第二次仍 401 就按错误模型抛出；新凭据与旧值相同则不重放）。正文不可重放（流 / 流式请求体 / multipart）、声明里显式写了 `Authorization`、`[AllowAnonymous]` 一律不重放；重放沿用同一个幂等键。用 `ApiClient.RetryOnUnauthorized = false` 关掉。
+- **401 自动重放**：收到 401 且本次 `Authorization` 头由库托管写入时，作废凭据、重新取一次并重放**一次**（第二次仍 401 就按错误模型抛出；新凭据与旧值相同则不重放）。重放沿用同一个幂等键，非幂等方法需显式打开 `Resilience.AllowUnsafeRetry`（与内核重试同一开关）。用 `ApiClient.RetryOnUnauthorized = false` 关掉。
+- **401 只归一层**：凭据槽位是提供方形态时，内核不再重试 401（即使把 401 写进 `RetryStatusCodes`），401 的刷新与重放只由声明式层负责，避免两层循环。
+- **重放时的正文**：数据型正文（`null` / `byte[]` / `string` / 业务对象 / 无流部件的 `FormData`）由请求模型重新装配；白名单内存内容（`ByteArrayContent` / `StringContent` / `FormUrlEncodedContent` / `ReadOnlyMemoryContent` / `JsonContent` / 全部部件可重放的 `MultipartContent`）在首次发送前做正文快照，受 `Limits.MaxRequestBytes` 约束——超限则不建快照、本次不重放（不会静默发第二次空正文）。`Stream`、含流部件的 multipart、`StreamContent` 与自定义内容一律不重放；声明里显式写了 `Authorization`、`[AllowAnonymous]` 也不重放。
 
 #### 用同一个客户端自举取令牌
 
@@ -2398,6 +2404,11 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `Auth` / `Profile` |
 | `Transport.BasicAuth`（及旧 `Connection.Auth`） | `Transport.Auth = AxiosCredential.Basic(...)`；同一槽位还支持 `Bearer` / `Header` / `Provider`，一个请求只能取一种形态 |
 | 显式 `Authorization` 头与凭据同时设置（旧行为静默取显式头） | 报 `ERR_BAD_OPTION_VALUE`；`CredentialProvider` 与已设置的 `Transport.Auth` 并存同样报错 |
+| `[Authorize("Token")]` 与静态槽位 scheme 不一致（旧行为静默以槽位为准） | 报 `ERR_BAD_OPTION_VALUE`；声明与 `Transport.Auth` 的 scheme 必须一致 |
+| 401 重放的正文范围（旧行为只有少数可重建形态能重放） | 数据型正文重新装配；白名单内存内容首次发送前快照（受 `Limits.MaxRequestBytes` 约束，超限不重放）；`Stream` / 流式 multipart 不重放 |
+| `RequestStreamAsync` / `[Stream]` 遇到显式非 `Stream` 的 `ResponseType`（旧行为静默覆盖） | 发出前报 `ERR_BAD_OPTION_VALUE`；只有未显式设置时才自动切到 `Stream` |
+| 声明式扩展入口（旧行为每次调用新建门面，丢掉 `CredentialProvider` / `ErrorFactory`） | 按 `AxiosClient` 缓存同一个 `ApiClient`，先配好的状态照常生效 |
+| 流式分帧实现位置 | NDJSON / SSE / JSON 数组分帧下沉到内核内部，`AxiosStreamFormat` / `Limits.MaxStreamFrameBytes` / `AxiosException.Stream*` 仍是公共能力；WebAPI 只保留声明式入口 |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
 | 顶层 `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
 | `Cache` | `Caching` |

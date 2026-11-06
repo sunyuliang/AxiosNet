@@ -212,7 +212,7 @@ internal static class UrlBuilder
             || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
     // 查询串规整：去首尾空白与前导 ? / &，不改顺序（顺序会影响部分服务端的缓存键）。
-    private static string NormalizeQuery(string? query)
+    internal static string NormalizeQuery(string? query)
     {
         if (string.IsNullOrWhiteSpace(query))
         {
@@ -298,7 +298,7 @@ internal static class ParamsSerializer
         // 已经是查询串（`"a=1&b=2"`）：原样透传，不走反射。
         if (paramsObj is string rawQuery)
         {
-            return NormalizeRawQuery(rawQuery);
+            return UrlBuilder.NormalizeQuery(rawQuery);
         }
 
         try
@@ -418,13 +418,6 @@ internal static class ParamsSerializer
         => AxiosException.InvalidOption(
             $"params 的类型 '{paramsObj.GetType()}' 无法序列化为查询串：请传对象 / 字典 / 集合，"
             + "或已经序列化好的查询串（string，如 \"a=1&b=2\"）。", config);
-
-    /// <summary>去掉查询串首尾空白与前导 <c>?</c> / <c>&amp;</c>（与自定义 paramsSerializer 的归一化一致）。</summary>
-    private static string NormalizeRawQuery(string query)
-    {
-        var trimmed = query.Trim();
-        return trimmed.Length == 0 ? string.Empty : trimmed.TrimStart('?', '&');
-    }
 
     /// <summary>把单个值按实际形态展平成查询键值对：null 跳过，字典 / 集合 / JSON 树 / 标量 / 嵌套对象分别处理。</summary>
     /// <param name="prefix">已转义的键前缀。</param>

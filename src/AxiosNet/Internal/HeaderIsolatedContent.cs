@@ -18,12 +18,7 @@ internal sealed class HeaderIsolatedContent : HttpContent
         _inner = inner;
 
         // 复制头；Content-Length 是计算属性，读一次让它定型（长度未知时为 null）。
-        foreach (var header in inner.Headers)
-        {
-            Headers.TryAddWithoutValidation(header.Key, header.Value);
-        }
-
-        _length = inner.Headers.ContentLength;
+        _length = ContentHeaderCopy.CopyFrom(inner, this);
     }
 
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)

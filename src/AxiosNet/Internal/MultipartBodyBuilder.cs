@@ -123,8 +123,11 @@ internal static class MultipartBodyBuilder
             }
 
             case JsonElement element:
-                CollectJsonElementParts(name, element, content, encoding, nameSelector, config.SerializationOrNull?.ValueText);
+            {
+                var sink = new MultipartJsonSink(content, encoding, config.SerializationOrNull?.ValueText);
+                JsonFlattener.Flatten(name, element, nameSelector, ref sink);
                 return;
+            }
 
             case string text:
                 content.Add(
@@ -336,43 +339,31 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>JSON 树按树语义展开：对象按键名、数组合并成同名重复部件、null / undefined 跳过。</summary>
-    private static void CollectJsonElementParts(
-        string? name,
-        JsonElement element,
-        MultipartFormDataContent content,
-        Encoding encoding,
-        Func<string?, string, string>? nameSelector,
-        Func<object?, ValueTextChannel, string?>? formatter)
+    private readonly struct MultipartJsonSink : IJsonFlattenSink
     {
-        switch (element.ValueKind)
+        private readonly MultipartFormDataContent _content;
+        private readonly Encoding _encoding;
+        private readonly Func<object?, ValueTextChannel, string?>? _formatter;
+
+        public MultipartJsonSink(
+            MultipartFormDataContent content,
+            Encoding encoding,
+            Func<object?, ValueTextChannel, string?>? formatter)
         {
-            case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
-                {
-                    CollectJsonElementParts(BodyFields.CombineName(nameSelector, name, property.Name), property.Value, content, encoding, nameSelector, formatter);
-                }
-
-                break;
-
-            case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
-                {
-                    CollectJsonElementParts(name, item, content, encoding, nameSelector, formatter);
-                }
-
-                break;
-
-            case JsonValueKind.String:
-            case JsonValueKind.Number:
-            case JsonValueKind.True:
-            case JsonValueKind.False:
-                content.Add(new StringContent(ValueText.JsonScalar(element, ValueTextChannel.Multipart, formatter), encoding), RequireName(name));
-                break;
-
-            default:
-                // null / undefined：跳过
-                break;
+            _content = content;
+            _encoding = encoding;
+            _formatter = formatter;
         }
+
+        // 数组沿用父名：同名重复部件。
+        public string? ArrayItemName(string? prefix, int index) => prefix;
+
+        public void Leaf(string? name, JsonElement value)
+            => _content.Add(
+                new StringContent(
+                    ValueText.JsonScalar(value, ValueTextChannel.Multipart, _formatter),
+                    _encoding),
+                RequireName(name));
     }
 
     /// <summary>

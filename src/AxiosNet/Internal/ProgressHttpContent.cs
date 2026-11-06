@@ -20,13 +20,8 @@ internal sealed class ProgressHttpContent : HttpContent
         _inner = inner;
         _config = config;
 
-        // 内容长度已知时进度才有百分比；未知时只有 loaded。
-        _meter = new TrafficMeter(inner.Headers.ContentLength, callback, maxRate);
-
-        foreach (var header in inner.Headers)
-        {
-            Headers.TryAddWithoutValidation(header.Key, header.Value);
-        }
+        // 头部与长度由共用装配一次取好；内容长度已知时进度才有百分比，未知时只有 loaded。
+        _meter = new TrafficMeter(ContentHeaderCopy.CopyFrom(inner, this), callback, maxRate);
     }
 
     // net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，必须实现。

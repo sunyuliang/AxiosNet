@@ -77,7 +77,7 @@ internal static class FormBodyEncoder
         return builder.ToString();
     }
 
-    /// <summary>把结构化数据展平为表单键值对；<see cref="JsonElement"/> 按树语义展平（<see cref="Flatten"/>）。</summary>
+    /// <summary>把结构化数据展平为表单键值对；<see cref="JsonElement"/> 按树语义展平（<c>JsonFlattener.Flatten</c>）。</summary>
     private static void CollectFormPairs(
         string? prefix,
         object? value,
@@ -92,8 +92,11 @@ internal static class FormBodyEncoder
                 return;
 
             case JsonElement element:
-                Flatten(prefix, element, pairs, options);
+            {
+                var sink = new FormJsonSink(pairs, options);
+                JsonFlattener.Flatten(prefix, element, options.NameSelector, ref sink);
                 return;
+            }
 
             case string text:
                 AddPair(prefix, ValueText.Format(text, ValueTextChannel.Form, memberFormat, options.Formatter)!, pairs, options.Encoding);
@@ -293,50 +296,31 @@ internal static class FormBodyEncoder
         pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, encoding), EncodeValue(value, encoding)));
     }
 
-    /// <summary>把 JSON 树展平为表单键值对：嵌套对象 <c>a[b]=v</c>、数组 <c>a[]=v</c>（根数组 <c>[i]</c>）、null 跳过。</summary>
-    private static void Flatten(
-        string? prefix,
-        JsonElement element,
-        List<KeyValuePair<string, string>> pairs,
-        FormFlattenOptions options)
+    /// <summary>JSON 树展平到表单键值对：数组编码成 <c>a[]</c>（根数组 <c>[i]</c>），键值按表单规则转义。</summary>
+    private readonly struct FormJsonSink : IJsonFlattenSink
     {
-        switch (element.ValueKind)
+        private readonly List<KeyValuePair<string, string>> _pairs;
+        private readonly FormFlattenOptions _options;
+
+        public FormJsonSink(List<KeyValuePair<string, string>> pairs, FormFlattenOptions options)
         {
-            case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
-                {
-                    Flatten(BodyFields.CombineName(options.NameSelector, prefix, property.Name), property.Value, pairs, options);
-                }
+            _pairs = pairs;
+            _options = options;
+        }
 
-                break;
+        public string? ArrayItemName(string? prefix, int index)
+            => prefix is null ? "[" + index + "]" : prefix + "[]";
 
-            case JsonValueKind.Array:
+        public void Leaf(string? name, JsonElement value)
+        {
+            if (name is null)
             {
-                var index = 0;
-                foreach (var item in element.EnumerateArray())
-                {
-                    Flatten(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, options);
-                    index++;
-                }
-
-                break;
+                return;
             }
 
-            case JsonValueKind.String:
-            case JsonValueKind.Number:
-            case JsonValueKind.True:
-            case JsonValueKind.False:
-                if (prefix is null)
-                {
-                    break;
-                }
-
-                pairs.Add(new KeyValuePair<string, string>(EncodeKey(prefix, options.Encoding), EncodeValue(ValueText.JsonScalar(element, ValueTextChannel.Form, options.Formatter), options.Encoding)));
-                break;
-
-            default:
-                // null / undefined：跳过。
-                break;
+            _pairs.Add(new KeyValuePair<string, string>(
+                EncodeKey(name, _options.Encoding),
+                EncodeValue(ValueText.JsonScalar(value, ValueTextChannel.Form, _options.Formatter), _options.Encoding)));
         }
     }
 

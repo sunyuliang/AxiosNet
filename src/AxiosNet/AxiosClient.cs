@@ -129,6 +129,8 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             _pool = pool;
             _ownsPool = false;
+            // 池实际生效的出口回写 Defaults：getter 与真实连接行为一致。
+            SyncConnectionDefaults();
         }
         else
         {
@@ -147,7 +149,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // maxRedirects：0 = 不跟随重定向，> 0 = 覆盖池默认上限；按 *Set 判断是否显式配置。
             if (Defaults.MaxRedirectsSet)
             {
-                var maxRedirects = Defaults.TransportOrNull?.MaxRedirects ?? 5;
+                var maxRedirects = Defaults.TransportOrNull?.MaxRedirects ?? AxiosConfig.DefaultMaxRedirects;
 
                 if (maxRedirects < 0)
                 {
@@ -188,7 +190,34 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             _pool = new HttpConnectionPool(effective);
             _ownsPool = true;
+            // 自建池会把 defaults / poolOptions / profile 合成一份生效值：回写 Defaults，
+            // 让 defaults.Proxy / Credentials / MaxRedirects / WithCredentials 的 getter 与实际一致。
+            SyncConnectionDefaults();
         }
+    }
+
+    /// <summary>
+    /// 连接层配置在构造期定型（之后改 defaults 不会重建池）：把池实际生效的出口写回 <see cref="Defaults"/>，
+    /// 使 getter 反映真实行为；同时清掉 setter 留下的 <c>*Set</c> 标记——这些值来自「回写」而非调用方显式设置，
+    /// 后续合并仍按「未设置」处理。
+    /// </summary>
+    private void SyncConnectionDefaults()
+    {
+        if (_pool is null)
+        {
+            return;
+        }
+
+        var effective = _pool.EffectiveOptions;
+        var transport = Defaults.Transport;
+        transport.Proxy = effective.Proxy;
+        transport.Credentials = effective.Credentials;
+        transport.MaxRedirects = effective.AllowAutoRedirect ? effective.MaxAutomaticRedirections : 0;
+        transport.WithCredentials = effective.UseCookies;
+
+        // 回写不是「显式设置」：清标记，避免被当成按请求写过的实例级选项。
+        transport.MaxRedirectsSet = false;
+        transport.WithCredentialsSet = false;
     }
 
     // ---- getUri：只组装 URL，不发请求（对应 axios.getUri） ----
@@ -266,7 +295,16 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         return SendAsync(PreparePerCall(config), dataType, target);
     }
 
-    /// <summary>把调用方交进来的配置整理成本次请求的生效配置：普通配置原样返回，已合并的（如回放 Config）在这里直接合并。</summary>
+    /// <summary>
+    /// 把调用方交进来的配置整理成本次请求的生效配置。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="MergeConfig"/> 互逆、<b>不可合并</b>：本方法只处理库产出的已合并配置
+    /// （<see cref="AxiosConfig.EffectiveMerged"/> 为 <c>true</c>，例如回放 <c>response.Config</c>），
+    /// 把它重新落到本实例默认值上并保持 <c>EffectiveMerged = true</c>；
+    /// 调用方传入的普通配置（<c>EffectiveMerged</c> 为 <c>false</c>）原样返回，留给管线阶段 1 的 <see cref="MergeConfig"/> 合并。
+    /// 两处的判断条件方向相反，合并其中一个会改变标记在管线里的传播语义。
+    /// </remarks>
     private AxiosConfig PreparePerCall(AxiosConfig config)
     {
         if (!config.EffectiveMerged)

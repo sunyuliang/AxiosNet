@@ -1,4 +1,5 @@
 using AxiosNet.Interceptors;
+using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 
@@ -138,8 +139,7 @@ public static class Axios
 
     /// <summary>对应 axios.isCancel：判断是否由取消导致。</summary>
     public static bool IsCancel(Exception? exception) =>
-        exception is OperationCanceledException
-        || exception is AxiosException { Code: AxiosException.ErrCanceled };
+        exception is not null && FailureClassifier.IsCancellation(exception);
 
     /// <summary>对应 axios.get，返回非泛型响应。</summary>
     public static Task<AxiosResponse> GetAsync(string url, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)

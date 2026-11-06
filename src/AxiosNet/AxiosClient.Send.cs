@@ -59,7 +59,8 @@ public sealed partial class AxiosClient
             AxiosConfig config,
             HttpRequestMessage request)
         {
-            return !_externalToken.IsCancellationRequested && _timeoutCts is { IsCancellationRequested: true }
+            var kind = CancellationClassifier.Classify(_externalToken, _timeoutCts?.Token, CancellationToken.None);
+            return kind == CancellationKind.Timeout
                 ? AxiosException.Timeout(config, request, exception, EffectiveTimeout)
                 : AxiosException.Canceled(config, request, exception);
         }

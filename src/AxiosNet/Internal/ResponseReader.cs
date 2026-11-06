@@ -443,7 +443,7 @@ internal static class ResponseReader
     /// <summary>未解码时的空白判定：只认 ASCII 空白（SP/HTAB/CR/LF）；开头若有 UTF-8 BOM 由本方法先跳过。</summary>
     private static bool IsBlankUtf8(ReadOnlySpan<byte> bytes)
     {
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        if (BomDetection.HasUtf8Bom(bytes))
         {
             bytes = bytes[3..];
         }
@@ -989,7 +989,7 @@ internal static class ResponseReader
 
     /// <summary>剥掉开头的 UTF-8 BOM：STJ 的字节入口不接受 BOM（与 <see cref="JsonDocument"/> 一致）。</summary>
     private static ReadOnlyMemory<byte> StripUtf8Bom(byte[] bytes)
-        => bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+        => BomDetection.HasUtf8Bom(bytes)
             ? bytes.AsMemory(3)
             : bytes;
 }
