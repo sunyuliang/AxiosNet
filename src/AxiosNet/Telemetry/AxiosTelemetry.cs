@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Globalization;
@@ -249,7 +249,8 @@ public static class AxiosTelemetry
     internal static long Timestamp => Stopwatch.GetTimestamp();
 
     /// <summary>本次请求是否产出遥测（默认开启；<paramref name="config"/> 为 null 视为「没表态」）。</summary>
-    internal static bool IsEnabled(AxiosConfig? config) => config?.TelemetryOrNull?.Enabled ?? true;
+    internal static bool IsEnabled(AxiosConfig? config)
+        => (config?.ObservabilityOrNull?.Capture ?? TelemetryCapture.Path) != TelemetryCapture.Off;
 
     /// <summary>耗时秒数：从 <see cref="Timestamp"/> 到现在的间隔。</summary>
     internal static double ElapsedSeconds(long startTimestamp)
@@ -275,7 +276,7 @@ public static class AxiosTelemetry
 
     /// <summary>
     /// 一次成功的租约：<c>pool.leases</c> +1（带 <c>reused</c> 标签），节点是新建时再记一条
-    /// <c>pool.endpoints.created</c>。池域指标不受 <see cref="AxiosConfig.TelemetrySettings.Enabled"/> 约束。
+    /// <c>pool.endpoints.created</c>。池域指标不受 <see cref="AxiosConfig.ObservabilitySettings.Capture"/> 约束。
     /// </summary>
     /// <remarks>不带 host / port（低基数）；要定位到具体 origin 看 span 上的 <c>server.address</c> / <c>server.port</c>。</remarks>
     internal static void RecordLease(bool reused)
@@ -852,9 +853,10 @@ public static class AxiosTelemetry
         activity.SetTag(TagServerPort, uri.Port);
         activity.SetTag(TagPath, uri.AbsolutePath);
 
-        if (config.TelemetryOrNull?.CaptureUrl ?? true)
+        var capture = config.ObservabilityOrNull?.Capture ?? TelemetryCapture.Path;
+        if (capture is not TelemetryCapture.NoUrl)
         {
-            activity.SetTag(TagFullUrl, UrlForTelemetry(uri, config.TelemetryOrNull?.CaptureQuery ?? false));
+            activity.SetTag(TagFullUrl, UrlForTelemetry(uri, capture == TelemetryCapture.Query));
         }
     }
 

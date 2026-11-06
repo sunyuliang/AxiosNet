@@ -1,4 +1,4 @@
-﻿using AxiosNet.Tests.Infrastructure;
+using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests.Requests;
 
@@ -47,7 +47,7 @@ public sealed class StatusTextTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(statusCode, Body: Array.Empty<byte>()));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url + "status", c => c.Callbacks.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url + "status", c => c.ValidateStatus = _ => true);
 
         Assert.Equal(statusCode, response.Status);
         Assert.Equal(expected, response.StatusText);
@@ -59,7 +59,7 @@ public sealed class StatusTextTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(411, Body: Array.Empty<byte>()));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url + "teapot", c => c.Callbacks.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url + "teapot", c => c.ValidateStatus = _ => true);
 
         Assert.Equal("LengthRequired", response.StatusText);
     }
@@ -70,7 +70,7 @@ public sealed class StatusTextTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(599, Body: Array.Empty<byte>()));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url + "unknown", c => c.Callbacks.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url + "unknown", c => c.ValidateStatus = _ => true);
 
         Assert.Equal(string.Empty, response.StatusText);
     }

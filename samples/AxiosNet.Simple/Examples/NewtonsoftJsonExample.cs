@@ -29,7 +29,7 @@ public sealed class NewtonsoftJsonExample : IExample
         var newtonsoft = _newtonsoft ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
-            c.Serialization.ContentSerializer = new NewtonsoftJsonSerializer();
+            c.Serialization.BodySerializers.Default = new NewtonsoftJsonSerializer();
         });
 
         // 对比基线：System.Text.Json 是默认引擎，直接用 Axios 静态门面，不必单独建实例

@@ -23,7 +23,7 @@ public sealed partial class AxiosClient
         if (TotalTimeoutBudget.IsExhausted(remaining))
         {
             throw AxiosException.TotalTimeoutExceeded(
-                config, request: null, attempt: 1, budget: config.TotalTimeout);
+                config, request: null, attempt: 1, budget: config.TotalTimeoutValue);
         }
 
         // 没有总预算：只让自己的令牌生效（不建计时器）。
@@ -69,7 +69,7 @@ public sealed partial class AxiosClient
             if (bounded)
             {
                 throw AxiosException.TotalTimeoutExceeded(
-                    config, request: null, attempt: 1, budget: config.TotalTimeout, ex);
+                    config, request: null, attempt: 1, budget: config.TotalTimeoutValue, ex);
             }
 
             // 否则是领导者被它自己的调用方取消，这次请求本身没问题。
@@ -83,7 +83,7 @@ public sealed partial class AxiosClient
 
     /// <summary>
     /// 落库并放行跟随者：只有 2xx、拿到了原始字节、且 <see cref="CacheFreshnessMode"/> 允许落库时才入缓存；写缓存失败不影响这次请求。
-    /// 写入同样受剩余 <see cref="AxiosConfig.TotalTimeout"/> 约束：预算已用完就不落库，跟随者各自补发。
+    /// 写入同样受剩余 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 约束：预算已用完就不落库，跟随者各自补发。
     /// <paramref name="flight"/> 为 <c>null</c> 时表示这次请求不参与单飞（关掉了单飞，或是跟随者落空后自己补发），只落库。
     /// </summary>
     private static async Task StoreAsync(
@@ -244,7 +244,7 @@ public sealed partial class AxiosClient
         var config = ctx.Config;
         var merged = MergeNotModified(config.RevalidationEntry!, message);
 
-        var validateStatus = config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
+        var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
         var statusAccepted = validateStatus(merged.Status);
 
         var response = ResponseReader.ReadShortCircuit(merged, config, ctx.DataType, ctx.Target, lenient: !statusAccepted);

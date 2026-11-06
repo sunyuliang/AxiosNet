@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
@@ -148,7 +148,7 @@ public sealed class MultipartBindingTests
 
         // 延迟执行的迭代器在物化该集合时就抛错：归成「请求体构建失败」（ERR_BAD_REQUEST），
         // 原始异常留在 InnerException 上，已经产出的流在回滚里被就地释放
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<AxiosException>(() =>
             client.RequestAsync(new ThrowingCollectionRequest { Files = YieldThenThrow(stream) }));
 
         Assert.Equal("ERR_BAD_REQUEST", ex.Code);

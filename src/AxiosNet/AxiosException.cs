@@ -4,7 +4,7 @@ namespace AxiosNet;
 /// 对应 axios 的 AxiosError：携带 code / config / request / response，错误码与 axios 对齐。
 /// </summary>
 /// <remarks>
-/// <b>请求失败</b>一律是本类型（含 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c>，<c>catch (AxiosException)</c> 全都接得住）；
+/// <b>请求失败</b>一律是本类型（派生类型同样如此，<c>catch (AxiosException)</c> 全都接得住）；
 /// 调用方传参非法（头名不是合法 token、用户名含冒号、<c>ContentType</c> 为空白等）仍抛 BCL 的 <see cref="ArgumentException"/>。
 /// </remarks>
 public class AxiosException : Exception
@@ -15,7 +15,7 @@ public class AxiosException : Exception
     /// <summary>服务端 5xx，或响应体无法按目标类型解析、超出 maxContentLength。</summary>
     public const string ErrBadResponse = "ERR_BAD_RESPONSE";
 
-    /// <summary>请求超时（<see cref="AxiosConfig.Timeout"/>）；总预算 <see cref="AxiosConfig.TotalTimeout"/> 在本次尝试发出前耗尽时也用它，靠 <see cref="IsTotalTimeoutExceeded"/> 区分。</summary>
+    /// <summary>请求超时（<see cref="AxiosConfig.Timeout"/>）；总预算 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在本次尝试发出前耗尽时也用它，靠 <see cref="IsTotalTimeoutExceeded"/> 区分。</summary>
     public const string ErrConnAborted = "ECONNABORTED";
 
     /// <summary>网络层失败（连接被拒、DNS 失败等）。</summary>
@@ -42,7 +42,7 @@ public class AxiosException : Exception
     /// </summary>
     public const string ErrQueueFull = "ERR_QUEUE_FULL";
 
-    /// <summary>熔断打开：请求<b>没有发出</b>（<see cref="AxiosConfig.Circuit"/>）。</summary>
+    /// <summary>熔断打开：请求<b>没有发出</b>（<see cref="AxiosConfig.ResilienceSettings.Circuit"/>）。</summary>
     public const string ErrCircuitOpen = "ERR_CIRCUIT_OPEN";
 
     /// <summary>
@@ -82,23 +82,23 @@ public class AxiosException : Exception
     public Exception? Cause => InnerException;
 
     /// <summary>
-    /// 是否属于「<see cref="AxiosConfig.TotalTimeout"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
+    /// 是否属于「<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在请求<b>发出之前</b>就已耗尽」——<c>ECONNABORTED</c> 的一个子集，
     /// 与「发出之后超时」区分开。
     /// </summary>
     /// <remarks>库内按同一口径分流：不计入熔断失败、不重试、不换端点。</remarks>
     public bool IsTotalTimeoutExceeded { get; private init; }
 
-    /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.TotalTimeout"/> 压小）。</summary>
+    /// <summary>本次超时的上限取自剩余总预算（被 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 压小）。</summary>
     internal bool TimedOutOnTotalBudget { get; private init; }
 
     /// <summary>
     /// 是否属于「请求构造阶段失败」（默认查询串展平时的取值 / 格式化抛错）。这是与具体 API 分层无关的中性分类：
     /// 核心直调保持 <c>ERR_BAD_OPTION_VALUE</c>，外层可以据此改判自己的错误码。
     /// </summary>
-    internal bool IsRequestConstructionFailure { get; private init; }
+    public bool IsRequestConstructionFailure { get; private init; }
 
     /// <summary>
-    /// 供派生类型（如 <c>AxiosNet.WebAPI.ApiError&lt;TError&gt;</c>）构造异常；调用方应当读取库抛出的实例，而不是自己创建。
+    /// 供派生类型构造异常；调用方应当读取库抛出的实例，而不是自己创建。
     /// <paramref name="code"/> 决定 <see cref="ErrorCode"/>，取值请用 <see cref="ErrBadRequest"/> 等常量。
     /// </summary>
     protected AxiosException(
@@ -146,9 +146,9 @@ public class AxiosException : Exception
     {
         string message;
 
-        if (!string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage))
+        if (!string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage))
         {
-            message = config.CallbacksOrNull!.TimeoutMessage!;
+            message = config.ObservabilityOrNull!.TimeoutMessage!;
         }
         else if (effectiveTimeout is { } effective)
         {
@@ -172,7 +172,7 @@ public class AxiosException : Exception
     }
 
     /// <summary>
-    /// 总预算（<see cref="AxiosConfig.TotalTimeout"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
+    /// 总预算（<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）已耗尽，本次尝试<b>根本没有发出</b>：错误码与超时一致（<c>ECONNABORTED</c>），
     /// 消息指明是第几次尝试、总预算多少。
     /// </summary>
     /// <param name="config">本次请求的生效配置（错误码、回调文案与超时消息都取自它）。</param>
@@ -191,11 +191,11 @@ public class AxiosException : Exception
             ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
             : "TotalTimeout exceeded";
 
-        var message = string.IsNullOrWhiteSpace(config.CallbacksOrNull?.TimeoutMessage)
+        var message = string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage)
             ? $"{headline} before attempt #{attempt} could be sent: "
               + "the total budget covers all retries, failover endpoints and hedges — "
               + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
-            : config.CallbacksOrNull!.TimeoutMessage!;
+            : config.ObservabilityOrNull!.TimeoutMessage!;
 
         return new AxiosException(message, ErrConnAborted, config, request, null, inner)
         {
@@ -423,18 +423,6 @@ public class AxiosException : Exception
         {
             IsRequestConstructionFailure = true
         };
-    }
-
-    /// <summary>声明式请求装配失败（路径 / 查询 / 请求头 / 正文取值或格式化）：统一 <c>ERR_BAD_REQUEST</c>。</summary>
-    internal static AxiosException RequestBindingFailed(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
-    {
-        return new AxiosException(
-            $"Request could not be built from '{targetName}': {inner.Message}",
-            ErrBadRequest,
-            config,
-            request,
-            null,
-            inner);
     }
 
     /// <summary>响应侧 <c>transformResponse</c> 抛错，原始异常在 <see cref="Cause"/> 里。</summary>

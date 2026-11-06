@@ -79,11 +79,11 @@ internal static class MultipartBodyBuilder
         AxiosConfig config,
         HashSet<object>? visited,
         HashSet<Stream> claimed,
-        PartOverride partOverride = default,
+        FormPartOverride partOverride = default,
         ValueFormat? memberFormat = null)
     {
         // 字段名选择器从 config 读取（含实例默认值）。
-        var nameSelector = config.SerializationOrNull?.FormFieldNameSelector;
+        var nameSelector = config.SerializationOrNull?.FormFieldName;
         switch (value)
         {
             case null:
@@ -123,13 +123,13 @@ internal static class MultipartBodyBuilder
             }
 
             case JsonElement element:
-                CollectJsonElementParts(name, element, content, encoding, nameSelector, config.ValueFormatter);
+                CollectJsonElementParts(name, element, content, encoding, nameSelector, config.SerializationOrNull?.ValueText);
                 return;
 
             case string text:
                 content.Add(
                     new StringContent(
-                        ValueText.Format(text, ValueTextChannel.Multipart, memberFormat, config.ValueFormatter)!,
+                        ValueText.Format(text, ValueTextChannel.Multipart, memberFormat, config.SerializationOrNull?.ValueText)!,
                         encoding),
                     RequireName(name));
                 return;
@@ -157,9 +157,9 @@ internal static class MultipartBodyBuilder
 
             case IDictionary<string, object?> genericDictionary:
             {
-                // 含 ExpandoObject（dynamic）；声明式表单的覆盖按字段名登记，在这里随值一起下传
-                var overrides = (genericDictionary as DeclaredForm)?.Overrides;
-                var formats = (genericDictionary as DeclaredForm)?.Formats;
+                // 含 ExpandoObject（dynamic）；调用方登记的覆盖按字段名随值一起下传
+                var overrides = (genericDictionary as FormData)?.Overrides;
+                var formats = (genericDictionary as FormData)?.Formats;
                 visited = ObjectGraph.Enter(visited, genericDictionary);
                 try
                 {
@@ -255,7 +255,7 @@ internal static class MultipartBodyBuilder
         if (ScalarTypes.IsScalarType(type))
         {
             content.Add(
-                new StringContent(ValueText.Format(value, ValueTextChannel.Multipart, memberFormat, config.ValueFormatter)!, encoding),
+                new StringContent(ValueText.Format(value, ValueTextChannel.Multipart, memberFormat, config.SerializationOrNull?.ValueText)!, encoding),
                 RequireName(name));
             return;
         }
@@ -402,7 +402,7 @@ internal static class MultipartBodyBuilder
         string? name,
         HttpContent part,
         AxiosConfig config,
-        PartOverride partOverride,
+        FormPartOverride partOverride,
         string? valueFileName = null,
         string? valueContentType = null,
         string? valueFieldName = null)
@@ -428,9 +428,9 @@ internal static class MultipartBodyBuilder
     }
 
     /// <summary>
-    /// 校验声明式层传入的文件名 / Content-Type，非法时换成 <see cref="InvalidMultipartOptionException"/>。
+    /// 校验调用方传入的文件名 / Content-Type，非法时换成 <see cref="InvalidMultipartOptionException"/>。
     /// </summary>
-    private static void ValidateDeclaredValue(PartOverride partOverride)
+    private static void ValidateDeclaredValue(FormPartOverride partOverride)
     {
         try
         {

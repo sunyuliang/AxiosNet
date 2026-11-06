@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -131,7 +131,8 @@ public sealed class ModelValidationTests
     [Fact]
     public void NullPathValue_ThrowsWithPropertyName()
     {
-        var ex = Assert.Throws<AxiosException>(
+        // 装配失败现在由 WebAPI 自有的异常工厂产出（AxiosException 派生），按公共契约接住基类即可。
+        var ex = Assert.ThrowsAny<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new NullablePathRequest()));
 
         Assert.Equal("ERR_BAD_REQUEST", ex.Code);

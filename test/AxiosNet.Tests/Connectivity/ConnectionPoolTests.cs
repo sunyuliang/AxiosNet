@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -673,7 +673,7 @@ public sealed class ConnectionPoolTests
         Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     MaxRedirects = 0,
                 },
@@ -681,7 +681,7 @@ public sealed class ConnectionPoolTests
         Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     WithCredentials = true,
                 },
@@ -689,7 +689,7 @@ public sealed class ConnectionPoolTests
         Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     Proxy = new System.Net.WebProxy("http://127.0.0.1:9"),
                 },
@@ -697,7 +697,7 @@ public sealed class ConnectionPoolTests
         Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     Credentials = System.Net.CredentialCache.DefaultCredentials,
                 },
@@ -705,9 +705,9 @@ public sealed class ConnectionPoolTests
         Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
-                    PoolOptions = new ConnectionPoolOptions(),
+                    Pool = new ConnectionPoolOptions(),
                 },
             }, pool: pool));
     }
@@ -732,7 +732,7 @@ public sealed class ConnectionPoolTests
         var ex = Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     MaxRedirects = 0,
                 },
@@ -885,7 +885,7 @@ public sealed class ConnectionPoolTests
     {
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 WithCredentials = true,
             },

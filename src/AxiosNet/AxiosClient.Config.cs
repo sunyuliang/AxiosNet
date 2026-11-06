@@ -24,8 +24,8 @@ public sealed partial class AxiosClient
         if (perCall is null)
         {
             // 没有按请求项：继承段长度即整条链长。
-            merged.TransformInheritedRequest = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
-            merged.TransformInheritedResponse = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
+            merged.TransformInheritedRequest = merged.TransformRequestCount;
+            merged.TransformInheritedResponse = merged.TransformResponseCount;
             return merged;
         }
 
@@ -41,18 +41,18 @@ public sealed partial class AxiosClient
             merged.Params = perCall.Params;
         }
 
-        if (perCall.DataSet)
+        if (perCall.BodySet)
         {
-            merged.Data = perCall.Data;
+            merged.Body = perCall.Body;
         }
 
         // 格式化钩子是实例级默认值：按请求没写就保留（写 null 不能把它冲掉，否则实例级钩子被任何按请求配置静默摘除）。
         // 库产出的配置（回放 response.Config / 快捷方法产物）按「实例来源」处理：钩子描述的是来源实例的默认值，
         // 不能跟着配置搬到目标实例上（否则回放会把来源实例的闭包 / 租户上下文泄漏到另一条客户端）。
         // 调用方自己 new 的配置不受此限：写了就用，仍是「写什么用什么」。
-        if (!instanceSourced && perCall.ValueFormatter is { } perCallFormatter)
+        if (!instanceSourced && perCall.SerializationOrNull is { ValueTextSet: true } perCallSerializationForValueText)
         {
-            merged.ValueFormatter = perCallFormatter;
+            merged.Serialization.ValueText = perCallSerializationForValueText.ValueText;
         }
 
         // 短路响应只按请求意图生效，回放生效配置时不命中。
@@ -62,9 +62,9 @@ public sealed partial class AxiosClient
         }
 
         // 缓存是实例级的共享状态：按请求项给了就用它，否则沿用实例默认。
-        if (perCall.Cache is not null)
+        if (perCall.Caching is not null)
         {
-            merged.Cache = perCall.Cache;
+            merged.Caching = perCall.Caching;
         }
 
         // BaseAddress 属「实例来源」，不搬来源实例的值。
@@ -80,7 +80,7 @@ public sealed partial class AxiosClient
             merged.Headers.MergeFrom(perCall.Headers);
         }
 
-        // 合并之后再删，按请求与实例默认的 RemoveHeaders 都在这时生效。
+        // 合并之后再删，按请求与实例默认的库内删头名单都在这时生效。
         if (perCall.RemoveHeadersSnapshot is { } perCallRemoveHeaders)
         {
             foreach (var name in perCallRemoveHeaders)
@@ -109,12 +109,6 @@ public sealed partial class AxiosClient
             merged.Timeout = perCall.Timeout;
         }
 
-        // 总预算属按请求项；显式 null 表示本次不要实例默认的总预算。
-        if (perCall.TotalTimeoutSet)
-        {
-            merged.TotalTimeout = perCall.TotalTimeout;
-        }
-
         // 只在显式设置时覆盖（setter 会置 ResponseTypeSet）。
         if (perCall.ResponseTypeSet)
         {
@@ -122,7 +116,7 @@ public sealed partial class AxiosClient
         }
 
         // 请求体压缩属按请求项；显式 None 用于关掉实例默认的压缩。
-        merged.RequestCompression = perCall.RequestCompression ?? merged.RequestCompression;
+        merged.Compression = perCall.Compression ?? merged.Compression;
 
         // 取消令牌同属「实例来源」，不搬到目标实例；setter 会置 CancellationTokenSet，故只在显式设置时赋值。
         if (!instanceSourced && perCall.CancellationTokenSet)
@@ -130,57 +124,34 @@ public sealed partial class AxiosClient
             merged.CancellationToken = perCall.CancellationToken;
         }
 
-        // 组对象为 null 表示本请求没碰这一组。
-        if (perCall.CallbacksOrNull is { } incomingCallbacks)
+        // 组对象为 null 表示本请求没碰这一组；ValidateStatus 是顶层项，单独合并。
+        if (perCall.ObservabilityOrNull is { } incomingObservability)
         {
-            merged.Callbacks.MergeFrom(incomingCallbacks);
+            merged.Observability.MergeFrom(incomingObservability);
         }
 
-        // 重试策略属按请求项，没碰这一组就沿用实例默认（懒创建）。
-        if (perCall.RetryOrNull is { } incomingRetry)
+        if (perCall.ValidateStatusSet)
         {
-            merged.Retry.MergeFrom(incomingRetry);
+            merged.ValidateStatus = perCall.ValidateStatus;
         }
 
-        // 熔断同理；显式赋 null 则压住实例默认。
-        if (perCall.CircuitOrNull is { } incomingCircuit)
+        // 治理项（重试 / 熔断 / 对冲 / 备用端点 / 并发 / 幂等键）属按请求项：
+        // 没碰这一组就沿用实例默认（懒创建），碰了就按 *Set 覆盖。
+        if (perCall.ResilienceOrNull is { } incomingResilience)
         {
-            merged.Circuit.MergeFrom(incomingCircuit);
-        }
-
-        // 对冲与备用端点同属按请求项。
-        if (perCall.HedgingOrNull is { } incomingHedging)
-        {
-            merged.Hedging.MergeFrom(incomingHedging);
-        }
-
-        if (perCall.FailoverOrNull is { } incomingFailover)
-        {
-            merged.Failover.MergeFrom(incomingFailover);
-        }
-
-        // 遥测开关同属按请求项。
-        if (perCall.TelemetryOrNull is { } incomingTelemetry)
-        {
-            merged.Telemetry.MergeFrom(incomingTelemetry);
-        }
-
-        // 幂等键同属按请求项；已生成的键不跨合并搬运（那是某次发送的状态）。
-        if (perCall.IdempotencyOrNull is { } incomingIdempotency)
-        {
-            merged.Idempotency.MergeFrom(incomingIdempotency);
+            merged.Resilience.MergeFrom(incomingResilience);
         }
 
         if (perCall.SerializationOrNull is { } incomingSerialization)
         {
             // 注册表属实例级：库产出的配置（回放 response.Config 等）沿用本实例的登记，不搬来源实例的。
-            var ownRegistry = merged.SerializationOrNull?.ContentSerializers;
+            var ownRegistry = merged.SerializationOrNull?.BodySerializersOrNull;
 
             merged.Serialization.MergeFrom(incomingSerialization);
 
             if (instanceSourced)
             {
-                merged.Serialization.ContentSerializers = ownRegistry;
+                merged.Serialization.BodySerializers = ownRegistry;
             }
         }
 
@@ -200,65 +171,70 @@ public sealed partial class AxiosClient
             }
         }
 
-        var perCallConnection = perCall.ConnectionOrNull;
+        var perCallTransport = perCall.TransportOrNull;
 
-        // HttpVersion / VersionPolicy / Transport 属按请求项，库产出的配置同样合并。
-        if (perCallConnection is not null)
+        // HttpVersion / VersionPolicy / Profile / MaxRate 属按请求项，库产出的配置同样合并。
+        if (perCallTransport is not null)
         {
-            if (perCallConnection.HttpVersion is { } httpVersion)
+            if (perCallTransport.HttpVersion is { } httpVersion)
             {
-                merged.Connection.HttpVersion = httpVersion;
+                merged.Transport.HttpVersion = httpVersion;
             }
 
-            if (perCallConnection.VersionPolicy is { } versionPolicy)
+            if (perCallTransport.VersionPolicy is { } versionPolicy)
             {
-                merged.Connection.VersionPolicy = versionPolicy;
+                merged.Transport.VersionPolicy = versionPolicy;
             }
 
             // 显式写 null 表示本次回到默认档。
-            if (perCallConnection.TransportSet)
+            if (perCallTransport.ProfileSet)
             {
-                merged.Connection.Transport = perCallConnection.Transport;
+                merged.Transport.Profile = perCallTransport.Profile;
+            }
+
+            if (perCallTransport.MaxRateSet)
+            {
+                merged.Transport.MaxRate = perCallTransport.MaxRate;
             }
         }
 
         // 实例级选项需合并：ValidatePerRequestOptions 校验的是生效配置；库产出的配置沿用本实例默认值。
-        // Auth = null 表示本次不带认证。
-        if (!instanceSourced && perCallConnection is not null)
+        // BasicAuth = null 表示本次不带认证。
+        if (!instanceSourced && perCallTransport is not null)
         {
-            merged.Connection.MergeFrom(perCallConnection);
+            merged.Transport.MergeFrom(perCallTransport);
         }
 
         // transform 链按「实例默认 + 本次追加」组合，顺序稳定；去重只覆盖 perCall 登记的继承段。
         // 继承段长度必须在追加之前取。
-        var inheritedRequestCount = merged.HasTransformRequest ? merged.TransformRequest.Count : 0;
-        var inheritedResponseCount = merged.HasTransformResponse ? merged.TransformResponse.Count : 0;
+        var inheritedRequestCount = merged.TransformRequestCount;
+        var inheritedResponseCount = merged.TransformResponseCount;
 
         if (perCall.HasTransformRequest)
         {
             var inherited = Math.Min(perCall.TransformInheritedRequest, inheritedRequestCount);
-            foreach (var transform in perCall.TransformRequest)
+            foreach (var transform in perCall.Serialization.TransformRequest)
             {
-                if (inherited > 0 && ChainContainsInherited(merged.TransformRequest, inherited, transform))
+                if (inherited > 0 && ChainContainsInherited(merged.Serialization.TransformRequest, inherited, transform))
                 {
                     continue;
                 }
 
-                merged.TransformRequest.Add(transform);
+                merged.Serialization.TransformRequest.Add(transform);
             }
         }
 
         if (perCall.HasTransformResponse)
         {
             var inherited = Math.Min(perCall.TransformInheritedResponse, inheritedResponseCount);
-            foreach (var transform in perCall.TransformResponse)
+            foreach (var transform in perCall.Serialization.TransformResponse)
             {
-                if (inherited > 0 && ChainContainsInherited(merged.TransformResponse, inherited, transform))
+                if (inherited > 0 && ChainContainsInherited(merged.Serialization.TransformResponse, inherited, transform))
                 {
                     continue;
                 }
 
-                merged.TransformResponse.Add(transform);
+                merged.Serialization.TransformResponse.Add(transform);
             }
         }
 
@@ -383,7 +359,7 @@ public sealed partial class AxiosClient
         }
 
         // 先判 HasHeaders，避免无谓创建头集合。
-        if (config.ConnectionOrNull?.Auth is { } auth
+        if (config.TransportOrNull?.BasicAuth is { } auth
             && !(config.HasHeaders && config.Headers.Has("Authorization"))
             && !request.Headers.Contains("Authorization"))
         {

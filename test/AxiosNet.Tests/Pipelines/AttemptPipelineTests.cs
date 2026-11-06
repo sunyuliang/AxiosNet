@@ -94,7 +94,12 @@ public sealed class AttemptPipelineTests
 
         var log = new ConcurrentQueue<string>();
         using var client = new AxiosClient(
-            new AxiosConfig { Retry = { Policy = Immediate(3) } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default.Append(Probe(log, "inner")));
 
         var response = await client.GetAsync(server.Url + "x");
@@ -120,7 +125,12 @@ public sealed class AttemptPipelineTests
         var pipeline = AxiosAttemptPipeline.Create(
             Probe(log, "outer"), Attempt.Retry, Attempt.Circuit, Attempt.Gate);
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(3) } }, pipeline: pipeline);
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            }, pipeline: pipeline);
 
         await client.GetAsync(server.Url + "x");
 
@@ -156,7 +166,12 @@ public sealed class AttemptPipelineTests
 
         var log = new ConcurrentQueue<string>();
         using var client = new AxiosClient(
-            new AxiosConfig { Circuit = { Policy = new AlwaysOpen() } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = new AlwaysOpen() }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default.Append(Probe(log, "inner")));
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -185,7 +200,9 @@ public sealed class AttemptPipelineTests
 
         var with = new ConcurrentQueue<IDisposable?>();
         using (var client = new AxiosClient(
-                   new AxiosConfig { Limits = { MaxConcurrentRequests = 4 } },
+                   new AxiosConfig {
+            Resilience = { Concurrency = {  MaxInFlight = 4  } }
+        },
                    pipeline: AxiosAttemptPipeline.Default.Append(SlotRecorder(with))))
         {
             await client.GetAsync(server.Url + "x");
@@ -358,7 +375,7 @@ public sealed class AttemptPipelineTests
 
     private static AxiosConfig Limited(int maxConcurrency) => new()
     {
-        Limits = new() { MaxConcurrentRequests = maxConcurrency, QueueTimeout = TimeSpan.FromMilliseconds(300) }
+        Resilience = { Concurrency = { MaxInFlight = maxConcurrency, QueueTimeout = TimeSpan.FromMilliseconds(300) } }
     };
 
     // ------------------------------------------------------------------
@@ -481,9 +498,12 @@ public sealed class AttemptPipelineTests
         using var client = new AxiosClient(
             new AxiosConfig
             {
-                Retry = { Policy = policy },
-                Circuit = { Policy = new AlwaysAllowed() },
-            },
+                Resilience =
+                {
+                    Retry = { Policy = policy },
+                    Circuit = { Policy = new AlwaysAllowed() }
+                }
+                },
             pipeline: pipeline);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -556,8 +576,7 @@ public sealed class AttemptPipelineTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = policy },
-            Limits = new() { MaxConcurrentRequests = 1, QueueTimeout = TimeSpan.FromMilliseconds(200) },
+            Resilience = { Retry = { Policy = policy }, Concurrency = { MaxInFlight = 1, QueueTimeout = TimeSpan.FromMilliseconds(200) } }
         });
 
         var holding = client.GetAsync(server.Url + "hold");
@@ -585,8 +604,12 @@ public sealed class AttemptPipelineTests
         using var client = new AxiosClient(
             new AxiosConfig
             {
-                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-            },
+                Resilience =
+                {
+                    AllowUnsafeRetry = true,
+                    Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+                }
+                },
             pipeline: AxiosAttemptPipeline.Default.Remove(Attempt.Retry));
         using var body = new NonSeekableStream(Encoding.UTF8.GetBytes("streamed-payload"));
 

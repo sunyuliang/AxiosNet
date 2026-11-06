@@ -18,7 +18,12 @@ public sealed class RetryPolicyContractTests
             _ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
         var policy = new RecordingPolicy { MaxRetries = 1 };
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -43,7 +48,12 @@ public sealed class RetryPolicyContractTests
             _ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
         var policy = new RecordingPolicy { MaxRetries = 0 };
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -60,7 +70,12 @@ public sealed class RetryPolicyContractTests
             _ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
         var policy = new RecordingPolicy { MaxRetries = 2 };
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -86,8 +101,11 @@ public sealed class RetryPolicyContractTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = policy, OnRetry = observed.Add }
-        });
+            Resilience =
+            {
+                Retry = { Policy = policy, OnRetry = observed.Add }
+            }
+            });
 
         var stopwatch = Stopwatch.StartNew();
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -123,8 +141,11 @@ public sealed class RetryPolicyContractTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = policy, OnRetry = observed.Add }
-        });
+            Resilience =
+            {
+                Retry = { Policy = policy, OnRetry = observed.Add }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -141,7 +162,12 @@ public sealed class RetryPolicyContractTests
             _ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
         var policy = new RecordingPolicy { MaxRetries = 2, Decision = _ => false };
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -164,7 +190,12 @@ public sealed class RetryPolicyContractTests
         });
 
         var policy = new RecordingPolicy { MaxRetries = 3 };
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(TimeSpan.FromMilliseconds(50));
 
@@ -183,7 +214,12 @@ public sealed class RetryPolicyContractTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
 
         var policy = new RecordingPolicy { MaxRetries = -1 };
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -205,8 +241,8 @@ public sealed class RetryPolicyContractTests
             "http://127.0.0.1:1/x",
             config =>
             {
-                config.Failover.Endpoints = new[] { new Uri(mirror.Url) };
-                config.Retry.Policy = policy;
+                config.Resilience.Failover.Endpoints = new[] { new Uri(mirror.Url) };
+                config.Resilience.Retry.Policy = policy;
             });
 
         Assert.Equal(200, response.Status);
@@ -226,9 +262,12 @@ public sealed class RetryPolicyContractTests
         var policy = new RecordingPolicy { MaxRetries = 1 };
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = policy },
-            Hedging = { MaxHedges = 1, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Retry = { Policy = policy },
+                Hedging = { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 

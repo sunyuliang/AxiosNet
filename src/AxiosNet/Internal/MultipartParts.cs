@@ -1,41 +1,8 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using AxiosNet.Metadata;
 
 namespace AxiosNet.Internal;
-
-/// <summary>
-/// 部件声明（声明式层传入的字段名 / 文件名 / Content-Type）解析后的覆盖项；包装与所有权登记由
-/// <see cref="MultipartBodyBuilder"/> 在装配时完成。
-/// </summary>
-/// <param name="FileName">声明的文件名；null 表示沿用值自带 / builder 默认。</param>
-/// <param name="ContentType">声明的部件 Content-Type；null 表示沿用值自带 / builder 默认。</param>
-/// <param name="HasExplicitName">字段名是否由声明显式指定（决定它是否压过 <see cref="FormFile.FieldName"/>）。</param>
-internal readonly record struct PartOverride(
-    string? FileName,
-    string? ContentType,
-    bool HasExplicitName)
-{
-    /// <summary>是否声明了任何覆盖项。</summary>
-    public bool Any => HasExplicitName || FileName is not null || ContentType is not null;
-}
-
-/// <summary>
-/// 声明式 multipart 表单：值保持调用方原样（<see cref="FormFile"/> / 流 / 字节 / 原值），
-/// 声明覆盖按字段名单独登记，装配时由 <see cref="MultipartBodyBuilder"/> 逐项取出应用。
-/// </summary>
-internal sealed class DeclaredForm : Dictionary<string, object?>
-{
-    /// <summary>字段名 → 声明覆盖（只登记确实声明了覆盖的项）。</summary>
-    public Dictionary<string, PartOverride> Overrides { get; } = new(StringComparer.Ordinal);
-
-    /// <summary>字段名 → 成员级格式化（只登记确实声明了 <c>[Format]</c> 的项）。</summary>
-    public Dictionary<string, ValueFormat> Formats { get; } = new(StringComparer.Ordinal);
-
-    /// <summary>数据来源的请求模型名：装配期错误用它做上下文（普通字典没有这个名字）。</summary>
-    public string? SourceName { get; init; }
-}
 
 /// <summary>
 /// multipart 部件的所有权回收：装配中途失败时释放已取得所有权的流 / 内容（含嵌套在字典、集合、对象里的）。

@@ -1,11 +1,11 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests.Resilience;
 
 /// <summary>
-/// 总预算（<see cref="AxiosConfig.TotalTimeout"/>）：整条逻辑请求的上限，跨重试 / 端点 / 对冲共享。
+/// 总预算（<see cref="AxiosConfig.Resilience.TotalTimeout"/>）：整条逻辑请求的上限，跨重试 / 端点 / 对冲共享。
 /// <para>
 /// 断言的是「N 毫秒内必须被打断」，与其它集合并行跑会被抢走 CPU，故进 <see cref="TimingCollection"/>。
 /// </para>
@@ -32,7 +32,7 @@ public sealed class TotalTimeoutTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c =>
         {
             c.Timeout = TimeSpan.FromSeconds(30);              // 单次尝试给得很宽
-            c.TotalTimeout = TimeSpan.FromMilliseconds(150);       // 但整条请求只允许 150ms
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(150);       // 但整条请求只允许 150ms
         }));
 
         watch.Stop();
@@ -60,14 +60,17 @@ public sealed class TotalTimeoutTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(20, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(20, TimeSpan.Zero) }
+            }
+            });
 
         var watch = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "boom", c =>
         {
             c.Timeout = TimeSpan.FromSeconds(10);
-            c.TotalTimeout = TimeSpan.FromMilliseconds(200);
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(200);
         }));
         watch.Stop();
 
@@ -92,12 +95,17 @@ public sealed class TotalTimeoutTests
         });
 
         var policy = new RetryBudgetPolicy(RetryPolicy.Constant(3, TimeSpan.Zero), capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "budget", c =>
         {
             c.Timeout = TimeSpan.FromSeconds(30);
-            c.TotalTimeout = TimeSpan.FromMilliseconds(150);
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(150);
         }));
 
         // 第一次尝试被总预算打断，重试决定还没发出预算就耗尽了
@@ -122,10 +130,15 @@ public sealed class TotalTimeoutTests
 
         // 退避 2s 远大于总预算：策略已放行，但等待本身就会把预算睡完，重试发不出去
         var policy = new RetryBudgetPolicy(RetryPolicy.Constant(3, TimeSpan.FromSeconds(2)), capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "backoff", c =>
-            c.TotalTimeout = TimeSpan.FromSeconds(1)));
+            c.Resilience.TotalTimeout = TimeSpan.FromSeconds(1)));
 
         Assert.True(ex.IsTotalTimeoutExceeded);
         Assert.Equal(1, calls);
@@ -142,10 +155,15 @@ public sealed class TotalTimeoutTests
         // 预算包预算：一次决定从两层各扣一个令牌，退的时候两层都得退，否则内层（可能是共享的那只）会被慢慢饿死
         var inner = new RetryBudgetPolicy(RetryPolicy.Constant(3, TimeSpan.FromSeconds(2)), capacity: 1, refillPerSecond: 0);
         var outer = new RetryBudgetPolicy(inner, capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = outer } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = outer }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "nested-backoff", c =>
-            c.TotalTimeout = TimeSpan.FromSeconds(1)));
+            c.Resilience.TotalTimeout = TimeSpan.FromSeconds(1)));
 
         Assert.True(ex.IsTotalTimeoutExceeded);
         Assert.Equal(1d, inner.AvailableTokens);
@@ -167,7 +185,9 @@ public sealed class TotalTimeoutTests
         });
 
         // 只能有一条在途：第二条请求注定要排队
-        using var client = new AxiosClient(new AxiosConfig { Limits = { MaxConcurrentRequests = 1 } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience = { Concurrency = {  MaxInFlight = 1  } }
+        });
 
         // ① 占住唯一的槽位（等它真的到达服务端，否则第二条可能先抢到槽位）
         var holder = client.GetAsync(server.Url + "holder");
@@ -180,7 +200,7 @@ public sealed class TotalTimeoutTests
         Assert.Single(server.Received);
 
         // ② 第二条请求排队期间总预算就到点了：它连发送阶段都不该进
-        var queued = client.GetAsync(server.Url + "queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(120));
+        var queued = client.GetAsync(server.Url + "queued", c => c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(120));
 
         // 让总预算在「排队中」过掉（排队时间计入 TotalTimeout，与 QueueTimeout 的口径不同）
         await Task.Delay(300);
@@ -208,7 +228,9 @@ public sealed class TotalTimeoutTests
             return TestJson.Response(new { ok = true });
         });
 
-        using var client = new AxiosClient(new AxiosConfig { Limits = { MaxConcurrentRequests = 1 } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience = { Concurrency = {  MaxInFlight = 1  } }
+        });
 
         var holder = client.GetAsync(server.Url + "holder");
         var waitForHolder = Stopwatch.StartNew();
@@ -222,7 +244,7 @@ public sealed class TotalTimeoutTests
         // 槽位一直不放：只有「预算封顶排队」才能让这条请求在 150ms 左右失败。
         var watch = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync(server.Url + "queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(150))
+            () => client.GetAsync(server.Url + "queued", c => c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(150))
                 .WaitAsync(TimeSpan.FromSeconds(3)));
         watch.Stop();
 
@@ -252,17 +274,22 @@ public sealed class TotalTimeoutTests
         });
 
         // 实例默认 100ms：任何请求都撑不过 300ms 的下游
-        using var client = new AxiosClient(new AxiosConfig { TotalTimeout = TimeSpan.FromMilliseconds(100) });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                TotalTimeout = TimeSpan.FromMilliseconds(100)
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "default"));
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
 
         // 按请求覆盖成更宽的值：实例默认必须让位
-        var response = await client.GetAsync(server.Url + "override", c => c.TotalTimeout = TimeSpan.FromSeconds(10));
+        var response = await client.GetAsync(server.Url + "override", c => c.Resilience.TotalTimeout = TimeSpan.FromSeconds(10));
         Assert.Equal(200, response.Status);
 
         // 显式 null = 这一次不要总预算（与「没设置」是两种语义）
-        var withoutTotalTimeout = await client.GetAsync(server.Url + "none", c => c.TotalTimeout = null);
+        var withoutTotalTimeout = await client.GetAsync(server.Url + "none", c => c.Resilience.TotalTimeout = null);
         Assert.Equal(200, withoutTotalTimeout.Status);
     }
 
@@ -278,7 +305,7 @@ public sealed class TotalTimeoutTests
         using var client = new AxiosClient();
 
         // 0 与 null 同义（与 Timeout = 0 的取值口径一致）：不该被当成「立刻超时」
-        var response = await client.GetAsync(server.Url + "zero", c => c.TotalTimeout = TimeSpan.Zero);
+        var response = await client.GetAsync(server.Url + "zero", c => c.Resilience.TotalTimeout = TimeSpan.Zero);
         Assert.Equal(200, response.Status);
     }
 
@@ -292,8 +319,8 @@ public sealed class TotalTimeoutTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "boom", c =>
         {
             // 退避 5 秒，总预算只有 200ms：睡过截止点等于把 TotalTimeout 变成摆设。
-            c.Retry.Policy = new RetryPolicy(5, TimeSpan.FromSeconds(5));
-            c.TotalTimeout = TimeSpan.FromMilliseconds(200);
+            c.Resilience.Retry.Policy = new RetryPolicy(5, TimeSpan.FromSeconds(5));
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(200);
         }));
         watch.Stop();
 
@@ -314,8 +341,8 @@ public sealed class TotalTimeoutTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c =>
         {
-            c.TotalTimeout = TimeSpan.FromMilliseconds(100);
-            c.Callbacks.TimeoutMessage = "调用方约定的超时文案";
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(100);
+            c.Observability.TimeoutMessage = "调用方约定的超时文案";
         }));
 
         // 自定义文案是调用方的显式措辞：超时与总预算耗尽都用它，不再拼接库自己的说明。
@@ -330,7 +357,7 @@ public sealed class TotalTimeoutTests
         using var client = new AxiosClient();
 
         // 超长预算等价于「不设」：换算成时间戳时按计时器上限收敛，不能溢出成负数（那会变成「立刻过期」）。
-        var response = await client.GetAsync(server.Url + "huge", c => c.TotalTimeout = TimeSpan.MaxValue);
+        var response = await client.GetAsync(server.Url + "huge", c => c.Resilience.TotalTimeout = TimeSpan.MaxValue);
         Assert.Equal(200, response.Status);
     }
 
@@ -340,7 +367,7 @@ public sealed class TotalTimeoutTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.TotalTimeout = TimeSpan.FromSeconds(-1)));
+            client.GetAsync("http://127.0.0.1:1/x", c => c.Resilience.TotalTimeout = TimeSpan.FromSeconds(-1)));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -352,11 +379,11 @@ public sealed class TotalTimeoutTests
         using var client = new AxiosClient();
 
         // 一次带总预算的请求不能把截止点留在实例默认里：下一条请求应当是「没有总预算」的。
-        var first = await client.GetAsync(server.Url + "one", c => c.TotalTimeout = TimeSpan.FromSeconds(5));
+        var first = await client.GetAsync(server.Url + "one", c => c.Resilience.TotalTimeout = TimeSpan.FromSeconds(5));
         Assert.Equal(200, first.Status);
 
         var second = await client.GetAsync(server.Url + "two");
         Assert.Equal(200, second.Status);
-        Assert.Null(client.Defaults.TotalTimeout);
+        Assert.Null(client.Defaults.Resilience.TotalTimeout);
     }
 }

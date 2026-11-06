@@ -1,4 +1,4 @@
-﻿using AxiosNet.Interceptors;
+using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 
@@ -116,7 +116,7 @@ public sealed partial class AxiosClient
             throw AxiosException.Canceled(config, null);
         }
 
-        var validateStatus = config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
+        var validateStatus = config.ValidateStatus ?? DefaultValidateStatus;
         var statusAccepted = validateStatus(reply.Status);
 
         // 状态码不合法时按宽松口径解析。

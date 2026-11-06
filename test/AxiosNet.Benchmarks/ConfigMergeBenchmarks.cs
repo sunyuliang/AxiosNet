@@ -61,7 +61,7 @@ public class ConfigMergeBenchmarks
         }
 
         // 一条默认 transform：合并层要为它维护「继承段长度」并做去重扫描
-        defaults.TransformRequest.Add((data, config) => data);
+        defaults.Serialization.TransformRequest.Add((data, config) => data);
 
         _client = new AxiosClient(defaults);
 

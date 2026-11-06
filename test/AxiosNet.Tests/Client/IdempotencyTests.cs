@@ -23,7 +23,12 @@ public sealed class IdempotencyTests
     public async Task Enabled_WritesHeader_AndEachRequestGetsItsOwnKey()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { Idempotency = { Enabled = true } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Idempotency = { Enabled = true }
+            }
+            });
 
         await client.GetAsync(server.Url + "x");
         await client.GetAsync(server.Url + "x");
@@ -46,9 +51,12 @@ public sealed class IdempotencyTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(3, TimeSpan.Zero) },
-            Idempotency = { Enabled = true }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(3, TimeSpan.Zero) },
+                Idempotency = { Enabled = true }
+            }
+            });
 
         await client.GetAsync(server.Url + "x");
 
@@ -67,9 +75,12 @@ public sealed class IdempotencyTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = { Endpoints = new[] { new Uri(mirror.Url) } },
-            Idempotency = { Enabled = true }
-        });
+            Resilience =
+            {
+                Failover = { Endpoints = new[] { new Uri(mirror.Url) } },
+                Idempotency = { Enabled = true }
+            }
+            });
 
         var response = await client.GetAsync("x");
 
@@ -95,9 +106,12 @@ public sealed class IdempotencyTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(50) },
-            Idempotency = { Enabled = true }
-        });
+            Resilience =
+            {
+                Hedging = { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(50) },
+                Idempotency = { Enabled = true }
+            }
+            });
 
         await client.GetAsync("x");
 
@@ -113,8 +127,8 @@ public sealed class IdempotencyTests
 
         await client.GetAsync(server.Url + "x", c =>
         {
-            c.Idempotency.Enabled = true;
-            c.Idempotency.Key = "  order-42  ";
+            c.Resilience.Idempotency.Enabled = true;
+            c.Resilience.Idempotency.Key = "  order-42  ";
         });
 
         Assert.Equal("order-42", server.Received[0].Headers[Header]);
@@ -131,13 +145,15 @@ public sealed class IdempotencyTests
         var factoryCalls = 0;
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) },
-            Idempotency =
+            Resilience =
             {
-                Enabled = true,
-                KeyFactory = _ => "key-" + Interlocked.Increment(ref factoryCalls)
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) },
+                Idempotency = {
+                    Enabled = true,
+                    KeyFactory = _ => "key-" + Interlocked.Increment(ref factoryCalls)
+                }
             }
-        });
+            });
 
         var response = await client.PutAsync(server.Url + "x", new { a = 1 });
 
@@ -151,7 +167,12 @@ public sealed class IdempotencyTests
     public async Task ExplicitBlankKey_Throws_AndSendsNothing()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { Idempotency = { Enabled = true, Key = " " } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Idempotency = { Enabled = true, Key = " " }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -165,8 +186,11 @@ public sealed class IdempotencyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Idempotency = { Enabled = true, KeyFactory = _ => "" }
-        });
+            Resilience =
+            {
+                Idempotency = { Enabled = true, KeyFactory = _ => "" }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -180,8 +204,11 @@ public sealed class IdempotencyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Idempotency = { Enabled = true, KeyFactory = config => "key:" + config.Method }
-        });
+            Resilience =
+            {
+                Idempotency = { Enabled = true, KeyFactory = config => "key:" + config.Method }
+            }
+            });
 
         await client.PostAsync(server.Url + "x", new { id = 1 });
 
@@ -194,8 +221,11 @@ public sealed class IdempotencyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Idempotency = { Enabled = true, HeaderName = "X-Request-Id" }
-        });
+            Resilience =
+            {
+                Idempotency = { Enabled = true, HeaderName = "X-Request-Id" }
+            }
+            });
 
         await client.GetAsync(server.Url + "x");
 
@@ -207,7 +237,12 @@ public sealed class IdempotencyTests
     public async Task ExplicitHeader_IsNotOverridden()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { Idempotency = { Enabled = true } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Idempotency = { Enabled = true }
+            }
+            });
 
         await client.GetAsync(server.Url + "x", c => c.Headers.Set(Header, "mine"));
 
@@ -220,8 +255,11 @@ public sealed class IdempotencyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Idempotency = { Enabled = true, HeaderName = "Bad Header" }
-        });
+            Resilience =
+            {
+                Idempotency = { Enabled = true, HeaderName = "Bad Header" }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -236,13 +274,13 @@ public sealed class IdempotencyTests
         using var client = new AxiosClient();
 
         var config = new AxiosConfig { Url = server.Url + "x" };
-        config.Idempotency.Enabled = true;
+        config.Resilience.Idempotency.Enabled = true;
 
         await client.RequestAsync(config);
         var clone = config.Clone();
 
-        Assert.Null(clone.Idempotency.GeneratedKey);
-        Assert.True(clone.Idempotency.Enabled);
+        Assert.Null(clone.Resilience.Idempotency.GeneratedKey);
+        Assert.True(clone.Resilience.Idempotency.Enabled);
     }
 
     [Fact]
@@ -252,12 +290,12 @@ public sealed class IdempotencyTests
         using var client = new AxiosClient();
 
         var config = new AxiosConfig { Url = server.Url + "x" };
-        config.Idempotency.Enabled = true;
+        config.Resilience.Idempotency.Enabled = true;
 
         await client.RequestAsync(config);
 
         // 合并产物才有键：用户手里的配置不因为发过一次请求就粘上旧键。
-        Assert.Null(config.Idempotency.GeneratedKey);
+        Assert.Null(config.Resilience.Idempotency.GeneratedKey);
         Assert.False(string.IsNullOrWhiteSpace(server.Received[0].Headers[Header]));
     }
 }

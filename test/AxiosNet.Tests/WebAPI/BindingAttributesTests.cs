@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
@@ -227,7 +227,7 @@ public sealed class BindingAttributesTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value switch
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value switch
         {
             int id => "p" + id,
             DateTime date => date.ToString("yyyyMMdd"),

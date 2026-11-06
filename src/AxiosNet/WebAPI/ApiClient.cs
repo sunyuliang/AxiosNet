@@ -109,12 +109,12 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         // 格式化钩子只有一个来源（客户端的实例默认值）：绑定参数时就要用它，所以这里先取定，再写进本次配置供发送期的表单 / multipart 使用。
-        var formatter = Axios.Defaults.ValueFormatter;
+        var formatter = Axios.Defaults.Serialization.ValueText;
         var target = request.GetType().Name;
         var config = new AxiosConfig
         {
             Method = metadata.Method,
-            ValueFormatter = formatter
+            Serialization = { ValueText = formatter }
         };
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
@@ -146,11 +146,11 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
         // 钩子在绑定期就已经用过（路径 / 查询 / 头 / 正文全部定型），这里再换只会让同一个请求出现两个钩子：
         // 一路是「已经写进 URL 与头的文本」，一路是「发送期的表单 / multipart / 正文」。报错，不留静默半生效。
-        if (!ReferenceEquals(config.ValueFormatter, formatter))
+        if (!ReferenceEquals(config.Serialization.ValueText, formatter))
         {
             throw AxiosException.InvalidOption(
-                $"请求模型 {target} 在绑定期之后修改了 ValueFormatter：路径 / 查询 / 请求头 / 正文已按原钩子定型，改了不会重算。"
-                + "请把钩子设在客户端实例默认值上（AxiosClient.Defaults.ValueFormatter）；"
+                $"请求模型 {target} 在绑定期之后修改了 Serialization.ValueText：路径 / 查询 / 请求头 / 正文已按原钩子定型，改了不会重算。"
+                + "请把钩子设在客户端实例默认值上（AxiosClient.Defaults.Serialization.ValueText）；"
                 + "直接调用（GetAsync / PostAsync 等）的按请求配置不受此限制。",
                 config);
         }
@@ -279,7 +279,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
             if (error.Config?.IdempotencyOrNull is { Enabled: true, GeneratedKey: { } key })
             {
-                config.Idempotency.Key = key;
+                config.Resilience.Idempotency.Key = key;
             }
 
             if (!await ReauthorizeAsync(request, config, credentialKind, cancellationToken).ConfigureAwait(false))
@@ -371,7 +371,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             IAsyncEnumerable<byte[]> => false,
             IAsyncEnumerable<ReadOnlyMemory<byte>> => false,
             HttpContent => false,
-            DeclaredForm => false,
+            FormData => false,
             _ => true,
         };
     /// <summary>「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；网络 / 超时 / 取消不经过工厂。</summary>
@@ -386,8 +386,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         }
         catch (AxiosException error) when (error.IsRequestConstructionFailure)
         {
-            // 查询展平阶段的取值 / 格式化失败：声明式口径是「请求装配失败」，改判 ERR_BAD_REQUEST，原因保留原始异常。
-            throw AxiosException.RequestBindingFailed(
+            // 查询展平阶段的取值 / 格式化失败：WebAPI 口径是「请求装配失败」，改判 ERR_BAD_REQUEST，原因保留原始异常。
+            throw RequestBindingErrors.Create(
                 error.Config,
                 request: null,
                 InvocationTargetName(request),

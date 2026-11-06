@@ -1,4 +1,4 @@
-﻿
+
 using System.Diagnostics;
 using AxiosNet.Circuit;
 using AxiosNet.Pipeline;
@@ -22,7 +22,12 @@ public sealed class CircuitBreakerTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
         var breaker = new CircuitBreaker { FailureThreshold = 2, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         // 前两次真的发出去、真的失败（阈值 2 才打开）
         for (var i = 0; i < 2; i++)
@@ -50,7 +55,12 @@ public sealed class CircuitBreakerTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "nope" }, statusCode: 404));
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         for (var i = 0; i < 4; i++)
         {
@@ -73,7 +83,12 @@ public sealed class CircuitBreakerTests
         });
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         // 超时（ECONNABORTED）与网络错误同级：下游不响应同样是「不可用」
         var timedOut = await Assert.ThrowsAsync<AxiosException>(
@@ -102,8 +117,7 @@ public sealed class CircuitBreakerTests
         var breaker = new CircuitBreaker { FailureThreshold = 2, BreakDuration = TimeSpan.FromSeconds(30) };
         using var client = new AxiosClient(new AxiosConfig
         {
-            Circuit = { Policy = breaker },
-            Limits = { MaxConcurrentRequests = 1 }
+            Resilience = { Circuit = { Policy = breaker }, Concurrency = {  MaxInFlight = 1  } }
         });
 
         // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽
@@ -118,7 +132,7 @@ public sealed class CircuitBreakerTests
         for (var i = 0; i < 2; i++)
         {
             var expired = await Assert.ThrowsAsync<AxiosException>(
-                () => client.GetAsync(server.Url + "queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(80)));
+                () => client.GetAsync(server.Url + "queued", c => c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(80)));
 
             Assert.Equal(AxiosException.ErrConnAborted, expired.Code);
             Assert.Contains("TotalTimeout of", expired.Message, StringComparison.Ordinal);
@@ -141,7 +155,12 @@ public sealed class CircuitBreakerTests
         });
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
@@ -193,10 +212,15 @@ public sealed class CircuitBreakerTests
 
         // 冷却取长值：本用例只断言「记账 + 拒绝」，不需要冷却结束。
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         // validateStatus 放行 5xx：请求本身不抛错，但熔断必须照样记账
-        var response = await client.GetAsync(server.Url + "x", c => c.Callbacks.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url + "x", c => c.ValidateStatus = _ => true);
         Assert.Equal(500, response.Status);
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
 
@@ -219,7 +243,12 @@ public sealed class CircuitBreakerTests
         // 先用长冷却把「冷却期内拒绝」钉死，再压回短冷却等它过期。
         // RecoverySuccesses = 1：本用例只锁定「探测成功 → 闭合」，慢启动另由 Recovery_* 覆盖。
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak, RecoverySuccesses = 1 };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
@@ -251,7 +280,12 @@ public sealed class CircuitBreakerTests
 
         // 阈值取 5：如果探测失败只是「再记一笔」，熔断器会回到闭合态等 5 次失败 —— 那是错的。
         var breaker = new CircuitBreaker { FailureThreshold = 5, BreakDuration = ShortBreak };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         // 攒够 5 次失败才打开
         for (var i = 0; i < 5; i++)
@@ -291,7 +325,12 @@ public sealed class CircuitBreakerTests
 
         // RecoverySuccesses = 1：本用例只看「名额归还」，不等慢启动走完。
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = ShortBreak, RecoverySuccesses = 1 };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         await Task.Delay(TimeSpan.FromMilliseconds(500));
@@ -394,7 +433,12 @@ public sealed class CircuitBreakerTests
             ProbeTimeout = TimeSpan.FromMilliseconds(300)
         };
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
         var host = HostOf(server);
 
         // A：真失败 → 打开
@@ -494,7 +538,12 @@ public sealed class CircuitBreakerTests
             RecoverySuccesses = 3
         };
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
         var host = HostOf(server);
 
         // A：闭合态放行，超时回报远晚于冷却结束
@@ -544,7 +593,12 @@ public sealed class CircuitBreakerTests
                 : next(request, ctx);
 
         using var client = new AxiosClient(
-            new AxiosConfig { Circuit = { Policy = breaker } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default.Append(sabotage));
         var host = HostOf(server);
 
@@ -577,7 +631,12 @@ public sealed class CircuitBreakerTests
         var transitions = new List<AxiosCircuitTransition>();
         breaker.StateChanged += transitions.Add;
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         await Task.Delay(TimeSpan.FromMilliseconds(500));
@@ -840,7 +899,12 @@ public sealed class CircuitBreakerTests
             RecoverySuccesses = recoverySuccesses
         };
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, failed.Code);
@@ -855,7 +919,12 @@ public sealed class CircuitBreakerTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
         var breaker = new CircuitBreaker { ProbeTimeout = TimeSpan.FromMilliseconds(milliseconds) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, failed.Code);
@@ -873,7 +942,12 @@ public sealed class CircuitBreakerTests
         await using var healthy = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(broken.Url + "x"));
 
@@ -901,7 +975,12 @@ public sealed class CircuitBreakerTests
             KeySelector = ctx => ctx.Uri.Host
         };
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(broken.Url + "x"));
 
@@ -918,7 +997,12 @@ public sealed class CircuitBreakerTests
         await using var c = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
         var breaker = new CircuitBreaker { MaxTrackedHosts = 2 };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await client.GetAsync(a.Url + "x");
         await client.GetAsync(b.Url + "x");
@@ -973,7 +1057,12 @@ public sealed class CircuitBreakerTests
             MaxTrackedHosts = 1
         };
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(broken.Url + "x"));
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(broken)));
@@ -1094,7 +1183,12 @@ public sealed class CircuitBreakerTests
             : TestJson.Response(new { ok = true }));
 
         var policy = new CountingPolicy();
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = policy }
+            }
+            });
 
         // 失败一次：放行 1 次、回报 1 次、算 1 次下游故障
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -1110,7 +1204,12 @@ public sealed class CircuitBreakerTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = new DenyAllPolicy(TimeSpan.FromSeconds(7)) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = new DenyAllPolicy(TimeSpan.FromSeconds(7)) }
+            }
+            });
 
         var rejected = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -1133,9 +1232,12 @@ public sealed class CircuitBreakerTests
         using var client = new AxiosClient(new AxiosConfig
         {
             // 允许 5 次重试、零等待：如果没有熔断闸门，服务端会收到 6 个请求
-            Retry = { Policy = new RetryPolicy(5, TimeSpan.Zero) },
-            Circuit = { Policy = breaker }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(5, TimeSpan.Zero) },
+                Circuit = { Policy = breaker }
+            }
+            });
 
         var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -1150,14 +1252,19 @@ public sealed class CircuitBreakerTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
 
         // 显式 null = 本次请求绕过熔断（探针 / 健康检查这类请求不该被挡住）
         var bypassed = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync(server.Url + "x", c => c.Circuit.Policy = null));
+            () => client.GetAsync(server.Url + "x", c => c.Resilience.Circuit.Policy = null));
 
         Assert.Equal(AxiosException.ErrBadResponse, bypassed.Code);
         Assert.Equal(2, server.Received.Count);
@@ -1173,8 +1280,11 @@ public sealed class CircuitBreakerTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Circuit = { Policy = breaker, OnRejected = rejected.Add }
-        });
+            Resilience =
+            {
+                Circuit = { Policy = breaker, OnRejected = rejected.Add }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -1193,7 +1303,12 @@ public sealed class CircuitBreakerTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
         var breaker = new CircuitBreaker { FailureThreshold = 0 };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         var failed = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 

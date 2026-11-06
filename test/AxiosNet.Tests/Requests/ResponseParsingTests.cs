@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -359,19 +359,19 @@ public sealed class ResponseParsingTests
 
         Assert.Equal(0, source.Headers.Count);
         Assert.Empty(source.RemoveHeaders);
-        Assert.Empty(source.TransformRequest);
-        Assert.Empty(source.TransformResponse);
+        Assert.Empty(source.Serialization.TransformRequest);
+        Assert.Empty(source.Serialization.TransformResponse);
 
         var clone = source.Clone();
         clone.Headers.Set("X-Trace", "1");
         clone.RemoveHeaders.Add("X-Default");
-        clone.TransformRequest.Add((data, _) => data);
-        clone.TransformResponse.Add((data, _) => data);
+        clone.Serialization.TransformRequest.Add((data, _) => data);
+        clone.Serialization.TransformResponse.Add((data, _) => data);
 
         Assert.Null(source.Headers.Get("X-Trace"));
         Assert.Empty(source.RemoveHeaders);
-        Assert.Empty(source.TransformRequest);
-        Assert.Empty(source.TransformResponse);
+        Assert.Empty(source.Serialization.TransformRequest);
+        Assert.Empty(source.Serialization.TransformResponse);
     }
 
     // 回放不携带按请求 Auth 的契约由 Audit20261024P2FixTests 锁定（含「用目标实例默认」），
@@ -391,7 +391,7 @@ public sealed class ResponseParsingTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Perm>(
             $"http://127.0.0.1:{server.Port}/",
-            c => c.Serialization.ContentSerializer = new ThrowingSerializer()));
+            c => c.Serialization.BodySerializers.Default = new ThrowingSerializer()));
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
 
         // Characterization：未定义枚举值由 ConvertData 抛出，本来就在读取段的补上下文范围内。
@@ -407,7 +407,7 @@ public sealed class ResponseParsingTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<object>(
             $"http://127.0.0.1:{server.Port}/",
-            c => c.TransformResponse.Add((_, _) => throw new InvalidOperationException("boom"))));
+            c => c.Serialization.TransformResponse.Add((_, _) => throw new InvalidOperationException("boom"))));
 
         // Characterization：transformResponse 失败同样是「有响应」的 ERR_BAD_RESPONSE，且必须带上下文。
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
@@ -461,7 +461,7 @@ public sealed class ResponseParsingTests
         // 第三方序列化器直接产出 (Level)999（不依赖 STJ 的既定行为）：复核同样拒
         var fromThirdParty = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Level>(
             $"http://127.0.0.1:{server.Port}/",
-            c => c.Serialization.ContentSerializer = new FixedUndefinedEnumSerializer()));
+            c => c.Serialization.BodySerializers.Default = new FixedUndefinedEnumSerializer()));
         Assert.Equal(AxiosException.ErrBadResponse, fromThirdParty.Code);
     }
 
@@ -480,7 +480,7 @@ public sealed class ResponseParsingTests
         using var nameClient = new AxiosClient();
         Assert.Equal(Level.Low, (await nameClient.GetAsync<Level>(
             $"http://127.0.0.1:{name.Port}/",
-            c => c.Serialization.ContentSerializer = new StringEnumSerializer())).Data);
+            c => c.Serialization.BodySerializers.Default = new StringEnumSerializer())).Data);
 
         using var flagsClient = new AxiosClient();
         Assert.Equal(Perm.Read | Perm.Write, (await flagsClient.GetAsync<Perm>($"http://127.0.0.1:{flags.Port}/")).Data);
@@ -497,7 +497,7 @@ public sealed class ResponseParsingTests
 
         var response = await client.GetAsync<Enum>(
             "http://localhost/a",
-            c => c.Serialization.ContentSerializer = new FixedDefinedEnumSerializer());
+            c => c.Serialization.BodySerializers.Default = new FixedDefinedEnumSerializer());
 
         Assert.Equal(Level.Low, response.Data);
     }
@@ -579,7 +579,7 @@ public sealed class ResponseParsingTests
     }
 
     [Fact]
-    public async Task ResponseEncoding_OverridesAutoDetection()
+    public async Task TextEncoding_OverridesAutoDetection()
     {
         // 服务端未声明 charset、字节为 Latin1：默认按 UTF-8 解码会乱码，强制 Latin1 后正确
         var body = Encoding.Latin1.GetBytes("café");
@@ -593,7 +593,7 @@ public sealed class ResponseParsingTests
         var forced = await client.GetAsync(server.Url, c =>
         {
             c.ResponseType = ResponseType.Text;
-            c.Serialization.ResponseEncoding = Encoding.Latin1;
+            c.Serialization.TextEncoding = Encoding.Latin1;
         });
         Assert.Equal("café", forced.Data);
     }
@@ -880,7 +880,7 @@ public sealed class ResponseParsingTests
         var forced = await client.GetAsync(server.Url, c =>
         {
             c.ResponseType = ResponseType.Text;
-            c.Serialization.ResponseEncoding = Encoding.Unicode;
+            c.Serialization.TextEncoding = Encoding.Unicode;
         });
         Assert.Equal("你好", forced.Data);
     }

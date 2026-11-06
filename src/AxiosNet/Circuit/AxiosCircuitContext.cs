@@ -66,7 +66,7 @@ public readonly struct AxiosCircuitContext
     public bool IsSuccess => Exception is null && (StatusCode is null || StatusCode < 400);
 
     /// <summary>
-    /// 本次尝试是否「一次都没发出」：<see cref="AxiosConfig.TotalTimeout"/> 在排队或入口处就耗尽了
+    /// 本次尝试是否「一次都没发出」：<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 在排队或入口处就耗尽了
     /// （<c>ECONNABORTED</c>，对应 <see cref="AxiosException.IsTotalTimeoutExceeded"/>，下游连一个字节都没收到）。
     /// </summary>
     /// <remarks>

@@ -59,7 +59,7 @@ internal sealed class BindingPlan
 
     /// <summary>
     /// 请求体的原始值（普通声明取 <see cref="BodyAttribute"/> 绑定的来源）。
-    /// 标量 + 成员级格式化 / 实例钩子时返回 <see cref="FormattedScalarBody"/>，让正文工厂按标量正文处理而不是当字符串透传；
+    /// 标量 + 成员级格式化 / 实例钩子时返回 <see cref="PreformattedValue"/>，让正文工厂按标量正文处理而不是当字符串透传；
     /// 钩子返回 <c>null</c>（本次不处理）时封存通道默认文本，正文工厂便不会再问它第二遍。
     /// 二进制正文只在真的产出文本时封存，否则保持原始字节。
     /// </summary>
@@ -77,14 +77,14 @@ internal sealed class BindingPlan
         // 不能因为配置了「对其它类型生效、对 byte[] 返回 null」的实例钩子就退化成 base64 文本。
         if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, _body!.Format, formatter) is { } text)
         {
-            return new FormattedScalarBody(text);
+            return new PreformattedValue(text);
         }
 
         // 钩子在绑定期已经看过这个值（返回 null = 不处理）：把默认文本一并封存，
         // 正文工厂对裸标量还会按「直接调用」那条规则再问一次钩子，封存后同一个值不会被问第二遍。
         // 二进制正文除外——它的默认形态是原始字节，封存成文本就等于 base64 化。
         return formatter is not null && !ScalarTypes.IsBinaryType(value.GetType())
-            ? new FormattedScalarBody(ValueText.Format(value, ValueTextChannel.ScalarBody)!)
+            ? new PreformattedValue(ValueText.Format(value, ValueTextChannel.ScalarBody)!)
             : value;
     }
 
@@ -248,7 +248,7 @@ internal sealed class BindingPlan
 
             // 有实例钩子时把结果封存：ParamsSerializer 不能再对这段文本套第二遍钩子，
             // 否则成员级 [Format] 的结果会被钩子覆盖（优先级链被打破）。
-            return formatter is null || text is null ? text : new FormattedQueryValue(text);
+            return formatter is null || text is null ? text : new PreformattedValue(text);
         }
 
         // 字典保持键结构（显式命名的映射要展开成 a[key]=v），只把值文本化。
@@ -284,7 +284,7 @@ internal sealed class BindingPlan
                     {
                         if (ValueText.Format(item, ValueTextChannel.Query, format, formatter) is { } text)
                         {
-                            mixed.Add(new FormattedQueryValue(text));
+                            mixed.Add(new PreformattedValue(text));
                         }
                     }
                     else
@@ -313,7 +313,7 @@ internal sealed class BindingPlan
 
     /// <summary>从待删除集合里摘掉匹配的名字（头名大小写不敏感）；没有匹配项时不动集合。</summary>
     /// <remarks>
-    /// 同名声明可能重复出现（<see cref="AxiosConfig.RemoveHeaders"/> 只是 <c>ICollection</c>，不去重：
+    /// 同名声明可能重复出现（库内删头名单只是 <c>ICollection</c>，不去重：
     /// <c>[Headers("X", "X")]</c> 或类 / 接口各声明一次都会留下两条），所以必须**删干净**。
     /// 只删一条的话，剩下那条仍然会在合并层把这个头删掉——表现为「写了签名头却发不出去」。
     /// </remarks>

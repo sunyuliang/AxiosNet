@@ -5,7 +5,7 @@ using System.Text;
 namespace AxiosNet.Tests.Requests;
 
 /// <summary>
-/// 原始响应字节钩子（<see cref="AxiosConfig.CallbackSettings.OnRawResponse"/>）：
+/// 原始响应字节钩子（<see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/>）：
 /// 触发时点、能看到的上下文、错误状态下的可见性，以及「不触发」的两种情形（流式 / 短路）。
 /// </summary>
 public sealed class RawResponseHookTests
@@ -30,14 +30,14 @@ public sealed class RawResponseHookTests
 
         var response = await client.GetAsync<Dictionary<string, string>>("raw", c =>
         {
-            c.Callbacks.OnRawResponse = (info, bytes) =>
+            c.Observability.OnRawResponse = (info, bytes) =>
             {
                 order.Add("raw");
                 seenContext = info;
                 seenBytes = bytes.ToArray();
             };
 
-            c.TransformResponse.Add((data, _) =>
+            c.Serialization.TransformResponse.Add((data, _) =>
             {
                 order.Add("transform");
                 return data;
@@ -74,7 +74,7 @@ public sealed class RawResponseHookTests
         string? seenBody = null;
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("nope", c =>
-            c.Callbacks.OnRawResponse = (info, bytes) =>
+            c.Observability.OnRawResponse = (info, bytes) =>
             {
                 seenStatus = info.Status;
                 seenBody = Encoding.UTF8.GetString(bytes.Span);
@@ -99,7 +99,7 @@ public sealed class RawResponseHookTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.Callbacks.OnRawResponse = (_, _) => throw new InvalidOperationException("boom")));
+            client.GetAsync("x", c => c.Observability.OnRawResponse = (_, _) => throw new InvalidOperationException("boom")));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
@@ -125,7 +125,7 @@ public sealed class RawResponseHookTests
         var response = await client.GetAsync("s", c =>
         {
             c.ResponseType = ResponseType.Stream;
-            c.Callbacks.OnRawResponse = (_, _) => fired = true;
+            c.Observability.OnRawResponse = (_, _) => fired = true;
         });
 
         await using var stream = (Stream)response.Data!;
@@ -144,7 +144,7 @@ public sealed class RawResponseHookTests
         var response = await client.GetAsync<byte[]>("http://short.local/x", c =>
         {
             c.ShortCircuit = AxiosShortCircuit.Json("{\"ok\":true}");
-            c.Callbacks.OnRawResponse = (_, _) => fired = true;
+            c.Observability.OnRawResponse = (_, _) => fired = true;
         });
 
         Assert.NotEmpty(response.Data!);
@@ -162,12 +162,15 @@ public sealed class RawResponseHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+            }
+            });
 
         var seenStatuses = new List<int>();
         var response = await client.GetAsync("retry", c =>
-            c.Callbacks.OnRawResponse = (info, _) => seenStatuses.Add(info.Status));
+            c.Observability.OnRawResponse = (info, _) => seenStatuses.Add(info.Status));
 
         Assert.Equal(200, response.Status);
 
@@ -190,7 +193,7 @@ public sealed class RawResponseHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Callbacks = new AxiosConfig.CallbackSettings
+            Observability = new AxiosConfig.ObservabilitySettings
             {
                 OnRawResponse = (_, _) => defaultCalls++
             }
@@ -199,7 +202,7 @@ public sealed class RawResponseHookTests
         await client.GetAsync("a");
         Assert.Equal(1, defaultCalls);
 
-        await client.GetAsync("b", c => c.Callbacks.OnRawResponse = (_, _) => perCallCalls++);
+        await client.GetAsync("b", c => c.Observability.OnRawResponse = (_, _) => perCallCalls++);
 
         // 按请求写的那份整体覆盖实例默认，不叠加执行。
         Assert.Equal(1, defaultCalls);

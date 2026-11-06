@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Cache;
@@ -157,7 +157,7 @@ public sealed class FormatMatrixTests
             c.BaseAddress = "http://example.test/";
             c.Url = "q";
             c.Params = Payload();
-            c.ValueFormatter = Hook;
+            c.Serialization.ValueText = Hook;
         });
 
         AssertPairs(QueryPairs(uri), Hooked());
@@ -206,7 +206,7 @@ public sealed class FormatMatrixTests
         {
             c.BaseAddress = "http://example.test/";
             c.Url = "q";
-            c.ValueFormatter = Hook;
+            c.Serialization.ValueText = Hook;
             c.Params = new Dictionary<string, object?>
             {
                 ["Int"] = 7,
@@ -283,7 +283,7 @@ public sealed class FormatMatrixTests
         {
             c.BaseAddress = "http://example.test/";
             c.Url = "q";
-            c.ValueFormatter = Hook;
+            c.Serialization.ValueText = Hook;
             c.Params = new List<object?> { 7, 1.25m, true, MxMode.Beta, "a b&c", WhenUtc, DayValue, BlobValue, new Memory<byte>(MemValue) };
         });
 
@@ -335,7 +335,7 @@ public sealed class FormatMatrixTests
             c.BaseAddress = "http://example.test/";
             c.Url = "q";
             c.Params = json;
-            c.ValueFormatter = Hook;
+            c.Serialization.ValueText = Hook;
         });
 
         AssertPairs(QueryPairs(uri), new[]
@@ -364,7 +364,7 @@ public sealed class FormatMatrixTests
     [Fact]
     public void C05_DeclarativeQuery_AllShapes_Hook()
     {
-        using var client = new ApiClient("http://example.test/", c => c.ValueFormatter = Hook);
+        using var client = new ApiClient("http://example.test/", c => c.Serialization.ValueText = Hook);
 
         var uri = client.GetUri(QueryRequest(Payload()));
 
@@ -417,7 +417,7 @@ public sealed class FormatMatrixTests
     [Fact]
     public void C06_DeclarativeQuery_NamedMap_AllShapes_Hook()
     {
-        using var client = new ApiClient("http://example.test/", c => c.ValueFormatter = Hook);
+        using var client = new ApiClient("http://example.test/", c => c.Serialization.ValueText = Hook);
 
         var uri = client.GetUri(new MxMapQueryRequest
         {
@@ -498,7 +498,7 @@ public sealed class FormatMatrixTests
     [Fact]
     public void C07_DeclarativeQuery_Collection_AllShapes_Hook()
     {
-        using var client = new ApiClient("http://example.test/", c => c.ValueFormatter = Hook);
+        using var client = new ApiClient("http://example.test/", c => c.Serialization.ValueText = Hook);
 
         var uri = client.GetUri(new MxCollectionQueryRequest
         {
@@ -526,7 +526,7 @@ public sealed class FormatMatrixTests
         var uri = client.GetUri(new MxNestedQueryRequest { N = new MxInner { X = "n1", Y = 9 } });
         AssertPairs(QueryPairs(uri), new[] { ("N[X]", "n1"), ("N[Y]", "9") });
 
-        using var hooked = new ApiClient("http://example.test/", c => c.ValueFormatter = Hook);
+        using var hooked = new ApiClient("http://example.test/", c => c.Serialization.ValueText = Hook);
         var hookedUri = hooked.GetUri(new MxNestedQueryRequest { N = new MxInner { X = "n1", Y = 9 } });
         AssertPairs(QueryPairs(hookedUri), new[] { ("N[X]", "Hn1"), ("N[Y]", "H9") });
     }
@@ -566,7 +566,7 @@ public sealed class FormatMatrixTests
     [Fact]
     public void C09_Path_AllScalarShapes_Hook()
     {
-        using var client = new ApiClient("http://example.test/", c => c.ValueFormatter = Hook);
+        using var client = new ApiClient("http://example.test/", c => c.Serialization.ValueText = Hook);
 
         var uri = client.GetUri(new MxPathRequest
         {
@@ -629,7 +629,7 @@ public sealed class FormatMatrixTests
         Assert.Equal("2024-04-06T00:00:00.000Z", headers["X-Maybe"]);
 
         await using var hookedServer = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var hookedClient = new ApiClient(hookedServer.Url, c => c.ValueFormatter = Hook);
+        using var hookedClient = new ApiClient(hookedServer.Url, c => c.Serialization.ValueText = Hook);
         await hookedClient.RequestAsync(request);
 
         var hooked = Assert.Single(hookedServer.Received).Headers;
@@ -674,7 +674,7 @@ public sealed class FormatMatrixTests
             c =>
             {
                 c.ContentType = "application/x-www-form-urlencoded";
-                c.ValueFormatter = Hook;
+                c.Serialization.ValueText = Hook;
             });
         AssertPairs(FormPairs(Assert.Single(hookedServer.Received)), Hooked());
     }
@@ -689,7 +689,7 @@ public sealed class FormatMatrixTests
         AssertPairs(FormPairs(Assert.Single(server.Received)), Defaults());
 
         await using var hookedServer = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var hooked = new ApiClient(hookedServer.Url, c => c.ValueFormatter = Hook);
+        using var hooked = new ApiClient(hookedServer.Url, c => c.Serialization.ValueText = Hook);
         await hooked.Create<IFormApi>().SendAsync(Payload());
         AssertPairs(FormPairs(Assert.Single(hookedServer.Received)), Hooked());
     }
@@ -730,7 +730,7 @@ public sealed class FormatMatrixTests
         });
 
         await using var hookedServer = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var hooked = new ApiClient(hookedServer.Url, c => c.ValueFormatter = Hook);
+        using var hooked = new ApiClient(hookedServer.Url, c => c.Serialization.ValueText = Hook);
         await hooked.Create<IPartsApi>().SendAsync(i: 7, when: WhenUtc, day: DayValue, mem: new Memory<byte>(MemValue), nested: new MxInner { X = "n1", Y = 9 });
 
         AssertParts(Assert.Single(hookedServer.Received), new[]
@@ -762,7 +762,7 @@ public sealed class FormatMatrixTests
     public async Task C15_MultipartFlatModel_AllShapes_Hook()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = Hook);
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = Hook);
 
         await client.RequestAsync(UploadRequest(Payload()));
 
@@ -847,7 +847,7 @@ public sealed class FormatMatrixTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new AxiosClient();
 
-        await client.PostAsync(server.Url + "b", new Memory<byte>(MemValue), c => c.ValueFormatter = (_, _) => null);
+        await client.PostAsync(server.Url + "b", new Memory<byte>(MemValue), c => c.Serialization.ValueText = (_, _) => null);
         Assert.Equal(MemValue, Assert.Single(server.Received).Body);
     }
 
@@ -867,7 +867,7 @@ public sealed class FormatMatrixTests
         using var bridged = new ApiClient(bridgedServer.Url);
         await bridged.RequestAsync(
             new MxJsonBodyRequest { Body = new MxJsonPayload { When = WhenUtc } },
-            c => c.Serialization.JsonSerializerOptions = AxiosJsonFormat.ApplyTo());
+            c => c.Serialization.JsonOptions = AxiosJsonFormat.ApplyTo());
 
         Assert.Contains(
             "\"20240305\"",
@@ -882,7 +882,7 @@ public sealed class FormatMatrixTests
     [Fact]
     public void K03_K04_MemberFormat_WinsOverHook()
     {
-        using var client = new ApiClient("http://example.test/", c => c.ValueFormatter = Hook);
+        using var client = new ApiClient("http://example.test/", c => c.Serialization.ValueText = Hook);
         var uri = client.GetUri(new MxFmtQueryRequest
         {
             When = WhenUtc,
@@ -906,7 +906,7 @@ public sealed class FormatMatrixTests
     public async Task K03_K04_MemberFormat_FormAndMultipart()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = Hook);
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = Hook);
 
         await client.Create<IFormApi>().SendAsync(new MxPayload
         {
@@ -922,10 +922,10 @@ public sealed class FormatMatrixTests
     }
 
     [Fact]
-    public async Task K05_CustomParamsSerializer_ReplacesRendering()
+    public async Task K05_CustomQueryEncoder_ReplacesRendering()
     {
         object? seen = null;
-        using var client = new ApiClient("http://example.test/", c => c.Serialization.ParamsSerializer = value =>
+        using var client = new ApiClient("http://example.test/", c => c.Serialization.QueryEncoder = value =>
         {
             seen = value;
             return "fixed=1";
@@ -941,7 +941,7 @@ public sealed class FormatMatrixTests
     public async Task K07_Cache_KeyedByFormattedUri()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = new AxiosCache() });
 
         await client.GetAsync(server.Url + "c", c => c.Params = new { Day = DayValue });
         await client.GetAsync(server.Url + "c", c => c.Params = new { Day = DayValue });
@@ -969,10 +969,10 @@ public sealed class FormatMatrixTests
 
         using var client = new ApiClient(server.Url, c =>
         {
-            c.Hedging.MaxHedges = 2;
-            c.Hedging.Delay = TimeSpan.FromMilliseconds(5);
+            c.Resilience.Hedging.MaxHedges = 2;
+            c.Resilience.Hedging.Delay = TimeSpan.FromMilliseconds(5);
         });
-        client.Axios.Defaults.ValueFormatter = Hook;
+        client.Axios.Defaults.Serialization.ValueText = Hook;
 
         await client.RequestAsync(new MxQueryRequest { When = WhenUtc });
 
@@ -996,7 +996,7 @@ public sealed class FormatMatrixTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x", c =>
         {
             c.Params = new { When = WhenUtc };
-            c.ValueFormatter = (_, _) => throw new InvalidOperationException("boom");
+            c.Serialization.ValueText = (_, _) => throw new InvalidOperationException("boom");
         }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -1007,9 +1007,10 @@ public sealed class FormatMatrixTests
     public async Task E1_DeclarativeQueryFormatterThrows_IsBadRequest()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => throw new InvalidOperationException("boom"));
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => throw new InvalidOperationException("boom"));
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
+        // 装配失败由 WebAPI 自有的异常工厂产出（AxiosException 派生），按公共契约接住基类。
+        var ex = await Assert.ThrowsAnyAsync<AxiosException>(() =>
             client.RequestAsync(new MxQueryRequest { When = WhenUtc }));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
@@ -1020,14 +1021,14 @@ public sealed class FormatMatrixTests
     [Fact]
     public async Task E1_PathAndHeaderFormatterThrows_IsBadRequest()
     {
-        using var client = new ApiClient("http://127.0.0.1:1/", c => c.ValueFormatter = (_, _) => throw new InvalidOperationException("boom"));
+        using var client = new ApiClient("http://127.0.0.1:1/", c => c.Serialization.ValueText = (_, _) => throw new InvalidOperationException("boom"));
 
-        var pathEx = Assert.Throws<AxiosException>(() => client.GetUri(new MxPathRequest { When = WhenUtc }));
+        var pathEx = Assert.ThrowsAny<AxiosException>(() => client.GetUri(new MxPathRequest { When = WhenUtc }));
         Assert.Equal(AxiosException.ErrBadRequest, pathEx.Code);
 
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var headerClient = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => throw new InvalidOperationException("boom"));
-        var headerEx = await Assert.ThrowsAsync<AxiosException>(() =>
+        using var headerClient = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => throw new InvalidOperationException("boom"));
+        var headerEx = await Assert.ThrowsAnyAsync<AxiosException>(() =>
             headerClient.RequestAsync(new MxHeaderRequest { Int = 7 }));
         Assert.Equal(AxiosException.ErrBadRequest, headerEx.Code);
         Assert.Empty(server.Received);
@@ -1037,7 +1038,7 @@ public sealed class FormatMatrixTests
     public void E2_PathNull_IsBadRequest()
     {
         using var client = new ApiClient("http://example.test/");
-        var ex = Assert.Throws<AxiosException>(() => client.GetUri(new MxPathRequest()));
+        var ex = Assert.ThrowsAny<AxiosException>(() => client.GetUri(new MxPathRequest()));
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
     }
 
@@ -1064,7 +1065,7 @@ public sealed class FormatMatrixTests
     public async Task X02_CrossConfigConcurrency_NoCrosstalk()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var hooked = new ApiClient(server.Url, c => c.ValueFormatter = Hook);
+        using var hooked = new ApiClient(server.Url, c => c.Serialization.ValueText = Hook);
         using var plain = new ApiClient(server.Url);
 
         var requests = Enumerable.Range(0, 32).Select(async i =>

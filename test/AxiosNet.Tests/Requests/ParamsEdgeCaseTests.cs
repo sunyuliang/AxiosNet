@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Text.Json;
 using AxiosNet.Tests.Infrastructure;
 
@@ -247,9 +247,9 @@ public sealed class ParamsEdgeCaseTests
     }
 
     [Fact]
-    public void ParamsSerializer_ReturningBlankQuery_AddsNoQuery()
+    public void QueryEncoder_ReturningBlankQuery_AddsNoQuery()
     {
-        var uri = BuildUri(new { q = "a" }, c => c.Serialization.ParamsSerializer = _ => "   ");
+        var uri = BuildUri(new { q = "a" }, c => c.Serialization.QueryEncoder = _ => "   ");
 
         Assert.DoesNotContain("?", uri);
     }

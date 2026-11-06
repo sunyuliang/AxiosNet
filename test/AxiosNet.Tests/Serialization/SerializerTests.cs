@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -70,7 +70,7 @@ public sealed class SerializerTests
             BaseAddress = server.Url,
             Serialization = new()
             {
-                ContentSerializer = new CancelingSerializer(),
+                BodySerializers = { Default = new CancelingSerializer() },
             },
         });
 
@@ -94,7 +94,7 @@ public sealed class SerializerTests
             BaseAddress = server.Url,
             Serialization = new()
             {
-                ContentSerializer = new CancelingSerializer(),
+                BodySerializers = { Default = new CancelingSerializer() },
             },
         });
 
@@ -118,7 +118,7 @@ public sealed class SerializerTests
         await client.PostAsync(
             "x",
             42,
-            c => c.Serialization.ContentSerializer = AxiosNet.Serialization.XmlContentSerializer.Instance);
+            c => c.Serialization.BodySerializers.Default = AxiosNet.Serialization.XmlContentSerializer.Instance);
 
         var received = Assert.Single(server.Received);
         Assert.StartsWith(AxiosContentType.Xml, received.Headers["Content-Type"]);
@@ -164,14 +164,14 @@ public sealed class SerializerTests
     }
 
     [Fact]
-    public async Task TypedJson_BinaryResponseWithForcedResponseEncoding_UsesForcedEncoding()
+    public async Task TypedJson_BinaryResponseWithForcedTextEncoding_UsesForcedEncoding()
     {
         var body = Encoding.Unicode.GetBytes("{\"name\":\"强编码\"}");
         using var client = CreateClient(body, contentType: "application/octet-stream");
 
         var response = await client.GetAsync<Payload>(
             "payload",
-            config => config.Serialization.ResponseEncoding = Encoding.Unicode);
+            config => config.Serialization.TextEncoding = Encoding.Unicode);
 
         Assert.Equal("强编码", response.Data!.Name);
     }
@@ -190,7 +190,7 @@ public sealed class SerializerTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Serialization = new() { ContentSerializer = new CharsetDeclaringSerializer() },
+            Serialization = new() { BodySerializers = { Default = new CharsetDeclaringSerializer() }},
         });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
@@ -210,7 +210,7 @@ public sealed class SerializerTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Serialization = new() { ContentSerializer = new HeaderWritingCharsetSerializer() },
+            Serialization = new() { BodySerializers = { Default = new HeaderWritingCharsetSerializer() }},
         });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
@@ -230,7 +230,7 @@ public sealed class SerializerTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Serialization = new() { ContentSerializer = new Utf8CharsetDeclaringSerializer() },
+            Serialization = new() { BodySerializers = { Default = new Utf8CharsetDeclaringSerializer() }},
         });
 
         await client.PostAsync("upload", new { a = 1 });
@@ -249,7 +249,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(),
+                BodySerializers = { Default = new CustomXmlSerializer() },
             },
         });
 
@@ -279,7 +279,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new ThrowingSerializer(),
+                BodySerializers = { Default = new ThrowingSerializer() },
             },
         });
 
@@ -296,7 +296,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(),
+                BodySerializers = { Default = new CustomXmlSerializer() },
             },
         });
 
@@ -314,7 +314,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(),
+                BodySerializers = { Default = new CustomXmlSerializer() },
             },
         });
 
@@ -333,7 +333,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(),
+                BodySerializers = { Default = new CustomXmlSerializer() },
             },
         });
 
@@ -353,7 +353,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(),
+                BodySerializers = { Default = new CustomXmlSerializer() },
             },
         });
 
@@ -375,7 +375,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new BinaryOrderSerializer(),
+                BodySerializers = { Default = new BinaryOrderSerializer() },
             },
         });
         var response = await client.GetAsync<BinaryOrder>(server.Url + "orders/7.bin");
@@ -396,7 +396,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = serializer,
+                BodySerializers = { Default = serializer },
             },
         });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/9");
@@ -417,7 +417,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new PlainXmlSerializer(),
+                BodySerializers = { Default = new PlainXmlSerializer() },
             },
         });
 
@@ -441,7 +441,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = serializer,
+                BodySerializers = { Default = serializer },
             },
         });
 
@@ -466,7 +466,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CustomXmlSerializer(),
+                BodySerializers = { Default = new CustomXmlSerializer() },
             },
         });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/5");
@@ -487,7 +487,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new PlainXmlSerializer(),
+                BodySerializers = { Default = new PlainXmlSerializer() },
             },
         });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/6");
@@ -507,7 +507,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new PlainXmlSerializer(),
+                BodySerializers = { Default = new PlainXmlSerializer() },
             },
         });
         var response = await client.GetAsync<XmlOrder>(server.Url + "orders/7");
@@ -524,15 +524,15 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new BinaryOrderSerializer(),
+                BodySerializers = { Default = new BinaryOrderSerializer() },
             },
         });
 
-        // RequestEncoding 只作用于文本通道：字节正文不做编码，Content-Type 也不补 charset
+        // TextEncoding 只作用于文本通道：字节正文不做编码，Content-Type 也不补 charset
         var response = await client.PostAsync<BinaryOrder>(
             server.Url + "echo",
             new BinaryOrder { Id = 3, Name = "cat", Tail = 0xAB },
-            c => c.Serialization.RequestEncoding = Encoding.UTF32);
+            c => c.Serialization.TextEncoding = Encoding.UTF32);
 
         var sent = server.Received[0];
         Assert.Equal(BinaryOrderSerializer.Write(new BinaryOrder { Id = 3, Name = "cat", Tail = 0xAB }), sent.Body);
@@ -552,7 +552,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new BinaryOrderSerializer(),
+                BodySerializers = { Default = new BinaryOrderSerializer() },
             },
         });
 
@@ -575,7 +575,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new GreedyByteSerializer(),
+                BodySerializers = { Default = new GreedyByteSerializer() },
             },
         });
 
@@ -614,7 +614,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new ThrowingSerializer(),
+                BodySerializers = { Default = new ThrowingSerializer() },
             },
         });
 
@@ -640,7 +640,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new ThrowingSerializer(),
+                BodySerializers = { Default = new ThrowingSerializer() },
             },
         });
 
@@ -662,7 +662,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new ThrowingSerializer(),
+                BodySerializers = { Default = new ThrowingSerializer() },
             },
         });
 
@@ -682,7 +682,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = serializer,
+                BodySerializers = { Default = serializer },
             },
         });
 
@@ -707,7 +707,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = XmlContentSerializer.Instance,
+                BodySerializers = { Default = XmlContentSerializer.Instance },
             },
         });
 
@@ -735,7 +735,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = XmlContentSerializer.Instance,
+                BodySerializers = { Default = XmlContentSerializer.Instance },
             },
         });
 
@@ -761,7 +761,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = XmlContentSerializer.Instance,
+                BodySerializers = { Default = XmlContentSerializer.Instance },
             },
         });
 
@@ -793,7 +793,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = XmlContentSerializer.Instance,
+                BodySerializers = { Default = XmlContentSerializer.Instance },
             },
         });
 
@@ -810,7 +810,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CsvLikeSerializer(),
+                BodySerializers = { Default = new CsvLikeSerializer() },
             },
         });
 
@@ -830,7 +830,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new CsvLikeSerializer(),
+                BodySerializers = { Default = new CsvLikeSerializer() },
             },
         });
 
@@ -852,7 +852,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = XmlContentSerializer.Instance,
+                BodySerializers = { Default = XmlContentSerializer.Instance },
             },
         });
 
@@ -872,7 +872,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new RecordingSerializer(),
+                BodySerializers = { Default = new RecordingSerializer() },
             },
         });
 
@@ -891,7 +891,7 @@ public sealed class SerializerTests
             ContentType = "application/x-team-json",
             Serialization = new()
             {
-                ContentSerializer = new CsvLikeSerializer(),
+                BodySerializers = { Default = new CsvLikeSerializer() },
             },
         });
 
@@ -910,7 +910,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new HeaderWritingSerializer(),
+                BodySerializers = { Default = new HeaderWritingSerializer() },
             },
         });
 
@@ -941,7 +941,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new VersionAwareSerializer(),
+                BodySerializers = { Default = new VersionAwareSerializer() },
             },
         });
 
@@ -965,7 +965,7 @@ public sealed class SerializerTests
         {
             Serialization = new()
             {
-                ContentSerializer = new VersionAwareSerializer(),
+                BodySerializers = { Default = new VersionAwareSerializer() },
             },
         });
 
@@ -985,7 +985,7 @@ public sealed class SerializerTests
 
         string? total = null;
         var config = new AxiosConfig();
-        config.TransformResponse.Add((data, cfg) =>
+        config.Serialization.TransformResponse.Add((data, cfg) =>
         {
             // 反序列化已完成，头仍然在：适合把元数据贴到业务对象上
             total = cfg.Response?.GetHeader("X-Total-Count");
@@ -1027,7 +1027,7 @@ public sealed class SerializerTests
 {
             Serialization = new()
             {
-                ContentSerializer = SnakeCaseSerializer.Instance,
+                BodySerializers = { Default = SnakeCaseSerializer.Instance },
             },
         });
 
@@ -1050,7 +1050,7 @@ public sealed class SerializerTests
 {
             Serialization = new()
             {
-                ContentSerializer = SnakeCaseSerializer.Instance,
+                BodySerializers = { Default = SnakeCaseSerializer.Instance },
             },
         });
 
@@ -1069,7 +1069,7 @@ public sealed class SerializerTests
 {
             Serialization = new()
             {
-                JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             {
                 PropertyNamingPolicy = SnakeCase
             },

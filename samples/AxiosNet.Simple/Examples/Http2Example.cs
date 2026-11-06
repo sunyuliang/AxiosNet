@@ -26,7 +26,7 @@ public sealed class Http2Example : IExample
         Console.WriteLine($"      客户端配置 2.0（本示例是明文，没有 ALPN 可协商）-> 服务端收到 {byDefault.Data!.RequestVersion}，响应协商结果 {byDefault.ProtocolVersion}：按契约落 1.1，请求照常成功");
 
         // 2) 退回 1.1：老网关 / NTLM 认证 / 必须用连接级头时
-        var forced = await Axios.GetAsync<ProtocolProbe>(protocolUrl, c => c.Connection.HttpVersion = HttpVersion.Version11);
+        var forced = await Axios.GetAsync<ProtocolProbe>(protocolUrl, c => c.Transport.HttpVersion = HttpVersion.Version11);
         Console.WriteLine("  [2] 退回 1.1（HttpVersion = Version11，策略仍是默认的 RequestVersionOrLower）");
         Console.WriteLine($"      客户端请求 1.1 -> 服务端收到 {forced.Data!.RequestVersion}，响应协商结果 {forced.ProtocolVersion}：不再尝试协商");
 
@@ -36,8 +36,8 @@ public sealed class Http2Example : IExample
         {
             await Axios.GetAsync<ProtocolProbe>(protocolUrl, c =>
             {
-                c.Connection.HttpVersion = HttpVersion.Version20;
-                c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+                c.Transport.HttpVersion = HttpVersion.Version20;
+                c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             });
             Console.WriteLine("      [意外] 只支持 1.1 的服务端竟然接受了 h2 请求");
         }
@@ -49,7 +49,7 @@ public sealed class Http2Example : IExample
         // 4) HTTP/3：默认仍是 2.0，h3 要显式要求（Version30）
         Console.WriteLine("  [4] 要求 h3（HttpVersion = Version30，策略默认 OrLower）");
         Console.WriteLine($"      本机 HTTP/3 能力：{(Http3Support.IsSupported ? "可用" : "不可用 —— " + Http3Support.UnsupportedReason)}");
-        var h3 = await Axios.GetAsync<ProtocolProbe>(protocolUrl, c => c.Connection.HttpVersion = HttpVersion.Version30);
+        var h3 = await Axios.GetAsync<ProtocolProbe>(protocolUrl, c => c.Transport.HttpVersion = HttpVersion.Version30);
         Console.WriteLine($"      客户端请求 3.0 -> 服务端收到 {h3.Data!.RequestVersion}，响应协商结果 {h3.ProtocolVersion}：明文上不存在 h3，按 OrLower 落 1.1");
 
         // 5) 「必须 h3」在明文目标上发请求前就报错
@@ -58,8 +58,8 @@ public sealed class Http2Example : IExample
         {
             await Axios.GetAsync<ProtocolProbe>(protocolUrl, c =>
             {
-                c.Connection.HttpVersion = HttpVersion.Version30;
-                c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+                c.Transport.HttpVersion = HttpVersion.Version30;
+                c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             });
             Console.WriteLine("      [意外] 明文目标竟然接受了 h3 请求");
         }

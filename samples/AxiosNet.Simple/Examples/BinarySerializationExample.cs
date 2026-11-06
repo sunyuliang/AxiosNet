@@ -21,7 +21,7 @@ public sealed class BinarySerializationExample : IExample
         var client = _binary ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
-            c.Serialization.ContentSerializer = new OrderBinarySerializer();
+            c.Serialization.BodySerializers.Default = new OrderBinarySerializer();
         });
 
         // 1) 强类型响应：application/octet-stream 走字节入口

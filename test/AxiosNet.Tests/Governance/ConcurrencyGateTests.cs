@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -266,8 +266,8 @@ public sealed class ConcurrencyGateTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.GetAsync(server.Url + "rejected", c =>
             {
-                c.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.Zero);
-                c.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
+                c.Resilience.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.Zero);
+                c.Resilience.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
             }));
 
         // 与排队超时同一性质：本实例在途 + 排队都满，立刻重发只会再撞一次
@@ -293,8 +293,7 @@ public sealed class ConcurrencyGateTests
         var config = new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Limits = { MaxConcurrentRequests = 1, MaxQueueLength = 1, QueueTimeout = TimeSpan.FromSeconds(5) },
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            Resilience = { Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = {  MaxInFlight = 1, MaxQueue = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
         };
         using var client = new AxiosClient(config);
 
@@ -487,7 +486,7 @@ public sealed class ConcurrencyGateTests
         // 实例默认只设并发上限：闸门由「这一次带排队上限的请求」建出来
         using var client = new AxiosClient(new AxiosConfig
         {
-            Limits = new() { MaxConcurrentRequests = 2 }
+            Resilience = { Concurrency = {  MaxInFlight = 2  } }
         });
 
         await client.GetAsync(server.Url + "first", c => c.Limits.MaxQueueLength = 1);
@@ -532,8 +531,8 @@ public sealed class ConcurrencyGateTests
             client.GetAsync(server.Url + "queued", c =>
             {
                 c.Limits.QueueTimeout = TimeSpan.FromMilliseconds(50);
-                c.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.Zero);
-                c.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
+                c.Resilience.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.Zero);
+                c.Resilience.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
             }));
 
         // 排队超时不是「服务端失败」，默认策略的可重试集合里没有它：
@@ -605,12 +604,7 @@ public sealed class ConcurrencyGateTests
     {
         var config = new AxiosConfig
         {
-            Limits = new()
-            {
-                MaxConcurrentRequests = maxConcurrency,
-                MaxQueueLength = maxQueueLength,
-                QueueTimeout = queueTimeout
-            }
+            Resilience = { Concurrency = {  MaxInFlight = maxConcurrency, MaxQueue = maxQueueLength, QueueTimeout = queueTimeout  } }
         };
 
         if (timeout is { } value)

@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using System.Net;
@@ -28,7 +28,7 @@ public sealed class SerializerRegistryTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             "http://localhost/a",
             new { x = 1 },
-            c => c.Serialization.ContentSerializer = new HostileMediaTypeSerializer()));
+            c => c.Serialization.BodySerializers.Default = new HostileMediaTypeSerializer()));
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
@@ -89,7 +89,7 @@ public sealed class SerializerRegistryTests
 {
                 Serialization = new()
                 {
-                    ContentSerializer = new MarkerSerializer("injected"),
+                    BodySerializers = { Default = new MarkerSerializer("injected") },
                 },
             });
 

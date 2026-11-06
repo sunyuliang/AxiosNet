@@ -4,7 +4,7 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>弹性重试（<see cref="AxiosConfig.Retry"/>）：不设置 <see cref="Policy"/> 时不重试。</summary>
+    /// <summary>弹性重试（<see cref="AxiosConfig.ResilienceSettings.Retry"/>）：不设置 <see cref="Policy"/> 时不重试。</summary>
     public sealed class RetrySettings
     {
         private IAxiosRetryPolicy? _policy;

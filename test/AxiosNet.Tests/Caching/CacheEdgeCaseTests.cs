@@ -32,8 +32,8 @@ public sealed class CacheEdgeCaseTests
         var calls = 0;
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(),
-            Callbacks =
+            Caching = NewCache(),
+            Observability =
             {
                 OnSendingRequest = (_, _, _) =>
                 {
@@ -68,7 +68,7 @@ public sealed class CacheEdgeCaseTests
             await release.Task;
             return TestJson.Response(new Person("ada", 36));
         });
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
 
         // 只把领导者那颗响应换成没有 RawBody 的新对象（不可落库），其余原样通过。
         var intercepted = 0;
@@ -106,7 +106,7 @@ public sealed class CacheEdgeCaseTests
             await release.Task;
             return TestJson.Response(new Person("ada", 36));
         });
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "store-after-cancel";
 
         var leader = client.GetAsync<Person>(url);
@@ -141,7 +141,7 @@ public sealed class CacheEdgeCaseTests
         });
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = new FaultedSetStore() })
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = new FaultedSetStore() })
         });
         var url = server.Url + "write-failure";
 
@@ -164,12 +164,12 @@ public sealed class CacheEdgeCaseTests
     public async Task Hit_AppliesValidateStatus()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "validate-on-hit";
 
         await client.GetAsync(url);
         var error = await Assert.ThrowsAnyAsync<AxiosException>(() =>
-            client.GetAsync(url, config => config.Callbacks.ValidateStatus = status => status == 201));
+            client.GetAsync(url, config => config.ValidateStatus = status => status == 201));
 
         Assert.Equal(200, error.Response!.Status);
         Assert.Single(server.Received);
@@ -179,11 +179,11 @@ public sealed class CacheEdgeCaseTests
     public async Task Hit_AppliesPerCallTransformResponse()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "transform-on-hit";
 
         await client.GetAsync(url);
-        var response = await client.GetAsync<Person>(url, config => config.TransformResponse.Add(
+        var response = await client.GetAsync<Person>(url, config => config.Serialization.TransformResponse.Add(
             (data, _) => data is Person person ? new Person(person.Name.ToUpperInvariant(), person.Age) : data));
 
         Assert.Equal("ADA", response.Data!.Name);
@@ -194,7 +194,7 @@ public sealed class CacheEdgeCaseTests
     public async Task Hit_HonorsPreCancelledToken()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "cancel-on-hit";
 
         await client.GetAsync(url);
@@ -212,7 +212,7 @@ public sealed class CacheEdgeCaseTests
     public async Task Hit_ReturnsIndependentBytes()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "bytes-on-hit";
 
         var first = await client.GetAsync<byte[]>(url);
@@ -238,7 +238,7 @@ public sealed class CacheEdgeCaseTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(options => options.FreshnessMode = CacheFreshnessMode.Intersection)
+            Caching = NewCache(options => options.FreshnessMode = CacheFreshnessMode.Intersection)
         });
         var url = server.Url + "request-max-age";
 
@@ -264,7 +264,7 @@ public sealed class CacheEdgeCaseTests
             }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(options => options.FreshnessMode = CacheFreshnessMode.Intersection)
+            Caching = NewCache(options => options.FreshnessMode = CacheFreshnessMode.Intersection)
         });
         var url = server.Url + "response-max-age";
 
@@ -281,7 +281,7 @@ public sealed class CacheEdgeCaseTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(
             new Person("ada", 36),
             headers: new Dictionary<string, string> { ["Content-Range"] = "bytes 0-15/999" }));
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "content-range";
 
         await client.GetAsync(url);
@@ -306,14 +306,17 @@ public sealed class CacheEdgeCaseTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         using var client = new AxiosClient(new AxiosConfig
         {
-            TotalTimeout = budget,
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = new HangingGetStore(), StoreTimeout = storeTimeout })
-        });
+            Resilience =
+            {
+                TotalTimeout = budget
+            },
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = new HangingGetStore(), StoreTimeout = storeTimeout })
+            });
 
         // 预热：入口到读缓存之间的合并 / 拦截 / 编码 / 键计算与冷启动的 JIT 同样花的是这份 200ms 预算，
         // 不预热时测量窗口里混进的是这些机器开销，而不是「存储读取被截断」。
         // 另起一个客户端并给它普通存储：连接池按 origin 共享，预热不会碰被测的挂起存储。
-        using (var warmup = new AxiosClient(new AxiosConfig { Cache = NewCache() }))
+        using (var warmup = new AxiosClient(new AxiosConfig { Caching = NewCache() }))
         {
             await warmup.GetAsync(server.Url + "warmup");
         }
@@ -342,7 +345,7 @@ public sealed class CacheEdgeCaseTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = new CancellableGetStore() })
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = new CancellableGetStore() })
         });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
@@ -360,7 +363,7 @@ public sealed class CacheEdgeCaseTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = new SelfCancellingGetStore() })
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = new SelfCancellingGetStore() })
         });
 
         // 存储自己抛的取消（调用方没取消）只表示缓存不可用：照常发请求。
@@ -387,13 +390,16 @@ public sealed class CacheEdgeCaseTests
         var store = new SlowSetStore(storeDelay);
         using var client = new AxiosClient(new AxiosConfig
         {
-            TotalTimeout = budget,
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = store, StoreTimeout = storeDelay })
-        });
+            Resilience =
+            {
+                TotalTimeout = budget
+            },
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = store, StoreTimeout = storeDelay })
+            });
 
         // 预热建连接、跑 JIT：这些耗时与「落库受预算约束」无关，但同样花的是这份预算。
         // 另起一个客户端并给它普通存储：连接池按 origin 共享，预热不会碰被测的慢存储。
-        using (var warmup = new AxiosClient(new AxiosConfig { Cache = NewCache() }))
+        using (var warmup = new AxiosClient(new AxiosConfig { Caching = NewCache() }))
         {
             await warmup.GetAsync(server.Url + "warmup");
         }
@@ -431,7 +437,7 @@ public sealed class CacheEdgeCaseTests
                 ["Location"] = request.Path.Replace("/redirect", "/final")
             })
             : TestJson.Response(new Person("ada", 36)));
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache() });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
         var url = server.Url + "redirect/redirect";
 
         var first = await client.GetAsync<Person>(url);

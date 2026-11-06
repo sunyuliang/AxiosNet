@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -30,7 +30,7 @@ public sealed class ClientInstanceTests
             client.RequestAsync(new AxiosConfig
             {
                 Url = "x",
-                Connection = new()
+                Transport = new()
                 {
                     WithCredentials = true,
                 },
@@ -49,7 +49,7 @@ public sealed class ClientInstanceTests
             client.RequestAsync(new AxiosConfig
             {
                 Url = "x",
-                Connection = new()
+                Transport = new()
                 {
                     Proxy = new WebProxy("http://127.0.0.1:1"),
                 },
@@ -68,9 +68,9 @@ public sealed class ClientInstanceTests
             client.RequestAsync(new AxiosConfig
             {
                 Url = "x",
-                Connection = new()
+                Transport = new()
                 {
-                    PoolOptions = new ConnectionPoolOptions { MaxConnectionsPerServer = 1 },
+                    Pool = new ConnectionPoolOptions { MaxConnectionsPerServer = 1 },
                 },
             }));
 
@@ -87,9 +87,9 @@ public sealed class ClientInstanceTests
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(
             new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
-                    PoolOptions = new ConnectionPoolOptions(),
+                    Pool = new ConnectionPoolOptions(),
                 },
             },
             poolOptions: new ConnectionPoolOptions()));
@@ -104,7 +104,7 @@ public sealed class ClientInstanceTests
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(
             new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     Proxy = new WebProxy("http://127.0.0.1:9"),
                 },
@@ -160,11 +160,11 @@ public sealed class ClientInstanceTests
         using var client = new AxiosClient();
 
         // 构造后改 defaults：不生效，池仍是 UseCookies = false
-        client.Defaults.Connection.WithCredentials = true;
+        client.Defaults.Transport.WithCredentials = true;
         Assert.False(client.Pool!.Options.UseCookies);
 
         // 按请求复述池的真实值 false —— 必须放行。
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -176,11 +176,11 @@ public sealed class ClientInstanceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        client.Defaults.Connection.WithCredentials = true; // 未生效
+        client.Defaults.Transport.WithCredentials = true; // 未生效
 
         // 按请求写 true 等于「要求打开 Cookie 容器」，但池没开 —— 必须响亮报错
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = true));
+            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -195,7 +195,7 @@ public sealed class ClientInstanceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        client.Defaults.Connection.WithCredentials = true;
+        client.Defaults.Transport.WithCredentials = true;
 
         // 构造后改 defaults 的承诺是「静默不生效」，不是「每个请求都炸」
         var response = await client.GetAsync(server.Url + "x");
@@ -218,7 +218,7 @@ public sealed class ClientInstanceTests
         Assert.True(client.Pool!.Options.UseCookies);
 
         // defaults 没写 WithCredentials（读出来是 false），但池的生效值是 true
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = true);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -232,7 +232,7 @@ public sealed class ClientInstanceTests
             poolOptions: new ConnectionPoolOptions { UseCookies = true });
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false));
+            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -251,7 +251,7 @@ public sealed class ClientInstanceTests
         using var client = new AxiosClient(pool: pool);
 
         // 共享池场景 defaults 上不能写连接级选项（构造期就抛），所以只能复述池的值
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = true);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -265,7 +265,7 @@ public sealed class ClientInstanceTests
         using var client = new AxiosClient(pool: pool);
 
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = true));
+            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Empty(server.Received);
@@ -281,12 +281,12 @@ public sealed class ClientInstanceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new() { WithCredentials = true },
+            Transport = new() { WithCredentials = true },
         });
 
         Assert.True(client.Pool!.Options.UseCookies);
 
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = true);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true);
 
         Assert.Equal(200, response.Status);
     }
@@ -298,7 +298,7 @@ public sealed class ClientInstanceTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Connection.PoolOptions = new ConnectionPoolOptions()));
+            client.GetAsync(server.Url + "x", c => c.Transport.Pool = new ConnectionPoolOptions()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -448,7 +448,7 @@ public sealed class ClientInstanceTests
         using var client = new AxiosClient();
 
         // 实例没开 WithCredentials（false），按请求写 false 是等价写法
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -460,14 +460,14 @@ public sealed class ClientInstanceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 WithCredentials = true,
             },
         });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Connection.WithCredentials = false));
+            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -480,7 +480,7 @@ public sealed class ClientInstanceTests
         using var client = new AxiosClient(handler: new HttpClientHandler());
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.Connection.WithCredentials = false));
+            client.GetAsync("http://127.0.0.1:1/x", c => c.Transport.WithCredentials = false));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -497,7 +497,7 @@ public sealed class ClientInstanceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 WithCredentials = true,
             },
@@ -551,7 +551,7 @@ public sealed class ClientInstanceTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
             server.Url + "x",
-            c => c.Connection.Proxy = new System.Net.WebProxy("http://127.0.0.1:9")));
+            c => c.Transport.Proxy = new System.Net.WebProxy("http://127.0.0.1:9")));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }

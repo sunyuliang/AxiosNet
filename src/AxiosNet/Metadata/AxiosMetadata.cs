@@ -12,7 +12,7 @@ namespace AxiosNet.Metadata;
 /// 应用代码通常不需要直接调用；在 Native AOT 下缺少生成元数据时可按 <see cref="AxiosAotMetadataException"/> 的提示手工注册。
 /// 注册只发生在启动期：手工入口（<see cref="RegisterShape"/> / <see cref="RegisterMap"/>）对同一类型重复注册直接抛错，
 /// 生成器入口（<see cref="RegisterGeneratedShapeFromSample"/> 等）对等价重复保留先注册的一份。
-/// 声明式 API 的请求模型 / 接口注册入口在 <c>AxiosNet.WebAPI.Metadata.AxiosApiMetadata</c>。
+/// 请求模型 / 接口声明属于可选扩展，其注册入口不在此处。
 /// </remarks>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class AxiosMetadata

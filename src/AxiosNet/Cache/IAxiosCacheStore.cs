@@ -12,7 +12,7 @@ namespace AxiosNet.Cache;
 /// </remarks>
 /// <example>
 /// <code>
-/// client.Defaults.Cache = new AxiosCache(new AxiosCacheOptions { Store = new RedisCacheStore(redis) });
+/// client.Defaults.Caching = new AxiosCache(new AxiosCacheOptions { Store = new RedisCacheStore(redis) });
 /// </code>
 /// </example>
 public interface IAxiosCacheStore

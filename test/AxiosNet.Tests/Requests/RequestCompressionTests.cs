@@ -6,10 +6,10 @@ using System.Text;
 namespace AxiosNet.Tests.Requests;
 
 /// <summary>
-/// 请求体压缩：库缓冲出来的正文（文本 / 二进制 / 表单）按 <c>RequestCompression</c> 压缩并补 <c>Content-Encoding</c>；
+/// 请求体压缩：库缓冲出来的正文（文本 / 二进制 / 表单）按 <c>Compression</c> 压缩并补 <c>Content-Encoding</c>；
 /// 流式正文、自带 <see cref="HttpContent"/>、multipart 与手写 Content-Encoding 一律拒绝。
 /// </summary>
-public sealed class RequestCompressionTests
+public sealed class CompressionTests
 {
     [Theory]
     [InlineData(AxiosCompression.Gzip, "gzip")]
@@ -23,7 +23,7 @@ public sealed class RequestCompressionTests
         await client.PostAsync(
             server.Url + "users",
             new Person("alice", 42),
-            c => c.RequestCompression = compression);
+            c => c.Compression = compression);
 
         var received = server.Received[0];
 
@@ -53,7 +53,7 @@ public sealed class RequestCompressionTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.RequestCompression = AxiosCompression.Gzip;
+                c.Compression = AxiosCompression.Gzip;
             });
 
         var received = server.Received[0];
@@ -71,7 +71,7 @@ public sealed class RequestCompressionTests
         await client.PostAsync(
             server.Url + "blob",
             new byte[] { 1, 2, 3, 4 },
-            c => c.RequestCompression = AxiosCompression.Gzip);
+            c => c.Compression = AxiosCompression.Gzip);
 
         Assert.Equal("gzip", server.Received[0].Headers["content-encoding"]);
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, Decompress(server.Received[0].Body, AxiosCompression.Gzip));
@@ -92,10 +92,10 @@ public sealed class RequestCompressionTests
     public async Task InstanceDefault_CanBeDisabledPerRequest()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient(new AxiosConfig { RequestCompression = AxiosCompression.Gzip });
+        using var client = new AxiosClient(new AxiosConfig { Compression = AxiosCompression.Gzip });
 
         await client.PostAsync(server.Url + "a", new Person("alice", 42));
-        await client.PostAsync(server.Url + "b", new Person("alice", 42), c => c.RequestCompression = AxiosCompression.None);
+        await client.PostAsync(server.Url + "b", new Person("alice", 42), c => c.Compression = AxiosCompression.None);
 
         Assert.Equal("gzip", server.Received[0].Headers["content-encoding"]);
         Assert.False(server.Received[1].Headers.ContainsKey("content-encoding"));
@@ -114,7 +114,7 @@ public sealed class RequestCompressionTests
             data,
             c =>
             {
-                c.RequestCompression = AxiosCompression.Gzip;
+                c.Compression = AxiosCompression.Gzip;
                 c.Limits.MaxBodyLength = 1024;
             });
 
@@ -131,7 +131,7 @@ public sealed class RequestCompressionTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             "http://localhost/upload",
             stream,
-            c => c.RequestCompression = AxiosCompression.Gzip));
+            c => c.Compression = AxiosCompression.Gzip));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("Stream", ex.Message);
@@ -146,7 +146,7 @@ public sealed class RequestCompressionTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             "http://localhost/upload",
             content,
-            c => c.RequestCompression = AxiosCompression.Gzip));
+            c => c.Compression = AxiosCompression.Gzip));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("HttpContent", ex.Message);
@@ -163,7 +163,7 @@ public sealed class RequestCompressionTests
             c =>
             {
                 c.ContentType = AxiosContentType.MultipartFormData;
-                c.RequestCompression = AxiosCompression.Gzip;
+                c.Compression = AxiosCompression.Gzip;
             }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -181,7 +181,7 @@ public sealed class RequestCompressionTests
             c =>
             {
                 c.Headers.Set("Content-Encoding", "gzip");
-                c.RequestCompression = AxiosCompression.Gzip;
+                c.Compression = AxiosCompression.Gzip;
             }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -196,7 +196,7 @@ public sealed class RequestCompressionTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             "http://localhost/x",
             new Person("alice", 42),
-            c => c.RequestCompression = (AxiosCompression)99));
+            c => c.Compression = (AxiosCompression)99));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("未定义", ex.Message);
@@ -213,10 +213,14 @@ public sealed class RequestCompressionTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+            }
+            });
 
-        var response = await client.PostAsync("x", new Person("alice", 42), c => c.RequestCompression = AxiosCompression.Gzip);
+        var response = await client.PostAsync("x", new Person("alice", 42), c => c.Compression = AxiosCompression.Gzip);
 
         Assert.Equal(200, response.Status);
 
@@ -230,17 +234,17 @@ public sealed class RequestCompressionTests
     }
 
     [Fact]
-    public async Task ReplayRequest_CarriesRequestCompression()
+    public async Task ReplayRequest_CarriesCompression()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
 
         using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
         using var target = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
-        var first = await source.PostAsync("x", new Person("alice", 42), c => c.RequestCompression = AxiosCompression.Gzip);
+        var first = await source.PostAsync("x", new Person("alice", 42), c => c.Compression = AxiosCompression.Gzip);
         await target.RequestAsync(first.Config!);
 
-        // 回放把 RequestCompression 一起带走：目标实例按自己的配置重新压缩，不是原样重放字节。
+        // 回放把 Compression 一起带走：目标实例按自己的配置重新压缩，不是原样重放字节。
         Assert.Equal("gzip", server.Received[1].Headers["content-encoding"]);
         Assert.Equal("""{"name":"alice","age":42}""", Encoding.UTF8.GetString(Decompress(server.Received[1].Body, AxiosCompression.Gzip)));
     }

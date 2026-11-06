@@ -3,7 +3,7 @@ using AxiosNet.Internal;
 namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
-/// 声明式装配（路径 / 查询 / 请求头 / 正文）的统一错误映射：取值或格式化失败一律归
+/// 请求装配（路径 / 查询 / 请求头 / 正文）的统一错误映射：取值或格式化失败一律归
 /// <see cref="AxiosException.ErrBadRequest"/>，与正文 / multipart 装配口径一致；
 /// <see cref="AxiosException"/> 与取消异常原样透传（不吞、不二次包装）。
 /// </summary>
@@ -18,12 +18,12 @@ internal static class BindingErrors
         }
         catch (AxiosException ex) when (ex.IsRequestConstructionFailure)
         {
-            // 核心的「请求构造阶段失败」分类：声明式口径改判为 ERR_BAD_REQUEST，原因保留原始异常。
-            throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex.Cause ?? ex);
+            // 内核的「请求构造阶段失败」分类：WebAPI 口径改判为 ERR_BAD_REQUEST，原因保留原始异常。
+            throw RequestBindingErrors.Create(config, request: null, targetName, ex.Cause ?? ex);
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex);
+            throw RequestBindingErrors.Create(config, request: null, targetName, ex);
         }
     }
 
@@ -36,11 +36,11 @@ internal static class BindingErrors
         }
         catch (AxiosException ex) when (ex.IsRequestConstructionFailure)
         {
-            throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex.Cause ?? ex);
+            throw RequestBindingErrors.Create(config, request: null, targetName, ex.Cause ?? ex);
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            throw AxiosException.RequestBindingFailed(config, request: null, targetName, ex);
+            throw RequestBindingErrors.Create(config, request: null, targetName, ex);
         }
     }
 }

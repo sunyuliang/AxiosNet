@@ -1,8 +1,9 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using AxiosNet.Cache;
 using AxiosNet.Interceptors;
 using AxiosNet.Internal;
+using AxiosNet.Metadata;
 using AxiosNet.Pipeline;
 using AxiosNet.Telemetry;
 
@@ -83,7 +84,7 @@ public sealed partial class AxiosClient
             var plan = BuildRequestPlan(config);
 
             // 阶段 5.5：缓存 —— 命中不发请求（不建正文、不占闸门、不产生 span）；未命中时同键并发只发一次。
-            if (config.Cache is { } configuredCache && configuredCache.CanHandle(config))
+            if (config.Caching is { } configuredCache && configuredCache.CanHandle(config))
             {
                 cache = configuredCache;
                 cacheKey = configuredCache.KeyFor(config, plan.Uri);
@@ -374,9 +375,9 @@ public sealed partial class AxiosClient
     /// </summary>
     private static RequestPlan BuildRequestPlan(AxiosConfig config)
     {
-        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config);
+        var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.QueryEncoder, config: config);
 
-        var connection = config.ConnectionOrNull;
+        var connection = config.TransportOrNull;
         var httpVersion = connection?.HttpVersion ?? HttpVersion.Version20;
         var versionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower;
 
@@ -407,19 +408,19 @@ public sealed partial class AxiosClient
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
-                // 序列化失败走统一错误模型，声明式表单报模型名。
+                // 序列化失败走统一错误模型，带来源名称的表单容器报该名称。
                 throw AxiosException.BadRequestPayload(
                     config,
                     template,
-                    config.Data is DeclaredForm declared
+                    config.Data is FormData declared
                         ? declared.SourceName ?? declared.GetType().Name
                         : config.Data?.GetType().Name ?? "null",
                     ex);
             }
 
             // 上传进度 / 限速：包一层流量统计（头部复制）。
-            var callbacks = config.CallbacksOrNull;
-            var maxRate = config.LimitsOrNull?.MaxRate;
+            var callbacks = config.ObservabilityOrNull;
+            var maxRate = config.TransportOrNull?.MaxRate;
             if (content is not null && (callbacks?.OnUploadProgress is not null || maxRate is > 0))
             {
                 content = new ProgressHttpContent(content, callbacks?.OnUploadProgress, maxRate, config);

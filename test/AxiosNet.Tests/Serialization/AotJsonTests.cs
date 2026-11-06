@@ -21,7 +21,7 @@ public sealed class AotJsonTests
         {
             Serialization = new()
             {
-                JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
                 {
                     TypeInfoResolver = AotJsonContext.Default
                 }
@@ -166,7 +166,7 @@ public sealed class AotJsonTests
         {
             Serialization = new()
             {
-                JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             }
         };
 

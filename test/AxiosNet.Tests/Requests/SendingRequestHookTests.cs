@@ -6,7 +6,7 @@ using System.Text;
 namespace AxiosNet.Tests.Requests;
 
 /// <summary>
-/// 发送前钩子（<see cref="AxiosConfig.CallbackSettings.OnSendingRequest"/>）：
+/// 发送前钩子（<see cref="AxiosConfig.ObservabilitySettings.OnSendingRequest"/>）：
 /// 能看到什么（最终 URL / 请求头 / 已序列化正文）、每次尝试各触发一次、改写只作用于本次发送，以及失败时的错误归属。
 /// </summary>
 public sealed class SendingRequestHookTests
@@ -23,7 +23,7 @@ public sealed class SendingRequestHookTests
         await client.PostAsync("items", new { name = "张三" }, c =>
         {
             c.Params = new Dictionary<string, object?> { ["page"] = 2 };
-            c.Callbacks.OnSendingRequest = async (request, _, token) =>
+            c.Observability.OnSendingRequest = async (request, _, token) =>
             {
                 seenUri = request.RequestUri;
                 seenBody = await request.Content!.ReadAsByteArrayAsync(token);
@@ -59,11 +59,14 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+            }
+            });
 
         var attempt = 0;
-        var response = await client.GetAsync("retry", c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        var response = await client.GetAsync("retry", c => c.Observability.OnSendingRequest = (request, _, _) =>
         {
             var number = Interlocked.Increment(ref attempt);
             request.Headers.TryAddWithoutValidation("X-Attempt", number.ToString());
@@ -94,10 +97,13 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = { MaxHedges = 2, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Hedging = { MaxHedges = 2, Delay = TimeSpan.Zero }
+            }
+            });
 
-        await client.PutAsync("hedge", new { name = "x" }, c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        await client.PutAsync("hedge", new { name = "x" }, c => c.Observability.OnSendingRequest = (request, _, _) =>
         {
             request.Content!.Headers.TryAddWithoutValidation("X-Branch-Sign", "v");
             return default;
@@ -121,10 +127,13 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+            }
+            });
 
-        await client.PutAsync("retry", new { name = "x" }, c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        await client.PutAsync("retry", new { name = "x" }, c => c.Observability.OnSendingRequest = (request, _, _) =>
         {
             request.Content!.Headers.TryAddWithoutValidation("X-Body-Sign", "v");
             return default;
@@ -147,11 +156,15 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+            }
+            });
 
         await client.PostAsync("retry", new { original = true }, c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Content = new StringContent("replaced", Encoding.UTF8, "text/plain");
                 return default;
@@ -173,7 +186,7 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x", c =>
-            c.Callbacks.OnSendingRequest = (_, _, _) => throw new InvalidOperationException("missing secret")));
+            c.Observability.OnSendingRequest = (_, _, _) => throw new InvalidOperationException("missing secret")));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
@@ -194,7 +207,7 @@ public sealed class SendingRequestHookTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x", c =>
         {
             c.CancellationToken = cts.Token;
-            c.Callbacks.OnSendingRequest = (_, _, token) =>
+            c.Observability.OnSendingRequest = (_, _, token) =>
             {
                 cts.Cancel();
                 token.ThrowIfCancellationRequested();
@@ -217,7 +230,7 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Callbacks = new AxiosConfig.CallbackSettings
+            Observability = new AxiosConfig.ObservabilitySettings
             {
                 OnSendingRequest = (_, _, _) =>
                 {
@@ -230,7 +243,7 @@ public sealed class SendingRequestHookTests
         await client.GetAsync("a");
         Assert.Equal(1, defaultCalls);
 
-        await client.GetAsync("b", c => c.Callbacks.OnSendingRequest = (_, _, _) =>
+        await client.GetAsync("b", c => c.Observability.OnSendingRequest = (_, _, _) =>
         {
             perCallCalls++;
             return default;
@@ -247,11 +260,11 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Connection = { Auth = new AxiosAuth("alice", "secret") }
+            Transport = { BasicAuth = new AxiosAuth("alice", "secret") }
         });
 
         string? seen = null;
-        await client.GetAsync("x", c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        await client.GetAsync("x", c => c.Observability.OnSendingRequest = (request, _, _) =>
         {
             seen = request.Headers.Authorization?.ToString();
             return default;
@@ -273,7 +286,7 @@ public sealed class SendingRequestHookTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync("x", new { a = 1 }, c =>
         {
             c.Limits.MaxBodyLength = 10;
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Content = new ByteArrayContent(new byte[100]);
                 return default;

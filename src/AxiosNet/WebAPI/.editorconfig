@@ -1,0 +1,4 @@
+# WebAPI 自身使用的就是被禁止清单里的类型：本目录内关闭 RS0030。
+# 内核目录（上一级）把它当 error，依赖方向因此只能是 WebAPI → 内核。
+[*.cs]
+dotnet_diagnostic.RS0030.severity = none

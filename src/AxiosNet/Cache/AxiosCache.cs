@@ -68,7 +68,7 @@ public sealed class AxiosCacheOptions
     /// </summary>
     /// <remarks>
     /// 只约束自建存储（Redis 之类）的写入：存储挂起时不能把响应一起拖住，超时按「这次没缓存」处理。
-    /// 实际等待还受本次请求剩余 <see cref="AxiosConfig.TotalTimeout"/> 封顶（两者取较短的一个），预算花完就不落库。
+    /// 实际等待还受本次请求剩余 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 封顶（两者取较短的一个），预算花完就不落库。
     /// 内置 <see cref="MemoryCacheStore"/> 是同步写入，不受影响。
     /// </remarks>
     public TimeSpan? StoreTimeout { get; set; } = TimeSpan.FromSeconds(2);
@@ -85,7 +85,7 @@ public sealed class AxiosCacheOptions
 }
 
 /// <summary>
-/// 响应缓存：挂在 <see cref="AxiosConfig.Cache"/> 上，命中时不发请求，直接把上次的响应交付（走与短路响应同一条路径）。
+/// 响应缓存：挂在 <see cref="AxiosConfig.Caching"/> 上，命中时不发请求，直接把上次的响应交付（走与短路响应同一条路径）。
 /// 同一个键的并发请求只发一次，其余等这一次的结果。
 /// </summary>
 /// <remarks>
@@ -103,7 +103,7 @@ public sealed class AxiosCacheOptions
 /// </remarks>
 /// <example>
 /// <code>
-/// client.Defaults.Cache = new AxiosCache(new AxiosCacheOptions { TimeToLive = TimeSpan.FromSeconds(30) });
+/// client.Defaults.Caching = new AxiosCache(new AxiosCacheOptions { TimeToLive = TimeSpan.FromSeconds(30) });
 /// </code>
 /// </example>
 public sealed class AxiosCache
@@ -489,7 +489,7 @@ public sealed class AxiosCache
         if (TotalTimeoutBudget.IsExhausted(remaining))
         {
             throw AxiosException.TotalTimeoutExceeded(
-                config, request: null, attempt: 1, budget: config.TotalTimeout);
+                config, request: null, attempt: 1, budget: config.TotalTimeoutValue);
         }
 
         Task<AxiosShortCircuit?>? read = null;
@@ -518,7 +518,7 @@ public sealed class AxiosCache
             // 存储挂起超出剩余总预算：放弃这次读取，但要观察它的失败，免得 GC 报「未观察的任务异常」。
             Observe(read);
             throw AxiosException.TotalTimeoutExceeded(
-                config, request: null, attempt: 1, budget: config.TotalTimeout, ex);
+                config, request: null, attempt: 1, budget: config.TotalTimeoutValue, ex);
         }
         catch (OperationCanceledException ex)
         {
@@ -552,7 +552,7 @@ public sealed class AxiosCache
     /// <param name="key">缓存键。</param>
     /// <param name="reply">要写入的条目。</param>
     /// <param name="policy">已判定的新鲜期策略。</param>
-    /// <param name="budgetRemaining">本次请求剩余的总预算（<see cref="AxiosConfig.TotalTimeout"/>）；<c>null</c> 表示没有总预算。</param>
+    /// <param name="budgetRemaining">本次请求剩余的总预算（<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）；<c>null</c> 表示没有总预算。</param>
     internal async ValueTask<bool> TrySetAsync(
         string key,
         AxiosShortCircuit reply,
@@ -654,7 +654,7 @@ public sealed class AxiosCache
             return authorization;
         }
 
-        return config.ConnectionOrNull?.Auth?.ToBasicHeaderValue();
+        return config.TransportOrNull?.BasicAuth?.ToBasicHeaderValue();
     }
 
     /// <summary>凭据摘要：SHA-256 的前 8 字节转十六进制（16 个字符），只够区分身份、不足以还原原值。</summary>

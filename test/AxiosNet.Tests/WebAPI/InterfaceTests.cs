@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using System.Text.Json;
@@ -148,7 +148,7 @@ public sealed class InterfaceTests
 
         // 调用本身不抛：异常进入返回的 Task，与异步方法语义一致
         Assert.NotNull(task);
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => task);
+        var ex = await Assert.ThrowsAnyAsync<AxiosException>(() => task);
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Contains("为 null", ex.Message);
         Assert.Empty(server.Received);
@@ -257,7 +257,7 @@ public sealed class InterfaceTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = CreateClient(server);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.Create<IBrokenMultipartApi>().UploadAsync(ThrowingSequence()));
 
         // 与请求模型的 ResolveBody 一致：装配失败归 ERR_BAD_REQUEST，且一个字节都没发出去。

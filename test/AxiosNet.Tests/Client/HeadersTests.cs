@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -341,7 +341,7 @@ public sealed class HeadersTests
         for (var round = 0; round < 20; round++)
         {
             var config = new AxiosConfig();
-            config.TransformRequest.Add(static (data, _) => data); // 让链非空，Clone 才会共享
+            config.Serialization.TransformRequest.Add(static (data, _) => data); // 让链非空，Clone 才会共享
 
             var stop = 0;
             var cloner = Task.Run(() =>
@@ -357,14 +357,14 @@ public sealed class HeadersTests
             {
                 for (var i = 0; i < appends / 4; i++)
                 {
-                    config.TransformRequest.Add(static (data, _) => data);
+                    config.Serialization.TransformRequest.Add(static (data, _) => data);
                 }
             });
 
             Volatile.Write(ref stop, 1);
             cloner.Wait();
 
-            Assert.Equal(appends + 1, config.TransformRequest.Count);
+            Assert.Equal(appends + 1, config.Serialization.TransformRequest.Count);
         }
     }
 
@@ -415,13 +415,13 @@ public sealed class HeadersTests
     {
         var config = new AxiosConfig();
         Func<object?, AxiosConfig, object?> transform = static (data, _) => data;
-        config.TransformRequest.Add(transform);
+        config.Serialization.TransformRequest.Add(transform);
         var shared = config.Clone();
 
-        var cost = AverageBytes(20_000, () => config.TransformRequest.Remove(static (_, _) => null));
+        var cost = AverageBytes(20_000, () => config.Serialization.TransformRequest.Remove(static (_, _) => null));
 
         Assert.True(cost < 32, $"移除不存在的 transform 平均分配 {cost} B —— 疑似仍整份复制。");
-        Assert.Equal(1, shared.TransformRequest.Count);
+        Assert.Equal(1, shared.Serialization.TransformRequest.Count);
     }
 
     [Fact]

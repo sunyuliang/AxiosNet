@@ -790,7 +790,7 @@ public sealed class HttpConnectionPool : IDisposable
     /// </summary>
     private string ResolveProfile(AxiosConfig? config)
     {
-        var requested = config?.TransportOrNull;
+        var requested = config?.ProfileOrNull;
 
         if (string.IsNullOrEmpty(requested))
         {

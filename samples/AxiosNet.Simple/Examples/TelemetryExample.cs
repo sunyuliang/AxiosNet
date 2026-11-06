@@ -26,8 +26,11 @@ public sealed class TelemetryExample : IExample
             new AxiosConfig
             {
                 BaseAddress = context.BaseUrl,
-                Retry = { Policy = new RetryPolicy(3, TimeSpan.FromMilliseconds(100)) }
-            });
+                Resilience =
+                {
+                    Retry = { Policy = new RetryPolicy(3, TimeSpan.FromMilliseconds(100)) }
+                }
+                });
 
         // ── 1) 链路：订阅 ActivitySource「AxiosNet」 ────────────────────────────
         // 一次逻辑请求 = 一个 span，重试不另开 span
@@ -124,7 +127,7 @@ public sealed class TelemetryExample : IExample
         }
 
         // 3) 关掉遥测：健康检查 / 探针请求不进业务指标
-        await client.GetAsync<object>("users/1", configure: config => config.Telemetry.Enabled = false);
+        await client.GetAsync<object>("users/1", configure: config => config.Observability.Capture = TelemetryCapture.Off);
         Console.WriteLine("  [2] 同上失败请求 + 一次 Telemetry.Enabled = false 的请求（不产出任何遥测）");
 
         meterListener.RecordObservableInstruments();

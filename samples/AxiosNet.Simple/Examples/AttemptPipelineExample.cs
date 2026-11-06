@@ -50,7 +50,12 @@ public sealed class AttemptPipelineExample : IExample
         ProbeLog.Clear();
 
         var retrying = _retrying ??= new AxiosClient(
-            new AxiosConfig { Retry = { Policy = new RetryPolicy(2, TimeSpan.FromMilliseconds(50)) } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.FromMilliseconds(50)) }
+            }
+            },
             pipeline: Probed);
 
         var response = await retrying.GetAsync($"{context.BaseUrl}flaky?fail=2&tag={tag}-probe");

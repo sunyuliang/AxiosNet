@@ -1,0 +1,5 @@
+# 内核目录：BannedApiAnalyzers 的禁止清单在 src/AxiosNet/BannedSymbols.txt 里，
+# 这里把它升级为 error——内核的任何一行引用 WebAPI 类型都会让构建失败。
+# WebAPI/ 子目录有自己的 .editorconfig，把同一规则关掉。
+[*.cs]
+dotnet_diagnostic.RS0030.severity = error

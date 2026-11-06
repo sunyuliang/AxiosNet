@@ -24,7 +24,7 @@ public sealed class AxiosRequestStartEvent
 }
 
 /// <summary>
-/// <c>AxiosNet.RequestStop</c> 事件的载荷：请求成功结束（含 <see cref="AxiosConfig.CallbackSettings.ValidateStatus"/>
+/// <c>AxiosNet.RequestStop</c> 事件的载荷：请求成功结束（含 <see cref="AxiosConfig.ValidateStatus"/>
 /// 接受的非 2xx 状态）。
 /// </summary>
 public sealed class AxiosRequestStopEvent

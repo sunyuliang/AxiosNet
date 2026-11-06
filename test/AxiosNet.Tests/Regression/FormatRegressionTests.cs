@@ -26,7 +26,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
         // 只处理字符串的钩子：它只应看到原始 int / DateTime，不应看到已定型的文本
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is string text ? "X" + text : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is string text ? "X" + text : null;
 
         await client.RequestAsync(new HookQuery { Id = 7, Month = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) });
 
@@ -39,7 +39,7 @@ public sealed class FormatRegressionTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is string text ? "X" + text : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is string text ? "X" + text : null;
 
         await client.RequestAsync(
             new MapAndCsvQuery
@@ -67,7 +67,7 @@ public sealed class FormatRegressionTests
             await plain.RequestAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
         }
 
-        using (var hooked = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => null))
+        using (var hooked = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => null))
         {
             await hooked.RequestAsync(new ListQuery { Items = { new Item { Name = "a", Age = 1 } } });
         }
@@ -173,7 +173,7 @@ public sealed class FormatRegressionTests
         using var hooked = new ApiClient(server.Url);
 
         // 只处理 int 的钩子：对 byte[] 返回 null 时必须保持原始字节，而不是退化成 base64 文本正文
-        hooked.Axios.Defaults.ValueFormatter =
+        hooked.Axios.Defaults.Serialization.ValueText =
             (value, _) => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await hooked.RequestAsync(new BinaryBody { Payload = payload });
@@ -223,7 +223,7 @@ public sealed class FormatRegressionTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime when ? when.ToString("yyyy-MM", CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is DateTime when ? when.ToString("yyyy-MM", CultureInfo.InvariantCulture) : null;
 
         var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
         await client.RequestAsync(new PathHeaderRequest { When = when, HeaderWhen = when });
@@ -244,7 +244,7 @@ public sealed class FormatRegressionTests
         var seen = new List<object?>();
         using var client = new ApiClient(server.Url);
         // 只处理字符串的钩子：单值头与字典头都该命中它，且字典值只命中一次
-        client.Axios.Defaults.ValueFormatter = (value, _) =>
+        client.Axios.Defaults.Serialization.ValueText = (value, _) =>
         {
             seen.Add(value);
             return value is string text ? "H" + text : null;
@@ -277,7 +277,7 @@ public sealed class FormatRegressionTests
         await client.PostAsync(server.Url + "b", 42, c =>
         {
             c.ContentType = "text/plain";
-            c.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+            c.Serialization.ValueText = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
         });
 
         Assert.Equal("v42", Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
@@ -290,7 +290,7 @@ public sealed class FormatRegressionTests
         var seen = new List<object?>();
         using var client = new ApiClient(server.Url);
         // 返回 null 的钩子最容易被问两遍：绑定期一次、正文工厂一次
-        client.Axios.Defaults.ValueFormatter = (value, _) =>
+        client.Axios.Defaults.Serialization.ValueText = (value, _) =>
         {
             seen.Add(value);
             return null;
@@ -311,7 +311,7 @@ public sealed class FormatRegressionTests
     public async Task InterfaceProxy_UsesInstanceHook()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (value, _) =>
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (value, _) =>
             value is int number ? "H" + number.ToString(CultureInfo.InvariantCulture) : null);
 
         await client.Create<IUserApi>().GetAsync(7);
@@ -327,7 +327,7 @@ public sealed class FormatRegressionTests
     public async Task StringBody_HookedOnlyOnTheDeclarativePath()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "HOOKED");
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "HOOKED");
 
         await client.RequestAsync(new StringBodyRequest { Text = "raw" });
         await client.Axios.PostAsync(server.Url + "raw-str", "raw", c => c.ContentType = "text/plain");
@@ -355,7 +355,7 @@ public sealed class FormatRegressionTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url, c =>
-            c.ValueFormatter = (value, _) => value is DateTime date
+            c.Serialization.ValueText = (value, _) => value is DateTime date
                 ? "d" + date.ToString("yyyy", CultureInfo.InvariantCulture)
                 : null);
 
@@ -377,10 +377,10 @@ public sealed class FormatRegressionTests
     public async Task PerCallHook_OverridesInstanceHook()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "D");
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "D");
 
         await client.Axios.PostAsync(server.Url + "raw", 42);
-        await client.Axios.PostAsync(server.Url + "raw", 42, c => c.ValueFormatter = (_, _) => "P");
+        await client.Axios.PostAsync(server.Url + "raw", 42, c => c.Serialization.ValueText = (_, _) => "P");
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal("D", Encoding.UTF8.GetString(server.Received[0].Body));
@@ -391,13 +391,13 @@ public sealed class FormatRegressionTests
     public async Task DeclarativeRequest_CannotRetargetHookAfterBinding()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "D");
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "D");
 
         var when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc);
         var error = await Assert.ThrowsAsync<AxiosException>(() =>
             client.RequestAsync(
                 new PathHeaderRequest { When = when, HeaderWhen = when },
-                c => c.ValueFormatter = (_, _) => "P"));
+                c => c.Serialization.ValueText = (_, _) => "P"));
 
         // 绑定期已经用旧钩子写完 URL / 头 / 正文，再换只会半生效：直接拒绝，不留静默行为
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
@@ -414,7 +414,7 @@ public sealed class FormatRegressionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         var seen = new List<ValueTextChannel>();
         using var client = new AxiosClient();
-        client.Defaults.ValueFormatter = (value, channel) =>
+        client.Defaults.Serialization.ValueText = (value, channel) =>
         {
             seen.Add(channel);
             return value is DateTime date ? "d" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
@@ -456,12 +456,12 @@ public sealed class FormatRegressionTests
         await client.GetAsync(server.Url + "q", c =>
         {
             c.Params = new { when = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc) };
-            c.ValueFormatter = (value, _) =>
+            c.Serialization.ValueText = (value, _) =>
             {
                 calls++;
                 return value is DateTime ? "d2024" : null;
             };
-            c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
+            c.Resilience.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
         });
 
         Assert.Equal(2, server.Received.Count);
@@ -642,7 +642,7 @@ public sealed class FormatRegressionTests
     private sealed class SelfConfiguringRequest : ApiRequest<Person>
     {
         /// <summary>按请求调整配置：这里故意改钩子。</summary>
-        protected override void Configure(AxiosConfig config) => config.ValueFormatter = (_, _) => "bad";
+        protected override void Configure(AxiosConfig config) => config.Serialization.ValueText = (_, _) => "bad";
     }
 
     [Get("probe/optional")]

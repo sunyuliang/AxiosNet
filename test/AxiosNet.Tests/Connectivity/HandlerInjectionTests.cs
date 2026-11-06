@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 using System.Net.Http.Headers;
@@ -128,7 +128,7 @@ public sealed class HandlerInjectionTests
         var ex = Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     MaxRedirects = 0,
                 },
@@ -146,7 +146,7 @@ public sealed class HandlerInjectionTests
         var ex = Assert.Throws<AxiosException>(() =>
             new AxiosClient(new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     Proxy = new WebProxy("http://127.0.0.1:8888"),
                 },

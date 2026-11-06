@@ -107,8 +107,11 @@ public sealed class StreamingRequestBodyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             server.Url + "x",
@@ -126,8 +129,11 @@ public sealed class StreamingRequestBodyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Failover = new() { Endpoints = new[] { new Uri(server.Url) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(server.Url) } }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             server.Url + "x",
@@ -144,8 +150,12 @@ public sealed class StreamingRequestBodyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero, HedgeNonIdempotentMethods = true }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            });
 
         await client.PostAsync(
             server.Url + "x",
@@ -167,17 +177,19 @@ public sealed class StreamingRequestBodyTests
             : TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                // 这里验的是正文可重放，不是默认的幂等门槛：POST 必须显式打开才会重试。
-                Policy = new RetryPolicy
-                {
-                    MaxRetries = 2,
-                    Delay = TimeSpan.Zero,
-                    RetryNonIdempotentMethods = true
+                AllowUnsafeRetry = true,
+                Retry = {
+                    // 这里验的是正文可重放，不是默认的幂等门槛：POST 必须显式打开才会重试。
+                    Policy = new RetryPolicy
+                    {
+                        MaxRetries = 2,
+                        Delay = TimeSpan.Zero
+                    }
                 }
             }
-        });
+            });
 
         // JsonContent 的 ContentLength 是 null（每次从持有的值重新序列化），但它是可重放的：
         // 「长度未知」这条收紧规则不能把它误伤成配置错误，重发时正文也必须完整。
@@ -227,8 +239,11 @@ public sealed class StreamingRequestBodyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.PostAsync(server.Url + "x", new UnknownLengthContent(Hello)));
@@ -244,8 +259,11 @@ public sealed class StreamingRequestBodyTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.Zero) }
+            }
+            });
 
         // 长度已知不代表可重放：一次性流包装成自定义内容后，重发只会发出空正文或直接报错。
         // 与其让第二次尝试报出误导性的网络错误，不如在发送前按配置错误拒绝。

@@ -25,8 +25,11 @@ public sealed class RetryBudgetExample : IExample
         var unbounded = _unbounded ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
-            Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(20)) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(20)) }
+            }
+            });
 
         var baselineRetries = await SendThreeAsync(unbounded, failing);
         Console.WriteLine($"  不带预算: 3 条请求共 {3 + baselineRetries} 次发送（每条 1 首发 + 最多 2 重试），下游故障时重试跟着请求数放大");
@@ -44,19 +47,22 @@ public sealed class RetryBudgetExample : IExample
         using var throttled = new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
-            Retry = { Policy = budget }
-        });
+            Resilience =
+            {
+                Retry = { Policy = budget }
+            }
+            });
 
         var throttledRetries = await SendThreeAsync(throttled, failing);
         Console.WriteLine($"  带预算:   3 条请求共 {3 + throttledRetries} 次发送，被拒重试 {budget.RefusedRetries} 次");
-        Console.WriteLine("  说明: 预算按策略对象共享 —— 挂在 Defaults.Retry.Policy 上就是整个实例（含声明式客户端）共用一只桶");
+        Console.WriteLine("  说明: 预算按策略对象共享 —— 挂在 Defaults.Resilience.Retry.Policy 上就是整个实例（含声明式客户端）共用一只桶");
         Console.WriteLine("  说明: 只拦重试不拦首发；放弃重试时抛的是真实失败（这里仍是 ERR_BAD_RESPONSE），不是新的错误码");
         Console.WriteLine("  说明: 需要「持续允许一定速率」就设 refillPerSecond（例如每秒 5 次）；0 表示用完就停");
 
         async Task<int> SendThreeAsync(AxiosClient client, string target)
         {
             var retries = 0;
-            client.Defaults.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
+            client.Defaults.Resilience.Retry.OnRetry = _ => Interlocked.Increment(ref retries);
 
             for (var i = 1; i <= 3; i++)
             {

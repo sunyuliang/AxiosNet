@@ -57,7 +57,7 @@ public sealed class FormatAttributeTests
             return "ch" + ((int)channel).ToString(CultureInfo.InvariantCulture);
         };
 
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = hook);
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = hook);
 
         // 声明式四通道：路径段 / 查询串 / 裸标量正文 / 请求头。
         await client.RequestAsync(new ChannelProbeRequest
@@ -75,7 +75,7 @@ public sealed class FormatAttributeTests
             c =>
             {
                 c.ContentType = "application/x-www-form-urlencoded";
-                c.ValueFormatter = hook;
+                c.Serialization.ValueText = hook;
             });
 
         Assert.True(seen.Count == 5, "实际通道：" + string.Join(",", seen));
@@ -145,7 +145,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value switch
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value switch
         {
             int id => "hook" + id.ToString(CultureInfo.InvariantCulture),
             DateTime date => "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
@@ -250,7 +250,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime date
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is DateTime date
             ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
             : null;
 
@@ -274,7 +274,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value switch
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value switch
         {
             int number => "p" + number.ToString(CultureInfo.InvariantCulture),
             DateTime date => date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
@@ -323,7 +323,7 @@ public sealed class FormatAttributeTests
     public async Task ValueFormatter_OutputIsEscapedPerChannel()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "a&b c");
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "a&b c");
 
         await client.RequestAsync(new ChannelProbeRequest { Id = 1, Count = 2, Trace = 3 });
 
@@ -339,7 +339,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         var seen = new List<ValueTextChannel>();
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, channel) =>
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, channel) =>
         {
             seen.Add(channel);
             return "hook";
@@ -357,7 +357,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         var seen = new List<ValueTextChannel>();
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, channel) =>
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, channel) =>
         {
             seen.Add(channel);
             return "e";
@@ -383,7 +383,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime date
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is DateTime date
             ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
             : null;
 
@@ -405,7 +405,7 @@ public sealed class FormatAttributeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is int number ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.Create<IFormatMultipartApi>().UploadAsync(7, new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc));
 
@@ -489,7 +489,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new ThrowingPathRequest { Id = 7 }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -502,7 +502,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new ThrowingQueryRequest { Name = "abc" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -514,7 +514,7 @@ public sealed class FormatAttributeTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var error = Assert.Throws<AxiosException>(
+        var error = Assert.ThrowsAny<AxiosException>(
             () => client.GetUri(new ThrowingHeaderRequest { Code = "abc" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -525,10 +525,10 @@ public sealed class FormatAttributeTests
     public async Task HeaderCollectionHookFailure_IsBadRequest()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) =>
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) =>
             throw new InvalidOperationException("boom"));
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new HookedHeaderCollectionRequest
             {
                 Extra = new Dictionary<string, string> { ["X-K"] = "v" }
@@ -546,9 +546,9 @@ public sealed class FormatAttributeTests
     public async Task HeaderCollectionHookText_WithControlChars_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => "v\r\nX-Evil: 1");
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => "v\r\nX-Evil: 1");
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new HookedHeaderCollectionRequest
             {
                 Extra = new Dictionary<string, string> { ["X-K"] = "raw" }
@@ -567,7 +567,7 @@ public sealed class FormatAttributeTests
     public async Task HeaderCollectionHookDeclining_KeepsDictionaryValue()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => null);
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => null);
 
         await client.RequestAsync(new HookedHeaderCollectionRequest
         {
@@ -585,7 +585,7 @@ public sealed class FormatAttributeTests
     public async Task EmptyHookText_KeepsKeyWithEmptyValue()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (_, _) => string.Empty);
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (_, _) => string.Empty);
 
         await client.RequestAsync(new EmptyTextRequest { Id = 1, Trace = 2 });
 
@@ -617,7 +617,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.Create<IThrowingBodyFormatApi>().SubmitAsync("payload"));
 
         Assert.Equal("ERR_BAD_REQUEST", error.Code);
@@ -630,7 +630,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.Create<IThrowingPathFormatApi>().GetAsync(7));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -643,7 +643,7 @@ public sealed class FormatAttributeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.Create<IThrowingQueryFormatApi>().GetAsync("abc"));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);

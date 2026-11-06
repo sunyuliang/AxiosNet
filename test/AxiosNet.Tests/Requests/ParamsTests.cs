@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -58,13 +58,13 @@ public sealed class ParamsTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task CustomParamsSerializerThrows_ReportsOptionError()
+    public async Task CustomQueryEncoderThrows_ReportsOptionError()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.Serialization.ParamsSerializer = _ => throw new InvalidOperationException("bad params")));
+            client.GetAsync("x", c => c.Serialization.QueryEncoder = _ => throw new InvalidOperationException("bad params")));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.IsType<InvalidOperationException>(ex.Cause);
@@ -411,7 +411,7 @@ public sealed class ParamsTests
     }
 
     [Fact]
-    public async Task ParamsSerializer_Custom_ReplacesBuiltInEncoding()
+    public async Task QueryEncoder_Custom_ReplacesBuiltInEncoding()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
@@ -419,7 +419,7 @@ public sealed class ParamsTests
         await client.GetAsync(server.Url + "search", c =>
         {
             c.Params = new Dictionary<string, object?> { ["ids"] = new[] { 1, 2, 3 }, ["q"] = "x y" };
-            c.Serialization.ParamsSerializer = p =>
+            c.Serialization.QueryEncoder = p =>
             {
                 var dict = (Dictionary<string, object?>)p!;
                 return $"ids={string.Join(",", (int[])dict["ids"]!)}&q={Uri.EscapeDataString((string)dict["q"]!)}";

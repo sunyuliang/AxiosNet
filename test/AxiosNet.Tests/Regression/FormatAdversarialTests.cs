@@ -9,20 +9,20 @@ using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.Tests.Regression;
 
-/// <summary>回归：格式化修复后的对抗边界（自定义 ParamsSerializer、集合形态、JSON 树、嵌套声明、重试、并发）。</summary>
+/// <summary>回归：格式化修复后的对抗边界（自定义 QueryEncoder、集合形态、JSON 树、嵌套声明、重试、并发）。</summary>
 public sealed class FormatAdversarialTests
 {
-    // ---------------------------------------------------------------- P1 自定义 ParamsSerializer
+    // ---------------------------------------------------------------- P1 自定义 QueryEncoder
 
     [Fact]
-    public async Task CustomParamsSerializer_SeesFormattedStrings()
+    public async Task CustomQueryEncoder_SeesFormattedStrings()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(new P1Request { Id = 7 }, c =>
-            c.Serialization.ParamsSerializer = raw =>
+            c.Serialization.QueryEncoder = raw =>
             {
                 var dict = (Dictionary<string, object?>)raw!;
                 return string.Join("&", dict.Select(entry => entry.Key + "=" + (string)entry.Value!));
@@ -64,7 +64,7 @@ public sealed class FormatAdversarialTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(
             new P2Request { Dates = [new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc), new DateTime(2024, 5, 6, 0, 0, 0, DateTimeKind.Utc)] },
@@ -87,7 +87,7 @@ public sealed class FormatAdversarialTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(new P3Request { Matrix = [[1, 2], [3]] });
 
@@ -127,7 +127,7 @@ public sealed class FormatAdversarialTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is string text ? "H" + text : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is string text ? "H" + text : null;
 
         await client.RequestAsync(new P5Request { Tags = ["a", "b"] });
 
@@ -151,7 +151,7 @@ public sealed class FormatAdversarialTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await Task.WhenAll(Enumerable.Range(0, 32).Select(id =>
             client.RequestAsync(new P6Request { Id = id })));
@@ -226,7 +226,7 @@ public sealed class FormatAdversarialTests
         await client.GetAsync(server.Url + "p8", c =>
         {
             c.Params = new { when = new DateTime(2024, 3, 4, 0, 0, 0, DateTimeKind.Utc) };
-            c.ValueFormatter = (value, _) => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
+            c.Serialization.ValueText = (value, _) => value is DateTime date ? "H" + date.ToString("yyyy", CultureInfo.InvariantCulture) : null;
         });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
@@ -245,7 +245,7 @@ public sealed class FormatAdversarialTests
         await client.GetAsync(server.Url + "p9", c =>
         {
             c.Params = document.RootElement;
-            c.ValueFormatter = (value, _) => value is string text ? "H" + text : null;
+            c.Serialization.ValueText = (value, _) => value is string text ? "H" + text : null;
         });
 
         var query = Uri.UnescapeDataString(Assert.Single(server.Received).Query ?? string.Empty);
@@ -259,7 +259,7 @@ public sealed class FormatAdversarialTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) =>
+        client.Axios.Defaults.Serialization.ValueText = (value, _) =>
         {
             if (value is DateTime)
             {
@@ -269,7 +269,8 @@ public sealed class FormatAdversarialTests
             return null;
         };
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        // 装配失败由 WebAPI 自有的异常工厂产出（AxiosException 派生），按公共契约接住基类。
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new P11Request { Item = new P11Inner { When = new DateTime(2024, 3, 4) } }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -294,7 +295,7 @@ public sealed class FormatAdversarialTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new P12Request { Item = new P12Inner { When = new DateTime(2024, 3, 4) } }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -326,7 +327,7 @@ public sealed class FormatAdversarialTests
         await client.PostAsync(server.Url + "p13", document.RootElement, c =>
         {
             c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-            c.ValueFormatter = (value, _) => value is string text ? "H" + text : null;
+            c.Serialization.ValueText = (value, _) => value is string text ? "H" + text : null;
         });
 
         var body = Uri.UnescapeDataString(Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
@@ -337,7 +338,7 @@ public sealed class FormatAdversarialTests
     public async Task MultipartJsonElement_HookAppliesToLeaves()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-        using var client = new ApiClient(server.Url, c => c.ValueFormatter = (value, _) => value is string text ? "H" + text : null);
+        using var client = new ApiClient(server.Url, c => c.Serialization.ValueText = (value, _) => value is string text ? "H" + text : null);
         using var document = JsonDocument.Parse("""{"when":"2024-03-04"}""");
         var request = new P14Request { Fields = document.RootElement };
 
@@ -369,10 +370,10 @@ public sealed class FormatAdversarialTests
         });
 
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         await client.RequestAsync(new P6Request { Id = 7 }, c =>
-            c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero });
+            c.Resilience.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero });
 
         Assert.Equal(2, server.Received.Count);
         Assert.All(server.Received, received =>
@@ -386,7 +387,7 @@ public sealed class FormatAdversarialTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
         using var client = new ApiClient(server.Url);
-        client.Axios.Defaults.ValueFormatter = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value is int number ? "v" + number.ToString(CultureInfo.InvariantCulture) : null;
 
         var api = client.Create<IGenericQueryApi<int>>();
         await api.GetAsync(5);

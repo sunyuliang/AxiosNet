@@ -1,4 +1,4 @@
-﻿using AxiosNet.Interceptors;
+using AxiosNet.Interceptors;
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
@@ -48,13 +48,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public AxiosInterceptors Interceptors { get; } = new();
 
     /// <summary>
-    /// 本实例按媒体类型登记的序列化器表（即 <c>Defaults.Serialization.ContentSerializers</c>）。
+    /// 本实例按媒体类型登记的序列化器表（即 <c>Defaults.Serialization.BodySerializers</c>）。
     /// 登记与全局 <see cref="AxiosContent.Register"/> 同款规则（精确 → 别名 → 结构化后缀），但只作用于本实例：
-    /// 测试之间、多个站点之间互不干扰；优先级高于全局注入与全局注册表，低于 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>。
+    /// 测试之间、多个站点之间互不干扰；优先级高于进程默认与全局注册表，低于同一张表里按媒体类型精确登记。
     /// 表对象随 <c>Defaults</c> 走：同一个 <see cref="AxiosConfig"/> 交给多个客户端、或 <c>Defaults.Clone()</c>，得到的仍是这一张表。
     /// </summary>
-    public ContentSerializerRegistry ContentSerializers
-        => Defaults.Serialization.ContentSerializers ??= new ContentSerializerRegistry();
+    public ContentSerializerRegistry BodySerializers
+        => Defaults.Serialization.BodySerializers;
 
     /// <summary>
     /// 本实例的尝试管线（构造期固化，之后不可变）；未显式传入时是 <see cref="AxiosAttemptPipeline.Default"/>。
@@ -93,7 +93,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         // 每个实例一份序列化注册表：登记只影响本实例，全局 AxiosContent.Register 继续作为兜底。
         // 配置里自带一份时沿用它（DI 的 configure 回调可以预先放好）。
-        Defaults.Serialization.ContentSerializers ??= new ContentSerializerRegistry();
+        _ = Defaults.Serialization.BodySerializers;
 
         // 下面的分支有提前 return，管线先在此初始化。
         AttemptPipeline = pipeline ?? AxiosAttemptPipeline.Default;
@@ -106,10 +106,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 throw AxiosException.InvalidOption("不能同时注入 handler 和 pool：注入 handler 时不使用连接池，请二选一。", Defaults);
             }
 
-            if (poolOptions is not null || Defaults.ConnectionOrNull?.PoolOptions is not null)
+            if (poolOptions is not null || Defaults.TransportOrNull?.Pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时注入 handler 和连接池选项（poolOptions / defaults.PoolOptions）："
+                    "不能同时注入 handler 和连接池选项（poolOptions / defaults.Transport.Pool）："
                     + "handler 的连接行为由它自己决定，需要池化请改用 ConnectionPoolOptions.HandlerFactory。", Defaults);
             }
 
@@ -126,10 +126,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         if (pool is not null)
         {
-            if (poolOptions is not null || Defaults.ConnectionOrNull?.PoolOptions is not null)
+            if (poolOptions is not null || Defaults.TransportOrNull?.Pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时传入 pool 和 poolOptions / defaults.PoolOptions："
+                    "不能同时传入 pool 和 poolOptions / defaults.Transport.Pool："
                     + "共享池已按自己的 ConnectionPoolOptions 创建，请在创建池时配置，或改为只传 poolOptions 让本实例自建池。", Defaults);
             }
 
@@ -142,13 +142,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         else
         {
             // 两处都配时直接报错。
-            if (poolOptions is not null && Defaults.ConnectionOrNull?.PoolOptions is not null)
+            if (poolOptions is not null && Defaults.TransportOrNull?.Pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时传入 poolOptions 和 defaults.PoolOptions：两者描述的是同一个自建连接池，请只在一处配置。", Defaults);
+                    "不能同时传入 poolOptions 和 defaults.Transport.Pool：两者描述的是同一个自建连接池，请只在一处配置。", Defaults);
             }
 
-            var effective = (poolOptions ?? Defaults.ConnectionOrNull?.PoolOptions ?? new ConnectionPoolOptions()).Clone();
+            var effective = (poolOptions ?? Defaults.TransportOrNull?.Pool ?? new ConnectionPoolOptions()).Clone();
 
             // 池选项非法时在构造期带配置抛错。
             HttpConnectionPool.ValidateOptions(effective, Defaults);
@@ -156,7 +156,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // maxRedirects：0 = 不跟随重定向，> 0 = 覆盖池默认上限；按 *Set 判断是否显式配置。
             if (Defaults.MaxRedirectsSet)
             {
-                var maxRedirects = Defaults.ConnectionOrNull?.MaxRedirects ?? 5;
+                var maxRedirects = Defaults.TransportOrNull?.MaxRedirects ?? 5;
 
                 if (maxRedirects < 0)
                 {
@@ -176,20 +176,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 两处都写时直接报错。
             if (poolOptions is not null)
             {
-                if (poolOptions.Proxy is not null && Defaults.ConnectionOrNull?.Proxy is not null)
+                if (poolOptions.Proxy is not null && Defaults.TransportOrNull?.Proxy is not null)
                 {
                     throw AxiosException.InvalidOption("不能同时在 poolOptions.Proxy 和 defaults.Proxy 上配置代理：请只在一处设置。", Defaults);
                 }
 
-                if (poolOptions.Credentials is not null && Defaults.ConnectionOrNull?.Credentials is not null)
+                if (poolOptions.Credentials is not null && Defaults.TransportOrNull?.Credentials is not null)
                 {
                     throw AxiosException.InvalidOption("不能同时在 poolOptions.Credentials 和 defaults.Credentials 上配置凭据：请只在一处设置。", Defaults);
                 }
             }
 
-            effective.Proxy ??= Defaults.ConnectionOrNull?.Proxy;
-            effective.Credentials ??= Defaults.ConnectionOrNull?.Credentials;
-            if (Defaults.ConnectionOrNull?.WithCredentials is true)
+            effective.Proxy ??= Defaults.TransportOrNull?.Proxy;
+            effective.Credentials ??= Defaults.TransportOrNull?.Credentials;
+            if (Defaults.TransportOrNull?.WithCredentials is true)
             {
                 effective.UseCookies = true;
                 effective.Credentials ??= CredentialCache.DefaultCredentials;
@@ -210,7 +210,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         // 回放 response.Config 时实例级项取自本实例默认值。
         var merged = MergeConfig(config);
-        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.ParamsSerializer, config: merged).AbsoluteUri;
+        return UrlBuilder.Build(merged.BaseAddress, merged.Url, merged.Params, merged.SerializationOrNull?.QueryEncoder, config: merged).AbsoluteUri;
     }
 
     /// <summary>按 Action 配置拼出最终请求 URL，不发请求；回调在实例默认值的副本上修改（与快捷方法同一模型）。</summary>
@@ -221,7 +221,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         // 直接拼生效配置，不走 MergeConfig：回调里显式写的 BaseAddress 需保留。
         var config = NewEffectiveConfig();
         configure(config);
-        return UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.ParamsSerializer, config: config).AbsoluteUri;
+        return UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.QueryEncoder, config: config).AbsoluteUri;
     }
 
     // ---- request(config) 入口 ----
@@ -266,7 +266,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 按目标类型发送（供声明式客户端）：<paramref name="dataType"/> 为 <c>null</c> 时正文按 JsonElement 交付，
+    /// 按目标类型发送：<paramref name="dataType"/> 为 <c>null</c> 时按内核默认形态交付（JSON 正文为 JsonElement），
     /// 为 <c>typeof(void)</c> 时只完成请求、不装配正文，其余类型按泛型入口同款规则反序列化。
     /// </summary>
     internal Task<AxiosResponse> SendInternalAsync(AxiosConfig config, Type? dataType, AxiosResponse? target)

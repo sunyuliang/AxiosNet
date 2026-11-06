@@ -25,11 +25,7 @@ public sealed class QueueBackpressureExample : IExample
         var capped = _capped ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
-            Limits = new()
-            {
-                MaxConcurrentRequests = 2,
-                MaxQueueLength = 1
-            }
+            Resilience = { Concurrency = {  MaxInFlight = 2, MaxQueue = 1  } }
         });
 
         Console.WriteLine("  闸门: MaxConcurrentRequests = 2, MaxQueueLength = 1，同时发起 4 条 400ms 的请求");
@@ -49,7 +45,7 @@ public sealed class QueueBackpressureExample : IExample
         var unlimitedQueue = _unlimitedQueue ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
-            Limits = new() { MaxConcurrentRequests = 2 }
+            Resilience = { Concurrency = {  MaxInFlight = 2  } }
         });
 
         var relaxed = await Task.WhenAll(Enumerable.Range(1, 4).Select(async _ =>

@@ -1,4 +1,4 @@
-﻿using AxiosNet.Circuit;
+using AxiosNet.Circuit;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 
@@ -21,45 +21,37 @@ public sealed class ConfigSectionsTests
         {
             BaseAddress = "https://example.com/",
             Timeout = TimeSpan.FromSeconds(7),
-            Telemetry = new() { Enabled = false, CaptureUrl = false, CaptureQuery = true },
-            Callbacks = new()
-            {
-                TimeoutMessage = "custom-timeout",
-                ValidateStatus = status => status < 500
-            },
-            Connection = new() { MaxRedirects = 2 },
-            Limits = new() { MaxContentLength = 4096, MaxBodyLength = 2048 },
-            Retry = new() { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5)) },
-            Circuit = new() { Policy = new CircuitBreaker(3, TimeSpan.FromSeconds(1)) },
-            Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(7), HedgeNonIdempotentMethods = true },
-            Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api") } }
+            MaxResponseBytes = 4096,
+            MaxRequestBytes = 2048,
+            Transport = { MaxRedirects = 2 },
+            Resilience = { AllowUnsafeRetry = true, Retry = new() { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5)) }, Circuit = new() { Policy = new CircuitBreaker(3, TimeSpan.FromSeconds(1)) }, Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(7) }, Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api") } } },
+            Observability = { Capture = TelemetryCapture.Off, TimeoutMessage = "custom-timeout" },
+            ValidateStatus = status => status < 500
         };
 
         var clone = config.Clone();
 
         Assert.Equal("https://example.com/", clone.BaseAddress);
         Assert.Equal(TimeSpan.FromSeconds(7), clone.Timeout);
-        Assert.False(clone.Telemetry.Enabled);
-        Assert.False(clone.Telemetry.CaptureUrl);
-        Assert.True(clone.Telemetry.CaptureQuery);
-        Assert.Equal("custom-timeout", clone.Callbacks.TimeoutMessage);
-        Assert.NotNull(clone.Callbacks.ValidateStatus);
-        Assert.Equal(2, clone.Connection.MaxRedirects);
-        Assert.Equal(4096, clone.Limits.MaxContentLength);
-        Assert.Equal(2048, clone.Limits.MaxBodyLength);
-        Assert.NotNull(clone.Retry.Policy);
-        Assert.NotNull(clone.Circuit.Policy);
-        Assert.Equal(2, clone.Hedging.MaxHedges);
-        Assert.Equal(TimeSpan.FromMilliseconds(7), clone.Hedging.Delay);
-        Assert.True(clone.Hedging.HedgeNonIdempotentMethods);
-        Assert.Equal("https://backup.example.com/api", clone.Failover.Endpoints![0].AbsoluteUri);
+        Assert.Equal(TelemetryCapture.Off, clone.Observability.Capture);
+        Assert.Equal("custom-timeout", clone.Observability.TimeoutMessage);
+        Assert.NotNull(clone.ValidateStatus);
+        Assert.Equal(2, clone.Transport.MaxRedirects);
+        Assert.Equal(4096, clone.MaxResponseBytes);
+        Assert.Equal(2048, clone.MaxRequestBytes);
+        Assert.NotNull(clone.Resilience.Retry.Policy);
+        Assert.NotNull(clone.Resilience.Circuit.Policy);
+        Assert.Equal(2, clone.Resilience.Hedging.MaxHedges);
+        Assert.Equal(TimeSpan.FromMilliseconds(7), clone.Resilience.Hedging.Delay);
+        Assert.True(clone.Resilience.AllowUnsafeRetry);
+        Assert.Equal("https://backup.example.com/api", clone.Resilience.Failover.Endpoints![0].AbsoluteUri);
 
         // 子对象必须是新实例：改克隆不能回写源配置
-        clone.Telemetry.Enabled = true;
-        Assert.False(config.Telemetry.Enabled);
+        clone.Observability.Capture = TelemetryCapture.Query;
+        Assert.Equal(TelemetryCapture.Off, config.Observability.Capture);
 
-        clone.Hedging.MaxHedges = 0;
-        Assert.Equal(2, config.Hedging.MaxHedges);
+        clone.Resilience.Hedging.MaxHedges = 0;
+        Assert.Equal(2, config.Resilience.Hedging.MaxHedges);
     }
 
     [Fact]
@@ -72,7 +64,7 @@ public sealed class ConfigSectionsTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Callbacks = new() { ValidateStatus = status => status < 600 }
+            ValidateStatus = status => status < 600
         });
 
         var response = await client.GetAsync("x", c => c.Headers.Set("X-Trace", "1"));
@@ -95,13 +87,16 @@ public sealed class ConfigSectionsTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = new() { OnRetry = _ => Interlocked.Increment(ref reported) }
-        });
+            Resilience =
+            {
+                Retry = new() { OnRetry = _ => Interlocked.Increment(ref reported) }
+            }
+            });
 
         var response = await client.GetAsync("x", c =>
         {
             Interlocked.Increment(ref attempts);
-            c.Retry.Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5));
+            c.Resilience.Retry.Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5));
         });
 
         Assert.Equal(200, response.Status);
@@ -216,15 +211,13 @@ public sealed class ConfigSectionsTests
         var settings = new AxiosConfig.HedgingSettings
         {
             MaxHedges = 2,
-            Delay = TimeSpan.FromMilliseconds(7),
-            HedgeNonIdempotentMethods = true
+            Delay = TimeSpan.FromMilliseconds(7)
         };
 
         settings.MergeFrom(new AxiosConfig.HedgingSettings());
 
         Assert.Equal(2, settings.MaxHedges);
         Assert.Equal(TimeSpan.FromMilliseconds(7), settings.Delay);
-        Assert.True(settings.HedgeNonIdempotentMethods);
     }
 
     [Fact]
@@ -233,8 +226,7 @@ public sealed class ConfigSectionsTests
         var settings = new AxiosConfig.HedgingSettings
         {
             MaxHedges = 2,
-            Delay = TimeSpan.FromMilliseconds(7),
-            HedgeNonIdempotentMethods = true
+            Delay = TimeSpan.FromMilliseconds(7)
         };
 
         // 显式 0 是「本次请求关掉对冲」，不能按「没表态」处理
@@ -242,16 +234,10 @@ public sealed class ConfigSectionsTests
 
         Assert.Equal(0, settings.MaxHedges);
         Assert.Equal(TimeSpan.FromMilliseconds(7), settings.Delay);
-        Assert.True(settings.HedgeNonIdempotentMethods);
 
-        settings.MergeFrom(new AxiosConfig.HedgingSettings
-        {
-            Delay = TimeSpan.Zero,
-            HedgeNonIdempotentMethods = false
-        });
+        settings.MergeFrom(new AxiosConfig.HedgingSettings { Delay = TimeSpan.Zero });
 
         Assert.Equal(TimeSpan.Zero, settings.Delay);
-        Assert.False(settings.HedgeNonIdempotentMethods);
     }
 
     // ------------------------------------------------------------------
@@ -293,41 +279,39 @@ public sealed class ConfigSectionsTests
     {
         Action<AxiosProgressEvent> upload = _ => { };
         Action<AxiosProgressEvent> download = _ => { };
-        Func<int, bool> validate = status => status < 600;
 
-        var settings = new AxiosConfig.CallbackSettings
+        var settings = new AxiosConfig.ObservabilitySettings
         {
             OnUploadProgress = upload,
             OnDownloadProgress = download,
             TimeoutMessage = "instance-timeout",
-            ValidateStatus = validate
+            Capture = TelemetryCapture.Query
         };
 
-        settings.MergeFrom(new AxiosConfig.CallbackSettings());
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings());
 
         Assert.Same(upload, settings.OnUploadProgress);
         Assert.Same(download, settings.OnDownloadProgress);
         Assert.Equal("instance-timeout", settings.TimeoutMessage);
-        Assert.Same(validate, settings.ValidateStatus);
+        Assert.Equal(TelemetryCapture.Query, settings.Capture);
     }
 
     [Fact]
-    public void CallbacksMerge_IncomingValues_ReplaceOneByOne()
+    public void ObservabilityMerge_IncomingValues_ReplaceOneByOne()
     {
         Action<AxiosProgressEvent> upload = _ => { };
         Action<AxiosProgressEvent> download = _ => { };
-        Func<int, bool> validate = status => status < 500;
 
-        var settings = new AxiosConfig.CallbackSettings
+        var settings = new AxiosConfig.ObservabilitySettings
         {
             OnUploadProgress = _ => { },
             OnDownloadProgress = _ => { },
             TimeoutMessage = "instance-timeout",
-            ValidateStatus = status => status < 600
+            Capture = TelemetryCapture.Path
         };
 
-        // 只覆盖上传回调与超时文案，下载回调与状态校验必须原样保留
-        settings.MergeFrom(new AxiosConfig.CallbackSettings
+        // 只覆盖上传回调与超时文案，下载回调与采集档位必须原样保留
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings
         {
             OnUploadProgress = upload,
             TimeoutMessage = "per-call-timeout"
@@ -336,61 +320,56 @@ public sealed class ConfigSectionsTests
         Assert.Same(upload, settings.OnUploadProgress);
         Assert.Equal("per-call-timeout", settings.TimeoutMessage);
         Assert.NotNull(settings.OnDownloadProgress);
-        Assert.True(settings.ValidateStatus!(503));
+        Assert.Equal(TelemetryCapture.Path, settings.Capture);
 
-        settings.MergeFrom(new AxiosConfig.CallbackSettings
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings
         {
             OnDownloadProgress = download,
-            ValidateStatus = validate
+            Capture = TelemetryCapture.Query
         });
 
         Assert.Same(download, settings.OnDownloadProgress);
-        Assert.Same(validate, settings.ValidateStatus);
+        Assert.Equal(TelemetryCapture.Query, settings.Capture);
     }
 
     // ------------------------------------------------------------------
-    // TelemetrySettings
+    // ObservabilitySettings.Capture
     // ------------------------------------------------------------------
 
     [Fact]
-    public void TelemetryMerge_UntouchedIncoming_KeepsEveryInstanceFlag()
+    public void ObservabilityMerge_UntouchedIncoming_KeepsInstanceCapture()
     {
-        var settings = new AxiosConfig.TelemetrySettings
+        var settings = new AxiosConfig.ObservabilitySettings
         {
-            Enabled = false,
-            CaptureUrl = false,
-            CaptureQuery = true
+            Capture = TelemetryCapture.Query
         };
 
-        settings.MergeFrom(new AxiosConfig.TelemetrySettings());
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings());
 
-        Assert.False(settings.Enabled);
-        Assert.False(settings.CaptureUrl);
-        Assert.True(settings.CaptureQuery);
+        Assert.Equal(TelemetryCapture.Query, settings.Capture);
     }
 
     [Fact]
-    public void TelemetryMerge_ExplicitFlags_OverrideOneByOne()
+    public void ObservabilityMerge_ExplicitCapture_Overrides()
     {
-        var settings = new AxiosConfig.TelemetrySettings
+        var settings = new AxiosConfig.ObservabilitySettings
         {
-            Enabled = false,
-            CaptureUrl = false,
-            CaptureQuery = false
+            Capture = TelemetryCapture.NoUrl
         };
 
-        // 只表态 CaptureQuery：另外两项保持实例值（false 是有效值，不能被「null 才算设置」吞掉）
-        settings.MergeFrom(new AxiosConfig.TelemetrySettings { CaptureQuery = true });
+        // 显式 Off 是有效值，不能被「null 才算设置」吞掉
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings { Capture = TelemetryCapture.Off });
 
-        Assert.False(settings.Enabled);
-        Assert.False(settings.CaptureUrl);
-        Assert.True(settings.CaptureQuery);
+        Assert.Equal(TelemetryCapture.Off, settings.Capture);
 
-        settings.MergeFrom(new AxiosConfig.TelemetrySettings { Enabled = true, CaptureUrl = true });
+        // 显式 null 表示「不表态」，保留实例值
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings { Capture = null });
 
-        Assert.True(settings.Enabled);
-        Assert.True(settings.CaptureUrl);
-        Assert.True(settings.CaptureQuery);
+        Assert.Equal(TelemetryCapture.Off, settings.Capture);
+
+        settings.MergeFrom(new AxiosConfig.ObservabilitySettings { Capture = TelemetryCapture.Query });
+
+        Assert.Equal(TelemetryCapture.Query, settings.Capture);
     }
 
     // ------------------------------------------------------------------
@@ -406,11 +385,14 @@ public sealed class ConfigSectionsTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = new() { Policy = RetryPolicy.Constant(3, TimeSpan.FromMilliseconds(5)) }
-        });
+            Resilience =
+            {
+                Retry = new() { Policy = RetryPolicy.Constant(3, TimeSpan.FromMilliseconds(5)) }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync("x", c => c.Retry.Policy = null));
+            () => client.GetAsync("x", c => c.Resilience.Retry.Policy = null));
 
         // 实例默认策略被本次请求显式关掉：只发一次，不做退避重试
         Assert.Single(server.Received);
@@ -427,8 +409,11 @@ public sealed class ConfigSectionsTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Circuit = new() { Policy = breaker }
-        });
+            Resilience =
+            {
+                Circuit = new() { Policy = breaker }
+            }
+            });
 
         // 先让熔断器进入 Open（实例默认策略生效）
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -436,7 +421,7 @@ public sealed class ConfigSectionsTests
 
         // 本次请求显式关掉熔断：闸门直接放行，请求真的发出去
         await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync("x", c => c.Circuit.Policy = null));
+            () => client.GetAsync("x", c => c.Resilience.Circuit.Policy = null));
         Assert.Equal(2, server.Received.Count);
     }
 }

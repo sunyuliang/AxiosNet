@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 整条逻辑请求的总预算（<see cref="AxiosConfig.TotalTimeout"/>）：入口处把相对时长换成一次绝对时间戳，
+/// 整条逻辑请求的总预算（<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）：入口处把相对时长换成一次绝对时间戳，
 /// 之后重试、备用端点、对冲分支共享同一个时间戳。
 /// </summary>
 internal static class TotalTimeoutBudget
@@ -23,7 +23,7 @@ internal static class TotalTimeoutBudget
     /// </summary>
     public static long Start(AxiosConfig config, long entryTimestamp)
     {
-        if (config.TotalTimeout is not { } totalTimeout || totalTimeout <= TimeSpan.Zero)
+        if (config.TotalTimeoutValue is not { } totalTimeout || totalTimeout <= TimeSpan.Zero)
         {
             return None;
         }

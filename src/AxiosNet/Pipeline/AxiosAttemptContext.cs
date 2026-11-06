@@ -114,7 +114,7 @@ public readonly struct AxiosAttemptContext
     /// <summary>
     /// 本次尝试的令牌：默认同 <see cref="ExternalToken"/>，对冲给每条分支各换一份。
     /// 并发闸门排队与终端超时计时都用它；中间件自身耗时不计入 <c>AxiosConfig.Timeout</c>，但计入
-    /// <see cref="AxiosConfig.TotalTimeout"/>。
+    /// <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>。
     /// </summary>
     public CancellationToken AttemptToken { get; }
 

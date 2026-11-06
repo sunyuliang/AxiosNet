@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
@@ -187,14 +187,14 @@ public sealed class GetUriTests
     }
 
     [Fact]
-    public void GetUri_UsesCustomParamsSerializer()
+    public void GetUri_UsesCustomQueryEncoder()
     {
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "https://api.example.com/",
             Serialization = new()
             {
-                ParamsSerializer = p =>
+                QueryEncoder = p =>
             {
                 var d = (Dictionary<string, object?>)p!;
                 return "ids=" + string.Join(",", (int[])d["ids"]!);
@@ -271,7 +271,7 @@ public sealed class GetUriTests
         var uri = client.GetUri(c =>
         {
             c.Url = "http://host/p";
-            c.Serialization.ParamsSerializer = _ => "q=%41%7E%2B";
+            c.Serialization.QueryEncoder = _ => "q=%41%7E%2B";
         });
 
         // %41/%7E 是非保留字符（归一化为 A/~），%2B 是保留字符（保持转义）

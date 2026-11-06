@@ -31,8 +31,8 @@ public sealed class TransportProfileExample : IExample
         using var client = new AxiosClient(pool: pool);
 
         // 37.1 同一个 origin、两个档 = 两个节点，各自的 Handler 与连接互不干扰
-        await client.GetAsync(baseUrl, c => c.Connection.Transport = "tenant-a");
-        await client.GetAsync(baseUrl, c => c.Connection.Transport = "tenant-b");
+        await client.GetAsync(baseUrl, c => c.Transport.Profile = "tenant-a");
+        await client.GetAsync(baseUrl, c => c.Transport.Profile = "tenant-b");
 
         var stats = pool.GetStatistics();
         Console.WriteLine($"  两个档各发一次: 节点数 = {stats.EndpointCount}（期望 2）");
@@ -53,7 +53,7 @@ public sealed class TransportProfileExample : IExample
         // 37.3 未登记的档不会被静默忽略：请求发出前就报错
         try
         {
-            await client.GetAsync(baseUrl, c => c.Connection.Transport = "tenant-c");
+            await client.GetAsync(baseUrl, c => c.Transport.Profile = "tenant-c");
         }
         catch (AxiosException ex)
         {
@@ -62,11 +62,14 @@ public sealed class TransportProfileExample : IExample
 
         // 37.4 档也可以在实例默认值上固定：之后每个请求都走它，单次请求仍可改回默认档
         using var tenantClient = new AxiosClient(
-            new AxiosConfig { BaseAddress = baseUrl, Connection = { Transport = "tenant-a" } },
+            new AxiosConfig {
+            BaseAddress = baseUrl,
+            Transport = { Profile = "tenant-a" }
+        },
             pool: pool);
 
         await tenantClient.GetAsync("/");
-        await tenantClient.GetAsync("/", c => c.Connection.Transport = null);
+        await tenantClient.GetAsync("/", c => c.Transport.Profile = null);
         Console.WriteLine($"  实例默认档 + 单次回到默认档: 累计租约 = {pool.GetStatistics().TotalLeases}");
     }
 }

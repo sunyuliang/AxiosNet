@@ -31,7 +31,7 @@ public sealed class BodyContentTypeAttribute : Attribute
 /// </summary>
 /// <remarks>
 /// 取值在构建接口契约时校验是否属于 <see cref="AxiosCollectionFormat"/> 的已定义值，错误信息带接口与方法名；属性对象本身只保留原值。
-/// 实例配置了 <see cref="AxiosConfig.SerializationSettings.ParamsSerializer"/> 时内置集合编码不参与（与手动设置 <see cref="AxiosConfig.SerializationSettings.CollectionFormat"/> 一致）。
+/// 实例配置了 <see cref="AxiosConfig.SerializationSettings.QueryEncoder"/> 时内置集合编码不参与（与手动设置 <see cref="AxiosConfig.SerializationSettings.CollectionFormat"/> 一致）。
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
 public sealed class QueryCollectionFormatAttribute : Attribute

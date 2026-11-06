@@ -45,7 +45,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
+            Caching = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -79,7 +79,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
+            Caching = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -104,7 +104,7 @@ public sealed class CacheConditionalTests
         var store = new ManualExpiryStore();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = store })
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = store })
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -131,7 +131,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
+            Caching = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -156,7 +156,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o =>
+            Caching = NewCache(o =>
             {
                 o.TimeToLive = TimeSpan.FromMilliseconds(50);
                 o.ConditionalRequests = false;
@@ -181,7 +181,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+            Caching = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -207,7 +207,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
+            Caching = NewCache(o => o.FreshnessMode = CacheFreshnessMode.Intersection)
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -267,7 +267,7 @@ public sealed class CacheConditionalTests
         // 只实现 IAxiosCacheStore 的存储拿不出旧条目：退化成每次完整下载，请求本身不受影响。
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions
+            Caching = new AxiosCache(new AxiosCacheOptions
             {
                 Store = new PlainStore(),
                 TimeToLive = TimeSpan.FromMilliseconds(50)
@@ -293,7 +293,7 @@ public sealed class CacheConditionalTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
+            Caching = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50))
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -309,7 +309,7 @@ public sealed class CacheConditionalTests
     public async Task MultipleSetCookieHeaders_On304_AreExposedSeparately()
     {
         using var client = new AxiosClient(
-            new AxiosConfig { Cache = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50)) },
+            new AxiosConfig { Caching = NewCache(o => o.TimeToLive = TimeSpan.FromMilliseconds(50)) },
             handler: new MultiSetCookieHandler());
 
         await client.GetAsync<Person>("https://probe.example/x");

@@ -3,7 +3,7 @@ namespace AxiosNet;
 public sealed partial class AxiosConfig
 {
     /// <summary>
-    /// 备用端点（<see cref="AxiosConfig.Failover"/>）：当前端点用不了时（网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx），
+    /// 备用端点（<see cref="AxiosConfig.ResilienceSettings.Failover"/>）：当前端点用不了时（网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx），
     /// 把同一份请求嫁接到下一个端点的 base URL 上重发；全部失败才交给重试。<see cref="Endpoints"/> 为空（默认）时不换端点。
     /// </summary>
     /// <remarks>

@@ -89,6 +89,17 @@ jobs:
             dotnet build "$project" --configuration Release --no-restore
           done
 
+      # 两条 WebAPI 护栏（包内不拆 DLL，靠构建期与清单期保证「WebAPI 可整体删除」）：
+      #   ① 禁止清单必须与 WebAPI 的公共类型清单一致（BannedApiAnalyzers 逐类型一条；
+      #      源码新增公共类型却忘了重新生成清单时，这里会红，而不是等到内核真的引用了才暴露）。
+      #   ② 打开 AxiosNetOmitWebApi 只编内核：任何内核文件引用 WebAPI 类型都会 CS0234 编译失败。
+      # 产物级引用图校验（System.Reflection.Metadata）在 Architecture 测试里，随下面的单元测试一并执行。
+      - name: 校验 WebAPI 禁止清单（BannedSymbols.txt 与源码一致）
+        run: pwsh -NoProfile -File eng/generate-banned-symbols.ps1 -Verify
+
+      - name: 只编译内核（WebAPI 目录整体排除）
+        run: pwsh -NoProfile -File eng/build-without-webapi.ps1
+
       - name: 运行并发性能用例（独占进程，排在整套用例之前）
         # 这条用例判的是「与 HttpClient 的配对比值」，两侧的编译状态必须可比：HttpClient 在共享框架里是
         # ReadyToRun，进程一起来就是优化代码；AxiosNet 是普通 IL，要先跑 Tier0、再等分层编译换成 Tier1 + PGO。

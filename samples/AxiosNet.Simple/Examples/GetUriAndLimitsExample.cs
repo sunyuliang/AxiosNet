@@ -24,7 +24,7 @@ public sealed class GetUriAndLimitsExample : IExample
         var http = _limited ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
-            Limits = new() { MaxContentLength = 1024 * 1024 } // 1 MB 上限
+            MaxResponseBytes = 1024 * 1024
         });
 
         // 1) getUri：只拼 URL 不发请求（签名、日志、调试都能用）
@@ -50,7 +50,7 @@ public sealed class GetUriAndLimitsExample : IExample
         var noRedirect = _noRedirect ??= new AxiosClient(new AxiosConfig
         {
             BaseAddress = context.BaseUrl,
-            Connection = new() { MaxRedirects = 0 }
+            Transport = new() { MaxRedirects = 0 }
         });
 
         try

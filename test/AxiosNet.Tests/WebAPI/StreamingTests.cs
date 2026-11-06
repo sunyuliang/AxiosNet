@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -60,7 +60,7 @@ public sealed class StreamingTests
     }
 
     // ------------------------------------------------------------------
-    // Bug 3：流式分帧未校验强制 ResponseEncoding
+    // Bug 3：流式分帧未校验强制 TextEncoding
     // ------------------------------------------------------------------
 
     [Fact]
@@ -75,7 +75,7 @@ public sealed class StreamingTests
             client.RequestStreamAsync(
                 new StreamRequest(),
                 AxiosStreamFormat.ServerSentEvents,
-                config => config.Serialization.ResponseEncoding = Encoding.Unicode));
+                config => config.Serialization.TextEncoding = Encoding.Unicode));
 
         Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
     }
@@ -251,7 +251,7 @@ public sealed class StreamingTests
         var serializer = new RecordingFrameSerializer();
         using var client = CreateClient(
             new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("data:\ndata: {\"n\":1}\n\n") }),
-            c => c.Serialization.ContentSerializer = serializer);
+            c => c.Serialization.BodySerializers.Default = serializer);
 
         var response = await client.RequestStreamAsync(new StreamFrameRequest(), AxiosStreamFormat.ServerSentEvents);
 
@@ -336,7 +336,7 @@ public sealed class StreamingTests
         // 而且消息要指明是「预算压的」，不能写成「timeout of 0ms exceeded」（统一口径后的关键点）。
         using var client = CreateClient(
             new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes("{\"n\":1}\n") }, stallAfterChunks: true),
-            configure: config => config.TotalTimeout = TimeSpan.FromMilliseconds(200));
+            configure: config => config.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(200));
 
         var response = await client.RequestStreamAsync(new StreamFrameRequest());
 
@@ -846,7 +846,7 @@ public sealed class StreamingTests
         var lenient = await client.RequestStreamAsync(
             new ItemRequest(),
             AxiosStreamFormat.JsonArray,
-            c => c.Serialization.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            c => c.Serialization.JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             {
                 AllowTrailingCommas = true,
                 ReadCommentHandling = JsonCommentHandling.Skip
@@ -867,7 +867,7 @@ public sealed class StreamingTests
         var response = await client.RequestStreamAsync(
             new AnyRequest(),
             AxiosStreamFormat.JsonArray,
-            c => c.Serialization.JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            c => c.Serialization.JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
             {
                 MaxDepth = 2
             });
@@ -1272,7 +1272,9 @@ public sealed class StreamingTests
     [Fact]
     public void Clone_PreservesConfiguredValue()
     {
-        var config = new AxiosConfig { Limits = new() { MaxStreamFrameLength = 12 * Mb } };
+        var config = new AxiosConfig {
+            MaxStreamFrameBytes = 12 * Mb
+        };
 
         Assert.Equal(12 * Mb, config.Clone().Limits.MaxStreamFrameLength);
     }

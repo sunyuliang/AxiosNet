@@ -21,7 +21,7 @@ internal static class FormBodyEncoder
         bool appendCharset)
     {
         var pairs = new List<KeyValuePair<string, string>>(8);
-        var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldNameSelector, config.ValueFormatter);
+        var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldName, config.SerializationOrNull?.ValueText);
         try
         {
             CollectFormPairs(null, data, pairs, options, visited: null, memberFormat: null);
@@ -44,7 +44,7 @@ internal static class FormBodyEncoder
         // 正文是已转义的 ASCII 串，编码只影响转义映射。
         var body = BuildBody(pairs);
 
-        var content = RequestCompression.WrapBytes(Encoding.ASCII.GetBytes(body), config);
+        var content = Compression.WrapBytes(Encoding.ASCII.GetBytes(body), config);
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }
@@ -428,10 +428,10 @@ internal readonly struct FormFlattenOptions
     /// <summary>百分号编码使用的字符编码。</summary>
     public Encoding Encoding { get; }
 
-    /// <summary>字段名生成器（<see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/>）。</summary>
+    /// <summary>字段名生成器（<see cref="AxiosConfig.SerializationSettings.FormFieldName"/>）。</summary>
     public Func<string?, string, string>? NameSelector { get; }
 
-    /// <summary>实例级格式化钩子（<c>AxiosConfig.ValueFormatter</c>）。</summary>
+    /// <summary>实例级格式化钩子（<c>AxiosConfig.Serialization.ValueText</c>）。</summary>
     public Func<object?, ValueTextChannel, string?>? Formatter { get; }
 }
 

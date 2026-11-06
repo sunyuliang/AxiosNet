@@ -398,8 +398,8 @@ public sealed partial class AxiosClient
         config.ClearInstanceOptionFlags();
 
         // 记下继承来的 transform 段长度：合并层只对这一段去重。
-        config.TransformInheritedRequest = Defaults.HasTransformRequest ? Defaults.TransformRequest.Count : 0;
-        config.TransformInheritedResponse = Defaults.HasTransformResponse ? Defaults.TransformResponse.Count : 0;
+        config.TransformInheritedRequest = Defaults.TransformRequestCount;
+        config.TransformInheritedResponse = Defaults.TransformResponseCount;
         return config;
     }
 

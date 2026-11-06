@@ -11,14 +11,13 @@ public sealed partial class AxiosConfig
 {
     // 按领域分组的可选设置：首次读取才分配，Clone 时各自复制。
     private SerializationSettings? _serialization;
-    private ConnectionSettings? _connection;
+    private TransportSettings? _transport;
     private LimitSettings? _limits;
-    private CallbackSettings? _callbacks;
+    private ObservabilitySettings? _observability;
     private RetrySettings? _retry;
     private CircuitSettings? _circuit;
     private HedgingSettings? _hedging;
     private FailoverSettings? _failover;
-    private TelemetrySettings? _telemetry;
     private IdempotencySettings? _idempotency;
 
     /// <summary>序列化相关设置：JSON 选项、内容序列化器、文本编码、查询串与表单字段命名；首次读取时懒创建。</summary>
@@ -28,85 +27,39 @@ public sealed partial class AxiosConfig
         set => _serialization = value;
     }
 
-    /// <summary>连接相关设置：代理 / 凭据 / 连接池选项 / HTTP 版本与协商策略 / Basic 认证 / 凭据开关 / 重定向次数；首次读取时懒创建。</summary>
-    public ConnectionSettings Connection
+    /// <summary>传输相关设置：代理 / 凭据 / 连接池 / HTTP 版本与协商策略 / 传输档 / Basic 认证 / 凭据开关 / 重定向次数 / 限速；首次读取时懒创建。</summary>
+    public TransportSettings Transport
     {
-        get => _connection ??= new ConnectionSettings();
-        set => _connection = value;
+        get => _transport ??= new TransportSettings();
+        set => _transport = value;
     }
 
-    /// <summary>体积、速率、在途并发上限、排队上限与排队超时、流式单帧上限；首次读取时懒创建。</summary>
-    public LimitSettings Limits
+    /// <summary>可观测性：采集档位与进度 / 原始字节 / 发送前回调、超时文案；首次读取时懒创建。</summary>
+    public ObservabilitySettings Observability
     {
-        get => _limits ??= new LimitSettings();
-        set => _limits = value;
-    }
-
-    /// <summary>进度 / 原始字节回调、状态校验与超时文案；首次读取时懒创建。</summary>
-    public CallbackSettings Callbacks
-    {
-        get => _callbacks ??= new CallbackSettings();
-        set => _callbacks = value;
-    }
-
-    /// <summary>弹性重试：策略与每次重试前的回调；不设置 <see cref="RetrySettings.Policy"/> 即不重试。</summary>
-    public RetrySettings Retry
-    {
-        get => _retry ??= new RetrySettings();
-        set => _retry = value;
-    }
-
-    /// <summary>熔断：策略与被拒绝时的回调；不设置 <see cref="CircuitSettings.Policy"/> 即不熔断。</summary>
-    public CircuitSettings Circuit
-    {
-        get => _circuit ??= new CircuitSettings();
-        set => _circuit = value;
-    }
-
-    /// <summary>并发对冲：首发的延迟副本与分支数；<see cref="HedgingSettings.MaxHedges"/> 为 0 即不对冲。</summary>
-    public HedgingSettings Hedging
-    {
-        get => _hedging ??= new HedgingSettings();
-        set => _hedging = value;
-    }
-
-    /// <summary>备用端点：当前端点用不了时按顺序换端点重发；<see cref="FailoverSettings.Endpoints"/> 为空即不换。</summary>
-    public FailoverSettings Failover
-    {
-        get => _failover ??= new FailoverSettings();
-        set => _failover = value;
-    }
-
-    /// <summary>可观测性：链路 / 指标 / 事件三路观测点的按请求开关（<see cref="TelemetrySettings.Enabled"/>）与 URL 采集策略（<see cref="TelemetrySettings.CaptureUrl"/>）。</summary>
-    public TelemetrySettings Telemetry
-    {
-        get => _telemetry ??= new TelemetrySettings();
-        set => _telemetry = value;
-    }
-
-    /// <summary>幂等键：打开后每个逻辑请求写一个键，重试 / 换端点 / 对冲共用同一个键（默认关闭）。</summary>
-    public IdempotencySettings Idempotency
-    {
-        get => _idempotency ??= new IdempotencySettings();
-        set => _idempotency = value;
+        get => _observability ??= new ObservabilitySettings();
+        set => _observability = value;
     }
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建（公共 getter 会建对象，库内一律走这几个）。</summary>
     internal SerializationSettings? SerializationOrNull => _serialization;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
-    internal ConnectionSettings? ConnectionOrNull => _connection;
+    internal TransportSettings? TransportOrNull => _transport;
 
-    /// <summary>本次请求选中的传输档名（<c>null</c> / 空串 = 默认档）；不懒创建连接组。</summary>
-    internal string? TransportOrNull => _connection?.Transport;
+    /// <summary>本次请求选中的传输档名（<c>null</c> / 空串 = 默认档）；不懒创建传输组。</summary>
+    internal string? ProfileOrNull => _transport?.Profile;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal LimitSettings? LimitsOrNull => _limits;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
-    internal CallbackSettings? CallbacksOrNull => _callbacks;
+    internal ObservabilitySettings? ObservabilityOrNull => _observability;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
+    internal IdempotencySettings? IdempotencyOrNull => _idempotency;
+
+    /// <summary>重试 / 熔断 / 对冲 / 备用端点 / 并发闸门的子对象存储；懒创建由 <see cref="Resilience"/> 负责。</summary>
     internal RetrySettings? RetryOrNull => _retry;
 
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
@@ -118,11 +71,8 @@ public sealed partial class AxiosConfig
     /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
     internal FailoverSettings? FailoverOrNull => _failover;
 
-    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
-    internal TelemetrySettings? TelemetryOrNull => _telemetry;
-
-    /// <summary>未设置时为 <c>null</c>；读取不触发懒创建。</summary>
-    internal IdempotencySettings? IdempotencyOrNull => _idempotency;
+    /// <summary>限额组存储（不再是独立分组，项分别落在 <see cref="MaxResponseBytes"/> / <see cref="MaxRequestBytes"/> 等位置）。</summary>
+    internal LimitSettings Limits => _limits ??= new LimitSettings();
 
     /// <summary>对应 axios baseURL。</summary>
     public string? BaseAddress { get; set; }
@@ -167,8 +117,8 @@ public sealed partial class AxiosConfig
 
     private SynchronizedList<string>? _removeHeaders;
 
-    /// <summary>按请求要删除的 Header 名（大小写不敏感），在 defaults 的头合并完成之后生效；线程安全，枚举走快照。</summary>
-    public ICollection<string> RemoveHeaders => _removeHeaders ??= new SynchronizedList<string>();
+    /// <summary>库内按请求要删除的 Header 名（大小写不敏感），在 defaults 的头合并完成之后生效；线程安全，枚举走快照。</summary>
+    internal ICollection<string> RemoveHeaders => _removeHeaders ??= new SynchronizedList<string>();
 
     /// <summary>是否有要摘除的头（不创建集合）。</summary>
     internal bool HasRemoveHeaders => _removeHeaders is { Count: > 0 };
@@ -237,7 +187,7 @@ public sealed partial class AxiosConfig
     /// 流式正文（<see cref="Stream"/>、<c>IAsyncEnumerable&lt;byte[]&gt;</c>）、调用方自带的 <see cref="HttpContent"/>
     /// 与 multipart 正文不压缩（会直接报 <c>ERR_BAD_OPTION_VALUE</c>）。
     /// </summary>
-    public AxiosCompression? RequestCompression { get; set; }
+    public AxiosCompression? Compression { get; set; }
 
     private object? _data;
 
@@ -246,42 +196,39 @@ public sealed partial class AxiosConfig
     /// <c>IAsyncEnumerable&lt;byte[]&gt;</c> / <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c> 按块流式发送（长度未知）。
     /// 合并按「是否赋值过」区分：不碰继承实例默认值，显式赋 <c>null</c> 发空正文。
     /// </summary>
-    public object? Data
+    public object? Body
     {
         get => _data;
         set
         {
             _data = value;
-            DataSet = true;
+            BodySet = true;
         }
     }
 
     /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
-    internal bool DataSet { get; private set; }
+    internal bool BodySet { get; private set; }
+
+    /// <summary>库内沿用 axios 命名读取请求体（等价于 <see cref="Body"/>）。</summary>
+    internal object? Data
+    {
+        get => _data;
+        set
+        {
+            _data = value;
+            BodySet = true;
+        }
+    }
 
     /// <summary>短路响应：设置后本次请求不发送，直接以这份结果作为响应；只属于本次请求，<see cref="Clone"/> 不复制它（细节见 <see cref="AxiosNet.AxiosShortCircuit"/>）。</summary>
     public AxiosShortCircuit? ShortCircuit { get; set; }
 
     /// <summary>响应缓存：设置后命中的请求不发出去，直接交付缓存里的那份响应（细节见 <see cref="AxiosNet.Cache.AxiosCache"/>）。</summary>
     /// <remarks>与 <see cref="ShortCircuit"/> 不同，它是实例级的共享状态：<see cref="Clone"/> 保留同一个实例，挂在 Defaults 上对整个实例生效。</remarks>
-    public AxiosCache? Cache { get; set; }
+    public AxiosCache? Caching { get; set; }
 
     /// <summary>本次请求是否要留原始响应字节：缓存阶段决定，响应读取据此决定留不留（不留时字节读完即弃）。</summary>
     internal bool CacheCaptureRawBody { get; set; }
-
-    /// <summary>
-    /// 实例级格式化钩子：值转线上文本时调用（路径 / 查询 / 请求头（含头集合的字典值）/ 表单字段 / multipart 文本部件 / 裸标量正文），
-    /// 第二个参数是值所在的 <see cref="ValueTextChannel"/>，同一个钩子可以按位置给出不同文本（如请求头用 RFC 1123、查询串用 ISO 8601）。
-    /// 返回的字符串直接作为该值的线上文本（路径段与查询 / 表单值随后仍会被转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。
-    /// 优先级低于成员上的 <c>[Format]</c>。
-    /// </summary>
-    /// <remarks>
-    /// 设在 <see cref="AxiosClient.Defaults"/> 上对整个客户端生效（声明式请求与直接调用同一口径），直接调用时也可在单次请求的配置里覆盖。
-    /// 声明式层的路径 / 查询 / 请求头 / 正文在绑定参数时就要用到它，所以那里取的是客户端默认值：
-    /// 在 <c>ApiClient</c> 的按请求 <c>configure</c> 里改它会抛 <c>ERR_BAD_OPTION_VALUE</c>（绑定已完成，改了不会重算）。
-    /// 回放 <see cref="AxiosResponse.Config"/> 时按实例级项处理：取目标实例的默认值，来源实例的钩子不跟过来。
-    /// </remarks>
-    public Func<object?, ValueTextChannel, string?>? ValueFormatter { get; set; }
 
     /// <summary>
     /// 本次请求要复用的旧缓存条目（条件请求）：管线据此发 <c>If-None-Match</c> / <c>If-Modified-Since</c>，
@@ -293,7 +240,7 @@ public sealed partial class AxiosConfig
 
     /// <summary>
     /// 对应 axios timeout，零表示不超时；一次尝试的预算（建连 + 等待响应头 + 读取正文），重试 / 备用端点 / 对冲各复制一份，
-    /// 要限制整条逻辑请求用 <see cref="TotalTimeout"/>。
+    /// 要限制整条逻辑请求用 <see cref="ResilienceSettings.TotalTimeout"/>。
     /// 流式响应的正文也计入本预算；零值下正文不限时。负值抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
     /// </summary>
     public TimeSpan Timeout
@@ -317,18 +264,13 @@ public sealed partial class AxiosConfig
     /// <c>Zero</c> 与 <c>null</c> 等价，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
     /// <remarks>排队时间与流式正文都在预算之内。</remarks>
-    public TimeSpan? TotalTimeout
-    {
-        get => _totalTimeout;
-        set
-        {
-            _totalTimeout = value;
-            TotalTimeoutSet = true;
-        }
-    }
+    private bool _totalTimeoutSet;
 
     /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「清掉实例默认值」。</summary>
-    internal bool TotalTimeoutSet { get; private set; }
+    internal bool TotalTimeoutSet => _totalTimeoutSet;
+
+    /// <summary>总预算的生效值（内部读取用，避免库内代码依赖已废弃的顶层属性）。</summary>
+    internal TimeSpan? TotalTimeoutValue => _totalTimeout;
 
     /// <summary>这份配置是否已是合并后的生效配置，管线据此跳过二次合并；<see cref="Clone"/> 不继承它。</summary>
     internal bool EffectiveMerged { get; set; }
@@ -343,7 +285,7 @@ public sealed partial class AxiosConfig
     internal int TransformInheritedResponse { get; set; }
 
     /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
-    internal bool AuthSet => _connection?.AuthSet ?? false;
+    internal bool AuthSet => _transport?.AuthSet ?? false;
 
     private ResponseType _responseType = ResponseType.Json;
 
@@ -381,66 +323,89 @@ public sealed partial class AxiosConfig
     internal bool CancellationTokenSet { get; private set; }
 
     /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-    internal bool WithCredentialsSet => _connection?.WithCredentialsSet ?? false;
+    internal bool WithCredentialsSet => _transport?.WithCredentialsSet ?? false;
 
     /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-    internal bool MaxRedirectsSet => _connection?.MaxRedirectsSet ?? false;
+    internal bool MaxRedirectsSet => _transport?.MaxRedirectsSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxContentLengthSet => _limits?.MaxContentLengthSet ?? false;
+    internal bool MaxResponseBytesSet => _limits?.MaxContentLengthSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxBodyLengthSet => _limits?.MaxBodyLengthSet ?? false;
+    internal bool MaxRequestBytesSet => _limits?.MaxBodyLengthSet ?? false;
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-    internal bool MaxRateSet => _limits?.MaxRateSet ?? false;
+    internal bool MaxRateSet => _transport?.MaxRateSet ?? false;
+
+    /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
+    internal bool MaxStreamFrameBytesSet => _limits?.MaxStreamFrameLengthSet ?? false;
+
+    /// <summary>
+    /// 响应体最大字节数，<c>null</c>（默认）不限；超出抛 <see cref="AxiosException"/>，按请求显式设为 <c>null</c> 可清除实例默认上限。
+    /// </summary>
+    public long? MaxResponseBytes
+    {
+        get => Limits.MaxContentLength;
+        set => Limits.MaxContentLength = value;
+    }
+
+    /// <summary>
+    /// 请求体最大字节数，<c>null</c> 不限；超出抛 <see cref="AxiosException"/>。
+    /// 只对能算出长度的正文生效（JSON / 表单 / <c>byte[]</c> / 可 seek 流）；未知长度正文不拦截。
+    /// 开启 <see cref="Compression"/> 时按压缩后（实际发送）的字节数校验。
+    /// </summary>
+    public long? MaxRequestBytes
+    {
+        get => Limits.MaxBodyLength;
+        set => Limits.MaxBodyLength = value;
+    }
+
+    /// <summary>
+    /// 流式分帧的单帧上限（字节）：NDJSON 一行 / SSE 一帧 / JSON 数组的一个顶层元素。
+    /// <c>null</c>（默认）等于 <see cref="LimitSettings.DefaultStreamFrameLength"/>（8 MB），合法区间 1–64 MB。
+    /// </summary>
+    public int? MaxStreamFrameBytes
+    {
+        get => Limits.MaxStreamFrameLength;
+        set => Limits.MaxStreamFrameLength = value;
+    }
+
+    private Func<int, bool>? _validateStatus;
+
+    /// <summary>对应 axios validateStatus，返回 false 时抛出异常；null 表示默认（2xx 合法）。</summary>
+    public Func<int, bool>? ValidateStatus
+    {
+        get => _validateStatus;
+        set
+        {
+            _validateStatus = value;
+            ValidateStatusSet = true;
+        }
+    }
+
+    /// <summary>是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
+    internal bool ValidateStatusSet { get; private set; }
 
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool CollectionFormatSet => _serialization?.CollectionFormatSet ?? false;
 
-    /// <summary>对应 axios transformRequest：拦截器之后、请求体编码之前依次作用于 <see cref="Data"/>，每个函数返回新的数据。列表线程安全，枚举走快照。</summary>
-    public IList<Func<object?, AxiosConfig, object?>> TransformRequest
-    {
-        get => _transformRequest ??= new SynchronizedList<Func<object?, AxiosConfig, object?>>();
-        set
-        {
-            ArgumentNullException.ThrowIfNull(value);
-            // 整体替换也包成同一线程安全实现。
-            _transformRequest = WrapTransforms(value);
-        }
-    }
-
-    private SynchronizedList<Func<object?, AxiosConfig, object?>>? _transformRequest;
-
-    /// <summary>是否有请求 transform（不创建集合）。</summary>
-    internal bool HasTransformRequest => _transformRequest is { Count: > 0 };
+    /// <summary>对应 axios transformRequest：拦截器之后、请求体编码之前依次作用于 <see cref="Body"/>。列表线程安全，枚举走快照。</summary>
+    internal bool HasTransformRequest => _serialization?.HasTransformRequest ?? false;
 
     /// <summary>请求 transform 链的只读快照（不可变数组），调用方不得修改。</summary>
-    internal Func<object?, AxiosConfig, object?>[]? TransformRequestSnapshot
-        => _transformRequest is { Count: > 0 } ? _transformRequest.Snapshot() : null;
+    internal Func<object?, AxiosConfig, object?>[]? TransformRequestSnapshot => _serialization?.TransformRequestSnapshot;
 
-    private SynchronizedList<Func<object?, AxiosConfig, object?>>? _transformResponse;
+    /// <summary>请求 transform 链长度（合并层记录继承段用）。</summary>
+    internal int TransformRequestCount => _serialization?.TransformRequestCount ?? 0;
 
     /// <summary>是否有响应 transform（不创建集合）。</summary>
-    internal bool HasTransformResponse => _transformResponse is { Count: > 0 };
+    internal bool HasTransformResponse => _serialization?.HasTransformResponse ?? false;
 
     /// <summary>响应 transform 链的只读快照（响应阶段热路径，同 <see cref="TransformRequestSnapshot"/>）。</summary>
-    internal Func<object?, AxiosConfig, object?>[]? TransformResponseSnapshot
-        => _transformResponse is { Count: > 0 } ? _transformResponse.Snapshot() : null;
+    internal Func<object?, AxiosConfig, object?>[]? TransformResponseSnapshot => _serialization?.TransformResponseSnapshot;
 
-    /// <summary>
-    /// 对应 axios transformResponse：响应体反序列化之后依次作用于 Data（如统一拆包），流式响应不适用；
-    /// 可读 <see cref="Response"/> 拿响应头。列表线程安全，枚举走快照。
-    /// </summary>
-    public IList<Func<object?, AxiosConfig, object?>> TransformResponse
-    {
-        get => _transformResponse ??= new SynchronizedList<Func<object?, AxiosConfig, object?>>();
-        set
-        {
-            ArgumentNullException.ThrowIfNull(value);
-            _transformResponse = WrapTransforms(value);
-        }
-    }
+    /// <summary>响应 transform 链长度（合并层记录继承段用）。</summary>
+    internal int TransformResponseCount => _serialization?.TransformResponseCount ?? 0;
 
     /// <summary>
     /// 响应阶段的只读上下文：状态码、响应头、媒体类型与字符集；请求阶段为 <c>null</c>，由库写入、调用方只读。
@@ -451,10 +416,10 @@ public sealed partial class AxiosConfig
     /// <summary>清掉实例级选项的「显式赋值过」标记。</summary>
     internal void ClearInstanceOptionFlags()
     {
-        if (_connection is not null)
+        if (_transport is not null)
         {
-            _connection.WithCredentialsSet = false;
-            _connection.MaxRedirectsSet = false;
+            _transport.WithCredentialsSet = false;
+            _transport.MaxRedirectsSet = false;
         }
     }
 
@@ -466,21 +431,22 @@ public sealed partial class AxiosConfig
 
         // ① 库自有集合共享一版不可变数组；② 调用方容器复制一份；③ 设置分组各自 Clone()。
         clone._headers = _headers?.Clone();
-
-        // transform 链与删头名单写时复制共享；空链在克隆侧保持 null。
         clone._removeHeaders = _removeHeaders?.ShareIfNotEmpty();
-        clone._transformRequest = _transformRequest?.ShareIfNotEmpty();
-        clone._transformResponse = _transformResponse?.ShareIfNotEmpty();
+
+        // 设置分组各自 Clone()；Serialization 的 transform 链在组内写时复制共享。
         clone._serialization = _serialization?.Clone();
-        clone._connection = _connection?.Clone();
+        clone._transport = _transport?.Clone();
         clone._limits = _limits?.Clone();
-        clone._callbacks = _callbacks?.Clone();
+        clone._observability = _observability?.Clone();
         clone._retry = _retry?.Clone();
         clone._circuit = _circuit?.Clone();
         clone._hedging = _hedging?.Clone();
         clone._failover = _failover?.Clone();
-        clone._telemetry = _telemetry?.Clone();
         clone._idempotency = _idempotency?.Clone();
+
+        // 分组 facade 持有「创建它的那份配置」的引用，克隆侧必须重建，否则读写会落到来源配置上。
+        clone._resilienceFacade = null;
+        clone._concurrencyFacade = null;
 
         // Params / Data 是可变的调用方容器，克隆时隔离一份。
         clone._params = IsolateMutableContainer(_params);
@@ -507,9 +473,9 @@ public sealed partial class AxiosConfig
         }
 
         // Auth 的值已是生效结果，克隆后清掉「显式赋值过」标记。
-        if (clone._connection is not null)
+        if (clone._transport is not null)
         {
-            clone._connection.AuthSet = false;
+            clone._transport.AuthSet = false;
         }
 
         // 合并标记属于那一次合并：克隆出来的是新请求的输入，尚未合并。

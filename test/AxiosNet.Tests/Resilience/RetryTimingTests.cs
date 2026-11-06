@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;
@@ -21,7 +21,13 @@ public sealed class RetryTimingTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         // 调用方自带的 StreamContent 部件：库既拨不回它包着的流，也无从判断可 seek 与否。
         // 第二次发送不能因「流已被消费」抛错并被翻译成 ERR_NETWORK。
@@ -42,7 +48,13 @@ public sealed class RetryTimingTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         // 根级 data 本身是调用方构造的 MultipartFormDataContent：里面还嵌着 StreamContent。
         // 只判根级类型会漏掉这层嵌套，第二次发送就会发出空文件。
@@ -60,7 +72,13 @@ public sealed class RetryTimingTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         // 库装配的 multipart 里再嵌一层 MultipartContent，真正的 StreamContent 在里层：
         // 只判「这一层是不是 StreamContent」会放过它，第一次照常发出、重发就只剩空部件。
@@ -107,7 +125,7 @@ public sealed class RetryTimingTests
         {
             // 等待走 Task.Delay（计时器队列上限约 49.7 天）：超限必须在发请求之前明确报配置错误，
             // 而不是等真的重试时漏出裸 ArgumentOutOfRangeException
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { MaxDelay = TimeSpan.FromDays(60) } }
+            Resilience = { Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { MaxDelay = TimeSpan.FromDays(60) } } }
         });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -123,7 +141,13 @@ public sealed class RetryTimingTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(1) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(1) }
+            }
+            });
 
         var response = await client.GetAsync(server.Url + "x", c => c.ResponseType = ResponseType.Stream);
         using var reader = new StreamReader((Stream)response.Data!);
@@ -142,7 +166,13 @@ public sealed class RetryTimingTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         await client.PostAsync(
             server.Url + "u",
@@ -162,7 +192,13 @@ public sealed class RetryTimingTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         // 调用方自带的 HttpContent（非 StreamContent）：按可重放对待，重试要原样再发一次
         await client.PostAsync(server.Url + "u", new StringContent("raw-payload", Encoding.UTF8, "text/plain"));
@@ -179,7 +215,13 @@ public sealed class RetryTimingTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(2) }
+            }
+            });
         using var body = new MemoryStream(Encoding.UTF8.GetBytes("XXXXpayload"));
 
         // 起点不是 0：拨回的必须是「构造时那个位置」，不是 0（否则会把调用方故意跳过的前缀也发出去）
@@ -220,7 +262,13 @@ public sealed class RetryTimingTests
                 : TestJson.Response(new { ok = true });
         });
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(attempts - 1) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(attempts - 1) }
+            }
+            });
 
         var clock = Stopwatch.StartNew();
         var response = await client.GetAsync(server.Url + "x", c => c.Timeout = timeout);
@@ -246,7 +294,13 @@ public sealed class RetryTimingTests
             ? TestJson.Response(new { error = "first" }, statusCode: 500)
             : TestJson.Response(new { error = "second" }, statusCode: 503));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(1) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(1) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -264,13 +318,19 @@ public sealed class RetryTimingTests
             : TestJson.Response(new { ok = true }));
 
         var events = new List<AxiosProgressEvent>();
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(1) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = Immediate(1) }
+            }
+            });
 
         var payload = new byte[64 * 1024];
         var response = await client.PostAsync(server.Url + "u", payload, c =>
         {
             c.ContentType = AxiosContentType.OctetStream;
-            c.Callbacks.OnUploadProgress = events.Add;
+            c.Observability.OnUploadProgress = events.Add;
         });
 
         Assert.Equal(200, response.Status);
@@ -293,5 +353,5 @@ public sealed class RetryTimingTests
 
     /// <summary>零等待策略：只验证重试语义，不让用例真的等。</summary>
     private static RetryPolicy Immediate(int maxRetries)
-        => new(maxRetries, TimeSpan.Zero) { RetryNonIdempotentMethods = true };
+        => new(maxRetries, TimeSpan.Zero);
 }

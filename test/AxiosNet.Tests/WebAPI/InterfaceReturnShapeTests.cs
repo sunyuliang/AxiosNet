@@ -138,10 +138,10 @@ public sealed class InterfaceReturnShapeTests
 
         // 方法本身不抛（拿到的是 Task 而不是同步异常），失败落在 Task 上。
         var dataTask = api.GetPersonBySlugAsync(null);
-        var error = await Assert.ThrowsAsync<AxiosException>(() => dataTask);
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(() => dataTask);
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
 
-        await Assert.ThrowsAsync<AxiosException>(() => api.DeleteBySlugAsync(null));
+        await Assert.ThrowsAnyAsync<AxiosException>(() => api.DeleteBySlugAsync(null));
 
         Assert.Empty(server.Received);
     }

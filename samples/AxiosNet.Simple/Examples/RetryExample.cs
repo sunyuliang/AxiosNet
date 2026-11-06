@@ -30,15 +30,17 @@ public sealed class RetryExample : IExample
 
         var retrying = _retrying ??= new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                // 内置策略：最多重试 3 次，200ms 起每次翻倍（200/400/800ms），带抖动
-                Policy = new RetryPolicy { MaxRetries = 3, Delay = TimeSpan.FromMilliseconds(200) },
-                OnRetry = ctx => Console.WriteLine(
-                    $"    [OnRetry] 第 {ctx.Attempt} 次尝试失败（{ctx.ErrorCode}），"
-                    + $"{ctx.Delay.TotalMilliseconds:0}ms 后重试（最多重试 {ctx.MaxRetries} 次）")
+                Retry = {
+                    // 内置策略：最多重试 3 次，200ms 起每次翻倍（200/400/800ms），带抖动
+                    Policy = new RetryPolicy { MaxRetries = 3, Delay = TimeSpan.FromMilliseconds(200) },
+                    OnRetry = ctx => Console.WriteLine(
+                        $"    [OnRetry] 第 {ctx.Attempt} 次尝试失败（{ctx.ErrorCode}），"
+                        + $"{ctx.Delay.TotalMilliseconds:0}ms 后重试（最多重试 {ctx.MaxRetries} 次）")
+                }
             }
-        });
+            });
 
         // 每次运行用新 tag：服务端按 tag 计「前 N 次失败」，结果稳定可复现
         var tag = Guid.NewGuid().ToString("N")[..8];
@@ -65,8 +67,11 @@ public sealed class RetryExample : IExample
         // 3) 幂等判定：POST 默认不重试（非幂等），即使挂了策略也只发一次
         var postClient = _post ??= new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(100)) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(100)) }
+            }
+            });
 
         try
         {
@@ -78,7 +83,12 @@ public sealed class RetryExample : IExample
         }
 
         // 4) 完全自定义：实现 IAxiosRetryPolicy（这里只对 503 重试，且固定等 50ms）
-        var customClient = _custom ??= new AxiosClient(new AxiosConfig { Retry = { Policy = new StatusCodePolicy(503, 2) } });
+        var customClient = _custom ??= new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new StatusCodePolicy(503, 2) }
+            }
+            });
         var custom = await customClient.GetAsync($"{context.BaseUrl}flaky?fail=1&tag={tag}-custom");
         Console.WriteLine($"  自定义策略（只重试 503）: status={custom.Status}");
 
@@ -86,8 +96,11 @@ public sealed class RetryExample : IExample
         //    而不是等到第二次发送才发现「流已被消费、只发出空正文」。
         var replayClient = _replay ??= new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
+            }
+            });
 
         var replayable = await replayClient.PostAsync($"{context.BaseUrl}echo", new StringContent("hello"));
         Console.WriteLine($"  白名单内（StringContent）: status={replayable.Status}");

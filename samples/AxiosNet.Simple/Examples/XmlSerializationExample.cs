@@ -22,7 +22,7 @@ public sealed class XmlSerializationExample : IExample
         var xml = _xml ??= Axios.Create(c =>
         {
             c.BaseAddress = context.BaseUrl;
-            c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
+            c.Serialization.BodySerializers.Default = XmlContentSerializer.Instance;
         });
 
         var user = new XmlUser { Id = 1, Name = "alice", Age = 30 };

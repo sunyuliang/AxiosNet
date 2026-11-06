@@ -28,8 +28,8 @@ public interface IContentSerializer
     string? MediaType => null;
 
     /// <summary>
-    /// 把业务对象序列化为该格式的文本。编码取 <c>ContentType</c> 声明的 charset → <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> → UTF-8；
-    /// charset 只在显式设置 <see cref="AxiosConfig.SerializationSettings.RequestEncoding"/> 时才写进请求头。
+    /// 把业务对象序列化为该格式的文本。编码取 <c>ContentType</c> 声明的 charset → <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> → UTF-8；
+    /// charset 只在显式设置 <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> 时才写进请求头。
     /// 二进制格式请覆写 <see cref="SerializeToBytes"/>，本方法实现成抛 <see cref="NotSupportedException"/>。
     /// </summary>
     string Serialize(object? value, Type type, AxiosConfig config);
@@ -55,5 +55,5 @@ public interface IContentSerializer
     /// 默认实现按响应字符集解码后转调文本入口，文本格式的序列化器无需实现本方法。
     /// </summary>
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
-        => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding), type, config);
+        => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.TextEncoding), type, config);
 }

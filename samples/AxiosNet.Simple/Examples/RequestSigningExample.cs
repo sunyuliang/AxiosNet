@@ -31,7 +31,7 @@ public sealed class RequestSigningExample : IExample
         // 发送前钩子：拿到的是最终请求（URL 已拼好、正文已序列化），签的就是实际发出的字节。
         // 每次尝试各触发一次（含重试），时间戳与 nonce 因此天然不会在重试里重复。
         void UseSigning(AxiosConfig config)
-            => config.Callbacks.OnSendingRequest = (request, _, cancellationToken)
+            => config.Observability.OnSendingRequest = (request, _, cancellationToken)
                 => SignAsync(request, secret, token, cancellationToken);
 
         var order = """{"sku":"AXN-1001","quantity":2,"remark":"签名演示"}""";

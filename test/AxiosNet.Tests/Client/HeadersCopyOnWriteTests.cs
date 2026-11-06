@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Tests.Infrastructure;
 using System.Net;
 using Xunit;

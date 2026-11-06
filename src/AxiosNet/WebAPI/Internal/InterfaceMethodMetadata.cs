@@ -1,4 +1,5 @@
-﻿using AxiosNet.Internal;
+using AxiosNet.Internal;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -82,12 +83,12 @@ internal sealed partial class InterfaceMethodMetadata
     /// <summary>把参数绑定成配置：URL / 查询 / 请求体（含 multipart）→ 声明级静态头 → 参数头（后者覆盖同名项）。</summary>
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
-        var formatter = client.Axios.Defaults.ValueFormatter;
+        var formatter = client.Axios.Defaults.Serialization.ValueText;
         var target = $"{_interfaceType!.Name}.{_methodName}";
         var config = new AxiosConfig
         {
             Method = _method!,
-            ValueFormatter = formatter
+            Serialization = { ValueText = formatter }
         };
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
@@ -137,7 +138,7 @@ internal sealed partial class InterfaceMethodMetadata
     /// <summary>接口方法的 multipart 请求体：参数即表单，全部参数为 null 时不发送请求体（与请求模型一致）。</summary>
     private object? ResolveMultipartBody(object?[] args)
     {
-        var form = new DeclaredForm { SourceName = $"{_interfaceType!.Name}.{_methodName}" };
+        var form = new FormData { SourceName = $"{_interfaceType!.Name}.{_methodName}" };
 
         try
         {
@@ -154,7 +155,7 @@ internal sealed partial class InterfaceMethodMetadata
                     form.Formats[binding.Name] = format;
                 }
 
-                var partOverride = new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
+                var partOverride = new FormPartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
                 if (partOverride.Any)
                 {
                     form.Overrides[binding.Name] = partOverride;
@@ -169,7 +170,7 @@ internal sealed partial class InterfaceMethodMetadata
         catch
         {
             // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放，否则会随异常泄漏。
-            MultipartOwnership.DisposeOwned(form.Values);
+            form.DisposeOwned();
             throw;
         }
 

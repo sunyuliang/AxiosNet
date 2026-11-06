@@ -32,7 +32,7 @@ public sealed class CacheStoreContractTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         var store = new ContractStore();
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache(store) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache(store) });
 
         var first = await client.GetAsync<Person>(server.Url + "x");
         var second = await client.GetAsync<Person>(server.Url + "x");
@@ -62,7 +62,7 @@ public sealed class CacheStoreContractTests
         var store = new ContractStore();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = NewCache(store, TimeSpan.FromMinutes(1))
+            Caching = NewCache(store, TimeSpan.FromMinutes(1))
         });
 
         await client.GetAsync<Person>(server.Url + "x");
@@ -85,7 +85,7 @@ public sealed class CacheStoreContractTests
     {
         await using var server = TestHttpServer.Start(request => TestJson.Response(new Person(request.Path, 1)));
         var store = new ContractStore();
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache(store) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache(store) });
 
         var a = await client.GetAsync<Person>(server.Url + "a");
         var b = await client.GetAsync<Person>(server.Url + "b");
@@ -119,7 +119,7 @@ public sealed class CacheStoreContractTests
         });
 
         var store = new ContractStore();
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache(store) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache(store) });
         var url = server.Url + "flight";
 
         var requests = Enumerable.Range(0, 4).Select(_ => client.GetAsync<Person>(url)).ToArray();
@@ -144,7 +144,7 @@ public sealed class CacheStoreContractTests
                 : TestJson.Response(new Person("ada", 36), headers: Headers(("ETag", "\"v1\""))));
 
         var store = new ContractStore();
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache(store) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache(store) });
         var url = server.Url + "x";
 
         await client.GetAsync<Person>(url);
@@ -177,7 +177,7 @@ public sealed class CacheStoreContractTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ada", 36)));
         var store = new ContractStore();
         var cache = NewCache(store);
-        using var client = new AxiosClient(new AxiosConfig { Cache = cache });
+        using var client = new AxiosClient(new AxiosConfig { Caching = cache });
         var url = server.Url + "x";
 
         await client.GetAsync<Person>(url);
@@ -201,7 +201,7 @@ public sealed class CacheStoreContractTests
     {
         await using var server = TestHttpServer.Start(request => TestJson.Response(new Person(request.Path, 1)));
         var store = new ContractStore { Capacity = 1 };
-        using var client = new AxiosClient(new AxiosConfig { Cache = NewCache(store) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = NewCache(store) });
 
         await client.GetAsync<Person>(server.Url + "a");
 

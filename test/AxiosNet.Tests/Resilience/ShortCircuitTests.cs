@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Circuit;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -139,7 +139,7 @@ public sealed class ShortCircuitTests
         using var client = new AxiosClient(new AxiosConfig
         {
             // 每次重试等待 200ms：真按策略走的话，这段耗时一眼就能看出来
-            Retry = { Policy = new RetryPolicy { MaxRetries = 3, Delay = TimeSpan.FromMilliseconds(200) } }
+            Resilience = { Retry = { Policy = new RetryPolicy { MaxRetries = 3, Delay = TimeSpan.FromMilliseconds(200) } } }
         });
 
         var stopwatch = Stopwatch.StartNew();
@@ -165,7 +165,12 @@ public sealed class ShortCircuitTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("boom", 0), statusCode: 500));
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "users/1"));
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState($"127.0.0.1:{server.Port}"));
@@ -195,7 +200,7 @@ public sealed class ShortCircuitTests
         var fromBody = await client.GetAsync<Person>(url, c =>
         {
             c.ShortCircuit = AxiosShortCircuit.Json("""{"name":"a","age":1}""");
-            c.TransformResponse.Add(Bump);
+            c.Serialization.TransformResponse.Add(Bump);
         });
 
         Assert.Equal(99, fromBody.Data!.Age);
@@ -205,7 +210,7 @@ public sealed class ShortCircuitTests
         var fromData = await client.GetAsync<Person>(url, c =>
         {
             c.ShortCircuit = AxiosShortCircuit.From(stub);
-            c.TransformResponse.Add(Bump);
+            c.Serialization.TransformResponse.Add(Bump);
         });
 
         Assert.Same(stub, fromData.Data);
@@ -279,7 +284,7 @@ public sealed class ShortCircuitTests
         var response = await client.GetAsync<Person>("http://127.0.0.1:9/never", c =>
         {
             c.ShortCircuit = AxiosShortCircuit.From(new Person("cached", 1), status: 304);
-            c.Callbacks.ValidateStatus = status => status is >= 200 and < 400;
+            c.ValidateStatus = status => status is >= 200 and < 400;
         });
 
         Assert.Equal(304, response.Status);

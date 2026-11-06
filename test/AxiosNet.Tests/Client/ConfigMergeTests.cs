@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -45,7 +45,7 @@ public sealed class ConfigMergeTests
         using var source = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 3,
             },
@@ -57,7 +57,7 @@ public sealed class ConfigMergeTests
         var replayed = await target.RequestAsync(first.Config!);
 
         Assert.Equal(200, replayed.Status);
-        Assert.Equal(5, replayed.Config!.Connection.MaxRedirects);
+        Assert.Equal(5, replayed.Config!.Transport.MaxRedirects);
     }
 
     [Fact]
@@ -110,7 +110,7 @@ public sealed class ConfigMergeTests
         using var source = new AxiosClient(new AxiosConfig
         {
             BaseAddress = sourceServer.Url,
-            ValueFormatter = (value, _) => value is int number ? "src" + number : null
+            Serialization = { ValueText = (value, _) => value is int number ? "src" + number : null },
         });
 
         var response = await source.GetAsync("x", c => c.Params = new { n = 1 });
@@ -119,7 +119,7 @@ public sealed class ConfigMergeTests
         using var target = new AxiosClient(new AxiosConfig
         {
             BaseAddress = targetServer.Url,
-            ValueFormatter = (value, _) => value is int number ? "dst" + number : null
+            Serialization = { ValueText = (value, _) => value is int number ? "dst" + number : null },
         });
 
         // 回放语义：格式化钩子是实例级默认值，回放取目标实例的，来源实例的闭包不跟过来。
@@ -132,28 +132,28 @@ public sealed class ConfigMergeTests
     public void ConfigClone_ListIsolation_HoldsInBothDirections()
     {
         var source = new AxiosConfig();
-        source.TransformRequest.Add((data, _) => data);
+        source.Serialization.TransformRequest.Add((data, _) => data);
         source.RemoveHeaders.Add("X-A");
 
         // 副本写：写时复制分离，源不受影响
         var clone = source.Clone();
-        clone.TransformRequest.Add((data, _) => data);
+        clone.Serialization.TransformRequest.Add((data, _) => data);
         clone.RemoveHeaders.Add("X-B");
 
-        Assert.Single(source.TransformRequest);
+        Assert.Single(source.Serialization.TransformRequest);
         Assert.Single(source.RemoveHeaders);
-        Assert.Equal(2, clone.TransformRequest.Count);
+        Assert.Equal(2, clone.Serialization.TransformRequest.Count);
         Assert.Equal(2, clone.RemoveHeaders.Count);
 
         // 源写：同样分离 —— 已克隆出去的副本看不到后续写入
         // （与旧「每请求整份拷贝」语义一致：隔离不靠副本，靠写入前分离）
         var snapshot = source.Clone();
-        source.TransformRequest.Add((data, _) => data);
+        source.Serialization.TransformRequest.Add((data, _) => data);
         source.RemoveHeaders.Add("X-C");
 
-        Assert.Single(snapshot.TransformRequest);
+        Assert.Single(snapshot.Serialization.TransformRequest);
         Assert.Single(snapshot.RemoveHeaders);
-        Assert.Equal(2, source.TransformRequest.Count);
+        Assert.Equal(2, source.Serialization.TransformRequest.Count);
         Assert.Equal(2, source.RemoveHeaders.Count);
     }
 
@@ -167,7 +167,7 @@ public sealed class ConfigMergeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-        var response = await source.GetAsync("x", c => c.Connection.Auth = new AxiosAuth("user", "pass"));
+        var response = await source.GetAsync("x", c => c.Transport.BasicAuth = new AxiosAuth("user", "pass"));
 
         Assert.Equal(TestJson.BasicAuth("user", "pass"), server.Received[0].Headers["Authorization"]);
 
@@ -185,12 +185,12 @@ public sealed class ConfigMergeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-        var response = await source.GetAsync("x", c => c.Connection.Auth = new AxiosAuth("user", "pass"));
+        var response = await source.GetAsync("x", c => c.Transport.BasicAuth = new AxiosAuth("user", "pass"));
 
         using var target = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Connection = new() { Auth = new AxiosAuth("target", "tpw") },
+            Transport = new() { BasicAuth = new AxiosAuth("target", "tpw") },
         });
 
         await target.RequestAsync(response.Config!);
@@ -264,7 +264,7 @@ public sealed class ConfigMergeTests
     [Fact]
     public void RemoveAtOnEmpty_ReportsIndexParameterAndValue()
     {
-        var list = new AxiosConfig().TransformRequest;
+        var list = new AxiosConfig().Serialization.TransformRequest;
 
         var ex = Assert.Throws<ArgumentOutOfRangeException>(() => list.RemoveAt(0));
 
@@ -275,7 +275,7 @@ public sealed class ConfigMergeTests
     [Fact]
     public void IndexerOutOfRange_ReportsIndexParameter()
     {
-        var list = new AxiosConfig().TransformRequest;
+        var list = new AxiosConfig().Serialization.TransformRequest;
 
         var read = Assert.Throws<ArgumentOutOfRangeException>(() => _ = list[3]);
         var write = Assert.Throws<ArgumentOutOfRangeException>(() => list[3] = One);
@@ -303,7 +303,7 @@ public sealed class ConfigMergeTests
     [Fact]
     public void InsertAtCount_Appends()
     {
-        var list = new AxiosConfig().TransformRequest;
+        var list = new AxiosConfig().Serialization.TransformRequest;
         list.Add(One);
 
         list.Insert(list.Count, One); // index == Count 合法（追加）
@@ -314,7 +314,7 @@ public sealed class ConfigMergeTests
     [Fact]
     public void RemoveAtLastIndex_Succeeds()
     {
-        var list = new AxiosConfig().TransformRequest;
+        var list = new AxiosConfig().Serialization.TransformRequest;
         list.Add(One);
         list.Add(One);
 
@@ -326,7 +326,7 @@ public sealed class ConfigMergeTests
     [Fact]
     public void IndexerWithinRange_StillReadsAndWrites()
     {
-        var list = new AxiosConfig().TransformRequest;
+        var list = new AxiosConfig().Serialization.TransformRequest;
         list.Add(One);
 
         list[0] = One;
@@ -346,10 +346,7 @@ public sealed class ConfigMergeTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Limits = new()
-            {
-                MaxContentLength = 16,
-            },
+            MaxResponseBytes = 16
         });
 
         // 实例默认上限对 4KB 响应生效（声明了长度 → 读正文前就拒绝）
@@ -371,10 +368,7 @@ public sealed class ConfigMergeTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Limits = new()
-            {
-                MaxBodyLength = 16,
-            },
+            MaxRequestBytes = 16
         });
 
         var blocked = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "up", payload));
@@ -398,15 +392,12 @@ public sealed class ConfigMergeTests
         var timeout = TimeSpan.FromSeconds(3);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Limits = new()
-            {
-                MaxRate = 32,
-            },
             Timeout = timeout,
+            Transport = { MaxRate = 32 }
         });
 
         var stopwatch = Stopwatch.StartNew();
-        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Limits.MaxRate = null);
+        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Transport.MaxRate = null);
         stopwatch.Stop();
 
         Assert.Equal(size, response.Data!.Length);
@@ -428,9 +419,9 @@ public sealed class ConfigMergeTests
         using var first = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Connection = new()
+            Transport = new()
             {
-                PoolOptions = new ConnectionPoolOptions(),
+                Pool = new ConnectionPoolOptions(),
             },
         });
         first.Defaults.Headers.Set("X-First", "1");
@@ -625,7 +616,7 @@ public sealed class ConfigMergeTests
     private static Action Chain(Action<IList<Func<object?, AxiosConfig, object?>>> action, bool seed = false)
         => () =>
         {
-            var list = new AxiosConfig().TransformRequest;
+            var list = new AxiosConfig().Serialization.TransformRequest;
             if (seed)
             {
                 list.Add(One);

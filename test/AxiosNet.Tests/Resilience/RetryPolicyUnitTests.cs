@@ -1,4 +1,4 @@
-﻿using AxiosNet.Retry;
+using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests.Resilience;
@@ -9,11 +9,20 @@ namespace AxiosNet.Tests.Resilience;
 /// </summary>
 public sealed class RetryPolicyUnitTests
 {
-    private static AxiosRetryContext Failed(int status, int attempt = 1, int maxRetries = 3, string method = "GET")
-        => new(attempt, maxRetries,
+    private static AxiosRetryContext Failed(
+        int status,
+        int attempt = 1,
+        int maxRetries = 3,
+        string method = "GET",
+        bool allowUnsafeRetry = false)
+    {
+        var config = new AxiosConfig { Method = new HttpMethod(method) };
+        config.Resilience.AllowUnsafeRetry = allowUnsafeRetry;
+        return new(attempt, maxRetries,
             new HttpRequestException("boom"),
-            new AxiosConfig { Method = new HttpMethod(method) },
+            config,
             new AxiosResponse { Status = status });
+    }
 
     [Fact]
     public void Defaults_MatchDocumentedValues()
@@ -26,7 +35,6 @@ public sealed class RetryPolicyUnitTests
         Assert.Equal(TimeSpan.FromSeconds(30), policy.MaxDelay);
         Assert.True(policy.Jitter);
         Assert.True(policy.HonorRetryAfter);
-        Assert.False(policy.RetryNonIdempotentMethods);
     }
 
     [Fact]
@@ -81,8 +89,8 @@ public sealed class RetryPolicyUnitTests
         Assert.False(policy.ShouldRetry(Failed(503, method: "POST")));
         Assert.False(policy.ShouldRetry(Failed(503, method: "PATCH")));
 
-        policy.RetryNonIdempotentMethods = true;
-        Assert.True(policy.ShouldRetry(Failed(503, method: "POST")));
+        // 非幂等放行是配置级唯一开关（Resilience.AllowUnsafeRetry），不在策略对象上重复一份。
+        Assert.True(policy.ShouldRetry(Failed(503, method: "POST", allowUnsafeRetry: true)));
 
         // PUT / DELETE / HEAD / OPTIONS 本来就是幂等的
         Assert.True(policy.ShouldRetry(Failed(503, method: "PUT")));

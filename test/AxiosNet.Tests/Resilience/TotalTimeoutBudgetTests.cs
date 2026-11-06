@@ -41,7 +41,12 @@ public sealed class TotalTimeoutBudgetTests
         var now = Stopwatch.GetTimestamp();
 
         Assert.Equal(TotalTimeoutBudget.None, TotalTimeoutBudget.Start(new AxiosConfig(), now));
-        Assert.Equal(TotalTimeoutBudget.None, TotalTimeoutBudget.Start(new AxiosConfig { TotalTimeout = TimeSpan.Zero }, now));
+        Assert.Equal(TotalTimeoutBudget.None, TotalTimeoutBudget.Start(new AxiosConfig {
+            Resilience =
+            {
+                TotalTimeout = TimeSpan.Zero
+            }
+            }, now));
         Assert.Null(TotalTimeoutBudget.Remaining(TotalTimeoutBudget.None));
     }
 
@@ -49,7 +54,12 @@ public sealed class TotalTimeoutBudgetTests
     public void Start_ConvertsRelativeBudgetToAbsoluteDeadline()
     {
         var deadline = TotalTimeoutBudget.Start(
-            new AxiosConfig { TotalTimeout = TimeSpan.FromMilliseconds(150) },
+            new AxiosConfig {
+            Resilience =
+            {
+                TotalTimeout = TimeSpan.FromMilliseconds(150)
+            }
+            },
             Stopwatch.GetTimestamp());
 
         var remaining = TotalTimeoutBudget.Remaining(deadline);
@@ -63,7 +73,12 @@ public sealed class TotalTimeoutBudgetTests
     {
         // 超长预算换算成 tick 会溢出成负数（那会变成「立刻耗尽」）：必须收敛到计时器上限。
         var deadline = TotalTimeoutBudget.Start(
-            new AxiosConfig { TotalTimeout = TimeSpan.MaxValue },
+            new AxiosConfig {
+            Resilience =
+            {
+                TotalTimeout = TimeSpan.MaxValue
+            }
+            },
             Stopwatch.GetTimestamp());
 
         Assert.True(TotalTimeoutBudget.Remaining(deadline) > TimeSpan.FromDays(1));

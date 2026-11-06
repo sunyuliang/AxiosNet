@@ -36,7 +36,7 @@ public sealed class CacheIdentityKeyExample : IExample
             TimeToLive = TimeSpan.FromMinutes(1),
             KeySelector = ApiKeyKeySelector
         });
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl, Cache = cache });
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl, Caching = cache });
 
         var alice = await client.GetAsync<Dictionary<string, string>>("headers", c => c.Headers.Set("X-Api-Key", "alice"));
         var bob = await client.GetAsync<Dictionary<string, string>>("headers", c => c.Headers.Set("X-Api-Key", "bob"));
@@ -67,7 +67,7 @@ public sealed class CacheIdentityKeyExample : IExample
             TimeToLive = TimeSpan.FromMinutes(1),
             KeySelector = QueryTokenKeySelector
         });
-        using var client = new AxiosClient(new AxiosConfig { Cache = cache });
+        using var client = new AxiosClient(new AxiosConfig { Caching = cache });
 
         var alice = await client.GetAsync<Dictionary<string, int>>(aliceUri.AbsoluteUri);
         var bob = await client.GetAsync<Dictionary<string, int>>(bobUri.AbsoluteUri);
@@ -90,17 +90,17 @@ public sealed class CacheIdentityKeyExample : IExample
             TimeToLive = TimeSpan.FromMinutes(1),
             KeySelector = ApiKeyKeySelector
         });
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl, Cache = cache });
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = context.BaseUrl, Caching = cache });
 
         var alice = await client.GetAsync<Dictionary<string, string>>("headers", c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Headers.Remove("X-Api-Key");
                 request.Headers.TryAddWithoutValidation("X-Api-Key", "alice");
                 return ValueTask.CompletedTask;
             });
         var bob = await client.GetAsync<Dictionary<string, string>>("headers", c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Headers.Remove("X-Api-Key");
                 request.Headers.TryAddWithoutValidation("X-Api-Key", "bob");
@@ -163,7 +163,7 @@ public sealed class CacheIdentityKeyExample : IExample
     private static AxiosConfig Hooked(string apiKey)
     {
         var config = new AxiosConfig();
-        config.Callbacks.OnSendingRequest = (request, _, _) =>
+        config.Observability.OnSendingRequest = (request, _, _) =>
         {
             request.Headers.Remove("X-Api-Key");
             request.Headers.TryAddWithoutValidation("X-Api-Key", apiKey);

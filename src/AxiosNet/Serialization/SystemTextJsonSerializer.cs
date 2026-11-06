@@ -11,7 +11,7 @@ namespace AxiosNet.Serialization;
 /// 库内默认的 <see cref="IContentSerializer"/> 实现（System.Text.Json）。
 /// </summary>
 /// <remarks>
-/// 选项取 <see cref="AxiosConfig.SerializationSettings.JsonSerializerOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
+/// 选项取 <see cref="AxiosConfig.SerializationSettings.JsonOptions"/>（未设置时用 <see cref="AxiosJson.Options"/>）。
 /// net8.0 目标在配了 <c>TypeInfoResolver</c> 时走 <c>JsonSerializerOptions.GetTypeInfo</c>（AOT 元数据）；
 /// 没配时（以及 net6.0 目标，它没有该 API）回退反射重载，见 <see cref="AxiosNet.Reflection.JsonSerializerJit"/>。
 /// </remarks>
@@ -56,7 +56,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         var span = data.Span;
 
         // 非文本 Content-Type 也可能声明 charset：与接口默认实现保持同一优先级。
-        var forced = config.SerializationOrNull?.ResponseEncoding;
+        var forced = config.SerializationOrNull?.TextEncoding;
         var charSet = config.Response?.CharSet;
         if (forced is not null
             || (ResponseTextDecoder.ResolveFromCharset(charSet) is { } declared

@@ -15,7 +15,7 @@ public enum AxiosErrorCode
     /// <summary><c>ERR_BAD_RESPONSE</c>：服务端 5xx，或响应体无法按目标类型解析、超出长度上限。</summary>
     BadResponse,
 
-    /// <summary><c>ECONNABORTED</c>：超时（<see cref="AxiosConfig.Timeout"/> 或 <see cref="AxiosConfig.TotalTimeout"/>）。</summary>
+    /// <summary><c>ECONNABORTED</c>：超时（<see cref="AxiosConfig.Timeout"/> 或 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）。</summary>
     ConnAborted,
 
     /// <summary><c>ERR_NETWORK</c>：网络层失败（连接被拒、DNS 失败、正文传输出错等）。</summary>

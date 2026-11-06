@@ -33,12 +33,15 @@ public sealed class AdversarialChecksTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
 
         var attempt = 0;
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("fail", c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Headers.TryAddWithoutValidation("X-Attempt", (++attempt).ToString());
                 return default;
@@ -76,12 +79,15 @@ public sealed class AdversarialChecksTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = { MaxHedges = 2, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Hedging = { MaxHedges = 2, Delay = TimeSpan.Zero }
+            }
+            });
 
         var branch = 0;
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PutAsync("hedge", new { ok = true }, c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Headers.TryAddWithoutValidation("X-Branch", (++branch).ToString());
                 return default;
@@ -115,7 +121,7 @@ public sealed class AdversarialChecksTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
             primary.Url + "x",
-            c => c.Failover.Endpoints = new[] { new Uri(mirror.Url) }));
+            c => c.Resilience.Failover.Endpoints = new[] { new Uri(mirror.Url) }));
 
         Assert.Equal(500, ex.Status);
         Assert.NotNull(ex.Response);
@@ -137,7 +143,7 @@ public sealed class AdversarialChecksTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions())
+            Caching = new AxiosCache(new AxiosCacheOptions())
         });
 
         // 先用 string 形态把字节落库（成功），再用 Person 形态命中缓存并在解析期失败。
@@ -214,7 +220,7 @@ public sealed class AdversarialChecksTests
 
         // 第二次请求的 transformResponse 直接把这个旧异常对象再抛出去（模拟调用方缓存异常）。
         var reuse = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(second.Url + "y", c =>
-            c.TransformResponse.Add((_, _) => throw firstFailure)));
+            c.Serialization.TransformResponse.Add((_, _) => throw firstFailure)));
 
         Assert.Same(firstFailure, reuse);
         Assert.Equal("first", reuse.Response!.GetHeader("X-Source"));
@@ -237,12 +243,15 @@ public sealed class AdversarialChecksTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = { MaxHedges = 3, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Hedging = { MaxHedges = 3, Delay = TimeSpan.Zero }
+            }
+            });
 
         var body = new StringBuilder();
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PutAsync("hedge", new { ok = true }, c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 request.Headers.TryAddWithoutValidation("X-Branch", Guid.NewGuid().ToString("N"));
                 return default;
@@ -271,7 +280,7 @@ public sealed class AdversarialChecksTests
         var payload = new byte[] { 1, 2, 3, 4, 5 };
         await client.PostAsync(server.Url + "bytes", new ByteArrayContent(payload), c =>
         {
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 Assert.NotNull(request.Content);
                 Assert.Equal(payload.Length, request.Content!.Headers.ContentLength);
@@ -300,7 +309,7 @@ public sealed class AdversarialChecksTests
         content.Headers.ContentLength = null;
 
         await client.PostAsync(server.Url + "stream", content, c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 Assert.Null(request.Content!.Headers.ContentLength);
                 return default;
@@ -326,7 +335,7 @@ public sealed class AdversarialChecksTests
             new KeyValuePair<string, string>("b", "x")
         });
         await client.PostAsync(server.Url + "form", formContent, c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 Assert.NotNull(request.Content);
                 return default;
@@ -339,14 +348,14 @@ public sealed class AdversarialChecksTests
 
         var expected = await form.ReadAsByteArrayAsync();
         await client.PostAsync(server.Url + "multipart", form, c =>
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 Assert.NotNull(request.Content);
                 return default;
             });
 
         // 无正文：钩子看到 Content 为 null。
-        await client.GetAsync(server.Url + "empty", c => c.Callbacks.OnSendingRequest = (request, _, _) =>
+        await client.GetAsync(server.Url + "empty", c => c.Observability.OnSendingRequest = (request, _, _) =>
         {
             Assert.Null(request.Content);
             return default;
@@ -375,11 +384,11 @@ public sealed class AdversarialChecksTests
 
         var data = new { text = new string('x', 4096) };
 
-        await client.PostAsync(server.Url + "plain", data, c => c.RequestCompression = AxiosCompression.Gzip);
+        await client.PostAsync(server.Url + "plain", data, c => c.Compression = AxiosCompression.Gzip);
         await client.PostAsync(server.Url + "hooked", data, c =>
         {
-            c.RequestCompression = AxiosCompression.Gzip;
-            c.Callbacks.OnSendingRequest = (request, _, _) =>
+            c.Compression = AxiosCompression.Gzip;
+            c.Observability.OnSendingRequest = (request, _, _) =>
             {
                 Assert.Equal("gzip", request.Content!.Headers.ContentEncoding.Single());
                 return default;
@@ -404,8 +413,8 @@ public sealed class AdversarialChecksTests
         var progress = 0L;
         await client.PostAsync(server.Url + "upload", new ByteArrayContent(payload), c =>
         {
-            c.Callbacks.OnUploadProgress = args => progress = args.Loaded;
-            c.Callbacks.OnSendingRequest = (_, _, _) => default;
+            c.Observability.OnUploadProgress = args => progress = args.Loaded;
+            c.Observability.OnSendingRequest = (_, _, _) => default;
         });
 
         var received = Assert.Single(server.Received);
@@ -423,7 +432,7 @@ public sealed class AdversarialChecksTests
 
         var inner = new TrackingContent(16);
         await client.PostAsync(server.Url + "x", inner, c =>
-            c.Callbacks.OnSendingRequest = (_, _, _) => default);
+            c.Observability.OnSendingRequest = (_, _, _) => default);
 
         Assert.Equal(1, inner.DisposeCount);
     }
@@ -441,15 +450,11 @@ public sealed class AdversarialChecksTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Limits =
-            {
-                MaxConcurrentRequests = 1,
-                QueueTimeout = TimeSpan.FromMilliseconds(300)
-            }
+            Resilience = { Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.FromMilliseconds(300)  } }
         });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("first", c =>
-            c.Callbacks.OnSendingRequest = (_, _, _) => throw new InvalidOperationException("boom")));
+            c.Observability.OnSendingRequest = (_, _, _) => throw new InvalidOperationException("boom")));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
 

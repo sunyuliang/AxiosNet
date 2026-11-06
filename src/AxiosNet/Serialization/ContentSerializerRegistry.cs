@@ -27,9 +27,23 @@ public sealed class ContentSerializerRegistry
     private readonly object _gate = new();
     // 当前表（写时复制）：读路径只 Volatile.Read，注册整体替换。
     private volatile IReadOnlyDictionary<string, IContentSerializer> _entries = Empty;
+    private volatile IContentSerializer? _default;
 
     /// <summary>已登记的类型数。</summary>
     public int Count => _entries.Count;
+
+    /// <summary>
+    /// 表内默认项：按媒体类型匹配不到时使用；<c>null</c>（默认）表示本表不提供兜底。
+    /// 按媒体类型精确登记始终优先于默认项。
+    /// </summary>
+    public IContentSerializer? Default
+    {
+        get => _default;
+        set => _default = value;
+    }
+
+    /// <summary>设置表内默认项（等价于给 <see cref="Default"/> 赋值）；<c>null</c> 表示移除。</summary>
+    public void SetDefault(IContentSerializer? serializer) => _default = serializer;
 
     /// <summary>为某个媒体类型登记序列化器；键忽略大小写与参数，重复登记以最后一次为准。</summary>
     /// <exception cref="ArgumentNullException"><paramref name="serializer"/> 为 <c>null</c>。</exception>
@@ -85,11 +99,12 @@ public sealed class ContentSerializerRegistry
         lock (_gate)
         {
             _entries = Empty;
+            _default = null;
         }
     }
 
-    /// <summary>按媒体类型查表；未命中返回 <c>null</c>。</summary>
-    internal IContentSerializer? Lookup(string? mediaType) => Lookup(_entries, mediaType);
+    /// <summary>按媒体类型查表；未命中返回表内默认项（可能为 <c>null</c>）。</summary>
+    internal IContentSerializer? Lookup(string? mediaType) => Lookup(_entries, mediaType) ?? Default;
 
     /// <summary>查表实现，全局注册表与实例注册表共用。</summary>
     internal static IContentSerializer? Lookup(IReadOnlyDictionary<string, IContentSerializer> entries, string? mediaType)

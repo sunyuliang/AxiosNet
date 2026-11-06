@@ -30,7 +30,12 @@ public sealed class AttemptAuditTests
 
         // 3 次尝试 = 首次 + 2 次重试。
         using var client = new AxiosClient(
-            new AxiosConfig { Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default);
 
         var response = await client.GetAsync(server.Url + path);
@@ -95,7 +100,12 @@ public sealed class AttemptAuditTests
 
         // 2s 退避足够把「尝试耗时」和「整请求耗时」区分开；上界只兜数量级退化（本机往返不可能到 1s）。
         using var client = new AxiosClient(
-            new AxiosConfig { Retry = { Policy = new RetryPolicy(1, TimeSpan.FromSeconds(2)) } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.FromSeconds(2)) }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default);
 
         var clock = Stopwatch.StartNew();
@@ -158,7 +168,12 @@ public sealed class AttemptAuditTests
         using var probe = new TelemetryProbe(server.Port, path);
 
         using var client = new AxiosClient(
-            new AxiosConfig { Circuit = { Policy = new AlwaysRejecting() } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = new AlwaysRejecting() }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default);
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
@@ -180,7 +195,9 @@ public sealed class AttemptAuditTests
         using var probe = new TelemetryProbe(server.Port, path);
 
         using var client = new AxiosClient(
-            new AxiosConfig { Telemetry = { Enabled = false } },
+            new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Off }
+        },
             pipeline: AxiosAttemptPipeline.Default);
 
         var response = await client.GetAsync(server.Url + path);
@@ -210,7 +227,12 @@ public sealed class AttemptAuditTests
         var path = UniquePath("hedge");
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(
-            new AxiosConfig { Hedging = { MaxHedges = 1, Delay = TimeSpan.Zero } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Hedging = { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default);
 
         var response = await client.GetAsync(server.Url + path);
@@ -241,8 +263,11 @@ public sealed class AttemptAuditTests
             new AxiosConfig
             {
                 BaseAddress = primary.Url,
-                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-            },
+                Resilience =
+                {
+                    Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+                }
+                },
             pipeline: AxiosAttemptPipeline.Default);
 
         var response = await client.GetAsync(path);

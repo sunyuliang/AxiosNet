@@ -44,7 +44,7 @@ internal sealed class ConcurrencyGate
     /// <param name="request">触发本次排队的请求（错误消息带出去）。</param>
     /// <param name="cancellationToken">本次尝试的令牌，排队期间取消立刻收手。</param>
     /// <param name="queueTimeout">调用方给的排队上限（<c>QueueTimeout</c>）。</param>
-    /// <param name="budgetRemaining">总预算剩余（<c>null</c> = 没设 <see cref="AxiosConfig.TotalTimeout"/>）；比排队上限更紧时由它封顶。</param>
+    /// <param name="budgetRemaining">总预算剩余（<c>null</c> = 没设 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）；比排队上限更紧时由它封顶。</param>
     /// <param name="attempt">当前是第几次尝试，只用于「预算耗尽」的错误消息。</param>
     /// <remarks>非 async：稳态下槽位立刻可得，只有真的要排队时才转到 <see cref="AcquireQueuedAsync"/>。</remarks>
     public ValueTask<IDisposable> AcquireAsync(
@@ -93,7 +93,7 @@ internal sealed class ConcurrencyGate
         {
             if (budget <= TimeSpan.Zero)
             {
-                throw AxiosException.TotalTimeoutExceeded(config, request, attempt, config.TotalTimeout);
+                throw AxiosException.TotalTimeoutExceeded(config, request, attempt, config.TotalTimeoutValue);
             }
 
             if (queueTimeout is not { } queued || budget < queued)
@@ -150,7 +150,7 @@ internal sealed class ConcurrencyGate
             catch (OperationCanceledException ex) when (cutByBudget)
             {
                 // 真的是总预算到点了：报「预算耗尽」而不是「排队上限太小」——后者会把调用方引到错的旋钮上。
-                throw AxiosException.TotalTimeoutExceeded(config, request, attempt, config.TotalTimeout, ex);
+                throw AxiosException.TotalTimeoutExceeded(config, request, attempt, config.TotalTimeoutValue, ex);
             }
             catch (OperationCanceledException ex)
             {

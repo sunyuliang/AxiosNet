@@ -1,4 +1,4 @@
-﻿using AxiosNet.Tests.Infrastructure;
+using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
 using System.Net.Http;
@@ -15,18 +15,18 @@ public sealed class AuthorizationTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
-                Auth = new AxiosAuth("user", "pass"),
+                BasicAuth = new AxiosAuth("user", "pass"),
             },
         });
 
         await client.RequestAsync(new AxiosConfig
         {
             Url = server.Url + "public",
-            Connection = new()
+            Transport = new()
             {
-                Auth = null,
+                BasicAuth = null,
             },
         });
 

@@ -1,4 +1,4 @@
-﻿using AxiosNet.Circuit;
+using AxiosNet.Circuit;
 using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
@@ -30,7 +30,7 @@ public sealed partial class AxiosClient
             throw AxiosException.InvalidOption(messages.WithCredentials, config);
         }
 
-        if (defaults.ConnectionOrNull?.Proxy is not null || defaults.ConnectionOrNull?.Credentials is not null)
+        if (defaults.TransportOrNull?.Proxy is not null || defaults.TransportOrNull?.Credentials is not null)
         {
             throw AxiosException.InvalidOption(messages.ProxyCredentials, config);
         }
@@ -99,7 +99,7 @@ public sealed partial class AxiosClient
         }
 
         // 总预算与 Timeout 同一口径：0 与 null 都表示不设。
-        if (config.TotalTimeout is { } totalTimeout && totalTimeout < TimeSpan.Zero)
+        if (config.TotalTimeoutValue is { } totalTimeout && totalTimeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption(
                 $"TotalTimeout 不能为负（当前 {totalTimeout}）：不设总预算请设为 null（或 TimeSpan.Zero），"
@@ -108,27 +108,28 @@ public sealed partial class AxiosClient
         }
 
         // 请求体压缩：枚举必须已定义；压缩与手写 Content-Encoding 只能二选一。
-        if (config.RequestCompression is { } compression)
+        if (config.Compression is { } compression)
         {
             if (!Enum.IsDefined(typeof(AxiosCompression), compression))
             {
                 throw AxiosException.InvalidOption(
-                    $"RequestCompression 取值 {(int)compression} 未定义：可选 AxiosCompression.None / Gzip / Deflate / Brotli。", config);
+                    $"Compression 取值 {(int)compression} 未定义：可选 AxiosCompression.None / Gzip / Deflate / Brotli。", config);
             }
 
             if (compression != AxiosCompression.None && config.HasHeaders && config.Headers.Has("Content-Encoding"))
             {
                 throw AxiosException.InvalidOption(
-                    "已开启 RequestCompression 时不能再手写 Content-Encoding 头：压缩算法会按 RequestCompression 写入该头，"
-                    + "两者同时存在会互相覆盖。自行压缩正文请去掉 RequestCompression，并传入预压缩的字节 / 流。", config);
+                    "已开启 Compression 时不能再手写 Content-Encoding 头：压缩算法会按 Compression 写入该头，"
+                    + "两者同时存在会互相覆盖。自行压缩正文请去掉 Compression，并传入预压缩的字节 / 流。", config);
             }
         }
 
         var limits = config.LimitsOrNull;
+        var maxRate = config.TransportOrNull?.MaxRate;
 
-        if (limits?.MaxRate is < 0)
+        if (maxRate is < 0)
         {
-            throw AxiosException.InvalidOption($"MaxRate 不能为负（当前 {limits.MaxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
+            throw AxiosException.InvalidOption($"MaxRate 不能为负（当前 {maxRate}）：要不限速请设为 null（0 等价于不限速）。", config);
         }
 
         if (limits?.MaxContentLength is < 0)
@@ -484,27 +485,27 @@ public sealed partial class AxiosClient
     /// <summary>实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造池时已固定：按请求复述实例的等价设置放行，写入别的值报错（WithCredentials / MaxRedirects 按值比，其余按引用比）。</summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {
-        var requested = config.ConnectionOrNull;
-        var defaultsConnection = Defaults.ConnectionOrNull;
+        var requested = config.TransportOrNull;
+        var defaultsTransport = Defaults.TransportOrNull;
 
-        if (requested?.Proxy is not null && !ReferenceEquals(requested.Proxy, defaultsConnection?.Proxy))
+        if (requested?.Proxy is not null && !ReferenceEquals(requested.Proxy, defaultsTransport?.Proxy))
         {
             throw AxiosException.InvalidOption(
-                "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Connection = new() { Proxy = ... } }) "
+                "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Transport = new() { Proxy = ... } }) "
                 + "或 ConnectionPoolOptions.Proxy。", config);
         }
 
-        if (requested?.Credentials is not null && !ReferenceEquals(requested.Credentials, defaultsConnection?.Credentials))
+        if (requested?.Credentials is not null && !ReferenceEquals(requested.Credentials, defaultsTransport?.Credentials))
         {
             throw AxiosException.InvalidOption("Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。", config);
         }
 
         // 池在构造时已建好，按请求改它一律报错。
-        if (requested?.PoolOptions is not null && !ReferenceEquals(requested.PoolOptions, defaultsConnection?.PoolOptions))
+        if (requested?.Pool is not null && !ReferenceEquals(requested.Pool, defaultsTransport?.Pool))
         {
             throw AxiosException.InvalidOption(
-                "PoolOptions 是实例级配置（连接池在构造 AxiosClient 时创建），"
-                + "请通过 AxiosClient 构造参数或 defaults.PoolOptions 设置。", config);
+                "Pool 是实例级配置（连接池在构造 AxiosClient 时创建），"
+                + "请通过 AxiosClient 构造参数或 defaults.Transport.Pool 设置。", config);
         }
 
         ValidateWithCredentials(config);
@@ -535,10 +536,10 @@ public sealed partial class AxiosClient
             return;
         }
 
-        var requestedValue = config.ConnectionOrNull?.WithCredentials ?? false;
+        var requestedValue = config.TransportOrNull?.WithCredentials ?? false;
 
         // 生效值按本次请求选中的传输档判：每个档各有自己的 Cookie 容器（命名档不继承默认档的 WithCredentials）。
-        var effective = _pool!.GetCookies(config.TransportOrNull) is not null;
+        var effective = _pool!.GetCookies(config.ProfileOrNull) is not null;
 
         if (requestedValue == effective)
         {
@@ -575,7 +576,7 @@ public sealed partial class AxiosClient
         var options = _pool!.EffectiveOptions;
         var effective = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
 
-        var requestedMaxRedirects = config.ConnectionOrNull?.MaxRedirects ?? 5;
+        var requestedMaxRedirects = config.TransportOrNull?.MaxRedirects ?? 5;
 
         if (requestedMaxRedirects == effective)
         {

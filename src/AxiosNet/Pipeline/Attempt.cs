@@ -48,7 +48,7 @@ public static partial class Attempt
 
     /// <summary>
     /// 并发闸门：本次尝试的槽位。排队时间不计入 <see cref="AxiosConfig.Timeout"/>（队列有自己的
-    /// <c>QueueTimeout</c>），所以计时在闸门之后才开始；但它计入 <see cref="AxiosConfig.TotalTimeout"/>，
+    /// <c>QueueTimeout</c>），所以计时在闸门之后才开始；但它计入 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>，
     /// 因此总预算比排队上限更紧时，闸门按剩余预算截断等待。没设并发上限时直接把请求交给下一环。
     /// </summary>
     public static AxiosAttemptMiddleware Gate { get; } = next =>
@@ -131,7 +131,7 @@ public static partial class Attempt
                 // 判在问策略之前：不重试就不该扣共享令牌，也不必再走一遍「发不出去再退费」。
                 if (ex is AxiosException { TimedOutOnTotalBudget: true })
                 {
-                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
+                    throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeoutValue, ex);
                 }
 
                 // 再问策略：它决定「这类失败值不值得重试」（4xx / 非幂等方法等），「不」时原样抛给调用方。
@@ -149,7 +149,7 @@ public static partial class Attempt
                 {
                     if (TotalTimeoutBudget.IsExhausted(ctx.RemainingTotalTimeout))
                     {
-                        throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
+                        throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeoutValue, ex);
                     }
 
                     var delay = policy.GetDelay(failed);
@@ -169,7 +169,7 @@ public static partial class Attempt
                     if (ctx.RemainingTotalTimeout is { } remainingBudget
                         && remainingBudget - delay <= TotalTimeoutBudget.TimerResolution)
                     {
-                        throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeout, ex);
+                        throw AxiosException.TotalTimeoutExceeded(ctx.Config, request, attempt + 1, ctx.Config.TotalTimeoutValue, ex);
                     }
 
                     // 回调与遥测共用同一个上下文

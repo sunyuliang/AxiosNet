@@ -88,6 +88,29 @@ public static class Axios
         return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
     }
 
+    /// <summary>
+    /// 对应 axios.create({ baseURL })：用基地址创建实例，可选再配置默认项。
+    /// 相对 URL 会与 <paramref name="baseAddress"/> 合并；绝对 URL 直接覆盖。
+    /// </summary>
+    public static AxiosClient Create(
+        string baseAddress,
+        Action<AxiosConfig>? configureDefaults = null,
+        HttpConnectionPool? pool = null,
+        ConnectionPoolOptions? poolOptions = null,
+        HttpMessageHandler? handler = null,
+        bool disposeHandler = true,
+        AxiosAttemptPipeline? pipeline = null)
+    {
+        if (string.IsNullOrWhiteSpace(baseAddress))
+        {
+            throw new ArgumentException("baseAddress 不能为空白。", nameof(baseAddress));
+        }
+
+        var config = new AxiosConfig { BaseAddress = baseAddress };
+        configureDefaults?.Invoke(config);
+        return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
+    }
+
     /// <summary>对应 axios(config)，用全局默认实例发送。</summary>
     public static Task<AxiosResponse> RequestAsync(AxiosConfig config)
         => DefaultClient.RequestAsync(config);

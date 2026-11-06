@@ -6,16 +6,16 @@ namespace AxiosNet.Internal;
 /// 请求体压缩：只作用于本库按字节缓冲出来的正文（文本 / 二进制 / 表单），速度优先于压缩率
 /// （<see cref="CompressionLevel.Fastest"/>：HTTP 传输瓶颈通常在网络，省 CPU 更划算）。
 /// </summary>
-internal static class RequestCompression
+internal static class Compression
 {
     /// <summary>是否开启了压缩。</summary>
     public static bool IsEnabled(AxiosConfig config)
-        => config.RequestCompression is { } compression && compression != AxiosCompression.None;
+        => config.Compression is { } compression && compression != AxiosCompression.None;
 
-    /// <summary>按 <see cref="AxiosConfig.RequestCompression"/> 压缩并补 <c>Content-Encoding</c>；未开启时原样包装（不复制）。</summary>
+    /// <summary>按 <see cref="AxiosConfig.Compression"/> 压缩并补 <c>Content-Encoding</c>；未开启时原样包装（不复制）。</summary>
     public static HttpContent WrapBytes(byte[] bytes, AxiosConfig config)
     {
-        if (config.RequestCompression is not { } compression || compression == AxiosCompression.None)
+        if (config.Compression is not { } compression || compression == AxiosCompression.None)
         {
             return new ByteArrayContent(bytes);
         }

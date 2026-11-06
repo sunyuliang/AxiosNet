@@ -27,7 +27,7 @@ public sealed class SigningExample : IExample
         // 静态复用：首次运行创建，之后所有次运行复用
         var client = _signing ??= new ApiClient(
             context.BaseUrl,
-            defaults => defaults.Serialization.ContentSerializer = new SigningSerializer(
+            defaults => defaults.Serialization.BodySerializers.Default = new SigningSerializer(
                 AxiosNet.Serialization.SystemTextJsonSerializer.Instance,
                 DemoApiServer.SigningKey));
 

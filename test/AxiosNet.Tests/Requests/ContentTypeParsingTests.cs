@@ -11,7 +11,7 @@ namespace AxiosNet.Tests.Requests;
 public sealed class ContentTypeParsingTests
 {
     [Fact]
-    public void Compose_TextualTypeWithoutCharset_AppendsRequestEncoding()
+    public void Compose_TextualTypeWithoutCharset_AppendsTextEncoding()
     {
         Assert.Equal("text/plain; charset=utf-16", RequestContentType.Compose("text/plain", Encoding.Unicode, appendCharset: true));
     }

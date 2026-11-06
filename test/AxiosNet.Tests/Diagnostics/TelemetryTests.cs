@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Cache;
 using AxiosNet.Circuit;
 using AxiosNet.Internal;
@@ -96,7 +96,7 @@ public sealed class TelemetryTests
         using var client = new AxiosClient(new AxiosConfig
         {
             // 调用方自己接受 404：请求不抛，但 HTTP 层面它仍是错误响应
-            Callbacks = { ValidateStatus = status => status is >= 200 and < 300 or 404 }
+            ValidateStatus = status => status is >= 200 and < 300 or 404
         });
 
         var response = await client.GetAsync(server.Url + path);
@@ -234,7 +234,12 @@ public sealed class TelemetryTests
         var path = UniquePath("retry-reason-network");
         using var probe = new TelemetryProbe(port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(1, TimeSpan.Zero) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(url + path));
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
@@ -257,7 +262,9 @@ public sealed class TelemetryTests
         var path = UniquePath("gate-depth");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Limits = { MaxConcurrentRequests = 1 } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience = { Concurrency = {  MaxInFlight = 1  } }
+        });
 
         // 第一条占住唯一槽位（等它真的到达服务端，否则第二条可能先抢到槽位）
         var first = client.GetAsync(server.Url + path);
@@ -293,7 +300,7 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Limits = { MaxConcurrentRequests = 1, MaxQueueLength = 1, QueueTimeout = TimeSpan.FromSeconds(5) }
+            Resilience = { Concurrency = {  MaxInFlight = 1, MaxQueue = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
         });
 
         var first = client.GetAsync(server.Url + path);
@@ -327,7 +334,7 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Limits = { MaxConcurrentRequests = 1, QueueTimeout = TimeSpan.Zero }
+            Resilience = { Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.Zero  } }
         });
 
         var first = client.GetAsync(server.Url + path);
@@ -352,7 +359,12 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
 
         var policy = new RetryBudgetPolicy(RetryPolicy.Constant(5, TimeSpan.Zero), capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + path));
 
@@ -369,7 +381,7 @@ public sealed class TelemetryTests
 
         var path = UniquePath("cache-metrics");
         using var probe = new TelemetryProbe(server.Port, path);
-        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions()) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = new AxiosCache(new AxiosCacheOptions()) });
 
         await client.GetAsync(server.Url + path);
         await client.GetAsync(server.Url + path);
@@ -397,7 +409,7 @@ public sealed class TelemetryTests
         using var client = new AxiosClient(new AxiosConfig
         {
             // 只留一个条目：第二条不同 URL 必然撞容量上限。
-            Cache = new AxiosCache(new AxiosCacheOptions { MaxEntries = 1 })
+            Caching = new AxiosCache(new AxiosCacheOptions { MaxEntries = 1 })
         });
 
         await client.GetAsync(server.Url + path);
@@ -424,7 +436,7 @@ public sealed class TelemetryTests
 
         var path = UniquePath("cache-followers");
         using var probe = new TelemetryProbe(server.Port, path);
-        using var client = new AxiosClient(new AxiosConfig { Cache = new AxiosCache(new AxiosCacheOptions()) });
+        using var client = new AxiosClient(new AxiosConfig { Caching = new AxiosCache(new AxiosCacheOptions()) });
 
         var requests = Enumerable.Range(0, 5)
             .Select(_ => client.GetAsync(server.Url + path))
@@ -451,7 +463,7 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions { FreshnessMode = CacheFreshnessMode.Intersection })
+            Caching = new AxiosCache(new AxiosCacheOptions { FreshnessMode = CacheFreshnessMode.Intersection })
         });
 
         // 请求自己否决缓存：既不查也不写，命中率两边都不计。
@@ -473,7 +485,7 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions
+            Caching = new AxiosCache(new AxiosCacheOptions
             {
                 Store = new HangingStore(),
                 StoreTimeout = TimeSpan.FromMilliseconds(50)
@@ -511,7 +523,7 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions { Store = new AlwaysStaleStore() })
+            Caching = new AxiosCache(new AxiosCacheOptions { Store = new AlwaysStaleStore() })
         });
 
         await client.GetAsync<Person>(server.Url + path);
@@ -576,7 +588,12 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
 
         var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
-        using var client = new AxiosClient(new AxiosConfig { Circuit = { Policy = breaker } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Circuit = { Policy = breaker }
+            }
+            });
 
         try
         {
@@ -848,7 +865,7 @@ public sealed class TelemetryTests
         using (var caller = callerSource.StartActivity("caller-off", ActivityKind.Internal))
         {
             Assert.NotNull(caller);
-            await client.GetAsync(server.Url + path, configure: c => c.Telemetry.Enabled = false);
+            await client.GetAsync(server.Url + path, configure: c => c.Observability.Capture = TelemetryCapture.Off);
             Assert.Single(probe.Spans);      // 只有第 ① 次那条
             Assert.Empty(caller.TagObjects);
         }
@@ -865,7 +882,12 @@ public sealed class TelemetryTests
         var path = UniquePath("pool-reuse-retry");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
         await client.GetAsync(server.Url + path);
 
         // 第 1 次尝试建了节点（false），第 2 次是复用（true）：标签必须留住「这个请求付了建节点的代价」。
@@ -894,7 +916,12 @@ public sealed class TelemetryTests
         var path = UniquePath("retry");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = new RetryPolicy(3, TimeSpan.Zero) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new RetryPolicy(3, TimeSpan.Zero) }
+            }
+            });
         var response = await client.GetAsync(server.Url + path);
 
         Assert.Equal(200, response.Status);
@@ -1266,7 +1293,7 @@ public sealed class TelemetryTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions
+            Caching = new AxiosCache(new AxiosCacheOptions
             {
                 Store = new SlowSetStore(TimeSpan.FromMilliseconds(300)),
                 StoreTimeout = TimeSpan.FromSeconds(5)
@@ -1346,7 +1373,9 @@ public sealed class TelemetryTests
         var path = UniquePath("no-url");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Telemetry = { CaptureUrl = false } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.NoUrl }
+        });
         await client.GetAsync(server.Url + path + "?token=secret");
 
         var span = Assert.Single(probe.Spans);
@@ -1380,7 +1409,9 @@ public sealed class TelemetryTests
         var path = UniquePath("with-query");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Telemetry = { CaptureQuery = true } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Query }
+        });
         await client.GetAsync(server.Url + path + "?access_token=secret");
 
         // 排障需要时显式打开
@@ -1420,7 +1451,9 @@ public sealed class TelemetryTests
         var path = UniquePath("disabled");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Telemetry = { Enabled = false } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Off }
+        });
         var response = await client.GetAsync(server.Url + path);
 
         Assert.Equal(200, response.Status);
@@ -1442,8 +1475,8 @@ public sealed class TelemetryTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(3, TimeSpan.Zero) },
-            Telemetry = { Enabled = false }
+            Resilience = { Retry = { Policy = new RetryPolicy(3, TimeSpan.Zero) } },
+            Observability = { Capture = TelemetryCapture.Off }
         });
 
         var response = await client.GetAsync(server.Url + path);
@@ -1470,7 +1503,9 @@ public sealed class TelemetryTests
         var path = UniquePath("disabled-pool");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig { Telemetry = { Enabled = false } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Off }
+        });
         await client.GetAsync(server.Url + path);
 
         // 请求级三路一律没有
@@ -1491,8 +1526,10 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
 
         // 实例默认关闭；单次请求显式打开（bool? 合并语义：null 才沿用实例值）
-        using var client = new AxiosClient(new AxiosConfig { Telemetry = { Enabled = false } });
-        await client.GetAsync(server.Url + path, configure: config => config.Telemetry.Enabled = true);
+        using var client = new AxiosClient(new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Off }
+        });
+        await client.GetAsync(server.Url + path, configure: config => config.Observability.Capture = TelemetryCapture.Path);
 
         Assert.Single(probe.Spans);
     }
@@ -1500,15 +1537,16 @@ public sealed class TelemetryTests
     [Fact]
     public async Task Config_Clone_CopiesTelemetrySettings()
     {
-        var config = new AxiosConfig { Telemetry = { Enabled = false, CaptureUrl = false } };
+        var config = new AxiosConfig {
+            Observability = { Capture = TelemetryCapture.Off }
+        };
         var clone = config.Clone();
 
-        Assert.False(clone.Telemetry.Enabled);
-        Assert.False(clone.Telemetry.CaptureUrl);
+        Assert.Equal(TelemetryCapture.Off, clone.Observability.Capture);
 
         // 克隆是独立副本：改克隆不能影响源
-        clone.Telemetry.Enabled = true;
-        Assert.False(config.Telemetry.Enabled);
+        clone.Observability.Capture = TelemetryCapture.Query;
+        Assert.Equal(TelemetryCapture.Off, config.Observability.Capture);
     }
 
     // ------------------------------------------------------------------

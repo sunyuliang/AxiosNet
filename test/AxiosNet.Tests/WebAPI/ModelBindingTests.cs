@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -102,7 +102,7 @@ public sealed class ModelBindingTests
         using var api = new ApiClient(server.Url);
 
         // 头名来自 [Header("...")]，非法名在配置构建期就抛：声明式装配统一 ERR_BAD_REQUEST，一个字节都不发
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(() =>
             api.RequestAsync(new ProbeBadHeaderNameRequest { Value = "1" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
@@ -267,7 +267,7 @@ public sealed class ModelBindingTests
         using var client = CreateClient(server);
 
         // CRLF 注入：AxiosHeaders 拦截，声明式装配统一归 ERR_BAD_REQUEST（内层仍是 ArgumentException），请求一个字节都不出
-        var error = await Assert.ThrowsAsync<AxiosException>(
+        var error = await Assert.ThrowsAnyAsync<AxiosException>(
             () => client.RequestAsync(new EvilHeaderRequest { Evil = "a\r\nX-Evil: injected" }));
 
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);

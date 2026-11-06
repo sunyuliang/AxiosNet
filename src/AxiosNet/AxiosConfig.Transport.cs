@@ -4,8 +4,8 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>连接相关设置（<see cref="AxiosConfig.Connection"/>）。</summary>
-    public sealed class ConnectionSettings
+    /// <summary>传输相关设置（<see cref="AxiosConfig.Transport"/>）。</summary>
+    public sealed class TransportSettings
     {
         /// <summary>代理设置，仅实例级生效（按请求设置抛 <see cref="AxiosException"/>）；注入自定义 Handler 时由 Handler 决定。</summary>
         public IWebProxy? Proxy { get; set; }
@@ -14,7 +14,7 @@ public sealed partial class AxiosConfig
         public ICredentials? Credentials { get; set; }
 
         /// <summary>连接池选项，仅在构造 AxiosClient（自建池）时生效；单次请求上设置会抛 <see cref="AxiosException"/>。</summary>
-        public ConnectionPoolOptions? PoolOptions { get; set; }
+        public ConnectionPoolOptions? Pool { get; set; }
 
         /// <summary>
         /// HTTP 版本，<c>null</c>（默认）= HTTP/2（<see cref="System.Net.HttpVersion.Version20"/>），配合默认协商策略可降级到 1.1。
@@ -28,7 +28,7 @@ public sealed partial class AxiosConfig
         /// </summary>
         public HttpVersionPolicy? VersionPolicy { get; set; }
 
-        private string? _transport;
+        private string? _profile;
 
         /// <summary>
         /// 传输档名（默认 <c>null</c> / 空串 = 默认档）：选择连接池上由
@@ -39,24 +39,24 @@ public sealed partial class AxiosConfig
         /// <para>档必须已在池上登记，否则请求发出前抛 <c>ERR_BAD_OPTION_VALUE</c>（不静默回落默认档）。</para>
         /// <para>直接注入自定义 <see cref="HttpMessageHandler"/> 时不走连接池，本项无效：此时传非空档名会报错。</para>
         /// </remarks>
-        public string? Transport
+        public string? Profile
         {
-            get => _transport;
+            get => _profile;
             set
             {
-                _transport = value;
-                TransportSet = true;
+                _profile = value;
+                ProfileSet = true;
             }
         }
 
         /// <summary>是否被显式赋值过（含显式赋 <c>null</c>），用于合并配置时区分「未设置」与「显式回到默认档」。</summary>
-        internal bool TransportSet { get; set; }
+        internal bool ProfileSet { get; set; }
 
         private AxiosAuth? _auth;
 
         /// <summary>对应 axios auth（HTTP Basic）。</summary>
-        /// <remarks><c>Auth = null</c> 表示本次请求不带认证，会压住实例默认凭据。</remarks>
-        public AxiosAuth? Auth
+        /// <remarks><c>BasicAuth = null</c> 表示本次请求不带认证，会压住实例默认凭据。</remarks>
+        public AxiosAuth? BasicAuth
         {
             get => _auth;
             set
@@ -104,16 +104,37 @@ public sealed partial class AxiosConfig
         /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
         internal bool MaxRedirectsSet { get; set; }
 
-        /// <summary>把 <paramref name="incoming"/> 里的按请求连接项覆盖到本实例（合并层内部使用）；HttpVersion / VersionPolicy 由合并层单独处理。</summary>
-        internal void MergeFrom(ConnectionSettings incoming)
+        private long? _maxRate;
+
+        /// <summary>令牌桶限速（字节/秒），<c>null</c>（默认）不限；按请求项，单次请求可以覆盖。</summary>
+        public long? MaxRate
+        {
+            get => _maxRate;
+            set
+            {
+                _maxRate = value;
+                MaxRateSet = true;
+            }
+        }
+
+        /// <summary>是否被显式赋值过（含显式 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
+        internal bool MaxRateSet { get; set; }
+
+        /// <summary>把 <paramref name="incoming"/> 里的按请求传输项覆盖到本实例（合并层内部使用）；HttpVersion / VersionPolicy 由合并层单独处理。</summary>
+        internal void MergeFrom(TransportSettings incoming)
         {
             Proxy = incoming.Proxy ?? Proxy;
             Credentials = incoming.Credentials ?? Credentials;
-            PoolOptions = incoming.PoolOptions ?? PoolOptions;
+            Pool = incoming.Pool ?? Pool;
+
+            if (incoming.ProfileSet)
+            {
+                Profile = incoming.Profile;
+            }
 
             if (incoming.AuthSet)
             {
-                Auth = incoming.Auth;
+                BasicAuth = incoming.BasicAuth;
             }
 
             if (incoming.WithCredentialsSet)
@@ -125,9 +146,14 @@ public sealed partial class AxiosConfig
             {
                 MaxRedirects = incoming.MaxRedirects;
             }
+
+            if (incoming.MaxRateSet)
+            {
+                MaxRate = incoming.MaxRate;
+            }
         }
 
         /// <summary>浅拷贝（合并层用）：策略与委托共用，不深克隆。</summary>
-        internal ConnectionSettings Clone() => (ConnectionSettings)MemberwiseClone();
+        internal TransportSettings Clone() => (TransportSettings)MemberwiseClone();
     }
 }

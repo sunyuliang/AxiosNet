@@ -20,7 +20,7 @@ public sealed class CacheExample : IExample
     {
         SampleConsole.Section(Number, Title);
 
-        var client = _client ??= new AxiosClient(new AxiosConfig { Cache = Cache });
+        var client = _client ??= new AxiosClient(new AxiosConfig { Caching = Cache });
         await Cache.ClearAsync();
 
         // 1) 没有缓存：用 Axios 静态门面的默认客户端，每发一次，服务端的计数器就加一
@@ -94,7 +94,7 @@ public sealed class CacheExample : IExample
         //    客户端自带一份缓存，每次运行新建以隔离条目
         using var etagClient = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions
+            Caching = new AxiosCache(new AxiosCacheOptions
             {
                 TimeToLive = TimeSpan.FromSeconds(10),
                 FreshnessMode = CacheFreshnessMode.Server
@@ -118,7 +118,7 @@ public sealed class CacheExample : IExample
     /// <summary>Intersection 模式客户端：配置 TTL 10s，与服务端新鲜期取交集。缓存条目是本次运行的状态，故每次调用新建。</summary>
     private static AxiosClient NewIntersectionClient() => new(new AxiosConfig
     {
-        Cache = new AxiosCache(new AxiosCacheOptions
+        Caching = new AxiosCache(new AxiosCacheOptions
         {
             TimeToLive = TimeSpan.FromSeconds(10),
             FreshnessMode = CacheFreshnessMode.Intersection
@@ -140,7 +140,7 @@ public sealed class CacheExample : IExample
         // 客户端 TTL 给到 10 秒：Server / Intersection 是否提前失效由服务端新鲜期决定，Configured 则一直用这 10 秒
         using var client = new AxiosClient(new AxiosConfig
         {
-            Cache = new AxiosCache(new AxiosCacheOptions
+            Caching = new AxiosCache(new AxiosCacheOptions
             {
                 TimeToLive = TimeSpan.FromSeconds(10),
                 FreshnessMode = mode

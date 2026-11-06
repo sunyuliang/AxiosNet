@@ -8,14 +8,14 @@ using AxiosNet.Reflection;
 
 namespace AxiosNet.Internal;
 
-/// <summary>字符串键字典的识别与枚举：查询参数平铺（以及声明式 API 的头集合参数）共用。</summary>
+/// <summary>字符串键字典的识别与枚举：查询参数平铺与头集合参数共用。</summary>
 internal static class QueryMap
 {
     /// <summary>是否为字符串键字典（<c>IDictionary</c> 或 <c>IDictionary&lt;string,T&gt;</c> / <c>IReadOnlyDictionary&lt;string,T&gt;</c>）。</summary>
     public static bool IsMapType(Type type)
         => typeof(IDictionary).IsAssignableFrom(type) || FindStringKeyedPair(type, valueType: null) is not null;
 
-    /// <summary>是否为「字符串键 + 字符串值」字典（声明式 API 的头集合参数要求）。</summary>
+    /// <summary>是否为「字符串键 + 字符串值」字典（头集合参数要求）。</summary>
     public static bool IsStringMapType(Type type)
         => FindStringKeyedPair(type, typeof(string)) is not null;
 

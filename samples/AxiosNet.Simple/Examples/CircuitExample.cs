@@ -36,12 +36,14 @@ public sealed class CircuitExample : IExample
         // 客户端随熔断器新建：熔断状态是本次运行的状态，静态复用会带上上一轮的打开 / 半开进度
         using var client = new AxiosClient(new AxiosConfig
         {
-            Circuit =
+            Resilience =
             {
-                Policy = breaker,
-                OnRejected = ctx => Console.WriteLine($"    [OnRejected] {ctx.Host} 熔断中，请求没有发出")
+                Circuit = {
+                    Policy = breaker,
+                    OnRejected = ctx => Console.WriteLine($"    [OnRejected] {ctx.Host} 熔断中，请求没有发出")
+                }
             }
-        });
+            });
 
         // ?fail=999：这个 tag 永远 503（演示「下游持续故障」）
         var tag = Guid.NewGuid().ToString("N")[..8];
@@ -91,7 +93,7 @@ public sealed class CircuitExample : IExample
         // 4) 单请求绕过熔断：显式把策略置空（探针 / 健康检查用）
         try
         {
-            await client.GetAsync(uri, c => c.Circuit.Policy = null);
+            await client.GetAsync(uri, c => c.Resilience.Circuit.Policy = null);
         }
         catch (AxiosException ex)
         {

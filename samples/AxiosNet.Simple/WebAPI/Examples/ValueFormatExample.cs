@@ -26,7 +26,7 @@ public sealed class ValueFormatExample : IExample
         {
             // 实例级钩子（客户端默认值，声明式与直接调用同一口径）：成员自己没有声明时生效；
             // 第二个参数是值所在通道，这里只在查询串里改日期形态，其余通道返回 null 交回默认规则。
-            c.ValueFormatter = (value, channel) => value is DateTime date && channel == ValueTextChannel.Query
+            c.Serialization.ValueText = (value, channel) => value is DateTime date && channel == ValueTextChannel.Query
                 ? "hook" + date.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
                 : null;
         });

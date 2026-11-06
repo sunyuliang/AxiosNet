@@ -42,8 +42,8 @@ public sealed class TransportProfileTests
         using var pool = new HttpConnectionPool(options);
         using var client = new AxiosClient(pool: pool);
 
-        await client.GetAsync(server.Url + "x", c => c.Connection.Transport = "a");
-        await client.GetAsync(server.Url + "x", c => c.Connection.Transport = "b");
+        await client.GetAsync(server.Url + "x", c => c.Transport.Profile = "a");
+        await client.GetAsync(server.Url + "x", c => c.Transport.Profile = "b");
 
         Assert.Equal(new[] { "a|True|True", "b|True" }, seen.ToArray());
 
@@ -61,7 +61,7 @@ public sealed class TransportProfileTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync("x", c => c.Connection.Transport = "missing"));
+            () => client.GetAsync("x", c => c.Transport.Profile = "missing"));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, exception.Code);
         Assert.Contains("missing", exception.Message);
@@ -117,7 +117,7 @@ public sealed class TransportProfileTests
         using var client = new AxiosClient(handler: new HttpClientHandler());
 
         var exception = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync(server.Url + "x", c => c.Connection.Transport = "a"));
+            () => client.GetAsync(server.Url + "x", c => c.Transport.Profile = "a"));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, exception.Code);
         Assert.Empty(server.Received);

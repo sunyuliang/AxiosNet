@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -27,7 +27,7 @@ public sealed class TransformTests
         var first = await source.GetAsync("x");
 
         using var target = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-        target.Defaults.TransformResponse.Add((_, _) => "unwrapped-by-target");
+        target.Defaults.Serialization.TransformResponse.Add((_, _) => "unwrapped-by-target");
 
         var replayed = await target.RequestAsync(first.Config!);
 
@@ -42,7 +42,7 @@ public sealed class TransformTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var instanceCalls = 0;
-        client.Defaults.TransformResponse.Add((data, _) =>
+        client.Defaults.Serialization.TransformResponse.Add((data, _) =>
         {
             instanceCalls++;
             return data;
@@ -68,7 +68,7 @@ public sealed class TransformTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         var instanceCalls = 0;
-        client.Defaults.TransformRequest.Add((data, _) =>
+        client.Defaults.Serialization.TransformRequest.Add((data, _) =>
         {
             instanceCalls++;
             return data;
@@ -89,13 +89,13 @@ public sealed class TransformTests
         using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
         var sourceDefaultCalls = 0;
         var perRequestCalls = 0;
-        source.Defaults.TransformResponse.Add((data, _) =>
+        source.Defaults.Serialization.TransformResponse.Add((data, _) =>
         {
             sourceDefaultCalls++;
             return data;
         });
 
-        var first = await source.GetAsync("x", c => c.TransformResponse.Add((data, _) =>
+        var first = await source.GetAsync("x", c => c.Serialization.TransformResponse.Add((data, _) =>
         {
             perRequestCalls++;
             return data;
@@ -105,7 +105,7 @@ public sealed class TransformTests
 
         using var target = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
         var targetDefaultCalls = 0;
-        target.Defaults.TransformResponse.Add((data, _) =>
+        target.Defaults.Serialization.TransformResponse.Add((data, _) =>
         {
             targetDefaultCalls++;
             return data;
@@ -126,12 +126,12 @@ public sealed class TransformTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
-        client.Defaults.TransformRequest.Add((data, _) => "[" + data + "]");
+        client.Defaults.Serialization.TransformRequest.Add((data, _) => "[" + data + "]");
 
-        await client.PostAsync("echo", "x", c => c.TransformRequest.Add((data, _) => data + "P"));
+        await client.PostAsync("echo", "x", c => c.Serialization.TransformRequest.Add((data, _) => data + "P"));
 
         Assert.Equal("[x]P", Body(server.Received[0]));
-        Assert.Single(client.Defaults.TransformRequest);
+        Assert.Single(client.Defaults.Serialization.TransformRequest);
     }
 
     [Fact]
@@ -141,13 +141,13 @@ public sealed class TransformTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
-        client.Defaults.TransformResponse.Add((data, _) => "instance");
+        client.Defaults.Serialization.TransformResponse.Add((data, _) => "instance");
         var first = await client.GetAsync("x");
 
         var ownCalls = 0;
         var replayConfig = first.Config!.Clone();
-        replayConfig.TransformResponse.Clear();
-        replayConfig.TransformResponse.Add((data, _) =>
+        replayConfig.Serialization.TransformResponse.Clear();
+        replayConfig.Serialization.TransformResponse.Add((data, _) =>
         {
             ownCalls++;
             return data;
@@ -213,11 +213,11 @@ public sealed class TransformTests
     public async Task TransformRequest_SetterWrapsPlainList()
     {
         var list = new List<Func<object?, AxiosConfig, object?>> { (data, _) => data };
-        var config = new AxiosConfig { TransformRequest = list };
+        var config = new AxiosConfig { Serialization = { TransformRequest = list } };
 
         // 存进去的不是调用方那个 List：否则并发枚举会抛 InvalidOperationException
-        Assert.NotSame(list, config.TransformRequest);
-        Assert.Single(config.TransformRequest);
+        Assert.NotSame(list, config.Serialization.TransformRequest);
+        Assert.Single(config.Serialization.TransformRequest);
 
         var failures = 0;
         using var stop = new CancellationTokenSource();
@@ -228,7 +228,7 @@ public sealed class TransformTests
             {
                 try
                 {
-                    foreach (var _ in config.TransformRequest)
+                    foreach (var _ in config.Serialization.TransformRequest)
                     {
                     }
                 }
@@ -241,10 +241,10 @@ public sealed class TransformTests
 
         for (var i = 0; i < 5000; i++)
         {
-            config.TransformRequest.Add((data, _) => data);
-            if (config.TransformRequest.Count > 3)
+            config.Serialization.TransformRequest.Add((data, _) => data);
+            if (config.Serialization.TransformRequest.Count > 3)
             {
-                config.TransformRequest.RemoveAt(0);
+                config.Serialization.TransformRequest.RemoveAt(0);
             }
         }
 
@@ -258,15 +258,15 @@ public sealed class TransformTests
     public void TransformResponse_SetterWrapsPlainList()
     {
         var list = new List<Func<object?, AxiosConfig, object?>> { (data, _) => data };
-        var config = new AxiosConfig { TransformResponse = list };
+        var config = new AxiosConfig { Serialization = { TransformResponse = list } };
 
-        Assert.NotSame(list, config.TransformResponse);
-        Assert.Single(config.TransformResponse);
+        Assert.NotSame(list, config.Serialization.TransformResponse);
+        Assert.Single(config.Serialization.TransformResponse);
 
         // 已是包装类型时不重复包装
-        var existing = config.TransformResponse;
-        config.TransformResponse = existing;
-        Assert.Same(existing, config.TransformResponse);
+        var existing = config.Serialization.TransformResponse;
+        config.Serialization.TransformResponse = existing;
+        Assert.Same(existing, config.Serialization.TransformResponse);
     }
 
     // ---------------------------------------------------------------
@@ -280,17 +280,17 @@ public sealed class TransformTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         // 实例默认链 + 每请求追加：写时复制下并发请求各自分离，互不串味也不污染 Defaults
-        client.Defaults.TransformRequest.Add((data, _) => "[" + data + "]");
+        client.Defaults.Serialization.TransformRequest.Add((data, _) => "[" + data + "]");
 
         var requests = Enumerable.Range(0, 32).Select(i => client.PostAsync(
             "echo",
             "x",
-            c => c.TransformRequest.Add((data, _) => data + i.ToString(CultureInfo.InvariantCulture))));
+            c => c.Serialization.TransformRequest.Add((data, _) => data + i.ToString(CultureInfo.InvariantCulture))));
 
         await Task.WhenAll(requests);
 
         Assert.All(server.Received, r => Assert.Matches(@"^\[x\]\d+$", BodyOf(r)));
-        Assert.Single(client.Defaults.TransformRequest);   // 实例链不被按请求追加污染
+        Assert.Single(client.Defaults.Serialization.TransformRequest);   // 实例链不被按请求追加污染
     }
 
     [Fact]
@@ -305,13 +305,13 @@ public sealed class TransformTests
             return data;
         };
 
-        client.Defaults.TransformRequest.Add(log);
+        client.Defaults.Serialization.TransformRequest.Add(log);
 
         // 调用方 new 的 config（非库产出）：两次追加与默认链同引用的委托是「有意重复」，
         // 合并后应执行 3 次（默认 1 + 本次 2）—— 去重只覆盖 perCall 登记的继承段。
         var config = new AxiosConfig { Data = new { x = 1 } };
-        config.TransformRequest.Add(log);
-        config.TransformRequest.Add(log);
+        config.Serialization.TransformRequest.Add(log);
+        config.Serialization.TransformRequest.Add(log);
         await client.PostAsync("http://localhost/a", config);
 
         Assert.Equal(3, calls);
@@ -329,7 +329,7 @@ public sealed class TransformTests
             return data;
         };
 
-        client.Defaults.TransformRequest.Add(log);
+        client.Defaults.Serialization.TransformRequest.Add(log);
 
         var response = await client.GetAsync("http://localhost/a");
         Assert.Equal(1, calls);
@@ -354,7 +354,7 @@ public sealed class TransformTests
             return data;
         };
 
-        client.Defaults.TransformRequest.Add(log);
+        client.Defaults.Serialization.TransformRequest.Add(log);
 
         var response = await client.RequestAsync(new AxiosConfig
         {
@@ -377,12 +377,12 @@ public sealed class TransformTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
-        client.Defaults.TransformRequest.Add((data, _) => "[" + data + "]");
+        client.Defaults.Serialization.TransformRequest.Add((data, _) => "[" + data + "]");
 
         var perRequestCalls = 0;
         for (var i = 0; i < 3; i++)
         {
-            await client.PostAsync("echo", "x", c => c.TransformRequest.Add((data, _) =>
+            await client.PostAsync("echo", "x", c => c.Serialization.TransformRequest.Add((data, _) =>
             {
                 perRequestCalls++;
                 return data + "P";
@@ -395,7 +395,7 @@ public sealed class TransformTests
 
         // 每次请求只跑一次本次追加的 transform（若合并写回了 Defaults，第 2、3 次会重复叠加）
         Assert.Equal(3, perRequestCalls);
-        Assert.Single(client.Defaults.TransformRequest);
+        Assert.Single(client.Defaults.Serialization.TransformRequest);
     }
 
     [Fact]
@@ -404,16 +404,16 @@ public sealed class TransformTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { v = 1 }));
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
-        client.Defaults.TransformResponse.Add((data, _) => "I:" + data);
+        client.Defaults.Serialization.TransformResponse.Add((data, _) => "I:" + data);
 
         var response = await client.GetAsync<string>("data", c =>
-            c.TransformResponse.Add((data, _) => data + ":P"));
+            c.Serialization.TransformResponse.Add((data, _) => data + ":P"));
 
         // 非泛型链上返回的新实例也会带上处理过的 Data
         Assert.Equal("I:{\"v\":1}:P", response.Data);
 
         // 实例默认链没有被本次追加污染
-        Assert.Single(client.Defaults.TransformResponse);
+        Assert.Single(client.Defaults.Serialization.TransformResponse);
     }
 
     [Fact]
@@ -429,10 +429,10 @@ public sealed class TransformTests
         {
             while (!stop.IsCancellationRequested)
             {
-                client.Defaults.TransformRequest.Add(identity);
-                client.Defaults.TransformResponse.Add(static (data, _) => data);
-                client.Defaults.TransformRequest.Remove(identity);
-                client.Defaults.TransformResponse.RemoveAt(0);
+                client.Defaults.Serialization.TransformRequest.Add(identity);
+                client.Defaults.Serialization.TransformResponse.Add(static (data, _) => data);
+                client.Defaults.Serialization.TransformRequest.Remove(identity);
+                client.Defaults.Serialization.TransformResponse.RemoveAt(0);
             }
         });
 
@@ -463,8 +463,8 @@ public sealed class TransformTests
 
         await client.PostAsync(server.Url + "echo", new { secret = "raw" }, c =>
         {
-            c.TransformRequest.Add((data, _) => new { masked = "***" });
-            c.TransformRequest.Add((data, _) =>
+            c.Serialization.TransformRequest.Add((data, _) => new { masked = "***" });
+            c.Serialization.TransformRequest.Add((data, _) =>
             {
                 // 第二个 transform 拿到的是上一个 transform 的返回值
                 Assert.NotNull(data);
@@ -483,7 +483,7 @@ public sealed class TransformTests
         using var client = new AxiosClient();
 
         var response = await client.GetAsync<System.Text.Json.JsonElement>(server.Url + "wrap", c =>
-            c.TransformResponse.Add((data, _) =>
+            c.Serialization.TransformResponse.Add((data, _) =>
                 ((System.Text.Json.JsonElement)data!).GetProperty("data")));
 
         Assert.Equal("alice", response.Data.GetProperty("name").GetString());

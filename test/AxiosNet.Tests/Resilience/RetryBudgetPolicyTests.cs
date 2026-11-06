@@ -13,7 +13,12 @@ public sealed class RetryBudgetPolicyTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
         var policy = new RetryBudgetPolicy(Immediate(maxRetries: 5), capacity: 2, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -31,7 +36,12 @@ public sealed class RetryBudgetPolicyTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
         var policy = new RetryBudgetPolicy(Immediate(maxRetries: 5), capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         // 第一条：首发 + 1 次重试（用掉唯一的令牌），第 2 次重试被拒
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "a"));
@@ -49,7 +59,12 @@ public sealed class RetryBudgetPolicyTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "nope" }, statusCode: 400));
         var policy = new RetryBudgetPolicy(Immediate(maxRetries: 3), capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -66,7 +81,12 @@ public sealed class RetryBudgetPolicyTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
         var policy = new RetryBudgetPolicy(Immediate(maxRetries: 1), capacity: 1, refillPerSecond: 100);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         // 第一条把唯一的令牌用掉（首发 + 1 次重试；maxRetries = 1 保证不会再多发）
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "a"));
@@ -87,7 +107,12 @@ public sealed class RetryBudgetPolicyTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
         var policy = new RetryBudgetPolicy(Immediate(maxRetries: 5), capacity: 1, refillPerSecond: 0);
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
 
         var refused = new List<AxiosRetryContext>();
         policy.OnBudgetExhausted = refused.Add;
@@ -109,12 +134,14 @@ public sealed class RetryBudgetPolicyTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = policy,
-                OnRetry = _ => throw new InvalidOperationException("callback boom")
+                Retry = {
+                    Policy = policy,
+                    OnRetry = _ => throw new InvalidOperationException("callback boom")
+                }
             }
-        });
+            });
 
         // 回调抛错：重试这一发没有发出去，令牌必须退回，否则共享桶被白白耗掉
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(server.Url + "x"));
@@ -132,7 +159,12 @@ public sealed class RetryBudgetPolicyTests
             capacity: 1,
             refillPerSecond: 0);
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = policy } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = policy }
+            }
+            });
         using var cts = new CancellationTokenSource();
 
         var pending = client.GetAsync(server.Url + "x", c => c.CancellationToken = cts.Token);
@@ -164,12 +196,14 @@ public sealed class RetryBudgetPolicyTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = outer,
-                OnRetry = _ => throw new InvalidOperationException("callback boom")
+                Retry = {
+                    Policy = outer,
+                    OnRetry = _ => throw new InvalidOperationException("callback boom")
+                }
             }
-        });
+            });
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(server.Url + "x"));
 

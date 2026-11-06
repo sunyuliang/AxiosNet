@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -29,7 +29,7 @@ public sealed class HttpVersionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.Connection.HttpVersion = new Version(1, 0));
+        var response = await client.GetAsync(server.Url, c => c.Transport.HttpVersion = new Version(1, 0));
 
         Assert.Equal(200, response.Status);
         Assert.Equal("HTTP/1.0", server.Received[0].Version);
@@ -88,7 +88,7 @@ public sealed class HttpVersionTests
 
         var response = await client.GetAsync(
             "https://example.test/ping",
-            c => c.Connection.HttpVersion = HttpVersion.Version30);
+            c => c.Transport.HttpVersion = HttpVersion.Version30);
 
         Assert.Equal(200, response.Status);
         var sent = Assert.Single(handler.Sent);
@@ -110,8 +110,8 @@ public sealed class HttpVersionTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version30;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Transport.HttpVersion = HttpVersion.Version30;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -128,8 +128,8 @@ public sealed class HttpVersionTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version30;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
+            c.Transport.HttpVersion = HttpVersion.Version30;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
         }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -151,8 +151,8 @@ public sealed class HttpVersionTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("https://example.test/ping", c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version30;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Transport.HttpVersion = HttpVersion.Version30;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -169,8 +169,8 @@ public sealed class HttpVersionTests
 
         var response = await client.GetAsync("https://example.test/ping", c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version11;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Transport.HttpVersion = HttpVersion.Version11;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         });
 
         Assert.Equal(200, response.Status);
@@ -193,8 +193,8 @@ public sealed class HttpVersionTests
 
         var response = await client.GetAsync("https://example.test/ping", c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version30;
-            c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
+            c.Transport.HttpVersion = HttpVersion.Version30;
+            c.Resilience.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
         });
 
         Assert.Equal(200, response.Status);
@@ -235,7 +235,7 @@ public sealed class HttpVersionTests
         using var client = new AxiosClient(handler: handler);
 
         // 退回 1.1 也只需要一行：老网关 / NTLM 这类连接级认证 / 必须用连接级头的场景
-        await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version11);
+        await client.GetAsync("http://example.test/ping", c => c.Transport.HttpVersion = HttpVersion.Version11);
 
         var sent = Assert.Single(handler.Sent);
         Assert.Equal(HttpVersion.Version11, sent.Version);
@@ -250,8 +250,8 @@ public sealed class HttpVersionTests
 
         await client.GetAsync("http://example.test/ping", c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version20;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Transport.HttpVersion = HttpVersion.Version20;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         });
 
         var sent = Assert.Single(handler.Sent);
@@ -265,11 +265,13 @@ public sealed class HttpVersionTests
         // 实例上退回 1.1（比如整个客户端面向一个老网关），单次请求仍可单独要 h2
         var handler = new CapturingHandler();
         using var client = new AxiosClient(
-            new AxiosConfig { Connection = { HttpVersion = HttpVersion.Version11 } },
+            new AxiosConfig {
+            Transport = { HttpVersion = HttpVersion.Version11 }
+        },
             handler: handler);
 
         await client.GetAsync("http://example.test/ping");
-        await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version20);
+        await client.GetAsync("http://example.test/ping", c => c.Transport.HttpVersion = HttpVersion.Version20);
 
         Assert.Equal(
             new[] { HttpVersion.Version11, HttpVersion.Version20 },
@@ -281,11 +283,13 @@ public sealed class HttpVersionTests
     {
         var handler = new CapturingHandler();
         using var client = new AxiosClient(
-            new AxiosConfig { Connection = { VersionPolicy = HttpVersionPolicy.RequestVersionExact } },
+            new AxiosConfig {
+            Transport = { VersionPolicy = HttpVersionPolicy.RequestVersionExact }
+        },
             handler: handler);
 
         await client.GetAsync("http://example.test/ping");
-        await client.GetAsync("http://example.test/ping", c => c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower);
+        await client.GetAsync("http://example.test/ping", c => c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower);
 
         Assert.Equal(
             new[] { HttpVersionPolicy.RequestVersionExact, HttpVersionPolicy.RequestVersionOrLower },
@@ -320,8 +324,8 @@ public sealed class HttpVersionTests
 
         var response = await client.GetAsync(server.Url, c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version11;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Transport.HttpVersion = HttpVersion.Version11;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         });
 
         Assert.Equal(200, response.Status);
@@ -374,8 +378,8 @@ public sealed class HttpVersionTests
                 $"http://127.0.0.1:{port}/",
                 c =>
                 {
-                    c.Connection.HttpVersion = HttpVersion.Version20;
-                    c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+                    c.Transport.HttpVersion = HttpVersion.Version20;
+                    c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
                 }));
 
             var received = await preface.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -446,7 +450,7 @@ public sealed class HttpVersionTests
         var handler = new CapturingHandler { ResponseVersion = HttpVersion.Version11 };
         using var client = new AxiosClient(handler: handler);
 
-        var response = await client.GetAsync("http://example.test/ping", c => c.Connection.HttpVersion = HttpVersion.Version20);
+        var response = await client.GetAsync("http://example.test/ping", c => c.Transport.HttpVersion = HttpVersion.Version20);
 
         Assert.Equal(HttpVersion.Version20, Assert.Single(handler.Sent).Version);
         Assert.Equal(HttpVersion.Version11, response.ProtocolVersion);
@@ -465,7 +469,7 @@ public sealed class HttpVersionTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.Connection.HttpVersion = HttpVersion.Version30);
+        var response = await client.GetAsync(server.Url, c => c.Transport.HttpVersion = HttpVersion.Version30);
 
         Assert.Equal(200, response.Status);
         Assert.Equal("HTTP/1.1", server.Received[0].Version);
@@ -483,8 +487,8 @@ public sealed class HttpVersionTests
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version30;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Transport.HttpVersion = HttpVersion.Version30;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -509,9 +513,9 @@ public sealed class HttpVersionTests
         {
             // 两项都取非默认值（默认是 2.0 + OrLower）：只搬 Version 不搬策略会静默退回 OrLower，
             // 只搬策略不搬 Version 会静默变成 2.0 —— 两个字段都必须过一遍 CloneRequest。
-            c.Connection.HttpVersion = HttpVersion.Version11;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
-            c.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
+            c.Transport.HttpVersion = HttpVersion.Version11;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Resilience.Retry.Policy = new RetryPolicy { MaxRetries = 1, Delay = TimeSpan.Zero };
         });
 
         Assert.Equal(200, response.Status);

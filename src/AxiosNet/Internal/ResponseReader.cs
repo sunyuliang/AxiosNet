@@ -26,7 +26,7 @@ internal static class ResponseReader
     {
         var declared = message.Content.Headers.ContentLength;
         var limits = config.LimitsOrNull;
-        var callbacks = config.CallbacksOrNull;
+        var callbacks = config.ObservabilityOrNull;
 
         if (limits?.MaxContentLength is long limit && declared is long length && length > limit)
         {
@@ -34,7 +34,9 @@ internal static class ResponseReader
             throw AxiosException.MaxContentLength(config, request, length, limit);
         }
 
-        if (callbacks?.OnDownloadProgress is null && limits?.MaxRate is not > 0 && limits?.MaxContentLength is null)
+        var maxRate = config.TransportOrNull?.MaxRate;
+
+        if (callbacks?.OnDownloadProgress is null && maxRate is not > 0 && limits?.MaxContentLength is null)
         {
             return stream;
         }
@@ -43,7 +45,7 @@ internal static class ResponseReader
             stream,
             declared,
             callbacks?.OnDownloadProgress,
-            limits?.MaxRate,
+            maxRate,
             limits?.MaxContentLength,
             config,
             request);
@@ -314,7 +316,7 @@ internal static class ResponseReader
 
                 // 原始字节钩子：在字符集解码 / 反序列化 / transformResponse 之前触发，正文仍是 HttpClient 交付的原样字节。
                 // 不复制：回调期间零拷贝借用；需要长期持有由调用方自行复制。
-                if (config.CallbacksOrNull?.OnRawResponse is { } onRawResponse)
+                if (config.ObservabilityOrNull?.OnRawResponse is { } onRawResponse)
                 {
                     try
                     {
@@ -322,7 +324,7 @@ internal static class ResponseReader
                     }
                     catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
                     {
-                        throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.CallbackSettings.OnRawResponse), ex, upload: false);
+                        throw AxiosException.CallbackFailed(config, request, nameof(AxiosConfig.ObservabilitySettings.OnRawResponse), ex, upload: false);
                     }
                 }
 
@@ -482,7 +484,7 @@ internal static class ResponseReader
         // lenient 需要保留原文：转换过程没解过码时补一次。
         if (lenient && text is null && NeedsText(config, dataType, textual))
         {
-            text = ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding);
+            text = ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.TextEncoding);
         }
 
         rawText = text;
@@ -969,7 +971,7 @@ internal static class ResponseReader
 
     /// <summary>按需解码正文并缓存：只有文本分支与 lenient 兜底才需要 UTF-16。</summary>
     private static string DecodeText(ref string? cache, byte[] bytes, string? charSet, AxiosConfig config)
-        => cache ??= ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.ResponseEncoding);
+        => cache ??= ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.TextEncoding);
 
     /// <summary>
     /// 字节能否直接按 UTF-8 解析：未强制 / 声明其它编码，且开头不是 UTF-16 / UTF-32 BOM
@@ -977,7 +979,7 @@ internal static class ResponseReader
     /// </summary>
     private static bool IsUtf8Bytes(byte[] bytes, string? charSet, AxiosConfig config)
     {
-        if (!ResponseTextDecoder.IsUtf8(charSet, config.SerializationOrNull?.ResponseEncoding))
+        if (!ResponseTextDecoder.IsUtf8(charSet, config.SerializationOrNull?.TextEncoding))
         {
             return false;
         }

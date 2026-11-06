@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/>
+/// 把响应原始字节解码为文本。优先级：显式 <see cref="AxiosConfig.SerializationSettings.TextEncoding"/>
 /// → Content-Type charset → BOM → UTF-8；未知 charset 不抛异常，回落到 BOM / UTF-8。
 /// </summary>
 internal static class ResponseTextDecoder

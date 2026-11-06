@@ -30,7 +30,7 @@ if (validationErrors.Count > 0)
 var http = new AxiosClient(new AxiosConfig
 {
     BaseAddress = server.BaseAddress,
-    Serialization = new() { JsonSerializerOptions = jsonOptions },
+    Serialization = new() { JsonOptions = jsonOptions },
 });
 
 var payload = new Person("alice", 30, new Address("Shanghai", "200000"));
@@ -39,7 +39,7 @@ var posted = await http.PostAsync<Person>("/echo", payload);
 // 2) 声明式：请求模型上的路由 / 参数特性由源生成器烘焙成元数据（JIT / AOT 同一路径）
 var api = new ApiClient(server.BaseAddress, defaults =>
 {
-    defaults.Serialization.JsonSerializerOptions = jsonOptions;
+    defaults.Serialization.JsonOptions = jsonOptions;
 });
 api.CredentialProvider = new FixedTokenProvider();
 

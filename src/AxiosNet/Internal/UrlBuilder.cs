@@ -223,15 +223,15 @@ internal static class UrlBuilder
     }
 
     /// <summary>
-    /// 自定义 ParamsSerializer 只应看到公开形态：绑定层用 <see cref="FormattedQueryValue"/> 标记「已定型文本」，
-    /// 这是内部实现细节，不能漏进用户回调（否则常见写法 <c>(string)value</c> 会 InvalidCast）。
-    /// 容器只在真的含封套时复制，普通调用（无绑定层封套）保持原引用。
+    /// 自定义 ParamsSerializer 只应看到公开形态：调用方可用 <see cref="PreformattedValue"/> 标记「已定型文本」，
+    /// 这是内部约定，不能漏进用户回调（否则常见写法 <c>(string)value</c> 会 InvalidCast）。
+    /// 容器只在真的含标记时复制，普通调用（无标记）保持原引用。
     /// </summary>
     private static object? UnwrapFormattedValues(object? value)
     {
         switch (value)
         {
-            case FormattedQueryValue formatted:
+            case PreformattedValue formatted:
                 return formatted.Text;
 
             case Dictionary<string, object?> map:
@@ -282,21 +282,6 @@ internal static class UrlBuilder
 }
 
 /// <summary>
-/// 绑定层已经定型的查询文本：成员格式化 / 实例钩子的结果在此封存，
-/// 后续 <see cref="ParamsSerializer"/> 不再对它套第二遍钩子（否则成员声明会被钩子覆盖）。
-/// </summary>
-internal sealed class FormattedQueryValue
-{
-    public FormattedQueryValue(string text) => Text = text;
-
-    /// <summary>已定型的查询文本，直接拼进 URL，不会再被格式钩子改写。</summary>
-    public string Text { get; }
-
-    // 定型文本就是查询值本身，拼 URL 时直接用它。
-    public override string ToString() => Text;
-}
-
-/// <summary>
 /// params 序列化（buildURL 的默认实现）：对象 / 字典 / 集合 / JSON 树展平成查询串，
 /// null 跳过，键按 encodeURIComponent 转义且保留方括号。
 /// </summary>
@@ -322,7 +307,7 @@ internal static class ParamsSerializer
             var format = config?.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
 
             // 实例级钩子：嵌套对象的叶子也要用同一份钩子，否则「查询里能格式化」只对顶层成立。
-            var formatter = config?.ValueFormatter;
+            var formatter = config?.SerializationOrNull?.ValueText;
             if (paramsObj is JsonElement rootElement)
             {
                 // JsonElement 按 JSON 树展开，不走反射。
@@ -464,8 +449,8 @@ internal static class ParamsSerializer
             return;
         }
 
-        // 绑定层已经定型的文本：直接写入，不能再让实例钩子对「文本」套第二遍。
-        if (value is FormattedQueryValue formatted)
+        // 调用方已定型的文本：直接写入，不能再让格式化钩子对「文本」套第二遍。
+        if (value is PreformattedValue formatted)
         {
             pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(formatted.Text)));
             return;
@@ -669,7 +654,7 @@ internal static class ParamsSerializer
                     return;
                 }
 
-                parts.Add(item is FormattedQueryValue formatted
+                parts.Add(item is PreformattedValue formatted
                     ? formatted.Text
                     : ValueText.Format(item, ValueTextChannel.Query, memberFormat, formatter)!);
             }
@@ -812,8 +797,8 @@ internal static class ParamsSerializer
     // 叶子值判定：二进制族按 base64 当叶子、已定型文本当叶子，其余标量直接 ToString 拼进去。
     private static bool IsScalar(object value)
         // 二进制族（byte[] / Memory / ReadOnlyMemory / ArraySegment）都算「叶子值」：query 里按 base64 输出（可逆），不再往里展开。
-        // FormattedQueryValue 是绑定层定型的文本，同样按叶子处理（否则会被集合逻辑回落到方括号形态）。
-        => value is FormattedQueryValue || ScalarTypes.IsBinaryType(value.GetType()) || ScalarTypes.IsScalarType(value.GetType());
+        // PreformattedValue 是已定型的文本，同样按叶子处理（否则会被集合逻辑回落到方括号形态）。
+        => value is PreformattedValue || ScalarTypes.IsBinaryType(value.GetType()) || ScalarTypes.IsScalarType(value.GetType());
 
     /// <summary>
     /// 键名转义：同 axios 默认 encoder（<c>encodeURIComponent</c>），但把 <c>%5B</c> / <c>%5D</c> 还原成 <c>[</c> <c>]</c>，

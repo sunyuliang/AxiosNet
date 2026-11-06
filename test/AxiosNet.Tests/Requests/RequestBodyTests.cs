@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -62,11 +62,11 @@ public sealed class RequestBodyTests
     }
 
     // ===============================================================
-    // Bug 14：ContentType 声明的 charset 与 RequestEncoding 矛盾时静默产出错误字节
+    // Bug 14：ContentType 声明的 charset 与 TextEncoding 矛盾时静默产出错误字节
     // ===============================================================
 
     [Fact]
-    public async Task ContentTypeCharset_ConflictsWithRequestEncoding_Throws()
+    public async Task ContentTypeCharset_ConflictsWithTextEncoding_Throws()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -78,7 +78,7 @@ public sealed class RequestBodyTests
             c =>
             {
                 c.ContentType = "text/plain; charset=utf-8";
-                c.Serialization.RequestEncoding = Encoding.Latin1;
+                c.Serialization.TextEncoding = Encoding.Latin1;
             }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -86,12 +86,12 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task ContentTypeCharset_WithoutRequestEncoding_EncodesBodyWithDeclaredCharset()
+    public async Task ContentTypeCharset_WithoutTextEncoding_EncodesBodyWithDeclaredCharset()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // 声明 charset=iso-8859-1 但没设 RequestEncoding：正文必须按声明的 charset 编码，与头保持一致。
+        // 声明 charset=iso-8859-1 但没设 TextEncoding：正文必须按声明的 charset 编码，与头保持一致。
         await client.PostAsync(
             server.Url + "x",
             "café",
@@ -113,7 +113,7 @@ public sealed class RequestBodyTests
         using var client = new AxiosClient(handler: new FailingBodyWriteHandler(), disposeHandler: false);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Callbacks.OnUploadProgress = _ => { }));
+            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Observability.OnUploadProgress = _ => { }));
 
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
     }
@@ -125,7 +125,7 @@ public sealed class RequestBodyTests
 
         // 只有 MaxRate 没有回调：不应报「OnUploadProgress 回调抛出异常」。
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Limits.MaxRate = 1_000_000));
+            client.PostAsync("http://localhost/upload", new { a = 1 }, c => c.Transport.MaxRate = 1_000_000));
 
         Assert.Equal(AxiosException.ErrNetwork, ex.Code);
         Assert.DoesNotContain("OnUploadProgress", ex.Message);
@@ -222,7 +222,7 @@ public sealed class RequestBodyTests
         await client.PostAsync("x", "hi", c =>
         {
             c.ContentType = "text/plain; charset = utf-8";
-            c.Serialization.RequestEncoding = Encoding.UTF8;
+            c.Serialization.TextEncoding = Encoding.UTF8;
         });
 
         var contentType = Assert.Single(server.Received).Headers["content-type"];
@@ -286,7 +286,7 @@ public sealed class RequestBodyTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "up", payload, c =>
         {
             c.Limits.MaxBodyLength = 16;
-            c.Callbacks.OnUploadProgress = _ => { };
+            c.Observability.OnUploadProgress = _ => { };
         }));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
@@ -613,12 +613,12 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task Post_String_WithRequestEncoding_UsesEncodingAndCharsetHeader()
+    public async Task Post_String_WithTextEncoding_UsesEncodingAndCharsetHeader()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req, contentType: "text/plain"));
         using var client = new AxiosClient();
 
-        await client.PostAsync(server.Url + "raw", "你好", c => c.Serialization.RequestEncoding = Encoding.Unicode);
+        await client.PostAsync(server.Url + "raw", "你好", c => c.Serialization.TextEncoding = Encoding.Unicode);
 
         var sent = server.Received[0];
         Assert.Equal("你好", Encoding.Unicode.GetString(sent.Body));
@@ -626,7 +626,7 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task Post_Dictionary_WithRequestEncoding_PercentEncodesWithThatEncoding()
+    public async Task Post_Dictionary_WithTextEncoding_PercentEncodesWithThatEncoding()
     {
         await using var server = TestHttpServer.Start(req
             => TestJson.Echo(req, contentType: "application/x-www-form-urlencoded"));
@@ -638,7 +638,7 @@ public sealed class RequestBodyTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.Serialization.RequestEncoding = Encoding.Latin1;
+                c.Serialization.TextEncoding = Encoding.Latin1;
             });
 
         var sent = server.Received[0];
@@ -648,7 +648,7 @@ public sealed class RequestBodyTests
     }
 
     [Fact]
-    public async Task Post_Dictionary_WithNonUtf8RequestEncoding_WritesAsciiEscapedBytes()
+    public async Task Post_Dictionary_WithNonUtf8TextEncoding_WritesAsciiEscapedBytes()
     {
         await using var server = TestHttpServer.Start(req
             => TestJson.Echo(req, contentType: "application/x-www-form-urlencoded"));
@@ -660,7 +660,7 @@ public sealed class RequestBodyTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.Serialization.RequestEncoding = Encoding.Unicode;
+                c.Serialization.TextEncoding = Encoding.Unicode;
             });
 
         var sent = server.Received[0];
@@ -767,7 +767,7 @@ public sealed class RequestBodyTests
             c =>
             {
                 c.ContentType = "application/x-www-form-urlencoded; charset=iso-8859-1";
-                c.Serialization.RequestEncoding = Encoding.Latin1;
+                c.Serialization.TextEncoding = Encoding.Latin1;
             });
 
         var sent = server.Received[0];

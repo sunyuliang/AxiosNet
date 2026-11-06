@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
@@ -100,7 +100,7 @@ public sealed class FormAndMultipartTests
 
         using var client = new AxiosClient();
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<object>(server.Url + "item", c => c.TransformResponse.Add((_, _) => throw new InvalidOperationException("boom"))));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<object>(server.Url + "item", c => c.Serialization.TransformResponse.Add((_, _) => throw new InvalidOperationException("boom"))));
 
         Assert.Equal(AxiosException.ErrBadResponse, error.Code);
         Assert.IsType<InvalidOperationException>(error.Cause);
@@ -113,13 +113,13 @@ public sealed class FormAndMultipartTests
 
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync<string>(server.Url + "item", c => c.TransformResponse.Add((_, _) => "unwrapped"));
+        var response = await client.GetAsync<string>(server.Url + "item", c => c.Serialization.TransformResponse.Add((_, _) => "unwrapped"));
 
         Assert.Equal("unwrapped", response.Data);
     }
 
     [Fact]
-    public async Task XmlSerializer_Declaration_MatchesRequestEncoding()
+    public async Task XmlSerializer_Declaration_MatchesTextEncoding()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(Body: Encoding.UTF8.GetBytes("{}"), ContentType: "application/json; charset=utf-8"));
 
@@ -127,11 +127,11 @@ public sealed class FormAndMultipartTests
         {
             Serialization = new()
             {
-                ContentSerializer = XmlContentSerializer.Instance,
+                BodySerializers = { Default = XmlContentSerializer.Instance },
             },
         });
 
-        await client.PostAsync(server.Url + "xml", new XmlProbeDto { Name = "中文" }, c => c.Serialization.RequestEncoding = Encoding.Unicode);
+        await client.PostAsync(server.Url + "xml", new XmlProbeDto { Name = "中文" }, c => c.Serialization.TextEncoding = Encoding.Unicode);
 
         var request = server.Received[0];
 
@@ -146,7 +146,7 @@ public sealed class FormAndMultipartTests
     }
 
     [Fact]
-    public void XmlSerializer_WithoutRequestEncoding_DeclaresUtf8()
+    public void XmlSerializer_WithoutTextEncoding_DeclaresUtf8()
     {
         var text = XmlContentSerializer.Instance.Serialize(new XmlProbeDto { Name = "abc" }, typeof(XmlProbeDto), new AxiosConfig());
 
@@ -483,7 +483,7 @@ public sealed class FormAndMultipartTests
             c =>
             {
                 c.ContentType = "application/x-www-form-urlencoded";
-                c.Serialization.RequestEncoding = Encoding.Unicode;
+                c.Serialization.TextEncoding = Encoding.Unicode;
             });
 
         // 键名与值都按字节流编码：UTF-16 下每个字符都带一个 0x00 字节
@@ -712,7 +712,7 @@ public sealed class FormAndMultipartTests
             new XmlPayload { Name = "hello" },
             c =>
             {
-                c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
+                c.Serialization.BodySerializers.Default = XmlContentSerializer.Instance;
                 c.ContentType = AxiosContentType.Xml + "; charset=iso-8859-1";
             });
 
@@ -726,7 +726,7 @@ public sealed class FormAndMultipartTests
     }
 
     [Fact]
-    public async Task Xml_RequestEncoding_DrivesDeclarationWhenNoCharset()
+    public async Task Xml_TextEncoding_DrivesDeclarationWhenNoCharset()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse());
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
@@ -736,9 +736,9 @@ public sealed class FormAndMultipartTests
             new XmlPayload { Name = "hello" },
             c =>
             {
-                c.Serialization.ContentSerializer = XmlContentSerializer.Instance;
+                c.Serialization.BodySerializers.Default = XmlContentSerializer.Instance;
                 c.ContentType = AxiosContentType.Xml;
-                c.Serialization.RequestEncoding = Encoding.Latin1;
+                c.Serialization.TextEncoding = Encoding.Latin1;
             });
 
         var document = Encoding.Latin1.GetString(server.Received[0].Body);
@@ -755,12 +755,12 @@ public sealed class FormAndMultipartTests
         await client.PostAsync(
             "xml",
             new XmlPayload { Name = "中文" },
-            c => c.Serialization.ContentSerializer = XmlContentSerializer.Instance);
+            c => c.Serialization.BodySerializers.Default = XmlContentSerializer.Instance);
 
         var request = server.Received[0];
         var document = Encoding.UTF8.GetString(request.Body);
 
-        // 序列化器自报 media type：头是 application/xml，未显式设 RequestEncoding 时不追加 charset
+        // 序列化器自报 media type：头是 application/xml，未显式设 TextEncoding 时不追加 charset
         Assert.Equal(AxiosContentType.Xml, request.Headers["Content-Type"]);
         Assert.Contains("encoding=\"utf-8\"", document);
         Assert.Contains("中文", document);
@@ -883,7 +883,7 @@ public sealed class FormAndMultipartTests
             {
                 c.ContentType = "multipart/form-data";
                 c.Headers.Set("Content-Type", "multipart/form-data");
-                c.Callbacks.OnUploadProgress = _ => events++;
+                c.Observability.OnUploadProgress = _ => events++;
             });
 
         Assert.Contains("boundary=", server.Received[0].Headers["Content-Type"]);
@@ -1023,7 +1023,7 @@ public sealed class FormAndMultipartTests
 {
             Serialization = new()
             {
-                ContentSerializer = SnakeCaseSerializer.Instance,
+                BodySerializers = { Default = SnakeCaseSerializer.Instance },
             },
         });
 
@@ -1033,7 +1033,7 @@ public sealed class FormAndMultipartTests
             c => c.ContentType = AxiosConfig.FormUrlEncodedContentType);
 
         // 表单是独立编码通道：换 JSON 引擎（snake_case）不影响字段名，命名只看属性名 /
-        // [JsonPropertyName] / FormFieldNameSelector。这样换 XML、YAML 序列化器也不会把表单带坏。
+        // [JsonPropertyName] / FormFieldName。这样换 XML、YAML 序列化器也不会把表单带坏。
         var body = Body_JsonCustomization(server.Received[0]);
         Assert.Contains("UserName=alice", body);
         Assert.Contains("Age=20", body);
@@ -1392,7 +1392,7 @@ public sealed class FormAndMultipartTests
         // 逃生口在 transformRequest：返回 HttpContent 后库只负责原样发送（头也自己带）。
         // 也就是说内置的表单/multipart 组装不是唯一路径 —— 自己造 FormUrlEncodedContent /
         // MultipartFormDataContent（含自定义 boundary、流式文件部件）完全可行，不必改库。
-        config.TransformRequest.Add((data, _) => data switch
+        config.Serialization.TransformRequest.Add((data, _) => data switch
         {
             "as-form" => new FormUrlEncodedContent(new Dictionary<string, string>
             {
@@ -1419,7 +1419,7 @@ public sealed class FormAndMultipartTests
     }
 
     [Fact]
-    public async Task FormFieldNameSelector_AppliesToFormUrlEncoded()
+    public async Task FormFieldName_AppliesToFormUrlEncoded()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -1430,14 +1430,14 @@ public sealed class FormAndMultipartTests
             c =>
             {
                 c.ContentType = AxiosConfig.FormUrlEncodedContentType;
-                c.Serialization.FormFieldNameSelector = (prefix, key) => prefix is null ? key : $"{prefix}.{key}";
+                c.Serialization.FormFieldName = (prefix, key) => prefix is null ? key : $"{prefix}.{key}";
             });
 
         Assert.Equal("name=alice&filter.kind=book", Body_SerializationAndTransform(server.Received[0]));
     }
 
     [Fact]
-    public async Task FormFieldNameSelector_AppliesToMultipart()
+    public async Task FormFieldName_AppliesToMultipart()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
@@ -1448,7 +1448,7 @@ public sealed class FormAndMultipartTests
             c =>
             {
                 c.ContentType = "multipart/form-data";
-                c.Serialization.FormFieldNameSelector = (prefix, key) => prefix is null ? key : $"{prefix}_{key}";
+                c.Serialization.FormFieldName = (prefix, key) => prefix is null ? key : $"{prefix}_{key}";
             });
 
         var body = Body_SerializationAndTransform(server.Received[0]);

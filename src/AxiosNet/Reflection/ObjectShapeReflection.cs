@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using AxiosNet.Internal;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.Reflection;
 
@@ -44,7 +45,7 @@ internal static class ObjectShapeReflection
                 ReflectionCache.IsIgnoredProperty(property),
                 property.PropertyType,
                 target => PropertyAccessor.GetValue(captured, target),
-                ShapeFormatReader.Reader?.Invoke(property)));
+                ValueFormatReader.Read(property)));
         }
 
         return new ObjectShape(type, [.. members]);

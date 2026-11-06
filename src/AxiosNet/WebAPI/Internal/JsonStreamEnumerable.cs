@@ -96,7 +96,7 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
         string? mediaType)
     {
         // 强制 ResponseEncoding 优先于 charset，按最终生效的编码判断。
-        var framingEncoding = config.SerializationOrNull?.ResponseEncoding ?? ResponseTextDecoder.ResolveFromCharset(charSet);
+        var framingEncoding = config.SerializationOrNull?.TextEncoding ?? ResponseTextDecoder.ResolveFromCharset(charSet);
         if (!ResponseTextDecoder.IsAsciiCompatible(framingEncoding))
         {
             // 非 ASCII 兼容编码无法按字节分帧：先释放响应流再报错。

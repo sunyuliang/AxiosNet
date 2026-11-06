@@ -21,19 +21,21 @@ public sealed class IdempotencyExample : IExample
         var client = _client ??= new AxiosClient(new AxiosConfig
         {
             // POST 默认不重试（非幂等）；这里显式打开，正是幂等键存在的意义：同键重发不会被当成两次写。
-            Retry =
+            Resilience =
             {
-                Policy = new RetryPolicy
-                {
-                    MaxRetries = 3,
-                    Delay = TimeSpan.FromMilliseconds(100),
-                    BackoffFactor = 1d,
-                    Jitter = false,
-                    RetryNonIdempotentMethods = true
-                }
+                AllowUnsafeRetry = true,
+                Retry = {
+                    Policy = new RetryPolicy
+                    {
+                        MaxRetries = 3,
+                        Delay = TimeSpan.FromMilliseconds(100),
+                        BackoffFactor = 1d,
+                        Jitter = false
+                    }
+                },
+                Idempotency = { Enabled = true }
             },
-            Idempotency = { Enabled = true },
-            Callbacks =
+            Observability =
             {
                 // 每次尝试读一次头：重试不会换键（写键是库的事，这里只观察）
                 OnSendingRequest = (request, _, _) =>
@@ -45,7 +47,7 @@ public sealed class IdempotencyExample : IExample
                     return default;
                 }
             }
-        });
+            });
 
         // 每次运行用新 tag：服务端按 tag 计「前 N 次失败」，结果稳定可复现
         var tag = Guid.NewGuid().ToString("N")[..8];
@@ -58,8 +60,8 @@ public sealed class IdempotencyExample : IExample
         var explicitKey = "order-" + tag;
         var echo = await Axios.GetAsync(context.BaseUrl + "users/1", c =>
         {
-            c.Idempotency.Enabled = true;
-            c.Idempotency.Key = explicitKey;
+            c.Resilience.Idempotency.Enabled = true;
+            c.Resilience.Idempotency.Key = explicitKey;
         });
         Console.WriteLine($"  显式键 {explicitKey} -> {echo.Status}（Key 压过 KeyFactory 与默认 Guid）");
 

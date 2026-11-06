@@ -4,7 +4,8 @@ namespace AxiosNet.Retry;
 
 /// <summary>
 /// <see cref="IAxiosRetryPolicy"/> 的默认实现：按「次数 + 间隔」重试，可选指数退避、抖动与 <c>Retry-After</c> 优先。
-/// 默认只重试幂等方法上的网络错误、超时、408、429 与 5xx；POST / PATCH 需显式打开 <see cref="RetryNonIdempotentMethods"/>。
+/// 默认只重试幂等方法上的网络错误、超时、408、429 与 5xx；POST / PATCH 需显式打开配置上的
+/// <c>Resilience.AllowUnsafeRetry</c>（重试与对冲共用）。
 /// </summary>
 /// <example>
 /// <code>
@@ -22,7 +23,6 @@ namespace AxiosNet.Retry;
 ///     BackoffFactor = 1.5,
 ///     MaxDelay = TimeSpan.FromSeconds(10),
 ///     Jitter = true,
-///     RetryNonIdempotentMethods = true,
 ///     RetryStatusCodes = status =&gt; status is 429 or &gt;= 500,
 ///     RetryWhen = ctx =&gt; ctx.ErrorCode != AxiosException.ErrBadOptionValue,
 /// };
@@ -67,9 +67,6 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
 
     /// <summary>是否优先采用服务端返回的 <c>Retry-After</c> 头（秒数或 HTTP 日期），默认 <c>true</c>。</summary>
     public bool HonorRetryAfter { get; set; } = true;
-
-    /// <summary>是否也重试 POST / PATCH 等非幂等方法，默认 <c>false</c>（打开前请确认接口幂等）。</summary>
-    public bool RetryNonIdempotentMethods { get; set; }
 
     private Func<int, bool> _retryStatusCodes = DefaultRetryStatus;
 
@@ -126,8 +123,9 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
             return false;
         }
 
-        if (!RetryNonIdempotentMethods
-            && context.Config is { } config
+        // 「非幂等方法是否放行」是配置级唯一开关（Resilience.AllowUnsafeRetry），重试与对冲共用。
+        if (context.Config is { } config
+            && !config.AllowUnsafeRetry
             && !IsIdempotent(config.Method))
         {
             return false;

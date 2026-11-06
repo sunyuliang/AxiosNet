@@ -33,8 +33,8 @@ public sealed class ProgressAndRateExample : IExample
         // 1) 下载 256 KB，限速 256 KB/s（约 1s，能看到多次进度）
         var download = await Axios.GetAsync<byte[]>(context.BaseUrl + "download?kb=256", c =>
         {
-            c.Limits.MaxRate = 256 * 1024;
-            c.Callbacks.OnDownloadProgress = Report;
+            c.Transport.MaxRate = 256 * 1024;
+            c.Observability.OnDownloadProgress = Report;
         });
         Console.WriteLine($"  下载完成: {download.Data!.Length} bytes");
 
@@ -45,8 +45,8 @@ public sealed class ProgressAndRateExample : IExample
         {
             c.ContentType = AxiosContentType.TextPlain;
             c.ResponseType = ResponseType.Text;
-            c.Limits.MaxRate = 1024 * 1024;
-            c.Callbacks.OnUploadProgress = Report;
+            c.Transport.MaxRate = 1024 * 1024;
+            c.Observability.OnUploadProgress = Report;
         });
         Console.WriteLine("  上传完成");
 

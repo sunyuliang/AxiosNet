@@ -174,7 +174,7 @@ public sealed class ConnectionPoolOptions
 
     /// <summary>
     /// 登记一条命名传输档：同一个池里可以并存多条出口（不同代理 / 不同客户端证书 / 不同 Cookie 会话），
-    /// 由 <see cref="AxiosConfig.ConnectionSettings.Transport"/> 按请求选择。
+    /// 由 <see cref="AxiosConfig.TransportSettings.Profile"/> 按请求选择。
     /// </summary>
     /// <param name="name">档名（区分大小写，不能为空或空白；空串保留给默认档）。</param>
     /// <param name="transport">该档的出口设置（保存副本，之后改传入的对象不影响已登记的档）。</param>

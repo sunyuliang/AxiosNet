@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -62,8 +62,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = Hedge(maxHedges: 1, delay: TimeSpan.FromMilliseconds(200))
-        });
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1, delay: TimeSpan.FromMilliseconds(200))
+            }
+            });
 
         var stopwatch = Stopwatch.StartNew();
         var response = await client.GetAsync("x");
@@ -98,8 +101,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = Hedge(maxHedges: 1)
-        });
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1)
+            }
+            });
 
         var response = await client.GetAsync("x");
 
@@ -117,8 +123,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = Hedge(maxHedges: 1)
-        });
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1)
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -135,9 +144,12 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
-            Hedging = Hedge(maxHedges: 1)
-        });
+            Resilience =
+            {
+                Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
+                Hedging = Hedge(maxHedges: 1)
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -153,8 +165,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
-        });
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
+            }
+            });
 
         var response = await client.PostAsync("x", new { name = "a" });
 
@@ -181,13 +196,16 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = new()
+            Resilience =
             {
-                MaxHedges = 1,
-                Delay = TimeSpan.Zero,
-                HedgeNonIdempotentMethods = true
+                AllowUnsafeRetry = true,
+                Hedging = new()
+                {
+                    MaxHedges = 1,
+                    Delay = TimeSpan.Zero
+                }
             }
-        });
+            });
 
         var response = await client.PostAsync("x", new { name = "a" });
 
@@ -214,7 +232,7 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         // 实例上没配对冲，只有这一次请求要：按请求项必须真的接进管线。
-        var response = await client.GetAsync("x", c => c.Hedging.MaxHedges = 1);
+        var response = await client.GetAsync("x", c => c.Resilience.Hedging.MaxHedges = 1);
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -226,8 +244,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Hedging = new() { MaxHedges = -1 }
-        });
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = -1 }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -240,8 +261,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Hedging = new() { MaxHedges = AxiosConfig.HedgingSettings.MaxHedgesLimit + 1 }
-        });
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = AxiosConfig.HedgingSettings.MaxHedgesLimit + 1 }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -254,8 +278,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(-1) }
-        });
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(-1) }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -271,7 +298,7 @@ public sealed class HedgingTests
 
             // 每条分支都单独在范围之内，乘上分支序号就越界：第 16 条分支的起跑时刻是 160 天，
             // 会被计时器上限收敛成同一个时刻 —— 那等于这条分支永不发出，必须提前报错而不是静默不发。
-            Hedging = new() { MaxHedges = 16, Delay = TimeSpan.FromDays(10) }
+            Resilience = { Hedging = new() { MaxHedges = 16, Delay = TimeSpan.FromDays(10) } }
         });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -298,8 +325,7 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Limits = { MaxConcurrentRequests = 1, QueueTimeout = TimeSpan.FromSeconds(5) },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
         });
 
         var stopwatch = Stopwatch.StartNew();
@@ -333,12 +359,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Limits = { MaxConcurrentRequests = 2, QueueTimeout = TimeSpan.Zero },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 2, QueueTimeout = TimeSpan.Zero  } }
         });
 
         // 先用一条长请求占住一个槽位（它自己不对冲，否则两条分支会把两个槽位都占掉）。
-        var occupying = client.GetAsync("hold", c => c.Hedging.MaxHedges = 0);
+        var occupying = client.GetAsync("hold", c => c.Resilience.Hedging.MaxHedges = 0);
         await WaitUntilAsync(() => server.Received.Count >= 1);
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -373,11 +398,10 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Limits = { MaxConcurrentRequests = 2, MaxQueueLength = 1, QueueTimeout = TimeSpan.FromSeconds(5) },
-            Hedging = new() { MaxHedges = 2, Delay = TimeSpan.Zero }
+            Resilience = { Hedging = new() { MaxHedges = 2, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 2, MaxQueue = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
         });
 
-        var occupying = client.GetAsync("hold", c => c.Hedging.MaxHedges = 0);
+        var occupying = client.GetAsync("hold", c => c.Resilience.Hedging.MaxHedges = 0);
         await WaitUntilAsync(() => server.Received.Count >= 1);
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -410,8 +434,7 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Limits = { MaxConcurrentRequests = 2, QueueTimeout = TimeSpan.Zero },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 2, QueueTimeout = TimeSpan.Zero  } }
         });
 
         var response = await client.GetAsync("x");
@@ -423,8 +446,8 @@ public sealed class HedgingTests
         Assert.Equal(0, client.Pool!.GetStatistics().Endpoints.Sum(endpoint => endpoint.ActiveLeases));
 
         // 两个槽位都空着：QueueTimeout = Zero 下连续两次普通请求都得拿到槽位（漏一个就会 ERR_QUEUE_TIMEOUT）。
-        await client.GetAsync("x", c => c.Hedging.MaxHedges = 0);
-        await client.GetAsync("x", c => c.Hedging.MaxHedges = 0);
+        await client.GetAsync("x", c => c.Resilience.Hedging.MaxHedges = 0);
+        await client.GetAsync("x", c => c.Resilience.Hedging.MaxHedges = 0);
     }
 
     [Fact]
@@ -444,8 +467,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
-        });
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
+            }
+            });
 
         // 泛型入口会预造响应对象：两条分支不能共用一个实例，但也不该因此放弃对冲。
         var response = await client.GetAsync<BranchPayload>("x");
@@ -486,9 +512,12 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Serialization = { ContentSerializer = serializer },
-            Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
-        });
+            Serialization = { BodySerializers = { Default = serializer } },
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
+            }
+            });
 
         var response = await client.GetAsync<BranchPayload>("x");
 
@@ -515,9 +544,12 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Circuit = { Policy = new CircuitBreaker(failureThreshold: 2, breakDuration: TimeSpan.FromMinutes(1)) },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Circuit = { Policy = new CircuitBreaker(failureThreshold: 2, breakDuration: TimeSpan.FromMinutes(1)) },
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            });
 
         // 熔断按「一次逻辑尝试一笔」记账：前两次各放出 2 条分支，2 笔失败后打开。
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -548,8 +580,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(200) }
-        });
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(200) }
+            }
+            });
 
         var response = await client.GetAsync("x");
 
@@ -572,7 +607,12 @@ public sealed class HedgingTests
         // 否则调用方、连接租约与并发槽位都被一条永远不回的分支占着。
         using var handler = new CancellationIgnoringLoserHandler(TimeSpan.FromSeconds(6));
         using var client = new AxiosClient(
-            new AxiosConfig { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            },
             handler: handler,
             disposeHandler: false);
 
@@ -593,7 +633,12 @@ public sealed class HedgingTests
         // 也不能被败者收尾上限拖住。
         using var handler = new HangingHandler(TimeSpan.FromSeconds(6));
         using var client = new AxiosClient(
-            new AxiosConfig { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            },
             handler: handler,
             disposeHandler: false);
         using var cts = new CancellationTokenSource();
@@ -617,9 +662,12 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Callbacks = { OnDownloadProgress = _ => { } },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
-        });
+            Observability = { OnDownloadProgress = _ => { } },
+            Resilience =
+            {
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            });
 
         // 下载进度回调按「一条流」设计：两条分支会各报一份（进度翻倍），按单次发送处理。
         var response = await client.GetAsync("x");
@@ -635,8 +683,11 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
-        });
+            Resilience =
+            {
+                Hedging = Hedge(maxHedges: 1, delay: TimeSpan.Zero)
+            }
+            });
 
         var response = await client.GetAsync("x", c => c.ResponseType = ResponseType.Stream);
 
@@ -653,13 +704,16 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Hedging = new()
+            Resilience =
             {
-                MaxHedges = 1,
-                Delay = TimeSpan.Zero,
-                HedgeNonIdempotentMethods = true
+                AllowUnsafeRetry = true,
+                Hedging = new()
+                {
+                    MaxHedges = 1,
+                    Delay = TimeSpan.Zero
+                }
             }
-        });
+            });
 
         // 网络流形态的正文只有一个读指针：两条分支并发序列化会互相踩，按单次发送处理。
         await using var payload = new NonSeekableStream(Encoding.UTF8.GetBytes("{\"name\":\"a\"}"));

@@ -71,7 +71,7 @@ public sealed class XmlContentSerializer : IContentSerializer
 
         // XML 声明里的 encoding 必须与实际写 socket 的字节编码一致，解析优先级与 RequestBodyFactory 相同。
         var encoding = RequestContentType.ResolveCharset(config.ContentType, config)
-            ?? config.SerializationOrNull?.RequestEncoding
+            ?? config.SerializationOrNull?.TextEncoding
             ?? Encoding.UTF8;
 
         using var text = new DeclaredEncodingStringWriter(encoding);

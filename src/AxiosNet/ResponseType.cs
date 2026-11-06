@@ -9,7 +9,7 @@ public enum ResponseType
     /// <summary>JSON 反序列化（默认）：非泛型调用得到 <c>JsonElement</c>，泛型调用按 T 反序列化。</summary>
     Json,
 
-    /// <summary>正文按文本解码（编码见 <see cref="AxiosConfig.SerializationSettings.ResponseEncoding"/>），Data 为 <c>string</c>。</summary>
+    /// <summary>正文按文本解码（编码见 <see cref="AxiosConfig.SerializationSettings.TextEncoding"/>），Data 为 <c>string</c>。</summary>
     Text,
 
     /// <summary>正文读成字节数组，Data 为 <c>byte[]</c>（下载 / 二进制载荷用）。</summary>

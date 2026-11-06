@@ -114,7 +114,7 @@ internal sealed class RequestModelMetadata
         }
 
         // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
-        var form = new DeclaredForm { SourceName = request.GetType().Name };
+        var form = new FormData { SourceName = request.GetType().Name };
 
         try
         {
@@ -132,7 +132,7 @@ internal sealed class RequestModelMetadata
                 }
 
                 // 声明覆盖与值分开登记，覆盖在装配时由 MultipartBodyBuilder 应用。
-                var partOverride = new PartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
+                var partOverride = new FormPartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
                 if (partOverride.Any)
                 {
                     form.Overrides[binding.Name] = partOverride;
@@ -147,7 +147,7 @@ internal sealed class RequestModelMetadata
         catch
         {
             // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放，否则会随异常泄漏。
-            MultipartOwnership.DisposeOwned(form.Values);
+            form.DisposeOwned();
             throw;
         }
 

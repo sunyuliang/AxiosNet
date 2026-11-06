@@ -25,8 +25,11 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Failover = new() { Endpoints = Array.Empty<Uri>() }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = Array.Empty<Uri>() }
+            }
+            });
 
         var response = await client.GetAsync("x");
 
@@ -44,7 +47,7 @@ public sealed class FailoverTests
         // 127.0.0.1:1 上的连接会被立刻拒绝（ERR_NETWORK），正好覆盖「当前端点建连都失败」。
         var response = await client.GetAsync(
             "http://127.0.0.1:1/api/users?page=2",
-            c => c.Failover.Endpoints = new[] { new Uri(mirror.Url) });
+            c => c.Resilience.Failover.Endpoints = new[] { new Uri(mirror.Url) });
 
         Assert.Equal(200, response.Status);
         Assert.True(Assert.IsType<System.Text.Json.JsonElement>(response.Data).GetProperty("mirror").GetBoolean());
@@ -77,8 +80,11 @@ public sealed class FailoverTests
             new AxiosConfig
             {
                 BaseAddress = primary.Url,
-                Failover = new() { Endpoints = new[] { new Uri(mirror.Url + "api") } }
-            },
+                Resilience =
+                {
+                    Failover = new() { Endpoints = new[] { new Uri(mirror.Url + "api") } }
+                }
+                },
             pipeline: AxiosAttemptPipeline.Default.Append(recorder));
 
         var response = await client.GetAsync("v1/thing");
@@ -103,8 +109,11 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -125,9 +134,12 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -147,11 +159,14 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(
-            () => client.GetAsync("x", c => c.Failover.Endpoints = null));
+            () => client.GetAsync("x", c => c.Resilience.Failover.Endpoints = null));
 
         // 显式赋 null 是「本次请求不换端点」，不是「没表态」。
         Assert.Equal(AxiosException.ErrBadResponse, exception.Code);
@@ -165,8 +180,11 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Failover = new() { Endpoints = new[] { new Uri("backup", UriKind.Relative) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri("backup", UriKind.Relative) } }
+            }
+            });
 
         var relative = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, relative.Code);
@@ -174,8 +192,11 @@ public sealed class FailoverTests
         using var ftpClient = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Failover = new() { Endpoints = new[] { new Uri("ftp://backup.example.com/") } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri("ftp://backup.example.com/") } }
+            }
+            });
 
         var ftp = await Assert.ThrowsAsync<AxiosException>(() => ftpClient.GetAsync("x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, ftp.Code);
@@ -187,8 +208,11 @@ public sealed class FailoverTests
         using var queryClient = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api?v=2") } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api?v=2") } }
+            }
+            });
 
         // 端点只提供 origin + 路径前缀：自带的 query 没有安放位置，静默丢掉就是「配置没生效」。
         var query = await Assert.ThrowsAsync<AxiosException>(() => queryClient.GetAsync("x"));
@@ -197,8 +221,11 @@ public sealed class FailoverTests
         using var fragmentClient = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api#frag") } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api#frag") } }
+            }
+            });
 
         var fragment = await Assert.ThrowsAsync<AxiosException>(() => fragmentClient.GetAsync("x"));
         Assert.Equal(AxiosException.ErrBadOptionValue, fragment.Code);
@@ -213,8 +240,11 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         // 换端点要按顺序重发同一份正文：与重试同一份要求，不可 seek 的流在第一次发送之前就该拦下。
         await using var payload = new NonSeekableStream(Encoding.UTF8.GetBytes("{\"name\":\"a\"}"));
@@ -235,9 +265,12 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Circuit = { Policy = new CircuitBreaker(failureThreshold: 1, breakDuration: TimeSpan.FromMinutes(1)) },
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Circuit = { Policy = new CircuitBreaker(failureThreshold: 1, breakDuration: TimeSpan.FromMinutes(1)) },
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         // 第 1 次：主端点 503 → 熔断打开 → 换到镜像。
         var first = await client.GetAsync("x");
@@ -272,8 +305,11 @@ public sealed class FailoverTests
         {
             BaseAddress = primary.Url,
             Timeout = TimeSpan.FromMilliseconds(500),
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         try
         {
@@ -315,9 +351,7 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Limits = { MaxConcurrentRequests = 1 },
-            Circuit = { Policy = policy },
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            Resilience = { Circuit = { Policy = policy }, Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = {  MaxInFlight = 1  } }
         });
 
         // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽
@@ -327,7 +361,7 @@ public sealed class FailoverTests
         try
         {
             var expired = await Assert.ThrowsAsync<AxiosException>(
-                () => client.GetAsync("queued", c => c.TotalTimeout = TimeSpan.FromMilliseconds(80)));
+                () => client.GetAsync("queued", c => c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(80)));
 
             Assert.Equal(AxiosException.ErrConnAborted, expired.Code);
 
@@ -372,7 +406,7 @@ public sealed class FailoverTests
 
         var response = await client.GetAsync(
             "http://127.0.0.1:1/x",
-            c => c.Failover.Endpoints = new[] { new Uri(mirror.Url) });
+            c => c.Resilience.Failover.Endpoints = new[] { new Uri(mirror.Url) });
 
         // 本机连接池耗尽换个下游就能解决：请求真的发到了镜像上。
         Assert.Equal(200, response.Status);
@@ -397,8 +431,7 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Limits = { MaxConcurrentRequests = 1, QueueTimeout = TimeSpan.Zero },
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            Resilience = { Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.Zero  } }
         });
 
         var occupying = client.GetAsync("hold");
@@ -437,8 +470,11 @@ public sealed class FailoverTests
             new AxiosConfig
             {
                 BaseAddress = primary.Url,
-                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-            },
+                Resilience =
+                {
+                    Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+                }
+                },
             pipeline: AxiosAttemptPipeline.Default.Append(rejectMirror));
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -470,9 +506,12 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            });
 
         var response = await client.GetAsync("x");
 
@@ -499,9 +538,9 @@ public sealed class FailoverTests
 
         var response = await client.GetAsync("https://primary.test/x", c =>
         {
-            c.Connection.HttpVersion = HttpVersion.Version30;
-            c.Connection.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
-            c.Failover.Endpoints = new[] { new Uri("http://plain.test/"), new Uri("https://mirror.test/") };
+            c.Transport.HttpVersion = HttpVersion.Version30;
+            c.Transport.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            c.Resilience.Failover.Endpoints = new[] { new Uri("http://plain.test/"), new Uri("https://mirror.test/") };
         });
 
         // 明文端点 + 严格 h3 是不可能成立的配置：跳过它，第 2 个备用端点仍拿到这次请求。
@@ -516,14 +555,19 @@ public sealed class FailoverTests
     {
         var endpoints = new List<Uri> { new("https://backup-a.example.com") };
 
-        var config = new AxiosConfig { Failover = { Endpoints = endpoints } };
+        var config = new AxiosConfig {
+            Resilience =
+            {
+                Failover = { Endpoints = endpoints }
+            }
+            };
 
         // 赋值即快照：之后改调用方自己的列表不影响已生效的配置。
         endpoints.Add(new Uri("https://backup-b.example.com"));
-        Assert.Single(config.Failover.Endpoints!);
+        Assert.Single(config.Resilience.Failover.Endpoints!);
 
         // 克隆共享同一版不可变快照（不必每请求复制）。
-        Assert.Same(config.Failover.Endpoints, config.Clone().Failover.Endpoints);
+        Assert.Same(config.Resilience.Failover.Endpoints, config.Clone().Resilience.Failover.Endpoints);
     }
 
     [Fact]
@@ -532,12 +576,15 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = "http://127.0.0.1:1/",
-            Failover = new()
+            Resilience =
             {
-                // 写法不同但规范化后是同一个地址：同一份请求对同一个地址打两遍只会放大下游压力。
-                Endpoints = new[] { new Uri("https://backup.example.com/api"), new Uri("https://BACKUP.example.com/api/") }
+                Failover = new()
+                {
+                    // 写法不同但规范化后是同一个地址：同一份请求对同一个地址打两遍只会放大下游压力。
+                    Endpoints = new[] { new Uri("https://backup.example.com/api"), new Uri("https://BACKUP.example.com/api/") }
+                }
             }
-        });
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -554,8 +601,11 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
-        });
+            Resilience =
+            {
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }
+            }
+            });
 
         // 调用方显式指定虚拟主机（反代 / 多站点同 IP 的常见做法）。
         var response = await client.GetAsync("x", c => c.Headers.Set("Host", "primary.example.com"));
@@ -596,7 +646,7 @@ public sealed class FailoverTests
             BaseAddress = primary.Url,
 
             // 照抄 BaseAddress 当备用端点：拼出来的就是当前地址，换过去等于原地重发。
-            Failover = new() { Endpoints = new[] { new Uri(primary.Url) } }
+            Resilience = { Failover = new() { Endpoints = new[] { new Uri(primary.Url) } } }
         });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -616,7 +666,7 @@ public sealed class FailoverTests
             BaseAddress = primary.Url + "api/",
 
             // 端点带路径前缀：请求 path 会整体接在后面（拼出 /api/api/x），与请求地址不同 —— 照打，不跳过。
-            Failover = new() { Endpoints = new[] { new Uri(primary.Url + "api") } }
+            Resilience = { Failover = new() { Endpoints = new[] { new Uri(primary.Url + "api") } } }
         });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
@@ -632,11 +682,14 @@ public sealed class FailoverTests
         // 直接测中间件：走整个客户端的话，无 QUIC 的机器上「主端点 https + 严格 h3」会先被同一套护栏拦掉，只能空跑。
         var config = new AxiosConfig
         {
-            Failover = new()
+            Resilience =
             {
-                Endpoints = new[] { new Uri("http://plain-a.test/"), new Uri("http://plain-b.test/") }
+                Failover = new()
+                {
+                    Endpoints = new[] { new Uri("http://plain-a.test/"), new Uri("http://plain-b.test/") }
+                }
             }
-        };
+            };
 
         var sent = new List<Uri>();
         AxiosAttemptHandler next = (request, _) =>
@@ -672,10 +725,13 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
-            Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },
-            Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
-        });
+            Resilience =
+            {
+                Retry = new() { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
+                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },
+                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+            }
+            });
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
 
@@ -758,13 +814,16 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new()
+            Resilience =
             {
-                Endpoints = new[] { new Uri(mirror.Url) },
-                FailureThreshold = 1,
-                Cooldown = TimeSpan.FromSeconds(30)
+                Failover = new()
+                {
+                    Endpoints = new[] { new Uri(mirror.Url) },
+                    FailureThreshold = 1,
+                    Cooldown = TimeSpan.FromSeconds(30)
+                }
             }
-        });
+            });
 
         // 第一次：主端点 500 → 记一次失败（阈值 1 立刻冷却）→ 换镜像。
         var first = await client.GetAsync("x");
@@ -791,15 +850,18 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new()
+            Resilience =
             {
-                Endpoints = new[] { new Uri(mirror.Url) },
+                Failover = new()
+                {
+                    Endpoints = new[] { new Uri(mirror.Url) },
 
-                // 阈值 0 = 关闭健康记忆：行为回到「每次请求都从第一个端点开始」。
-                FailureThreshold = 0,
-                Cooldown = TimeSpan.FromSeconds(30)
+                    // 阈值 0 = 关闭健康记忆：行为回到「每次请求都从第一个端点开始」。
+                    FailureThreshold = 0,
+                    Cooldown = TimeSpan.FromSeconds(30)
+                }
             }
-        });
+            });
 
         await client.GetAsync("x");
         await client.GetAsync("x");
@@ -816,13 +878,16 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new()
+            Resilience =
             {
-                Endpoints = new[] { new Uri(mirror.Url) },
-                FailureThreshold = 1,
-                Cooldown = TimeSpan.FromSeconds(30)
+                Failover = new()
+                {
+                    Endpoints = new[] { new Uri(mirror.Url) },
+                    FailureThreshold = 1,
+                    Cooldown = TimeSpan.FromSeconds(30)
+                }
             }
-        });
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));
         Assert.Single(primary.Received);
@@ -843,13 +908,16 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Failover = new()
+            Resilience =
             {
-                Endpoints = new[] { new Uri(mirror.Url) },
-                FailureThreshold = 1,
-                Cooldown = TimeSpan.FromSeconds(30)
+                Failover = new()
+                {
+                    Endpoints = new[] { new Uri(mirror.Url) },
+                    FailureThreshold = 1,
+                    Cooldown = TimeSpan.FromSeconds(30)
+                }
             }
-        });
+            });
 
         // 4xx 不换端点，也不该被当成「端点坏了」：连续两次都要打主端点。
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("x"));

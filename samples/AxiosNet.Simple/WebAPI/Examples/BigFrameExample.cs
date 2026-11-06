@@ -1,4 +1,4 @@
-﻿using AxiosNet.WebAPI;
+using AxiosNet.WebAPI;
 
 namespace AxiosNet.Simple.WebAPI.Examples;
 
@@ -44,7 +44,7 @@ public sealed class BigFrameExample : IExample
         // 2) 放开到 12 MB：同一端点可以逐帧读完（这里只打印长度，不把 9 MB 正文打到控制台）
         var relaxed = _relaxed ??= new ApiClient(
             context.BaseUrl,
-            defaults => defaults.Limits.MaxStreamFrameLength = 12 * 1024 * 1024);
+            defaults => defaults.MaxStreamFrameBytes = 12 * 1024 * 1024);
 
         var relaxedResponse = await relaxed.RequestStreamAsync(new StreamBigFrameRequest(), AxiosStreamFormat.JsonArray);
 

@@ -8,7 +8,7 @@ namespace AxiosNet.Pooling;
 /// <summary>
 /// 一条<b>命名传输档</b>的出口设置：代理、凭据、TLS / 客户端证书、建连回调与 Handler 工厂。
 /// 用 <see cref="ConnectionPoolOptions.AddTransport"/> 登记到池上，再由
-/// <see cref="AxiosConfig.ConnectionSettings.Transport"/> 按请求选择。
+/// <see cref="AxiosConfig.TransportSettings.Profile"/> 按请求选择。
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,7 +28,7 @@ namespace AxiosNet.Pooling;
 ///     .AddTransport("egress-b", new ConnectionTransportOptions { Proxy = proxyB, UseCookies = true }));
 ///
 /// using var client = new AxiosClient(pool: pool);
-/// var response = await client.GetAsync(c => { c.Url = "/orders"; c.Connection.Transport = "egress-b"; });
+/// var response = await client.GetAsync(c => { c.Url = "/orders"; c.Transport.Profile = "egress-b"; });
 /// </code>
 /// </example>
 public sealed class ConnectionTransportOptions

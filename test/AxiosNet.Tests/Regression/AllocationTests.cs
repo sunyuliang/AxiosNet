@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Serialization;
@@ -39,25 +39,25 @@ public sealed class AllocationTests
         var source = new AxiosConfig();
         source.Headers.Set("Accept", "application/json");
         source.RemoveHeaders.Add("X-Trace");
-        source.TransformRequest.Add((data, config) => data);
-        source.TransformResponse.Add((data, config) => data);
+        source.Serialization.TransformRequest.Add((data, config) => data);
+        source.Serialization.TransformResponse.Add((data, config) => data);
 
         var clone = source.Clone();
 
         // MemberwiseClone 是浅拷贝：集合成员漏替换就会与源共享，合并时互相污染
         Assert.NotSame(source.Headers, clone.Headers);
         Assert.NotSame(source.RemoveHeaders, clone.RemoveHeaders);
-        Assert.NotSame(source.TransformRequest, clone.TransformRequest);
-        Assert.NotSame(source.TransformResponse, clone.TransformResponse);
+        Assert.NotSame(source.Serialization.TransformRequest, clone.Serialization.TransformRequest);
+        Assert.NotSame(source.Serialization.TransformResponse, clone.Serialization.TransformResponse);
 
         clone.Headers.Set("Accept", "text/plain");
         clone.RemoveHeaders.Add("X-Other");
-        clone.TransformRequest.Clear();
+        clone.Serialization.TransformRequest.Clear();
 
         Assert.Equal("application/json", source.Headers.Get("Accept"));
         Assert.Equal("X-Trace", Assert.Single(source.RemoveHeaders));
-        Assert.Single(source.TransformRequest);
-        Assert.Single(source.TransformResponse);
+        Assert.Single(source.Serialization.TransformRequest);
+        Assert.Single(source.Serialization.TransformResponse);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class AllocationTests
             new AxiosConfig
             {
                 BaseAddress = "http://units.test/",
-                Callbacks =
+                Observability =
                 {
                     OnSendingRequest = (request, _, _) =>
                     {
@@ -97,8 +97,11 @@ public sealed class AllocationTests
             new AxiosConfig
             {
                 BaseAddress = "http://units.test/",
-                Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
-            },
+                Resilience =
+                {
+                    Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
+                }
+                },
             handler: new FailOnceThenOkHandler(),
             disposeHandler: true);
 
@@ -106,8 +109,11 @@ public sealed class AllocationTests
             new AxiosConfig
             {
                 BaseAddress = "http://units.test/",
-                Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) },
-                Callbacks =
+                Resilience =
+                {
+                    Retry = { Policy = RetryPolicy.Constant(1, TimeSpan.Zero) }
+                },
+                Observability =
                 {
                     OnSendingRequest = (request, _, _) =>
                     {
@@ -115,7 +121,7 @@ public sealed class AllocationTests
                         return default;
                     }
                 }
-            },
+                },
             handler: new FailOnceThenOkHandler(),
             disposeHandler: true);
 
@@ -146,14 +152,14 @@ public sealed class AllocationTests
         var clone = source.Clone();
 
         // 空链走无参构造（不加锁、不建快照 List），但语义必须与普通副本一致
-        Assert.Empty(clone.TransformRequest);
-        Assert.Empty(clone.TransformResponse);
+        Assert.Empty(clone.Serialization.TransformRequest);
+        Assert.Empty(clone.Serialization.TransformResponse);
         Assert.Empty(clone.RemoveHeaders);
 
-        clone.TransformRequest.Add((data, config) => data);
+        clone.Serialization.TransformRequest.Add((data, config) => data);
         clone.RemoveHeaders.Add("X-Trace");
 
-        Assert.Empty(source.TransformRequest);
+        Assert.Empty(source.Serialization.TransformRequest);
         Assert.Empty(source.RemoveHeaders);
     }
 
@@ -318,7 +324,7 @@ public sealed class AllocationTests
 
         var serializer = new EntryOnlySerializer();
         var config = new AxiosConfig();
-        config.Serialization.ContentSerializer = serializer;
+        config.Serialization.BodySerializers.Default = serializer;
 
         object? Convert()
             => ResponseReader.ConvertBody(config, null, typeof(JsonItem), body, AxiosContentType.Json, "utf-8", lenient: false, out _);
@@ -343,7 +349,7 @@ public sealed class AllocationTests
 
         var serializer = new EntryOnlySerializer();
         var config = new AxiosConfig();
-        config.Serialization.ContentSerializer = serializer;
+        config.Serialization.BodySerializers.Default = serializer;
 
         await using var stream = new MemoryStream(body);
         var frames = new JsonStreamEnumerable<JsonItem>(stream, config, null, AxiosStreamFormat.ServerSentEvents, charSet: null, "text/event-stream");

@@ -1,11 +1,19 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace AxiosNet.Tests.Architecture;
 
 /// <summary>
-/// 架构护栏：<c>WebAPI/</c> 是可整体删除的扩展（删掉它，核心与原始 HTTP 照样能用），所以核心不得反向引用它。
-/// 这条不变量靠「目录约定 + 人工 review」守不住：任何人写一句 <c>using AxiosNet.WebAPI.Internal;</c> 就破坏了它，
-/// 而编译、测试、AOT 都照样通过。这里把它变成可执行断言。
+/// 架构护栏：<c>WebAPI/</c> 是可整体删除的扩展（删掉它，核心与原始 HTTP 照样能用），
+/// 依赖方向只能是 <c>WebAPI → 内核</c>，内核不得反向引用它。
+/// <para>
+/// 这里压三层证据：
+/// ① 核心源码不出现 <c>AxiosNet.WebAPI</c> 命名空间；
+/// ② 核心源码不出现 WebAPI 概念词（防「把类型整族搬进内核」绕过命名空间检查）；
+/// ③ 核心 csproj 保留「整体排除 WebAPI」的构建开关，且不引用 WebAPI 项目。
+/// 真正以元数据引用为准的主力护栏在 <see cref="WebApiReferenceGraphTests"/>；
+/// 「WebAPI 可整体删除」的实证由 <c>eng/build-without-webapi.ps1</c> 与 CI 的独立构建负责。
+/// </para>
 /// </summary>
 public class WebApiRemovabilityTests
 {
@@ -45,8 +53,10 @@ public class WebApiRemovabilityTests
     }
 
     /// <summary>
-    /// 核心代码里不得出现 WebAPI 专属概念（声明式绑定 / 门面类型）。这条防的是「字段或标识符」级回归：
-    /// 编译与既有测试都发现不了，但拆包时会立刻变成硬依赖。
+    /// 核心代码里不得出现 WebAPI 概念词。这条防的是「字段或标识符」级回归——把类型整族搬进内核后，
+    /// 命名空间扫描会漏，编译与既有测试也发现不了，但整体排除 WebAPI 目录后它会立刻变成硬依赖。
+    /// <para>清单只列 WebAPI 独有的概念词，并按词边界精确匹配；<c>Client</c>、<c>Error</c>、<c>Credential</c> 这类
+    /// 中性同形词不列，避免误伤内核自己的类型。注释与字符串字面量里的说明文字不计。</para>
     /// </summary>
     [Fact]
     public void CoreDoesNotCarryWebApiOnlyConcepts()
@@ -61,24 +71,18 @@ public class WebApiRemovabilityTests
                 continue;
             }
 
-            foreach (var line in File.ReadLines(file))
+            foreach (var line in EnumerateCodeLines(file))
             {
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'))
+                if (WebApiConcept.IsMatch(line))
                 {
-                    continue;
-                }
-
-                if (DeclarativeIdentifier.IsMatch(trimmed) || ApiClientIdentifier.IsMatch(trimmed))
-                {
-                    offenders.Add($"{relative}: {trimmed}");
+                    offenders.Add($"{relative}: {line}");
                 }
             }
         }
 
         Assert.True(
             offenders.Count == 0,
-            "核心代码不得出现 WebAPI 专属标识符（Declarative* / ApiClient）：" + Environment.NewLine
+            "核心代码不得出现 WebAPI 专属概念词（" + WebApiConceptOnList + "）：" + Environment.NewLine
                 + string.Join(Environment.NewLine, offenders));
     }
 
@@ -87,36 +91,120 @@ public class WebApiRemovabilityTests
     public void CoreConfigSurfaceHasNoDeclarativeMembers()
     {
         var offenders = typeof(AxiosNet.AxiosConfig)
-            .GetMembers(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Select(member => member.Name)
-            .Where(name => DeclarativeIdentifier.IsMatch(name) || ApiClientIdentifier.IsMatch(name))
+            .Where(name => WebApiConcept.IsMatch(name))
             .ToList();
 
         Assert.True(offenders.Count == 0, "AxiosConfig 不得承载 WebAPI 专属语义：" + string.Join("、", offenders));
     }
 
-    private static readonly Regex DeclarativeIdentifier = new(@"\bDeclarative\w*", RegexOptions.CultureInvariant);
-    private static readonly Regex ApiClientIdentifier = new(@"\bApiClient\b", RegexOptions.CultureInvariant);
+    /// <summary>
+    /// 项目依赖方向：核心 csproj 不得引用 WebAPI 项目，也不得按文件把 WebAPI 源码编进核心程序集；
+    /// 同时必须保留 <c>AxiosNetOmitWebApi</c> 开关与 <c>&lt;Compile Remove="WebAPI/**/*.cs"&gt;</c>，
+    /// 否则「WebAPI 可整体删除」就失去可执行的实证入口。
+    /// </summary>
+    [Fact]
+    public void CoreProjectKeepsOmitWebApiSwitchAndNoWebApiReference()
+    {
+        var csprojPath = Path.Combine(RepositoryRoot(), "src", "AxiosNet", "AxiosNet.csproj");
+        Assert.True(File.Exists(csprojPath), $"找不到核心项目文件：{csprojPath}");
 
-    /// <summary>代码行（去掉注释）里出现 <c>AxiosNet.WebAPI</c> 即算引用；注释里的说明文字不算。</summary>
+        var text = File.ReadAllText(csprojPath);
+        var projectReferences = Regex
+            .Matches(text, @"<ProjectReference\s+[^>]*Include\s*=\s*""([^""]+)""", RegexOptions.IgnoreCase)
+            .Select(match => match.Groups[1].Value)
+            .ToList();
+        var compileIncludes = Regex
+            .Matches(text, @"<Compile\s+[^>]*Include\s*=\s*""([^""]+)""", RegexOptions.IgnoreCase)
+            .Select(match => match.Groups[1].Value)
+            .ToList();
+
+        Assert.DoesNotContain(projectReferences, path => path.Contains("WebAPI", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(compileIncludes, path => path.Contains("WebAPI", StringComparison.OrdinalIgnoreCase));
+
+        // 排除开关必须存在，且指向 WebAPI 源码目录（属性名变化时这条会红，提醒同步 eng 脚本）。
+        Assert.Contains("AxiosNetOmitWebApi", text, StringComparison.Ordinal);
+        Assert.Matches(@"Compile\s+Remove\s*=\s*""WebAPI/\*\*/\*\.cs""", text.Replace("\\", "/"));
+    }
+
+    // WebAPI 概念清单：整词 + 可选后缀（类型族），避免「ApiErrorContext」这类派生拼写漏网。
+    private static readonly Regex WebApiConcept = new(
+        @"\b(ApiClient|Declarative\w*|ApiCredential\w*|ApiError\w*|ApiInterfaceInvocation\w*|AllowAnonymous\w*|BindingPlan\w*)\b",
+        RegexOptions.CultureInvariant);
+
+    private const string WebApiConceptOnList =
+        "ApiClient / Declarative* / ApiCredential* / ApiError* / ApiInterfaceInvocation* / AllowAnonymous* / BindingPlan*";
+
+    /// <summary>代码行（去掉注释与字符串字面量）里出现 <c>AxiosNet.WebAPI</c> 即算引用。</summary>
     private static bool ReferencesWebApi(string file)
     {
-        foreach (var line in File.ReadLines(file))
+        foreach (var line in EnumerateCodeLines(file))
         {
-            var trimmed = line.TrimStart();
-            if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'))
-            {
-                continue;
-            }
-
-            if (trimmed.Contains("AxiosNet.WebAPI", StringComparison.Ordinal)
-                || WebApiTypeReference.IsMatch(trimmed))
+            if (line.Contains("AxiosNet.WebAPI", StringComparison.Ordinal)
+                || WebApiTypeReference.IsMatch(line))
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 枚举「代码部分」：跳过 <c>//</c> 与 <c>&lt;summary&gt;</c> 注释行，并去掉双引号内的字面量，
+    /// 免得错误文案里出现的概念词被误判（字符串不构成对扩展的类型依赖）。
+    /// </summary>
+    private static IEnumerable<string> EnumerateCodeLines(string file)
+    {
+        foreach (var line in File.ReadLines(file))
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith("//", StringComparison.Ordinal)
+                || trimmed.StartsWith('*')
+                || trimmed.StartsWith("///", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            yield return StripStringLiterals(line);
+        }
+    }
+
+    /// <summary>把 <c>"..."</c> 与 <c>$"..."</c> 的内容换成空串；转义引号 <c>\"</c> 不截断。</summary>
+    private static string StripStringLiterals(string line)
+    {
+        var builder = new System.Text.StringBuilder(line.Length);
+        var inString = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var current = line[i];
+            if (inString)
+            {
+                if (current == '\\' && i + 1 < line.Length)
+                {
+                    i++;
+                    continue;
+                }
+
+                if (current == '"')
+                {
+                    inString = false;
+                }
+
+                continue;
+            }
+
+            if (current == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            builder.Append(current);
+        }
+
+        return builder.ToString();
     }
 
     private static IEnumerable<string> EnumerateSources(string root)

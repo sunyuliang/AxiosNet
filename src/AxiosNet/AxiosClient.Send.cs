@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.CompilerServices;
@@ -82,7 +82,7 @@ public sealed partial class AxiosClient
             {
                 if (TotalTimeoutBudget.IsExhausted(remaining))
                 {
-                    throw AxiosException.TotalTimeoutExceeded(config, request, ctx.AttemptNumber, config.TotalTimeout);
+                    throw AxiosException.TotalTimeoutExceeded(config, request, ctx.AttemptNumber, config.TotalTimeoutValue);
                 }
 
                 if (timeout <= TimeSpan.Zero || remaining < timeout)
@@ -150,7 +150,7 @@ public sealed partial class AxiosClient
             using var budget = AttemptBudget.Start(ctx, request);
 
             // 阶段 3 前：发送前钩子 —— 每次尝试一次，失败时不占连接；钩子里抛的取消按本次尝试的预算归属。
-            if (config.CallbacksOrNull?.OnSendingRequest is { } onSendingRequest)
+            if (config.ObservabilityOrNull?.OnSendingRequest is { } onSendingRequest)
             {
                 // 模板会被后续重试 / 换端点 / 对冲反复复制（且第一次尝试就是模板本身），
                 // 钩子的改写因此落在独占副本上：一次发送一份头，重试各自签名不会互相污染。
@@ -176,7 +176,7 @@ public sealed partial class AxiosClient
                 catch (Exception ex) when (ex is not AxiosException)
                 {
                     throw AxiosException.CallbackFailed(
-                        config, request, nameof(AxiosConfig.CallbackSettings.OnSendingRequest), ex, upload: true);
+                        config, request, nameof(AxiosConfig.ObservabilitySettings.OnSendingRequest), ex, upload: true);
                 }
 
                 // 模板的长度上限检查在钩子之前：钩子把正文换得更大时，这里对已知长度再判一次。
@@ -290,10 +290,10 @@ public sealed partial class AxiosClient
         // 注入 Handler：固定 HttpClient，没有租约要归还。传输档属于连接层的选择，Handler 模式下无从生效。
         if (_customClient is { } custom)
         {
-            if (!string.IsNullOrEmpty(ctx.Config.TransportOrNull))
+            if (!string.IsNullOrEmpty(ctx.Config.ProfileOrNull))
             {
                 throw AxiosException.InvalidOption(
-                    $"注入自定义 Handler 时不走连接池，Connection.Transport（'{ctx.Config.TransportOrNull}'）无法生效："
+                    $"注入自定义 Handler 时不走连接池，Connection.Profile（'{ctx.Config.ProfileOrNull}'）无法生效："
                     + "需要多出口请改用 ConnectionPoolOptions.AddTransport 配合池，或在 Handler 自己里选路。",
                     ctx.Config);
             }
@@ -374,7 +374,7 @@ public sealed partial class AxiosClient
     {
         try
         {
-            var validateStatus = ctx.Config.CallbacksOrNull?.ValidateStatus ?? DefaultValidateStatus;
+            var validateStatus = ctx.Config.ValidateStatus ?? DefaultValidateStatus;
             var statusAccepted = validateStatus((int)responseMessage.StatusCode);
 
             var response = await ResponseReader.ReadAsync(
@@ -478,7 +478,7 @@ public sealed partial class AxiosClient
             // 解码必须在 finally 归还缓冲之前完成：归还后该数组可能立刻被别的请求租走并覆写。
             return total == 0
                 ? null
-                : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.ResponseEncoding);
+                : ResponseTextDecoder.Decode(buffer.AsSpan(0, total), config.Response?.CharSet, config.SerializationOrNull?.TextEncoding);
         }
         finally
         {

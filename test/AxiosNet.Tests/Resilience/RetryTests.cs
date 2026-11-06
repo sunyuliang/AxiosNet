@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
@@ -34,7 +34,12 @@ public sealed class RetryTests
     public async Task PolicyWithZeroRetries_DoesNotRetry()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 503));
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(0) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(0) }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -53,7 +58,12 @@ public sealed class RetryTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(3) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            });
 
         var response = await client.GetAsync(server.Url + "x");
 
@@ -65,7 +75,12 @@ public sealed class RetryTests
     public async Task ServerError_StopsAtMaxRetries_AndThrowsLastError()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -78,7 +93,12 @@ public sealed class RetryTests
     public async Task NotFound_IsNotRetried()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "nope" }, statusCode: 404));
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(3) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -97,7 +117,12 @@ public sealed class RetryTests
             ? TestJson.Response(new { error = "retry me" }, statusCode: status)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         var response = await client.GetAsync(server.Url + "x");
 
@@ -109,7 +134,12 @@ public sealed class RetryTests
     public async Task Post_IsNotRetriedByDefault()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(3) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(server.Url + "x", new { id = 1 }));
 
@@ -127,8 +157,12 @@ public sealed class RetryTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
 
         var response = await client.PostAsync(server.Url + "x", new { id = 1 });
 
@@ -144,7 +178,7 @@ public sealed class RetryTests
 
         var response = await client.GetAsync(
             "http://retry.local/x",
-            c => c.Retry.Policy = Immediate(2));
+            c => c.Resilience.Retry.Policy = Immediate(2));
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, handler.Calls);
@@ -159,7 +193,7 @@ public sealed class RetryTests
         var response = await client.GetAsync("http://retry.local/x", c =>
         {
             c.Timeout = TimeSpan.FromMilliseconds(100);
-            c.Retry.Policy = Immediate(2);
+            c.Resilience.Retry.Policy = Immediate(2);
         });
 
         Assert.Equal(200, response.Status);
@@ -183,7 +217,12 @@ public sealed class RetryTests
         };
 
         using var client = new AxiosClient(
-            new AxiosConfig { Retry = { Policy = Immediate(1) } },
+            new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(1) }
+            }
+            },
             pipeline: AxiosAttemptPipeline.Default.Append(rejectOnRetry));
 
         var exception = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -205,8 +244,11 @@ public sealed class RetryTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(120)) }
-        });
+            Resilience =
+            {
+                Retry = { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(120)) }
+            }
+            });
 
         var stopwatch = Stopwatch.StartNew();
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
@@ -235,8 +277,12 @@ public sealed class RetryTests
         // POST 默认不重试（非幂等）：这里要验证的是「正文被完整重放」，显式打开
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
 
         await client.PostAsync(server.Url + "x", new { name = "bob" });
 
@@ -255,8 +301,12 @@ public sealed class RetryTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
         using var body = new MemoryStream(Encoding.UTF8.GetBytes("streamed-payload"));
 
         await client.PostAsync(server.Url + "x", body, c => c.ContentType = "text/plain");
@@ -272,8 +322,12 @@ public sealed class RetryTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
         using var body = new NonSeekableStream(Encoding.UTF8.GetBytes("streamed-payload"));
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
@@ -291,14 +345,17 @@ public sealed class RetryTests
         MemoryStream? body = new MemoryStream(Encoding.UTF8.GetBytes("streamed-payload"));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true },
+                AllowUnsafeRetry = true,
+                Retry = {
+                    Policy = new RetryPolicy(2, TimeSpan.Zero),
 
-                // 模拟「调用方在两次尝试之间把流关了」：正文从此不可重放
-                OnRetry = _ => body.Dispose()
+                    // 模拟「调用方在两次尝试之间把流关了」：正文从此不可重放
+                    OnRetry = _ => body.Dispose()
+                }
             }
-        });
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.PostAsync(server.Url + "x", body, c => c.ContentType = "text/plain"));
@@ -321,12 +378,14 @@ public sealed class RetryTests
         var observed = new List<AxiosRetryContext>();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(20)),
-                OnRetry = observed.Add
+                Retry = {
+                    Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(20)),
+                    OnRetry = observed.Add
+                }
             }
-        });
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -350,8 +409,11 @@ public sealed class RetryTests
         var observed = new List<AxiosRetryContext>();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry = { Policy = Immediate(1), OnRetry = observed.Add }
-        });
+            Resilience =
+            {
+                Retry = { Policy = Immediate(1), OnRetry = observed.Add }
+            }
+            });
 
         // 必须走泛型入口：它把同一个响应对象交给后续尝试就地填充，才存在「回调外读到下一次的值」的问题
         var response = await client.GetAsync<Dictionary<string, object>>(server.Url + "x");
@@ -369,12 +431,14 @@ public sealed class RetryTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = Immediate(3),
-                OnRetry = _ => throw new InvalidOperationException("回调写错了")
+                Retry = {
+                    Policy = Immediate(3),
+                    OnRetry = _ => throw new InvalidOperationException("回调写错了")
+                }
             }
-        });
+            });
 
         // 回调是调用方代码：它抛出的异常原样抛出，不该被当成「本次尝试失败」再重试三次。
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(server.Url + "x"));
@@ -391,7 +455,12 @@ public sealed class RetryTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = new OnlyOddAttemptsPolicy() } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = new OnlyOddAttemptsPolicy() }
+            }
+            });
 
         var response = await client.GetAsync(server.Url + "x");
 
@@ -404,10 +473,15 @@ public sealed class RetryTests
     public async Task PerRequest_CanDisableInstanceDefaultRetry()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { error = "boom" }, statusCode: 500));
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(3) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Retry.Policy = null));
+            client.GetAsync(server.Url + "x", c => c.Resilience.Retry.Policy = null));
 
         Assert.Single(server.Received);
     }
@@ -422,7 +496,7 @@ public sealed class RetryTests
 
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url + "x", c => c.Retry.Policy = Immediate(1));
+        var response = await client.GetAsync(server.Url + "x", c => c.Resilience.Retry.Policy = Immediate(1));
 
         Assert.Equal(200, response.Status);
         Assert.Equal(2, server.Received.Count);
@@ -436,12 +510,14 @@ public sealed class RetryTests
         using var cts = new CancellationTokenSource();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = Immediate(3),
-                OnRetry = _ => cts.Cancel()
+                Retry = {
+                    Policy = Immediate(3),
+                    OnRetry = _ => cts.Cancel()
+                }
             }
-        });
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
             client.GetAsync(server.Url + "x", c => c.CancellationToken = cts.Token));
@@ -458,7 +534,12 @@ public sealed class RetryTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(3) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(3) }
+            }
+            });
 
         var interceptorCalls = 0;
         client.Interceptors.Response.Use(response =>
@@ -478,7 +559,12 @@ public sealed class RetryTests
     public async Task NegativeMaxRetries_ThrowsBadOption()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(-1) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(-1) }
+            }
+            });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 
@@ -498,7 +584,12 @@ public sealed class RetryTests
             ? TestJson.Response(new { error = "boom" }, statusCode: 500)
             : TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(new AxiosConfig { Retry = { Policy = Immediate(2) } });
+        using var client = new AxiosClient(new AxiosConfig {
+            Resilience =
+            {
+                Retry = { Policy = Immediate(2) }
+            }
+            });
 
         var response = await client.PutAsync(server.Url + "x", new { id = 1 });
 
@@ -514,11 +605,13 @@ public sealed class RetryTests
         // 只对 429 重试：500 虽属默认可重试范围，但附加条件否决
         using var client = new AxiosClient(new AxiosConfig
         {
-            Retry =
+            Resilience =
             {
-                Policy = new RetryPolicy(3, TimeSpan.Zero) { RetryWhen = context => context.StatusCode == 429 }
+                Retry = {
+                    Policy = new RetryPolicy(3, TimeSpan.Zero) { RetryWhen = context => context.StatusCode == 429 }
+                }
             }
-        });
+            });
 
         await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
 

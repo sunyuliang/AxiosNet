@@ -194,8 +194,11 @@ public sealed class UnauthorizedRetryTests
         using var axios = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Idempotency = { Enabled = true }
-        });
+            Resilience =
+            {
+                Idempotency = { Enabled = true }
+            }
+            });
         using var client = new ApiClient(axios, ownsAxiosClient: false) { CredentialProvider = tokens };
 
         await client.RequestAsync(new SecureRequest());

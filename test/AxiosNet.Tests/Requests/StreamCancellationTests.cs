@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;
@@ -280,7 +280,7 @@ public sealed class StreamCancellationTests
             c.Timeout = ShortTimeout;
             // 1KB/s：读完 64KB 需要 64 秒，必须被 250ms 的超时打断。
             // 速率压得足够低，才能把「被打断」和「限速自己等完」清楚地区分开（后者远大于 BlockingReadBudget）。
-            c.Limits.MaxRate = 1024;
+            c.Transport.MaxRate = 1024;
         });
         await using var stream = response.Data!;
 
@@ -344,7 +344,7 @@ public sealed class StreamCancellationTests
         {
             // 256KB @ 8KB/s ≈ 32 秒才能传完，必须被 250ms 的超时打断。
             // 速率压得足够低，才能把「被打断」与「限速自己等完」清楚地区分开（后者远大于 Budget）。
-            c.Limits.MaxRate = 8 * 1024;
+            c.Transport.MaxRate = 8 * 1024;
             c.Timeout = ShortTimeout;
         }));
         clock.Stop();
@@ -361,7 +361,7 @@ public sealed class StreamCancellationTests
         using var cts = new CancellationTokenSource();
 
         var payload = new byte[256 * 1024];
-        var upload = client.PostAsync(server.Url + "upload", payload, c => c.Limits.MaxRate = 64 * 1024, cts.Token);
+        var upload = client.PostAsync(server.Url + "upload", payload, c => c.Transport.MaxRate = 64 * 1024, cts.Token);
 
         await Task.Delay(150);
         cts.Cancel();
@@ -388,7 +388,7 @@ public sealed class StreamCancellationTests
 
         // 取消点必须是「正文确实开始写了」，而不是固定 150ms：CI 上建连 + 序列化启动可能超过 150ms，
         // 那样取消落在正文之前，进度回调一次都不会触发 —— 断言失败于机器调度，而不是同步桥的实现。
-        var upload = client.PostAsync(server.Url + "upload", content, c => c.Callbacks.OnUploadProgress = e =>
+        var upload = client.PostAsync(server.Url + "upload", content, c => c.Observability.OnUploadProgress = e =>
         {
             lock (events)
             {

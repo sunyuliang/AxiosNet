@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;

@@ -8,11 +8,10 @@ namespace AxiosNet;
 /// 请求体 / 响应体的内容格式入口，内置 JSON（默认）与 XML 两个实现。
 /// </summary>
 /// <remarks>
-/// 选择优先级：单次请求 / 实例的 <see cref="AxiosConfig.SerializationSettings.ContentSerializer"/>
-/// → 实例注册表（<see cref="AxiosClient.ContentSerializers"/>）→ 全局 <see cref="Serializer"/>
-/// → 按媒体类型查 <see cref="Register"/> → 内置 JSON。
+/// 选择优先级固定为三层：实例注册表（<see cref="AxiosClient.BodySerializers"/>，先按媒体类型、后表内默认项）
+/// → 进程默认（<see cref="Serializer"/> 与 <see cref="Register"/>）→ 内置 JSON。
 /// 请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
-/// <para>全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosClient.ContentSerializers"/>。</para>
+/// <para>全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosClient.BodySerializers"/>。</para>
 /// </remarks>
 public static class AxiosContent
 {
@@ -68,16 +67,14 @@ public static class AxiosContent
         return true;
     }
 
-    /// <summary>取本次请求实际生效的序列化器：单次/实例注入 → 实例注册表 → 全局注入 → 全局注册表 → 内置 JSON。</summary>
+    /// <summary>取本次请求实际生效的序列化器：实例注册表（类型优先、默认项次之）→ 进程默认 → 内置 JSON。</summary>
     /// <param name="config">请求配置（读取单次/实例注入与实例注册表）。</param>
     /// <param name="mediaType">请求的 <see cref="AxiosConfig.ContentType"/> 或响应的 <c>Content-Type</c>。</param>
     internal static IContentSerializer Get(AxiosConfig config, string? mediaType)
     {
         var serialization = config.SerializationOrNull;
 
-        return serialization?.ContentSerializer
-            // 实例登记比全局兜底更具体：显式登记了某格式就按格式走，不受全局 Serializer 压住。
-            ?? serialization?.ContentSerializers?.Lookup(mediaType)
+        return serialization?.BodySerializers?.Lookup(mediaType)
             ?? Volatile.Read(ref _serializer)
             ?? Lookup(mediaType)
             ?? SystemTextJsonSerializer.Instance;

@@ -5,8 +5,7 @@ namespace AxiosNet.Metadata;
 /// <summary>成员级值格式化：格式串（<see cref="IFormattable"/>）或格式化函数。</summary>
 /// <remarks>
 /// 只作用于库自己把值转成线上文本的通道（路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文），
-/// 不进入结构化正文内部——那里由序列化器负责（要让 JSON 文档内部也生效，用可选的
-/// <c>AxiosNet.WebAPI.Serialization.AxiosJsonFormat.ApplyTo</c> 桥接）。
+/// 不进入结构化正文内部——那里由序列化器负责。
 /// </remarks>
 public sealed class ValueFormat
 {

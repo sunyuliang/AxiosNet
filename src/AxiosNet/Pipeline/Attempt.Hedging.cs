@@ -41,14 +41,14 @@ public static partial class Attempt
             return false;
         }
 
-        // 非幂等方法默认不对冲。
-        if (!hedging.HedgeNonIdempotentMethods && !RetryPolicy.IsIdempotent(ctx.Config.Method))
+        // 非幂等方法默认不对冲；放行开关由配置级 Resilience.AllowUnsafeRetry 统一提供。
+        if (!ctx.Config.AllowUnsafeRetry && !RetryPolicy.IsIdempotent(ctx.Config.Method))
         {
             return false;
         }
 
         // 响应侧带共享状态（下载进度回调 / 限速器）不对冲。
-        if (ctx.Config.CallbacksOrNull?.OnDownloadProgress is not null || ctx.Config.LimitsOrNull?.MaxRate is > 0)
+        if (ctx.Config.ObservabilityOrNull?.OnDownloadProgress is not null || ctx.Config.TransportOrNull?.MaxRate is > 0)
         {
             return false;
         }

@@ -2,7 +2,7 @@ namespace AxiosNet;
 
 public sealed partial class AxiosConfig
 {
-    /// <summary>体积、速率、在途并发上限与排队、流式分帧限制（<see cref="AxiosConfig.Limits"/>）。</summary>
+    /// <summary>体积、在途并发上限与排队、流式分帧限制（内部存储；公共入口是 <see cref="AxiosConfig.MaxResponseBytes"/> 等顶层项与 <see cref="ResilienceSettings.Concurrency"/>）。</summary>
     public sealed class LimitSettings
     {
         private long? _maxContentLength;
@@ -30,7 +30,7 @@ public sealed partial class AxiosConfig
         /// 对应 axios maxBodyLength：请求体最大字节数，<c>null</c> 不限；超出抛 <see cref="AxiosException"/>。
         /// 只对能算出长度的正文生效（JSON / 表单 / <c>byte[]</c> / 可 seek 流）；
         /// 不可 seek 流、<c>IAsyncEnumerable&lt;byte[]&gt;</c>、multipart 等未知长度正文不拦截，需要硬上限请在调用方自行限制。
-        /// 开启 <see cref="AxiosConfig.RequestCompression"/> 时按压缩后（实际发送）的字节数校验。
+        /// 开启 <see cref="AxiosConfig.Compression"/> 时按压缩后（实际发送）的字节数校验。
         /// </summary>
         public long? MaxBodyLength
         {
@@ -45,22 +45,6 @@ public sealed partial class AxiosConfig
         /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
         internal bool MaxBodyLengthSet { get; set; }
 
-        private long? _maxRate;
-
-        /// <summary>限速（字节/秒），null 不限速，同时作用于上传与下载；响应流须单线程顺序读取。</summary>
-        public long? MaxRate
-        {
-            get => _maxRate;
-            set
-            {
-                _maxRate = value;
-                MaxRateSet = true;
-            }
-        }
-
-        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-        internal bool MaxRateSet { get; set; }
-
         private int? _maxConcurrentRequests;
 
         /// <summary>
@@ -68,7 +52,7 @@ public sealed partial class AxiosConfig
         /// </summary>
         /// <remarks>
         /// 实例级配置：闸门在首个受限请求时创建并固定，之后按请求写别的值抛错；排队等待不计入
-        /// <see cref="AxiosConfig.Timeout"/>，但计入 <see cref="AxiosConfig.TotalTimeout"/>（见 <see cref="QueueTimeout"/>）。
+        /// <see cref="AxiosConfig.Timeout"/>，但计入 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>（见 <see cref="QueueTimeout"/>）。
         /// 闸门是实例级的：在拦截器 / 回调里用同一实例发子请求会抢同一批槽位，请给 <see cref="QueueTimeout"/> 设上限。
         /// </remarks>
         public int? MaxConcurrentRequests
@@ -115,7 +99,7 @@ public sealed partial class AxiosConfig
         /// <see cref="TimeSpan.Zero"/> 不排队，槽位占满时立刻失败；大于零超时抛 <c>ERR_QUEUE_TIMEOUT</c>。负值非法。
         /// </summary>
         /// <remarks>
-        /// 排队计入 <see cref="AxiosConfig.TotalTimeout"/>、不计入 <see cref="AxiosConfig.Timeout"/>；设了总预算时实际等待 =
+        /// 排队计入 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>、不计入 <see cref="AxiosConfig.Timeout"/>；设了总预算时实际等待 =
         /// <c>min(本项, 剩余预算)</c>，被总预算截断时报 <c>ECONNABORTED</c>。<c>null</c>（一直等）同样受这条约束。
         /// </remarks>
         public TimeSpan? QueueTimeout
@@ -145,7 +129,7 @@ public sealed partial class AxiosConfig
         /// <summary>
         /// 流式分帧的单帧上限（字节）：NDJSON 一行 / SSE 一帧 / JSON 数组的一个顶层元素。
         /// <c>null</c>（默认）等于 <see cref="DefaultStreamFrameLength"/>（8 MB），合法区间 1–64 MB，越界抛 <c>ERR_BAD_OPTION_VALUE</c>。
-        /// 只影响声明式客户端的 <c>RequestStreamAsync</c>。
+        /// 只影响流式响应的分帧读取。
         /// </summary>
         public int? MaxStreamFrameLength
         {
@@ -171,11 +155,6 @@ public sealed partial class AxiosConfig
             if (incoming.MaxBodyLengthSet)
             {
                 MaxBodyLength = incoming.MaxBodyLength;
-            }
-
-            if (incoming.MaxRateSet)
-            {
-                MaxRate = incoming.MaxRate;
             }
 
             // 并发上限虽属实例级，同样合并进来。

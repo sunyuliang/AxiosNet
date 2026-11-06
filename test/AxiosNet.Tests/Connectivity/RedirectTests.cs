@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -25,7 +25,7 @@ public sealed class RedirectTests
             client.RequestAsync(new AxiosConfig
             {
                 Url = "x",
-                Connection = new()
+                Transport = new()
                 {
                     MaxRedirects = 0,
                 },
@@ -42,7 +42,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 3,
             },
@@ -51,7 +51,7 @@ public sealed class RedirectTests
         var response = await client.RequestAsync(new AxiosConfig
         {
             Url = "x",
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 3,
             },
@@ -76,7 +76,7 @@ public sealed class RedirectTests
 
         // 按请求显式写 5 且与默认值相同：仍必须生效（服务端只会重定向 3 次）。
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.Connection.MaxRedirects = 5));
+            client.GetAsync("x", c => c.Transport.MaxRedirects = 5));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("MaxRedirects", ex.Message);
@@ -94,7 +94,7 @@ public sealed class RedirectTests
             poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.Connection.MaxRedirects = 5));
+            client.GetAsync("x", c => c.Transport.MaxRedirects = 5));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
@@ -127,7 +127,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient();
 
         // AxiosClient.Defaults 的 XML 文档：连接级选项构造后修改不生效，但不会有任何报错。
-        client.Defaults.Connection.MaxRedirects = 3;
+        client.Defaults.Transport.MaxRedirects = 3;
 
         var response = await client.GetAsync(server.Url + "items");
 
@@ -142,7 +142,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient();
 
         // 构造之后再改：与快捷方法入口是同一个根因（*Set 标记随 Clone 泄漏进生效配置）
-        client.Defaults.Connection.MaxRedirects = 2;
+        client.Defaults.Transport.MaxRedirects = 2;
 
         var response = await client.RequestAsync(new AxiosConfig
         {
@@ -188,7 +188,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient(
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
 
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 3);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 3);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -203,7 +203,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient(
             poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
 
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 0);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 0);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -215,7 +215,7 @@ public sealed class RedirectTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 5,
             },
@@ -223,7 +223,7 @@ public sealed class RedirectTests
 
         // 4 与生效值 5 不同：不会生效，必须响亮报错，而不是静默丢弃
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 4));
+            client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 4));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -245,7 +245,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient(
             new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     MaxRedirects = 12,
                 },
@@ -261,7 +261,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient(
             new AxiosConfig
             {
-                Connection = new()
+                Transport = new()
                 {
                     MaxRedirects = 0,
                 },
@@ -277,7 +277,7 @@ public sealed class RedirectTests
     {
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = -1,
             },
@@ -294,13 +294,13 @@ public sealed class RedirectTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 5,
             },
         });
 
-        var response = await client.GetAsync(server.Url + "x", c => c.Connection.MaxRedirects = 5);
+        var response = await client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 5);
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -312,7 +312,7 @@ public sealed class RedirectTests
         await using var server = StartRedirectServer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 0,
             },
@@ -345,7 +345,7 @@ public sealed class RedirectTests
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "redir", c => c.Connection.MaxRedirects = 0));
+            client.GetAsync(server.Url + "redir", c => c.Transport.MaxRedirects = 0));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Empty(server.Received);
@@ -416,7 +416,7 @@ public sealed class RedirectTests
         });
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url + "redir", c => c.Connection.Auth = new AxiosAuth("user", "secret"));
+        await client.GetAsync(server.Url + "redir", c => c.Transport.BasicAuth = new AxiosAuth("user", "secret"));
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(TestJson.BasicAuth("user", "secret"), server.Received[0].Headers["authorization"]);
@@ -436,7 +436,7 @@ public sealed class RedirectTests
         });
         using var client = new AxiosClient(new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
                 MaxRedirects = 0,
             },

@@ -7,7 +7,7 @@ namespace AxiosNet;
 /// </summary>
 /// <remarks>
 /// 闸门（排队 / 并发槽位）、编码、连接租约、发送、重试、熔断、遥测 span 都不参与；响应方向照常处理——
-/// 按本次 <c>dataType</c> / responseType 重新解析、跑 transformResponse、过 <see cref="AxiosConfig.CallbackSettings.ValidateStatus"/>、
+/// 按本次 <c>dataType</c> / responseType 重新解析、跑 transformResponse、过 <see cref="AxiosConfig.ValidateStatus"/>、
 /// 执行响应拦截器。唯一可辨的痕迹是 <see cref="AxiosResponse.Request"/> 为 <c>null</c>。
 /// <para><see cref="Body"/> 是原始字节，按每次调用的类型重新解析；<see cref="Data"/> 是已成型的结果，原样交付。</para>
 /// <para>本对象只描述「这一次请求」：<see cref="AxiosConfig.Clone"/> 会清空它，放在 Defaults 上不生效。</para>

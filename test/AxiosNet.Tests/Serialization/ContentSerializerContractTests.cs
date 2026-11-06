@@ -22,9 +22,13 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer },
-            Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) { RetryNonIdempotentMethods = true } }
-        });
+            Serialization = { BodySerializers = { Default = serializer } },
+            Resilience =
+            {
+                AllowUnsafeRetry = true,
+                Retry = { Policy = new RetryPolicy(2, TimeSpan.Zero) }
+            }
+            });
 
         await client.PostAsync(server.Url + "x", new Person("ada", 36));
 
@@ -51,7 +55,7 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer }
+            Serialization = { BodySerializers = { Default = serializer } }
         });
 
         var response = await client.GetAsync<Person>(server.Url + "x");
@@ -77,7 +81,7 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer }
+            Serialization = { BodySerializers = { Default = serializer } }
         });
 
         var response = await client.GetAsync<Person>(server.Url + "x");
@@ -94,7 +98,7 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer, RequestEncoding = Encoding.Latin1 }
+            Serialization = { BodySerializers = { Default = serializer }, TextEncoding = Encoding.Latin1 }
         });
 
         await client.PostAsync(
@@ -106,7 +110,7 @@ public sealed class ContentSerializerContractTests
         Assert.Equal(Encoding.Latin1.GetBytes("name=José;age=3"), received.Body);
         Assert.Contains((byte)0xE9, received.Body);
 
-        // 显式 RequestEncoding 会把 charset 写进请求头，与实际正文编码一致。
+        // 显式 TextEncoding 会把 charset 写进请求头，与实际正文编码一致。
         Assert.Equal("text/x-contract; charset=iso-8859-1", received.Headers["Content-Type"]);
         Assert.Equal(1, serializer.SerializeCalls);
     }
@@ -137,14 +141,16 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer },
-            Hedging =
+            Serialization = { BodySerializers = { Default = serializer } },
+            Resilience =
             {
-                MaxHedges = 1,
-                Delay = TimeSpan.Zero,
-                HedgeNonIdempotentMethods = true
+                AllowUnsafeRetry = true,
+                Hedging = {
+                    MaxHedges = 1,
+                    Delay = TimeSpan.Zero
+                }
             }
-        });
+            });
 
         var response = await client
             .PostAsync<Person>(server.Url + "x", new Person("ada", 36))
@@ -166,7 +172,7 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer { FailSerialize = true };
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer }
+            Serialization = { BodySerializers = { Default = serializer } }
         });
 
         var error = await Assert.ThrowsAsync<AxiosException>(
@@ -187,7 +193,7 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer { FailDeserialize = true };
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer }
+            Serialization = { BodySerializers = { Default = serializer } }
         });
 
         var error = await Assert.ThrowsAsync<AxiosException>(
@@ -208,7 +214,7 @@ public sealed class ContentSerializerContractTests
         var serializer = new ContractSerializer();
         using var client = new AxiosClient(new AxiosConfig
         {
-            Serialization = { ContentSerializer = serializer }
+            Serialization = { BodySerializers = { Default = serializer } }
         });
 
         var response = await client.GetAsync<Person>(server.Url + "x");
@@ -313,7 +319,7 @@ public sealed class ContentSerializerContractTests
         {
             lock (_gate)
             {
-                _sameSerializer.Add(ReferenceEquals(config.Serialization.ContentSerializer, this));
+                _sameSerializer.Add(ReferenceEquals(config.Serialization.BodySerializers.Default, this));
             }
         }
     }

@@ -1,4 +1,4 @@
-﻿
+
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -67,7 +67,7 @@ public sealed class ErrorModelTests
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.PostAsync(
             server.Url + "x",
             new { a = 1 },
-            c => c.TransformRequest.Add((_, _) => throw new FormatException("bad transform"))));
+            c => c.Serialization.TransformRequest.Add((_, _) => throw new FormatException("bad transform"))));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.IsType<FormatException>(ex.Cause);
@@ -146,7 +146,7 @@ public sealed class ErrorModelTests
         using var client = new AxiosClient();
 
         var calls = 0;
-        await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = _ =>
+        await client.GetAsync(server.Url, c => c.ValidateStatus = _ =>
         {
             calls++;
             return true;
@@ -163,7 +163,7 @@ public sealed class ErrorModelTests
 
         var calls = 0;
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
-            c.Callbacks.ValidateStatus = _ =>
+            c.ValidateStatus = _ =>
             {
                 calls++;
                 return false;
@@ -263,7 +263,7 @@ public sealed class ErrorModelTests
         await using var server = TestHttpServer.Start(_ => new TestResponse(503));
         using var client = new AxiosClient();
 
-        var response = await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = _ => true);
+        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = _ => true);
 
         Assert.Equal(503, response.Status);
     }
@@ -275,11 +275,11 @@ public sealed class ErrorModelTests
         using var client = new AxiosClient();
 
         // 只接受 404
-        var response = await client.GetAsync(server.Url, c => c.Callbacks.ValidateStatus = status => status == 404);
+        var response = await client.GetAsync(server.Url, c => c.ValidateStatus = status => status == 404);
         Assert.Equal(404, response.Status);
 
         await using var server2 = TestHttpServer.Start(_ => new TestResponse(400));
-        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server2.Url, c => c.Callbacks.ValidateStatus = status => status == 404));
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server2.Url, c => c.ValidateStatus = status => status == 404));
     }
 
     [Fact]
@@ -395,7 +395,7 @@ public sealed class ErrorModelTests
             c =>
             {
                 c.Timeout = TimeSpan.FromMilliseconds(100);
-                c.Callbacks.TimeoutMessage = "上游响应超时，请稍后重试";
+                c.Observability.TimeoutMessage = "上游响应超时，请稍后重试";
             }));
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
@@ -548,9 +548,9 @@ public sealed class ErrorModelTests
     {
         var defaults = new AxiosConfig
         {
-            Connection = new()
+            Transport = new()
             {
-                PoolOptions = new ConnectionPoolOptions { MaxConnectionsPerServer = 0 },
+                Pool = new ConnectionPoolOptions { MaxConnectionsPerServer = 0 },
             },
         };
 

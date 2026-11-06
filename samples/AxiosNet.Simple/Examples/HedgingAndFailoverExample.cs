@@ -24,8 +24,11 @@ public sealed class HedgingAndFailoverExample : IExample
         // ---- 1) 并发对冲：首发之后 100ms 再放一条同样的请求 ----
         var hedged = _hedged ??= new AxiosClient(new AxiosConfig
         {
-            Hedging = { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(100) }
-        });
+            Resilience =
+            {
+                Hedging = { MaxHedges = 1, Delay = TimeSpan.FromMilliseconds(100) }
+            }
+            });
 
         var tag = Guid.NewGuid().ToString("N")[..8];
         var stopwatch = Stopwatch.StartNew();
@@ -41,7 +44,7 @@ public sealed class HedgingAndFailoverExample : IExample
         {
             await hedged.GetAsync(
                 $"{context.BaseUrl}flaky?fail=1&tag={tag}-single",
-                c => c.Hedging.MaxHedges = 0);
+                c => c.Resilience.Hedging.MaxHedges = 0);
         }
         catch (AxiosException ex)
         {
@@ -51,8 +54,11 @@ public sealed class HedgingAndFailoverExample : IExample
         // ---- 2) 备用端点：主端点连不上时换到演示服务器的同路径 ----
         var failover = _failover ??= new AxiosClient(new AxiosConfig
         {
-            Failover = { Endpoints = new[] { new Uri(context.BaseUrl) } }
-        });
+            Resilience =
+            {
+                Failover = { Endpoints = new[] { new Uri(context.BaseUrl) } }
+            }
+            });
 
         var mirrored = await failover.GetAsync("http://127.0.0.1:1/users/1");
         Console.WriteLine(

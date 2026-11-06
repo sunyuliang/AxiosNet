@@ -1,6 +1,6 @@
 using System.Collections;
 using System.Text.Json;
-using AxiosNet.Internal;
+using AxiosNet.Metadata;
 
 namespace AxiosNet.WebAPI.Internal;
 
@@ -29,7 +29,7 @@ internal static class MultipartValues
         catch
         {
             // 迭代器抛错：已产出的项就地释放后再上抛。
-            MultipartOwnership.DisposeOwned(materialized);
+            FormData.DisposeOwnedValues(materialized);
             throw;
         }
 

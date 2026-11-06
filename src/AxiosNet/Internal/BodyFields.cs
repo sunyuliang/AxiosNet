@@ -2,7 +2,7 @@ namespace AxiosNet.Internal;
 
 /// <summary>
 /// 请求体展平（表单 / multipart）共用的字段名拼装：默认 <c>prefix[key]</c>，可被
-/// <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖。
+/// <see cref="AxiosConfig.SerializationSettings.FormFieldName"/> 覆盖。
 /// 值分类归 <see cref="ScalarTypes"/>，值 → 文本归 <see cref="ValueText"/>，本类不持有这两套规则。
 /// </summary>
 /// <remarks>
@@ -11,7 +11,7 @@ namespace AxiosNet.Internal;
 /// </remarks>
 internal static class BodyFields
 {
-    /// <summary>字段名生成：默认 <c>prefix[key]</c>，可通过 <see cref="AxiosConfig.SerializationSettings.FormFieldNameSelector"/> 覆盖。</summary>
+    /// <summary>字段名生成：默认 <c>prefix[key]</c>，可通过 <see cref="AxiosConfig.SerializationSettings.FormFieldName"/> 覆盖。</summary>
     public static string CombineName(Func<string?, string, string>? selector, string? prefix, string name)
         => selector is not null
             ? selector(prefix, name)

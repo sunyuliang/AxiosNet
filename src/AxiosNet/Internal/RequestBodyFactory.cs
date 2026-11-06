@@ -26,7 +26,7 @@ internal static class RequestBodyFactory
     public static HttpContent? Create(object? data, AxiosConfig config)
     {
         // 正文编码：默认 UTF-8；charset 只在显式设置 RequestEncoding 时写入。
-        var requestEncoding = config.SerializationOrNull?.RequestEncoding;
+        var requestEncoding = config.SerializationOrNull?.TextEncoding;
         var encoding = requestEncoding ?? Encoding.UTF8;
         var appendCharset = requestEncoding is not null;
         var mediaType = config.ContentType;
@@ -62,7 +62,7 @@ internal static class RequestBodyFactory
         }
 
         // 请求体压缩只覆盖库自己缓冲出来的正文：流式 / 自带内容没有可压缩的完整字节。
-        if (data is not null && RequestCompression.IsEnabled(config))
+        if (data is not null && Compression.IsEnabled(config))
         {
             EnsureCompressible(data, mediaType, config);
         }
@@ -155,7 +155,7 @@ internal static class RequestBodyFactory
     private static HttpContent CreateText(string text, string mediaType, Encoding encoding, bool appendCharset, AxiosConfig config)
     {
         // 用 ByteArrayContent 保证携带 Content-Length。
-        var content = RequestCompression.WrapBytes(encoding.GetBytes(text), config);
+        var content = Compression.WrapBytes(encoding.GetBytes(text), config);
         RequestContentType.Set(content, RequestContentType.Compose(mediaType, encoding, appendCharset), config);
         return content;
     }
@@ -163,7 +163,7 @@ internal static class RequestBodyFactory
     /// <summary>字节正文：按配置压缩后挂上 <c>Content-Type</c>；字节数组自带长度，能带 <c>Content-Length</c>。</summary>
     private static HttpContent CreateBinary(byte[] bytes, string mediaType, AxiosConfig config)
     {
-        var content = RequestCompression.WrapBytes(bytes, config);
+        var content = Compression.WrapBytes(bytes, config);
         RequestContentType.Set(content, mediaType, config);
         return content;
     }
@@ -172,9 +172,9 @@ internal static class RequestBodyFactory
     private static HttpContent CreateBinary(ReadOnlyMemory<byte> memory, string mediaType, AxiosConfig config)
     {
         HttpContent content;
-        if (RequestCompression.IsEnabled(config))
+        if (Compression.IsEnabled(config))
         {
-            content = RequestCompression.WrapBytes(memory.ToArray(), config);
+            content = Compression.WrapBytes(memory.ToArray(), config);
         }
         else
         {
@@ -212,8 +212,8 @@ internal static class RequestBodyFactory
             mediaType = declared.Trim();
         }
 
-        // 声明成员带 [Format] 的裸标量：文本已由绑定层产出，媒体类型与下面的标量分支完全一致。
-        if (data is FormattedScalarBody formatted)
+        // 已定型的裸标量：文本由调用方产出，媒体类型与下面的标量分支完全一致。
+        if (data is PreformattedValue formatted)
         {
             var formattedContent = CreateText(formatted.Text, mediaType, encoding, appendCharset, config);
             ValidateDeclaredCharset(formattedContent, config, encoding);
@@ -223,9 +223,9 @@ internal static class RequestBodyFactory
         // 基础类型不经过序列化器，直接取文本。
         if (ScalarTypes.IsScalarType(type))
         {
-            // 实例钩子与声明式同一条规则（钩子 > 通道默认）：绑定层已定型的正文走上面的 FormattedScalarBody 分支，不会再被问一次。
+            // 标量正文同一条规则（钩子 > 通道默认）：已定型的正文走上面的 PreformattedValue 分支，不会再被问一次。
             var scalar = CreateText(
-                ValueText.Format(data, ValueTextChannel.ScalarBody, memberFormat: null, config.ValueFormatter)!,
+                ValueText.Format(data, ValueTextChannel.ScalarBody, memberFormat: null, config.SerializationOrNull?.ValueText)!,
                 mediaType,
                 encoding,
                 appendCharset,
@@ -262,37 +262,37 @@ internal static class RequestBodyFactory
             throw AxiosException.InvalidOption(
                 $"Content-Type 声明 charset={declared.WebName}，但请求体实际按 {bodyEncoding.WebName} 编码："
                 + "两者不一致会让服务端按头解出乱码。请让序列化器自报 / 写入与正文一致的 charset，"
-                + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.RequestEncoding。", config);
+                + "或改用 AxiosConfig.ContentType（它的 charset 会驱动正文编码）与 Serialization.TextEncoding。", config);
         }
     }
 
     /// <summary>开启请求体压缩时，拒绝没有完整字节可压的正文形态。</summary>
     private static void EnsureCompressible(object data, string mediaType, AxiosConfig config)
     {
-        const string Hint = "请先压缩好再传入，或改用对象 / byte[] 让库压缩，或去掉 RequestCompression。";
+        const string Hint = "请先压缩好再传入，或改用对象 / byte[] 让库压缩，或去掉 Compression。";
 
         if (data is Stream)
         {
             throw AxiosException.InvalidOption(
-                "RequestCompression 不压缩 Stream 正文：流式正文没有完整长度，压缩需要先缓冲整个内容。" + Hint, config);
+                "Compression 不压缩 Stream 正文：流式正文没有完整长度，压缩需要先缓冲整个内容。" + Hint, config);
         }
 
         if (data is IAsyncEnumerable<byte[]> or IAsyncEnumerable<ReadOnlyMemory<byte>>)
         {
             throw AxiosException.InvalidOption(
-                "RequestCompression 不压缩流式正文（IAsyncEnumerable 字节块）：内容按块写出、长度未知。" + Hint, config);
+                "Compression 不压缩流式正文（IAsyncEnumerable 字节块）：内容按块写出、长度未知。" + Hint, config);
         }
 
         if (data is HttpContent)
         {
             throw AxiosException.InvalidOption(
-                "RequestCompression 不作用于调用方传入的 HttpContent：压缩与 Content-Encoding 由该内容自己决定。" + Hint, config);
+                "Compression 不作用于调用方传入的 HttpContent：压缩与 Content-Encoding 由该内容自己决定。" + Hint, config);
         }
 
         if (MediaTypes.Is(mediaType, MultipartMediaType))
         {
             throw AxiosException.InvalidOption(
-                "RequestCompression 不压缩 multipart 正文：部件里可能含流式文件。" + Hint, config);
+                "Compression 不压缩 multipart 正文：部件里可能含流式文件。" + Hint, config);
         }
     }
 
@@ -307,11 +307,11 @@ internal static class RequestBodyFactory
             or IAsyncEnumerable<byte[]>
             or IAsyncEnumerable<ReadOnlyMemory<byte>>;
 
-    /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string / 已格式化的标量 / 结构化数据）。</summary>
+    /// <summary>正文是否由本库按 <see cref="Encoding"/> 编成文本（string / 已定型的标量 / 结构化数据）。</summary>
     private static bool EncodesText(object data)
         => data is string
             // 兜底条件对它已返回 true；这里显式列出，避免将来收紧兜底时把它误判成二进制。
-            || data is FormattedScalarBody
+            || data is PreformattedValue
             || (data is not HttpContent
                 && data is not byte[]
                 && data is not ReadOnlyMemory<byte>
