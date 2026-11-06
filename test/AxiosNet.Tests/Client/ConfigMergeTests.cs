@@ -167,7 +167,7 @@ public sealed class ConfigMergeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-        var response = await source.GetAsync("x", c => c.Transport.BasicAuth = new AxiosAuth("user", "pass"));
+        var response = await source.GetAsync("x", c => c.Transport.Auth = AxiosCredential.Basic("user", "pass"));
 
         Assert.Equal(TestJson.BasicAuth("user", "pass"), server.Received[0].Headers["Authorization"]);
 
@@ -185,12 +185,12 @@ public sealed class ConfigMergeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-        var response = await source.GetAsync("x", c => c.Transport.BasicAuth = new AxiosAuth("user", "pass"));
+        var response = await source.GetAsync("x", c => c.Transport.Auth = AxiosCredential.Basic("user", "pass"));
 
         using var target = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Transport = new() { BasicAuth = new AxiosAuth("target", "tpw") },
+            Transport = new() { Auth = AxiosCredential.Basic("target", "tpw") },
         });
 
         await target.RequestAsync(response.Config!);

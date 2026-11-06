@@ -511,6 +511,55 @@ public sealed partial class AxiosClient
 
         ValidateWithCredentials(config);
         ValidateMaxRedirects(config);
+        ValidateProfileTransport(config);
+        ValidateCredentialConflict(config);
+    }
+
+    /// <summary>凭据槽位与显式 <c>Authorization</c> 头同时设置属于配置冲突：凭据只有一个来源，不做二选一静默压制。</summary>
+    private static void ValidateCredentialConflict(AxiosConfig config)
+    {
+        if (config.TransportOrNull?.Auth is null)
+        {
+            return;
+        }
+
+        if (!config.HasHeaders || !config.Headers.Has(AuthorizationHeader.Name))
+        {
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            "显式 Authorization 头与 Transport.Auth 同时设置：凭据只能有一个来源。"
+            + "保留其中一个：要自己写头就把 Transport.Auth 设为 null，要用凭据槽位就删掉显式 Authorization 头。",
+            config);
+    }
+
+    /// <summary>
+    /// 命名档与默认档的出口设置互斥：选中命名档后实际 Handler 只取该档的 Proxy / Credentials，
+    /// 默认档上的同类设置不可能生效，故直接报错而不是静默忽略。注入自定义 Handler 时没有默认档，交给发送终端报错。
+    /// </summary>
+    private void ValidateProfileTransport(AxiosConfig config)
+    {
+        if (_customClient is not null)
+        {
+            return;
+        }
+
+        var profile = config.ProfileOrNull;
+        if (string.IsNullOrEmpty(profile))
+        {
+            return;
+        }
+
+        var options = _pool!.EffectiveOptions;
+        if (options.Proxy is null && options.Credentials is null)
+        {
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"选中命名传输档 '{profile}' 后，实际连接只使用该档的出口设置，默认档的 Proxy / Credentials 不会生效。"
+            + "请把出口设置配置到该档（ConnectionPoolOptions.AddTransport），或去掉 Profile 使用默认档。", config);
     }
 
     /// <summary>

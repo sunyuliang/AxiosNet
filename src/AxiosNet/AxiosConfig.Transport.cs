@@ -52,11 +52,15 @@ public sealed partial class AxiosConfig
         /// <summary>是否被显式赋值过（含显式赋 <c>null</c>），用于合并配置时区分「未设置」与「显式回到默认档」。</summary>
         internal bool ProfileSet { get; set; }
 
-        private AxiosAuth? _auth;
+        private AxiosCredential? _auth;
 
-        /// <summary>对应 axios auth（HTTP Basic）。</summary>
-        /// <remarks><c>BasicAuth = null</c> 表示本次请求不带认证，会压住实例默认凭据。</remarks>
-        public AxiosAuth? BasicAuth
+        /// <summary>凭据来源的唯一槽位（对应 axios <c>auth</c>）：静态 Basic、静态令牌、完整头值，或每请求调用一次的提供方。</summary>
+        /// <remarks>
+        /// <c>Auth = null</c> 表示本次请求不带认证，会压住实例默认凭据。
+        /// 同一请求只能取一种形态；显式 <c>Authorization</c> 头与本项同时设置视为配置冲突，发出前抛 <c>ERR_BAD_OPTION_VALUE</c>，不做二选一静默压制。
+        /// 凭据 → <c>Authorization</c> 头由内核统一映射；WebAPI 的 <c>CredentialProvider</c> 会包成这里的提供方形态。
+        /// </remarks>
+        public AxiosCredential? Auth
         {
             get => _auth;
             set
@@ -134,7 +138,7 @@ public sealed partial class AxiosConfig
 
             if (incoming.AuthSet)
             {
-                BasicAuth = incoming.BasicAuth;
+                Auth = incoming.Auth;
             }
 
             if (incoming.WithCredentialsSet)

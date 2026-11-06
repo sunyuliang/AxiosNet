@@ -18,6 +18,7 @@ namespace AxiosNet.Tests.Serialization;
 /// <summary>
 /// 序列化：JSON/XML 内置实现、字节通道、标量直出、上下文头读写、字符集声明。
 /// </summary>
+[Collection(GlobalSerializationCollection.Name)]
 public sealed class SerializerTests
 {
     // ===============================================================
@@ -1084,8 +1085,8 @@ public sealed class SerializerTests
     [Fact]
     public void GlobalJsonDefaults_AreSystemTextJsonWeb()
     {
-        // 未注入任何序列化器：全局槽是 null（= 自动模式，查表未命中才回落内置 STJ）
-        Assert.Null(AxiosContent.Serializer);
+        // 未注入任何序列化器：进程兜底槽是 null（= 自动模式，查表未命中才回落内置 STJ）
+        Assert.Null(AxiosContent.Default);
 
         // 内置 STJ 的默认值就是 Web defaults：四个维度一起钉住，避免只改其中一项被漏掉
         var options = AxiosJson.Options;

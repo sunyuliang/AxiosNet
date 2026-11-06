@@ -71,6 +71,24 @@ public sealed class TransportProfileTests
     }
 
     [Fact]
+    public async Task Transport_DefaultProxyConflictsWithNamedProfile()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        var options = new ConnectionPoolOptions { Proxy = new WebProxy("http://127.0.0.1:1") }
+            .AddTransport("a", new ConnectionTransportOptions());
+        using var pool = new HttpConnectionPool(options);
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url }, pool: pool);
+
+        // 命名档只取该档的出口设置，默认档代理不会生效：不能静默忽略，必须在发出前报错。
+        var exception = await Assert.ThrowsAsync<AxiosException>(
+            () => client.GetAsync("x", c => c.Transport.Profile = "a"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, exception.Code);
+        Assert.Contains("Proxy", exception.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public void Transport_CookieContainersAreIsolatedPerProfile()
     {
         var options = new ConnectionPoolOptions { UseCookies = true }

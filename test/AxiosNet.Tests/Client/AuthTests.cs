@@ -34,7 +34,7 @@ public sealed class AuthTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
 
         // 用 "/" 显式请求 baseAddress 本身（空串 / null 现在按非法地址拒绝）
-        await client.GetAsync("/", c => c.Transport.BasicAuth = new AxiosAuth("user", "p@ss:word"));
+        await client.GetAsync("/", c => c.Transport.Auth = AxiosCredential.Basic("user", "p@ss:word"));
 
         var expected = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("user:p@ss:word"));
         Assert.Equal(expected, server.Received[0].Headers["Authorization"]);
@@ -48,7 +48,7 @@ public sealed class AuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c => c.Transport.BasicAuth = new AxiosAuth("user", "pass:word"));
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Basic("user", "pass:word"));
 
         Assert.Equal(TestJson.BasicAuth("user", "pass:word"), server.Received[0].Headers["authorization"]);
     }
@@ -59,7 +59,7 @@ public sealed class AuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c => c.Transport.BasicAuth = new AxiosAuth("用户名", "密码"));
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Basic("用户名", "密码"));
 
         var header = server.Received[0].Headers["authorization"];
         Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("用户名:密码")), header);
@@ -72,7 +72,7 @@ public sealed class AuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c => c.Transport.BasicAuth = new AxiosAuth("user", string.Empty));
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Basic("user", string.Empty));
 
         Assert.Equal(TestJson.BasicAuth("user", string.Empty), server.Received[0].Headers["authorization"]);
     }
@@ -85,28 +85,77 @@ public sealed class AuthTests
         {
             Transport = new()
             {
-                BasicAuth = new AxiosAuth("instance", "secret"),
+                Auth = AxiosCredential.Basic("instance", "secret"),
             },
         });
 
-        await client.GetAsync(server.Url, c => c.Transport.BasicAuth = new AxiosAuth("percall", "other"));
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Basic("percall", "other"));
 
         Assert.Equal(TestJson.BasicAuth("percall", "other"), server.Received[0].Headers["authorization"]);
     }
 
     [Fact]
-    public async Task Auth_ExplicitAuthorizationHeader_WinsOverAuth()
+    public async Task Auth_ExplicitAuthorizationHeader_ConflictsWithAuthSlot()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url, c =>
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url, c =>
         {
-            c.Transport.BasicAuth = new AxiosAuth("user", "secret");
+            c.Transport.Auth = AxiosCredential.Basic("user", "secret");
             c.Headers.Set("Authorization", "Bearer token");
-        });
+        }));
 
-        Assert.Equal("Bearer token", server.Received[0].Headers["authorization"]);
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task Auth_StaticBearerSlot_SetsTokenHeader()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Bearer("tok-1"));
+
+        Assert.Equal("Bearer tok-1", server.Received[0].Headers["authorization"]);
+    }
+
+    [Fact]
+    public async Task Auth_StaticHeaderSlot_SendsCompleteValue()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Header("Signature abc"));
+
+        Assert.Equal("Signature abc", server.Received[0].Headers["authorization"]);
+    }
+
+    [Fact]
+    public async Task Auth_ProviderSlot_IsCalledOncePerRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+        var provider = new CountingCredentialProvider();
+
+        await client.GetAsync(server.Url, c => c.Transport.Auth = AxiosCredential.Provider(provider));
+
+        Assert.Equal(1, provider.Calls);
+        Assert.Equal("Bearer tok", server.Received[0].Headers["authorization"]);
+    }
+
+    private sealed class CountingCredentialProvider : IAxiosCredentialProvider
+    {
+        internal int Calls { get; private set; }
+
+        public bool CanRefresh => false;
+
+        public ValueTask<AxiosCredential?> GetAsync(AxiosCredentialContext context, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return ValueTask.FromResult<AxiosCredential?>(AxiosCredential.Bearer("tok"));
+        }
     }
 
     [Fact]
@@ -115,7 +164,7 @@ public sealed class AuthTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url + "secure", c => c.Transport.BasicAuth = new AxiosAuth("user", "pass"));
+        await client.GetAsync(server.Url + "secure", c => c.Transport.Auth = AxiosCredential.Basic("user", "pass"));
 
         Assert.Equal(TestJson.BasicAuth("user", "pass"), server.Received[0].Headers.GetValueOrDefault("authorization"));
     }

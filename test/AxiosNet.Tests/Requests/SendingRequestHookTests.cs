@@ -260,7 +260,7 @@ public sealed class SendingRequestHookTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Transport = { BasicAuth = new AxiosAuth("alice", "secret") }
+            Transport = { Auth = AxiosCredential.Basic("alice", "secret") }
         });
 
         string? seen = null;

@@ -1001,11 +1001,11 @@ public sealed class CacheTests
         using var client = new AxiosClient(new AxiosConfig { Caching = NewCache() });
 
         var first = await client.GetAsync<Dictionary<string, string>>(
-            server.Url + "x", config => config.Transport.BasicAuth = new AxiosAuth("alice", "pw"));
+            server.Url + "x", config => config.Transport.Auth = AxiosCredential.Basic("alice", "pw"));
         var second = await client.GetAsync<Dictionary<string, string>>(
-            server.Url + "x", config => config.Transport.BasicAuth = new AxiosAuth("bob", "pw"));
+            server.Url + "x", config => config.Transport.Auth = AxiosCredential.Basic("bob", "pw"));
         var third = await client.GetAsync<Dictionary<string, string>>(
-            server.Url + "x", config => config.Transport.BasicAuth = new AxiosAuth("alice", "pw"));
+            server.Url + "x", config => config.Transport.Auth = AxiosCredential.Basic("alice", "pw"));
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal("Basic YWxpY2U6cHc=", first.Data?["auth"]);

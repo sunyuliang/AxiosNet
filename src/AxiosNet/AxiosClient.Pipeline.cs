@@ -59,6 +59,9 @@ public sealed partial class AxiosClient
             // 阶段 2：校验（实例级选项）—— 构造期已固化进连接池，判在拦截器之前。
             ValidatePerRequestOptions(config);
 
+            // 阶段 2.5：凭据 —— 槽位在拦截器之前解析成 Authorization 头值，提供方每请求只在这里调用一次。
+            await ResolveCredentialAsync(config).ConfigureAwait(false);
+
             // 阶段 3：拦截 —— 请求拦截器按注册逆序执行（与 axios 一致）。
             config = await InterceptRequestAsync(config).ConfigureAwait(false);
 

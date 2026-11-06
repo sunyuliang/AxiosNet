@@ -29,8 +29,8 @@ public sealed class ApiInterfaceInvocation
     /// </remarks>
     public IReadOnlyList<object?> Arguments => Volatile.Read(ref _argumentsView) ?? CreateArgumentsView();
 
-    /// <summary>本次请求由库实际写入的凭据形态（<see cref="ApiCredentialKind.None"/> 表示没写头，401 重放的判定依据）。</summary>
-    internal ApiCredentialKind CredentialKind { get; set; }
+    /// <summary>本次请求挂到内核凭据槽位的适配器（<c>null</c> 表示没有托管凭据，401 重放无从谈起）。</summary>
+    internal Internal.ApiCredentialProviderAdapter? Auth { get; set; }
 
     /// <summary>参数只读视图按需创建，并发首次访问只发布一份（避免把可变数组直接交出去）。</summary>
     private IReadOnlyList<object?> CreateArgumentsView()

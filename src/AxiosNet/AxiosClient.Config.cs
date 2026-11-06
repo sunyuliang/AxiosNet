@@ -21,6 +21,9 @@ public sealed partial class AxiosClient
         // 标记实例级选项来自本实例默认值。
         merged.InstanceOptionsInherited = true;
 
+        // 解析结果属于上一次发送，合并出来的新配置必须重新解析。
+        merged.ResolvedAuthorization = null;
+
         if (perCall is null)
         {
             // 没有按请求项：继承段长度即整条链长。
@@ -194,7 +197,7 @@ public sealed partial class AxiosClient
         }
 
         // 实例级选项需合并：ValidatePerRequestOptions 校验的是生效配置；库产出的配置沿用本实例默认值。
-        // BasicAuth = null 表示本次不带认证。
+        // Auth = null 表示本次不带认证。
         if (!instanceSourced && perCallTransport is not null)
         {
             merged.Transport.MergeFrom(perCallTransport);
@@ -238,6 +241,21 @@ public sealed partial class AxiosClient
         merged.TransformInheritedResponse = inheritedResponseCount;
 
         return merged;
+    }
+
+    /// <summary>解析凭据槽位：静态形态直接映射，提供方形态每请求调用一次；结果只存在配置内部，发送前才写到请求头。</summary>
+    private static async ValueTask ResolveCredentialAsync(AxiosConfig config)
+    {
+        if (config.TransportOrNull?.Auth is not { } auth)
+        {
+            return;
+        }
+
+        var resolved = await auth
+            .ResolveAsync(new AxiosCredentialContext(config), config.CancellationToken)
+            .ConfigureAwait(false);
+
+        config.ResolvedAuthorization = resolved?.ToHeaderValue();
     }
 
     /// <summary>链的前 <paramref name="count"/> 项里是否已含同一委托实例（按引用）。</summary>
@@ -353,12 +371,11 @@ public sealed partial class AxiosClient
             }
         }
 
-        // 先判 HasHeaders，避免无谓创建头集合。
-        if (config.TransportOrNull?.BasicAuth is { } auth
-            && !(config.HasHeaders && config.Headers.Has("Authorization"))
-            && !request.Headers.Contains("Authorization"))
+        // 凭据槽位已在管线里解析（提供方只在那时调用一次）；显式 Authorization 头存在时不再写。
+        if (config.ResolvedAuthorization is { } credential
+            && !request.Headers.Contains(AuthorizationHeader.Name))
         {
-            request.Headers.TryAddWithoutValidation("Authorization", auth.ToBasicHeaderValue());
+            request.Headers.TryAddWithoutValidation(AuthorizationHeader.Name, credential);
         }
     }
 

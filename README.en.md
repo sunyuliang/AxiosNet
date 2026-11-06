@@ -579,7 +579,7 @@ The other four sub-objects (created lazily on first access):
 | --- | --- |
 | `Serialization` | `JsonOptions` (web style) / `BodySerializers` (instance registry, always present on a client) / `TextEncoding` (`null` = UTF-8 send, auto-detect receive) / `QueryEncoder` / `FormFieldName` / `CollectionFormat` (`Brackets`) / `ValueText` / `TransformRequest` / `TransformResponse` |
 | `Resilience` | `Retry` (`Policy` = `null`, no retries / `OnRetry`) / `Circuit` (`Policy` = `null`, no breaker / `OnRejected`) / `Hedging` (`MaxHedges` = `0`, max 16 / `Delay` = 80ms) / `Failover` (`Endpoints` = `null` / `FailureThreshold` = 2 / `Cooldown` = 30s / `MaxCooldown` = 5min) / `Concurrency` (`MaxInFlight` / `MaxQueue` / `QueueTimeout`, all `null`) / `Idempotency` (`Enabled` = `false` / `HeaderName` = `Idempotency-Key` / `Key` / `KeyFactory`) / `TotalTimeout` (`null` = none, shared across retries / endpoints / hedges) / `AllowUnsafeRetry` (`false`, the only switch that lets non-idempotent methods through) |
-| `Transport` | `Proxy` / `Credentials` (`null`, instance-level only) / `Pool` (`null`, frozen when the pool is built) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`) / `Profile` (`null` = default profile) / `BasicAuth` (`null`) / `WithCredentials` (`false`, instance-level only) / `MaxRedirects` (5, instance-level only) / `MaxRate` (`null` = unlimited) |
+| `Transport` | `Proxy` / `Credentials` (`null`, instance-level only) / `Pool` (`null`, frozen when the pool is built) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`) / `Profile` (`null` = default profile) / `Auth` (`null`; one of static Basic / token / complete header value / provider) / `WithCredentials` (`false`, instance-level only) / `MaxRedirects` (5, instance-level only) / `MaxRate` (`null` = unlimited) |
 | `Observability` | `Capture` (`null` = `TelemetryCapture.Path`; `Off` / `Path` / `Query` / `NoUrl`) / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage` |
 
 > Assigning `null` per request explicitly turns off an instance default `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`, which is different from "not set".
@@ -624,7 +624,7 @@ var again = await b.RequestAsync(first.Config!);    // b's instance-level settin
 | --- | --- |
 | `BaseAddress` | The current instance's default |
 | `CancellationToken` | The current instance's default (to swap the token, pass `cancellationToken:` to a shortcut) |
-| `Transport.BasicAuth` / `Proxy` / `Credentials` / `WithCredentials` / `Pool` / `MaxRedirects` | The current instance's defaults (the previous call's per-request `Auth` is not carried over) |
+| `Transport.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `Pool` / `MaxRedirects` | The current instance's defaults (the previous call's per-request `Auth` is not carried over) |
 | `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` | The current instance's defaults |
 | `Serialization.BodySerializers` | The current instance's registry (media types registered on the source instance do not travel) |
 | `Serialization.ValueText` | The current instance's default (the source instance's hook is its own instance-level setting and does not travel with the config; pass a hook per request through a direct call's `configure`) |
@@ -720,8 +720,8 @@ Request and response bodies go through System.Text.Json by default, and the whol
 ```csharp
 using AxiosNet.Serialization;
 
-// A: global / instance injection, the request header becomes application/xml
-AxiosContent.Serializer = XmlContentSerializer.Instance;
+// A: process-wide fallback (used only when no media-type registration matches); the request header becomes application/xml
+AxiosContent.Default = XmlContentSerializer.Instance;
 await http.PostAsync("orders", order);
 
 // B: select by Content-Type (mixing formats in one app)
@@ -729,10 +729,10 @@ AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 await http.PostAsync("orders", order, c => c.ContentType = AxiosContentType.Xml);
 
 // C: register on this instance only (recommended: sites and tests stay isolated)
-http.BodySerializers.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
+http.Defaults.Serialization.BodySerializers.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 ```
 
-**Priority** (later wins): instance / request `Serialization.BodySerializers` table → process defaults (`AxiosContent.Serializer` first, then the `AxiosContent.Register` table) → built-in JSON.
+**Priority** (highest first): instance / request `Serialization.BodySerializers` (exact registration → table default) → process `AxiosContent.Register` by media type → process `AxiosContent.Default` fallback → built-in JSON. `Default` is a fallback only; it never bypasses media-type registrations.
 
 - The instance registry is a per-client `ContentSerializerRegistry` with the same lookup rules as the global table (exact match → aliases such as `text/xml` → structured suffix `+xml`). Registering there never affects other clients or the global table; in tests, global changes leak into other cases in the same process, so use the instance registry when you need isolation.
 - Replace the whole table per request with `c => c.Serialization.BodySerializers = new ContentSerializerRegistry()` — that request sees only the new table, and the instance registry is untouched.
@@ -751,7 +751,7 @@ public sealed class YamlSerializer : IContentSerializer
     public object? Deserialize(string text, Type type, AxiosConfig config) => YamlConvert.Deserialize(text, type);
 }
 
-AxiosContent.Serializer = new YamlSerializer();
+AxiosContent.Default = new YamlSerializer();
 ```
 
 - A serializer may write headers (`config.Headers.Set(...)`); the `config` it sees is a per-request copy, so instance defaults stay clean.
@@ -883,6 +883,7 @@ using var tenantClient = new AxiosClient(
 ```
 
 - **A profile does not inherit the default profile's transport fields**: `Proxy` / `Credentials` / certificate callbacks / `ConnectCallback` / `HandlerFactory` / `UseCookies` are one set. To keep using the default proxy on a named profile, assign the same `IWebProxy` instance to it (shared by reference, zero cost).
+- **Selecting a named profile disables the default profile's proxy, and the default profile may not set one**: the actual handler only takes that profile's `Proxy` / `Credentials`. If the default profile still sets either, the request throws `ERR_BAD_OPTION_VALUE` before sending (same rule as the other two-layer egress entries) instead of ignoring it silently.
 - **Pool-level policy is not split per profile**: connection limit, connection lifetime, idle eviction, decompression, redirects, HTTP/2 and pings still come from `ConnectionPoolOptions` — they describe *how to use a connection*, not *where it comes from*. The limit itself applies **per handler**, and each profile gets its own handler, so N profiles can reach `N × MaxConnectionsPerServer` connections in total (split the budget yourself if you need one shared ceiling).
 - **One node per profile per origin**: its own handler, its own TCP connections, its own cookie container (`pool.GetCookies("name")`). So `MaxEndpointCount` counts **origin × profile**, and `GetStatistics().Endpoints[i].Transport` tells you which node belongs to which profile.
 - **An unregistered profile fails loudly**: `c.Transport.Profile = "missing"` throws `ERR_BAD_OPTION_VALUE` before anything is sent (the message lists registered profiles). Silently falling back to the default profile would turn "I thought this went through the dedicated line" into a security incident.
@@ -1707,9 +1708,16 @@ dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
 
 ### Credentials and token management
 
-A declarative client has exactly one authorization extension point: `ApiClient.CredentialProvider` (`IApiCredentialProvider`). It runs once before every send, and the `ApiCredential` it returns decides how the header is written; `[AllowAnonymous]` skips the whole chain.
+A declarative client has exactly one authorization extension point: `ApiClient.CredentialProvider` (`IApiCredentialProvider`). It runs once before every send, and the `ApiCredential` it returns decides how the header is written; `[AllowAnonymous]` skips the whole chain. It ends up as an adapter over the kernel's single credential slot `Transport.Auth` — when using the kernel directly you can put static credentials in that slot:
 
 ```csharp
+// Configure the kernel credential slot directly (pick one form)
+config.Transport.Auth = AxiosCredential.Basic("user", "pass");      // static Basic
+config.Transport.Auth = AxiosCredential.Bearer("token");           // static Bearer (optional second argument overrides the scheme)
+config.Transport.Auth = AxiosCredential.Header("Signature abc");   // complete header value
+config.Transport.Auth = AxiosCredential.Provider(source);          // per-request provider
+
+// Declarative callers keep their existing code (wrapped as the provider form internally)
 var client = new ApiClient("https://api.example.com/")
 {
     CredentialProvider = CredentialProviders.Fixed("token")
@@ -1723,7 +1731,10 @@ var client = new ApiClient("https://api.example.com/")
 | `ApiCredential.Custom()` | The provider already wrote any headers it needs (signature, cookie, ...); the library touches no header | No |
 | `ApiCredential.None` (or `Token(null)`) | Sends no credential | No |
 
-- **Explicit headers win**: when the model or instance defaults already set `Authorization`, **the whole credential chain is skipped** (the provider is not called) — no wasted token fetch, and a failing token endpoint cannot break a request that already carries its own header.
+- **One slot, one source**: credentials live in the single `Transport.Auth` slot, taking exactly one of four forms (static Basic / static token / complete header value / provider). `CredentialProvider` is an adapter for the provider form; `Transport.BasicAuth` has been folded into this slot.
+- **Conflicts error, never silently suppressed**: an explicit `Authorization` header together with the credential slot, or `CredentialProvider` together with an already-set `Transport.Auth`, throws `ERR_BAD_OPTION_VALUE` before sending. With only one of them set, that source applies. The credential → header mapping exists once in the kernel; WebAPI only supplies values and the 401 replay policy.
+- **401 replay only covers managed credentials**: only `Token` / `Header` shapes (written by the library) are refreshed and replayed after a 401; static Basic / static token / complete header value never participate — use `CredentialProvider` when you need refresh (the kernel exposes `IsRefreshable` for the source).
+- **No wasted token fetch**: an explicit header with a provider is rejected first, so the provider is never called.
 - **`Token` always prefixes the scheme**: the token form carries the token only; use `ApiCredential.Header` for complete values such as `Basic xxx` / `Signature xxx`. The library recovers the stale token back by the deterministic `scheme + space + token` shape before calling `Invalidate`, so mixing the two breaks value-based invalidation.
 - **Custom credentials**: inside `CredentialProviders.Create((ctx, ct) => ...)` you can write `ctx.Config.Headers` directly (model bindings have already been merged) and return `ApiCredential.Custom()`; branch per request with `ctx.Request` (an `ApiInterfaceInvocation` for interface-based calls). Pass `invalidate:` to `Create` when you want a forced refresh after 401.
 - **`Fixed` rejects blanks**: `CredentialProviders.Fixed(" ")` throws `ArgumentException` (use `Fixed(ApiCredential.None)` to mean "this request carries no credential"), so a misconfiguration never degrades silently into an anonymous request.
@@ -1822,7 +1833,7 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | `KeySelector` | `null` | Custom key (gets the effective config and the final URL); defaults to `AxiosCache.CreateKey` |
 | `ShouldCache` | built-in rule | Which requests take part; defaults to `AxiosCache.IsCacheable` (GET / HEAD, no short circuit, not streaming, no body, not a range request), and can be composed on top of it |
 
-**Key = method + absolute URL (+ credential digest)**: credentials (`Authorization` header or `Transport.BasicAuth`) are part of the key, and only as a 64-bit digest — two users hitting the same endpoint on one instance never share an entry. Use `KeySelector` when identity lives in cookies or a custom header, or when you want per-tenant / per-language partitions.
+**Key = method + absolute URL (+ credential digest)**: credentials (an explicit `Authorization` header or the header value resolved from `Transport.Auth`) are part of the key, and only as a 64-bit digest — two users hitting the same endpoint on one instance never share an entry. Use `KeySelector` when identity lives in cookies or a custom header, or when you want per-tenant / per-language partitions.
 
 **Two boundaries**: a query-string token such as `?token=` does not collide (the URL differs), but it enters the cache key **in plain text** (and the audit event URI), whereas `Authorization` enters only as a digest — keep sensitive tokens out of the query string, or have `KeySelector` contribute only a digest. Identity headers written in `OnSendingRequest` are **not part of the key** (the key is computed before that hook runs); write them in the per-request config or a request interceptor instead.
 
@@ -2044,7 +2055,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [Unified errors](#errors) | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
 | [Interceptors](#interceptors) | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
 | [Data transforms](#data-transforms) | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
-| [Swappable serialization](#serialization) | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` / `client.BodySerializers` |
+| [Swappable serialization](#serialization) | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` / `Serialization.BodySerializers` |
 | [Request body compression](#request-body-compression) | gzip / deflate / br, `Content-Encoding` written for you | `c.Compression = AxiosCompression.Gzip` |
 | [Observability](#observability) | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
 
@@ -2073,7 +2084,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | `config.params` / `config.data` | `c.Params` / `c.Body` (encoding via `c.ContentType`) |
 | `responseType: 'json' / 'text' / 'arraybuffer' / 'stream'` | `ResponseType.Json` / `Text` / `ArrayBuffer` / `Stream` |
 | `validateStatus` / `timeout` / `AbortController` | `c.ValidateStatus` / `c.Timeout` / `c.CancellationToken` |
-| `auth: { username, password }` | `c.Transport.BasicAuth = new AxiosAuth(user, pass)` |
+| `auth: { username, password }` | `c.Transport.Auth = AxiosCredential.Basic(user, pass)` |
 | — (token refresh / 401 replay needs a hand-written interceptor) | Declarative `ApiClient.CredentialProvider` + `AccessTokenManager` (auto refresh / 401 replay) |
 | `withCredentials` / `proxy` / `maxRedirects` | Same-named properties on `Transport` (instance-level) |
 | `maxContentLength` / `maxBodyLength` / `maxRate` | `Limits.MaxResponseBytes` / `Limits.MaxRequestBytes` / `Transport.MaxRate` |
@@ -2379,15 +2390,20 @@ Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAP
 | `Limits.MaxBodyLength` / `MaxContentLength` / `MaxStreamFrameLength` | `Limits.MaxRequestBytes` / `Limits.MaxResponseBytes` / `Limits.MaxStreamFrameBytes` |
 | `Limits.MaxRate` | `Transport.MaxRate` |
 | `Limits.MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` | `Resilience.Concurrency.MaxInFlight` / `MaxQueue` / `QueueTimeout` |
-| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `BasicAuth` / `Profile` |
+| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `Auth` / `Profile` |
+| `Transport.BasicAuth` (and the legacy `Connection.Auth`) | `Transport.Auth = AxiosCredential.Basic(...)`; the same slot also accepts `Bearer` / `Header` / `Provider`, exactly one form per request |
+| Explicit `Authorization` header together with a credential (previously the explicit header silently won) | Throws `ERR_BAD_OPTION_VALUE`; `CredentialProvider` together with an already-set `Transport.Auth` errors too |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
 | top-level `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
 | `Cache` | `Caching` |
 | `Data` | `Body` |
 | `RequestCompression` | `Compression` |
 | `ValueFormatter` | `Serialization.ValueText` |
-| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` / `client.BodySerializers` |
-| `Serialization.ContentSerializer` | removed; use `Serialization.BodySerializers.Default` or the global `AxiosContent.Serializer` / `Register` |
+| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` |
+| `Serialization.ContentSerializer` | removed; use `Serialization.BodySerializers.Default`, or process-level `AxiosContent.Register` / `AxiosContent.Default` |
+| `AxiosContent.Serializer` | `AxiosContent.Default` (fallback only; media-type registrations always win) |
+| `client.BodySerializers` | `client.Defaults.Serialization.BodySerializers` |
+| `ContentSerializerRegistry.SetDefault(x)` | `registry.Default = x` |
 | `RequestEncoding` / `ResponseEncoding` | `Serialization.TextEncoding` |
 | `ParamsSerializer` | `Serialization.QueryEncoder` |
 | `FormFieldNameSelector` | `Serialization.FormFieldName` |

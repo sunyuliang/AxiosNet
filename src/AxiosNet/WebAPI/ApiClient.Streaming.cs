@@ -59,9 +59,9 @@ public sealed partial class ApiClient
         // （本次尝试的 Timeout，已被 TotalTimeout 压过），不设超时时正文不限时、靠取消令牌退出。
         config.SetResponseTypeAuto(ResponseType.Stream);
 
-        var credential = await ApplyAuthorizationAsync(authorization, request, config, cancellationToken).ConfigureAwait(false);
+        var auth = ApplyAuthorization(authorization, request, config);
 
-        var raw = await SendAsync<Stream>(request, config, credential.Kind, cancellationToken).ConfigureAwait(false);
+        var raw = await SendAsync<Stream>(request, config, auth, cancellationToken).ConfigureAwait(false);
         var body = raw.Data ?? throw AxiosException.BadResponse(raw.Config ?? config, raw.Request, "Stream", new InvalidOperationException("流式响应没有拿到正文流：响应拦截器把 Data 换成了 null，流式请求不能被拦截器替换成非流对象。"));
 
         var info = raw.Config?.Response;

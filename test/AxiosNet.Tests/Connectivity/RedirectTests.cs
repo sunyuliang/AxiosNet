@@ -416,7 +416,7 @@ public sealed class RedirectTests
         });
         using var client = new AxiosClient();
 
-        await client.GetAsync(server.Url + "redir", c => c.Transport.BasicAuth = new AxiosAuth("user", "secret"));
+        await client.GetAsync(server.Url + "redir", c => c.Transport.Auth = AxiosCredential.Basic("user", "secret"));
 
         Assert.Equal(2, server.Received.Count);
         Assert.Equal(TestJson.BasicAuth("user", "secret"), server.Received[0].Headers["authorization"]);

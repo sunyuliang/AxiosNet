@@ -199,12 +199,6 @@ public sealed class ConnectionPoolOptions
         return this;
     }
 
-    /// <summary>按档名取设置；<c>null</c> / 空串返回 <c>null</c>（默认档），未登记的名字同样返回 <c>null</c>（由池在租用时报错）。</summary>
-    internal ConnectionTransportOptions? FindTransport(string? name)
-        => string.IsNullOrEmpty(name) || _transports is null || !_transports.TryGetValue(name, out var transport)
-            ? null
-            : transport;
-
     /// <summary>
     /// 把本类上的出口字段投影成默认档：池内部用它统一「默认档」与「命名档」的处理路径。
     /// </summary>

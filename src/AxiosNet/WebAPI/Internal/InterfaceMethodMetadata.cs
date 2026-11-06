@@ -178,7 +178,7 @@ internal sealed partial class InterfaceMethodMetadata
     }
 
     /// <summary>调用前准备：写入调用方取消令牌、组装调用上下文并跑授权。</summary>
-    private async Task<ApiInterfaceInvocation> PrepareAsync(
+    private Task<ApiInterfaceInvocation> PrepareAsync(
         ApiClient client,
         object?[] args,
         AxiosConfig config,
@@ -192,9 +192,9 @@ internal sealed partial class InterfaceMethodMetadata
 
         var invocation = new ApiInterfaceInvocation(_interfaceType!, _methodName!, args);
 
-        invocation.CredentialKind = (await client.ApplyAuthorizationAsync(_authorization, invocation, config, cancellationToken).ConfigureAwait(false)).Kind;
+        invocation.Auth = client.ApplyAuthorization(_authorization, invocation, config);
 
-        return invocation;
+        return Task.FromResult(invocation);
     }
 
     /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>：交付完整响应（生成代理经 <c>InterfaceMethodRuntime</c> 直接调用）。</summary>
@@ -203,7 +203,7 @@ internal sealed partial class InterfaceMethodMetadata
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
 
-        return await client.SendAsync<T>(invocation, config, invocation.CredentialKind, cancellationToken).ConfigureAwait(false);
+        return await client.SendAsync<T>(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary><c>Task&lt;AxiosResponse&gt;</c>：交付响应，正文按 JsonElement 原样给。</summary>
@@ -212,7 +212,7 @@ internal sealed partial class InterfaceMethodMetadata
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
 
-        return await client.SendUntypedAsync(invocation, config, invocation.CredentialKind, cancellationToken).ConfigureAwait(false);
+        return await client.SendUntypedAsync(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary><c>Task&lt;T&gt;</c>：只交付正文。</summary>
@@ -228,7 +228,7 @@ internal sealed partial class InterfaceMethodMetadata
         var config = BuildConfig(client, args);
         var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
 
-        await client.SendWithoutBodyAsync(invocation, config, invocation.CredentialKind, cancellationToken).ConfigureAwait(false);
+        await client.SendWithoutBodyAsync(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>接口侧流式发送：绑定配置后把授权交给客户端内核统一执行。</summary>

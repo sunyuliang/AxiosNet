@@ -21,7 +21,7 @@ public sealed class SerializationFallbackTests
             ContentType = "application/json",
             Serialization = { BodySerializers = { Default = legacy } }
         });
-        client.BodySerializers.Register("application/json", registered);
+        client.Defaults.Serialization.BodySerializers.Register("application/json", registered);
 
         await using var server = TestHttpServer.Start(_ => new TestResponse(200));
 

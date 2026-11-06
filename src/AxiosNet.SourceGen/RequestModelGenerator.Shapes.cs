@@ -16,8 +16,6 @@ namespace AxiosNet.SourceGen
     /// </summary>
     public sealed partial class RequestModelGenerator
     {
-        private const string ShapeNamespace = "AxiosNet.Generated";
-
         // 被视为「调用点」的容器方法名：出现在形状构建器里说明是声明式代码，跳过。
         private static readonly HashSet<string> AxiosCallNames = new HashSet<string>(StringComparer.Ordinal)
         {

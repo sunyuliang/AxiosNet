@@ -262,9 +262,6 @@ public sealed partial class AxiosConfig
     /// <remarks>排队时间与流式正文都在预算之内。</remarks>
     private bool _totalTimeoutSet;
 
-    /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「清掉实例默认值」。</summary>
-    internal bool TotalTimeoutSet => _totalTimeoutSet;
-
     /// <summary>总预算的生效值（内部读取用，避免库内代码依赖已废弃的顶层属性）。</summary>
     internal TimeSpan? TotalTimeoutValue => _totalTimeout;
 
@@ -282,6 +279,9 @@ public sealed partial class AxiosConfig
 
     /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
     internal bool AuthSet => _transport?.AuthSet ?? false;
+
+    /// <summary>本次请求由凭据槽位解析出的 <c>Authorization</c> 头值（静态形态或提供方返回值），发送前写入请求头。</summary>
+    internal string? ResolvedAuthorization { get; set; }
 
     private ResponseType _responseType = ResponseType.Json;
 
@@ -497,9 +497,4 @@ public sealed partial class AxiosConfig
             _ => value
         };
     }
-
-    /// <summary>把外部传入的 transform 集合包成线程安全实现（已是则原样复用）。</summary>
-    private static SynchronizedList<Func<object?, AxiosConfig, object?>> WrapTransforms(
-        IList<Func<object?, AxiosConfig, object?>> values)
-        => values as SynchronizedList<Func<object?, AxiosConfig, object?>> ?? new SynchronizedList<Func<object?, AxiosConfig, object?>>(values);
 }

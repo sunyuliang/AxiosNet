@@ -41,9 +41,6 @@ public sealed partial class AxiosConfig
 
     private bool _allowUnsafeRetrySet;
 
-    /// <summary>是否被显式赋值过（含显式 false），用于合并配置时区分「未设置」与「显式关闭」。</summary>
-    internal bool AllowUnsafeRetrySet => _allowUnsafeRetrySet;
-
     /// <summary>并发闸门的三项存储（唯一入口是 <see cref="ResilienceSettings.Concurrency"/>）：闸门是实例级状态，变更请新建客户端。</summary>
     private int? _maxInFlight;
     private bool _maxInFlightSet;
@@ -127,12 +124,6 @@ public sealed partial class AxiosConfig
                 _owner._allowUnsafeRetrySet = true;
             }
         }
-
-        /// <summary>是否被显式赋值过（含显式 false），合并层用。</summary>
-        internal bool AllowUnsafeRetryIsSet => _owner._allowUnsafeRetrySet;
-
-        /// <inheritdoc cref="AxiosConfig.TotalTimeoutSet"/>
-        internal bool TotalTimeoutIsSet => _owner._totalTimeoutSet;
 
         /// <summary>把 <paramref name="incoming"/> 里显式设置过的治理项覆盖到本实例（合并层内部使用）。</summary>
         internal void MergeFrom(ResilienceSettings incoming)
@@ -233,13 +224,7 @@ public sealed partial class AxiosConfig
         }
 
         /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-        internal bool MaxInFlightSet => _owner._maxInFlightSet;
-
-        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
         internal bool MaxQueueSet => _owner._maxQueueSet;
-
-        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-        internal bool QueueTimeoutSet => _owner._queueTimeoutSet;
 
         /// <summary>库产出的配置不搬运实例级并发项：把三项连同 *Set 标记整体还原到 <paramref name="source"/> 的值。</summary>
         internal void ResetFrom(AxiosConfig source)

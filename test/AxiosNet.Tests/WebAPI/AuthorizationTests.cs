@@ -17,7 +17,7 @@ public sealed class AuthorizationTests
         {
             Transport = new()
             {
-                BasicAuth = new AxiosAuth("user", "pass"),
+                Auth = AxiosCredential.Basic("user", "pass"),
             },
         });
 
@@ -26,7 +26,7 @@ public sealed class AuthorizationTests
             Url = server.Url + "public",
             Transport = new()
             {
-                BasicAuth = null,
+                Auth = null,
             },
         });
 
@@ -260,31 +260,19 @@ public sealed class AuthorizationTests
     }
 
     [Fact]
-    public async Task ExplicitAuthorizationHeader_IsNotOverwrittenByManagedCredential()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
-        using var client = new ApiClient(server.Url)
-        {
-            CredentialProvider = new StaticCredentialProvider("tok-1")
-        };
-
-        await client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" });
-
-        Assert.Equal("Signature abc", Assert.Single(server.Received).Headers["Authorization"]);
-    }
-
-    [Fact]
-    public async Task ExplicitAuthorizationHeader_SkipsCredentialProvider()
+    public async Task ExplicitAuthorizationHeader_WithProvider_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         var recorder = new RecordingCredentialProvider();
         using var client = new ApiClient(server.Url) { CredentialProvider = recorder };
 
-        await client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" });
+        // 显式头与凭据槽位同时设置 = 配置冲突：不静默二选一，也不白取一次令牌。
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
 
-        // 模型自带的头已经给出凭据：不进凭据链路，也就不会白取一次令牌。
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Equal(0, recorder.Calls);
-        Assert.Equal("Signature abc", Assert.Single(server.Received).Headers["Authorization"]);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -293,13 +281,16 @@ public sealed class AuthorizationTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url) { CredentialProvider = new ThrowingCredentialProvider() };
 
-        await client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" });
+        // 冲突在调用提供方之前判掉：即便提供方会失败，也不影响「先报配置冲突」。
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
 
-        Assert.Equal("Signature abc", Assert.Single(server.Received).Headers["Authorization"]);
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
-    public async Task ExplicitAuthorizationInDefaults_SkipsCredentialProvider()
+    public async Task ExplicitAuthorizationInDefaults_WithProvider_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         var recorder = new RecordingCredentialProvider();
@@ -310,10 +301,11 @@ public sealed class AuthorizationTests
             CredentialProvider = recorder
         };
 
-        await client.RequestAsync(new AuthorizedRequest());
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
 
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
         Assert.Equal(0, recorder.Calls);
-        Assert.Equal("Bearer static", Assert.Single(server.Received).Headers["Authorization"]);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -358,7 +350,7 @@ public sealed class AuthorizationTests
     }
 
     [Fact]
-    public async Task ExplicitAuthorizationInInstanceDefaults_IsNotOverwrittenByManagedCredential()
+    public async Task ExplicitAuthorizationInInstanceDefaults_WithProvider_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url, defaults => defaults.Headers.Set("Authorization", "Bearer static"))
@@ -366,9 +358,10 @@ public sealed class AuthorizationTests
             CredentialProvider = new StaticCredentialProvider("tok-1")
         };
 
-        await client.RequestAsync(new AuthorizedRequest());
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
 
-        Assert.Equal("Bearer static", Assert.Single(server.Received).Headers["Authorization"]);
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -383,6 +376,50 @@ public sealed class AuthorizationTests
         await client.RequestAsync(new AuthorizedRequest());
 
         Assert.False(Assert.Single(server.Received).Headers.ContainsKey("Authorization"));
+    }
+
+    [Fact]
+    public async Task CredentialProvider_ConflictsWithStaticAuthSlot()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(
+            server.Url,
+            defaults => defaults.Transport.Auth = AxiosCredential.Basic("u", "p"))
+        {
+            CredentialProvider = new StaticCredentialProvider("tok-1")
+        };
+
+        // 同一个凭据槽位不能有两个来源：静态凭据与提供方并存直接报错。
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new AuthorizedRequest()));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task StaticAuthSlot_AppliesWithoutProvider()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(
+            server.Url,
+            defaults => defaults.Transport.Auth = AxiosCredential.Basic("u", "p"));
+
+        await client.RequestAsync(new AuthorizedRequest());
+
+        Assert.Equal("Basic dTpw", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task StaticBearerSlot_AppliesToken()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(
+            server.Url,
+            defaults => defaults.Transport.Auth = AxiosCredential.Bearer("tok-1"));
+
+        await client.RequestAsync(new AuthorizedRequest());
+
+        Assert.Equal("Bearer tok-1", Assert.Single(server.Received).Headers["Authorization"]);
     }
 
     [Fact]

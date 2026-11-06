@@ -68,12 +68,6 @@ internal sealed class SpecNode
     /// <summary>是否数组。</summary>
     public bool IsArray => _kind == Kind.Array;
 
-    /// <summary>是否字符串。</summary>
-    public bool IsString => _kind == Kind.String;
-
-    /// <summary>是否数字。</summary>
-    public bool IsNumber => _kind == Kind.Number;
-
     /// <summary>是否布尔。</summary>
     public bool IsBoolean => _kind == Kind.Boolean;
 
@@ -162,12 +156,6 @@ internal sealed class SpecNode
 
     /// <summary>取子节点的字符串值（键不存在时返回 null）。</summary>
     public string? GetString(string key) => this[key]?.AsString();
-
-    /// <summary>取子节点的布尔值（键不存在或类型不符时返回 null）。</summary>
-    public bool? GetBool(string key) => this[key]?.AsBool();
-
-    /// <summary>取子节点的 int 值（键不存在或越界时返回 null）。</summary>
-    public int? GetInt(string key) => this[key]?.AsInt();
 
     /// <summary>把 YAML 反序列化得到的 CLR 对象图（字典 / 列表 / 标量）转成节点。</summary>
     public static SpecNode FromPlain(object? value)

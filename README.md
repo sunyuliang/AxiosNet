@@ -582,7 +582,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | --- | --- |
 | `Serialization` | `JsonOptions`（Web 风格）/ `BodySerializers`（实例注册表，客户端上必有）/ `TextEncoding`（`null` = 发送 UTF-8、接收自动识别）/ `QueryEncoder` / `FormFieldName` / `CollectionFormat`（`Brackets`）/ `ValueText` / `TransformRequest` / `TransformResponse` |
 | `Resilience` | `Retry`（`Policy` = `null` 不重试 / `OnRetry`）/ `Circuit`（`Policy` = `null` 不熔断 / `OnRejected`）/ `Hedging`（`MaxHedges` = `0`，上限 16 / `Delay` = 80ms）/ `Failover`（`Endpoints` = `null` / `FailureThreshold` = 2 / `Cooldown` = 30 秒 / `MaxCooldown` = 5 分钟）/ `Concurrency`（`MaxInFlight` / `MaxQueue` / `QueueTimeout`，均 `null`）/ `Idempotency`（`Enabled` = `false` / `HeaderName` = `Idempotency-Key` / `Key` / `KeyFactory`）/ `TotalTimeout`（`null` = 不设，跨重试 / 端点 / 对冲共享）/ `AllowUnsafeRetry`（`false`，非幂等放行的唯一开关） |
-| `Transport` | `Proxy` / `Credentials`（`null`，仅实例级）/ `Pool`（`null`，建池时固化）/ `HttpVersion`（`null` = 2.0）/ `VersionPolicy`（`null` = `OrLower`）/ `Profile`（`null` = 默认档）/ `BasicAuth`（`null`）/ `WithCredentials`（`false`，仅实例级）/ `MaxRedirects`（5，仅实例级）/ `MaxRate`（`null` = 不限速） |
+| `Transport` | `Proxy` / `Credentials`（`null`，仅实例级）/ `Pool`（`null`，建池时固化）/ `HttpVersion`（`null` = 2.0）/ `VersionPolicy`（`null` = `OrLower`）/ `Profile`（`null` = 默认档）/ `Auth`（`null`；静态 Basic / 令牌 / 完整头值 / 提供方四选一）/ `WithCredentials`（`false`，仅实例级）/ `MaxRedirects`（5，仅实例级）/ `MaxRate`（`null` = 不限速） |
 | `Observability` | `Capture`（`null` = `TelemetryCapture.Path`；`Off` / `Path` / `Query` / `NoUrl`）/ `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage` |
 
 > 按请求显式赋 `null` 可以关掉实例默认的 `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`，这与「没设置」是两种语义。
@@ -627,7 +627,7 @@ var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + fi
 | --- | --- |
 | `BaseAddress` | 当前实例的默认值 |
 | `CancellationToken` | 当前实例的默认值（要换令牌，用快捷方法的 `cancellationToken:` 参数） |
-| `Transport.BasicAuth` / `Proxy` / `Credentials` / `WithCredentials` / `Pool` / `MaxRedirects` | 当前实例的默认值（上一次的按请求 `Auth` 不会被带走） |
+| `Transport.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `Pool` / `MaxRedirects` | 当前实例的默认值（上一次的按请求 `Auth` 不会被带走） |
 | `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` | 当前实例的默认值 |
 | `Serialization.BodySerializers` | 当前实例的注册表（来源实例登记的媒体类型不会带过来） |
 | `Serialization.ValueText` | 当前实例的默认值（来源实例的钩子是它的实例级设置，不跟着配置搬过来；按请求显式给钩子请走直接调用的 `configure`） |
@@ -723,8 +723,8 @@ await http.GetAsync("users/1", c => c.TransformResponse.Add((d, _) => Normalize(
 ```csharp
 using AxiosNet.Serialization;
 
-// 方式 A：全局 / 实例注入，请求头自动变成 application/xml
-AxiosContent.Serializer = XmlContentSerializer.Instance;
+// 方式 A：进程兜底（按媒体类型都匹配不到时才用），请求头自动变成 application/xml
+AxiosContent.Default = XmlContentSerializer.Instance;
 await http.PostAsync("orders", order);
 
 // 方式 B：按 Content-Type 自动选（同一应用混用多种格式）
@@ -732,10 +732,10 @@ AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 await http.PostAsync("orders", order, c => c.ContentType = AxiosContentType.Xml);
 
 // 方式 C：只给这个实例登记（推荐：多个站点 / 测试之间互不干扰）
-http.BodySerializers.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
+http.Defaults.Serialization.BodySerializers.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);
 ```
 
-**优先级**（后者优先）：实例 / 请求 `Serialization.BodySerializers` 表 → 进程默认（`AxiosContent.Serializer` 优先，其次 `AxiosContent.Register` 表）→ 内置 JSON。
+**优先级**（从左到右降低）：实例 / 请求 `Serialization.BodySerializers`（精确登记 → 表内默认）→ 进程 `AxiosContent.Register` 按媒体类型登记 → 进程 `AxiosContent.Default` 兜底 → 内置 JSON。`Default` 只兜底，不会绕过按媒体类型登记的项。
 
 - 实例注册表是每客户端一份的 `ContentSerializerRegistry`（查表规则与全局表一致：精确匹配 → `text/xml` 等别名 → 结构化后缀 `+xml`），登记不影响其它实例和全局表；测试里改全局表会污染同进程的其它用例，需要隔离就用实例表。
 - 按请求替换整张表：`c => c.Serialization.BodySerializers = new ContentSerializerRegistry()`，本次请求只认这张新表，不回流到实例。
@@ -754,7 +754,7 @@ public sealed class YamlSerializer : IContentSerializer
     public object? Deserialize(string text, Type type, AxiosConfig config) => YamlConvert.Deserialize(text, type);
 }
 
-AxiosContent.Serializer = new YamlSerializer();
+AxiosContent.Default = new YamlSerializer();
 ```
 
 - 序列化器可写请求头（`config.Headers.Set(...)`），拿到的 `config` 是本次请求独占副本，不会污染实例默认值。
@@ -885,6 +885,7 @@ using var tenantClient = new AxiosClient(
 ```
 
 - **档不继承默认档的传输字段**：`Proxy` / `Credentials` / 证书回调 / `ConnectCallback` / `HandlerFactory` / `UseCookies` 都是一整套。想在某个档上继续用默认档的代理，把同一个 `IWebProxy` 实例赋给它（按引用共享，零成本）。
+- **选中命名档后默认档代理不生效，且默认档不能再设代理**：实际 Handler 只取该档的 `Proxy` / `Credentials`；若默认档还设了这两项，按请求发出前直接抛 `ERR_BAD_OPTION_VALUE`（与其它两层出口入口同一口径），不静默忽略。
 - **池级策略不按档拆**：连接数上限、连接生命周期、空闲驱逐、压缩、重定向、HTTP/2 与 ping 仍由 `ConnectionPoolOptions` 统一决定 —— 它们描述的是「怎么用连接」，不是「从哪出去」。但上限是**按 Handler 生效**的：每个档一套 Handler，所以 N 个档的实际连接总量上限是 `N × MaxConnectionsPerServer`（想要「整池共用一份预算」得自己按档分摊）。
 - **每档每 origin 一个独立节点**：独立的 Handler、独立的 TCP 连接、独立的 Cookie 容器（`pool.GetCookies("档名")` 取）。所以 `MaxEndpointCount` 的计数维度是 **origin × 档**，`GetStatistics().Endpoints[i].Transport` 能看出每个节点属于哪一档。
 - **未登记的档直接报错**：`c.Transport.Profile = "missing"` 在发出前抛 `ERR_BAD_OPTION_VALUE`（消息里列出已登记的档）—— 静默回落默认档会把「以为走了专线」变成安全事故。
@@ -1710,9 +1711,16 @@ dotnet run --project src/AxiosNet.Cli -f net8.0 -- \
 
 ### 凭据与令牌管理
 
-声明式客户端只有一个授权扩展点：`ApiClient.CredentialProvider`（`IApiCredentialProvider`）。每次请求发送前调用一次，返回的 `ApiCredential` 决定库怎么落头；`[AllowAnonymous]` 跳过整条链路。
+声明式客户端只有一个授权扩展点：`ApiClient.CredentialProvider`（`IApiCredentialProvider`）。每次请求发送前调用一次，返回的 `ApiCredential` 决定库怎么落头；`[AllowAnonymous]` 跳过整条链路。它最终只是内核唯一凭据槽位 `Transport.Auth` 的适配器——直接使用内核时也可以给这个槽位配静态凭据：
 
 ```csharp
+// 直接配置内核凭据槽位（四选一）
+config.Transport.Auth = AxiosCredential.Basic("user", "pass");      // 静态 Basic
+config.Transport.Auth = AxiosCredential.Bearer("token");           // 静态 Bearer（可传第二个参数改 scheme）
+config.Transport.Auth = AxiosCredential.Header("Signature abc");   // 完整头值
+config.Transport.Auth = AxiosCredential.Provider(source);          // 每请求调用一次的提供方
+
+// 声明式调用方保持原写法（内部包成上面的提供方形态）
 var client = new ApiClient("https://api.example.com/")
 {
     CredentialProvider = CredentialProviders.Fixed("token")
@@ -1726,7 +1734,10 @@ var client = new ApiClient("https://api.example.com/")
 | `ApiCredential.Custom()` | 提供方已自行写任意头（签名、Cookie 等），库不碰头 | 不重放 |
 | `ApiCredential.None`（或 `Token(null)`） | 本次不写头 | 不重放 |
 
-- **显式头优先**：模型或实例默认值里已显式写了 `Authorization` 时**整条凭据链路都不执行**（提供方不会被调用）——既不白取一次令牌，也不会因为取令牌失败把原本能发的请求拖挂。
+- **一个槽位，一个来源**：凭据只有 `Transport.Auth` 一个槽位，形态四选一（静态 Basic / 静态令牌 / 完整头值 / 提供方）。`CredentialProvider` 是提供方形态的适配器，`Transport.BasicAuth` 已并入本槽位。
+- **冲突报错，不静默压制**：显式 `Authorization` 头与凭据槽位同时设置、或 `CredentialProvider` 与已设置的 `Transport.Auth` 同时存在，都在发出前抛 `ERR_BAD_OPTION_VALUE`；只设其一时按该来源落头。「凭据 → 头值」映射只有内核一份实现，WebAPI 只提供值与 401 重放策略。
+- **401 重放只认托管凭据**：只有 `Token` / `Header` 形态（由库写入头）才会在 401 后刷新重放；静态 Basic / 静态令牌 / 完整头值不参与重放，需要刷新请改用 `CredentialProvider`（内核通过 `IsRefreshable` 暴露该来源是否可刷新）。
+- **不白取令牌**：显式头与提供方并存时先报冲突，提供方一次都不会被调用。
 - **`Token` 永远拼 scheme**：令牌形态只负责「令牌本体」，要发 `Basic xxx` / `Signature xxx` 这类完整头值请用 `ApiCredential.Header`。库靠「scheme + 空格 + 令牌」的确定性反解出旧令牌值传给 `Invalidate`，混用会让按值作废失效。
 - **自定义凭据**：`CredentialProviders.Create((ctx, ct) => ...)` 里可直接写 `ctx.Config.Headers`（此时配置已合并模型绑定结果），返回 `ApiCredential.Custom()`；按请求分支用 `ctx.Request`（接口式调用是 `ApiInterfaceInvocation`）。需要 401 后强制刷新，给 `Create` 传 `invalidate:` 委托。
 - **`Fixed` 不信空白**：`CredentialProviders.Fixed(" ")` 抛 `ArgumentException`（要表达「本次不带」用 `Fixed(ApiCredential.None)`），避免配置错误静默退化成匿名请求。
@@ -1825,7 +1836,7 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | `KeySelector` | `null` | 自定义键（参数是生效配置与最终 URL），默认 `AxiosCache.CreateKey` |
 | `ShouldCache` | 默认口径 | 哪些请求参与缓存，默认为 `AxiosCache.IsCacheable`（GET / HEAD、无短路响应、非流式、无请求体、非范围请求），可在此基础上组合 |
 
-**键 = 方法 + 绝对 URL（+ 凭据摘要）**：凭据（`Authorization` 头或 `Transport.BasicAuth`）参与键，且只以 64 位摘要进键——同一实例上不同用户的同名接口不会串用同一条缓存。用 Cookie 或自定义头区分身份、或要按租户 / 语言分区时，给 `KeySelector`。
+**键 = 方法 + 绝对 URL（+ 凭据摘要）**：凭据（显式 `Authorization` 头或 `Transport.Auth` 解析出的头值）参与键，且只以 64 位摘要进键——同一实例上不同用户的同名接口不会串用同一条缓存。用 Cookie 或自定义头区分身份、或要按租户 / 语言分区时，给 `KeySelector`。
 
 **两条边界**：`?token=` 这类查询串令牌虽然因为 URL 不同不会串用，但令牌会**明文**进缓存键（还会进审计事件的 URI），而 `Authorization` 只以摘要进键——敏感令牌不要放查询串，或由 `KeySelector` 只取摘要；`OnSendingRequest` 里写的身份头**不参与键**（键早于钩子计算），要按身份分区请挪到按请求配置或请求拦截器里写。
 
@@ -2047,7 +2058,7 @@ AOT 下不可用的能力：
 | [统一错误模型](#错误处理) | 所有失败都是 `AxiosException`，带稳定 `Code` | `catch (AxiosException ex) { ex.Code }` |
 | [拦截器](#拦截器) | 请求 / 响应双向，可异步 | `client.Interceptors.Request.Use(...)` |
 | [数据转换](#数据转换) | axios 同构的两条 transform 链 | `c.TransformRequest.Add(...)` |
-| [序列化可替换](#序列化) | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` / `client.BodySerializers` |
+| [序列化可替换](#序列化) | JSON（默认）/ XML 内置，任意格式可插 | `AxiosContent.Register(...)` / `Serialization.BodySerializers` |
 | [请求体压缩](#请求体压缩) | gzip / deflate / br，压缩后自动写 `Content-Encoding` | `c.Compression = AxiosCompression.Gzip` |
 | [可观测性](#可观测性) | `ActivitySource` + `Meter` + `DiagnosticListener` | `AddSource("AxiosNet")` / `AddMeter("AxiosNet")` |
 
@@ -2077,7 +2088,7 @@ AOT 下不可用的能力：
 | `config.params` / `config.data` | `c.Params` / `c.Body`（编码由 `c.ContentType` 决定） |
 | `responseType: 'json' / 'text' / 'arraybuffer' / 'stream'` | `ResponseType.Json` / `Text` / `ArrayBuffer` / `Stream` |
 | `validateStatus` / `timeout` / `AbortController` | `c.ValidateStatus` / `c.Timeout` / `c.CancellationToken` |
-| `auth: { username, password }` | `c.Transport.BasicAuth = new AxiosAuth(user, pass)` |
+| `auth: { username, password }` | `c.Transport.Auth = AxiosCredential.Basic(user, pass)` |
 | —（令牌 / 401 刷新靠自己写拦截器） | 声明式 `ApiClient.CredentialProvider` + `AccessTokenManager`（自动刷新 / 401 重放） |
 | `withCredentials` / `proxy` / `maxRedirects` | `Transport` 子对象同名属性（仅实例级） |
 | `maxContentLength` / `maxBodyLength` / `maxRate` | `Limits.MaxResponseBytes` / `Limits.MaxRequestBytes` / `Transport.MaxRate` |
@@ -2384,15 +2395,20 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | `Limits.MaxBodyLength` / `MaxContentLength` / `MaxStreamFrameLength` | `Limits.MaxRequestBytes` / `Limits.MaxResponseBytes` / `Limits.MaxStreamFrameBytes` |
 | `Limits.MaxRate` | `Transport.MaxRate` |
 | `Limits.MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` | `Resilience.Concurrency.MaxInFlight` / `MaxQueue` / `QueueTimeout` |
-| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `BasicAuth` / `Profile` |
+| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `Auth` / `Profile` |
+| `Transport.BasicAuth`（及旧 `Connection.Auth`） | `Transport.Auth = AxiosCredential.Basic(...)`；同一槽位还支持 `Bearer` / `Header` / `Provider`，一个请求只能取一种形态 |
+| 显式 `Authorization` 头与凭据同时设置（旧行为静默取显式头） | 报 `ERR_BAD_OPTION_VALUE`；`CredentialProvider` 与已设置的 `Transport.Auth` 并存同样报错 |
 | `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
 | 顶层 `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
 | `Cache` | `Caching` |
 | `Data` | `Body` |
 | `RequestCompression` | `Compression` |
 | `ValueFormatter` | `Serialization.ValueText` |
-| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` / `client.BodySerializers` |
-| `Serialization.ContentSerializer` | 删除；改用 `Serialization.BodySerializers.Default` 或全局 `AxiosContent.Serializer` / `Register` |
+| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` |
+| `Serialization.ContentSerializer` | 删除；改用 `Serialization.BodySerializers.Default`，或进程级 `AxiosContent.Register` / `AxiosContent.Default` |
+| `AxiosContent.Serializer` | `AxiosContent.Default`（只兜底，按媒体类型登记始终优先） |
+| `client.BodySerializers` | `client.Defaults.Serialization.BodySerializers` |
+| `ContentSerializerRegistry.SetDefault(x)` | `registry.Default = x` |
 | `RequestEncoding` / `ResponseEncoding` | `Serialization.TextEncoding` |
 | `ParamsSerializer` | `Serialization.QueryEncoder` |
 | `FormFieldNameSelector` | `Serialization.FormFieldName` |

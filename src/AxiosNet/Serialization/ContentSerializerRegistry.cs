@@ -42,9 +42,6 @@ public sealed class ContentSerializerRegistry
         set => _default = value;
     }
 
-    /// <summary>设置表内默认项（等价于给 <see cref="Default"/> 赋值）；<c>null</c> 表示移除。</summary>
-    public void SetDefault(IContentSerializer? serializer) => _default = serializer;
-
     /// <summary>为某个媒体类型登记序列化器；键忽略大小写与参数，重复登记以最后一次为准。</summary>
     /// <exception cref="ArgumentNullException"><paramref name="serializer"/> 为 <c>null</c>。</exception>
     /// <exception cref="ArgumentException"><paramref name="mediaType"/> 为空。</exception>

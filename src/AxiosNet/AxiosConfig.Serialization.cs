@@ -17,8 +17,8 @@ public sealed partial class AxiosConfig
         public JsonSerializerOptions? JsonOptions { get; set; }
 
         /// <summary>
-        /// 按媒体类型登记的序列化器表（每个 <see cref="AxiosClient"/> 构造时保证有一份，见 <see cref="AxiosClient.BodySerializers"/>）。
-        /// 查找顺序固定为「按媒体类型精确登记 → 表内默认项」；未命中再到进程默认，最后内置 JSON。
+        /// 按媒体类型登记的序列化器表（每个 <see cref="AxiosClient"/> 构造时保证有一份）。
+        /// 查找顺序固定为「按媒体类型精确登记 → 表内默认项」；未命中再到进程注册表（按媒体类型登记优先，<see cref="AxiosContent.Default"/> 兜底），最后内置 JSON。
         /// 属实例级：库产出的配置（如回放 <see cref="AxiosResponse.Config"/>）合并时不带走来源实例的登记。
         /// 按请求拿到的是实例那张表本身（同一引用），直接 <c>Register</c> 会改到实例；只在本次请求生效请 new 一张表再赋值。
         /// </summary>

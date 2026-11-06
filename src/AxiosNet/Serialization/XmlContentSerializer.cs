@@ -15,7 +15,7 @@ namespace AxiosNet.Serialization;
 /// </summary>
 /// <example>
 /// <code>
-/// AxiosContent.Serializer = XmlContentSerializer.Instance;                       // 全局显式注入
+/// AxiosContent.Default = XmlContentSerializer.Instance;                          // 进程兜底（只在按媒体类型查不到时用）
 /// AxiosContent.Register(AxiosContentType.Xml, XmlContentSerializer.Instance);   // 或注册：按 Content-Type 自动匹配
 /// new AxiosClient(new AxiosConfig { Serialization = { BodySerializers = new ContentSerializerRegistry { Default = XmlContentSerializer.Instance } } });  // 实例默认
 ///

@@ -125,17 +125,18 @@ public sealed class UnauthorizedRetryTests
     }
 
     [Fact]
-    public async Task ExplicitAuthorizationHeader_DoesNotReplay()
+    public async Task ExplicitAuthorizationHeader_WithProvider_IsRejectedBeforeSending()
     {
         await using var server = TestHttpServer.Start(_ =>
             TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
 
         using var client = new ApiClient(server.Url) { CredentialProvider = new StaticTokenProvider("tok") };
 
-        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new ExplicitAuthRequest()));
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new ExplicitAuthRequest()));
 
-        var received = Assert.Single(server.Received);
-        Assert.Equal("Basic dXNlcjpwYXNz", received.Headers["Authorization"]);
+        // 显式头与凭据槽位并存是配置冲突：连一次请求都不该发，更谈不上 401 重放。
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
     }
 
     [Fact]
@@ -302,6 +303,28 @@ public sealed class UnauthorizedRetryTests
 
         Assert.Equal(401, ex.Status);
         Assert.Single(server.Received); // 静态令牌刷新后不变，不重放
+    }
+
+    [Fact]
+    public async Task ProviderReplay_RefreshesAndReplays()
+    {
+        await using var server = SecureServer("Bearer tok-2");
+        var calls = 0;
+
+        using var tokens = new AccessTokenManager(new AccessTokenOptions(_ =>
+            ValueTask.FromResult(new AccessToken("tok-" + Interlocked.Increment(ref calls)))));
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = tokens
+        };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal(2, server.Received.Count);
+        // 提供方托管的令牌：401 后由同一来源刷新重放，映射仍走内核槽位。
+        Assert.Equal("Bearer tok-1", server.Received[0].Headers["Authorization"]);
+        Assert.Equal("Bearer tok-2", server.Received[1].Headers["Authorization"]);
     }
 
     private static TestHttpServer SecureServer(string acceptedAuthorization)

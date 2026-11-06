@@ -8,10 +8,10 @@ namespace AxiosNet;
 /// 请求体 / 响应体的内容格式入口，内置 JSON（默认）与 XML 两个实现。
 /// </summary>
 /// <remarks>
-/// 选择优先级固定为三层：实例注册表（<see cref="AxiosClient.BodySerializers"/>，先按媒体类型、后表内默认项）
-/// → 进程默认（<see cref="Serializer"/> 与 <see cref="Register"/>）→ 内置 JSON。
+/// 选择优先级固定为三层：实例注册表（<see cref="AxiosConfig.SerializationSettings.BodySerializers"/>，先按媒体类型、后表内默认项）
+/// → 进程注册表（<see cref="Register"/> 按媒体类型登记，<see cref="Default"/> 只做兜底）→ 内置 JSON。
 /// 请求方向按 <see cref="AxiosConfig.ContentType"/> 查表，响应方向按响应的 <c>Content-Type</c> 查表。
-/// <para>全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosClient.BodySerializers"/>。</para>
+/// <para>全局注册表是进程级的（测试之间会互相影响）；按实例隔离请用 <see cref="AxiosConfig.SerializationSettings.BodySerializers"/>。</para>
 /// </remarks>
 public static class AxiosContent
 {
@@ -21,16 +21,16 @@ public static class AxiosContent
     /// <summary>注册表条目数，只用于 <see cref="Lookup"/> 的空表快路径判定。</summary>
     private static int _registeredCount;
 
-    // 全局序列化器：null = 未注入，按媒体类型自动匹配。
-    private static IContentSerializer? _serializer;
+    // 进程级兜底序列化器：null = 未注入，按媒体类型查不到时回落到内置 JSON。
+    private static IContentSerializer? _default;
 
     /// <summary>
-    /// 全局内容序列化器。<c>null</c>（默认）= 未注入，此时按媒体类型自动匹配；赋 <c>null</c> 可回到自动模式。
+    /// 进程级兜底序列化器。<c>null</c>（默认）= 不提供兜底；按媒体类型登记始终优先，默认项不会绕过它们。
     /// </summary>
-    public static IContentSerializer? Serializer
+    public static IContentSerializer? Default
     {
-        get => Volatile.Read(ref _serializer);
-        set => Volatile.Write(ref _serializer, value);
+        get => Volatile.Read(ref _default);
+        set => Volatile.Write(ref _default, value);
     }
 
     /// <summary>为某个媒体类型注册序列化器（自动模式使用）；键忽略大小写与参数，重复注册以最后一次为准。</summary>
@@ -75,8 +75,8 @@ public static class AxiosContent
         var serialization = config.SerializationOrNull;
 
         return serialization?.BodySerializers?.Lookup(mediaType)
-            ?? Volatile.Read(ref _serializer)
             ?? Lookup(mediaType)
+            ?? Volatile.Read(ref _default)
             ?? SystemTextJsonSerializer.Instance;
     }
 

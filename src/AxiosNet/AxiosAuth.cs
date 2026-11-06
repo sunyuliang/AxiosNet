@@ -38,11 +38,4 @@ public sealed class AxiosAuth
 
     /// <summary>Basic 认证的密码，默认空串。</summary>
     public string Password { get; set; } = string.Empty;
-
-    /// <summary>生成 <c>Basic base64(user:pass)</c> 头值（UTF-8）。</summary>
-    internal string ToBasicHeaderValue()
-    {
-        var raw = $"{Username}:{Password}";
-        return "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
-    }
 }

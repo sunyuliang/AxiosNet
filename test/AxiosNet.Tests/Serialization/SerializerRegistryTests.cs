@@ -9,8 +9,9 @@ using System.Text;
 namespace AxiosNet.Tests.Serialization;
 
 /// <summary>
-/// 序列化器选型与注册表：显式 -> 全局 -> 注册表（别名/后缀）-> 内置 JSON。
+/// 序列化器选型与注册表：实例注册表（精确 → 表内默认）→ 进程注册表（精确 → Default 兜底）→ 内置 JSON。
 /// </summary>
+[Collection(GlobalSerializationCollection.Name)]
 public sealed class SerializerRegistryTests
 {
     // ------------------------------------------------------------------
@@ -70,8 +71,8 @@ public sealed class SerializerRegistryTests
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // 未注入 = 自动模式；查表未命中 → 内置 System.Text.Json（camelCase）
-        Assert.Null(AxiosContent.Serializer);
+        // 未注入任何序列化器：进程兜底是 null（= 自动模式，查表未命中才回落内置 STJ）
+        Assert.Null(AxiosContent.Default);
 
         await client.PostAsync(server.Url + "x", new XmlOrder { Id = 1, Name = "pen" });
 

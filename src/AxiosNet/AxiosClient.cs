@@ -48,15 +48,6 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public AxiosInterceptors Interceptors { get; } = new();
 
     /// <summary>
-    /// 本实例按媒体类型登记的序列化器表（即 <c>Defaults.Serialization.BodySerializers</c>）。
-    /// 登记与全局 <see cref="AxiosContent.Register"/> 同款规则（精确 → 别名 → 结构化后缀），但只作用于本实例：
-    /// 测试之间、多个站点之间互不干扰；优先级高于进程默认与全局注册表，低于同一张表里按媒体类型精确登记。
-    /// 表对象随 <c>Defaults</c> 走：同一个 <see cref="AxiosConfig"/> 交给多个客户端、或 <c>Defaults.Clone()</c>，得到的仍是这一张表。
-    /// </summary>
-    public ContentSerializerRegistry BodySerializers
-        => Defaults.Serialization.BodySerializers;
-
-    /// <summary>
     /// 本实例的尝试管线（构造期固化，之后不可变）；未显式传入时是 <see cref="AxiosAttemptPipeline.Default"/>。
     /// </summary>
     public AxiosAttemptPipeline AttemptPipeline { get; }

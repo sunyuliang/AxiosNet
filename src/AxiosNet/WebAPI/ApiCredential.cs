@@ -21,7 +21,8 @@ public sealed class ApiAuthContext
 
 /// <summary>凭据扩展点：每次请求发送前调用一次，返回的凭据描述决定库怎么落头、以及 401 后能否重放。</summary>
 /// <remarks>
-/// <para>请求模型或实例默认值已显式写 <c>Authorization</c> 头时不调用本接口 —— 显式配置优先，也避免白取一次令牌、或因取令牌失败而连带失败。</para>
+/// <para>落头由内核完成：本接口返回的托管凭据会被包成内核 <see cref="AxiosConfig.TransportSettings.Auth"/> 槽位的提供方形态，凭据到 <c>Authorization</c> 头的映射只有一份实现。显式 <c>Authorization</c> 头与本接口（或已设置的 <c>Transport.Auth</c>）同时存在视为配置冲突并报错，不静默覆盖；只设其一时按该来源生效。</para>
+/// <para>请求模型或实例默认值已显式写 <c>Authorization</c> 头时不调用本接口 —— 这属于配置冲突，发出前报 <c>ERR_BAD_OPTION_VALUE</c>，避免静默覆盖或白取一次令牌。</para>
 /// <para>要完全控制请求头（签名等）就自己写头并返回 <see cref="ApiCredential.Custom()"/>；只想要「库帮你拼 <c>{scheme} {token}</c>、401 自动刷新重放」就返回 <see cref="ApiCredential.Token(string)"/>。</para>
 /// </remarks>
 public interface IApiCredentialProvider
