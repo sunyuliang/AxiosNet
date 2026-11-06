@@ -3,12 +3,13 @@ using System.Net.Http.Headers;
 namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
-/// 401 重放用的正文快照：首次发送前把内存缓冲的 HttpContent 读成字节并记下 <c>Content-Type</c>，
+/// 401 重放用的正文快照：在首次发送失败（401）之后把内存缓冲的 HttpContent 读成字节并记下 <c>Content-Type</c>，
 /// 重放时用快照新建内容实例。
 /// </summary>
 /// <remarks>
-/// 跨调用重放是第二次完整发送，第一次发送收尾会释放模板正文；同一个 <see cref="HttpContent"/> 实例不能再发，
-/// 所以这里只缓存字节与类型，重放时重建实例。流与含流部件的 multipart 不在此列（库不做二次读取，也不截断）。
+/// 不能在首次发送前读：没有 401 的默认路径会白付一份正文大小（<c>ReadAsByteArrayAsync</c> 还会多一倍缓冲）。
+/// 401 时发送管线会保留模板正文（见 <c>AxiosConfig.RetainBodyContent</c>），快照读的是保留下来、尚未释放的那份。
+/// 流与含流部件的 multipart 不在此列（库不做二次读取，也不截断）。
 /// </remarks>
 internal sealed class RequestBodySnapshot
 {

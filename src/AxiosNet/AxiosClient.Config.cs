@@ -32,6 +32,9 @@ public sealed partial class AxiosClient
         // 解析结果属于上一次发送，合并出来的新配置必须重新解析。
         merged.ResolvedAuthorization = null;
 
+        // 401 重放的正文持有标记只来自本次按请求的 WebAPI 门面，不继承实例默认值。
+        merged.RetainBodyContent = perCall?.RetainBodyContent ?? false;
+
         if (perCall is null)
         {
             // 没有按请求项：继承段长度即整条链长。
@@ -43,6 +46,10 @@ public sealed partial class AxiosClient
         // 库产出的配置（快捷方法 / 合并产物 / 克隆）按「实例来源」对待：
         // BaseAddress 与连接级选项沿用本实例的值。
         var instanceSourced = perCall.InstanceOptionsInherited || perCall.EffectiveMerged;
+
+        // 门面提供方绑定的是按请求模型实例，随调用方配置搬运；库产出的配置不搬来源实例的提供方
+        // （与 Transport.Auth 同一规则，避免回放把来源实例的凭据带进另一条客户端）。
+        merged.InternalCredentialProvider = instanceSourced ? null : perCall.InternalCredentialProvider;
 
         merged.Url = perCall.Url ?? merged.Url;
 
@@ -245,19 +252,25 @@ public sealed partial class AxiosClient
         return merged;
     }
 
-    /// <summary>解析凭据槽位：静态形态直接映射，提供方形态每请求调用一次；结果只存在配置内部，发送前才写到请求头。</summary>
+    /// <summary>解析凭据来源：静态槽位直接映射；槽位为空时调用门面挂进来的内部提供方（每请求一次）；结果只存在配置内部，发送前才写到请求头。</summary>
     private static async ValueTask ResolveCredentialAsync(AxiosConfig config)
     {
-        if (config.TransportOrNull?.Auth is not { } auth)
+        // 槽位里有静态凭据时以槽位为准；槽位为空（包括按请求显式清空）才回落到门面挂进来的内部提供方
+        // （它不占槽位，省掉每请求的槽位组与包装对象）。两处都只在本次请求调用一次。
+        var slot = config.TransportOrNull?.Auth;
+        var provider = slot is null ? config.InternalCredentialProvider : null;
+
+        if (slot is null && provider is null)
         {
             // 槽位为空（例如拦截器显式清空）：之前解析出的头值一并作废。
             config.ResolvedAuthorization = null;
             return;
         }
 
-        var resolved = await auth
-            .ResolveAsync(new AxiosCredentialContext(config), config.CancellationToken)
-            .ConfigureAwait(false);
+        var context = new AxiosCredentialContext(config);
+        var resolved = slot is not null
+            ? await slot.ResolveAsync(context, config.CancellationToken).ConfigureAwait(false)
+            : await provider!.GetAsync(context, config.CancellationToken).ConfigureAwait(false);
 
         config.ResolvedAuthorization = resolved?.ToHeaderValue();
     }

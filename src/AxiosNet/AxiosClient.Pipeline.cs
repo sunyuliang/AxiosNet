@@ -200,6 +200,9 @@ public sealed partial class AxiosClient
 
             var template = CreateRequestMessage(config, plan, telemetryActivity);
 
+            // 401 重放要在第二次发送前继续持有正文；只有失败确实是 401 时才把正文交接出去。
+            AxiosException? attemptFailure = null;
+
             // 模板持有请求体（可能是调用方的 FileStream / FormFile），所有路径都必须先释放它。
             try
             {
@@ -250,9 +253,25 @@ public sealed partial class AxiosClient
 
                 return result;
             }
+            catch (AxiosException error)
+            {
+                attemptFailure = error;
+                throw;
+            }
             finally
             {
                 // 正文随模板一起释放；重试换出来的请求只摘不释放（见 Attempt.RetryLoopAsync 的 finally）。
+                // WebAPI 401 重放需要在第二次发送前继续持有正文：只把这次正文交给失败的配置，
+                // 由门面在重放 / 放弃后释放；成功路径与其它失败照旧在这里释放。
+                if (config.RetainBodyContent
+                    && attemptFailure is { Status: 401 }
+                    && template.Content is not null
+                    && attemptFailure.Config is { } failureConfig)
+                {
+                    failureConfig.RetainedReplayContent = template.Content;
+                    template.Content = null;
+                }
+
                 template.Dispose();
             }
         }

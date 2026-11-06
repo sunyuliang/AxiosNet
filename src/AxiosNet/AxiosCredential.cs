@@ -29,6 +29,9 @@ public sealed class AxiosCredential
     private readonly string? _headerValue;
     private readonly IAxiosCredentialProvider? _provider;
 
+    // 静态形态的头值只由自身字段决定：算过一次就复用（对象不可变，缓存是幂等的；并发下重复计算也只会得到同值）。
+    private string? _resolvedHeaderValue;
+
     private AxiosCredential(Form form, AxiosAuth? basic = null, string? token = null, string? scheme = null, string? headerValue = null, IAxiosCredentialProvider? provider = null)
     {
         _form = form;
@@ -97,6 +100,16 @@ public sealed class AxiosCredential
     /// <summary>槽位是否是提供方形态：内核据此把 401 的重试交给上层（不需要认识声明式层的提供方类型）。</summary>
     internal bool IsProvider => _form == Form.Provider;
 
+    /// <summary>本对象是否就是「令牌 + scheme」的映射结果（WebAPI 按值复用映射对象时用）。</summary>
+    internal bool IsBearerFor(string token, string? scheme)
+        => _form == Form.Bearer
+            && string.Equals(_token, token, StringComparison.Ordinal)
+            && string.Equals(_scheme, scheme, StringComparison.Ordinal);
+
+    /// <summary>本对象是否就是「完整头值」的映射结果。</summary>
+    internal bool IsHeaderFor(string value)
+        => _form == Form.Header && string.Equals(_headerValue, value, StringComparison.Ordinal);
+
     /// <summary>
     /// 静态形态的认证方案名（Basic 固定 <c>Basic</c>，令牌用显式 scheme 或默认 <c>Bearer</c>，
     /// 完整头值取第一段）；提供方形态返回 <c>null</c>，由提供方在解析后决定。
@@ -127,6 +140,11 @@ public sealed class AxiosCredential
     /// <summary>凭据 → <c>Authorization</c> 头值；提供方形态由 <see cref="ResolveAsync"/> 先解成静态形态。</summary>
     internal string? ToHeaderValue()
     {
+        if (_resolvedHeaderValue is not null)
+        {
+            return _resolvedHeaderValue;
+        }
+
         var value = _form switch
         {
             Form.Basic => AuthorizationHeader.FormatBasic(_basic!),
@@ -139,6 +157,7 @@ public sealed class AxiosCredential
         {
             // 统一入口拦 CR/LF 等控制字符：显式头走 AxiosHeaders.Set 的校验，凭据槽位不能绕过。
             AxiosHeaders.ValidateHeaderValue(AuthorizationHeader.Name, value);
+            _resolvedHeaderValue = value;
         }
 
         return value;

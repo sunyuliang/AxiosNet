@@ -515,17 +515,18 @@ public sealed partial class AxiosClient
         ValidateCredentialConflict(config);
     }
 
-    /// <summary>凭据槽位与显式 <c>Authorization</c> 头同时设置属于配置冲突：凭据只有一个来源，不做二选一静默压制。</summary>
+    /// <summary>凭据来源与显式 <c>Authorization</c> 头同时设置属于配置冲突：凭据只有一个来源，不做二选一静默压制。</summary>
     private static void ValidateCredentialConflict(AxiosConfig config)
     {
-        if (config.TransportOrNull?.Auth is null || !HasAuthorizationHeader(config))
+        var hasSource = config.TransportOrNull?.Auth is not null || config.InternalCredentialProvider is not null;
+        if (!hasSource || !HasAuthorizationHeader(config))
         {
             return;
         }
 
         throw AxiosException.InvalidOption(
-            "显式 Authorization 头与 Transport.Auth 同时设置：凭据只能有一个来源。"
-            + "保留其中一个：要自己写头就把 Transport.Auth 设为 null，要用凭据槽位就删掉显式 Authorization 头。",
+            "显式 Authorization 头与凭据来源（Transport.Auth / 凭据提供方）同时设置：凭据只能有一个来源。"
+            + "保留其中一个：要自己写头就去掉凭据来源，要用凭据来源就删掉显式 Authorization 头。",
             config);
     }
 

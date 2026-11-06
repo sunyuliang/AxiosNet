@@ -271,6 +271,18 @@ public sealed partial class AxiosConfig
     /// <summary>这份配置里的实例级选项（WithCredentials / MaxRedirects / Proxy / Credentials / PoolOptions）是实例的生效值，合并时沿用本实例默认值；随 <see cref="Clone"/> 继承。</summary>
     internal bool InstanceOptionsInherited { get; set; }
 
+    /// <summary>
+    /// 本次发送收尾不释放模板正文：WebAPI 401 重放需要在第二次发送前继续持有调用方提供的 <c>HttpContent</c>。
+    /// 只在首次发送前设置（合并时显式搬运），<see cref="Clone"/> 不继承。
+    /// </summary>
+    internal bool RetainBodyContent { get; set; }
+
+    /// <summary>
+    /// 被发送管线保留下来、供 401 重放使用的正文。仅当 <see cref="RetainBodyContent"/> 为 <c>true</c>
+    /// 且本次确实是 401 时写入失败配置；门面读走后负责释放。<see cref="Clone"/> 不继承。
+    /// </summary>
+    internal HttpContent? RetainedReplayContent { get; set; }
+
     /// <summary>transform 链里继承自实例默认的前缀长度（库产出的配置才有，调用方 new 的为 0），合并层据此去重；随 <see cref="Clone"/> 继承。</summary>
     internal int TransformInheritedRequest { get; set; }
 
@@ -282,6 +294,12 @@ public sealed partial class AxiosConfig
 
     /// <summary>本次请求由凭据槽位解析出的 <c>Authorization</c> 头值（静态形态或提供方返回值），发送前写入请求头。</summary>
     internal string? ResolvedAuthorization { get; set; }
+
+    /// <summary>
+    /// 门面（WebAPI）挂进来的凭据提供方：不占 <see cref="TransportSettings.Auth"/> 槽位，
+    /// 省掉每请求一个槽位组与包装对象；显式设置的槽位（含显式清空）优先，<see cref="Clone"/> 不继承。
+    /// </summary>
+    internal IAxiosCredentialProvider? InternalCredentialProvider { get; set; }
 
     private ResponseType _responseType = ResponseType.Json;
 
@@ -446,6 +464,13 @@ public sealed partial class AxiosConfig
         {
             clone._transport.AuthSet = false;
         }
+
+        // 401 重放的持有标记与保留正文都属于那一次发送，克隆出来的是新请求的输入。
+        clone.RetainBodyContent = false;
+        clone.RetainedReplayContent = null;
+
+        // 门面提供方绑定的是那一次请求的模型实例，克隆是「新请求的输入」。
+        clone.InternalCredentialProvider = null;
 
         // 合并标记属于那一次合并：克隆出来的是新请求的输入，尚未合并。
         if (clone.EffectiveMerged)

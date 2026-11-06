@@ -265,15 +265,16 @@ public sealed class UnauthorizedRetryTests
         {
             CredentialProvider = tokens
         };
-        // JsonContent 自带缓冲、ContentLength 不可预知：读取后长度才可知，随后由发送管线按上限拦下。
+        // JsonContent 自带缓冲、ContentLength 不可预知：按 MaxRequestBytes 文档，未知长度正文不提前拦截。
         using var body = JsonContent.Create(new Person(new string('x', 100), 1));
 
         var error = await Assert.ThrowsAsync<AxiosException>(
             () => client.RequestAsync(new HttpContentPutRequest { Payload = body }));
 
-        // 明确行为：不建快照、不截断正文；超限正文在发出前被拦下，服务端一次都没收到，自然也没有重放。
+        // 明确行为：不建快照、不截断正文。首次发送照常发出（未知长度正文不提前拦截），
+        // 401 后因超限不建快照、不重放，所以服务端只收到一次。
         Assert.Equal(AxiosException.ErrBadRequest, error.Code);
-        Assert.Empty(server.Received);
+        Assert.True(Assert.Single(server.Received).Body.Length > 16);
     }
 
     [Fact]

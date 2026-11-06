@@ -4,6 +4,7 @@ using AxiosNet.Retry;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Internal;
 using System.Buffers;
 using System.Diagnostics;
@@ -379,6 +380,58 @@ public sealed class AllocationTests
             average < 64,
             $"SSE 每帧平均分配 {average} B——超出护栏：每行又在解码成字符串、字段名与值又各切了一次子串。");
 #endif
+    }
+
+    [Fact]
+    public void ReplayEligibleHttpContentBody_DoesNotCopyBodyBeforeFirstSend()
+    {
+        // 1KB HttpContent 正文 + 托管凭据 + PUT（幂等、可 401 重放）+ 200 响应。
+        // 默认配置（未设 MaxRequestBytes）不允许在首次发送前读正文：旧实现会把正文读成两份缓冲，
+        // 1KB 正文实测多出约 2.2KB/请求。这里用「有凭据 vs 无凭据」的差值卡住它，凭据本身只值几百字节。
+        var body = new byte[1024];
+
+        using var plain = new ApiClient(
+            new AxiosClient(
+                new AxiosConfig { BaseAddress = "http://units.test/" },
+                handler: new AlwaysOkHandler(),
+                disposeHandler: true));
+
+        using var guarded = new ApiClient(
+            new AxiosClient(
+                new AxiosConfig { BaseAddress = "http://units.test/" },
+                handler: new AlwaysOkHandler(),
+                disposeHandler: true))
+        {
+            CredentialProvider = CredentialProviders.Fixed("tok-1"),
+        };
+
+#pragma warning disable xUnit1031 // 测量窗口内必须同步推进：await 会引入测试自己的分配。
+        long Run(ApiClient client)
+            => MinimumBytes(
+                100,
+                () => client.RequestAsync(new ContentBodyRequest { Payload = new ByteArrayContent(body) })
+                    .GetAwaiter()
+                    .GetResult(),
+                windows: 5);
+#pragma warning restore xUnit1031
+
+        var plainBytes = Run(plain);
+        var guardedBytes = Run(guarded);
+        var delta = guardedBytes - plainBytes;
+
+        Assert.True(
+            delta < 600,
+            $"可重放正文请求比无凭据对照组多 {delta} B/请求（{guardedBytes} vs {plainBytes}）——超出护栏："
+            + "疑似又在首次发送前读了正文（默认配置不该为没发生的 401 付正文大小的分配），"
+            + "或凭据链路又新加了每请求对象（映射复用后实测约 280 B）。");
+    }
+
+    [Put("fixed")]
+    [Authorize]
+    private sealed class ContentBodyRequest : IApiRequest<object>
+    {
+        [Body]
+        public HttpContent? Payload { get; set; }
     }
 
     private static long AverageBytes(int iterations, Action action)

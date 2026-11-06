@@ -12,12 +12,15 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 {
     private readonly bool _ownsAxiosClient;
 
+    // 按值复用不可变的凭据映射对象：提供方仍每请求调用一次，只有「形态 + 值 + scheme」完全不变时才复用。
+    private readonly ApiCredentialCache _credentialCache = new();
+
     /// <summary>底层 AxiosNet 客户端（实例默认值、拦截器、连接池都从它进入）。</summary>
     public AxiosClient Axios { get; }
 
     /// <summary>
-    /// 凭据提供方：每次请求发送前调用一次，返回的凭据描述决定落头；null 表示匿名访问。<see cref="AllowAnonymousAttribute"/> 声明会清空本次的凭据槽位（提供方与实例默认的静态凭据都不生效）。
-    /// 本提供方只是内核 <see cref="AxiosConfig.TransportSettings.Auth"/> 槽位的适配器：凭据到 <c>Authorization</c> 头的映射由内核统一完成。
+    /// 凭据提供方：每次请求发送前调用一次，返回的凭据描述决定落头；null 表示匿名访问。<see cref="AllowAnonymousAttribute"/> 声明会清空本次的凭据来源（提供方与实例默认的静态凭据都不生效）。
+    /// 本提供方挂在内核中性的凭据来源位上（不占 <see cref="AxiosConfig.TransportSettings.Auth"/> 槽位）：凭据到 <c>Authorization</c> 头的映射由内核统一完成。
     /// 与显式 <c>Authorization</c> 头、或已经设置的 <c>Transport.Auth</c> 同时存在时视为配置冲突并报错，不做二选一静默压制。
     /// </summary>
     public IApiCredentialProvider? CredentialProvider { get; set; }
@@ -25,7 +28,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>
     /// 收到 401 时用新凭据重放一次，默认开启（只在提供方返回托管凭据、由库写入 <c>Authorization</c> 头时生效）。
     /// 关掉后 401 直接按错误模型抛出。正文按内核共用分类器判定：数据型正文由请求模型重新装配；内存缓冲的
-    /// <c>HttpContent</c> 在首次发送前做正文快照（受 <c>Limits.MaxRequestBytes</c> 约束，超限则不建快照、本次不重放）；
+    /// <c>HttpContent</c> 只在收到 401 后才做正文快照（管线保留首次发送的正文；受 <c>Limits.MaxRequestBytes</c> 约束，超限则不建快照、本次不重放）；
     /// 流与含流部件的 multipart 不重放。非幂等方法需显式打开 <c>Resilience.AllowUnsafeRetry</c>（与内核重试同一开关）。
     /// </summary>
     public bool RetryOnUnauthorized { get; set; } = true;
@@ -187,7 +190,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         return config;
     }
 
-    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 清空内核凭据槽位；提供方包成槽位的提供方形态，落头由内核完成。</summary>
+    /// <summary>授权链路：<see cref="AllowAnonymousAttribute"/> 清空凭据来源；提供方挂成内核内部提供方（不占槽位），落头由内核完成。</summary>
     /// <param name="authorization">声明的授权策略（模式与 scheme）。</param>
     /// <param name="request">请求载荷（模型实例或 <see cref="ApiInterfaceInvocation"/>），原样交给提供方。</param>
     /// <param name="config">本次请求的生效配置。</param>
@@ -199,13 +202,14 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
         if (authorization.Mode == ApiAuthorizationMode.Anonymous)
         {
-            // 匿名 = 本次请求不使用凭据：直接清空内核唯一槽位（AuthSet 让显式 null 压住实例默认值）。
+            // 匿名 = 本次请求不使用凭据：清空门面提供方；实例默认的静态槽位要用显式 null 压住。
             // 按请求显式设置的 Transport.Auth 属于调用方显式覆盖，保持不动。
-            if (config.TransportOrNull?.AuthSet != true)
+            if (config.TransportOrNull?.AuthSet != true && Axios.Defaults.TransportOrNull?.Auth is not null)
             {
                 config.Transport.Auth = null;
             }
 
+            config.InternalCredentialProvider = null;
             return null;
         }
 
@@ -242,8 +246,9 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 config);
         }
 
-        var adapter = new ApiCredentialProviderAdapter(CredentialProvider, request, authorization.Scheme);
-        config.Transport.Auth = AxiosCredential.Provider(adapter);
+        // 提供方直接挂到内核的内部提供方位：不创建槽位组与 AxiosCredential.Provider 包装对象。
+        var adapter = new ApiCredentialProviderAdapter(CredentialProvider, request, authorization.Scheme, _credentialCache);
+        config.InternalCredentialProvider = adapter;
         return adapter;
     }
 
@@ -306,15 +311,27 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken,
         Func<Task<TResult>> send)
     {
-        // 可重放性在首次发送前定型：需要快照的正文只在这里读一次，重放时不再读模板正文。
-        var plan = await PrepareReplayAsync(config, auth, cancellationToken).ConfigureAwait(false);
+        // 首次发送前只算一个布尔结论：默认路径（没 401）不能读正文——1KB 正文的快照会白付两份缓冲。
+        var bodyReplayable = CanPrepareReplay(config, auth);
+        var bodyIsContent = config.Body is HttpContent;
+
+        if (bodyReplayable && bodyIsContent)
+        {
+            // 不预读正文：让管线在 401 收尾保留正文，只有真要重放时才读。
+            config.RetainBodyContent = true;
+        }
+
+        HttpContent? retained = null;
 
         try
         {
             return await send().ConfigureAwait(false);
         }
-        catch (AxiosException error) when (CanReplayForAuth(error, auth, plan))
+        catch (AxiosException error) when (CanReplayForAuth(error, auth, bodyReplayable))
         {
+            // 401 收尾没有释放正文，快照在这里读；真正发送的正文可能经过 transformRequest，取失败配置里的那份。
+            retained = TakeRetainedBody(error);
+
             // 重放是同一个逻辑请求：沿用上次实际发出的幂等键。
             if (error.Config?.IdempotencyOrNull is { Enabled: true, GeneratedKey: { } key })
             {
@@ -326,84 +343,113 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 throw;
             }
 
-            // 快照正文在这里换成一份新的内容实例：第一次发送的模板正文已被释放，旧实例不能再发。
-            if (plan.Snapshot is not null)
+            if (bodyIsContent)
             {
-                config.Body = plan.Snapshot.CreateContent();
+                RequestBodySnapshot? snapshot = null;
+                if (retained is not null)
+                {
+                    try
+                    {
+                        snapshot = await RequestBodySnapshot
+                            .TryCreateAsync(retained, ResolveMaxRequestBytes(config), cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception)
+                    {
+                        // 快照只是重放前置动作：读不出来就不重放，原样抛出本次 401。
+                        snapshot = null;
+                    }
+                }
+
+                // 读不出来或超 MaxRequestBytes（未知长度正文不提前拦截）：不截断正文，本次退成不可重放。
+                if (snapshot is null)
+                {
+                    throw;
+                }
+
+                // 重放前换成一份新的内容实例：管线的保留缓冲不再复用。
+                config.Body = snapshot.CreateContent();
             }
+
+            // 第二次发送自己会释放新正文，不要再次保留。
+            config.RetainBodyContent = false;
 
             return await send().ConfigureAwait(false);
         }
+        catch (AxiosException error)
+        {
+            // 这次 401 不重放：把管线保留的正文取走，交给 finally 释放。
+            retained = TakeRetainedBody(error);
+            throw;
+        }
+        finally
+        {
+            config.RetainBodyContent = false;
+            retained?.Dispose();
+        }
     }
 
-    /// <summary>401 重放计划：可重放性与正文快照都在首次发送前定型。</summary>
-    /// <param name="BodyReplayable">本次正文能否跨第二次发送重放。</param>
-    /// <param name="Snapshot">内存缓冲 HttpContent 的正文快照；不需要快照（数据型正文）时为 <c>null</c>。</param>
-    private readonly record struct AuthReplayPlan(bool BodyReplayable, RequestBodySnapshot? Snapshot);
-
     /// <summary>
-    /// 首次发送前算好 401 重放计划。四个前提同时成立才继续：重放开、已装配可刷新的托管提供方、
-    /// 内核分类器判定正文可重放、方法幂等或配置级放行。内存缓冲的 HttpContent 在这里读成快照（只读一次）。
+    /// 首次发送前判定 401 重放是否值得准备。四个前提同时成立才继续：重放开、已装配可刷新的托管提供方、
+    /// 内核分类器判定正文可重放、方法幂等或配置级放行。这里只做判定，不读正文。
     /// </summary>
-    private async ValueTask<AuthReplayPlan> PrepareReplayAsync(
-        AxiosConfig config,
-        ApiCredentialProviderAdapter? auth,
-        CancellationToken cancellationToken)
+    private bool CanPrepareReplay(AxiosConfig config, ApiCredentialProviderAdapter? auth)
     {
         if (!RetryOnUnauthorized
             || auth is null
             || !auth.CanRefresh
             || !(config.AllowUnsafeRetry || Axios.Defaults.AllowUnsafeRetry || RetryPolicy.IsIdempotent(config.Method)))
         {
-            return default;
+            return false;
         }
 
-        switch (BodyReplayability.Classify(config))
+        return BodyReplayability.Classify(config) switch
         {
-            case BodyReplayKind.Rebuild:
-                // 数据型正文每次发送都由模型重新装配，不需要快照。
-                return new AuthReplayPlan(true, null);
+            // 数据型正文每次发送都由模型重新装配。
+            BodyReplayKind.Rebuild => true,
 
-            case BodyReplayKind.Content when config.Body is HttpContent content:
-                var maxBytes = config.LimitsOrNull is { MaxRequestBytesSet: true } limits
-                    ? limits.MaxRequestBytes
-                    : Axios.Defaults.LimitsOrNull?.MaxRequestBytes;
+            // 白名单内的内存内容可跨第二次发送重新序列化。
+            BodyReplayKind.Content when config.Body is HttpContent => true,
 
-                try
-                {
-                    var snapshot = await RequestBodySnapshot
-                        .TryCreateAsync(content, maxBytes, cancellationToken)
-                        .ConfigureAwait(false);
-
-                    // 超 MaxRequestBytes：不建快照（不截断正文），本次退成不可重放。
-                    return snapshot is null ? default : new AuthReplayPlan(true, snapshot);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception)
-                {
-                    // 快照只是重放前置动作：读不出来就退成不可重放，首次发送仍按正常路径给出错误。
-                    return default;
-                }
-
-            default:
-                // None：分类器已判不可重放；Streamed：流随第一次请求释放，且不做快照，跨调用无法安全重放。
-                return default;
-        }
+            // None：分类器已判不可重放；Streamed：流随第一次请求释放，跨调用无法安全重放。
+            _ => false,
+        };
     }
 
-    /// <summary>这次 401 值不值得重放：首次发送前的计划说正文可重放，且确实是本次托管提供方的 401。</summary>
+    /// <summary>取走发送管线在 401 收尾保留的正文，并清掉失败配置上的引用（异常不该继续持有正文）。</summary>
+    private static HttpContent? TakeRetainedBody(AxiosException error)
+    {
+        var config = error.Config;
+        if (config is null)
+        {
+            return null;
+        }
+
+        var content = config.RetainedReplayContent;
+        config.RetainedReplayContent = null;
+        return content;
+    }
+
+    /// <summary>本次请求生效的正文上限；实例默认未设置时为 <c>null</c>（不限制）。</summary>
+    private long? ResolveMaxRequestBytes(AxiosConfig config)
+        => config.LimitsOrNull is { MaxRequestBytesSet: true } limits
+            ? limits.MaxRequestBytes
+            : Axios.Defaults.LimitsOrNull?.MaxRequestBytes;
+
+    /// <summary>这次 401 值不值得重放：首次发送前的判定说正文可重放，且确实是本次托管提供方的 401。</summary>
     /// <remarks>
-    /// 幂等 / 放行开关 / 正文分类已在 <see cref="PrepareReplayAsync"/> 里与内核同一口径算好；
+    /// 幂等 / 放行开关 / 正文分类已在 <see cref="CanPrepareReplay"/> 里与内核同一口径算好；
     /// 内核在凭据槽位是提供方形态时不再重试 401（见 <see cref="RetryPolicy.ShouldRetry"/>），刷新与重放只在这里发生一次。
     /// </remarks>
     /// <param name="error">本次失败。</param>
     /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
-    /// <param name="plan">首次发送前算好的重放计划。</param>
-    private static bool CanReplayForAuth(AxiosException error, ApiCredentialProviderAdapter? auth, AuthReplayPlan plan)
-        => plan.BodyReplayable
+    /// <param name="bodyReplayable">首次发送前算好的正文可重放结论。</param>
+    private static bool CanReplayForAuth(AxiosException error, ApiCredentialProviderAdapter? auth, bool bodyReplayable)
+        => bodyReplayable
             && auth is not null
             && auth.LastKind is ApiCredentialKind.Token or ApiCredentialKind.Header
             && error.Status == 401;

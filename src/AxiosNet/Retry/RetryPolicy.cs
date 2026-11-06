@@ -218,9 +218,10 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         return false;
     }
 
-    /// <summary>本次请求的凭据槽位是否是提供方形态（只看槽位形态，不引用声明式层类型）。</summary>
+    /// <summary>本次请求的凭据是否来自提供方（槽位形态或门面挂进来的内部提供方；不引用声明式层类型）。</summary>
     private static bool IsCredentialProvider(AxiosConfig? config)
-        => config?.TransportOrNull?.Auth is { IsProvider: true };
+        => config is not null
+            && (config.TransportOrNull?.Auth is { IsProvider: true } || config.InternalCredentialProvider is not null);
 
     /// <summary>幂等方法：重发不会改变服务端状态（或结果与发一次相同）；对冲复用同一判定。</summary>
     internal static bool IsIdempotent(HttpMethod method)
