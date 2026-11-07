@@ -30,9 +30,9 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Getting started | [Install](#install) · [Quick start](#quick-start) · [Common tasks](#common-tasks) |
 | Requests and responses | [Body and ContentType (JSON default)](#body-and-contenttype-json-default) · [Query parameters](#query-parameters) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Request body compression](#request-body-compression) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook (signing / final request)](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [Methods and URLs](#methods-and-urls) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Errors and configuration | [Errors](#errors) · [Configuration](#configuration) ([Configuration reference](#configuration-reference) / [Clients](#clients) / [Interceptors](#interceptors) / [Data transforms and serialization](#data-transforms-and-serialization) / [Connections and transport](#connections-and-transport) / [Observability](#observability)) |
-| Resilience and cache | [Resilience](#resilience) ([Retries](#retries) / [Circuit breaker](#circuit-breaker) / [Concurrent hedging](#concurrent-hedging) / [Backup endpoints](#backup-endpoints) / [Idempotency keys](#idempotency-keys) / [Attempt pipeline](#attempt-pipeline) / [Short circuit](#short-circuit)) · [Response cache](#response-cache) |
+| Resilience and cache | [Resilience](#resilience) ([Retries](#retries) / [Circuit breaker](#circuit-breaker) / [Concurrent hedging](#concurrent-hedging) / [Backup endpoints](#backup-endpoints) / [Idempotency keys](#idempotency-keys) / [Attempt pipeline](#attempt-pipeline) / [Short circuit](#short-circuit)) · [Caching](#caching) |
 | Declarative | [Declarative client](#declarative-client) ([Model-based](#model-based-api) / [Interface-based](#interface-based-api) / [Value formatting](#value-formatting) / [OpenAPI import](#openapi-import) / [Credentials and token management](#credentials-and-token-management)) |
-| Runtime and reference | [Runtime and AOT](#runtime-and-aot) · [Reference](#reference) ([Capability map](#capability-map) / [axios comparison](#axios-comparison) / [Dependency injection](#dependency-injection) / [Samples](#samples) / [Build and test](#build-and-test) / [Project layout](#project-layout) / [Breaking changes](#breaking-changes-in-15)) |
+| Runtime and reference | [Runtime and AOT](#runtime-and-aot) · [Reference](#reference) ([Capability map](#capability-map) / [axios comparison](#axios-comparison) / [Dependency injection](#dependency-injection) / [Samples](#samples) / [Build and test](#build-and-test) / [Project layout](#project-layout)) |
 | Other | [License](#license) |
 
 Pick an entry point:
@@ -47,6 +47,8 @@ Pick an entry point:
 
 ## Install
 
+> Upgrading from 1.x: see [breaking changes in 1.5](docs/breaking-changes-1.5.en.md) for renames and tightened behavior.
+
 ```bash
 dotnet add package AxiosNet                       # core client + declarative API client (one package)
 dotnet add package AxiosNet.DependencyInjection   # optional: DI registration
@@ -58,25 +60,55 @@ Referencing the source tree: `dotnet add your-app.csproj reference src/AxiosNet/
 
 ## Quick start
 
-Shortest usable version (4 lines):
+Direct one-line calls:
 
 ```csharp
+
 using AxiosNet;
 
-using var http = Axios.Create("https://api.example.com");
-var user = (await http.GetAsync<User>("users/1")).Data!;
-Console.WriteLine(user.Name);
+// string form
+var rsp=await Axios.GetAsync<string>("https://api.example.com/users/1");
+
+// dynamic object form
+var dyUser=await Axios.GetAsync<dynamic>("https://api.example.com/users/1");
+
+// strongly typed form
+var user=await Axios.GetAsync<User>("https://api.example.com/users/1");
+
 ```
 
-The same client is also the declarative entry point (`using AxiosNet.WebAPI;`, `IUserApi` is defined in [Interface-based API](#interface-based-api)):
+Once endpoints are grouped, the declarative client offers two parallel ways, and **model-based is the default recommendation**: pass a request model directly, or hand an interface to `Create<T>()`. Both share the same client and the same binding / authorization / validation rules (see [Model-based API](#model-based-api) / [Interface-based API](#interface-based-api)).
+
+**Model-based (default recommendation)**
 
 ```csharp
-using AxiosNet;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 
-var client = Axios.Create("https://api.example.com");
+[Get("users/{id}")]
+public sealed class GetUserRequest : IApiRequest<User>
+{
+    [Path] public int Id { get; set; }
+}
+
+var client = new ApiClient("https://api.example.com/");
+var user = (await client.RequestAsync(new GetUserRequest { Id = 5 })).Data!;   // User
+```
+
+**Interface-based**
+
+```csharp
+using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
+
+public interface IUserApi
+{
+    [Get("users/{id}")]
+    Task<AxiosResponse<User>> GetAsync([Path] int id, CancellationToken cancellationToken = default);
+}
+
 var api = client.Create<IUserApi>();
-var user = await api.GetAsync(1);
+var user = (await api.GetAsync(5)).Data!;                                      // User
 ```
 
 The extension entry points share the same facade as `ApiClient` (cached per `AxiosClient`): construct `new ApiClient(client)`, set `CredentialProvider` / `ErrorFactory`, then use `client.Create<T>()` / `RequestAsync` / `RequestStreamAsync` — that state still applies instead of silently becoming a separate anonymous facade.
@@ -303,7 +335,7 @@ await foreach (var order in pages.Data!)
 ```
 
 - **Timeout**: headers and body share one budget — streaming body reads count against `Timeout` too (or against the remaining `Resilience.TotalTimeout` when set), so a body that runs past it fails with `ECONNABORTED`. With no timeout configured the body is unbounded; exit via a cancellation token.
-- **Frame cap**: 8 MB default, valid range 1–64 MB (`Limits.MaxStreamFrameBytes`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap.
+- **Frame cap**: 8 MB default, valid range 1–64 MB (`Limits.MaxStreamFrameBytes`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap. The cap counts **raw on-wire bytes** (field prefixes, line endings and delimiters included), so each format's usable payload is smaller: 1 B less for NDJSON and JSON Array, and 7 B (LF) or 8 B (CRLF) per line for SSE.
 - **Encoding**: NDJSON / SSE require an ASCII-compatible charset, wide-char encodings throw `ERR_BAD_RESPONSE` when taking the stream; `JsonArray` must be UTF-8. A UTF-8 BOM is skipped.
 - **Ownership**: the stream can be enumerated once; `await foreach` (including `break`) disposes it, manual `MoveNextAsync` callers must `DisposeAsync` themselves.
 - **Explicit `ResponseType`**: the streaming entry points switch to `Stream` only when `ResponseType` was not explicitly set; an explicit non-`Stream` value (per request or instance default) throws `ERR_BAD_OPTION_VALUE` before sending instead of silently overriding the caller's choice.
@@ -614,6 +646,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 
 - **Instance-level only**: `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` (fixed when the pool is built) and `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
 - **`Params` / `Body` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Body = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Body`; write `Body = null` to send an empty body.
+- **The six `Observability` leaves merge the same way**: leaving one untouched inherits the instance default; writing `null` per request clears the instance default. This covers `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage`, matching `Body` / `ContentType` / `Compression` / `CancellationToken`.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
 - Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
 - **The static facade can be reset**: `Axios.Reset()` disposes the global default instance, and the next access to `Axios.Defaults` / `Axios.Interceptors` or the next request rebuilds it from scratch. In-flight requests are unaffected (disposal does not abort them), and the old defaults and interceptors are dropped — useful to isolate global state between tests, or to recover after the default instance was disposed by mistake (a disposed instance throws `ERR_CANCELED` for every request).
@@ -637,12 +670,13 @@ var again = await b.RequestAsync(first.Config!);    // b's instance-level settin
 | `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` | The current instance's defaults |
 | `Serialization.BodySerializers` | The current instance's registry (media types registered on the source instance do not travel) |
 | `Serialization.ValueText` | The current instance's default (the source instance's hook is its own instance-level setting and does not travel with the config; pass a hook per request through a direct call's `configure`) |
+| The six `Observability` leaves (`Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage`) | Callbacks inherited from the source instance do not travel (including the `Config` produced by shortcut methods); callbacks / `null` explicitly written into the config by the caller are kept, because that is request-level intent |
 | `ShortCircuit` | Not applied (a short-circuit response belongs to that call only) |
 
 Everything else is copied as per-request items, in three groups:
 
 - the request itself: `Url` / `Method` / `Headers` / `Params` / `Body` / `ContentType` / `Compression` / `ResponseType`;
-- timing and policy: `Timeout` / `Resilience.TotalTimeout` / retry / circuit / hedging / failover / telemetry;
+- timing and policy: `Timeout` / `Resilience.TotalTimeout` / retry / circuit / hedging / failover / telemetry (explicitly assigned items only; callback rules in the table above);
 - the rest: the remaining serialization options / the remaining size caps / `Transport.HttpVersion` / `VersionPolicy` / transform chains (appended and de-duplicated by reference against the inherited segment).
 
 **Two boundaries**
@@ -1383,14 +1417,14 @@ Once endpoints multiply, URLs, parameters and headers scattered across call site
 
 | Style | What it looks like | Use for | Cost |
 | --- | --- | --- | --- |
-| Request model | `class GetUserRequest : IApiRequest<User>` with `[Path]` / `[Query]` / `[Body]` on properties | Endpoints fairly independent; requests passed around or reused as objects | One type per endpoint |
+| Request model (default recommendation) | `class GetUserRequest : IApiRequest<User>` with `[Path]` / `[Query]` / `[Body]` on properties | Endpoints fairly independent; requests passed around or reused as objects | One type per endpoint |
 | Interface | `interface IUserApi` with routes and bindings on methods / parameters | Endpoints in groups; calls feel like local methods | Source generator emits real proxies (same path for JIT / Native AOT); falls back to `DispatchProxy` (JIT only) when not generated |
 
-Both forms share one kernel: path-template validation, duplicate detection, default body inference, scalar guards, static headers and authorization semantics are identical. Start with request models.
+Both forms share one kernel: path-template validation, duplicate detection, default body inference, scalar guards, static headers and authorization semantics are identical. Model-based is the default recommendation — start there.
 
 ### Model-based API
 
-One class per endpoint: the route sits on the class, binding attributes on properties, the URL is built from the declaration, and the call is just `RequestAsync` / `GetUri`.
+Default recommendation: one class per endpoint. The route sits on the class, binding attributes on properties, the URL is built from the declaration, and the call is just `RequestAsync` / `GetUri` / `RequestStreamAsync`; the response type follows the generic argument of `IApiRequest<TResponse>`.
 
 ```csharp
 using AxiosNet.WebAPI;
@@ -1416,9 +1450,18 @@ var client = new ApiClient("https://api.example.com/")
     CredentialProvider = CredentialProviders.Fixed("token")
 };
 
-var response = await client.RequestAsync(new GetUserRequest { Id = 5 });
-string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
+var user = (await client.RequestAsync(new GetUserRequest { Id = 5 })).Data!;   // User
+string url = client.GetUri(new GetUserRequest { Id = 5 });                     // URL only
 ```
+
+**Call and return shapes**
+
+- The `TResponse` of `IApiRequest<TResponse>` is the type of `Data`: `RequestAsync` returns `AxiosResponse<TResponse>`, while `GetUri` only builds the URL and sends nothing.
+- `client.RequestAsync(model)` / `RequestStreamAsync` are `AxiosClient` extension methods (`using AxiosNet.WebAPI;`) and share the same facade — `CredentialProvider` / `ErrorFactory` state included — with `new ApiClient(...)`.
+- Per-request tweaks: `RequestAsync(request, config => ...)`, or derive from `ApiRequest<TResponse>` and override `Configure(config)`; the callback runs after binding and before authorization.
+- `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work).
+
+**Binding**
 
 | Binding | Attribute | Notes |
 | --- | --- | --- |
@@ -1430,14 +1473,44 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 | Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
 | Body | `[Body]` | At most one per model; `null` sends no body |
 | Value formatting | `[Format]` (property / parameter) | Format string or static method; per element for collections, per value for dictionaries (see [Value formatting](#value-formatting)) |
-| Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` (interface methods) | Body media type (decides encoding) / query collection format; overrides instance defaults |
+| Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` / `[Stream]` (class / property) | Property level overrides class level; two explicit declarations with different values throw `ERR_BAD_OPTION_VALUE`; `[Multipart]` and `[BodyContentType]` are mutually exclusive |
 | Skip | `[ApiIgnore]` | Not bound at all |
-
-**Binding rules**
 
 - **Single-payload models can omit `[Body]`**: for POST / PUT / PATCH with exactly one undecorated **non-scalar** property, it binds as the body (dictionary properties excepted — always query).
 - One property may carry several binding attributes (`[Path]` + `[Header]`): the value is read once and applied to each.
-- Per-request tweaks: derive from `ApiRequest<T>` and override `Configure(config)`, or `RequestAsync(request, config => ...)`.
+- Value formatting: `[Format]` on the member wins; everything else uses the instance default `AxiosConfig.Serialization.ValueText`. For declarative requests it must be set on the instance defaults — changing it in the per-request `configure` throws `ERR_BAD_OPTION_VALUE` (see [Value formatting](#value-formatting)).
+
+**Encoding and streaming**
+
+Encoding and frame format can be configured per request, or declared directly on the model:
+
+```csharp
+[Post("login")]
+[BodyContentType("application/x-www-form-urlencoded")]   // class level: this model is form-encoded by default
+public sealed class LoginRequest : IApiRequest<Token>
+{
+    [Body] public LoginForm Form { get; set; } = null!;
+}
+
+[Get("users")]
+public sealed class ListUsersRequest : IApiRequest<User[]>
+{
+    [Query]
+    [QueryCollectionFormat(AxiosCollectionFormat.Multi)]  // property level: applies to this query property only
+    public int[] Ids { get; set; } = new int[0];
+}
+
+[Get("stream/events")]
+[Stream(AxiosStreamFormat.ServerSentEvents)]              // class-level default frame format; NDJSON when omitted
+public sealed class StreamEventsRequest : IApiRequest<Chunk> { }
+```
+
+- `[BodyContentType(...)]` may sit on a model class or property and writes `config.ContentType` (it drives body encoding, not just the header); `[QueryCollectionFormat(...)]` likewise writes `config.Serialization.CollectionFormat`.
+- Precedence: a single declaration applies as written; property level overrides class level; **two explicit declarations with different values** throw `ERR_BAD_OPTION_VALUE` at build time instead of silently picking one.
+- `[Multipart]` together with `[BodyContentType]` is an error (multipart's media type is fixed to `multipart/form-data`).
+- Streaming: `[Stream(...)]` may sit on a model class or property as the default frame format, and `RequestStreamAsync(request, format)` still accepts an explicit format (the argument wins); the generic of `IApiRequest<TItem>` is the frame type. OpenAPI-generated models also carry `public const AxiosStreamFormat StreamFormat`, so you can pass `XxxRequest.StreamFormat`.
+- Per-request tweaks still work: `RequestAsync(request, c => c.ContentType = ...)`, `c.Serialization.CollectionFormat = AxiosCollectionFormat.Multi`, or derive from `ApiRequest<T>` and pin them in `Configure`.
+- Streaming bodies follow the client's `Timeout` / `Resilience.TotalTimeout` — there is no separate idle-timeout knob; frame parse failures map to `ERR_BAD_RESPONSE`, a mid-stream disconnect to `ERR_NETWORK` and cancellation to `ERR_CANCELED`.
 
 **Validation and errors**
 
@@ -1452,13 +1525,11 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });   // URL only
 - Authorization: `[Authorize]` / `[Authorize("Basic")]` require it, `[AllowAnonymous]` skips the whole chain; the single extension point is `ApiClient.CredentialProvider` (`IApiCredentialProvider`), whose `ApiCredential` result decides how the header is written (see [credentials and token management](#credentials-and-token-management)).
 - Typed errors: after `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, status-code failures throw `ApiError<TError>` (network / timeout / cancellation bypass the factory). `ApiError<TError>` derives from `AxiosException`, so a plain `catch (AxiosException)` catches it too; `Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` are all inherited.
 
-**Lower-level entry points**
+**Native AOT**
 
-- The text-shape hook lives in exactly one place: `AxiosConfig.Serialization.ValueText` (instance defaults via `client.Defaults.Serialization.ValueText`, or the `configureDefaults` you pass when building an `ApiClient`). Declarative and direct calls read the same property, and it sits below a member's `[Format]` (see [Value formatting](#value-formatting)); its second argument is the `ValueTextChannel` the value is written through.
-  - On a direct call it covers query params / form fields / multipart text parts / raw scalar body; path segments and headers have no value-to-text step (the URL and headers are strings you supply), so they never reach it.
-  - On a declarative request it must be set on the instance defaults: binding needs it up front, and changing it in the per-request `configure` throws `ERR_BAD_OPTION_VALUE`.
-- `client.Axios` reaches the underlying `AxiosClient` (interceptors, pool, handler injection all work).
-- Streaming bodies follow the client's `Timeout` / `Resilience.TotalTimeout` — there is no separate idle-timeout knob.
+- As long as the assembly declaring the model runs the bundled source generator, member accessors are baked at compile time (internal types included) with no reflection under AOT; without generated / registered metadata `RequestAsync` throws `AxiosAotMetadataException` (with repair guidance).
+- Startup validation with `ApiClient.ValidateModels(typeof(A), ...)` works under AOT; assembly scanning does not — call the generated `ValidateAll()` instead.
+- The generated path needs no `TrimmerRootAssembly`.
 
 ### Interface-based API
 
@@ -1480,8 +1551,24 @@ public interface IUserApi
 }
 
 var api = client.Create<IUserApi>();
-var response = await api.GetAsync(5);
+var user = (await api.GetAsync(5)).Data!;                 // User
 ```
+
+**Call and return shapes**
+
+- Every method must carry exactly one route attribute. Four return shapes are supported: `Task<AxiosResponse<T>>` (full response) / `Task<AxiosResponse>` (body delivered as a raw `JsonElement`) / `Task<T>` (only `Data`) / `Task` (request only, body never parsed — a non-JSON body is not a parse error).
+- Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method; a bare `Task<IAsyncEnumerable<T>>` has no response metadata or disposal ownership and fails startup validation.
+- Synchronous returns / `ValueTask` / generic methods / `ref`·`out` are rejected.
+- Failure semantics are identical across shapes: non-2xx throws `AxiosException`, and a configured `ErrorFactory` still replaces/wraps it; with the `Task` shape the factory still receives the response (only the body is discarded).
+
+**Binding**
+
+- `CancellationToken` parameters are recognized by type (at most one) and never bound.
+- Every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
+- `[Multipart]` sits on the method: parameters are the form parts, and `[Part]` overrides the field name / file name / part type.
+- `[Format]` may sit on parameters; the rest follows the instance default `AxiosConfig.Serialization.ValueText` (see [Value formatting](#value-formatting)).
+
+**Encoding and streaming**
 
 Multipart and streaming are declared on the interface the same way (semantics match request models one-to-one):
 
@@ -1510,38 +1597,27 @@ Task<AxiosResponse<Token>> LoginAsync([Body] LoginForm form, CancellationToken c
 Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cancellationToken = default);
 ```
 
-**Methods and return shapes**
+- Method-level encoding: `[BodyContentType(...)]` writes `config.ContentType` (it drives body encoding, not just the header) for forms, XML or custom media types; it is mutually exclusive with `[Multipart]` (whose media type is fixed).
+- `[QueryCollectionFormat(...)]` writes `config.Serialization.CollectionFormat` and overrides instance defaults; OpenAPI `explode: true` maps to `AxiosCollectionFormat.Multi`.
+- Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
+- Interface declarations remain method-level (unchanged); the new class / property scopes for `[BodyContentType]` / `[QueryCollectionFormat]` / `[Stream]` belong to models — see "Encoding and streaming" under [Model-based API](#model-based-api) for precedence and conflicts.
+- Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
 
-- Every method must carry exactly one route attribute. Four return shapes are supported: `Task<AxiosResponse<T>>` (full response) / `Task<AxiosResponse>` (body delivered as a raw `JsonElement`) / `Task<T>` (only `Data`) / `Task` (request only, body never parsed — a non-JSON body is not a parse error).
-- Returning `Task<AxiosResponse<IAsyncEnumerable<T>>>` makes it a streaming method; a bare `Task<IAsyncEnumerable<T>>` has no response metadata or disposal ownership and fails startup validation.
-- Synchronous returns / `ValueTask` / generic methods / `ref`·`out` are rejected.
-- Failure semantics are identical across shapes: non-2xx throws `AxiosException`, and a configured `ErrorFactory` still replaces/wraps it; with the `Task` shape the factory still receives the response (only the body is discarded). Declarative assembly failures (path / query / header / body read or formatting threw) are unified as `ERR_BAD_REQUEST`, with the original exception in `Cause`.
-
-**Parameter binding**
-
-- `CancellationToken` parameters are recognized by type (at most one) and never bound.
-- Every other parameter follows the `[Path]` / `[Query]` / `[Header]` / `[HeaderCollection]` / `[Part]` / `[Body]` / `[ApiIgnore]` or "undecorated" rules, including default body inference.
-
-**Headers and authorization**
-
-- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface or on an interface method; with base interfaces, static headers and authorization merge in the **derived interface's scope** — the same base method can carry different static headers per derived interface.
-- Method-level declarations win over interface level: same-name static headers are overridden, `[AllowAnonymous]` makes a single method anonymous, `[Authorize("Basic")]` switches the scheme for one method.
-- Declaring both `[Authorize]` and `[AllowAnonymous]` on one method is ambiguous (`Create<T>()` / `ValidateInterfaces` reports it).
-- The credential provider (via `ApiAuthContext.Request`) and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
-
-**Declaration validation**
+**Validation and errors**
 
 - Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]` / `[BodyContentType]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`.
 - Validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)`: returns all messages, never throws, and aggregates every failing method of the same interface rather than only the first.
   - The type-based overloads work under Native AOT.
   - `ValidateInterfaces(assembly)` throws `PlatformNotSupportedException` under AOT — call the generated `ValidateAll()` instead.
+- Declarative assembly failures (path / query / header / body read or formatting threw) are unified as `ERR_BAD_REQUEST`, with the original exception in `Cause`.
 
-**Encoding and streaming**
+**Authorization and typed errors**
 
-- Method-level encoding: `[BodyContentType(...)]` writes `config.ContentType` (it drives body encoding, not just the header) for forms, XML or custom media types; it is mutually exclusive with `[Multipart]` (whose media type is fixed).
-- `[QueryCollectionFormat(...)]` writes `config.Serialization.CollectionFormat` and overrides instance defaults; OpenAPI `explode: true` maps to `AxiosCollectionFormat.Multi`.
-- Interface-level streaming: pick the frame format with `[Stream(AxiosStreamFormat.ServerSentEvents)]` / `[Stream(AxiosStreamFormat.JsonArray)]` (NDJSON when omitted); the returned stream can only be enumerated once and shares the exact timeout / error semantics of `RequestStreamAsync(...)`.
-- Interface methods have no per-method `configure` hook — switch to a request model when you need per-request tweaks.
+- `[Headers]` / `[Authorize]` / `[AllowAnonymous]` may sit on the interface or on an interface method; with base interfaces, static headers and authorization merge in the **derived interface's scope** — the same base method can carry different static headers per derived interface.
+- Method-level declarations win over interface level: same-name static headers are overridden, `[AllowAnonymous]` makes a single method anonymous, `[Authorize("Basic")]` switches the scheme for one method.
+- Declaring both `[Authorize]` and `[AllowAnonymous]` on one method is ambiguous (`Create<T>()` / `ValidateInterfaces` reports it).
+- Typed errors work the same as with request models: with `client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()`, a bad status code throws `ApiError<TError>` (network / timeout / cancellation do not go through the factory).
+- The credential provider (via `ApiAuthContext.Request`) and the error factory receive an `ApiInterfaceInvocation` (interface type, method name, argument snapshot) instead of a model instance; use those three to branch per request.
 
 **Native AOT**
 
@@ -1809,7 +1885,7 @@ using var client = api;
 
 The `/login` request carries no `Authorization` header, and 401 refresh replays go through the same anonymous endpoint. Regression test: `test/AxiosNet.Tests/WebAPI/SelfHostedTokenEndpointTests.cs`.
 
-## Response cache
+## Caching
 
 Both let a request "produce a response without being sent"; the difference is who decides: a short circuit is a response handed in by the caller, the cache is looked up by the library. Manual short circuit first, built-in cache second.
 
@@ -2028,6 +2104,8 @@ To lock metadata down at the end of startup, call the hidden `AxiosMetadata.Free
 **Known limitation**: keeping the first registration for equivalent duplicates is designed for "several mutually unreferenced assemblies each generate a proxy for the same interface". Inside a collectible `AssemblyLoadContext` (plugin hot reload), the second registration is silently dropped and the proxy factory still points at the assembly loaded by the first one — do not rely on the registry refreshing itself when a plugin is reloaded; use a separate process, or cross a fresh `AssemblyLoadContext` boundary after unloading.
 
 ## Reference
+
+> Configuration renames and behavior tightening when upgrading from 1.x to 1.5: see [1.5 breaking changes](docs/breaking-changes-1.5.en.md).
 
 ### Capability map
 
@@ -2396,60 +2474,6 @@ Three folder rules:
 - **`WebAPI/` is an extension that can be deleted as a whole**: remove it and the core still compiles and plain HTTP still works, so the core must never reference it back (object shapes, dictionary maps, the generated-metadata registry and the AOT guards/exception therefore live in `Metadata/` and `Internal/`).
 
 Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAPI.Attributes`); other public types stay at the `WebAPI/` root.
-
-### Breaking changes in 1.5
-
-| 1.x | 1.5 |
-| --- | --- |
-| `Callbacks` | `Observability` + top-level `ValidateStatus` |
-| `Connection` | `Transport` |
-| `Limits` | stays a public group (a real group): three leaves under `Limits` — `MaxResponseBytes` / `MaxRequestBytes` / `MaxStreamFrameBytes`; `MaxRate` → `Transport.MaxRate`, the three concurrency items → `Resilience.Concurrency` |
-| `Limits.MaxBodyLength` / `MaxContentLength` / `MaxStreamFrameLength` | `Limits.MaxRequestBytes` / `Limits.MaxResponseBytes` / `Limits.MaxStreamFrameBytes` |
-| `Limits.MaxRate` | `Transport.MaxRate` |
-| `Limits.MaxConcurrentRequests` / `MaxQueueLength` / `QueueTimeout` | `Resilience.Concurrency.MaxInFlight` / `MaxQueue` / `QueueTimeout` |
-| `Connection.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `PoolOptions` / `HttpVersion` / `VersionPolicy` / `Auth` / `Transport` | `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` / `HttpVersion` / `VersionPolicy` / `Auth` / `Profile` |
-| `Transport.BasicAuth` (and the legacy `Connection.Auth`) | `Transport.Auth = AxiosCredential.Basic(...)`; the same slot also accepts `Bearer` / `Header` / `Provider`, exactly one form per request |
-| Explicit `Authorization` header together with a credential (previously the explicit header silently won) | Throws `ERR_BAD_OPTION_VALUE`; `CredentialProvider` together with an already-set `Transport.Auth` errors too |
-| `[Authorize("Token")]` with a static slot of a different scheme (previously the slot silently won) | Throws `ERR_BAD_OPTION_VALUE`; the declared scheme and `Transport.Auth`'s scheme must match |
-| 401 replay body scope (previously only a few rebuildable shapes could replay) | Data bodies are rebuilt; whitelisted in-memory content is snapshotted before the first send (bounded by `Limits.MaxRequestBytes`; over the limit no replay); `Stream` / streaming multipart never replay |
-| `RequestStreamAsync` / `[Stream]` with an explicit non-`Stream` `ResponseType` (previously silently overridden) | Throws `ERR_BAD_OPTION_VALUE` before sending; `Stream` is only auto-selected when `ResponseType` was not explicitly set |
-| Stream-read cancellation (previously a caller-supplied token passed to `ReadAsync` / `CopyToAsync` on the `Response.Data` stream threw a raw `OperationCanceledException`) | Always throws an `AxiosException` with `ERR_CANCELED`, keeping the original OCE in `Cause`; timeouts remain `ECONNABORTED` |
-| Declarative extension entry points (previously created a fresh facade per call, dropping `CredentialProvider` / `ErrorFactory`) | Cache one `ApiClient` per `AxiosClient`; state configured beforehand keeps applying |
-| Streaming frame implementation location | NDJSON / SSE / JSON array framing moved into the kernel internals; `AxiosStreamFormat` / `Limits.MaxStreamFrameBytes` / `AxiosException.Stream*` remain public capabilities, while WebAPI keeps only the declarative entry points |
-| `Telemetry.Enabled` / `CaptureUrl` / `CaptureQuery` | `Observability.Capture = TelemetryCapture.Off` / `Path` / `Query` / `NoUrl` |
-| top-level `Retry` / `Circuit` / `Hedging` / `Failover` / `Idempotency` / `TotalTimeout` | `Resilience.*` |
-| `Cache` | `Caching` |
-| `Data` | `Body` |
-| `RequestCompression` | `Compression` |
-| `ValueFormatter` | `Serialization.ValueText` |
-| `ContentSerializers` / `client.ContentSerializers` | `Serialization.BodySerializers` |
-| `Serialization.ContentSerializer` | removed; use `Serialization.BodySerializers.Default`, or process-level `AxiosContent.Register` / `AxiosContent.Default` |
-| `AxiosContent.Serializer` | `AxiosContent.Default` (fallback only; media-type registrations always win) |
-| `client.BodySerializers` | `client.Defaults.Serialization.BodySerializers` |
-| `ContentSerializerRegistry.SetDefault(x)` | `registry.Default = x` |
-| `RequestEncoding` / `ResponseEncoding` | `Serialization.TextEncoding` |
-| `ParamsSerializer` | `Serialization.QueryEncoder` |
-| `FormFieldNameSelector` | `Serialization.FormFieldName` |
-| `JsonSerializerOptions` | `Serialization.JsonOptions` |
-| `RetryNonIdempotentMethods` / `HedgeNonIdempotentMethods` | `Resilience.AllowUnsafeRetry` (the only switch for non-idempotent methods) |
-| `RemoveHeaders` | no longer public |
-| `AxiosConfig.LimitSettings` (public nested type) | becomes the public real group `AxiosConfig.LimitsSettings` (reached via `AxiosConfig.Limits`; both the type name and the access path changed); default-value constants stay on `AxiosConfig.DefaultStreamFrameBytes` / `MinStreamFrameBytes` / `MaxStreamFrameBytesLimit` |
-| — | new `Axios.Create(baseAddress)` and `client.Create<T>()` |
-
-#### Behavior tightening in 1.5.x (vs 1.5.0)
-
-| 1.5.0 | 1.5.x |
-| --- | --- |
-| `BaseAddress` with query / fragment was string-concatenated, semantics undefined | Resolved per RFC 3986 §5.2.2: the base query is inherited only when the reference path is empty, the base fragment is always dropped, and a fragment on the relative reference is kept |
-| A request interceptor returning a brand-new `AxiosConfig` lost instance defaults (`BaseAddress` etc.) | Merged once automatically; explicitly written values win over instance defaults; already-merged configs / clones are not merged twice |
-| Explicit `null` on `Transport.HttpVersion` / `VersionPolicy` behaved differently across entry points | Unified as "explicitly back to the library default" (HTTP/2 / `RequestVersionOrLower`), overriding the instance default |
-| Every redirect failure reported `ERR_BAD_REQUEST` | Overrun now reports the dedicated `ERR_TOO_MANY_REDIRECTS`; `MaxRedirects = 0` keeps `ERR_BAD_REQUEST` but with a distinct "redirects disabled" message |
-| Cache single-flight broadcast HTTP-status failures to followers | Non-2xx now uses "share the response, decide per follower": each follower applies its own `ValidateStatus` / interceptors / error factory while the server sees one request; streaming responses and over-cap bodies fall back to individual resends |
-| A spent `Resilience.TotalTimeout` budget could still fail over / hedge | Exhaustion throws `ECONNABORTED` (`IsTotalTimeoutExceeded = true`) immediately; no second attempt is sent |
-| Cached hits kept the original `Age` header; duplicate response headers replayed only the first value | `Age` is recomputed from `receivedAt` on hits; duplicate headers replay all values |
-| Hedging exclusion covered download progress only | Upload / download progress callbacks and `MaxRate` now exclude hedging; `TrafficMeter` counting is atomic |
-
-`AxiosNet.WebAPI` is still part of the same package: there is no separate package, and the declarative extension methods only need `using AxiosNet.WebAPI;`; use `AxiosNetOmitWebApi` to leave it out of the build when needed.
 
 ## License
 

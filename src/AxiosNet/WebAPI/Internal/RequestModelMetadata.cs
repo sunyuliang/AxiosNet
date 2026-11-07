@@ -60,6 +60,18 @@ internal sealed class RequestModelMetadata
     /// <summary>是否声明了 <see cref="MultipartAttribute"/>（请求体 = 模型自身装配的 multipart 表单）。</summary>
     internal bool IsMultipart { get; init; }
 
+    /// <summary>类 / 属性级 <c>[BodyContentType]</c> 的生效值（已归一化）；null 表示没有声明。</summary>
+    internal string? ContentType { get; init; }
+
+    /// <summary>类 / 属性级 <c>[QueryCollectionFormat]</c> 的生效值；null 表示没有声明。</summary>
+    internal AxiosCollectionFormat? QueryCollectionFormat { get; init; }
+
+    /// <summary>类 / 属性级 <see cref="StreamAttribute"/> 是否出现；出现时 <see cref="StreamFormat"/> 为生效值。</summary>
+    internal bool HasStreamAttribute { get; init; }
+
+    /// <summary>流式响应帧格式的生效值；<see cref="HasStreamAttribute"/> 为 false 时无意义。</summary>
+    internal AxiosStreamFormat StreamFormat { get; init; }
+
     /// <summary>multipart 部件绑定：未标注参数特性的属性默认参与（名字 = [JsonPropertyName] / 属性名），[Part] 可覆盖。</summary>
     internal PartBinding[] PartBindings { get; init; } = [];
 
@@ -209,12 +221,25 @@ internal sealed class RequestModelMetadata
         var path = DeclarationNormalization.Path(declaration.Path);
         var owner = $"请求模型 {modelName}";
 
+        // 类 / 属性两层的编码声明：属性级优先，但两层都显式声明且取值不同时直接报错，不静默取一个。
+        var contentType = ResolveContentType(declaration, owner);
+        var queryCollectionFormat = ResolveQueryCollectionFormat(declaration, owner);
+        var (hasStream, streamFormat) = ResolveStream(declaration, owner);
+
         var accumulator = new BindingAccumulator(owner, "属性");
 
         // multipart 部件绑定：模型声明 [Multipart] 时，模型自身即表单
         var parts = new List<PartBinding>();
         var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
         var isMultipart = declaration.Multipart;
+
+        // multipart 的正文由全部属性装配、媒体类型固定，声明 [BodyContentType] 无法生效。
+        if (isMultipart && contentType is not null)
+        {
+            throw new InvalidOperationException(
+                $"{owner} 同时声明了 [Multipart] 与 [BodyContentType]（\"{contentType}\"）："
+                + "multipart 的媒体类型固定为 multipart/form-data，两者互斥。");
+        }
 
         accumulator.AddStaticHeaders(declaration.StaticHeaders);
 
@@ -334,8 +359,155 @@ internal sealed class RequestModelMetadata
         {
             Authorization = DeclarationNormalization.Authorization(declaration.AllowAnonymous, declaration.AuthorizeScheme, owner),
             IsMultipart = isMultipart,
-            PartBindings = [.. parts]
+            PartBindings = [.. parts],
+            ContentType = contentType,
+            QueryCollectionFormat = queryCollectionFormat,
+            HasStreamAttribute = hasStream,
+            StreamFormat = streamFormat
         };
+    }
+
+    // ---- 类 / 属性两层编码声明的解析：属性级优先；两层都显式声明且取值不同 → ERR_BAD_OPTION_VALUE ----
+
+    private static string? ResolveContentType(RequestModelDeclaration declaration, string owner)
+    {
+        var typeValue = declaration.ContentType is null
+            ? (string?)null
+            : DeclarationNormalization.ContentType(declaration.ContentType);
+
+        var members = declaration.Members
+            .Where(member => !member.Ignore && member.ContentType is not null)
+            .Select(member => (Value: DeclarationNormalization.ContentType(member.ContentType), Display: $"{owner}.{member.Name}"))
+            .ToList();
+
+        var (hasValue, value) = ResolveEncodingDeclaration(
+            owner,
+            "BodyContentType",
+            typeValue is not null,
+            typeValue ?? string.Empty,
+            members.Select(item => (item.Value, item.Display)).ToList());
+
+        return hasValue ? value : null;
+    }
+
+    private static AxiosCollectionFormat? ResolveQueryCollectionFormat(RequestModelDeclaration declaration, string owner)
+    {
+        var hasTypeValue = declaration.QueryCollectionFormat is not null;
+        var typeValue = declaration.QueryCollectionFormat ?? default;
+        if (hasTypeValue)
+        {
+            ValidateCollectionFormat(typeValue, owner, "类");
+        }
+
+        var members = declaration.Members
+            .Where(member => !member.Ignore && member.QueryCollectionFormat is not null)
+            .Select(member =>
+            {
+                var value = member.QueryCollectionFormat!.Value;
+                ValidateCollectionFormat(value, owner, $"属性 {member.Name}");
+                return (Value: value, Display: $"{owner}.{member.Name}");
+            })
+            .ToList();
+
+        var (hasValue, value) = ResolveEncodingDeclaration(
+            owner,
+            "QueryCollectionFormat",
+            hasTypeValue,
+            typeValue,
+            members);
+
+        return hasValue ? value : null;
+    }
+
+    private static (bool HasValue, AxiosStreamFormat Value) ResolveStream(RequestModelDeclaration declaration, string owner)
+    {
+        var hasTypeValue = declaration.HasStreamAttribute;
+        var typeValue = declaration.StreamFormat;
+        if (hasTypeValue)
+        {
+            ValidateStreamFormat(typeValue, owner, "类");
+        }
+
+        var members = declaration.Members
+            .Where(member => !member.Ignore && member.HasStreamAttribute)
+            .Select(member =>
+            {
+                ValidateStreamFormat(member.StreamFormat, owner, $"属性 {member.Name}");
+                return (Value: member.StreamFormat, Display: $"{owner}.{member.Name}");
+            })
+            .ToList();
+
+        var (hasValue, value) = ResolveEncodingDeclaration(
+            owner,
+            "Stream",
+            hasTypeValue,
+            typeValue,
+            members);
+
+        return (hasValue, value);
+    }
+
+    /// <summary>
+    /// 两层声明解析：属性级 > 类型级；多个属性都声明时必须一致；属性与类同时声明且取值不同 → <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 返回值可空表示两层都没有声明（调用方只在至少有声明时使用）。
+    /// </summary>
+    private static (bool HasValue, T Value) ResolveEncodingDeclaration<T>(
+        string owner,
+        string attributeName,
+        bool hasTypeValue,
+        T typeValue,
+        IReadOnlyList<(T Value, string Display)> members)
+    {
+        if (members.Count == 0)
+        {
+            return hasTypeValue ? (true, typeValue) : (false, default!);
+        }
+
+        var first = members[0];
+        for (var i = 1; i < members.Count; i++)
+        {
+            if (!EqualityComparer<T>.Default.Equals(first.Value, members[i].Value))
+            {
+                throw AxiosException.InvalidOption(
+                    $"{owner} 的 [{attributeName}] 在多个属性上声明了不同的值（{FormatDeclarations(members)}）："
+                    + "请只保留一处，或让所有声明一致。");
+            }
+        }
+
+        if (hasTypeValue && !EqualityComparer<T>.Default.Equals(typeValue, first.Value))
+        {
+            throw AxiosException.InvalidOption(
+                $"{owner} 的 [{attributeName}] 在类与属性上声明了不同的值（类：{FormatValue(typeValue)}，{first.Display}：{FormatValue(first.Value)}）："
+                + "两层声明必须一致，或只保留一层。");
+        }
+
+        return (true, first.Value);
+    }
+
+    private static string FormatDeclarations<T>(IReadOnlyList<(T Value, string Display)> members)
+        => string.Join("、", members.Select(item => $"{item.Display}={FormatValue(item.Value)}"));
+
+    private static string FormatValue<T>(T value)
+        => value is string text ? $"\"{text}\"" : value?.ToString() ?? "null";
+
+    private static void ValidateCollectionFormat(AxiosCollectionFormat format, string owner, string scope)
+    {
+        if (!Enum.IsDefined(typeof(AxiosCollectionFormat), format))
+        {
+            throw new InvalidOperationException(
+                $"{owner}（{scope}）的 [QueryCollectionFormat] 值 {format} 不是已定义的 AxiosCollectionFormat："
+                + "只能是 Brackets / Multi / Csv / Ssv / Tsv / Pipes。");
+        }
+    }
+
+    private static void ValidateStreamFormat(AxiosStreamFormat format, string owner, string scope)
+    {
+        if (!Enum.IsDefined(typeof(AxiosStreamFormat), format))
+        {
+            throw new InvalidOperationException(
+                $"{owner}（{scope}）的 [Stream] 值 {format} 不是已定义的 AxiosStreamFormat："
+                + "只能是 NewlineDelimitedJson / ServerSentEvents / JsonArray。");
+        }
     }
 
     /// <summary>同名绑定冲突的错误：说明同名参数要合并成同一个属性。</summary>

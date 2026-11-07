@@ -36,6 +36,30 @@ internal static class RequestModelDeclarationReader
 
         // 类级静态头：基类在前、派生类在后（同名后者覆盖）
         var chain = BuildInheritanceChain(requestType);
+
+        // 类级编码声明：沿继承链由近到远，最近一层声明胜出（与授权 / 静态头的类级口径一致）。
+        foreach (var type in chain)
+        {
+            if (declaration.ContentType is null
+                && type.GetCustomAttribute<BodyContentTypeAttribute>(inherit: false) is { } contentType)
+            {
+                declaration.ContentType = contentType.ContentType;
+            }
+
+            if (declaration.QueryCollectionFormat is null
+                && type.GetCustomAttribute<QueryCollectionFormatAttribute>(inherit: false) is { } collectionFormat)
+            {
+                declaration.QueryCollectionFormat = collectionFormat.Format;
+            }
+
+            if (!declaration.HasStreamAttribute
+                && type.GetCustomAttribute<StreamAttribute>(inherit: false) is { } stream)
+            {
+                declaration.HasStreamAttribute = true;
+                declaration.StreamFormat = stream.Format;
+            }
+        }
+
         for (var i = chain.Count - 1; i >= 0; i--)
         {
             if (chain[i].GetCustomAttribute<HeadersAttribute>(inherit: false) is { } headers)
@@ -140,6 +164,23 @@ internal static class RequestModelDeclarationReader
         if (property.GetCustomAttribute<BodyAttribute>(inherit) is not null)
         {
             member.Body = true;
+        }
+
+        if (property.GetCustomAttribute<BodyContentTypeAttribute>(inherit) is { } contentType)
+        {
+            member.ContentType = contentType.ContentType;
+        }
+
+        if (property.GetCustomAttribute<QueryCollectionFormatAttribute>(inherit) is { } collectionFormat)
+        {
+            member.QueryCollectionFormat = collectionFormat.Format;
+        }
+
+        // [Stream] 本身不继承（与接口方法一致）；属性级只读本属性的声明。
+        if (property.GetCustomAttribute<StreamAttribute>(inherit: false) is { } stream)
+        {
+            member.HasStreamAttribute = true;
+            member.StreamFormat = stream.Format;
         }
 
         if (property.GetCustomAttribute<FormatAttribute>(inherit) is { } format)

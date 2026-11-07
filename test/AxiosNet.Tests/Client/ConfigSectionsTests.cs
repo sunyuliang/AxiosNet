@@ -361,10 +361,10 @@ public sealed class ConfigSectionsTests
 
         Assert.Equal(TelemetryCapture.Off, settings.Capture);
 
-        // 显式 null 表示「不表态」，保留实例值
+        // 显式 null 表示清除实例值（与 Body / ContentType / Compression / CancellationToken 同一口径）
         settings.MergeFrom(new AxiosConfig.ObservabilitySettings { Capture = null });
 
-        Assert.Equal(TelemetryCapture.Off, settings.Capture);
+        Assert.Null(settings.Capture);
 
         settings.MergeFrom(new AxiosConfig.ObservabilitySettings { Capture = TelemetryCapture.Query });
 

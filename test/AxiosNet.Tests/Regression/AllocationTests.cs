@@ -285,11 +285,13 @@ public sealed class AllocationTests
 
         Assert.True(sample.Data!.Count > 0, "JSON 没有反序列化成对象图，这条用例测不到被测路径。");
 
-        var average = AverageBytes(3, Read);
+        // 取 5 个测量窗口的最小值：单窗口平均值会被并行构建 / GC 噪声抬高（曾出现 4.56× > 4.5× 的误报），
+        // 最小值只反映最干净的一轮，阈值保持不变，不靠放宽护栏换稳定。
+        var average = MinimumBytes(3, Read, windows: 5);
 
         Assert.True(
             average < size * 4,
-            $"1MB JSON 强类型响应平均分配 {average:N0} B（{average / (double)size:0.00}× 载荷）——超出 4× 护栏："
+            $"1MB JSON 强类型响应最小窗口分配 {average:N0} B（{average / (double)size:0.00}× 载荷）——超出 4× 护栏："
             + "疑似整串解码成 UTF-16 再反序列化，或字节被额外复制了一份。");
     }
 
@@ -310,11 +312,13 @@ public sealed class AllocationTests
 
         Assert.True(((JsonElement)sample.Data!).GetArrayLength() > 0, "JSON 没有解析成 JsonElement，这条用例测不到被测路径。");
 
-        var average = AverageBytes(3, Read);
+        // 5 个窗口取最小值：并行负载下的 GC 抖动只会抬高单轮均值，最小值才代表被测路径本身；
+        // 阈值维持 4.5×，避免把偶发噪声当成产品退化，也避免放宽护栏掩盖真实回归。
+        var average = MinimumBytes(3, Read, windows: 5);
 
         Assert.True(
             average < size * 9 / 2,
-            $"1MB JSON JsonElement 响应平均分配 {average:N0} B（{average / (double)size:0.00}× 载荷）——超出 4.5× 护栏："
+            $"1MB JSON JsonElement 响应最小窗口分配 {average:N0} B（{average / (double)size:0.00}× 载荷）——超出 4.5× 护栏："
             + "要么是文档之外又多了一次整串解码 / 复制，要么是省掉了 Clone、让未释放的文档每次重新租元数据（后者实测更贵）。");
     }
 

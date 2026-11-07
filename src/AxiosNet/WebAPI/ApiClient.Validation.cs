@@ -138,6 +138,12 @@ public sealed partial class ApiClient
             {
                 errors.Add($"{Describe(type)}：{ex.Message}");
             }
+            catch (AxiosException ex)
+            {
+                // 声明冲突（例如类与属性都声明 [BodyContentType] 且取值不同）也要计入校验报告，
+                // 不能因为校验器自身抛出异常而中断整轮扫描。
+                errors.Add($"{Describe(type)}：{ex.Message}");
+            }
         }
 
         return errors;

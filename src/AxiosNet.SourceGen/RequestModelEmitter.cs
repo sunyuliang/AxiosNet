@@ -48,6 +48,25 @@ namespace AxiosNet.SourceGen
                 builder.AppendLine("                    b.Multipart();");
             }
 
+            if (model.ContentType is not null)
+            {
+                builder.Append("                    b.ContentType(").Append(Literal(model.ContentType)).AppendLine(");");
+            }
+
+            if (model.QueryCollectionFormat is not null)
+            {
+                builder.Append("                    b.QueryCollectionFormat((global::AxiosNet.AxiosCollectionFormat)")
+                    .Append(model.QueryCollectionFormat.Value)
+                    .AppendLine(");");
+            }
+
+            if (model.HasStreamAttribute)
+            {
+                builder.Append("                    b.Stream((global::AxiosNet.AxiosStreamFormat)")
+                    .Append(model.StreamFormat)
+                    .AppendLine(");");
+            }
+
             if (model.AuthorizeScheme is not null)
             {
                 builder.Append("                    b.Authorize(").Append(Literal(model.AuthorizeScheme)).AppendLine(");");
@@ -88,6 +107,25 @@ namespace AxiosNet.SourceGen
                 .AppendLine(", static m =>");
             builder.AppendLine("                    {");
             builder.Append("                        m.FieldName(").Append(Literal(member.FieldName)).AppendLine(");");
+
+            if (member.ContentType is not null)
+            {
+                builder.Append("                        m.ContentType(").Append(Literal(member.ContentType)).AppendLine(");");
+            }
+
+            if (member.QueryCollectionFormat is not null)
+            {
+                builder.Append("                        m.QueryCollectionFormat((global::AxiosNet.AxiosCollectionFormat)")
+                    .Append(member.QueryCollectionFormat.Value)
+                    .AppendLine(");");
+            }
+
+            if (member.HasStreamAttribute)
+            {
+                builder.Append("                        m.Stream((global::AxiosNet.AxiosStreamFormat)")
+                    .Append(member.StreamFormat)
+                    .AppendLine(");");
+            }
 
             if (member.FormatExpression is { } format)
             {

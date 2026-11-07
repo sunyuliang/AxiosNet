@@ -406,6 +406,10 @@ public sealed partial class AxiosClient
         config.EffectiveMerged = true;
         config.ClearInstanceOptionFlags();
 
+        // 与 MergeConfig 同一口径：继承来的 *Set 标记不算「调用方显式写过」，清掉后
+        // configure 里的显式写会重新置标记，回放这份产物时只搬调用方意图、不搬来源实例默认值。
+        config.ObservabilityOrNull?.ClearSetFlags();
+
         // 记下继承来的 transform 段长度：合并层只对这一段去重。
         config.TransformInheritedRequest = Defaults.TransformRequestCount;
         config.TransformInheritedResponse = Defaults.TransformResponseCount;

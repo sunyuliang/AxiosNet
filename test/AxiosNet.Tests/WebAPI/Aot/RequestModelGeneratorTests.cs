@@ -88,6 +88,48 @@ public sealed class RequestModelGeneratorTests
     }
 
     /// <summary>
+    /// 类 / 属性级 <c>[BodyContentType]</c> / <c>[QueryCollectionFormat]</c> / <c>[Stream]</c>：
+    /// 生成器与反射读到的声明逐字段一致，AOT 路径与运行期路径得出同一个生效值。
+    /// </summary>
+    [Fact]
+    public void EncodingDeclarations_GeneratedMatchesReflection()
+    {
+        var ns = UniqueNamespace();
+        var (result, diagnostics, output) = RunGenerator(EncodingModels.Replace("__NS__", ns));
+
+        Assert.Empty(diagnostics);
+        Assert.Single(ModelSources(result));
+
+        var assembly = LoadEmitted(output);
+        AssertSameDeclaration(assembly, ns + ".EncodingModel");
+
+        var metadata = RequestModelMetadata.Get(assembly.GetType(ns + ".EncodingModel", throwOnError: true)!);
+        Assert.Equal("application/json", metadata.ContentType);
+        Assert.Equal(AxiosCollectionFormat.Multi, metadata.QueryCollectionFormat);
+        Assert.True(metadata.HasStreamAttribute);
+        Assert.Equal(AxiosStreamFormat.ServerSentEvents, metadata.StreamFormat);
+    }
+
+    /// <summary>
+    /// 类与属性两层都显式声明且取值不同：生成器把两层都发射出去，共享构建器按统一口径抛
+    /// <c>ERR_BAD_OPTION_VALUE</c>——AOT 与反射路径结论一致，不会静默取一个。
+    /// </summary>
+    [Fact]
+    public void EncodingDeclarationConflict_ThrowsErrBadOptionValue()
+    {
+        var ns = UniqueNamespace();
+        var (_, diagnostics, output) = RunGenerator(ConflictEncodingModels.Replace("__NS__", ns));
+        Assert.Empty(diagnostics);
+
+        var assembly = LoadEmitted(output);
+        var modelType = assembly.GetType(ns + ".ConflictModel", throwOnError: true)!;
+
+        var error = Assert.Throws<AxiosException>(() => RequestModelMetadata.Get(modelType));
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Contains("[BodyContentType]", error.Message);
+    }
+
+    /// <summary>
     /// <c>[Format]</c> 的三种声明形态都要烘焙成 <c>ValueFormat</c>：格式串、忽略通道的格式化函数、按通道分叉的格式化函数，
     /// 在生成代码里同样可用，且与反射路径产出的文本逐字符相同。
     /// </summary>
@@ -398,6 +440,10 @@ public sealed class RequestModelGeneratorTests
         Assert.Equal(reflected.ImplementsApiRequest, generated.ImplementsApiRequest);
         Assert.Equal(reflected.Error, generated.Error);
         Assert.Equal(reflected.StaticHeaders, generated.StaticHeaders);
+        Assert.Equal(reflected.ContentType, generated.ContentType);
+        Assert.Equal(reflected.QueryCollectionFormat, generated.QueryCollectionFormat);
+        Assert.Equal(reflected.HasStreamAttribute, generated.HasStreamAttribute);
+        Assert.Equal(reflected.StreamFormat, generated.StreamFormat);
         Assert.Equal(reflected.Members.Count, generated.Members.Count);
 
         for (var i = 0; i < reflected.Members.Count; i++)
@@ -446,6 +492,10 @@ public sealed class RequestModelGeneratorTests
         Assert.Equal(expected.PartName, actual.PartName);
         Assert.Equal(expected.PartFileName, actual.PartFileName);
         Assert.Equal(expected.PartContentType, actual.PartContentType);
+        Assert.Equal(expected.ContentType, actual.ContentType);
+        Assert.Equal(expected.QueryCollectionFormat, actual.QueryCollectionFormat);
+        Assert.Equal(expected.HasStreamAttribute, actual.HasStreamAttribute);
+        Assert.Equal(expected.StreamFormat, actual.StreamFormat);
     }
 
     private static string? NormalizeOptionalName(string? name) => string.IsNullOrEmpty(name) ? null : name;
@@ -940,6 +990,53 @@ public sealed class RequestModelGeneratorTests
         public class HiddenTypeDerived : HiddenTypeBase
         {
             public new object? Value { get; set; }
+        }
+        """;
+
+    private const string EncodingModels = """
+        using System;
+        using AxiosNet;
+        using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
+
+        namespace __NS__;
+
+        [Get("encoding")]
+        [BodyContentType("application/json")]
+        [QueryCollectionFormat(AxiosCollectionFormat.Multi)]
+        [Stream(AxiosStreamFormat.ServerSentEvents)]
+        public class EncodingModel : IApiRequest<string>
+        {
+            // 两层同值：允许，属性级是实际读取到的来源。
+            [Body]
+            [BodyContentType("application/json")]
+            public string? Payload { get; set; }
+
+            [Query]
+            [QueryCollectionFormat(AxiosCollectionFormat.Multi)]
+            public string? Tags { get; set; }
+
+            [Query]
+            [Stream(AxiosStreamFormat.ServerSentEvents)]
+            public string? Note { get; set; }
+        }
+        """;
+
+    private const string ConflictEncodingModels = """
+        using System;
+        using AxiosNet;
+        using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
+
+        namespace __NS__;
+
+        [Post("conflict")]
+        [BodyContentType("application/json")]
+        public class ConflictModel : IApiRequest<string>
+        {
+            [Body]
+            [BodyContentType("text/plain")]
+            public string? Payload { get; set; }
         }
         """;
 

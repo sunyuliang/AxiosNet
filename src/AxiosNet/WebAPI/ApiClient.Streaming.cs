@@ -7,14 +7,26 @@ namespace AxiosNet.WebAPI;
 // 流式响应：把响应流按帧解析成 IAsyncEnumerable<T>，状态码 / 响应头按 AxiosResponse 原样保留。
 public sealed partial class ApiClient
 {
-    /// <summary>以 NDJSON（行分隔 JSON）读取流式响应：<c>Data</c> 是逐帧反序列化的 <see cref="IAsyncEnumerable{T}"/>。</summary>
+    /// <summary>
+    /// 读取流式响应：<c>Data</c> 是逐帧反序列化的 <see cref="IAsyncEnumerable{T}"/>。
+    /// 帧格式取请求模型类 / 属性上的 <c>[Stream]</c> 声明，未声明时按 NDJSON。
+    /// </summary>
     /// <typeparam name="TItem">每个帧（行）反序列化后的类型。</typeparam>
     /// <param name="request">请求模型实例；泛型参数即<b>单个帧</b>的类型。</param>
     /// <param name="cancellationToken">外部取消令牌（贯穿整个枚举过程）。</param>
     public Task<AxiosResponse<IAsyncEnumerable<TItem>>> RequestStreamAsync<TItem>(
         IApiRequest<TItem> request,
         CancellationToken cancellationToken = default)
-        => RequestStreamAsync(request, AxiosStreamFormat.NewlineDelimitedJson, configure: null, cancellationToken);
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var metadata = RequestModelMetadata.Get(request.GetType());
+        var format = metadata.HasStreamAttribute
+            ? metadata.StreamFormat
+            : AxiosStreamFormat.NewlineDelimitedJson;
+
+        return RequestStreamAsync(request, format, configure: null, cancellationToken);
+    }
 
     /// <summary>以指定帧格式（NDJSON / SSE / JSON 数组）逐帧读取流式响应。</summary>
     /// <remarks>

@@ -26,6 +26,11 @@ public sealed partial class AxiosClient
         // 只清 WithCredentials / MaxRedirects 两项：Proxy / Credentials 没有 *Set 标记，靠引用为空判断。
         merged.ClearInstanceOptionFlags();
 
+        // 可观测性回调组的 *Set 标记只描述「显式写过」：Defaults.Clone() 带过来的标记是来源实例默认值，
+        // 不是按请求意图。不清掉的话，回放 response.Config 会把来源实例的回调 / 清空意图搬到目标实例上
+        // （与缓存、CancellationToken 同一套「实例来源不搬运」口径）。只清标记、留值，本次请求照常继承。
+        merged.ObservabilityOrNull?.ClearSetFlags();
+
         // 标记实例级选项来自本实例默认值。
         merged.InstanceOptionsInherited = true;
 
@@ -80,7 +85,8 @@ public sealed partial class AxiosClient
         }
 
         // 缓存是实例级的共享状态：按请求项给了就用它，否则沿用实例默认。
-        if (perCall.Caching is not null)
+        // 库产出的配置（回放 response.Config 等）不搬来源实例的缓存，否则目标实例会直接命中来源实例的条目。
+        if (!instanceSourced && perCall.Caching is not null)
         {
             merged.Caching = perCall.Caching;
         }
@@ -173,7 +179,7 @@ public sealed partial class AxiosClient
 
             if (instanceSourced)
             {
-                merged.Serialization.BodySerializers = ownRegistry;
+                merged.Serialization.BodySerializers = ownRegistry!;
             }
         }
 

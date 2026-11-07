@@ -26,6 +26,17 @@ internal sealed class RequestModelDeclaration
 
     public bool Multipart { get; set; }
 
+    /// <summary>类级 <c>[BodyContentType]</c> 原文；null 表示类上没有声明。</summary>
+    public string? ContentType { get; set; }
+
+    /// <summary>类级 <c>[QueryCollectionFormat]</c>；null 表示类上没有声明。</summary>
+    public AxiosCollectionFormat? QueryCollectionFormat { get; set; }
+
+    /// <summary>类级 <c>[Stream]</c> 是否出现；出现时 <see cref="StreamFormat"/> 为声明值。</summary>
+    public bool HasStreamAttribute { get; set; }
+
+    public AxiosStreamFormat StreamFormat { get; set; }
+
     public bool AllowAnonymous { get; set; }
 
     /// <summary>非 null 表示 [Authorize]，值为声明的 scheme（构建期归一化校验）；null 表示继承默认授权。</summary>
@@ -55,6 +66,17 @@ internal sealed class RequestModelMemberDeclaration
     public string? Description { get; set; }
 
     public bool Ignore { get; set; }
+
+    /// <summary>属性级 <c>[BodyContentType]</c> 原文；null 表示属性上没有声明。</summary>
+    public string? ContentType { get; set; }
+
+    /// <summary>属性级 <c>[QueryCollectionFormat]</c>；null 表示属性上没有声明。</summary>
+    public AxiosCollectionFormat? QueryCollectionFormat { get; set; }
+
+    /// <summary>属性级 <c>[Stream]</c> 是否出现；出现时 <see cref="StreamFormat"/> 为声明值。</summary>
+    public bool HasStreamAttribute { get; set; }
+
+    public AxiosStreamFormat StreamFormat { get; set; }
 
     /// <summary>成员级格式化（<c>[Format]</c>）；null 表示走通道默认规则。</summary>
     public ValueFormat? Format { get; set; }

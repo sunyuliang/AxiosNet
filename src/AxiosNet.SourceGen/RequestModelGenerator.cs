@@ -248,6 +248,7 @@ namespace AxiosNet.SourceGen
             diagnostics.AddRange(memberDiags);
 
             var (multipart, allowAnonymous, authorizeScheme) = ReadDeclarationLevelAttributes(symbol, wellKnown, location, diagnostics);
+            var encoding = ReadEncodingDeclarations(symbol, wellKnown);
 
             return new RequestModelInfo(
                 fullTypeName,
@@ -262,7 +263,11 @@ namespace AxiosNet.SourceGen
                 ImplementsApiRequest(symbol, wellKnown),
                 new EquatableArray<RequestMemberInfo>(members.ToImmutable()),
                 new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
-                true);
+                true,
+                encoding.ContentType,
+                encoding.QueryCollectionFormat,
+                encoding.HasStreamAttribute,
+                encoding.StreamFormat);
         }
 
         // 单个属性 → 一条成员绑定：解析 Path / Query / Header / Body / Part，并写好取值的表达式。
@@ -277,6 +282,11 @@ namespace AxiosNet.SourceGen
             var ownBindingCount = CountOwnBindings(ownAttributes, wellKnown);
 
             var bindings = ImmutableArray.CreateBuilder<MemberBindingInfo>();
+            string? contentType = null;
+            int? queryCollectionFormat = null;
+            var hasStreamAttribute = false;
+            var streamFormat = 0;
+
             if (!ignored || ownBindingCount > 0)
             {
                 // [ApiIgnore] 只和「本属性自己声明的」参数特性冲突；继承来的参数特性被 [ApiIgnore] 静默压掉（与反射一致）。
@@ -285,6 +295,22 @@ namespace AxiosNet.SourceGen
                 if (binding is not null)
                 {
                     bindings.Add(binding);
+                }
+
+                // 与反射侧同一规则：被 [ApiIgnore] 压掉的属性不参与类 / 属性编码声明。
+                contentType = Find(property, wellKnown.BodyContentType, inherit) is { } bodyContentType
+                    ? GetStringArgument(bodyContentType, 0)
+                    : null;
+                if (Find(property, wellKnown.QueryCollectionFormat, inherit) is { } collectionFormat)
+                {
+                    queryCollectionFormat = GetIntArgument(collectionFormat);
+                }
+
+                // [Stream] 不继承，与接口方法一致。
+                if (Find(property, wellKnown.Stream, inherit: false) is { } stream)
+                {
+                    hasStreamAttribute = true;
+                    streamFormat = GetIntArgument(stream) ?? 0;
                 }
             }
 
@@ -321,7 +347,11 @@ namespace AxiosNet.SourceGen
                 "static o => ((" + TypeFormats.Display(property.ContainingType) + ")o)." + EscapeIdentifier(property.Name),
                 ignored,
                 formatExpression,
-                new EquatableArray<MemberBindingInfo>(bindings.ToImmutable()));
+                new EquatableArray<MemberBindingInfo>(bindings.ToImmutable()),
+                contentType,
+                queryCollectionFormat,
+                hasStreamAttribute,
+                streamFormat);
         }
 
         /// <summary>读出成员命中的绑定目标（路径 / 查询 / 头 / 正文 / 部件）；多个命中留给构建期报错。</summary>
@@ -422,6 +452,64 @@ namespace AxiosNet.SourceGen
 
             return (multipart, allowAnonymous, authorizeScheme);
         }
+
+        // 沿基类链由近到远读取类级编码声明：[Stream] 不继承，其余两项按「最近一层声明胜出」。
+        private static (string? ContentType, int? QueryCollectionFormat, bool HasStreamAttribute, int StreamFormat)
+            ReadEncodingDeclarations(INamedTypeSymbol symbol, WellKnownSymbols wellKnown)
+        {
+            string? contentType = null;
+            int? queryCollectionFormat = null;
+            var hasStreamAttribute = false;
+            var streamFormat = 0;
+
+            for (var current = symbol; current is not null && current.SpecialType != SpecialType.System_Object; current = current.BaseType)
+            {
+                if (contentType is null
+                    && FindOnType(current, wellKnown.BodyContentType) is { } content
+                    && GetStringArgument(content, 0) is { } contentValue)
+                {
+                    contentType = contentValue;
+                }
+
+                if (queryCollectionFormat is null
+                    && FindOnType(current, wellKnown.QueryCollectionFormat) is { } collectionFormat
+                    && GetIntArgument(collectionFormat) is { } collectionFormatValue)
+                {
+                    queryCollectionFormat = collectionFormatValue;
+                }
+
+                if (!hasStreamAttribute && FindOnType(current, wellKnown.Stream) is { } stream)
+                {
+                    hasStreamAttribute = true;
+                    streamFormat = GetIntArgument(stream) ?? 0;
+                }
+            }
+
+            return (contentType, queryCollectionFormat, hasStreamAttribute, streamFormat);
+        }
+
+        private static AttributeData? FindOnType(INamedTypeSymbol type, INamedTypeSymbol? attributeType)
+        {
+            if (attributeType is null)
+            {
+                return null;
+            }
+
+            foreach (var attribute in type.GetAttributes())
+            {
+                if (SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, attributeType))
+                {
+                    return attribute;
+                }
+            }
+
+            return null;
+        }
+
+        private static int? GetIntArgument(AttributeData attribute)
+            => attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int value
+                ? value
+                : null;
 
         // 沿基类链由表及里收集 Headers 声明的静态头：基类在前、派生类在后，同名由运行时按顺序覆盖。
         private static IEnumerable<string> ReadStaticHeaders(INamedTypeSymbol symbol, WellKnownSymbols wellKnown)

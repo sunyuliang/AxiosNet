@@ -48,6 +48,28 @@ public sealed class RequestModelBuilder
         return this;
     }
 
+    /// <summary>类级 <c>[BodyContentType]</c>：请求体媒体类型（与 <see cref="Multipart"/> 互斥）。</summary>
+    public RequestModelBuilder ContentType(string contentType)
+    {
+        Declaration.ContentType = contentType;
+        return this;
+    }
+
+    /// <summary>类级 <c>[QueryCollectionFormat]</c>：查询集合的默认编码。</summary>
+    public RequestModelBuilder QueryCollectionFormat(AxiosCollectionFormat format)
+    {
+        Declaration.QueryCollectionFormat = format;
+        return this;
+    }
+
+    /// <summary>类级 <c>[Stream]</c>：流式响应的默认帧格式。</summary>
+    public RequestModelBuilder Stream(AxiosStreamFormat format = AxiosStreamFormat.NewlineDelimitedJson)
+    {
+        Declaration.HasStreamAttribute = true;
+        Declaration.StreamFormat = format;
+        return this;
+    }
+
     /// <summary>声明 <c>[Authorize(scheme)]</c>。</summary>
     public RequestModelBuilder Authorize(string scheme)
     {
@@ -138,6 +160,28 @@ public sealed class RequestModelMemberBuilder
     public RequestModelMemberBuilder FieldName(string fieldName)
     {
         _member.FieldName = fieldName;
+        return this;
+    }
+
+    /// <summary>属性级 <c>[BodyContentType]</c>：覆盖类级声明（两层都声明且不同则在构建期报错）。</summary>
+    public RequestModelMemberBuilder ContentType(string contentType)
+    {
+        _member.ContentType = contentType;
+        return this;
+    }
+
+    /// <summary>属性级 <c>[QueryCollectionFormat]</c>：覆盖类级声明（两层都声明且不同则在构建期报错）。</summary>
+    public RequestModelMemberBuilder QueryCollectionFormat(AxiosCollectionFormat format)
+    {
+        _member.QueryCollectionFormat = format;
+        return this;
+    }
+
+    /// <summary>属性级 <c>[Stream]</c>：覆盖类级声明（两层都声明且不同则在构建期报错）。</summary>
+    public RequestModelMemberBuilder Stream(AxiosStreamFormat format = AxiosStreamFormat.NewlineDelimitedJson)
+    {
+        _member.HasStreamAttribute = true;
+        _member.StreamFormat = format;
         return this;
     }
 

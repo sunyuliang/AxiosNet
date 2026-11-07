@@ -55,7 +55,11 @@ namespace AxiosNet.SourceGen
         string GetterExpression,
         bool Ignore,
         string? FormatExpression,
-        EquatableArray<MemberBindingInfo> Bindings);
+        EquatableArray<MemberBindingInfo> Bindings,
+        string? ContentType = null,
+        int? QueryCollectionFormat = null,
+        bool HasStreamAttribute = false,
+        int StreamFormat = 0);
 
     /// <summary>一个请求模型的完整生成数据；<see cref="Emit"/> 为 false 时只携带诊断。</summary>
     /// <param name="FullTypeName">模型类型的完整名（含命名空间），输出阶段按它去重。</param>
@@ -84,7 +88,11 @@ namespace AxiosNet.SourceGen
         bool ImplementsApiRequest,
         EquatableArray<RequestMemberInfo> Members,
         EquatableArray<DiagnosticInfo> Diagnostics,
-        bool Emit);
+        bool Emit,
+        string? ContentType = null,
+        int? QueryCollectionFormat = null,
+        bool HasStreamAttribute = false,
+        int StreamFormat = 0);
 
     /// <summary>生成器开关（来自 buildTransitive props 暴露的 CompilerVisibleProperty）。</summary>
     /// <param name="Enabled">总开关（<c>AxiosNetSourceGen</c>，缺省开启，只有显式写 <c>false</c> 才关）。</param>

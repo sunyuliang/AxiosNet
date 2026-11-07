@@ -1,4 +1,5 @@
 
+using AxiosNet.Cache;
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
@@ -441,6 +442,28 @@ public sealed class ConfigMergeTests
         // 旧实例的生效头仍在：合并后的配置里「实例默认」与「按请求项」已经不可区分，
         // 回放只能做到「带着旧值再合并一次」，这里把这条语义固定下来。
         Assert.Equal("1", received.Headers["X-First"]);
+    }
+
+    /// <summary>
+    /// 回放 <see cref="AxiosResponse.Config"/> 到另一个实例时，<see cref="AxiosConfig.Caching"/> 属于实例级共享状态：
+    /// 目标实例没配缓存就必须真的发请求，不能沿用来源实例的缓存并直接命中。
+    /// </summary>
+    [Fact]
+    public async Task ReplayedEffectiveConfig_DoesNotCarrySourceInstanceCache()
+    {
+        await using var server = TestHttpServer.Start(_ => Json());
+
+        var cache = new AxiosCache(new AxiosCacheOptions { TimeToLive = TimeSpan.FromMinutes(1) });
+        using var source = new AxiosClient(new AxiosConfig { BaseAddress = server.Url, Caching = cache });
+
+        var first = await source.GetAsync("x");
+        await source.GetAsync("x");
+        Assert.Single(server.Received);
+
+        using var target = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        await target.RequestAsync(first.Config!);
+
+        Assert.Equal(2, server.Received.Count);
     }
 
     [Fact]

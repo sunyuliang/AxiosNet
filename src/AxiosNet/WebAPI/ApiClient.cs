@@ -161,6 +161,17 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         BindingErrors.Run(config, target, () => metadata.ApplyStaticHeaders(config));
         BindingErrors.Run(config, target, () => metadata.ApplyHeaders(request, config, formatter));
 
+        // 类 / 属性级编码声明是「默认值」：先落地，随后 IApiRequestConfigurable.Configure 与调用方 configure 仍可覆盖。
+        if (metadata.ContentType is { } declaredContentType)
+        {
+            config.ContentType = declaredContentType;
+        }
+
+        if (metadata.QueryCollectionFormat is { } declaredCollectionFormat)
+        {
+            config.Serialization.CollectionFormat = declaredCollectionFormat;
+        }
+
         // 仅在调用方传入可取消的令牌时才写入：None 会覆盖实例默认令牌
         if (cancellationToken.CanBeCanceled)
         {
