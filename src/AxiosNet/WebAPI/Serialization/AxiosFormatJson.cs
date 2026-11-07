@@ -19,7 +19,7 @@ namespace AxiosNet.WebAPI.Serialization;
 /// <remarks>
 /// 库默认不进入序列化器的文档内部——JSON 里怎么长由 <c>JsonSerializerOptions</c> 决定。
 /// 需要「URL 与 JSON 用同一份 <c>[Format]</c>」时，把 <see cref="ApplyTo"/> 的返回值设给
-/// <c>Serialization.JsonSerializerOptions</c>（或 <c>AxiosJson.Options</c>）。
+/// <c>Serialization.JsonOptions</c>（或 <c>AxiosJson.Options</c>）。
 /// 只支持 net7.0 及以上（依赖 <see cref="JsonTypeInfo.Properties"/> 的属性级改写），读取方向按不变文化尽力还原。
 /// </remarks>
 public static class AxiosJsonFormat

@@ -73,7 +73,7 @@ public sealed class Http2Example : IExample
         Console.WriteLine("    · 默认 2.0：h2 已是公网流量主力，默认停在 1.1 等于白白丢掉多路复用与头部压缩");
         Console.WriteLine("    · 降级是免费的：https 上走 TLS 的 ALPN，服务端只认 1.1 就在同一次握手里谈成 1.1，不多一次往返、不多一条连接");
         Console.WriteLine("    · 明文 http:// 没有 ALPN 可协商，一律走 1.1 —— 所以默认 2.0 只影响 https，http:// 的线上行为与之前完全一致");
-        Console.WriteLine("    · 需要 1.1 时一行退回：Connection.HttpVersion = Version11（老网关、NTLM 认证、必须用连接级头）");
+        Console.WriteLine("    · 需要 1.1 时一行退回：Transport.HttpVersion = Version11（老网关、NTLM 认证、必须用连接级头）");
         Console.WriteLine("    · 降级是静默的：response.ProtocolVersion 是「实际用了哪个版本」，日志 / 断言靠它确认有没有真拿到 h2");
         Console.WriteLine("    · HTTP/3：默认仍是 2.0，写 Version30 才用 h3；本机能力查 Http3Support.IsSupported（不支持时 UnsupportedReason 说明缺什么）");
         Console.WriteLine("    · 「必须 h3」（Exact / OrHigher）在明文目标或没有 QUIC 的环境里会在发请求前报 ERR_BAD_OPTION_VALUE，不会白等超时；本库不做 Alt-Svc 自动发现");

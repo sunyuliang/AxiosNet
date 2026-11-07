@@ -1992,7 +1992,7 @@ var client = new AxiosClient(new AxiosConfig
 {
     Serialization = new()
     {
-        JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             TypeInfoResolver = ApiJsonContext.Default
         }

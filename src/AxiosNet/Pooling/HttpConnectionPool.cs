@@ -801,7 +801,7 @@ public sealed class HttpConnectionPool : IDisposable
         {
             throw AxiosException.InvalidOption(
                 $"传输档 '{requested}' 未在该连接池上登记：请用 ConnectionPoolOptions.AddTransport(\"{requested}\", ...) 登记，"
-                + "或按请求不设 Connection.Transport 走默认档。已登记的档："
+                + "或按请求不设 Transport.Profile 走默认档。已登记的档："
                 + (_transports.Count == 0 ? "（无）" : string.Join(", ", _transports.Keys)) + "。",
                 config);
         }

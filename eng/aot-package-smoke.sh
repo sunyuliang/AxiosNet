@@ -166,7 +166,7 @@ var config = new AxiosConfig
 {
     Serialization = new()
     {
-        JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        JsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             TypeInfoResolver = SmokeJsonContext.Default
         }

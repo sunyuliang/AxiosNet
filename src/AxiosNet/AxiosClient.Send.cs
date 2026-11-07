@@ -298,7 +298,7 @@ public sealed partial class AxiosClient
             if (!string.IsNullOrEmpty(ctx.Config.ProfileOrNull))
             {
                 throw AxiosException.InvalidOption(
-                    $"注入自定义 Handler 时不走连接池，Connection.Profile（'{ctx.Config.ProfileOrNull}'）无法生效："
+                    $"注入自定义 Handler 时不走连接池，Transport.Profile（'{ctx.Config.ProfileOrNull}'）无法生效："
                     + "需要多出口请改用 ConnectionPoolOptions.AddTransport 配合池，或在 Handler 自己里选路。",
                     ctx.Config);
             }

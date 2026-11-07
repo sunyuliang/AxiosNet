@@ -11,7 +11,7 @@ namespace AxiosNet.Retry;
 /// 令牌桶按策略对象共享：挂在 <c>Defaults.Retry.Policy</c> 上时本实例的所有请求共用一只桶。
 /// 线程安全，每次判定只在锁内做一次时间戳换算、不分配；<see cref="RefusedRetries"/> 与
 /// <see cref="OnBudgetExhausted"/> 用于本地观测，进程级指标见
-/// <c>axiosnet.client.retry.budget_exhausted</c>（无标签，受 <c>Telemetry.Enabled</c> 控制）。
+/// <c>axiosnet.client.retry.budget_exhausted</c>（无标签，受 <c>Observability.Capture</c> 控制）。
 /// </remarks>
 /// <example>
 /// <code>

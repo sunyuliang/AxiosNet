@@ -24,7 +24,7 @@ public sealed class CacheIdentityKeyExample : IExample
 
     /// <summary>
     /// 适用场景：身份放在非标准头（如 X-Api-Key）里。
-    /// 默认键只认 Authorization / Connection.Auth，必须把该头摘要进 KeySelector；
+    /// 默认键只认 Authorization / Transport.Auth，必须把该头摘要进 KeySelector；
     /// 没有该头时回落到 AxiosCache.CreateKey，保证匿名请求仍按 URL 分区。
     /// </summary>
     private static async Task ApiKeyScenarioAsync(ExampleContext context)

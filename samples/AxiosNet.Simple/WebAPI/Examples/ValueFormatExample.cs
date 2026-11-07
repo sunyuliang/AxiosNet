@@ -6,7 +6,7 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 17. 值格式化：成员级 <c>[Format]</c>（格式串 / 静态函数）与实例级 <c>ValueFormatter</c>。
+/// 17. 值格式化：成员级 <c>[Format]</c>（格式串 / 静态函数）与实例级 <c>Serialization.ValueText</c>。
 /// 优先级是「成员声明 &gt; 实例钩子 &gt; 通道默认」，集合与字典逐元素 / 逐值应用；
 /// 路径 / 查询 / 请求头 / 表单字段 / multipart 文本部件 / 裸标量正文走的是同一条转换路径，
 /// 实例钩子的第二个参数就是这条路径的通道（<c>ValueTextChannel</c>），成员级格式化函数也可以声明这个参数。
@@ -15,9 +15,9 @@ public sealed class ValueFormatExample : IExample
 {
     public int Number => 17;
 
-    public string Title => "值格式化：[Format] 格式串 / 静态函数 + ValueFormatter 优先级";
+    public string Title => "值格式化：[Format] 格式串 / 静态函数 + Serialization.ValueText 优先级";
 
-    /// <summary>示例入口：值格式化：[Format] 格式串 / 静态函数 + ValueFormatter 优先级。</summary>
+    /// <summary>示例入口：值格式化：[Format] 格式串 / 静态函数 + Serialization.ValueText 优先级。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
