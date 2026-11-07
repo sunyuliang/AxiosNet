@@ -51,6 +51,12 @@ public class AxiosException : Exception
     /// </summary>
     public const string ErrPoolExhausted = "ERR_POOL_EXHAUSTED";
 
+    /// <summary>
+    /// 重定向次数用尽：服务端仍返回 3xx + <c>Location</c>，但已跟随到 <c>Transport.MaxRedirects</c> 上限。
+    /// 与 <c>MaxRedirects = 0</c>（主动关闭跟随，仍报 <see cref="ErrBadRequest"/>）用错误码与文案双向区分。
+    /// </summary>
+    public const string ErrTooManyRedirects = "ERR_TOO_MANY_REDIRECTS";
+
     /// <summary>对应 axios 的 <c>isAxiosError</c>：这个类型本身就是「axios 错误」，恒为 <c>true</c>，供跨语言对照与统一判型。</summary>
     public bool IsAxiosError => true;
 
@@ -194,6 +200,36 @@ public class AxiosException : Exception
         var message = string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage)
             ? $"{headline} before attempt #{attempt} could be sent: "
               + "the total budget covers all retries, failover endpoints and hedges — "
+              + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
+            : config.ObservabilityOrNull!.TimeoutMessage!;
+
+        return new AxiosException(message, ErrConnAborted, config, request, null, inner)
+        {
+            IsTotalTimeoutExceeded = true
+        };
+    }
+
+    /// <summary>
+    /// 总预算（<see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/>）在某次尝试<b>发出之后</b>到点：本次尝试的上限本就被剩余预算压小，
+    /// 错误码与超时一致（<c>ECONNABORTED</c>），对外同样以 <see cref="IsTotalTimeoutExceeded"/> 表示「预算已经花完、不会再发下一次」。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="TotalTimeoutExceeded"/> 的区别只在文案：这里说的是「第几次尝试在途时到点」，而不是「下一次发不出去」。
+    /// </remarks>
+    internal static AxiosException TotalTimeoutExceededDuringAttempt(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        int attempt,
+        TimeSpan? budget,
+        Exception? inner = null)
+    {
+        var headline = budget is { } known && known > TimeSpan.Zero
+            ? $"TotalTimeout of {known.TotalMilliseconds:0}ms exceeded"
+            : "TotalTimeout exceeded";
+
+        var message = string.IsNullOrWhiteSpace(config.ObservabilityOrNull?.TimeoutMessage)
+            ? $"{headline} while attempt #{attempt} was in flight: "
+              + "no further attempt is sent (the total budget covers all retries, failover endpoints and hedges) — "
               + "raise TotalTimeout, cut MaxRetries / MaxHedges, or shorten Timeout"
             : config.ObservabilityOrNull!.TimeoutMessage!;
 
@@ -354,9 +390,38 @@ public class AxiosException : Exception
         return new AxiosException(message, ErrBadOptionValue, config, null, null, inner);
     }
 
-    /// <summary>非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>。</summary>
+    /// <summary>非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>；3xx 且带 <c>Location</c> 时按重定向细分。</summary>
     internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage? request, AxiosResponse response)
     {
+        // 3xx + Location 说明服务端还想跳：要么次数到了上限（ERR_TOO_MANY_REDIRECTS），
+        // 要么是调用方把 MaxRedirects 设成 0 主动关闭跟随（仍是 ERR_BAD_REQUEST，文案点明配置）。
+        if (IsRedirectStatus(response.Status) && HasLocation(response))
+        {
+            var configured = config.TransportOrNull?.MaxRedirects;
+
+            if (configured == 0)
+            {
+                return new AxiosException(
+                    $"Request failed with status code {response.Status}: redirects are disabled (MaxRedirects = 0); "
+                    + "set Transport.MaxRedirects > 0 to follow redirects",
+                    ErrBadRequest,
+                    config,
+                    request,
+                    response,
+                    null);
+            }
+
+            var limit = configured ?? AxiosConfig.DefaultMaxRedirects;
+            return new AxiosException(
+                $"Request failed with status code {response.Status}: too many redirects "
+                + $"(stopped after MaxRedirects = {limit}); raise Transport.MaxRedirects, or set it to 0 to stop following",
+                ErrTooManyRedirects,
+                config,
+                request,
+                response,
+                null);
+        }
+
         var code = response.Status >= 500 ? ErrBadResponse : ErrBadRequest;
         return new AxiosException(
             $"Request failed with status code {response.Status}",
@@ -365,6 +430,32 @@ public class AxiosException : Exception
             request,
             response,
             null);
+    }
+
+    /// <summary>可跟随的重定向状态码（RFC 9110 §15.4 里的 301 / 302 / 303 / 307 / 308）。</summary>
+    private static bool IsRedirectStatus(int status)
+        => status is 301 or 302 or 303 or 307 or 308;
+
+    /// <summary>响应是否带非空的 <c>Location</c>：没有 Location 的 3xx（如 304）不是可跟随的重定向。</summary>
+    private static bool HasLocation(AxiosResponse response)
+    {
+        foreach (var header in response.Headers)
+        {
+            if (!string.Equals(header.Key, "Location", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var value in header.Value)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>响应正文反序列化失败（<c>ERR_BAD_RESPONSE</c>），消息带目标类型名。</summary>

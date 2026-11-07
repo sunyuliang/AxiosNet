@@ -439,6 +439,47 @@ public sealed class InterceptorTests
     }
 
     /// <summary>
+    /// 拦截器返回一个全新的 <see cref="AxiosConfig"/> 时，必须再与实例默认值合并一次：
+    /// 新实例没写的项（BaseAddress、超时、钩子等）不能因此丢失；拦截器刚写入的项也不能被默认值盖回去。
+    /// </summary>
+    [Fact]
+    public async Task RequestInterceptor_ReturningBrandNewConfig_IsMergedWithDefaults_AndKeepsWrittenValues()
+    {
+        await using var server = TestHttpServer.Start(async req =>
+        {
+            await Task.Delay(400);
+            return TestJson.Response(new { custom = req.Headers.GetValueOrDefault("x-custom") });
+        });
+
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            BaseAddress = server.Url,
+            Timeout = TimeSpan.FromSeconds(30)
+        });
+
+        client.Interceptors.Request.Use(_ =>
+        {
+            var fresh = new AxiosConfig
+            {
+                Url = "inside",
+                // 拦截器刚写入的 100ms 必须保留；实例默认是 30s。
+                Timeout = TimeSpan.FromMilliseconds(100)
+            };
+            fresh.Headers.Set("X-Custom", "kept");
+            return Task.FromResult(fresh);
+        });
+
+        // 快捷方法的 url 参数不能空白（那条校验在拦截器之前），这里给一个会被拦截器整个替换掉的占位地址。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("ignored"));
+
+        // 合并后能解析出 BaseAddress + 拦截器写的相对路径，并沿用拦截器写的 100ms 超时。
+        Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
+        Assert.Single(server.Received);
+        Assert.Equal("/inside", server.Received[0].Path);
+        Assert.Equal("kept", server.Received[0].Headers.GetValueOrDefault("x-custom"));
+    }
+
+    /// <summary>
     /// 限制类配置的范围校验必须针对**拦截器之后**的生效配置：在校验之后才允许拦截器改写，
     /// 就等于允许「拦截器写 Timeout = -1」把负值带进管线，而 <c>hasTimeout</c> 随后为 false，
     /// 静默变成「不超时」——与文档承诺的 fail-fast 相反。

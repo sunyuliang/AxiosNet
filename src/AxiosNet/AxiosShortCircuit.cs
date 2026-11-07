@@ -46,6 +46,14 @@ public sealed class AxiosShortCircuit
     /// </summary>
     internal IReadOnlyDictionary<string, IEnumerable<string>>? MultiValueHeaders { get; set; }
 
+    /// <summary>
+    /// 内部：缓存条目的落库时刻。命中时用它与 <see cref="StoredAge"/> 把 <c>Age</c> 头推进到「当前龄期」。
+    /// </summary>
+    internal DateTimeOffset? ReceivedAt { get; set; }
+
+    /// <summary>内部：落库那一刻的龄期（RFC 9111 的 current_age），命中时叠加在缓存里停留的时间。</summary>
+    internal TimeSpan? StoredAge { get; set; }
+
     /// <summary>响应正文字节（原始未解码），与 <see cref="Data"/> 互斥；交付时按本次调用的 responseType 与泛型参数重新处理。</summary>
     public byte[]? Body { get; set; }
 

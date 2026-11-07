@@ -10,11 +10,11 @@
 按 PE 数据结构解析（COFF → optional header → 数据目录第 6 项 Debug → 各条目）才可靠。
 
 用法：
-    python3 .github/scripts/debug-id.py --nupkg artifacts/AxiosNet.1.0.2.nupkg
+    python3 .github/scripts/debug-id.py --nupkg artifacts/AxiosNet.1.5.0.nupkg
     python3 .github/scripts/debug-id.py --nupkg published.nupkg
     python3 .github/scripts/debug-id.py --dll src/AxiosNet/bin/Release/net6.0/AxiosNet.dll
     python3 .github/scripts/debug-id.py --nupkg x.nupkg --entry lib/net6.0/AxiosNet.dll
-    python3 .github/scripts/debug-id.py --nupkg artifacts/AxiosNet.Cli.1.0.0.nupkg   # dotnet tool 包：tools/ 下的主程序集
+    python3 .github/scripts/debug-id.py --nupkg artifacts/AxiosNet.Cli.1.5.0.nupkg   # dotnet tool 包：tools/ 下的主程序集
 
 stdout 只输出 32 位大写十六进制 id（便于 `$(...)` 直接取用），诊断信息走 stderr。
 """

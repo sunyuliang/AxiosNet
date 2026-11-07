@@ -187,14 +187,15 @@ public sealed partial class AxiosClient
         // HttpVersion / VersionPolicy / Profile / MaxRate 属按请求项，库产出的配置同样合并。
         if (perCallTransport is not null)
         {
-            if (perCallTransport.HttpVersion is { } httpVersion)
+            // 版本两项按 *Set 标记合并：显式 null 是「回到库默认」，与「未设置（沿用实例默认）」区分开。
+            if (perCallTransport.HttpVersionSet)
             {
-                merged.Transport.HttpVersion = httpVersion;
+                merged.Transport.HttpVersion = perCallTransport.HttpVersion;
             }
 
-            if (perCallTransport.VersionPolicy is { } versionPolicy)
+            if (perCallTransport.VersionPolicySet)
             {
-                merged.Transport.VersionPolicy = versionPolicy;
+                merged.Transport.VersionPolicy = perCallTransport.VersionPolicy;
             }
 
             // 显式写 null 表示本次回到默认档。

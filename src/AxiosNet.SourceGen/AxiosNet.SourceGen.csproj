@@ -11,6 +11,7 @@
     <!-- 生成器是分析器资产：不进入运行时依赖，也不作为普通引用流入消费方。 -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <IsPackable>false</IsPackable>
+    <Version>1.5.0</Version>
     <Deterministic>true</Deterministic>
     <!-- 生成器不随包发布独立的 analyzer release 文件；AXA 规则清单维护在 README。 -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>

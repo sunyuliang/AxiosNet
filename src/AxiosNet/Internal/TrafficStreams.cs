@@ -5,6 +5,11 @@ namespace AxiosNet.Internal;
 /// <summary>
 /// 上传/下载共用的流量计量与进度上报：累计字节、按 50ms 节流回调、按 MaxRate 反算应等待的时间。
 /// </summary>
+/// <remarks>
+/// 累计值 / 本轮起点可被并发写（重试轮次、被误放到同一正文上的多个写者）：<see cref="Loaded"/> 与
+/// <see cref="Add"/> 用原子操作保证不丢字节。回调与本轮计时状态仍按「同一时刻只有一条传输」设计，
+/// 对冲在 <c>Attempt.CanHedge</c> 里把带进度的正文挡在单分支路径上。
+/// </remarks>
 internal sealed class TrafficMeter
 {
     // 进度回调的最小间隔：更密的回调只是重复报同一个百分比。
@@ -25,9 +30,9 @@ internal sealed class TrafficMeter
 
     /// <summary>
     /// 本轮起点是否已确定：构造后由首字节到达时惰性确定，<see cref="Restart"/> 时直接推进到那一刻，
-    /// 因此空闲间隔不计入限速预算。
+    /// 因此空闲间隔不计入限速预算。用整数 + 原子读，首字节并发到达时也只会把起点钉在同一个时刻附近。
     /// </summary>
-    private bool _roundStarted;
+    private int _roundStartedState;
 
     // 上次回调时刻；初值取负一个间隔，保证首块一定上报。
     private long _lastReportMs = -ReportIntervalMs;
@@ -41,33 +46,62 @@ internal sealed class TrafficMeter
         _maxRate = maxRate;
     }
 
-    /// <summary>累计已传输字节（跨重发轮次，不随本轮起点归零）。</summary>
-    public long Loaded => _loaded;
+    /// <summary>累计已传输字节（跨重发轮次，不随本轮起点归零）。并发写不丢字节。</summary>
+    public long Loaded => Volatile.Read(ref _loaded);
 
-    /// <summary>累计本轮字节；首字节在此定下本轮计时起点（见 <see cref="_roundStarted"/>）。</summary>
+    /// <summary>累计本轮字节；首字节在此定下本轮计时起点（见 <see cref="_roundStartedState"/>）。</summary>
     public void Add(int count)
     {
-        if (!_roundStarted)
+        if (Volatile.Read(ref _roundStartedState) == 0)
         {
             BeginRound();
         }
 
-        _loaded += count;
+        Interlocked.Add(ref _loaded, count);
     }
 
     /// <summary>按平均速率反算「当前应耗时 - 实际耗时」；不限速时返回零。</summary>
-    public TimeSpan ComputeDelay()
+    /// <param name="upcoming">还没记入 <see cref="Loaded"/>、即将写出的字节数（写侧按片限速时用）。</param>
+    public TimeSpan ComputeDelay(int upcoming = 0)
     {
         if (_maxRate is not long rate || rate <= 0)
         {
             return TimeSpan.Zero;
         }
 
-        var bytes = _loaded - _roundStart;
+        var bytes = Volatile.Read(ref _loaded) - _roundStart + upcoming;
         var elapsed = _clock.Elapsed - _roundStartClock;
         var expected = TimeSpan.FromSeconds((double)bytes / rate);
         var delta = expected - elapsed;
         return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// 限速时一次 I/O 最多搬运多少字节：约等于「一个上报窗口内允许的流量」。
+    /// 一次把整包写进 socket 会让服务端瞬间收完，之后才睡 —— 那是拖住调用方，不是限流；
+    /// 按窗口切片后，每一片都要等到自己的应发时刻，服务端收包也随之间隔。
+    /// 不限速时返回剩余全部（保持原有的一次性写 / 读，不额外切分）。
+    /// </summary>
+    public int SliceLength(int remaining)
+    {
+        if (remaining <= 0)
+        {
+            return 0;
+        }
+
+        if (_maxRate is not long rate || rate <= 0)
+        {
+            return remaining;
+        }
+
+        // 每片覆盖一个上报窗口：片数 ≈ 传输总时长 / 50ms，进度回调因此能按窗口真实上报。
+        var perWindow = (long)(rate * (ReportIntervalMs / 1000.0));
+        if (perWindow < 1)
+        {
+            perWindow = 1;
+        }
+
+        return perWindow < remaining ? (int)perWindow : remaining;
     }
 
     /// <summary>节流上报进度：force 或本轮已传满声明长度时立即上报并置「已完成」，之后的结束上报不再重复。</summary>
@@ -79,7 +113,7 @@ internal sealed class TrafficMeter
         }
 
         // 读满本轮声明长度时立即上报，不受 50ms 节流。
-        if (_total is long declared && declared > 0 && _loaded - _roundStart >= declared)
+        if (_total is long declared && declared > 0 && Volatile.Read(ref _loaded) - _roundStart >= declared)
         {
             force = true;
         }
@@ -99,7 +133,7 @@ internal sealed class TrafficMeter
         _callback(BuildEvent(upload));
 
         // 已传满本轮声明长度：后续 EOF / Complete 不再重复报 100%；total 必须大于 0。
-        if (_total is long total && total > 0 && _loaded - _roundStart >= total)
+        if (_total is long total && total > 0 && Volatile.Read(ref _loaded) - _roundStart >= total)
         {
             _completed = true;
         }
@@ -118,21 +152,22 @@ internal sealed class TrafficMeter
     /// <summary>把本轮起点钉在此刻：累计值快照 + 时钟快照，同时标记本轮已开始计时。</summary>
     private void BeginRound()
     {
-        _roundStarted = true;
-        _roundStart = _loaded;
+        // 先把起点钉在「此刻的累计值」再标记开始：并发首字节到达时，两个线程的快照差最多是各自已加的那一块。
+        _roundStart = Volatile.Read(ref _loaded);
         _roundStartClock = _clock.Elapsed;
+        Volatile.Write(ref _roundStartedState, 1);
     }
 
     // 按本轮增量算进度事件：累计值减本轮起点，速率也只用本轮耗时。
     private AxiosProgressEvent BuildEvent(bool upload)
     {
         // 只按本轮增量算。
-        var roundBytes = _loaded - _roundStart;
+        var roundBytes = Volatile.Read(ref _loaded) - _roundStart;
         var seconds = (_clock.Elapsed - _roundStartClock).TotalSeconds;
         double? rate = seconds > 0 && roundBytes > 0 ? roundBytes / seconds : null;
 
         // Loaded 是累计发送量，保持单调推进；Progress 自身封顶 1。
-        var loaded = _loaded;
+        var loaded = Volatile.Read(ref _loaded);
 
         TimeSpan? estimated = rate is > 0 && _total is long total && total > roundBytes
             ? TimeSpan.FromSeconds((total - roundBytes) / rate.Value)
@@ -183,7 +218,13 @@ internal sealed class ProgressReadStream : DelegatingStream
     /// </summary>
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
-        var pending = Inner.ReadAsync(buffer, cancellationToken);
+        // 限速时按窗口切片读：一次把底层缓冲全部读出来，只会在读完后睡一大觉 —— 进度也只有 0 → 100 两帧。
+        // 切片只切 Memory 视图，不复制数据。
+        var request = _meter.SliceLength(buffer.Length) is var slice && slice < buffer.Length
+            ? buffer.Slice(0, slice)
+            : buffer;
+
+        var pending = Inner.ReadAsync(request, cancellationToken);
 
         // IsCompletedSuccessfully 为 false 覆盖「真异步」与「同步故障」两种情形，都走异步路径抛出。
         if (!pending.IsCompletedSuccessfully)
@@ -323,37 +364,34 @@ internal sealed class ProgressWriteStream : DelegatingStream
     protected override ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         => throw new NotSupportedException();
 
-    // 先写内层再记账：顺序反了会把还没发出去的字节算成已上传。
+    // 限速时按窗口切片写：整块一次写进 socket 会让服务端瞬间收完，之后才睡 —— 那不是限流。
+    // 切片只切 ReadOnlyMemory 视图（零分配），每片先等到它的应发时刻再写，服务端收包也随之摊开。
     protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
-        await Inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-        await TrackAsync(buffer.Length, cancellationToken).ConfigureAwait(false);
-    }
-
-    // 写侧记账：累计已写字节并按时间节流上报，读侧同款逻辑。
-    private async ValueTask TrackAsync(int count, CancellationToken cancellationToken)
-    {
-        if (count <= 0)
+        var offset = 0;
+        while (offset < buffer.Length)
         {
-            return;
-        }
+            var count = _meter.SliceLength(buffer.Length - offset);
+            var delay = _meter.ComputeDelay(count);
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
 
-        _meter.Add(count);
+            // 先写内层再记账：顺序反了会把还没发出去的字节算成已上传。
+            await Inner.WriteAsync(buffer.Slice(offset, count), cancellationToken).ConfigureAwait(false);
+            _meter.Add(count);
+            offset += count;
 
-        var delay = _meter.ComputeDelay();
-        if (delay > TimeSpan.Zero)
-        {
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-        }
-
-        try
-        {
-            _meter.Report(force: false, upload: true);
-        }
-        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-        {
-            // 回调异常换成统一错误模型，避免被包成 HttpRequestException 误报为 ERR_NETWORK。
-            throw _mapCallbackError(ex);
+            try
+            {
+                _meter.Report(force: false, upload: true);
+            }
+            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+            {
+                // 回调异常换成统一错误模型，避免被包成 HttpRequestException 误报为 ERR_NETWORK。
+                throw _mapCallbackError(ex);
+            }
         }
     }
 }

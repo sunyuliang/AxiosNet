@@ -14,6 +14,28 @@ internal static class CacheValidators
     /// <summary>取头值（大小写不敏感、跳过空白值）；没有就返回 <c>null</c>。</summary>
     internal static string? Find(AxiosShortCircuit entry, string name)
     {
+        // 缓存条目按全部值保存（多值头不能折叠），校验器取第一个非空值。
+        if (entry.MultiValueHeaders is { Count: > 0 } multi)
+        {
+            foreach (var header in multi)
+            {
+                if (!string.Equals(header.Key, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (var value in header.Value)
+                {
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            return null;
+        }
+
         if (entry.Headers is not { Count: > 0 } headers)
         {
             return null;

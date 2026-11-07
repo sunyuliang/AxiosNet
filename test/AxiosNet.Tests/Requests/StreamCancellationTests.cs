@@ -289,7 +289,14 @@ public sealed class StreamCancellationTests
         var buffer = new byte[16 * 1024];
         var clock = Stopwatch.StartNew();
 
-        var ex = Assert.Throws<AxiosException>(() => stream.Read(buffer, 0, buffer.Length));
+        // 真限流按窗口切片：单次 Read 只返回一片（约 50ms 的量），不会为整块一直阻塞。
+        // 覆盖意图仍是「限速等待可被超时打断」——循环读到超时为止，断言错误码与总耗时。
+        var ex = Assert.Throws<AxiosException>(() =>
+        {
+            while (stream.Read(buffer, 0, buffer.Length) > 0)
+            {
+            }
+        });
         clock.Stop();
 
         Assert.Equal(AxiosException.ErrConnAborted, ex.Code);

@@ -109,11 +109,12 @@ public sealed partial class AxiosClient
                 }
 
                 // 再判 HTTP 语义、最后才动正文：no-store / no-cache 的响应没必要为落库复制字节。
-                var policy = cache.CreateEntryPolicy(response.Headers, DateTimeOffset.UtcNow, requestDirectives);
+                var receivedAt = DateTimeOffset.UtcNow;
+                var policy = cache.CreateEntryPolicy(response.Headers, receivedAt, requestDirectives);
 
                 if (policy is not null)
                 {
-                    reply = TryCreateCacheEntry(response);
+                    reply = TryCreateCacheEntry(response, policy, receivedAt);
 
                     // 复制正文（需要时）也要花时间，剩余预算按此刻重算。
                     if (await cache.TrySetAsync(
@@ -162,45 +163,39 @@ public sealed partial class AxiosClient
            && response.RawBody is not null;
 
     /// <summary>从响应里做一条缓存条目；调用方先用 <see cref="IsStorable"/> 挡掉不可能落库的响应。</summary>
-    private static AxiosShortCircuit TryCreateCacheEntry(AxiosResponse response)
+    /// <remarks>
+    /// 头按<b>全部值</b>保存：同名多值（如多个 <c>WWW-Authenticate</c> challenge）折叠成首值会改变语义。
+    /// <c>Set-Cookie</c> 是唯一例外（会话态不缓存）。<c>Age</c> 头不固定：命中时按这里的落库时刻与龄期重算。
+    /// </remarks>
+    private static AxiosShortCircuit TryCreateCacheEntry(
+        AxiosResponse response,
+        AxiosCacheEntryPolicy policy,
+        DateTimeOffset receivedAt)
     {
         var body = response.RawBody!;
-
-        // 头按首值存：短路响应的头字典是单值的。
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in response.Headers)
-        {
-            // Set-Cookie 是发给「这一次连接」的会话态：命中时回放等于把别人的会话塞进下一次请求。
-            if (IsSessionCookieHeader(header.Key))
-            {
-                continue;
-            }
-
-            if (header.Value.FirstOrDefault() is not { } value)
-            {
-                continue;
-            }
-
-            try
-            {
-                // 命中时这些头会走短路响应的校验：先过一遍，坏头不进缓存（否则每次命中都抛）。
-                AxiosHeaders.ValidateHeaderValue(AxiosHeaders.ValidateHeaderName(header.Key), value);
-                headers[header.Key] = value;
-            }
-            catch (ArgumentException)
-            {
-                // 单个头不合法就丢掉它，正文照旧可用。
-            }
-        }
+        var headers = BuildResponseHeaderValues(response);
 
         return new AxiosShortCircuit
         {
             Status = response.Status,
             StatusText = response.StatusText,
             ProtocolVersion = response.ProtocolVersion,
-            Headers = headers,
 
-            Body = CanShareBody(response) ? body : (byte[])body.Clone()
+            // 单值字典保留（第三方存储在按契约读它），多值字典供交付时原样回放全部值。
+            Headers = headers.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value[0],
+                StringComparer.OrdinalIgnoreCase),
+            MultiValueHeaders = headers.ToDictionary(
+                entry => entry.Key,
+                entry => (IEnumerable<string>)entry.Value,
+                StringComparer.OrdinalIgnoreCase),
+
+            Body = CanShareBody(response) ? body : (byte[])body.Clone(),
+
+            // 命中时的 Age = 落库龄期 + 在缓存里停留的时间，而不是原样回放入库时的数值。
+            ReceivedAt = receivedAt,
+            StoredAge = policy.Age
         };
     }
 
@@ -210,6 +205,98 @@ public sealed partial class AxiosClient
     private static bool CanShareBody(AxiosResponse response)
         => !ReferenceEquals(response.Data, response.RawBody)
            && response.Config?.HasTransformResponse is not true;
+
+    /// <summary>
+    /// 把响应头收成「全部值」字典：跳过会话型 Cookie、丢弃非法值；缓存条目与非 2xx 共享都走这一条。
+    /// </summary>
+    private static Dictionary<string, List<string>> BuildResponseHeaderValues(AxiosResponse response)
+    {
+        var headers = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in response.Headers)
+        {
+            // Set-Cookie 是发给「这一次连接」的会话态：命中 / 共享时回放等于把别人的会话塞进下一次请求。
+            if (IsSessionCookieHeader(header.Key))
+            {
+                continue;
+            }
+
+            var values = new List<string>(2);
+            foreach (var value in header.Value)
+            {
+                if (value is null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    // 命中时这些头会走短路响应的校验：先过一遍，坏头不进缓存（否则每次命中都抛）。
+                    AxiosHeaders.ValidateHeaderValue(AxiosHeaders.ValidateHeaderName(header.Key), value);
+                    values.Add(value);
+                }
+                catch (ArgumentException)
+                {
+                    // 单个值不合法就丢掉它，正文照旧可用。
+                }
+            }
+
+            if (values.Count > 0)
+            {
+                headers[header.Key] = values;
+            }
+        }
+
+        return headers;
+    }
+
+    /// <summary>
+    /// 领导者拿到非 2xx 响应：把状态码 / 响应头 / 原始正文做成可共享的短路结果，交给跟随者各自判定。
+    /// </summary>
+    /// <remarks>
+    /// 不可共享时返回 <c>null</c>，跟随者各自补发：
+    /// 流式响应（<see cref="ResponseType.Stream"/>，只能读一次）；没拿到原始字节（未捕获正文 / 不落库的请求）；
+    /// 正文超过 <see cref="AxiosCacheOptions.MaxSharedFailureBodyBytes"/>（默认 256 KB，<c>0</c> = 关闭共享）。
+    /// 共享正文在这里复制一次，与领导者自己响应的 <c>Data</c> 脱钩（<c>byte[]</c> 形态可能直接引用原数组）；
+    /// 跟随者各自经 <see cref="Internal.ResponseReader.ReadShortCircuit"/> 建立独立的响应头与 <c>Data</c>，不会共享可变对象。
+    /// 该结果只用于本次单飞，不落 <see cref="Cache.IAxiosCacheStore"/>：HTTP 缓存契约不存非 2xx，存储实现者无需扩展。
+    /// </remarks>
+    private static AxiosShortCircuit? TryCreateSharedFailureReply(
+        AxiosResponse response,
+        AxiosConfig config,
+        AxiosCache cache)
+    {
+        if (config.ResponseType == ResponseType.Stream)
+        {
+            return null;
+        }
+
+        var body = response.RawBody;
+        var limit = cache.Options.MaxSharedFailureBodyBytes;
+        if (body is null || limit == 0 || body.Length > limit)
+        {
+            return null;
+        }
+
+        var headers = BuildResponseHeaderValues(response);
+
+        return new AxiosShortCircuit
+        {
+            Status = response.Status,
+            StatusText = response.StatusText,
+            ProtocolVersion = response.ProtocolVersion,
+            Headers = headers.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value[0],
+                StringComparer.OrdinalIgnoreCase),
+            MultiValueHeaders = headers.ToDictionary(
+                entry => entry.Key,
+                entry => (IEnumerable<string>)entry.Value,
+                StringComparer.OrdinalIgnoreCase),
+
+            // 复制一次而不是每个跟随者复制：领导者的 Data 可能是同一块数组，共享对象必须与它脱钩。
+            Body = (byte[])body.Clone()
+        };
+    }
 
     /// <summary>是否为会话型 Cookie 头（<c>Set-Cookie</c> / <c>Set-Cookie2</c>）：落库时跳过，缓存条目不该回放过期 Cookie。</summary>
     private static bool IsSessionCookieHeader(string name)
@@ -276,6 +363,27 @@ public sealed partial class AxiosClient
             }
         }
 
+        // 缓存条目按全部值保存：304 合并前必须把多值也带进来，否则条件头 / Set-Cookie 会丢。
+        if (stored.MultiValueHeaders is { Count: > 0 } storedMulti)
+        {
+            foreach (var header in storedMulti)
+            {
+                var values = new List<string>(2);
+                foreach (var value in header.Value)
+                {
+                    if (value is not null)
+                    {
+                        values.Add(value);
+                    }
+                }
+
+                if (values.Count > 0)
+                {
+                    headers[header.Key] = values;
+                }
+            }
+        }
+
         foreach (var header in message.Headers)
         {
             MergeNotModifiedHeader(headers, header.Key, header.Value);
@@ -301,7 +409,13 @@ public sealed partial class AxiosClient
             Body = stored.Body,
 
             // 协商结果取这次真正发出的那一次（降级是静默的）。
-            ProtocolVersion = message.Version
+            ProtocolVersion = message.Version,
+
+            // 304 之后的条目重新计时：Age 以合并后的头为准（304 通常不带 Age，按 0 起算）。
+            ReceivedAt = DateTimeOffset.UtcNow,
+            StoredAge = headers.TryGetValue("Age", out var ageValues) && ageValues.Count > 0
+                ? AxiosCache.ParseSeconds(ageValues[0]) ?? TimeSpan.Zero
+                : TimeSpan.Zero
         };
     }
 

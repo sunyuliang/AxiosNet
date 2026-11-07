@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "AxiosNet Sample API",
-    "version": "1.0.0",
+    "version": "1.5.0",
     "description": "示例文档：对应 DemoApiServer 的路由，用于演示 axiosnet-gen 生成声明式客户端。"
   },
   "servers": [

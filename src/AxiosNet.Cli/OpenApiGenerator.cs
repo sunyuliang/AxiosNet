@@ -10,7 +10,7 @@ namespace AxiosNet.Cli;
 /// <summary>命令行主流程：读文档 → 归一化 → 读成 IR → 生成 → 落地 → 报告。</summary>
 internal static class OpenApiGenerator
 {
-    /// <summary>工具版本：取程序集 InformationalVersion，并去掉 SourceLink 追加的 <c>+commit</c> 后缀；取不到时退回程序集版本或 <c>1.0.0</c>。</summary>
+    /// <summary>工具版本：取程序集 InformationalVersion，并去掉 SourceLink 追加的 <c>+commit</c> 后缀；取不到时退回程序集版本或 <c>1.5.0</c>。</summary>
     public static string Version
     {
         get
@@ -23,7 +23,7 @@ internal static class OpenApiGenerator
                 return plus >= 0 ? informational[..plus] : informational;
             }
 
-            return assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+            return assembly.GetName().Version?.ToString(3) ?? "1.5.0";
         }
     }
 

@@ -32,7 +32,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Errors and configuration | [Errors](#errors) · [Configuration](#configuration) ([Configuration reference](#configuration-reference) / [Clients](#clients) / [Interceptors](#interceptors) / [Data transforms and serialization](#data-transforms-and-serialization) / [Connections and transport](#connections-and-transport) / [Observability](#observability)) |
 | Resilience and cache | [Resilience](#resilience) ([Retries](#retries) / [Circuit breaker](#circuit-breaker) / [Concurrent hedging](#concurrent-hedging) / [Backup endpoints](#backup-endpoints) / [Idempotency keys](#idempotency-keys) / [Attempt pipeline](#attempt-pipeline) / [Short circuit](#short-circuit)) · [Response cache](#response-cache) |
 | Declarative | [Declarative client](#declarative-client) ([Model-based](#model-based-api) / [Interface-based](#interface-based-api) / [Value formatting](#value-formatting) / [OpenAPI import](#openapi-import) / [Credentials and token management](#credentials-and-token-management)) |
-| Runtime and reference | [Runtime and AOT](#runtime-and-aot) · [Reference](#reference) ([Capability map](#capability-map) / [axios comparison](#axios-comparison) / [Dependency injection](#dependency-injection) / [Samples](#samples) / [Build and test](#build-and-test) / [Project layout](#project-layout) / [Breaking changes](#breaking-changes-in-20)) |
+| Runtime and reference | [Runtime and AOT](#runtime-and-aot) · [Reference](#reference) ([Capability map](#capability-map) / [axios comparison](#axios-comparison) / [Dependency injection](#dependency-injection) / [Samples](#samples) / [Build and test](#build-and-test) / [Project layout](#project-layout) / [Breaking changes](#breaking-changes-in-15)) |
 | Other | [License](#license) |
 
 Pick an entry point:
@@ -454,6 +454,10 @@ All seven verbs also have an overload that takes a full `AxiosConfig` (`GetAsync
 - Leaving `config.Url` as `null` also means "request `BaseAddress` itself" and is fully equivalent to passing `"/"`: a trailing slash belongs to the address and is kept as-is.
 - `Method` is BCL's `HttpMethod`, so custom verbs work: `new HttpMethod("PROPFIND")`.
 - Escape path segments with `AxiosUrl.EncodePathSegment(value)`.
+- `BaseAddress` is resolved by RFC 3986 §5.2.2 component rules, not string concatenation:
+  - the base query is inherited only when the reference path is empty (a query on the reference itself wins); a non-empty relative path drops the base query instead of silently appending it;
+  - the base fragment is **always dropped**; a fragment carried by the relative reference is kept in the final URI (fragments are never sent to the server);
+  - `GetUri` and the actual send share this resolution path, so they always agree.
 
 ### In-flight concurrency cap
 
@@ -519,6 +523,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_CIRCUIT_OPEN` | Circuit is open, request **not sent** (`RetryAfter` suggests how long to wait) |
 | `ERR_POOL_EXHAUSTED` | Pool origin cardinality saturated (all in flight, no evictable idle node); request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry |
 | `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme, or a URL longer than 65519 characters (the pre-.NET 10 `Uri` limit, now enforced by the library itself) |
+| `ERR_TOO_MANY_REDIRECTS` | Redirects followed beyond `Transport.MaxRedirects`. With `MaxRedirects = 0` the code is `ERR_BAD_REQUEST` plus a distinct message ("redirects are disabled") so "disabled" and "over the limit" stay distinguishable |
 | `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…) |
 
 Branch on `ex.ErrorCode` (an enum you can exhaustively `switch`) or `ex.Code` (the axios-aligned string); never parse the message:
@@ -678,6 +683,8 @@ client.Interceptors.Response.Use(
 var id = client.Interceptors.Request.Use(cfg => cfg);
 client.Interceptors.Request.Eject(id);
 ```
+
+**Merge rule for a brand-new config**: a request interceptor may return its own `new AxiosConfig` (or the caller's raw config). The pipeline then merges it once against the instance defaults, so `BaseAddress`, timeouts and connection-level options still apply. The merge only takes explicitly set values, so anything the interceptor just wrote wins over the instance defaults. Returning an already-merged config (`response.Config`) or its `Clone()` skips the second merge, and mutating the passed `config` then returning it does too.
 
 ### Data transforms and serialization
 
@@ -1831,7 +1838,8 @@ var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 | --- | --- | --- |
 | `TimeToLive` | 30s | Entry lifetime, must be greater than zero |
 | `FreshnessMode` | `Configured` | Where the lifetime comes from: `Configured` trusts your TTL; `Server` trusts the response; `Intersection` takes the smaller of the two |
-| `SingleFlight` | `true` | Send once for concurrent requests with the same key |
+| `SingleFlight` | `true` | Send once for concurrent requests with the same key (non-2xx responses are shared too, see below) |
+| `MaxSharedFailureBodyBytes` | 256 KB | Byte cap for the non-2xx body shared inside a single flight; over the cap (or `0`) followers resend individually. Streaming responses are never shared |
 | `ConditionalRequests` | `true` | Revalidate stale entries with `ETag` / `Last-Modified`; a 304 serves the cached body (see below) |
 | `Store` | `null` | Entry storage; `null` = the built-in `MemoryCacheStore`. Implement `IAxiosCacheStore` for Redis or a shared cache |
 | `MaxEntries` | 1024 | Entry cap of the built-in store: expired entries are purged first, then new entries are refused (ignored when `Store` is set) |
@@ -1896,13 +1904,15 @@ The library interprets responses as a **private cache**: `private` / `public` do
 **Hits and storing**
 
 - **A hit sends nothing**: no concurrency slot, no telemetry span, no in-flight gauge, and `response.Request` is `null` (the same visible trace as a short circuit).
-- **Headers keep their first value**: the short-circuit header dictionary is single-valued; `Set-Cookie` / `Set-Cookie2` are never stored — session state belongs to that one response, and replaying it on a hit would hand it to the next request.
+- **Headers keep all values**: duplicate response headers (e.g. multiple `WWW-Authenticate` challenges) are stored and replayed verbatim; the `Headers` single-value view keeps the first value for custom stores that read it per contract. `Set-Cookie` / `Set-Cookie2` are never stored — session state belongs to that one response, and replaying it on a hit would hand it to the next request.
 - **The key does not include the body**: by default only bodiless GET / HEAD requests are cached; if `ShouldCache` lets a method with a body through, fold a body fingerprint into `KeySelector`, otherwise different bodies share one entry.
 - **Policy lives on the instance**: one `AxiosCache` is one policy; create several and attach them separately when endpoints need different lifetimes or keys.
 
 **Single flight and budget**
 
-- **Single flight shares failures**: when the leader throws, waiters get the same error (one read-only `AxiosException` instance, `Response` included). But a leader cancelled by **its own caller** does not count as a failure — each waiter sends its own request instead.
+- **HTTP-status failures share the response**: when the leader gets a non-2xx, the flight hands its status / headers / raw body to every follower; each follower applies its own `ValidateStatus`, response interceptors and error factory (WebAPI `ErrorFactory`). `Response` and `Config` belong to each caller and the server sees exactly one request.
+- **Sharing boundaries**: `ResponseType.Stream` (read-once) is never shared; a body over `MaxSharedFailureBodyBytes` (256 KB by default) or setting the option to `0` falls back to individual resends. Transient memory is roughly "error body × in-flight followers". The shared reply lives only in this flight and never enters `IAxiosCacheStore` (the cache contract does not store non-2xx), so store implementers need no changes.
+- **Transport / cancellation failures are still broadcast**: waiters get the same `AxiosException`. But a leader cancelled by **its own caller** does not count as a failure — each waiter sends its own request instead.
 - **Waiters stay cancellable**: cancelling `CancellationToken` gives up the wait only and never cancels the shared send (`ERR_CANCELED`).
 - **Waiting is bounded by the total budget**: a follower waits at most the remaining `Resilience.TotalTimeout` and then fails with `ECONNABORTED` (`IsTotalTimeoutExceeded`) instead of hanging on a slow leader.
 - **Lookups count against that budget too**: a cache read is bounded by the remaining `Resilience.TotalTimeout`, so a hanging store (unreachable custom store, network partition) fails with `ECONNABORTED` (`IsTotalTimeoutExceeded`) instead of parking the request; caller cancellation surfaces as `ERR_CANCELED`, and a cancellation thrown by the store itself counts as a miss. Implementations of `IAxiosCacheStore.GetAsync` should honour the token they receive.
@@ -2387,9 +2397,9 @@ Three folder rules:
 
 Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAPI.Attributes`); other public types stay at the `WebAPI/` root.
 
-### Breaking changes in 2.0
+### Breaking changes in 1.5
 
-| 1.x | 2.0 |
+| 1.x | 1.5 |
 | --- | --- |
 | `Callbacks` | `Observability` + top-level `ValidateStatus` |
 | `Connection` | `Transport` |
@@ -2425,6 +2435,19 @@ Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAP
 | `RemoveHeaders` | no longer public |
 | `AxiosConfig.LimitSettings` (public nested type) | becomes the public real group `AxiosConfig.LimitsSettings` (reached via `AxiosConfig.Limits`; both the type name and the access path changed); default-value constants stay on `AxiosConfig.DefaultStreamFrameBytes` / `MinStreamFrameBytes` / `MaxStreamFrameBytesLimit` |
 | — | new `Axios.Create(baseAddress)` and `client.Create<T>()` |
+
+#### Behavior tightening in 1.5.x (vs 1.5.0)
+
+| 1.5.0 | 1.5.x |
+| --- | --- |
+| `BaseAddress` with query / fragment was string-concatenated, semantics undefined | Resolved per RFC 3986 §5.2.2: the base query is inherited only when the reference path is empty, the base fragment is always dropped, and a fragment on the relative reference is kept |
+| A request interceptor returning a brand-new `AxiosConfig` lost instance defaults (`BaseAddress` etc.) | Merged once automatically; explicitly written values win over instance defaults; already-merged configs / clones are not merged twice |
+| Explicit `null` on `Transport.HttpVersion` / `VersionPolicy` behaved differently across entry points | Unified as "explicitly back to the library default" (HTTP/2 / `RequestVersionOrLower`), overriding the instance default |
+| Every redirect failure reported `ERR_BAD_REQUEST` | Overrun now reports the dedicated `ERR_TOO_MANY_REDIRECTS`; `MaxRedirects = 0` keeps `ERR_BAD_REQUEST` but with a distinct "redirects disabled" message |
+| Cache single-flight broadcast HTTP-status failures to followers | Non-2xx now uses "share the response, decide per follower": each follower applies its own `ValidateStatus` / interceptors / error factory while the server sees one request; streaming responses and over-cap bodies fall back to individual resends |
+| A spent `Resilience.TotalTimeout` budget could still fail over / hedge | Exhaustion throws `ECONNABORTED` (`IsTotalTimeoutExceeded = true`) immediately; no second attempt is sent |
+| Cached hits kept the original `Age` header; duplicate response headers replayed only the first value | `Age` is recomputed from `receivedAt` on hits; duplicate headers replay all values |
+| Hedging exclusion covered download progress only | Upload / download progress callbacks and `MaxRate` now exclude hedging; `TrafficMeter` counting is atomic |
 
 `AxiosNet.WebAPI` is still part of the same package: there is no separate package, and the declarative extension methods only need `using AxiosNet.WebAPI;`; use `AxiosNetOmitWebApi` to leave it out of the build when needed.
 

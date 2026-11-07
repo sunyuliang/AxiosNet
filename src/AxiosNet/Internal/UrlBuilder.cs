@@ -148,7 +148,11 @@ internal static class UrlBuilder
         }
     }
 
-    /// <summary>对应 axios isAbsoluteURL + combineURLs。</summary>
+    /// <summary>
+    /// 对应 axios 的路径合并（base 当作目录前缀，不影响既有的斜杠折叠规则），但 base 的 query / fragment
+    /// 按 RFC 3986 §5.2.2 解析：它们不是路径字符，不能被拼进路径。<br/>
+    /// 规则：非空相对路径不继承 base 的 query；base 的 fragment 永不继承；引用自带的 query / fragment 保留。
+    /// </summary>
     private static string Combine(string? baseAddress, string? url)
     {
         // url 为 null 表示「请求 baseAddress 本身」：原样返回，不能裁掉尾斜杠——
@@ -173,7 +177,109 @@ internal static class UrlBuilder
             return url;
         }
 
-        return string.Concat(baseAddress.AsSpan().TrimEnd('/'), "/", url.AsSpan().TrimStart('/'));
+        // base 必须是合法 http(s) 绝对地址才做组件解析；否则保留旧拼接，由 Build 统一报 ERR_INVALID_URL。
+        if (!TryGetBaseComponents(baseAddress, out var baseUri))
+        {
+            return string.Concat(baseAddress.AsSpan().TrimEnd('/'), "/", url.AsSpan().TrimStart('/'));
+        }
+
+        SplitReference(url, out var relativePath, out var relativeQuery, out var fragment);
+
+        // 空路径引用（"?q" / "#f"）：路径沿用 base；query 用引用自己的，引用没带才继承 base 的。
+        // 非空相对路径：base 的 query 不继承（RFC 3986 §5.2.2），base 的 fragment 在任何情况下都不继承。
+        if (relativePath.Length == 0)
+        {
+            var query = relativeQuery ?? baseUri.Query;
+            var tail = query is null ? fragment : string.Concat("?", query, fragment);
+            return string.Concat(baseUri.Root, baseUri.Path, tail);
+        }
+
+        var joinedPath = JoinPaths(baseUri.Path, relativePath);
+        var relativeTail = relativeQuery is null
+            ? fragment
+            : string.Concat("?", relativeQuery, fragment);
+        return string.Concat(baseUri.Root, joinedPath, relativeTail);
+    }
+
+    /// <summary>base 的组件拆分结果（已按 URI 规则解码成可安全再拼接的文本）。</summary>
+    private readonly record struct BaseComponents(string Root, string Path, string? Query);
+
+    private static readonly ConcurrentDictionary<string, BaseComponents> BaseComponentCache = new(StringComparer.Ordinal);
+
+    private static int _baseComponentCount;
+
+    /// <summary>
+    /// 把 baseAddress 拆成 authority / path / query（fragment 直接丢弃）：用 <see cref="Uri"/> 解析而不是找字符，
+    /// 才能正确处理 userinfo、IPv6 与转义。按字符串缓存，避免每次请求都重新解析同一个 BaseAddress。
+    /// </summary>
+    private static bool TryGetBaseComponents(string baseAddress, out BaseComponents components)
+    {
+        if (BaseComponentCache.TryGetValue(baseAddress, out components))
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(baseAddress, UriKind.Absolute, out var uri) || uri.IsFile || !IsHttpScheme(uri))
+        {
+            return false;
+        }
+
+        components = new BaseComponents(
+            uri.GetLeftPart(UriPartial.Authority),
+            uri.AbsolutePath,
+            uri.Query.Length > 0 ? uri.Query.Substring(1) : null);
+
+        if (Volatile.Read(ref _baseComponentCount) >= UriCacheLimit)
+        {
+            BaseComponentCache.Clear();
+            Volatile.Write(ref _baseComponentCount, 0);
+        }
+
+        if (BaseComponentCache.TryAdd(baseAddress, components))
+        {
+            Interlocked.Increment(ref _baseComponentCount);
+        }
+
+        return true;
+    }
+
+    /// <summary>按 axios 的斜杠折叠规则拼接两段路径：base 末尾与相对路径开头的 '/' 各收掉，再补一个分隔符。</summary>
+    private static string JoinPaths(string basePath, string relativePath)
+    {
+        var trimmedBase = basePath.AsSpan().TrimEnd('/');
+        var trimmedRelative = relativePath.AsSpan().TrimStart('/');
+
+        if (trimmedBase.Length == 0)
+        {
+            // base 只有根斜杠：结果就是 "/" + 相对路径（相对路径本身以 '/' 开头时不再重复补）。
+            return relativePath.StartsWith('/')
+                ? string.Concat("/", trimmedRelative)
+                : string.Concat("/", relativePath);
+        }
+
+        return trimmedRelative.Length == 0
+            ? string.Concat(trimmedBase, "/")
+            : string.Concat(trimmedBase, "/", trimmedRelative);
+    }
+
+    /// <summary>把相对引用拆成 path / query / fragment；query 为 null 表示引用里没有 '?'，fragment 保留前导 '#'。</summary>
+    private static void SplitReference(string reference, out string path, out string? query, out string fragment)
+    {
+        var hashIndex = reference.IndexOf('#');
+        var end = hashIndex >= 0 ? hashIndex : reference.Length;
+        fragment = hashIndex >= 0 ? reference.Substring(hashIndex) : string.Empty;
+
+        var questionIndex = reference.IndexOf('?');
+        if (questionIndex >= 0 && questionIndex < end)
+        {
+            path = reference.Substring(0, questionIndex);
+            query = reference.Substring(questionIndex + 1, end - questionIndex - 1);
+        }
+        else
+        {
+            path = reference.Substring(0, end);
+            query = null;
+        }
     }
 
     /// <summary>是否为绝对地址（形如 <c>scheme://</c>）：要求 <c>scheme</c> 后紧跟 <c>//</c>，避免把「主机:端口」误判。</summary>

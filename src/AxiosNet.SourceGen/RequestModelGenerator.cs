@@ -23,7 +23,7 @@ namespace AxiosNet.SourceGen
     public sealed partial class RequestModelGenerator : IIncrementalGenerator
     {
         internal const string GeneratorName = "AxiosNet.SourceGen";
-        internal const string GeneratorVersion = "1.0.0";
+        internal const string GeneratorVersion = "1.5.0";
 
         /// <summary>生成器入口：请求模型、接口代理、对象形状、启动期校验与 DI 注册扩展各自独立成管线。</summary>
         public void Initialize(IncrementalGeneratorInitializationContext context)

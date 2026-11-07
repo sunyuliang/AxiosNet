@@ -1,9 +1,15 @@
 namespace AxiosNet.Interceptors;
 
-/// <summary>一条响应拦截器：<c>Id</c> 用于 Eject，<c>OnRejected</c> 只兜自身 <c>OnFulfilled</c> 的异常。</summary>
+/// <summary>一条响应拦截器：<c>Id</c> 用于 Eject，<c>OnRejected</c> 兜的是内层链（更靠近真正发请求的那一步）抛出的异常。</summary>
+/// <remarks>
+/// 拦截器按注册顺序套在末端调用外面（见 <c>AxiosClient.Interceptors.cs</c> 的 <c>WrapWithInterceptors</c>）：
+/// 每次调用先 <c>await previous()</c>，抛错才交给本拦截器的 <c>OnRejected</c>。因此
+/// <c>OnRejected</c> 不兜自身 <c>OnFulfilled</c> 的异常——那是在 <c>previous()</c> 成功返回之后才抛的，
+/// 会交给更外层拦截器的 <c>OnRejected</c>，或在没有外层时原样漏给调用方。
+/// </remarks>
 /// <param name="Id">注册时分配的编号，Eject 按它定位；只增不复用。</param>
 /// <param name="OnFulfilled">正常路径：拿到响应、改完再交回。</param>
-/// <param name="OnRejected">补偿路径：只处理本拦截器 <c>OnFulfilled</c> 抛出的异常；null 表示不处理。</param>
+/// <param name="OnRejected">补偿路径：处理内层链（<c>previous()</c>）抛出的异常；null 表示不处理。</param>
 internal sealed record ResponseInterceptor(
     int Id,
     Func<AxiosResponse, Task<AxiosResponse>> OnFulfilled,

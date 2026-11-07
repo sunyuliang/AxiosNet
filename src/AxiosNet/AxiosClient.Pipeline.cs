@@ -277,10 +277,24 @@ public sealed partial class AxiosClient
         }
         catch (Exception ex)
         {
-            // 领导者失败：跟随者原样拿到这个错误，不要挂在原地等。
+            // 领导者失败时的跟随者处理：
+            // - HTTP 状态类失败（Response 非 null）：把状态码 / 响应头 / 原始正文共享给跟随者，
+            //   每个跟随者用自己的 ValidateStatus / 响应拦截器 / 错误工厂判定，服务端全程只发一次。
+            //   流式响应、没拿到原始字节或正文超过共享上限时无法共享（reply = null），跟随者各自补发。
+            // - 传输 / 取消类失败与具体请求口径无关，按约定广播，避免同时压垮同一个下游。
             if (flight is not null && cache is not null && cacheKey is not null)
             {
-                cache.FailFlight(cacheKey, flight, ex);
+                if (ex is AxiosException { Response: not null } statusFailure && config is not null)
+                {
+                    cache.CompleteFlight(
+                        cacheKey,
+                        flight,
+                        TryCreateSharedFailureReply(statusFailure.Response, config, cache));
+                }
+                else
+                {
+                    cache.FailFlight(cacheKey, flight, ex);
+                }
             }
 
             // 记录后原样抛出，不改动异常。
@@ -352,6 +366,16 @@ public sealed partial class AxiosClient
                 "请求拦截器返回了 null：OnFulfilled / OnRejected 必须返回一个 AxiosConfig 实例"
                 + "（要做修改请改传入的 config 后端返回它）。",
                 config);
+
+            // 拦截器可以返回全新配置（拦截器自己 new 的，或调用方原始输入）：它没经过阶段 1 的合并，
+            // 缺少实例默认值（BaseAddress / 超时 / 连接级选项等），必须补一次合并才能发出。
+            // 已合并的配置（EffectiveMerged）与它的克隆（InstanceOptionsInherited）不再合并：
+            // 第二次合并会以实例默认值为基底，把拦截器刚写入的项（如按请求 BaseAddress / 并发）冲掉。
+            // 合并按 *Set 标记取值，拦截器显式写入的项不会被默认值覆盖。
+            if (!next.EffectiveMerged && !next.InstanceOptionsInherited)
+            {
+                config = MergeConfig(next);
+            }
         }
 
         return config;

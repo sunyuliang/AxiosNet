@@ -19,7 +19,7 @@
   <PropertyGroup>
     <PackageId>AxiosNet.Cli</PackageId>
     <Title>AxiosNet.Cli - 从 OpenAPI 文档生成 AxiosNet 强类型客户端</Title>
-    <Version>1.0.0</Version>
+    <Version>1.5.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
     <Description>设计期命令行工具：读取 OpenAPI 3.0 / 3.1、Swagger 2.0 文档（JSON / YAML、本地 / URL / stdin），生成 AxiosNet.WebAPI 声明式接口与模型。生成代码不含运行时代码，由 AxiosNet 源生成器在编译期烘焙代理，Native AOT 同样可用。Design-time CLI that generates strongly typed AxiosNet declarative clients from OpenAPI documents.</Description>

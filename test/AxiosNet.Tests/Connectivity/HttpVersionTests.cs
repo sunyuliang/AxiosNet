@@ -296,6 +296,77 @@ public sealed class HttpVersionTests
             handler.Sent.Select(s => s.Policy));
     }
 
+    [Fact]
+    public async Task PerRequestNullHttpVersion_ResetsToLibraryDefault()
+    {
+        // 显式 null 的口径是「显式回到库默认」：按请求写 null 压过实例默认 1.1，回到 2.0。
+        var handler = new CapturingHandler();
+        using var client = new AxiosClient(
+            new AxiosConfig {
+            Transport = { HttpVersion = HttpVersion.Version11 }
+        },
+            handler: handler);
+
+        await client.GetAsync("http://example.test/ping", c => c.Transport.HttpVersion = null);
+
+        Assert.Equal(HttpVersion.Version20, Assert.Single(handler.Sent).Version);
+    }
+
+    [Fact]
+    public async Task PerRequestNullVersionPolicy_ResetsToLibraryDefault()
+    {
+        var handler = new CapturingHandler();
+        using var client = new AxiosClient(
+            new AxiosConfig {
+            Transport = { VersionPolicy = HttpVersionPolicy.RequestVersionExact }
+        },
+            handler: handler);
+
+        await client.GetAsync("http://example.test/ping", c => c.Transport.VersionPolicy = null);
+
+        Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, Assert.Single(handler.Sent).Policy);
+    }
+
+    [Fact]
+    public async Task RequestConfigNullHttpVersion_ResetsToLibraryDefault()
+    {
+        // 同一条口径在通用入口（原始配置 + 阶段 1 合并）也必须成立：显式 null 不能因为「合并只看非空值」而被实例默认吞掉。
+        var handler = new CapturingHandler();
+        using var client = new AxiosClient(
+            new AxiosConfig {
+            Transport = { HttpVersion = HttpVersion.Version11, VersionPolicy = HttpVersionPolicy.RequestVersionExact }
+        },
+            handler: handler);
+
+        await client.RequestAsync(new AxiosConfig
+        {
+            Url = "http://example.test/ping",
+            Transport = { HttpVersion = null, VersionPolicy = null }
+        });
+
+        var sent = Assert.Single(handler.Sent);
+        Assert.Equal(HttpVersion.Version20, sent.Version);
+        Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, sent.Policy);
+    }
+
+    [Fact]
+    public async Task InstanceNullHttpVersion_FallsBackToLibraryDefault()
+    {
+        // 实例默认值本身为 null：使用库默认（2.0 + OrLower），与 Default_RequestsHttp2 同一口径。
+        var handler = new CapturingHandler();
+        using var client = new AxiosClient(
+            new AxiosConfig {
+            Transport = { HttpVersion = null, VersionPolicy = null }
+        },
+            handler: handler);
+
+        await client.GetAsync("http://example.test/ping");
+
+        var sent = Assert.Single(handler.Sent);
+        Assert.Equal(HttpVersion.Version20, sent.Version);
+        Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, sent.Policy);
+    }
+
     // ------------------------------------------------------------------
     // 线上行为：明文连接
     // ------------------------------------------------------------------

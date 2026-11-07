@@ -78,6 +78,60 @@ public sealed class GetUriTests
     }
 
     // ---------------------------------------------------------------
+    // RFC 3986：baseAddress 的 query / fragment 不是路径的一部分
+    // ---------------------------------------------------------------
+
+    [Theory]
+    // 非空相对路径：引用自带 query（没有就为空），base 的 query 不得混进路径。
+    [InlineData("http://a.com/api?token=abc", "users", "http://a.com/api/users")]
+    [InlineData("http://a.com/api?token=abc", "/users", "http://a.com/api/users")]
+    [InlineData("http://a.com/api?token=abc", "users?x=1", "http://a.com/api/users?x=1")]
+    // 空路径引用（只带 query）：路径与 query 都沿用 base。
+    [InlineData("http://a.com/api?token=abc", "?x=1", "http://a.com/api?x=1")]
+    [InlineData("http://a.com/api?token=abc", "#sec", "http://a.com/api?token=abc#sec")]
+    public void GetUri_BaseQuery_IsResolvedNotConcatenated(string baseAddress, string url, string expected)
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = baseAddress });
+
+        Assert.Equal(expected, client.GetUri(c => c.Url = url));
+    }
+
+    [Fact]
+    public void GetUri_BaseFragment_IsDropped_AndRelativeFragmentIsKept()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://a.com/api?token=abc#top" });
+
+        // 相对引用有自己的路径：base 的 fragment 不继承（RFC 3986 §5.2.2）。
+        Assert.Equal("http://a.com/api/users", client.GetUri(c => c.Url = "users"));
+
+        // 引用自带 fragment：保留引用的那一个。
+        Assert.Equal("http://a.com/api/users#details", client.GetUri(c => c.Url = "users#details"));
+    }
+
+    [Fact]
+    public void GetUri_BaseQuery_IsDropped_AndParamsStillAppendedAfterPath()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://a.com/api?token=abc" });
+
+        var uri = client.GetUri(c =>
+        {
+            c.Url = "users";
+            c.Params = new { page = 2 };
+        });
+
+        Assert.Equal("http://a.com/api/users?page=2", uri);
+    }
+
+    [Fact]
+    public void GetUri_BaseQueryWithoutPath_IsStillAQuery()
+    {
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://a.com?token=abc" });
+
+        // BaseAddress 没有路径：相对引用落到根路径下，base 的 query 同样不参与路径拼接。
+        Assert.Equal("http://a.com/users", client.GetUri(c => c.Url = "users"));
+    }
+
+    // ---------------------------------------------------------------
     // baseURL 与 url 的斜杠合并
     // ---------------------------------------------------------------
 

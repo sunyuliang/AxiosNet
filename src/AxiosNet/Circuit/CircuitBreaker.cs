@@ -606,14 +606,24 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
            && host.ProbesInFlight > 0
            && Elapsed(host.ProbeStartedAt) >= timeout;
 
-    /// <summary>切换状态：换一代票号（旧请求的回报按迟到处理）、跟着调整各维度计数，返回迁移记录。</summary>
+    /// <summary>
+    /// 全局单调代次源：每个状态实例、每次状态迁移都取一个从未出现过的值。
+    /// <c>Reset</c> 会删掉旧实例、新建一个状态实例；若代次像旧实现那样从 1 重新开始，Reset 前放行的在途请求
+    /// 手里的旧票恰好等于新实例的初始代次，迟到结果就会被当成这一轮的账，把刚恢复的熔断又打开。
+    /// </summary>
+    private static long _generationEpoch;
+
+    private static long NextGenerationEpoch() => Interlocked.Increment(ref _generationEpoch);
+
+    /// <summary>切换状态：换一个全局唯一的代次（旧请求的回报按迟到处理）、跟着调整各维度计数，返回迁移记录。</summary>
     private static AxiosCircuitTransition MoveTo(HostState host, AxiosCircuitState next)
     {
         var previous = host.State;
         host.StateValue = (int)next;
 
         // 每次迁移都换一代：上一轮放行的请求持旧票，之后回报的结果一律按迟到处理。
-        host.Generation++;
+        // 用全局自增值而不是实例内自增：Reset / 驱逐后重建的状态实例也不能与旧票撞号。
+        host.Generation = NextGenerationEpoch();
 
         // 计数跟着迁移走：调用方都在 host.Gate 内，所以这两步对同一维度是原子的。
         // 已经离开跟踪表的维度不再动计数：驱逐与迁移可能交错（Evict 拿到表项之后、本次 Report 才进锁），
@@ -677,10 +687,11 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         public long ProbeStartedAt;
 
         /// <summary>
-        /// 当前代次：每次状态迁移 +1。放行时把代次作为准入票发给调用方，迟到的结果凭旧票被丢弃。
-        /// 从 1 开始，<c>0</c> 专指「没有票」（直接调用公共 API）。
+        /// 当前代次：每个状态实例创建时取一个全局唯一值，每次状态迁移再取一个。
+        /// 放行时把代次作为准入票发给调用方，迟到的结果凭旧票被丢弃；全局单调保证 Reset 重建的实例不会与旧票撞号。
+        /// <c>0</c> 专指「没有票」（直接调用公共 API）。
         /// </summary>
-        public long Generation = 1;
+        public long Generation = NextGenerationEpoch();
 
         /// <summary>本次打开的时刻（<see cref="Stopwatch.GetTimestamp"/>）。</summary>
         public long OpenedAt;

@@ -40,7 +40,10 @@ public enum AxiosErrorCode
     CircuitOpen,
 
     /// <summary><c>ERR_POOL_EXHAUSTED</c>：连接池 origin 基数饱和，请求没有发出。</summary>
-    PoolExhausted
+    PoolExhausted,
+
+    /// <summary><c>ERR_TOO_MANY_REDIRECTS</c>：重定向次数用尽（<c>Transport.MaxRedirects</c>），仍在 3xx。</summary>
+    TooManyRedirects
 }
 
 /// <summary>字符串错误码与枚举的映射：两侧必须同步（由用例锁定每个内置常量都能映射到非 <see cref="AxiosErrorCode.Unknown"/>）。</summary>
@@ -60,6 +63,7 @@ internal static class AxiosErrorCodes
         AxiosException.ErrQueueFull => AxiosErrorCode.QueueFull,
         AxiosException.ErrCircuitOpen => AxiosErrorCode.CircuitOpen,
         AxiosException.ErrPoolExhausted => AxiosErrorCode.PoolExhausted,
+        AxiosException.ErrTooManyRedirects => AxiosErrorCode.TooManyRedirects,
         _ => AxiosErrorCode.Unknown
     };
 }

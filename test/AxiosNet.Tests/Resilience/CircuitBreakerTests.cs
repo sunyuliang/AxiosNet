@@ -1429,6 +1429,63 @@ public sealed class CircuitBreakerTests
     private static AxiosCircuitContext FailedContext(string host)
         => new(host, new Uri("https://" + host + "/orders"), null, new HttpRequestException("down"));
 
+    // ------------------------------------------------------------------
+    // Reset 与在途旧票：旧结果不得污染新代次
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Reset_DoesNotLetAnInFlightOldTicket_TripTheNewGeneration()
+    {
+        var slowGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var server = TestHttpServer.Start(async request =>
+        {
+            if (request.Path == "/slow")
+            {
+                await slowGate.Task;
+                return TestJson.Response(new { error = "slow" }, statusCode: 500);
+            }
+
+            return request.Path == "/ok"
+                ? TestJson.Response(new { ok = true })
+                : TestJson.Response(new { error = "boom" }, statusCode: 500);
+        });
+
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = TimeSpan.FromSeconds(30) };
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Resilience = { Circuit = { Policy = breaker } }
+        });
+
+        // A 在闭合态放行（拿到旧代次的票），随后一直挂在服务端。
+        var inFlight = client.GetAsync(server.Url + "slow");
+        var wait = Stopwatch.StartNew();
+        while (wait.Elapsed < TimeSpan.FromSeconds(5) && server.Received.Count == 0)
+        {
+            await Task.Delay(5);
+        }
+
+        // B 失败一次就把熔断打开（阈值 1）：A 手里的票从此是旧票。
+        await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "fail"));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(HostOf(server)));
+
+        // Reset 清掉旧状态；再发一个成功请求，让新代次的状态实例真正建立起来。
+        breaker.Reset();
+        await client.GetAsync(server.Url + "ok");
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(HostOf(server)));
+
+        // A 的迟到失败落地：票号属于被 Reset 掉的旧状态，必须丢弃。
+        // 旧实现新实例的代次从 1 重新开始，恰好与 A 的旧票相同 —— 这一笔会把新代次重新打开。
+        slowGate.SetResult();
+        await Assert.ThrowsAsync<AxiosException>(() => inFlight);
+
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(HostOf(server)));
+
+        // 新代次照常放行。
+        var after = await client.GetAsync(server.Url + "ok");
+        Assert.Equal(200, after.Status);
+    }
+
     /// <summary>熔断的计数维度：默认 <c>host:port</c>。</summary>
     private static string HostOf(TestHttpServer server) => $"127.0.0.1:{server.Port}";
 

@@ -171,6 +171,81 @@ public sealed class TotalTimeoutTests
     }
 
     // ------------------------------------------------------------------
+    // 备用端点：总预算耗尽后不再换端点，最终错误必须是「总预算耗尽」
+    // ------------------------------------------------------------------
+
+    // 复现：Timeout=100ms + TotalTimeout=150ms + 1 个备用端点。
+    // 第一个端点快速 503 后换到备用端点，备用端点拖住直到总预算到点 —— 旧实现会把第一次的 503
+    // 当成最终答案（ERR_BAD_RESPONSE，IsTotalTimeoutExceeded=false），且还会继续在预算之外换端点。
+    [Fact]
+    public async Task TotalTimeout_Failover_StopsAtBudget_AndReportsBudgetNotTheEarlierEndpointError()
+    {
+        var primaryCalls = 0;
+        var mirrorCalls = 0;
+
+        await using var primary = TestHttpServer.Start(_ =>
+        {
+            Interlocked.Increment(ref primaryCalls);
+            return new TestResponse(503, Body: Array.Empty<byte>());
+        });
+
+        await using var mirror = TestHttpServer.Start(async _ =>
+        {
+            Interlocked.Increment(ref mirrorCalls);
+            await Task.Delay(3000);
+            return TestJson.Response(new { mirror = true });
+        });
+
+        using var client = new AxiosClient();
+
+        var watch = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
+            primary.Url + "api/slow",
+            c =>
+            {
+                // Timeout 故意给得比总预算宽：备用端点那次尝试的上限就是「剩余总预算」，到点即花完预算。
+                c.Timeout = TimeSpan.FromSeconds(30);
+                c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(150);
+                c.Resilience.Failover.Endpoints = new[] { new Uri(mirror.Url) };
+            }));
+        watch.Stop();
+
+        // 总预算到点后必须直接报「总预算耗尽」：不能把第一次端点的 503 当作最终答案。
+        Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
+        Assert.True(ex.IsTotalTimeoutExceeded, "总预算耗尽时 IsTotalTimeoutExceeded 必须为 true");
+
+        // 预算耗尽后不得再发第三次：原端点 1 次、备用端点 1 次（在预算内起跑，到点被收掉）。
+        Assert.Equal(1, primaryCalls);
+        Assert.Equal(1, mirrorCalls);
+
+        // 硬上限：总时长不得越过 TotalTimeout（留出测试基建与调度余量）。
+        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(600), $"实际耗时 {watch.Elapsed}：总预算没有成为硬上限");
+    }
+
+    // 对冲分支同样共享总预算：到点后不得把「某条分支的超时」当成最终答案。
+    [Fact]
+    public async Task TotalTimeout_Hedging_ReportsBudgetNotTheBranchTimeout()
+    {
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await Task.Delay(3000);
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "slow", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(30);
+            c.Resilience.TotalTimeout = TimeSpan.FromMilliseconds(150);
+            c.Resilience.Hedging.MaxHedges = 1;
+        }));
+
+        Assert.Equal(AxiosException.ErrConnAborted, ex.Code);
+        Assert.True(ex.IsTotalTimeoutExceeded, "对冲分支在总预算到点后必须报总预算耗尽");
+    }
+
+    // ------------------------------------------------------------------
     // 排队：TotalTimeout 计入排队时间（与 QueueTimeout 的口径不同）
     // ------------------------------------------------------------------
 

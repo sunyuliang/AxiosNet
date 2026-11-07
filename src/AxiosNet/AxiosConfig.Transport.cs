@@ -20,13 +20,48 @@ public sealed partial class AxiosConfig
         /// HTTP 版本，<c>null</c>（默认）= HTTP/2（<see cref="System.Net.HttpVersion.Version20"/>），配合默认协商策略可降级到 1.1。
         /// 设 <c>Version30</c> 即要求 h3（环境支持见 <see cref="Http3Support"/>）；按请求项：单次请求覆盖实例默认值。
         /// </summary>
-        public Version? HttpVersion { get; set; }
+        /// <remarks>
+        /// 显式写 <c>null</c> 是「显式回到库默认 HTTP/2」，会压过实例默认值（不只是「未设置」）：
+        /// 实例设了 1.1、单次请求写 <c>null</c> → 本次用 2.0。要沿用实例默认值就不要碰本项。
+        /// 通用入口（<see cref="AxiosClient.RequestAsync(AxiosConfig)"/>）与快捷方法口径一致。
+        /// </remarks>
+        public Version? HttpVersion
+        {
+            get => _httpVersion;
+            set
+            {
+                _httpVersion = value;
+                HttpVersionSet = true;
+            }
+        }
+
+        private Version? _httpVersion;
+
+        /// <summary>是否被显式赋值过（含显式赋 <c>null</c>），用于合并配置时区分「未设置」与「显式回到库默认」。</summary>
+        internal bool HttpVersionSet { get; set; }
 
         /// <summary>
         /// 版本协商策略（<see cref="System.Net.Http.HttpVersionPolicy"/>），默认 <c>RequestVersionOrLower</c>（服务端不支持就降级）；
         /// <c>RequestVersionExact</c> 表示只用该版本，协商不上就报错。按请求项：单次请求覆盖实例默认值。
         /// </summary>
-        public HttpVersionPolicy? VersionPolicy { get; set; }
+        /// <remarks>
+        /// 显式写 <c>null</c> 同样是「显式回到库默认 <c>RequestVersionOrLower</c>」，会压过实例默认值；
+        /// 要沿用实例默认值就不要碰本项。通用入口与快捷方法口径一致。
+        /// </remarks>
+        public HttpVersionPolicy? VersionPolicy
+        {
+            get => _versionPolicy;
+            set
+            {
+                _versionPolicy = value;
+                VersionPolicySet = true;
+            }
+        }
+
+        private HttpVersionPolicy? _versionPolicy;
+
+        /// <summary>是否被显式赋值过（含显式赋 <c>null</c>），用于合并配置时区分「未设置」与「显式回到库默认」。</summary>
+        internal bool VersionPolicySet { get; set; }
 
         private string? _profile;
 

@@ -1,4 +1,5 @@
 
+using AxiosNet.Cache;
 using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Serialization;
@@ -9,6 +10,7 @@ using AxiosNet.WebAPI.Internal;
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
@@ -435,6 +437,59 @@ public sealed class AllocationTests
         public HttpContent? Payload { get; set; }
     }
 
+    [Fact]
+    public void Non2xxSingleFlight_SharedReply_PaysOneBodyCopy()
+    {
+        // 非 2xx 共享路径的额外分配：一版正文复制（与领导者自己的 Data 脱钩）+ 头字典 + 单飞簿记。
+        // 成功路径不经过这里，所以「每请求分配不得上升」由既有成功路径护栏保证。
+        var json = Encoding.UTF8.GetBytes("{\"error\":\"" + new string('x', 1024) + "\"}");
+
+        using var baseline = new AxiosClient(
+            new AxiosConfig
+            {
+                BaseAddress = "http://units.test/",
+                Caching = new AxiosCache(new AxiosCacheOptions { SingleFlight = false })
+            },
+            handler: new FixedStatusHandler(json),
+            disposeHandler: true);
+
+        using var shared = new AxiosClient(
+            new AxiosConfig
+            {
+                BaseAddress = "http://units.test/",
+                Caching = new AxiosCache(new AxiosCacheOptions { SingleFlight = true })
+            },
+            handler: new FixedStatusHandler(json),
+            disposeHandler: true);
+
+#pragma warning disable xUnit1031 // 测量窗口内必须同步推进：await 会引入测试自己的分配。
+        static void Fire(AxiosClient client)
+        {
+            try
+            {
+                _ = client.GetAsync("err").GetAwaiter().GetResult();
+            }
+            catch (AxiosException)
+            {
+                // 默认 ValidateStatus 把 500 转成异常；测量的是异常产生前的共享簿记。
+            }
+        }
+#pragma warning restore xUnit1031
+
+        var baselineBytes = MinimumBytes(40, () => Fire(baseline));
+        var sharedBytes = MinimumBytes(40, () => Fire(shared));
+        var extra = sharedBytes - baselineBytes;
+
+        // 实测（net8 Debug）：baseline 14640 B/请求、shared 17392 B/请求、增量 2752 B（正文 1036 B）。
+        Assert.True(
+            extra >= json.Length,
+            $"共享非 2xx 的额外分配 {extra} B 小于正文长度 {json.Length} B——正文没有复制，共享对象可能与调用方可变数据共用。");
+        Assert.True(
+            extra < json.Length + 12 * 1024,
+            $"共享非 2xx 的额外分配 {extra} B（正文 {json.Length} B）超出「一次正文复制 + 头字典 + 单飞簿记」"
+            + "的 12 KB 护栏——疑似每个跟随者都复制了一遍正文或重复建头字典。");
+    }
+
     private static long AverageBytes(int iterations, Action action)
     {
         action(); // warmup：JIT 与静态缓存不计入
@@ -476,6 +531,24 @@ public sealed class AllocationTests
             {
                 Content = new ByteArrayContent(Array.Empty<byte>())
             });
+    }
+
+    /// <summary>固定返回 500 + 指定正文，用来量非 2xx 共享路径的分配。</summary>
+    private sealed class FixedStatusHandler : HttpMessageHandler
+    {
+        private readonly byte[] _body;
+
+        public FixedStatusHandler(byte[] body) => _body = body;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            response.Content = new ByteArrayContent(_body);
+            response.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            return Task.FromResult(response);
+        }
     }
 
     /// <summary>第一次 503、第二次 200，让每个请求恰好产生两次尝试。</summary>

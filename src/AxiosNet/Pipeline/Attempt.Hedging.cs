@@ -15,8 +15,8 @@ public static partial class Attempt
     /// 位置在 <see cref="Retry"/>、<see cref="Failover"/>、<see cref="Circuit"/> 之内、<see cref="Gate"/> 之外：
     /// 熔断看整组分支的最终结果，每条分支各过并发闸门、各占一个槽位 —— 开启对冲后占用的并发额度是
     /// <c>1 + MaxHedges</c> 倍，<c>Resilience.Concurrency.MaxInFlight</c> 要按此预留。
-    /// <c>Hedging.MaxHedges = 0</c> 时纯直通。流式响应、非幂等方法、正文不能并发重放、响应侧带共享状态的请求
-    /// 按单次发送处理。每条分支各执行一次 <c>transformResponse</c> 与响应侧回调（含落败分支）；
+    /// <c>Hedging.MaxHedges = 0</c> 时纯直通。流式响应、非幂等方法、正文不能并发重放、带上传 / 下载进度回调
+    /// 或限速的请求按单次发送处理。每条分支各执行一次 <c>transformResponse</c> 与响应侧回调（含落败分支）；
     /// 响应拦截器在管线之外，仍只对胜出结果执行一次。
     /// </remarks>
     public static AxiosAttemptMiddleware Hedging { get; } = next =>
@@ -47,8 +47,12 @@ public static partial class Attempt
             return false;
         }
 
-        // 响应侧带共享状态（下载进度回调 / 限速器）不对冲。
-        if (ctx.Config.ObservabilityOrNull?.OnDownloadProgress is not null || ctx.Config.TransportOrNull?.MaxRate is > 0)
+        // 进度回调与限速器都挂在同一条正文的共享可变状态上：多个分支并发写会丢字节 / 重复上报，
+        // 因此请求侧（上传）与响应侧（下载）任一带进度或限速，都按单次发送处理。
+        var observability = ctx.Config.ObservabilityOrNull;
+        if (observability?.OnUploadProgress is not null
+            || observability?.OnDownloadProgress is not null
+            || ctx.Config.TransportOrNull?.MaxRate is > 0)
         {
             return false;
         }
@@ -118,6 +122,17 @@ public static partial class Attempt
                 catch (Exception ex) when (IsCleanupCancellation(ex, ctx))
                 {
                     // 败者被链接令牌取消：清理，不算失败。
+                }
+                catch (Exception ex) when (IsBudgetExhausted(ex))
+                {
+                    // 分支共享同一个总预算截止点：任一分支到点，其余分支也不可能成功。
+                    // 直接按「总预算耗尽」收尾（finally 会取消并收掉其余分支），不把某条分支的超时当成最终答案。
+                    if (ex is AxiosException { IsTotalTimeoutExceeded: true })
+                    {
+                        throw;
+                    }
+
+                    throw AsBudgetExhausted(ex, ctx, template);
                 }
                 catch (Exception ex)
                 {

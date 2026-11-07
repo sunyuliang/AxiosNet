@@ -32,7 +32,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 错误与配置 | [错误处理](#错误处理) · [配置](#配置)（[配置速查](#配置速查) / [客户端](#客户端) / [拦截器](#拦截器) / [数据转换与序列化](#数据转换与序列化) / [连接与传输](#连接与传输) / [可观测性](#可观测性)） |
 | 治理与缓存 | [治理](#治理)（[重试](#重试) / [熔断](#熔断) / [并发对冲](#并发对冲) / [备用端点](#备用端点) / [幂等键](#幂等键) / [尝试管线](#尝试管线) / [短路响应](#短路响应)） · [缓存](#缓存) |
 | 声明式 | [声明式客户端](#声明式客户端)（[模型式](#模型式-api) / [接口式](#接口式-api) / [值格式化](#值格式化) / [OpenAPI 导入](#从-openapi-导入) / [凭据与令牌管理](#凭据与令牌管理)） |
-| 运行时与参考 | [运行时与 AOT](#运行时与-aot) · [参考](#参考)（[能力地图](#能力地图) / [与 axios 对照](#与-axios-对照) / [依赖注入](#依赖注入) / [示例项目](#示例项目) / [构建与测试](#构建与测试) / [项目结构](#项目结构) / [2.0 破坏性变更](#20-破坏性变更)） |
+| 运行时与参考 | [运行时与 AOT](#运行时与-aot) · [参考](#参考)（[能力地图](#能力地图) / [与 axios 对照](#与-axios-对照) / [依赖注入](#依赖注入) / [示例项目](#示例项目) / [构建与测试](#构建与测试) / [项目结构](#项目结构) / [1.5 破坏性变更](#15-破坏性变更)） |
 | 其它 | [License](#license) |
 
 按目标选入口：
@@ -456,6 +456,10 @@ await client.GetAsync<User>("users/1", c =>
 - `config.Url` 留空（`null`）同样表示请求 `BaseAddress` 本身，与传 `"/"` 完全等价：尾斜杠属于地址的一部分，会原样保留。
 - `Method` 直接用 BCL 的 `HttpMethod`，自定义谓词照发：`new HttpMethod("PROPFIND")`。
 - 路径段特殊字符用 `AxiosUrl.EncodePathSegment(value)` 转义。
+- `BaseAddress` 按 RFC 3986 §5.2.2 的组件规则解析，不做字符串拼接：
+  - base 的 query 只在引用路径为空时继承（引用自己带 query 则以引用为准）；引用带非空相对路径时，base 的 query 被丢弃，不会偷偷拼到新路径后面；
+  - base 的 fragment **一律丢弃**；相对引用自带的 fragment 保留在最终 URI 中（fragment 不会发往服务端）；
+  - `GetUri` 与实际发送共用同一条解析路径，两者结果一致。
 
 ### 在途并发上限
 
@@ -521,6 +525,7 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 | `ERR_CIRCUIT_OPEN` | 熔断打开，请求**没有发出**（`RetryAfter` 给建议等待） |
 | `ERR_POOL_EXHAUSTED` | 连接池 origin 基数饱和（全部在途、无可驱逐空闲节点），请求未发出；可观测、默认不自动重发，降扇出 / 调大上限 / `Clear()` 回收后再重试 |
 | `ERR_INVALID_URL` | URL 非法、相对地址但没有 `BaseAddress`、非 http(s) scheme、长度超过 65519 字符（与 .NET 10 之前的 `Uri` 上限一致，由库自己守住） |
+| `ERR_TOO_MANY_REDIRECTS` | 跟随重定向超过 `Transport.MaxRedirects`（`MaxRedirects = 0` 时用 `ERR_BAD_REQUEST` + 独立文案，表示「本实例禁止跟随」，与「超限」可区分） |
 | `ERR_BAD_OPTION_VALUE` | 选项取值非法（按请求写实例级选项、multipart 头体矛盾、`Params` 是标量、重试 / 熔断配置越界等） |
 
 分支判断优先用 `ex.ErrorCode`（枚举，`switch` 能穷举）或 `ex.Code`（与 axios 对齐的字符串），不要解析消息文本：
@@ -680,6 +685,8 @@ client.Interceptors.Response.Use(
 var id = client.Interceptors.Request.Use(cfg => cfg);
 client.Interceptors.Request.Eject(id);
 ```
+
+**返回全新配置时的合并规则**：请求拦截器可以返回自己 `new` 的 `AxiosConfig`（或调用方原始配置）。管线会把它再合并一次到实例默认值上，`BaseAddress`、超时、连接级选项等默认值因此照常生效。合并只取「显式设置」的项，拦截器刚写入的值不会被实例默认值覆盖。返回已合并配置（`response.Config`）或它的 `Clone()` 时不再二次合并；在原 `config` 上修改并返回它同样不会触发二次合并。
 
 ### 数据转换与序列化
 
@@ -1833,7 +1840,8 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 | --- | --- | --- |
 | `TimeToLive` | 30 秒 | 条目存活时长，必须大于零 |
 | `FreshnessMode` | `Configured` | 缓存时长怎么来：`Configured` 只信配置 TTL；`Server` 只信服务器；`Intersection` 取交集（见下） |
-| `SingleFlight` | `true` | 同键并发只发一次 |
+| `SingleFlight` | `true` | 同键并发只发一次（非 2xx 也共享响应，见下） |
+| `MaxSharedFailureBodyBytes` | 256 KB | 非 2xx 单飞共享正文的字节上限；超限或设为 `0` 时跟随者各自补发（流式响应永不共享） |
 | `ConditionalRequests` | `true` | 过期条目带 `ETag` / `Last-Modified` 时发条件请求，304 直接复用缓存的正文（见下） |
 | `Store` | `null` | 条目存储，`null` = 内置 `MemoryCacheStore`；接 Redis / 共享缓存时换成自己的 `IAxiosCacheStore` |
 | `MaxEntries` | 1024 | 内置内存存储的条目上限：满了先清过期条目，仍满就不再收新条目（自建 `Store` 时本项不生效） |
@@ -1898,13 +1906,15 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 **命中与落库**
 
 - **命中不发请求**：不占并发闸门、不产生遥测 span 与在途计数，`response.Request` 为 `null`（与短路响应同一处可辨痕迹）。
-- **响应头按首值存**：短路响应的头字典是单值的；`Set-Cookie` / `Set-Cookie2` 不进缓存——会话态只属于那一次响应，命中回放等于把它塞给下一次请求。
+- **响应头按全部值存**：同名多值头（如多个 `WWW-Authenticate` challenge）原样回放；`Headers` 单值视图保留首值供第三方存储按契约读取。`Set-Cookie` / `Set-Cookie2` 不进缓存——会话态只属于那一次响应，命中回放等于把它塞给下一次请求。
 - **键不含请求体**：默认口径只缓存无正文的 GET / HEAD；用 `ShouldCache` 放行带正文的方法时，必须在 `KeySelector` 里把正文特征算进键，否则不同正文会串用同一条缓存。
 - **策略挂在实例上**：一个 `AxiosCache` 就是一份策略；要按接口区分存活时长或键规则，建多个实例分别挂。
 
 **单飞与预算**
 
-- **单飞的失败是共享的**：领导者抛错，等待者拿到同一个错误（同一个只读的 `AxiosException` 实例，`Response` 也是那一份）；但领导者被**它自己的调用方**取消时不算失败——等待者各自补发一次。
+- **HTTP 状态类失败按响应共享**：领导者拿到非 2xx 时，单飞把状态码 / 响应头 / 原始正文交给所有跟随者；每个跟随者用自己的 `ValidateStatus`、响应拦截器与错误工厂（WebAPI `ErrorFactory`）判定，`Response` 与 `Config` 都属于各自调用方，服务端全程只发一次。
+- **共享的边界**：`ResponseType.Stream`（只能读一次）永不共享；正文超过 `MaxSharedFailureBodyBytes`（默认 256 KB）或把该项设为 `0` 时退回各自补发；瞬时内存约等于「错误正文 × 在途跟随者数」。共享结果只走本次单飞，不写入 `IAxiosCacheStore`（HTTP 缓存契约不存非 2xx），存储实现者无需扩展。
+- **传输 / 取消类失败仍广播**：领导者抛出非状态类错误时，等待者拿到同一个 `AxiosException`；但领导者被**它自己的调用方**取消时不算失败——等待者各自补发一次。
 - **等待者可以被取消**：`CancellationToken` 取消只放弃等待，不会取消那次共享的发送（`ERR_CANCELED`）。
 - **等待受总预算约束**：跟随者的等待不超过剩余 `Resilience.TotalTimeout`，到点按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会挂在原地等一个慢领导者。
 - **查询同样吃总预算**：缓存读取也受剩余 `Resilience.TotalTimeout` 约束，存储挂起（自建存储不可用 / 网络分区）时按 `ECONNABORTED`（`IsTotalTimeoutExceeded`）抛出，不会把请求挂在查缓存上；调用方取消按 `ERR_CANCELED` 报出，存储自己抛的取消按「没命中」处理。实现 `IAxiosCacheStore.GetAsync` 时应当尊重传入的令牌。
@@ -2391,9 +2401,9 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 
 公开特性统一收在 `WebAPI/Attributes/`（命名空间 `AxiosNet.WebAPI.Attributes`），其余公开类型留在 `WebAPI/` 根。
 
-### 2.0 破坏性变更
+### 1.5 破坏性变更
 
-| 1.x | 2.0 |
+| 1.x | 1.5 |
 | --- | --- |
 | `Callbacks` | `Observability` + 顶层 `ValidateStatus` |
 | `Connection` | `Transport` |
@@ -2429,6 +2439,19 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | `RemoveHeaders` | 不再公开 |
 | `AxiosConfig.LimitSettings`（公共嵌套类型） | 成为公共真分组 `AxiosConfig.LimitsSettings`（经 `AxiosConfig.Limits` 访问，类型名与访问路径同时更名）；默认值常量仍在 `AxiosConfig.DefaultStreamFrameBytes` / `MinStreamFrameBytes` / `MaxStreamFrameBytesLimit` |
 | — | 新增 `Axios.Create(baseAddress)` 与 `client.Create<T>()` |
+
+#### 1.5.x 行为收紧（相对 1.5.0）
+
+| 1.5.0 | 1.5.x |
+| --- | --- |
+| `BaseAddress` 带 query / fragment 时按字符串拼接，语义未定义 | 按 RFC 3986 §5.2.2 组件解析：base query 仅在引用路径为空时继承；base fragment 一律丢弃；相对引用自带的 fragment 保留 |
+| 请求拦截器返回全新 `AxiosConfig` 时缺少实例默认值（`BaseAddress` 等） | 自动补一次合并；拦截器显式写入的项不被实例默认值覆盖；已合并配置 / 克隆不二次合并 |
+| `Transport.HttpVersion` / `VersionPolicy` 显式 `null` 在两条入口上语义不一致 | 统一为「显式回到库默认」（HTTP/2 / `RequestVersionOrLower`），并压过实例默认值 |
+| 重定向超限与此前所有重定向错误都报 `ERR_BAD_REQUEST` | 超限报独立错误码 `ERR_TOO_MANY_REDIRECTS`；`MaxRedirects = 0` 保留 `ERR_BAD_REQUEST` 但使用独立的「禁止跟随」文案 |
+| 缓存单飞把 HTTP 状态类失败也广播给跟随者 | 非 2xx 改为「共享响应、各自判定」：跟随者用它自己的 `ValidateStatus` / 拦截器 / 错误工厂判定，服务端只发一次；流式响应与超限正文退回各自补发 |
+| `Resilience.TotalTimeout` 预算耗尽后仍可能换端点 / 开对冲分支 | 预算耗尽立即抛出 `ECONNABORTED`（`IsTotalTimeoutExceeded = true`），不再发第二次 |
+| 缓存命中时 `Age` 头保持原值；重复响应头只回放首值 | 命中时按 `receivedAt` 重算 `Age`；重复头回放全部值 |
+| 囊括所有并发回调的对冲判定只排除下载进度 | 上传 / 下载进度回调与 `MaxRate` 同时排除对冲；`TrafficMeter` 计数改原子操作 |
 
 `AxiosNet.WebAPI` 仍是同一个包：没有独立包，声明式扩展方法只需 `using AxiosNet.WebAPI;`；需要时可用 `AxiosNetOmitWebApi` 排除构建。
 

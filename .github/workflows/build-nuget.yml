@@ -342,7 +342,7 @@ jobs:
           ver="${tag#v}"
           # 允许 1.2.3 与 1.2.3-rc.1（NuGet 语义化版本，不含 build metadata）
           if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-            echo "::error::tag '$tag' 不符合 vMAJOR.MINOR.PATCH[-prerelease]，例如 v1.0.0 / v1.1.0-rc.1"
+            echo "::error::tag '$tag' 不符合 vMAJOR.MINOR.PATCH[-prerelease]，例如 v1.5.0 / v1.5.1-rc.1"
             exit 1
           fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"

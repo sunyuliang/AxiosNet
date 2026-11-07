@@ -114,6 +114,17 @@ public static partial class Attempt
                 // Throw() 不返回，编译器不知道。
                 throw;
             }
+            catch (AxiosException ex) when (ex.IsTotalTimeoutExceeded)
+            {
+                // 下一次尝试开始前预算就已耗尽：请求根本没发出，直接按预算耗尽收尾。
+                throw;
+            }
+            catch (Exception ex) when (IsBudgetExhausted(ex))
+            {
+                // 本次尝试的上限就是剩余总预算且已到点：换端点只会再发一次注定超时的请求，
+                // 还会让更早端点的 5xx 盖掉真正的终止原因 —— 立即改报「总预算耗尽」。
+                throw AsBudgetExhausted(ex, ctx, template);
+            }
             catch (Exception ex) when (CanFailover(ex, ctx.ExternalToken))
             {
                 // 这个端点用不了：记一笔失败（到阈值后进入冷却），继续下一个端点。
@@ -223,8 +234,9 @@ public static partial class Attempt
             // 建连 / DNS / TLS / 读响应失败、本机连接池耗尽：换下游可能好。
             AxiosException.ErrNetwork or AxiosException.ErrPoolExhausted => true,
 
-            // 发出之后的超时：换一个下游可能响应；总预算耗尽不换。
-            AxiosException.ErrConnAborted when !axios.IsTotalTimeoutExceeded => true,
+            // 发出之后的超时：换一个下游可能响应；被总预算压小后到点（TimedOutOnTotalBudget）说明整条请求的
+            // 预算已经花完，换端点只会再次撞上同一个截止点，不换。
+            AxiosException.ErrConnAborted when !axios.IsTotalTimeoutExceeded && !axios.TimedOutOnTotalBudget => true,
 
             // 熔断按端点独立成账：这个端点被拦下不代表下一个端点也被拦下。
             AxiosException.ErrCircuitOpen => true,

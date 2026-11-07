@@ -315,6 +315,44 @@ public sealed class RedirectTests
     }
 
     [Fact]
+    public async Task RedirectLoop_ReportsTooManyRedirects_WithDedicatedCode()
+    {
+        await using var server = TestHttpServer.Start(req => new TestResponse(
+            302,
+            Headers: new Dictionary<string, string> { ["Location"] = "/loop" },
+            Body: Array.Empty<byte>()));
+
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "loop"));
+
+        Assert.Equal(AxiosException.ErrTooManyRedirects, ex.Code);
+        Assert.Equal(AxiosErrorCode.TooManyRedirects, ex.ErrorCode);
+        Assert.Equal(302, ex.Status);
+        // 初始请求 + 默认上限 5 次跟随后停下。
+        Assert.Equal(6, server.Received.Count);
+        Assert.Contains("MaxRedirects", ex.Message);
+    }
+
+    [Fact]
+    public async Task Redirect_DisabledByMaxRedirectsZero_HasItsOwnMessage_DistinctFromTooMany()
+    {
+        await using var server = StartRedirectServer();
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Transport = new() { MaxRedirects = 0 },
+        });
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "redir"));
+
+        // 关闭跟随不是「次数用尽」：码仍是 ERR_BAD_REQUEST，文案必须点明 MaxRedirects = 0。
+        Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
+        Assert.Equal(302, ex.Status);
+        Assert.Contains("MaxRedirects = 0", ex.Message);
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
     public async Task MaxRedirectsZero_DoesNotFollowRedirect()
     {
         await using var server = StartRedirectServer();

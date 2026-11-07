@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -669,6 +670,14 @@ internal static class ResponseReader
             {
                 AxiosHeaders.ValidateHeaderValue("Content-Type", contentType);
                 headers["Content-Type"] = new[] { contentType };
+            }
+
+            // 缓存命中：Age 是「当前龄期」，要把在缓存里停留的时间叠上去；否则同一份内容在缓存里放越久，
+            // 调用方看到的 Age 越新，会误判新鲜度。
+            if (reply.ReceivedAt is { } receivedAt && reply.StoredAge is { } storedAge && headers.ContainsKey("Age"))
+            {
+                var seconds = (long)(storedAge + (DateTimeOffset.UtcNow - receivedAt)).TotalSeconds;
+                headers["Age"] = new[] { (seconds > 0 ? seconds : 0).ToString(CultureInfo.InvariantCulture) };
             }
         }
         catch (ArgumentException ex)

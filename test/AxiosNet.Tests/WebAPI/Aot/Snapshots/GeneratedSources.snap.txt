@@ -4,7 +4,7 @@
 
 namespace AxiosNet.Generated
 {
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.5.0")]
     internal sealed class __AxiosProxy_AxiosNet_SnapshotProbe_ISnapshotApi_a27d46f2 : global::AxiosNet.SnapshotProbe.ISnapshotApi
     {
         private static readonly global::AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime __method0 =
@@ -26,7 +26,7 @@ namespace AxiosNet.Generated
             => __method1.SendDataAsync<global::AxiosNet.SnapshotProbe.SnapshotItem>(_client, new object[] { p0, p1 }, p1);
     }
 
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.5.0")]
     internal static class __AxiosProxy_AxiosNet_SnapshotProbe_ISnapshotApi_a27d46f2_Registration
     {
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
@@ -60,7 +60,7 @@ namespace AxiosNet.Generated
 
 namespace AxiosNet.Generated
 {
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.5.0")]
     internal static class __AxiosRequestModel_AxiosNet_SnapshotProbe_SnapshotRequest_7d9a77bf
     {
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
@@ -98,7 +98,7 @@ namespace AxiosNet.Generated
 
 namespace AxiosNet.Generated
 {
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.5.0")]
     internal static class __AxiosShape_named_global__AxiosNet_SnapshotProbe_SnapshotIte_895f57b3
     {
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
@@ -120,7 +120,7 @@ namespace AxiosNet.Generated
 
 namespace AxiosNet.Generated
 {
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.5.0")]
     internal static class __AxiosShape_named_global__AxiosNet_SnapshotProbe_SnapshotReq_cf634dc5
     {
         [global::System.Runtime.CompilerServices.ModuleInitializerAttribute]
@@ -144,7 +144,7 @@ namespace AxiosNet.Generated
 
 namespace AxiosNet.Generated
 {
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.5.0")]
     public static class AxiosNetValidation_AxiosNet_SnapshotProbe
     {
         /// <summary>校验本程序集里源生成器覆盖到的全部请求模型与接口，返回全部错误（空列表 = 合法）。</summary>

@@ -29,11 +29,23 @@ public sealed class AxiosCacheOptions
 
     /// <summary>同键并发只发一次（单飞），默认 <c>true</c>；关掉后每个请求各自发送，只共享已落库的条目。</summary>
     /// <remarks>
-    /// 请求侧要求绕开缓存（<c>no-store</c> / <c>no-cache</c> / <c>max-age=0</c>）时不查缓存、也不参与单飞，各自发送；
-    /// 领导者正常结束但没拿到可共享的正文（非 2xx、不落库、存储没接住）时，跟随者也各自补发；
-    /// 领导者抛错时跟随者拿到同一个错误（领导者自己被取消除外，跟随者会自己补发）。
+    /// 请求侧要求绕开缓存（<c>no-store</c> / <c>no-cache</c> / <c>max-age=0</c>）时不查缓存、也不参与单飞，各自发送。
+    /// 领导者拿到非 2xx 响应时，只把状态码 / 响应头 / 原始正文交给跟随者，每个跟随者用自己的
+    /// <see cref="AxiosConfig.ValidateStatus"/>、响应拦截器与错误工厂判定（响应对象与 <c>Config</c> 都属于跟随者自己），
+    /// 服务端全程只收到一次请求；流式响应或正文超过 <see cref="MaxSharedFailureBodyBytes"/> 时无法共享，退回各自补发。
+    /// 传输 / 取消类失败仍然广播（领导者自己被取消除外，跟随者会自己补发）。
     /// </remarks>
     public bool SingleFlight { get; set; } = true;
+
+    /// <summary>
+    /// 非 2xx 响应在单飞内共享给跟随者的正文上限，默认 256 KB（262144 字节）；<c>0</c> = 关闭非 2xx 共享（跟随者各自补发）。
+    /// </summary>
+    /// <remarks>
+    /// 领导者拿到非 2xx 时，共享正文的瞬时内存约等于「本次错误正文大小 × 在途跟随者数」；
+    /// 本项是唯一的硬约束：超过上限就不共享，跟随者各自补发。流式响应（<see cref="ResponseType.Stream"/>）
+    /// 无论大小都不共享（只能读一次的响应不能复用）。负值在构造 <see cref="AxiosCache"/> 时抛 <see cref="ArgumentOutOfRangeException"/>。
+    /// </remarks>
+    public int MaxSharedFailureBodyBytes { get; set; } = 256 * 1024;
 
     /// <summary>
     /// 条件请求（<c>ETag</c> / <c>Last-Modified</c> 复用），默认开启：新鲜条目没命中时，若存储里还留着带校验器的旧条目，
@@ -116,7 +128,8 @@ public sealed class AxiosCache
 
     /// <summary>构造一份缓存策略；<paramref name="options"/> 为 <c>null</c> 时全用默认值。</summary>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// <see cref="AxiosCacheOptions.TimeToLive"/> 不大于零、<see cref="AxiosCacheOptions.StoreTimeout"/> 为负，
+    /// <see cref="AxiosCacheOptions.TimeToLive"/> 不大于零、<see cref="AxiosCacheOptions.StoreTimeout"/> 为负、
+    /// <see cref="AxiosCacheOptions.MaxSharedFailureBodyBytes"/> 为负，
     /// 或用内置存储时 <see cref="AxiosCacheOptions.MaxBytes"/> 为负 / <see cref="AxiosCacheOptions.MaxEntries"/> 不大于零。
     /// </exception>
     public AxiosCache(AxiosCacheOptions? options = null)
@@ -137,6 +150,14 @@ public sealed class AxiosCache
                 nameof(AxiosCacheOptions.StoreTimeout),
                 storeTimeout,
                 "StoreTimeout 不能为负：不限时请设为 null。");
+        }
+
+        if (_options.MaxSharedFailureBodyBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(AxiosCacheOptions.MaxSharedFailureBodyBytes),
+                _options.MaxSharedFailureBodyBytes,
+                "MaxSharedFailureBodyBytes 不能为负：关闭共享请设为 0。");
         }
 
         // 容量两项只在用内置存储时才校验：自建存储的上限归它自己管。
@@ -417,7 +438,7 @@ public sealed class AxiosCache
             : null;
 
     // 解析 max-age 这类秒数；负数、带符号、非整数一律当无效。
-    private static TimeSpan? ParseSeconds(string? value)
+    internal static TimeSpan? ParseSeconds(string? value)
     {
         if (value is null
             || !long.TryParse(value.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)

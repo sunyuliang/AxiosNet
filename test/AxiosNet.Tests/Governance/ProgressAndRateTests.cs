@@ -1,4 +1,5 @@
 
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 using System.Collections.Concurrent;
@@ -260,6 +261,161 @@ public sealed class ProgressAndRateTests
 
         // 服务端确实收到了完整请求体
         Assert.Equal(size, server.Received[0].Body.Length);
+    }
+
+    // ===============================================================
+    // 并发不安全的进度状态：带上传进度时不得对冲
+    // ===============================================================
+
+    /// <summary>
+    /// 上传进度回调挂在同一个 <see cref="HttpContent"/> 上，所有对冲分支共用同一个计量器：
+    /// 并发写会丢字节 / 重复上报。带上传进度时按单次发送处理。
+    /// </summary>
+    [Fact]
+    public async Task Hedging_IsDisabled_WhenUploadProgressIsSet()
+    {
+        await using var server = TestHttpServer.Start(async _ =>
+        {
+            await Task.Delay(50);
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var client = new AxiosClient();
+
+        var events = new List<AxiosProgressEvent>();
+        await client.PutAsync(server.Url + "upload", new byte[7], c =>
+        {
+            c.Resilience.Hedging.MaxHedges = 1;
+            c.Resilience.Hedging.Delay = TimeSpan.Zero;
+            c.Observability.OnUploadProgress = events.Add;
+        });
+
+        // 只有一个分支被发出：进度计量器是分支共享的可变状态。
+        Assert.Single(server.Received);
+        Assert.All(events, e => Assert.True(e.Loaded <= 7, $"进度越过正文长度：{e.Loaded}"));
+    }
+
+    /// <summary><see cref="TrafficMeter"/> 的累计值必须经得起并发写：对冲分支会共用同一个计量器。</summary>
+    [Fact]
+    public void TrafficMeter_ConcurrentAdds_DoNotLoseBytes()
+    {
+        var meter = new TrafficMeter(total: null, callback: null, maxRate: null);
+        const int threads = 8;
+        const int perThread = 20_000;
+
+        Parallel.For(0, threads, _ =>
+        {
+            for (var i = 0; i < perThread; i++)
+            {
+                meter.Add(1);
+            }
+        });
+
+        Assert.Equal((long)threads * perThread, meter.Loaded);
+    }
+
+    // ===============================================================
+    // 真限流：限速必须让「服务端收包」也变慢，而不是只把调用方拖住
+    // ===============================================================
+
+    /// <summary>
+    /// 上传真限流：200KB / 200KB/s 时服务端花约 1s 才收完整段正文。
+    /// 旧实现把整包一次写进 socket 再睡，服务端 7ms 就收完、调用方空等 —— 限速只作用于调用方，不是真限流。
+    /// </summary>
+    [Fact]
+    public async Task MaxRate_PacesUpload_ServerReceivesSpreadOverTime()
+    {
+        const int size = 200 * 1024;
+        const long rate = 200 * 1024; // 约 1s
+        long? receivedAt = null;
+
+        await using var server = TestHttpServer.Start(_ =>
+        {
+            // 处理器被调用时正文已整段读完：这个时刻就是「服务端收完」的证据。
+            receivedAt = Stopwatch.GetTimestamp();
+            return TestJson.Response(new { ok = true });
+        });
+
+        using var client = new AxiosClient();
+
+        var start = Stopwatch.GetTimestamp();
+        await client.PostAsync(server.Url + "upload", new byte[size], c => c.Transport.MaxRate = rate);
+
+        // net6 没有 Stopwatch.GetElapsedTime（.NET 7+），用频率换算保持跨目标框架可编译。
+        var elapsed = TimeSpan.FromSeconds((double)(receivedAt!.Value - start) / Stopwatch.Frequency);
+        Assert.Equal(size, server.Received[0].Body.Length);
+        Assert.True(
+            elapsed >= TimeSpan.FromMilliseconds(700),
+            $"服务端 {elapsed.TotalMilliseconds:0}ms 就收完 {size} 字节（目标 {rate} B/s）：限速没有作用到接收端");
+    }
+
+    [Fact]
+    public async Task MaxRate_PacesDownload_TotalDurationMatchesRate()
+    {
+        const int size = 200 * 1024;
+        const long rate = 200 * 1024; // 约 1s
+
+        await using var server = TestHttpServer.Start(_ => Binary(size));
+        using var client = new AxiosClient();
+
+        var watch = Stopwatch.StartNew();
+        var response = await client.GetAsync<byte[]>(server.Url + "file", c => c.Transport.MaxRate = rate);
+        watch.Stop();
+
+        Assert.Equal(size, response.Data!.Length);
+        Assert.True(
+            watch.Elapsed >= TimeSpan.FromMilliseconds(700),
+            $"下载 {watch.ElapsedMilliseconds}ms 就读完 {size} 字节（目标 {rate} B/s）：限速没有生效");
+    }
+
+    // ===============================================================
+    // 进度回调频率：限速下必须按文档的频率多次回报，而不是 0 → 100 跳变
+    // ===============================================================
+
+    [Fact]
+    public async Task UploadProgress_UnderMaxRate_ReportsMultipleMonotonicEvents()
+    {
+        const int size = 200 * 1024;
+        const long rate = 200 * 1024;
+
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient();
+
+        var events = new List<AxiosProgressEvent>();
+        await client.PostAsync(server.Url + "upload", new byte[size], c =>
+        {
+            c.Transport.MaxRate = rate;
+            c.Observability.OnUploadProgress = events.Add;
+        });
+
+        Assert.True(events.Count >= 5, $"只有 {events.Count} 次上传进度：{string.Join(", ", events)}");
+        AssertMonotonic(events.Select(e => e.Loaded).ToList());
+        Assert.Equal(size, events[^1].Loaded);
+        Assert.Equal(size, events[^1].Total);
+        Assert.Equal(1d, events[^1].Progress);
+    }
+
+    [Fact]
+    public async Task DownloadProgress_UnderMaxRate_ReportsMultipleMonotonicEvents()
+    {
+        const int size = 200 * 1024;
+        const long rate = 200 * 1024;
+
+        await using var server = TestHttpServer.Start(_ => Binary(size));
+        using var client = new AxiosClient();
+
+        var events = new List<AxiosProgressEvent>();
+        await client.GetAsync<byte[]>(server.Url + "file", c =>
+        {
+            c.Transport.MaxRate = rate;
+            c.Observability.OnDownloadProgress = events.Add;
+        });
+
+        Assert.True(events.Count >= 5, $"只有 {events.Count} 次下载进度：{string.Join(", ", events)}");
+        AssertMonotonic(events.Select(e => e.Loaded).ToList());
+        Assert.Equal(size, events[^1].Loaded);
+        Assert.Equal(size, events[^1].Total);
+        Assert.Equal(1d, events[^1].Progress);
     }
 
     [Fact]
@@ -578,6 +734,14 @@ public sealed class ProgressAndRateTests
         }
     }
 
+
+    private static void AssertMonotonic(List<long> loaded)
+    {
+        for (var i = 1; i < loaded.Count; i++)
+        {
+            Assert.True(loaded[i] >= loaded[i - 1], $"进度回跳：{loaded[i - 1]} → {loaded[i]}");
+        }
+    }
 
     private static TestResponse Binary(int size)
         => new(Body: new byte[size], ContentType: "application/octet-stream");

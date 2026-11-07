@@ -18,8 +18,8 @@ namespace AxiosNet.Tests.Pipelines;
 /// 按单次发送处理。
 /// <para>
 /// 整个类进 <see cref="TimingCollection"/>：错峰用例断言的是「分支按 200ms 间隔起跑」，
-/// 并行集合抢 CPU 时到达时刻会被挤到 60ms 量级（假失败）。这个类本来就只有 3 秒，
-/// 串行化的代价小于一条永远在抖的护栏。
+/// 并行集合抢 CPU 时分支到达时刻仍可能被挤压。错峰用例本身用 TCS 门控三条分支，
+/// 直到三条都到达后才一起放行，避免首条提前返回导致其余分支被取消；间隔断言仍按到达时刻校验。
 /// </para>
 /// </summary>
 [Collection(TimingCollection.Name)]
@@ -567,13 +567,24 @@ public sealed class HedgingTests
     public async Task Hedging_StaggersBranches_ByIndexTimesDelay()
     {
         var arrivals = new ConcurrentQueue<TimeSpan>();
+        var arrivalCount = 0;
         var clock = Stopwatch.StartNew();
 
-        // 每条分支都要 1000ms 才回：第 2、3 条分别在 200ms / 400ms 起跑，三条都必然到达服务端。
+        // 三条分支都在到达服务端后被 TCS 门控挡住：谁都不能先返回抢跑，
+        // 必须等三条都到达（说明第 2、3 条已在 200ms / 400ms 起跑）后一起放行。
+        // 这样不用靠服务端 Task.Delay 把在途请求「撑住」，也不会出现首条提前返回取消其余分支。
+        var allArrived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         await using var server = TestHttpServer.Start(async _ =>
         {
             arrivals.Enqueue(clock.Elapsed);
-            await Task.Delay(TimeSpan.FromMilliseconds(1000));
+            if (Interlocked.Increment(ref arrivalCount) == 3)
+            {
+                allArrived.TrySetResult(true);
+            }
+
+            await release.Task;
             return TestJson.Response(new { ok = true });
         });
 
@@ -586,11 +597,45 @@ public sealed class HedgingTests
             }
             });
 
-        var response = await client.GetAsync("x");
+        var request = client.GetAsync("x");
+        try
+        {
+            try
+            {
+                await allArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                var observed = arrivals.ToArray();
+                Assert.Fail(
+                    $"等待对冲分支到达超时（5s）：已到 {observed.Length}/3 条，"
+                    + $"到达时刻 [{string.Join(", ", observed.Select(stamp => $"{stamp.TotalMilliseconds:0}ms"))}]；"
+                    + $"未到达的是第 {observed.Length} 条（index={observed.Length}，理论起跑约 {observed.Length * 200}ms）。");
+            }
+        }
+        finally
+        {
+            // 到达断言失败也要放行，避免服务器 Dispose 卡在门控上。
+            release.TrySetResult(true);
+        }
 
-        Assert.Equal(200, response.Status);
+        AxiosResponse? response = null;
+        try
+        {
+            response = await request.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            var observed = arrivals.ToArray();
+            Assert.Fail(
+                $"三条分支均已到达并放行，但请求 5s 内未完成；到达时刻 "
+                + $"[{string.Join(", ", observed.Select(stamp => $"{stamp.TotalMilliseconds:0}ms"))}]。");
+        }
 
-        var stamps = arrivals.OrderBy(stamp => stamp).ToArray();
+        Assert.Equal(200, response!.Status);
+
+        // 到达队列保持实际到达顺序；不用 OrderBy，顺序本身也是断言的一部分。
+        var stamps = arrivals.ToArray();
         Assert.Equal(3, stamps.Length);
         Assert.True(
             stamps[1] - stamps[0] >= TimeSpan.FromMilliseconds(120),
