@@ -237,6 +237,18 @@ public sealed class DemoApiServer : IDisposable
                     ? (200, JsonSerializer.Serialize(new SecureProfile("alice", "rotated-token", "sample-console")), null)
                     : (401, """{"error":"token expired"}""", null);
 
+            // query 令牌演示：令牌在 access_token 参数里，Authorization 头不参与（企业微信这类接口的形态）
+            case "GET" when path == "/api/secure/query-profile":
+                return QueryToken(query) == DemoToken
+                    ? (200, JsonSerializer.Serialize(new SecureProfile("alice", "query-token", "sample-console")), null)
+                    : (401, """{"error":"missing or invalid access_token"}""", null);
+
+            // 任意头令牌演示：API Key 放在 X-Api-Key 里，Authorization 头不参与
+            case "GET" when path == "/api/secure/key-profile":
+                return headers.GetValueOrDefault("x-api-key") == DemoToken
+                    ? (200, JsonSerializer.Serialize(new SecureProfile("alice", "api-key", "sample-console")), null)
+                    : (401, """{"error":"missing or invalid X-Api-Key"}""", null);
+
             case "POST" when path == "/api/signed/echo":
                 return SignedEcho(headers, body);
 
@@ -353,6 +365,15 @@ public sealed class DemoApiServer : IDisposable
 
         return JsonSerializer.Serialize(result);
     }
+
+    /// <summary>从查询串里取 <c>access_token</c>（键名大小写不敏感，值按 URL 解码）；没有则返回 <c>null</c>。</summary>
+    private static string? QueryToken(string query)
+        => query
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .Where(kv => kv.Length == 2 && kv[0].Equals("access_token", StringComparison.OrdinalIgnoreCase))
+            .Select(kv => Uri.UnescapeDataString(kv[1]))
+            .FirstOrDefault();
 
     /// <summary>请求体解析用：键名大小写不敏感（AxiosNet 默认按 camelCase 序列化，属性是 PascalCase）。</summary>
     private static readonly JsonSerializerOptions BodyOptions = new() { PropertyNameCaseInsensitive = true };

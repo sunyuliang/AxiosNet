@@ -720,6 +720,8 @@ var id = client.Interceptors.Request.Use(cfg => cfg);
 client.Interceptors.Request.Eject(id);
 ```
 
+> **拦截器写 `Authorization` 头，只适合「授权完全由拦截器负责」的客户端**。同时配了 `CredentialProvider` 或 `Transport.Auth` 时，显式 `Authorization` 头与凭据来源视为配置冲突，发出前抛 `ERR_BAD_OPTION_VALUE`——要按请求换身份请改凭据槽位（`config.Transport.Auth = AxiosCredential.Bearer(token)`），改完库会按新槽位重新解析一次凭据。另外 401 重放会重跑请求拦截器，时间戳 / trace id 这类值在重放时会变；需要跨尝试稳定的键用 [`Resilience.Idempotency`](#幂等键)。
+
 **返回全新配置时的合并规则**：请求拦截器可以返回自己 `new` 的 `AxiosConfig`（或调用方原始配置）。管线会把它再合并一次到实例默认值上，`BaseAddress`、超时、连接级选项等默认值因此照常生效。合并只取「显式设置」的项，拦截器刚写入的值不会被实例默认值覆盖。返回已合并配置（`response.Config`）或它的 `Clone()` 时不再二次合并；在原 `config` 上修改并返回它同样不会触发二次合并。
 
 ### 数据转换与序列化
@@ -1524,7 +1526,7 @@ public sealed class StreamEventsRequest : IApiRequest<Chunk> { }
 
 **授权与强类型错误**
 
-- 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；唯一扩展点是 `ApiClient.CredentialProvider`（`IApiCredentialProvider`），返回的 `ApiCredential` 决定怎么落头（见[凭据与令牌管理](#凭据与令牌管理)）。
+- 授权：`[Authorize]` / `[Authorize("Basic")]` 声明需要授权，`[AllowAnonymous]` 跳过整条链路；唯一扩展点是 `ApiClient.CredentialProvider`（`IApiCredentialProvider`），返回的 `ApiCredential` 决定落在哪里（`Authorization` 头 / 任意请求头 / 查询参数，见[凭据与令牌管理](#凭据与令牌管理)）。
 - 强类型错误：`client.ErrorFactory = new ApiErrorFactory<ProblemDetails>()` 后状态码错误抛 `ApiError<TError>`（网络 / 超时 / 取消不经过工厂）。`ApiError<TError>` 继承自 `AxiosException`，只写 `catch (AxiosException)` 也能接住；`Code` / `ErrorCode` / `Config` / `Request` / `ToJson()` 都从基类继承。
 
 **Native AOT**
@@ -1813,22 +1815,27 @@ var client = new ApiClient("https://api.example.com/")
 };
 ```
 
-| 返回值 | 落头方式 | 401 重放 |
+| 返回值 | 落点 | 401 重放 |
 | --- | --- | --- |
 | `ApiCredential.Token(token)` | 按 `[Authorize]` 的 scheme（默认 `Bearer`）写 `Authorization: {scheme} {token}` | 支持 |
-| `ApiCredential.Header(value)` | `value` 作为完整 `Authorization` 头值原样发送 | 支持 |
-| `ApiCredential.Custom()` | 提供方已自行写任意头（签名、Cookie 等），库不碰头 | 不重放 |
-| `ApiCredential.None`（或 `Token(null)`） | 本次不写头 | 不重放 |
+| `ApiCredential.Header(value)` | `value` 作为完整 `Authorization` 头值原样发送，不做 scheme 拼接（等价 `Header("Authorization", value)`） | 支持 |
+| `ApiCredential.Header(name, value)` | 请求头 `{name}: {value}`（覆盖同名头），如 `X-Api-Key`；`name` 是 `Authorization`（忽略大小写）时按完整头值处理 | 支持 |
+| `ApiCredential.Query(name, value)` | 查询参数 `?{name}={value}`（覆盖同名参数），如 `access_token` | 支持 |
+| `ApiCredential.Custom()` | 提供方已自行写配置（正文令牌、一次写多个头、正文签名），库不碰 | 不重放 |
+| `ApiCredential.None`（或 `Token(null)`） | 本次不带凭据 | 不重放 |
 
-- **一个槽位，一个来源**：凭据只有 `Transport.Auth` 一个槽位，形态四选一（静态 Basic / 静态令牌 / 完整头值 / 提供方）。`CredentialProvider` 是提供方形态的适配器，`Transport.BasicAuth` 已并入本槽位。
-- **冲突报错，不静默压制**：显式 `Authorization` 头与凭据槽位同时设置、或 `CredentialProvider` 与已设置的 `Transport.Auth` 同时存在，都在发出前抛 `ERR_BAD_OPTION_VALUE`；只设其一时按该来源落头。「凭据 → 头值」映射只有内核一份实现，WebAPI 只提供值与 401 重放策略。
-- **401 重放只认托管凭据**：只有 `Token` / `Header` 形态（由库写入头）才会在 401 后刷新重放；静态 Basic / 静态令牌 / 完整头值不参与重放，需要刷新请改用 `CredentialProvider`（内核通过 `IsRefreshable` 暴露该来源是否可刷新）。
+- **一个槽位，一个来源**：`Authorization` 头落点只有 `Transport.Auth` 一个槽位，形态四选一（静态 Basic / 静态令牌 / 完整头值 / 提供方）。`CredentialProvider` 是提供方形态的适配器，`Transport.BasicAuth` 已并入本槽位。`Header`（非 `Authorization` 头名）/ `Query` 落点不占该槽位，直接写进本次配置。
+- **冲突报错，不静默压制**：显式 `Authorization` 头与凭据槽位同时设置、或 `CredentialProvider` 与已设置的 `Transport.Auth` 同时存在，都在发出前抛 `ERR_BAD_OPTION_VALUE`；只设其一时按该来源落头。「凭据 → 头值」映射只有内核一份实现，WebAPI 只提供值与 401 重放策略。`Header`（非 `Authorization` 头名）/ `Query` 落点按覆盖语义写同名键，不与显式头做冲突判定。
+- **401 重放认托管落点**：`Token` / `Header` / `Query` 三种由库写入的形态都会在 401 后作废旧值、重取一次、重放一次；`Custom` / `None` 不重放。静态 Basic / 静态令牌 / 完整头值不参与重放，需要刷新请改用 `CredentialProvider`（内核通过 `IsRefreshable` 暴露该来源是否可刷新）。
 - **声明里的 scheme 与静态槽位必须一致**：`[Authorize("Token")]` 这类带 scheme 的声明，与已设置的 `Transport.Auth` 静态凭据 scheme 不一致时，发出前抛 `ERR_BAD_OPTION_VALUE`，不静默以槽位为准。比如静态配了 Basic，声明就要写 `[Authorize("Basic")]`；令牌配成 `AxiosCredential.Bearer(token, "Token")` 才能匹配 `[Authorize("Token")]`。
 - **不白取令牌**：显式头与提供方并存时先报冲突，提供方一次都不会被调用。
-- **`Token` 永远拼 scheme**：令牌形态只负责「令牌本体」，要发 `Basic xxx` / `Signature xxx` 这类完整头值请用 `ApiCredential.Header`。库靠「scheme + 空格 + 令牌」的确定性反解出旧令牌值传给 `Invalidate`，混用会让按值作废失效。
-- **自定义凭据**：`CredentialProviders.Create((ctx, ct) => ...)` 里可直接写 `ctx.Config.Headers`（此时配置已合并模型绑定结果），返回 `ApiCredential.Custom()`；按请求分支用 `ctx.Request`（接口式调用是 `ApiInterfaceInvocation`）。需要 401 后强制刷新，给 `Create` 传 `invalidate:` 委托。
-- **`Fixed` 不信空白**：`CredentialProviders.Fixed(" ")` 抛 `ArgumentException`（要表达「本次不带」用 `Fixed(ApiCredential.None)`），避免配置错误静默退化成匿名请求。
-- **401 作废**：`IApiCredentialProvider.Invalidate(staleToken)` 由库在 401 后调用，默认空实现；带旧令牌值可避免并发下把别人刚刷新的新令牌也作废。
+- **`Token` 永远拼 scheme**：令牌形态只负责「令牌本体」，要发 `Basic xxx` / `Signature xxx` 这类完整头值请用 `ApiCredential.Header(value)`。
+- **`Header` / `Query` 是可托管落点**：API Key 类接口用 `ApiCredential.Header("X-Api-Key", key)`，查询参数类（企业微信的 `access_token`）用 `ApiCredential.Query("access_token", token)`。两者都支持按请求切换落点名（`ctx.Request` 分支），也都进缓存身份键——不同 key 不会共用同一条响应缓存。落点名不能是空白（`ArgumentException`），值空白等同 `None`。
+- **`Header` 一个名字一条规则**：省略头名时写 `Authorization` 完整值（不拼 scheme），给了头名就写那个头；头名是 `Authorization`（忽略大小写）时两者行为一致——都走内核凭据槽位，与显式 `Authorization` 头并存时报冲突。
+- **自定义凭据**：值依赖请求本身时（令牌放正文、一次写多个头、签业务对象而非原始字节）返回 `ApiCredential.Custom()`，自己写 `ctx.Config.Headers` / `ctx.Config.Params`（此时配置已合并模型绑定结果）；按请求分支用 `ctx.Request`（接口式调用是 `ApiInterfaceInvocation`）。`Custom` 不由库托管，因此不重放——需要 401 后强制刷新，给 `Create` 传 `invalidate:` 委托自行处理。签**最终正文 / 最终 URL** 也可以走这里，注意 `transformRequest` 与 401 重放的取舍，见 [托管令牌 + 正文签名](#托管令牌--正文签名)。
+- **手写查询参数用 `SetQuery`**：`ctx.Config.SetQuery(name, value)` 在 `Params` 为空时新建字典、已是键 `string` / 值 `object` 的可变字典时原地写入；其它形态（对象 / 查询串 / 只读字典）抛 `ERR_BAD_OPTION_VALUE`，不静默替换掉原有参数。托管落点请直接用 `ApiCredential.Query`，不必自己写。
+- **`Fixed` 有两个入口**：`Fixed(ApiCredential)` 接受任意落点；`Fixed(string)` 是 `Fixed(ApiCredential.Token(...))` 的短名，额外把空白令牌判为配置错误（`Fixed(" ")` 抛 `ArgumentException`，要表达「本次不带」用 `Fixed(ApiCredential.None)`）。
+- **401 作废**：`IApiCredentialProvider.Invalidate(staleToken)` 由库在 401 后调用，默认空实现；入参是上次落点值（`Header` 形态拿不到令牌本体，传 `null` 无条件作废），带值可避免并发下把别人刚刷新的新令牌也作废。
 - 容器里注册 `IApiCredentialProvider` 即可自动挂到每个 `ApiClient`（见[依赖注入](#依赖注入)）。
 
 #### 内置令牌管理器
@@ -1855,6 +1862,7 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 - **刷新不跟随调用方取消**：一个请求断开不会让同批等待者一起失败，也不会白刷一次（刷新自身受 `RefreshTimeout` 约束，超时抛 `TimeoutException`）。
 - **提前量自动收敛**：实际提前量 = min(`RefreshAhead`, 令牌寿命的一半)，短寿命令牌不会「刚拿到就该刷」。
 - **401 后强制刷新**：`tokens.Invalidate(staleToken)` 作废当前令牌（带旧令牌值可避免并发下把别人刚刷新的新令牌也作废），下一次取令牌必然刷新。
+- **取令牌不需要请求上下文**：`tokens.GetTokenAsync(ct)` 直接返回令牌文本，用于自己决定落点的提供方（查询参数 / 自定义头）；`GetTokenAsync(context, ct)` 等价，`context` 不参与取令牌。
 - **401 自动重放**：收到 401 且本次 `Authorization` 头由库托管写入时，作废凭据、重新取一次并重放**一次**（第二次仍 401 就按错误模型抛出；新凭据与旧值相同则不重放）。重放沿用同一个幂等键，非幂等方法需显式打开 `Resilience.AllowUnsafeRetry`（与内核重试同一开关）。用 `ApiClient.RetryOnUnauthorized = false` 关掉。
 - **401 只归一层**：凭据槽位是提供方形态时，内核不再重试 401（即使把 401 写进 `RetryStatusCodes`），401 的刷新与重放只由声明式层负责，避免两层循环。
 - **重放时的正文**：数据型正文（`null` / `byte[]` / `string` / 业务对象 / 无流部件的 `FormData`）由请求模型重新装配；白名单内存内容（`ByteArrayContent` / `StringContent` / `FormUrlEncodedContent` / `ReadOnlyMemoryContent` / `JsonContent` / 全部部件可重放的 `MultipartContent`）在首次发送前做正文快照，受 `Limits.MaxRequestBytes` 约束——超限则不建快照、本次不重放（不会静默发第二次空正文）。`Stream`、含流部件的 multipart、`StreamContent` 与自定义内容一律不重放；声明里显式写了 `Authorization`、`[AllowAnonymous]` 也不重放。
@@ -1886,6 +1894,110 @@ using var client = api;
 ```
 
 `/login` 请求不带 `Authorization` 头；401 刷新重放同样走这个匿名接口。回归测试见 `test/AxiosNet.Tests/WebAPI/SelfHostedTokenEndpointTests.cs`。
+
+#### 凭据落点：任意请求头 / 查询参数
+
+不是所有服务都把令牌放在 `Authorization` 头：API Key 类接口用自定义头（`X-Api-Key`），企业微信这类用查询参数（`access_token`）。这两种落点同样是托管凭据——库写值、401 后刷新重放，`AccessTokenManager` 的缓存与提前刷新照常生效：
+
+```csharp
+// 任意请求头
+client.CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("X-Api-Key", apiKey));
+
+// 查询参数（配令牌管理器，401 后自动换新值重放）
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync));
+client.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
+    ApiCredential.Query("access_token", await tokens.GetTokenAsync(ct)));
+```
+
+落点名可以按请求切换（`ctx.Request` 分支）；同一落点重复写是覆盖语义。值依赖请求本身的场景（令牌放正文、一次写多个头、正文签名）都可以用 `ApiCredential.Custom()`，取舍见 [托管令牌 + 正文签名](#托管令牌--正文签名)。
+
+`Header` / `Query` 落点的服务常用 200 + 业务错误码表达令牌失效（不走 401），这类情况在错误处理里调 `tokens.Invalidate()`，下一次请求就会重新取令牌。
+
+#### 托管令牌 + 正文签名
+
+既要托管令牌（401 自动换新重放），又要对最终正文签名，有两种写法：
+
+| 写法 | 401 自动重放 | 适用 |
+| --- | --- | --- |
+| 令牌走托管落点 + 签名走 `OnSendingRequest` | 有 | 通用；钩子看到的是最终字节与最终 URL |
+| `ApiCredential.Custom()` 里一次做完 | 无 | 没有 `transformRequest`，且不需要 401 自动重放 |
+
+前者把凭据与签名各归各的层：令牌照常刷新重放，钩子跑在正文序列化、凭据头写入之后，拿到的就是最终字节。
+
+```csharp
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync));
+
+using var api = new ApiClient("https://api.example.com/", defaults =>
+{
+    defaults.Observability.OnSendingRequest = async (request, config, ct) =>
+    {
+        // 此刻正文已序列化、URL 已拼好、X-Api-Token 头已写入
+        var body = request.Content is null
+            ? Array.Empty<byte>()
+            : await request.Content.ReadAsByteArrayAsync(ct);
+
+        var token = request.Headers.TryGetValues("X-Api-Token", out var values) ? values.First() : string.Empty;
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+        var nonce = Guid.NewGuid().ToString("N");
+
+        request.Headers.TryAddWithoutValidation("X-Timestamp", timestamp);
+        request.Headers.TryAddWithoutValidation("X-Nonce", nonce);
+        request.Headers.TryAddWithoutValidation(
+            "X-Signature",
+            Sign(request.Method.Method, request.RequestUri!.PathAndQuery, timestamp, nonce, token, body)); // Sign 为你的签名函数
+    };
+});
+
+api.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
+    ApiCredential.Header("X-Api-Token", await tokens.GetTokenAsync(ct)));
+```
+
+- **钩子能看到什么**：最终绝对 URI（路径参数已替换、query 已合并转义）、已序列化的正文字节、**已写入的凭据头**；每次尝试拿到的是独占副本，改头不会污染重试 / 对冲的其它分支。
+- **401 重放按新令牌重签**：重放重新走「解析凭据 → 拼 URL → 触发钩子」，签名里的令牌与头里的令牌天然一致。
+- **签名头进不了缓存键**（建键早于钩子）。开缓存时令牌仍会进键，但缓存命中不发请求、也就不会签名——签名接口建议关缓存，或只对 `Cache-Control: no-store` 的响应落库。
+- **每次尝试都触发**：重试 / 换端点 / 对冲各签一次，时间戳与 nonce 都是新的，这正是签名要的；幂等键不要写在这里（每次换值等于两次写操作），用 [`Resilience.Idempotency`](#幂等键)。
+- **读正文有代价**：已缓冲正文（JSON / 表单 / `byte[]` / `string`）直接取字节；流式正文会被读走。只签已缓冲正文，或只签头。
+- **异常归类**：钩子抛异常 → `ERR_BAD_REQUEST`，请求不发出、不占连接；钩子里的取消 / 超时按本次尝试归属（`ERR_CANCELED` / `ECONNABORTED`）。
+
+**`Custom()` 也能一次做完**：`ctx.Config.Url` 里的路径参数已经替换，`ctx.Config.Body` 是业务对象，把序列化结果写回 `Body` 库就会原样发送，于是「签的」与「发的」是同一份。序列化选项要与库内一致（`Serialization.JsonOptions` 优先，其次 `AxiosJson.Options`），否则线上格式会和平时不同。
+
+```csharp
+api.CredentialProvider = CredentialProviders.Create(async (ctx, ct) =>
+{
+    var token = await tokens.GetTokenAsync(ct);
+
+    // 正文定成最终字节并写回 Body：库原样发送，不再二次序列化
+    var body = ctx.Config.Body switch
+    {
+        null => Array.Empty<byte>(),
+        byte[] raw => raw,
+        string text => Encoding.UTF8.GetBytes(text),
+        var value => JsonSerializer.SerializeToUtf8Bytes(value, ctx.Config.Serialization.JsonOptions ?? AxiosJson.Options),
+    };
+    if (ctx.Config.Body is not (null or byte[] or string))
+    {
+        ctx.Config.Body = body;
+    }
+
+    // 路径参数已替换；这里补齐 BaseAddress 与 params，不发请求
+    var uri = api.Axios.GetUri(ctx.Config);
+
+    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+    ctx.Config.Headers.Set("X-Api-Token", token);
+    ctx.Config.Headers.Set("X-Timestamp", timestamp);
+    ctx.Config.Headers.Set("X-Signature", Sign(ctx.Config.Method.Method, uri, timestamp, token, body)); // Sign 为你的签名函数
+
+    return ApiCredential.Custom();
+});
+```
+
+代价是这三件事要自己兜：
+
+- **`transformRequest` 会在你之后改正文**：transform 链作用于 `config.Body`，签的是加工前、发出去的是加工后。项目里注册过 transformRequest（统一拆包 / 加壳）时不要走这条路，用上面的钩子写法。
+- **401 不重放**：`Custom` 由库判为不可刷新，`invalidate:` 只影响下一次取令牌，这一次 401 照样抛；要重放请在调用方 catch 后重发。
+- **身份不进缓存键**：`Custom` 不写落点身份，换令牌仍会命中同一条缓存，需要自己配 `Caching.KeySelector`。
+
+签名对象是业务对象而非原始字节、或要一次写多个互相派生的头时，`Custom` 反而是最直接的写法。
 
 ## 缓存
 
@@ -2128,7 +2240,7 @@ AOT 下不可用的能力：
 | [响应类型](#响应类型与下载) | JSON / 文本 / 字节 / 流 / dynamic 五种 | `c.ResponseType = ResponseType.Stream` |
 | [流式响应](#流式响应) | NDJSON / SSE / JSON 数组 → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
 | [超时与取消](#超时与取消) | 单次尝试预算 + 整条请求总预算 + `CancellationToken` | `c.Timeout = ...` / `c.Resilience.TotalTimeout = ...` / `cancellationToken:` |
-| [凭据与令牌管理](#凭据与令牌管理) | 统一凭据扩展点、令牌缓存、提前刷新、并发刷新单飞、401 重放 | `ApiClient.CredentialProvider` / `AccessTokenManager` |
+| [凭据与令牌管理](#凭据与令牌管理) | 统一凭据扩展点与落点（`Authorization` 头 / 任意头 / 查询参数）、令牌缓存、提前刷新、并发刷新单飞、401 重放 | `ApiClient.CredentialProvider` / `AccessTokenManager` |
 
 **流量治理**
 

@@ -66,6 +66,39 @@ public sealed class AuthorizationTests
     }
 
     [Fact]
+    public async Task KeyCredential_OnAuthorizationHeader_IsSentAsIs()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+
+        using var client = new ApiClient(server.Url)
+        {
+            // Key 落点名是 Authorization 时与 Header 形态等价：原样发送，不拼 scheme（头名大小写不敏感）
+            CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("authorization", "Basic dXNlcjpwYXNz"))
+        };
+
+        await client.RequestAsync(new GetUserRequest { Id = 1 });
+
+        Assert.Equal("Basic dXNlcjpwYXNz", Assert.Single(server.Received).Headers["Authorization"]);
+    }
+
+    [Fact]
+    public async Task KeyCredential_OnAuthorizationHeader_ConflictsWithExplicitHeader()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("Authorization", "Basic v1"))
+        };
+
+        // 归一化后走内核槽位：与显式头并存的判定和 Header 形态一致
+        var error = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new ExplicitAuthorizationRequest { Authorization = "Signature abc" }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
     public async Task TokenWithSpace_StillGetsSchemePrefix()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
@@ -171,6 +204,52 @@ public sealed class AuthorizationTests
         await client.RequestAsync(new GetUserRequest { Id = 1, Trace = "trace-final" });
 
         Assert.Equal("trace-final", seenTrace);
+    }
+
+    [Fact]
+    public async Task CustomCredential_SetQuery_AppendsToBoundQuery()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+
+        using var client = new ApiClient(server.Url)
+        {
+            // 令牌走 query string（企业微信等）：提供方自己落参数，返回 Custom() 让库不碰头
+            CredentialProvider = CredentialProviders.Create((ctx, _) =>
+            {
+                ctx.Config.SetQuery("access_token", "tok-query");
+                return ValueTask.FromResult(ApiCredential.Custom());
+            })
+        };
+
+        await client.RequestAsync(new GetUserRequest { Id = 1, Verbose = "1" });
+
+        var received = Assert.Single(server.Received);
+        Assert.False(received.Headers.ContainsKey("Authorization"));
+        Assert.Contains("access_token=tok-query", received.Query);
+        Assert.Contains("verbose=1", received.Query);
+    }
+
+    [Fact]
+    public void SetQuery_OnEmptyParams_CreatesDictionary()
+    {
+        var config = new AxiosConfig();
+
+        config.SetQuery("access_token", "tok");
+
+        var query = Assert.IsType<Dictionary<string, object?>>(config.Params);
+        Assert.Equal("tok", query["access_token"]);
+    }
+
+    [Fact]
+    public void SetQuery_OnNonDictionaryParams_Throws()
+    {
+        // 对象 / 查询串形态无法原地追加：覆盖会静默丢掉原有参数，所以直接报错
+        var config = new AxiosConfig { Params = new { page = 1 } };
+
+        var ex = Assert.Throws<AxiosException>(() => config.SetQuery("access_token", "tok"));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.Contains("SetQuery", ex.Message);
     }
 
     [Fact]

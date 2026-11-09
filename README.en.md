@@ -718,6 +718,8 @@ var id = client.Interceptors.Request.Use(cfg => cfg);
 client.Interceptors.Request.Eject(id);
 ```
 
+> **Writing the `Authorization` header from an interceptor only fits clients where the interceptor owns authorization end to end.** When `CredentialProvider` or `Transport.Auth` is also configured, an explicit `Authorization` header plus a credential source counts as a configuration conflict and throws `ERR_BAD_OPTION_VALUE` before sending. To switch identity per request, swap the credential slot instead (`config.Transport.Auth = AxiosCredential.Bearer(token)`); the library re-resolves the credential against the new slot. A 401 replay also re-runs request interceptors, so timestamps and trace ids change on replay — use [`Resilience.Idempotency`](#idempotency-keys) for keys that must stay stable across attempts.
+
 **Merge rule for a brand-new config**: a request interceptor may return its own `new AxiosConfig` (or the caller's raw config). The pipeline then merges it once against the instance defaults, so `BaseAddress`, timeouts and connection-level options still apply. The merge only takes explicitly set values, so anything the interceptor just wrote wins over the instance defaults. Returning an already-merged config (`response.Config`) or its `Clone()` skips the second merge, and mutating the passed `config` then returning it does too.
 
 ### Data transforms and serialization
@@ -1811,22 +1813,27 @@ var client = new ApiClient("https://api.example.com/")
 };
 ```
 
-| Return value | How the header is written | 401 replay |
+| Return value | Placement | 401 replay |
 | --- | --- | --- |
 | `ApiCredential.Token(token)` | Writes `Authorization: {scheme} {token}` using the `[Authorize]` scheme (`Bearer` by default) | Yes |
-| `ApiCredential.Header(value)` | Sends `value` verbatim as the full `Authorization` header value | Yes |
-| `ApiCredential.Custom()` | The provider already wrote any headers it needs (signature, cookie, ...); the library touches no header | No |
+| `ApiCredential.Header(value)` | Sends `value` verbatim as the full `Authorization` header value, without a scheme prefix (equivalent to `Header("Authorization", value)`) | Yes |
+| `ApiCredential.Header(name, value)` | Request header `{name}: {value}` (overwrites a same-named header), e.g. `X-Api-Key`; a `name` of `Authorization` (case-insensitive) is treated as a complete header value | Yes |
+| `ApiCredential.Query(name, value)` | Query parameter `?{name}={value}` (overwrites a same-named parameter), e.g. `access_token` | Yes |
+| `ApiCredential.Custom()` | The provider already wrote its own config (token in body, several headers at once, body signature); the library touches nothing | No |
 | `ApiCredential.None` (or `Token(null)`) | Sends no credential | No |
 
-- **One slot, one source**: credentials live in the single `Transport.Auth` slot, taking exactly one of four forms (static Basic / static token / complete header value / provider). `CredentialProvider` is an adapter for the provider form; `Transport.BasicAuth` has been folded into this slot.
-- **Conflicts error, never silently suppressed**: an explicit `Authorization` header together with the credential slot, or `CredentialProvider` together with an already-set `Transport.Auth`, throws `ERR_BAD_OPTION_VALUE` before sending. With only one of them set, that source applies. The credential → header mapping exists once in the kernel; WebAPI only supplies values and the 401 replay policy.
-- **401 replay only covers managed credentials**: only `Token` / `Header` shapes (written by the library) are refreshed and replayed after a 401; static Basic / static token / complete header value never participate — use `CredentialProvider` when you need refresh (the kernel exposes `IsRefreshable` for the source).
+- **One slot, one source**: the `Authorization`-header placement still lives in the single `Transport.Auth` slot, taking exactly one of four forms (static Basic / static token / complete header value / provider). `CredentialProvider` is an adapter for the provider form; `Transport.BasicAuth` has been folded into this slot. `Header` (non-`Authorization` name) / `Query` placements do not occupy that slot and are written straight into this request's config.
+- **Conflicts error, never silently suppressed**: an explicit `Authorization` header together with the credential slot, or `CredentialProvider` together with an already-set `Transport.Auth`, throws `ERR_BAD_OPTION_VALUE` before sending. With only one of them set, that source applies. The credential → header mapping exists once in the kernel; WebAPI only supplies values and the 401 replay policy. `Header` (non-`Authorization` name) / `Query` overwrite same-named keys and take no part in that conflict check.
+- **401 replay covers managed placements**: all three library-written shapes (`Token` / `Header` / `Query`) invalidate the stale value, fetch once more and replay once after a 401; `Custom` / `None` never replay. Static Basic / static token / complete header value never participate — use `CredentialProvider` when you need refresh (the kernel exposes `IsRefreshable` for the source).
 - **Declared scheme must match the static slot**: when a declaration such as `[Authorize("Token")]` carries a scheme, a static `Transport.Auth` credential with a different scheme throws `ERR_BAD_OPTION_VALUE` before sending instead of silently deferring to the slot. With a static Basic credential the declaration must say `[Authorize("Basic")]`; a token configured as `AxiosCredential.Bearer(token, "Token")` matches `[Authorize("Token")]`.
 - **No wasted token fetch**: an explicit header with a provider is rejected first, so the provider is never called.
-- **`Token` always prefixes the scheme**: the token form carries the token only; use `ApiCredential.Header` for complete values such as `Basic xxx` / `Signature xxx`. The library recovers the stale token back by the deterministic `scheme + space + token` shape before calling `Invalidate`, so mixing the two breaks value-based invalidation.
-- **Custom credentials**: inside `CredentialProviders.Create((ctx, ct) => ...)` you can write `ctx.Config.Headers` directly (model bindings have already been merged) and return `ApiCredential.Custom()`; branch per request with `ctx.Request` (an `ApiInterfaceInvocation` for interface-based calls). Pass `invalidate:` to `Create` when you want a forced refresh after 401.
-- **`Fixed` rejects blanks**: `CredentialProviders.Fixed(" ")` throws `ArgumentException` (use `Fixed(ApiCredential.None)` to mean "this request carries no credential"), so a misconfiguration never degrades silently into an anonymous request.
-- **Invalidation on 401**: the library calls `IApiCredentialProvider.Invalidate(staleToken)` after a 401; the default implementation does nothing, and passing the stale value avoids discarding a token another request just refreshed.
+- **`Token` always prefixes the scheme**: the token form carries the token only; use `ApiCredential.Header(value)` for complete values such as `Basic xxx` / `Signature xxx`.
+- **`Header` / `Query` are managed placements**: API-key services use `ApiCredential.Header("X-Api-Key", key)`; query-parameter services (WeCom's `access_token` and friends) use `ApiCredential.Query("access_token", token)`. Both can switch the placement name per request (`ctx.Request` branching), and both feed the cache identity key — different keys never share a cached response. A blank placement name throws `ArgumentException`; a blank value means `None`.
+- **`Header` has one rule**: omit the name and it writes the complete `Authorization` value (no scheme prefix); give a name and it writes that header. A name of `Authorization` (case-insensitive) behaves exactly like the omitted form — both go through the kernel credential slot and both conflict with an explicit `Authorization` header.
+- **Custom credentials**: when the value depends on the request itself (token in the body, several headers at once, signing a business object rather than raw bytes) return `ApiCredential.Custom()` and write `ctx.Config.Headers` / `ctx.Config.Params` yourself (model bindings have already been merged); branch per request with `ctx.Request` (an `ApiInterfaceInvocation` for interface-based calls). `Custom` is not managed by the library, so it never replays — pass `invalidate:` to `Create` when you want a forced refresh after 401. Signing the **final body / final URL** can also go here — mind the `transformRequest` and 401-replay trade-offs, see [managed token plus body signature](#managed-token-plus-body-signature).
+- **Hand-written query parameters use `SetQuery`**: `ctx.Config.SetQuery(name, value)` creates a dictionary when `Params` is empty and writes in place when `Params` is already a mutable `string`-keyed / `object`-valued dictionary; any other shape (object / raw query string / read-only dictionary) throws `ERR_BAD_OPTION_VALUE` instead of silently replacing the existing parameters. For a managed credential use `ApiCredential.Query` instead of writing it yourself.
+- **`Fixed` has two entry points**: `Fixed(ApiCredential)` accepts any placement; `Fixed(string)` is the short name for `Fixed(ApiCredential.Token(...))` and additionally rejects a blank token (`Fixed(" ")` throws `ArgumentException`; use `Fixed(ApiCredential.None)` to mean "this request carries no credential").
+- **Invalidation on 401**: the library calls `IApiCredentialProvider.Invalidate(staleToken)` after a 401; the default implementation does nothing. The argument is the last placement value (`Header` cannot expose the token itself, so it passes `null` for unconditional invalidation), and passing the value avoids discarding a token another request just refreshed.
 - Register `IApiCredentialProvider` in the container and every `ApiClient` picks it up (see [dependency injection](#dependency-injection)).
 
 #### Built-in token manager
@@ -1853,6 +1860,7 @@ static ValueTask<AccessToken> RefreshAsync(CancellationToken ct) { ... }
 - **Refreshes ignore caller cancellation**: one client disconnecting neither fails the other waiters nor wastes a refresh (the refresh itself is bounded by `RefreshTimeout`, which throws `TimeoutException`).
 - **Refresh-ahead is clamped**: the effective lead is min(`RefreshAhead`, half the token lifetime), so short-lived tokens are not refreshed the moment they arrive.
 - **Forced refresh after 401**: `tokens.Invalidate(staleToken)` drops the current token (passing the stale value avoids discarding a token another request just refreshed); the next call must refresh.
+- **Fetching a token needs no request context**: `tokens.GetTokenAsync(ct)` returns the token text directly, for providers that decide the placement themselves (query parameter / custom header); `GetTokenAsync(context, ct)` is equivalent and ignores `context`.
 - **Automatic replay on 401**: when the response is 401 and the library wrote this request's `Authorization` header, the credential is invalidated, fetched again, and the request is replayed **once** (a second 401 goes through the normal error path; an unchanged credential means no replay). The replay keeps the same idempotency key; non-idempotent methods require `Resilience.AllowUnsafeRetry` (the same switch as kernel retries). Turn it off with `ApiClient.RetryOnUnauthorized = false`.
 - **401 is owned by one layer only**: when the credential slot is in provider form, the kernel stops retrying 401 (even if 401 is listed in `RetryStatusCodes`); refresh and replay belong to the declarative layer alone, so there is no double loop.
 - **Bodies during replay**: data bodies (`null` / `byte[]` / `string` / business objects / stream-free `FormData`) are rebuilt by the request model; whitelisted in-memory content (`ByteArrayContent` / `StringContent` / `FormUrlEncodedContent` / `ReadOnlyMemoryContent` / `JsonContent` / fully replayable `MultipartContent`) is snapshotted before the first send, bounded by `Limits.MaxRequestBytes` — over the limit no snapshot is taken and this request is not replayed (never a silent second send with an empty body). `Stream`, multipart with stream parts, `StreamContent` and custom content are never replayed; declarations with an explicit `Authorization` header or `[AllowAnonymous]` are never replayed either.
@@ -1884,6 +1892,108 @@ using var client = api;
 ```
 
 The `/login` request carries no `Authorization` header, and 401 refresh replays go through the same anonymous endpoint. Regression test: `test/AxiosNet.Tests/WebAPI/SelfHostedTokenEndpointTests.cs`.
+
+#### Placement: any request header or query parameter
+
+Not every service puts its token in the `Authorization` header: API-key services use a custom header (`X-Api-Key`), WeCom-style services use a query parameter (`access_token`). Both are managed placements — the library writes the value and replays it after a 401, while `AccessTokenManager` caching and refresh-ahead keep working:
+
+```csharp
+// any request header
+client.CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("X-Api-Key", apiKey));
+
+// query parameter (with a token manager, so a 401 gets a fresh value and a replay)
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync));
+client.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
+    ApiCredential.Query("access_token", await tokens.GetTokenAsync(ct)));
+```
+
+The placement name can switch per request (`ctx.Request` branching); writing the same placement twice overwrites. Values that depend on the request itself (token in the body, several headers at once, body signature) can all use `ApiCredential.Custom()`; see [managed token plus body signature](#managed-token-plus-body-signature) for the trade-offs.
+
+Services using `Header` / `Query` placements often report an expired token as HTTP 200 plus a business error code (no 401); in that case call `tokens.Invalidate()` from your error handling and the next request fetches a fresh token.
+
+#### Managed token plus body signature
+
+When you need both a managed token (automatic refresh-and-replay on 401) and a signature over the final body, there are two ways to write it:
+
+| Approach | Automatic replay on 401 | Fits when |
+| --- | --- | --- |
+| Managed placement for the token + `OnSendingRequest` for the signature | Yes | The general case; the hook sees the final bytes and the final URL |
+| Do everything inside `ApiCredential.Custom()` | No | There is no `transformRequest`, and you do not need automatic replay on 401 |
+
+The first keeps credentials and signing on their own layers: the token still refreshes and replays as usual, and the hook runs after the body is serialized and the credential header is written, so what it reads is the final bytes.
+
+```csharp
+using var tokens = new AccessTokenManager(new AccessTokenOptions(AcquireAsync));
+
+using var api = new ApiClient("https://api.example.com/", defaults =>
+{
+    defaults.Observability.OnSendingRequest = async (request, config, ct) =>
+    {
+        // The body is serialized, the URL is built and X-Api-Token is already written
+        var body = request.Content is null
+            ? Array.Empty<byte>()
+            : await request.Content.ReadAsByteArrayAsync(ct);
+
+        var token = request.Headers.TryGetValues("X-Api-Token", out var values) ? values.First() : string.Empty;
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+        var nonce = Guid.NewGuid().ToString("N");
+
+        request.Headers.TryAddWithoutValidation("X-Timestamp", timestamp);
+        request.Headers.TryAddWithoutValidation("X-Nonce", nonce);
+        request.Headers.TryAddWithoutValidation(
+            "X-Signature",
+            Sign(request.Method.Method, request.RequestUri!.PathAndQuery, timestamp, nonce, token, body)); // your signing function
+    };
+});
+
+api.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
+    ApiCredential.Header("X-Api-Token", await tokens.GetTokenAsync(ct)));
+```
+
+- **What the hook sees**: the final absolute URI (path parameters substituted, query merged and escaped), the serialized body bytes, and the **already written credential header**. Each attempt gets its own copy, so header edits never leak into retries or other hedging branches.
+- **A 401 replay re-signs with the new token**: the replay runs "resolve credential → build URL → fire hook" again, so the token inside the signature and the token in the header always match.
+- **Signature headers never reach the cache key** (the key is built before the hook). With caching on, the token still contributes to the key, but a cache hit sends nothing and therefore signs nothing — disable caching for signed endpoints, or only store responses carrying `Cache-Control: no-store`.
+- **The hook fires on every attempt**: retries, backup endpoints and hedges each sign once with a fresh timestamp and nonce, which is exactly what a signature wants. Never write the idempotency key here (a new value per attempt looks like two writes); use [`Resilience.Idempotency`](#idempotency-keys).
+- **Reading the body costs**: buffered bodies (JSON / form / `byte[]` / `string`) hand over bytes directly; streaming bodies get consumed. Sign buffered bodies only, or sign headers only.
+- **Error mapping**: a throwing hook yields `ERR_BAD_REQUEST` with the request never sent and no connection taken; cancellation or timeout inside the hook is attributed to the current attempt (`ERR_CANCELED` / `ECONNABORTED`).
+
+**`Custom()` can also do it in one pass**: path parameters in `ctx.Config.Url` are already substituted, `ctx.Config.Body` is the business object, and whatever you write back into `Body` is sent as-is — so what you sign and what you send are the same bytes. Resolve options the way the library does (`Serialization.JsonOptions` first, then `AxiosJson.Options`) or the wire format will differ from your normal requests.
+
+```csharp
+api.CredentialProvider = CredentialProviders.Create(async (ctx, ct) =>
+{
+    var token = await tokens.GetTokenAsync(ct);
+
+    // Pin the body to final bytes and write it back: the library sends it as-is, no second serialization
+    var body = ctx.Config.Body switch
+    {
+        null => Array.Empty<byte>(),
+        byte[] raw => raw,
+        string text => Encoding.UTF8.GetBytes(text),
+        var value => JsonSerializer.SerializeToUtf8Bytes(value, ctx.Config.Serialization.JsonOptions ?? AxiosJson.Options),
+    };
+    if (ctx.Config.Body is not (null or byte[] or string))
+    {
+        ctx.Config.Body = body;
+    }
+
+    // Path parameters are already substituted; this fills in BaseAddress and params without sending
+    var uri = api.Axios.GetUri(ctx.Config);
+
+    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+    ctx.Config.Headers.Set("X-Api-Token", token);
+    ctx.Config.Headers.Set("X-Timestamp", timestamp);
+    ctx.Config.Headers.Set("X-Signature", Sign(ctx.Config.Method.Method, uri, timestamp, token, body)); // your signing function
+
+    return ApiCredential.Custom();
+});
+```
+
+The cost is three things you now own:
+
+- **`transformRequest` runs after you**: the transform chain works on `config.Body`, so you sign the pre-transform body and send the post-transform one. Skip this path when the project registers a `transformRequest` (unwrapping / wrapping envelopes) and use the hook form above.
+- **No replay on 401**: the library treats `Custom` as non-refreshable, so `invalidate:` only affects the next token fetch and this 401 still surfaces; to replay, catch it at the call site and resend.
+- **Identity never reaches the cache key**: `Custom` writes no placement identity, so a new token still hits the same cache entry — configure `Caching.KeySelector` yourself.
 
 ## Caching
 
@@ -2126,7 +2236,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | [Response types](#response-types-and-downloads) | JSON / text / bytes / stream / dynamic | `c.ResponseType = ResponseType.Stream` |
 | [Streaming responses](#streaming-responses) | NDJSON / SSE / JSON array → `IAsyncEnumerable<T>` | `client.RequestStreamAsync<T>(req, AxiosStreamFormat.ServerSentEvents)` |
 | [Timeouts and cancellation](#timeouts-and-cancellation) | Per-attempt budget, whole-request budget, `CancellationToken` | `c.Timeout = ...` / `c.Resilience.TotalTimeout = ...` / `cancellationToken:` |
-| [Credentials and token management](#credentials-and-token-management) | One credential extension point, token cache, refresh-ahead, single-flight refresh, 401 replay | `ApiClient.CredentialProvider` / `AccessTokenManager` |
+| [Credentials and token management](#credentials-and-token-management) | One credential extension point with placements (`Authorization` header / any header / query parameter), token cache, refresh-ahead, single-flight refresh, 401 replay | `ApiClient.CredentialProvider` / `AccessTokenManager` |
 
 **Traffic control**
 

@@ -249,7 +249,7 @@ var response = await http.GetAsync<List<User>>("users", c =>
 }, ct);
 ```
 
-声明式客户端还能把这一步收进实例：设置 `ApiClient.CredentialProvider`（`IApiCredentialProvider`），由库按 `[Authorize]` 的 scheme 写 `Authorization` 头；配 `AccessTokenManager` 时自动刷新，401 后用新凭据重放一次。标了 `[AllowAnonymous]` 的登录接口跳过整条凭据链路，因此取令牌可以直接调同一个 `ApiClient`。
+声明式客户端还能把这一步收进实例：设置 `ApiClient.CredentialProvider`（`IApiCredentialProvider`），由库按 `[Authorize]` 的 scheme 写 `Authorization` 头（或用 `ApiCredential.Header(name, value)` / `ApiCredential.Query(name, value)` 落到任意请求头 / 查询参数）；配 `AccessTokenManager` 时自动刷新，401 后用新凭据重放一次。标了 `[AllowAnonymous]` 的登录接口跳过整条凭据链路，因此取令牌可以直接调同一个 `ApiClient`。
 
 再看上传文件，差距更明显：
 

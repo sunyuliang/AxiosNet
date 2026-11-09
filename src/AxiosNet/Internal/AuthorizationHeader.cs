@@ -29,22 +29,4 @@ internal static class AuthorizationHeader
     /// <summary>Basic 形态：<c>Basic base64(user:pass)</c>，用户名 / 密码按 UTF-8 编码。</summary>
     internal static string FormatBasic(AxiosAuth auth)
         => "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(auth.Username + ":" + auth.Password));
-
-    /// <summary>从已写出的令牌头反解 scheme 与令牌本体；没有分隔空格时 scheme 按 <c>Bearer</c>、令牌为 <c>null</c>。</summary>
-    internal static void SplitToken(string? value, out string scheme, out string? token)
-    {
-        scheme = "Bearer";
-        token = null;
-        if (value is null)
-        {
-            return;
-        }
-
-        var separator = value.IndexOf(' ');
-        if (separator > 0)
-        {
-            scheme = value[..separator];
-            token = value.Length > separator + 1 ? value[(separator + 1)..] : null;
-        }
-    }
 }

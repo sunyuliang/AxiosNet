@@ -667,9 +667,17 @@ public sealed class AxiosCache
         }
     }
 
-    /// <summary>身份来源：显式 <c>Authorization</c> 头优先，其次内核凭据槽位解析出的头值；两者都只以摘要进键（只在建键时读配置，发送钩子里追加的头看不到）。</summary>
+    /// <summary>
+    /// 身份来源：托管落点的身份值优先（自定义头 / 查询参数），其次显式 <c>Authorization</c> 头，最后内核凭据槽位解析出的头值；
+    /// 三者都只以摘要进键（只在建键时读配置，发送钩子里追加的头看不到）。
+    /// </summary>
     private static string? ResolveIdentity(AxiosConfig config)
     {
+        if (config.ResolvedCredentialIdentity is { } identity)
+        {
+            return identity;
+        }
+
         if (config.HasHeaders && config.Headers.Get("Authorization") is { } authorization)
         {
             return authorization;

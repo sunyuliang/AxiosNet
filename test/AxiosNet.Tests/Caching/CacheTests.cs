@@ -1041,6 +1041,32 @@ public sealed class CacheTests
     }
 
     [Fact]
+    public async Task ManagedKeyCredential_IsPartOfTheDefaultKey()
+    {
+        // 与上一条对照：同样的 X-Api-Key 走托管凭据时库知道它是身份，自动进默认键，不需要 KeySelector。
+        await using var server = TestHttpServer.Start(request => TestJson.Response(
+            new Person(request.Headers.TryGetValue("X-Api-Key", out var value) ? value : "none", 1)));
+
+        var current = "alice";
+        using var client = new ApiClient(server.Url, config => config.Caching = NewCache())
+        {
+            CredentialProvider = CredentialProviders.Create((_, _) =>
+                ValueTask.FromResult(ApiCredential.Header("X-Api-Key", current)))
+        };
+
+        var first = await client.RequestAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
+        current = "bob";
+        var second = await client.RequestAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
+        current = "alice";
+        var third = await client.RequestAsync(new AxiosNet.Tests.WebAPI.SecureRequest());
+
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("alice", first.Data!.Name);
+        Assert.Equal("bob", second.Data!.Name);
+        Assert.Equal("alice", third.Data!.Name);
+    }
+
+    [Fact]
     public async Task CustomHeader_WithKeySelector_IsolatesEntries()
     {
         // 契约：把自定义身份头摘要进 KeySelector 后，同 URL 的不同身份不再共用条目。

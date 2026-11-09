@@ -150,6 +150,38 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过（包括赋 <c>null</c>）：合并时区分「没写」与「写了 null」，后者摘掉实例默认值。</summary>
     internal bool ParamsSet { get; private set; }
 
+    /// <summary>
+    /// 追加一个查询参数：<see cref="Params"/> 为空时新建字典，已是键 <see cref="string"/>、值 <see cref="object"/> 的可变字典时原地写入。
+    /// 其它形态（对象 / 查询串 / 只读字典）不静默替换，直接抛错——否则原有查询参数会被悄悄丢掉。
+    /// </summary>
+    /// <param name="name">参数名；序列化时按键转义。</param>
+    /// <param name="value">参数值；<c>null</c> 在序列化时跳过。</param>
+    /// <exception cref="AxiosException"><see cref="Params"/> 已是无法原地写入的形态（<c>ERR_BAD_OPTION_VALUE</c>）。</exception>
+    public void SetQuery(string name, object? value)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        if (_params is null)
+        {
+            var created = new Dictionary<string, object?>();
+            created[name] = value;
+            Params = created;
+            return;
+        }
+
+        if (_params is IDictionary<string, object?> writable)
+        {
+            writable[name] = value;
+            return;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"Params 当前是 '{_params.GetType()}'，无法追加查询参数 '{name}'："
+            + "SetQuery 只接受空值或键为 string、值为 object 的可变字典；"
+            + "对象 / 查询串 / 只读字典请先转成 Dictionary<string, object?>。",
+            this);
+    }
+
     /// <summary>库默认的请求体媒体类型（等价于 <see cref="AxiosContentType.Json"/>）。</summary>
     public const string JsonContentType = AxiosContentType.Json;
 
@@ -376,6 +408,7 @@ public sealed partial class AxiosConfig
         internal bool RetainBodyContent;
         internal HttpContent? RetainedReplayContent;
         internal string? ResolvedAuthorization;
+        internal string? ResolvedCredentialIdentity;
         internal IAxiosCredentialProvider? InternalCredentialProvider;
 
         internal AuthReplayState Clone() => (AuthReplayState)MemberwiseClone();
@@ -454,6 +487,29 @@ public sealed partial class AxiosConfig
             }
 
             (_authReplay ??= new AuthReplayState()).ResolvedAuthorization = value;
+        }
+    }
+
+    /// <summary>
+    /// 本次请求由托管凭据产生的身份值：落点不是 <c>Authorization</c> 头（自定义头 / 查询参数）时用它进缓存身份键，
+    /// 避免不同身份共用同一条缓存。只参与建键，不写请求。
+    /// </summary>
+    internal string? ResolvedCredentialIdentity
+    {
+        get => _authReplay?.ResolvedCredentialIdentity;
+        set
+        {
+            if (value is null)
+            {
+                if (_authReplay is not null)
+                {
+                    _authReplay.ResolvedCredentialIdentity = null;
+                }
+
+                return;
+            }
+
+            (_authReplay ??= new AuthReplayState()).ResolvedCredentialIdentity = value;
         }
     }
 

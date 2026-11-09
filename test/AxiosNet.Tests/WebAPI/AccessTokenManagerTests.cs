@@ -26,6 +26,24 @@ public sealed class AccessTokenManagerTests
     }
 
     [Fact]
+    public async Task GetTokenAsync_WithoutContext_UsesSameCache()
+    {
+        var clock = new FakeClock();
+        var calls = 0;
+
+        using var tokens = new AccessTokenManager(Options(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            return new AccessToken("tok-1", clock.Now.AddHours(1));
+        }), clock.Read);
+
+        // 取令牌不依赖请求上下文：不带 ApiAuthContext 的重载走同一份缓存
+        Assert.Equal("tok-1", await tokens.GetTokenAsync(CancellationToken.None));
+        Assert.Equal("tok-1", await tokens.GetTokenAsync(CancellationToken.None));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task NoExpiry_NeverRefreshes()
     {
         var clock = new FakeClock();

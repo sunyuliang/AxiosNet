@@ -4,7 +4,7 @@ namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
 /// 4. 授权：<c>[AllowAnonymous]</c> / <c>[Authorize]</c> 声明 + <see cref="IApiCredentialProvider"/> 的托管凭据与自定义凭据、
-/// <see cref="AccessTokenManager"/> 的缓存与刷新，以及用同一个客户端的匿名登录接口自举取令牌。
+/// <see cref="AccessTokenManager"/> 的缓存与刷新、用同一个客户端的匿名登录接口自举取令牌，以及凭据落在任意请求头 / 查询参数的写法。
 /// </summary>
 public sealed class AuthorizationExample : IExample
 {
@@ -23,9 +23,15 @@ public sealed class AuthorizationExample : IExample
     /// <summary>401 重放客户端：客户端静态复用，轮换管理器按运行重新挂载。</summary>
     private static ApiClient? _rotatingClient;
 
+    /// <summary>query 令牌客户端：客户端静态复用，提供方按运行重新挂载。</summary>
+    private static ApiClient? _queryClient;
+
+    /// <summary>请求头令牌客户端：凭据固定，首次运行创建后跨运行复用。</summary>
+    private static ApiClient? _keyClient;
+
     public int Number => 4;
 
-    public string Title => "授权：[AllowAnonymous] / [Authorize] + 统一凭据提供方 / AccessTokenManager / 本客户端自举取令牌";
+    public string Title => "授权：[AllowAnonymous] / [Authorize] + 统一凭据提供方 / AccessTokenManager / 自举取令牌 / 凭据落点（任意头 / 查询参数）";
 
     /// <summary>示例入口：统一凭据提供方的四种形态、令牌缓存与 401 重放，以及自举取令牌。</summary>
     public async Task RunAsync(ExampleContext context)
@@ -128,6 +134,29 @@ public sealed class AuthorizationExample : IExample
         await selfHostedClient.RequestAsync(new SecureProfileRequest());
         Console.WriteLine($"  自举取令牌 -> {bootstrapped.Status} {bootstrapped.Data!.User}"
             + $"（登录 {logins} 次，第二次请求走缓存）");
+
+        // 9) 落点不止 Authorization 头：托管凭据一样能写查询参数 / 任意请求头，401 后同样刷新重放
+        using var queryTokens = new AccessTokenManager(new AccessTokenOptions(_ =>
+            ValueTask.FromResult(new AccessToken(DemoApiServer.DemoToken, DateTimeOffset.UtcNow.AddMinutes(5)))));
+        var queryClient = _queryClient ??= new ApiClient(context.BaseUrl);
+        queryClient.CredentialProvider = CredentialProviders.Create(async (_, ct) =>
+            ApiCredential.Query("access_token", await queryTokens.GetTokenAsync(ct)));
+
+        var queryProfile = await queryClient.RequestAsync(new QueryTokenProfileRequest());
+        Console.WriteLine($"  query 落点 -> {queryProfile.Status} {queryProfile.Data!.User}，"
+            + $"实际 query = {queryProfile.Request?.RequestUri?.Query}，"
+            + $"实际头 Authorization = {Header(queryProfile.Request, "Authorization")}");
+
+        // 10) 任意请求头落点：API Key 类接口，库写 X-Api-Key，Authorization 头不参与
+        var keyClient = _keyClient ??= new ApiClient(context.BaseUrl)
+        {
+            CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("X-Api-Key", DemoApiServer.DemoToken))
+        };
+
+        var keyProfile = await keyClient.RequestAsync(new KeyTokenProfileRequest());
+        Console.WriteLine($"  请求头落点 -> {keyProfile.Status} {keyProfile.Data!.User}，"
+            + $"实际头 X-Api-Key = {Header(keyProfile.Request, "X-Api-Key")}，"
+            + $"实际头 Authorization = {Header(keyProfile.Request, "Authorization")}");
     }
 
     /// <summary>读请求消息上的某个头；短路响应没有请求消息，返回 <c>none</c>。</summary>

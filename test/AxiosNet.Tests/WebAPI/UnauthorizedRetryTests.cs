@@ -52,6 +52,136 @@ public sealed class UnauthorizedRetryTests
     }
 
     [Fact]
+    public async Task KeyCredential_WritesCustomHeader()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Fixed(ApiCredential.Header("X-Api-Key", "key-1"))
+        };
+
+        await client.RequestAsync(new SecureRequest());
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("key-1", received.Headers["X-Api-Key"]);
+        Assert.False(received.Headers.ContainsKey("Authorization"));
+    }
+
+    [Fact]
+    public async Task KeyCredential_401_RefreshesAndReplays()
+    {
+        await using var server = TestHttpServer.Start(request =>
+            request.Headers.TryGetValue("x-api-key", out var key) && key == "key-2"
+                ? TestJson.Response(new Person("ok", 1))
+                : TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+
+        var calls = 0;
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Create((_, _) =>
+                ValueTask.FromResult(ApiCredential.Header("X-Api-Key", "key-" + Interlocked.Increment(ref calls))))
+        };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal(2, server.Received.Count);
+        Assert.Equal("key-1", server.Received[0].Headers["X-Api-Key"]);
+        Assert.Equal("key-2", server.Received[1].Headers["X-Api-Key"]);
+        // 重取只发生一次：重放那次发送直接用快照，不再调提供方。
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task QueryCredential_WritesQueryParameter()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Fixed(ApiCredential.Query("access_token", "tok-1"))
+        };
+
+        await client.RequestAsync(new SecureRequest());
+
+        var received = Assert.Single(server.Received);
+        Assert.Contains("access_token=tok-1", received.Query);
+        Assert.False(received.Headers.ContainsKey("Authorization"));
+    }
+
+    [Fact]
+    public async Task QueryCredential_401_RefreshesAndReplays()
+    {
+        await using var server = TestHttpServer.Start(request =>
+            request.Query?.Contains("access_token=tok-2", StringComparison.Ordinal) == true
+                ? TestJson.Response(new Person("ok", 1))
+                : TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+
+        var calls = 0;
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Create((_, _) =>
+                ValueTask.FromResult(ApiCredential.Query("access_token", "tok-" + Interlocked.Increment(ref calls))))
+        };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal(2, server.Received.Count);
+        Assert.Contains("access_token=tok-1", server.Received[0].Query);
+        Assert.Contains("access_token=tok-2", server.Received[1].Query);
+    }
+
+    [Fact]
+    public async Task CustomCredential_401_NotReplayed()
+    {
+        await using var server = TestHttpServer.Start(_ =>
+            TestJson.Response(new { error = "unauthorized" }, statusCode: 401));
+
+        using var client = new ApiClient(server.Url)
+        {
+            CredentialProvider = CredentialProviders.Create((ctx, _) =>
+            {
+                ctx.Config.Headers.Set("X-Api-Key", "key-1");
+                return ValueTask.FromResult(ApiCredential.Custom());
+            })
+        };
+
+        await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SecureRequest()));
+
+        // Custom 是「提供方自己写」：库不知道落点，也就无从作废与重放。
+        Assert.Single(server.Received);
+    }
+
+    [Fact]
+    public void KeyAndQueryCredential_BlankName_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => ApiCredential.Header(" ", "v"));
+        Assert.Throws<ArgumentException>(() => ApiCredential.Query("", "v"));
+    }
+
+    [Fact]
+    public async Task KeyCredential_OnAuthorizationHeader_401_InvalidatesUnconditionally()
+    {
+        await using var server = SecureServer("Basic v2");
+
+        string? staleSeen = "not-called";
+        var calls = 0;
+        var provider = CredentialProviders.Create(
+            (_, _) => ValueTask.FromResult(ApiCredential.Header("Authorization", "Basic v" + Interlocked.Increment(ref calls))),
+            invalidate: stale => staleSeen = stale);
+
+        using var client = new ApiClient(server.Url) { CredentialProvider = provider };
+
+        var response = await client.RequestAsync(new SecureRequest());
+
+        Assert.Equal(200, response.Status);
+        // 完整头值拿不到令牌本体：按无条件作废（null），与 Header 形态一致
+        Assert.Null(staleSeen);
+    }
+
+    [Fact]
     public async Task SecondCall401_Throws_NoInfiniteLoop()
     {
         await using var server = TestHttpServer.Start(_ =>

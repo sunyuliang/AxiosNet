@@ -349,7 +349,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
                 config.Resilience.Idempotency.Key = key;
             }
 
-            if (!await ReauthorizeAsync(auth!, config, error.Config?.ResolvedAuthorization, cancellationToken).ConfigureAwait(false))
+            if (!await ReauthorizeAsync(auth!, config, cancellationToken).ConfigureAwait(false))
             {
                 throw;
             }
@@ -451,7 +451,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
             ? limits.MaxRequestBytes
             : Axios.Defaults.LimitsOrNull?.MaxRequestBytes;
 
-    /// <summary>这次 401 值不值得重放：首次发送前的判定说正文可重放，且确实是本次托管提供方的 401。</summary>
+    /// <summary>这次 401 值不值得重放：首次发送前的判定说正文可重放，且本次凭据由库托管（落点与值都由库掌握）。</summary>
     /// <remarks>
     /// 幂等 / 放行开关 / 正文分类已在 <see cref="CanPrepareReplay"/> 里与内核同一口径算好；
     /// 内核在凭据槽位是提供方形态时不再重试 401（见 <see cref="RetryPolicy.ShouldRetry"/>），刷新与重放只在这里发生一次。
@@ -462,43 +462,27 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     private static bool CanReplayForAuth(AxiosException error, ApiCredentialProviderAdapter? auth, bool bodyReplayable)
         => bodyReplayable
             && auth is not null
-            && auth.LastKind is ApiCredentialKind.Token or ApiCredentialKind.Header
+            && auth.IsManaged
             && error.Status == 401;
 
-    /// <summary>401 后重新取凭据并把新值放回槽位；返回 <c>false</c> 表示没拿到新值（重放没有意义）。</summary>
+    /// <summary>401 后作废旧凭据并重取一次；返回 <c>false</c> 表示没拿到新值（重放没有意义）。</summary>
     /// <param name="auth">授权链路挂到凭据槽位的适配器。</param>
     /// <param name="config">本次请求的生效配置（按请求原件，合并由下一次发送重新做）。</param>
-    /// <param name="previousValue">上次实际生效的 <c>Authorization</c> 头值（取自失败时的生效配置）。</param>
     /// <param name="cancellationToken">调用方的取消令牌。</param>
     private static async ValueTask<bool> ReauthorizeAsync(
         ApiCredentialProviderAdapter auth,
         AxiosConfig config,
-        string? previousValue,
         CancellationToken cancellationToken)
     {
-        // 令牌形态的头一定按「scheme + 空格 + 令牌」写出，反解才有确定性；
-        // 完整头值形态拿不到令牌本体，按无条件作废（传 null）。
-        string? staleToken = null;
-        if (auth.LastKind == ApiCredentialKind.Token && previousValue is not null)
-        {
-            AuthorizationHeader.SplitToken(previousValue, out _, out staleToken);
-        }
+        // 旧值由适配器记录，与落点无关：查询参数 / 自定义头也能按值作废。
+        // 完整 Authorization 头值拿不到令牌本体，提供方无法拿它比较，按无条件作废。
+        var previousValue = auth.LastValue;
+        auth.Invalidate(auth.LastValueIsCompleteAuthorization ? null : previousValue);
 
-        auth.Invalidate(staleToken);
-
-        // 重新取一次交给内核映射；槽位换成解析后的静态值，重放发送时不再二次调用提供方。
-        var resolved = await auth
-            .GetAsync(new AxiosCredentialContext(config), cancellationToken)
-            .ConfigureAwait(false);
-        if (resolved?.ToHeaderValue() is not { } newValue
-            || string.Equals(newValue, previousValue, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        config.Transport.Auth = resolved;
-        config.ResolvedAuthorization = newValue;
-        return true;
+        // 重取只取值；落点留到重放那次发送时写进合并后的配置（写请求原件会覆盖实例默认查询参数）。
+        var next = await auth.RefreshAsync(config, cancellationToken).ConfigureAwait(false);
+        return next is { Value: { } value }
+            && !string.Equals(value, previousValue, StringComparison.Ordinal);
     }
 
     /// <summary>「服务端给了响应却是错误状态码」时交给 <see cref="ErrorFactory"/>；网络 / 超时 / 取消不经过工厂。</summary>

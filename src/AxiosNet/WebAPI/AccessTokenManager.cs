@@ -53,9 +53,22 @@ public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
         => ApiCredential.Token(await GetTokenAsync(context, cancellationToken).ConfigureAwait(false));
 
     /// <summary>取当前可用令牌：缓存有效时直接返回，否则触发（或等待正在进行的）刷新。</summary>
+    /// <param name="cancellationToken">等待期间可取消；刷新本身继续，结果仍会缓存。</param>
+    /// <exception cref="ObjectDisposedException">管理器已释放。</exception>
+    public ValueTask<string?> GetTokenAsync(CancellationToken cancellationToken)
+        => GetTokenAsyncCore(cancellationToken);
+
+    /// <summary>取当前可用令牌：<paramref name="context"/> 不参与取令牌，等价于 <see cref="GetTokenAsync(CancellationToken)"/>。</summary>
+    /// <param name="context">本次请求的上下文；取令牌本身不需要它。</param>
+    /// <param name="cancellationToken">等待期间可取消；刷新本身继续，结果仍会缓存。</param>
     /// <exception cref="ObjectDisposedException">管理器已释放。</exception>
     /// <exception cref="OperationCanceledException">等待期间 <paramref name="cancellationToken"/> 被取消；刷新本身继续，结果仍会缓存。</exception>
-    public async ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
+    public ValueTask<string?> GetTokenAsync(ApiAuthContext context, CancellationToken cancellationToken)
+        => GetTokenAsyncCore(cancellationToken);
+
+    /// <summary>取当前可用令牌的本体：缓存命中直接返回，否则加入（或发起）唯一一次刷新。</summary>
+    /// <param name="cancellationToken">等待期间可取消；刷新本身继续，结果仍会缓存。</param>
+    private async ValueTask<string?> GetTokenAsyncCore(CancellationToken cancellationToken)
     {
         Task<AccessToken> refreshing;
 

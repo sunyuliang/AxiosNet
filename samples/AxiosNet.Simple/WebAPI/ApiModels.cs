@@ -65,6 +65,20 @@ public sealed class RotatingProfileRequest : IApiRequest<SecureProfile>
 {
 }
 
+/// <summary>GET /api/secure/query-profile：令牌放在 <c>access_token</c> 查询参数里（企业微信这类接口），不写 Authorization 头。</summary>
+[Get("api/secure/query-profile")]
+[Authorize]
+public sealed class QueryTokenProfileRequest : IApiRequest<SecureProfile>
+{
+}
+
+/// <summary>GET /api/secure/key-profile：令牌放在 <c>X-Api-Key</c> 请求头里（API Key 类接口），不写 Authorization 头。</summary>
+[Get("api/secure/key-profile")]
+[Authorize]
+public sealed class KeyTokenProfileRequest : IApiRequest<SecureProfile>
+{
+}
+
 /// <summary>DELETE /api/users/{id}：方法由路由特性决定。</summary>
 [HttpApi("delete", "api/users/{id}")]
 public sealed class DeleteUserRequest : IApiRequest<DeleteResult>

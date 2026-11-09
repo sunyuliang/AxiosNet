@@ -36,6 +36,7 @@ public sealed partial class AxiosClient
 
         // 解析结果属于上一次发送，合并出来的新配置必须重新解析。
         merged.ResolvedAuthorization = null;
+        merged.ResolvedCredentialIdentity = null;
 
         // 401 重放的正文持有标记只来自本次按请求的 WebAPI 门面，不继承实例默认值。
         merged.RetainBodyContent = perCall?.RetainBodyContent ?? false;
@@ -270,6 +271,9 @@ public sealed partial class AxiosClient
         // （它不占槽位，省掉每请求的槽位组与包装对象）。两处都只在本次请求调用一次。
         var slot = config.TransportOrNull?.Auth;
         var provider = slot is null ? config.InternalCredentialProvider : null;
+
+        // 上一次解析出的落点身份作废：提供方可能在本次改落点（甚至不再带凭据）。
+        config.ResolvedCredentialIdentity = null;
 
         if (slot is null && provider is null)
         {
