@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2262%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2251%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2500%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2489%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -472,6 +472,25 @@ await client.GetAsync<User>("users/1", c =>
 - 每读一份正文触发一次：被重试放弃、被对冲丢弃的分支同样触发，对冲时多条分支会**并发**触发（回调需线程安全）；回调同步执行，抛异常中断请求（`ERR_BAD_RESPONSE`，原异常在 `Cause`）。
 - 按请求设置会整体覆盖实例默认，与其余 `Observability` 项一致。
 
+#### 响应对象上的正文
+
+回调之外，响应对象本身也带两个只读入口，返回后照样能读：
+
+| 成员 | 何时有值 | 说明 |
+| --- | --- | --- |
+| `RawText` | 状态码被 `ValidateStatus` 拒绝，或正文解析 / `transformResponse` 失败时 | 错误体原文（字符串）。正常响应不保留整段文本，避免大正文跟着响应对象一起存活；解析失败时 `Data` 为 `null` 而这里仍是原文；流式失败会先抢救一段；原始字节用 `CaptureRawResponseBody` |
+| `RawBody` | 打开 `Observability.CaptureRawResponseBody` 的非流式响应 | `ReadOnlyMemory<byte>?`，与 `OnRawResponse` 看到的字节一致（已解压、未解码）。默认 `null`，不额外占内存 |
+
+```csharp
+var response = await client.GetAsync<User>("users/1", c => c.Observability.CaptureRawResponseBody = true);
+
+logger.LogInformation("raw body: {Body}", Encoding.UTF8.GetString(response.RawBody!.Value.Span));
+```
+
+- `RawBody` 是只读视图而不是 `byte[]`：底层数组可能与缓存条目共用，交出去改了就污染缓存。空正文是长度 0，不是 `null`。
+- 打开后整段正文随响应对象一起存活，只在需要排查的那几次请求上开；长期留档用 `OnRawResponse` 自己复制。
+- 流式响应（`ResponseType.Stream`）没有完整字节，开了也没有 `RawBody`；短路 / 缓存命中的正文不受此限。
+
 ### 方法与 URL
 
 | 方法 | 说明 |
@@ -582,7 +601,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 
 ## 配置
 
-`AxiosConfig` 顶层是请求本身（13 个可配置叶子），其余按领域收进六个分组：`Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。连同顶层共 7 组、70 个叶子（13 + 3 + 9 + 19 + 10 + 6 + 10）；每个叶子只有一份存储、一份注释、一个入口，实例默认值与按请求覆盖写同一组属性。
+`AxiosConfig` 顶层是请求本身（13 个可配置叶子），其余按领域收进六个分组：`Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。连同顶层共 7 组、71 个叶子（13 + 3 + 9 + 19 + 10 + 7 + 10）；每个叶子只有一份存储、一份注释、一个入口，实例默认值与按请求覆盖写同一组属性。
 
 ### 配置速查
 
@@ -623,7 +642,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `Serialization` | `JsonOptions`（Web 风格）/ `BodySerializers`（实例注册表，客户端上必有）/ `TextEncoding`（`null` = 发送 UTF-8、接收自动识别）/ `QueryEncoder` / `FormFieldName` / `CollectionFormat`（`Brackets`）/ `ValueText` / `TransformRequest` / `TransformResponse` |
 | `Resilience` | `Retry`（`Policy` = `null` 不重试 / `OnRetry`）/ `Circuit`（`Policy` = `null` 不熔断 / `OnRejected`）/ `Hedging`（`MaxHedges` = `0`，上限 16 / `Delay` = 80ms）/ `Failover`（`Endpoints` = `null` / `FailureThreshold` = 2 / `Cooldown` = 30 秒 / `MaxCooldown` = 5 分钟）/ `Concurrency`（`MaxInFlight` / `MaxQueue` / `QueueTimeout`，均 `null`）/ `Idempotency`（`Enabled` = `false` / `HeaderName` = `Idempotency-Key` / `Key` / `KeyFactory`）/ `TotalTimeout`（`null` = 不设，跨重试 / 端点 / 对冲共享）/ `AllowUnsafeRetry`（`false`，非幂等放行的唯一开关） |
 | `Transport` | `Proxy` / `Credentials`（`null`，仅实例级）/ `Pool`（`null`，建池时固化）/ `HttpVersion`（`null` = 2.0）/ `VersionPolicy`（`null` = `OrLower`）/ `Profile`（`null` = 默认档）/ `Auth`（`null`；静态 Basic / 令牌 / 完整头值 / 提供方四选一）/ `WithCredentials`（`false`，仅实例级）/ `MaxRedirects`（5，仅实例级）/ `MaxRate`（`null` = 不限速） |
-| `Observability` | `Capture`（`null` = `TelemetryCapture.Path`；`Off` / `Path` / `Query` / `NoUrl`）/ `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage` |
+| `Observability` | `Capture`（`null` = `TelemetryCapture.Path`；`Off` / `Path` / `Query` / `NoUrl`）/ `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody`（`false`）/ `OnSendingRequest` / `TimeoutMessage` |
 
 > 按请求显式赋 `null` 可以关掉实例默认的 `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`，这与「没设置」是两种语义。
 
@@ -648,7 +667,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // 默
 
 - **只在实例级生效**：`Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool`（建池时固化）、`Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue`（首个受限请求时固化）。单次请求写**不同的值**会抛 `ERR_BAD_OPTION_VALUE`（复述实例的值则放行），避免「设了没生效」。
 - **`Params` / `Body` 按「有没有赋值过」合并，不按是否为 `null`**：不碰这两项 = 继承实例默认值；显式写 `c.Params = null` / `c.Body = null` = 摘掉实例默认值（与 `Headers.Delete` 用「删除」表达摘头同一个道理）。所以 `PostAsync(url)` 这种不传 `data` 的调用仍会带上 `Defaults.Body`，要发空正文得显式写 `Body = null`。
-- **`Observability` 的六个叶子同样按「有没有赋值过」合并**：省略 = 继承实例默认值；按请求显式写 `null` = 清除实例默认值。适用于 `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage`，与 `Body` / `ContentType` / `Compression` / `CancellationToken` 同一口径。
+- **`Observability` 的七个叶子同样按「有没有赋值过」合并**：省略 = 继承实例默认值；按请求显式写 `null`（布尔项写 `false`）= 清除 / 关掉实例默认值。适用于 `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`，与 `Body` / `ContentType` / `Compression` / `CancellationToken` 同一口径。
 - **一个站点一个实例，不要按请求新建**：每个实例自建一条连接池，`Axios.Create` / `new AxiosClient` 各建一套 Handler；按请求新建等于退化成 `new HttpClient()` 那个经典坑——长连接不复用，连接与句柄持续增长。要换默认值就换实例，要共享连接就共享池（见[连接池](#连接池)）；DI 场景直接用 `AddAxiosClient` 注册单例。
 - 实例用 `using`（或交给 DI 容器持有）收尾，连接池与 Handler 随之释放；在途请求不会被打断，只是不再接受新请求。
 - **静态门面可以重置**：`Axios.Reset()` 释放全局默认实例，下次访问 `Axios.Defaults` / `Axios.Interceptors` 或发请求时按全新配置重建。在途请求不受影响（释放不打断它们），旧的默认值与拦截器一并丢弃——典型场景是测试之间隔离全局状态，或默认实例被误释放后恢复（释放过的实例对所有请求恒抛 `ERR_CANCELED`）。
@@ -672,7 +691,7 @@ var again = await b.RequestAsync(first.Config!);    // b 的实例级设置 + fi
 | `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` | 当前实例的默认值 |
 | `Serialization.BodySerializers` | 当前实例的注册表（来源实例登记的媒体类型不会带过来） |
 | `Serialization.ValueText` | 当前实例的默认值（来源实例的钩子是它的实例级设置，不跟着配置搬过来；按请求显式给钩子请走直接调用的 `configure`） |
-| `Observability` 的六个叶子（`Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage`） | 来源实例继承来的回调不跟着回放（快捷方法产出的 `Config` 也一样）；调用方显式写进配置的回调 / `null` 保留，因为那是请求级意图 |
+| `Observability` 的七个叶子（`Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`） | 来源实例继承来的回调不跟着回放（快捷方法产出的 `Config` 也一样）；调用方显式写进配置的回调 / `null` 保留，因为那是请求级意图 |
 | `ShortCircuit` | 不生效（短路响应只属于那一次调用） |
 
 其余按请求项照搬，分三组：
@@ -1365,6 +1384,7 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 | 在序列化前加工要发的 `Body` | `transformRequest` |
 | 在发送前改写最终请求消息（签名、时间戳、幂等键，每次尝试） | `c.Observability.OnSendingRequest` |
 | 在反序列化前拿原始响应字节（每次尝试） | `c.Observability.OnRawResponse` |
+| 请求返回后仍要读正文原文 / 原始字节（记日志、排查） | `response.RawText`（错误体）/ `c.Observability.CaptureRawResponseBody` + `response.RawBody` |
 | 在反序列化后加工回来的 `Data`（每次尝试） | `transformResponse` |
 | 加工最终响应、把异常兜成响应 | 响应拦截器 |
 | 观察或干预**每一次尝试**（含审计） | 尝试中间件 |

@@ -36,8 +36,17 @@ public class AxiosResponse
     /// </remarks>
     public AxiosConfig? Config { get; set; }
 
-    /// <summary>错误响应的正文原文（只有状态码不合法时才有；正常、二进制 / 流式响应为 <c>null</c>）。</summary>
-    internal string? RawText { get; set; }
+    /// <summary>
+    /// 失败响应的正文原文（字符串形态），供记日志与排查用。
+    /// </summary>
+    /// <remarks>
+    /// 在两种情况下保留：状态码被 <see cref="AxiosConfig.ValidateStatus"/> 拒绝，或响应装配失败（正文解析 / <see cref="AxiosConfig.SerializationSettings.TransformResponse"/>）。
+    /// 正常响应不持有整段文本，避免大正文跟着响应对象一起存活。
+    /// 二进制响应与流式成功响应为 <c>null</c>（流式失败会先抢救一段错误体）；解析失败时 <see cref="Data"/> 为 <c>null</c> 而这里仍是原文。
+    /// 需要任何响应（含 2xx 成功）的原始字节请用 <see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/> 或
+    /// <see cref="AxiosConfig.ObservabilitySettings.CaptureRawResponseBody"/>。
+    /// </remarks>
+    public string? RawText { get; internal set; }
 
     /// <summary>
     /// 底层 HttpRequestMessage（对应 axios response.request）。
@@ -82,8 +91,19 @@ public class AxiosResponse
     /// <summary>这次响应是条件请求的 304 合并出来的（正文来自缓存），供遥测与日志区分「未命中」。</summary>
     internal bool CacheRevalidated { get; set; }
 
-    /// <summary>响应正文的原始字节（只有非流式响应有值）：只在启用缓存时保留，落库后由管线清空。</summary>
-    internal byte[]? RawBody { get; set; }
+    /// <summary>
+    /// 响应正文的原始字节（只读视图），供记日志、留档与排查用。
+    /// </summary>
+    /// <remarks>
+    /// 只有显式打开 <see cref="AxiosConfig.ObservabilitySettings.CaptureRawResponseBody"/> 的响应才有值（默认 <c>null</c>，不额外占内存）；
+    /// 网络流式响应（<see cref="ResponseType.Stream"/>）没有完整字节，短路 / 缓存命中不受此限。
+    /// 内容与交给 <see cref="AxiosConfig.ObservabilitySettings.OnRawResponse"/> 的字节一致（已解压、未解码）。
+    /// 只读：底层数组可能与缓存条目共用，改写会污染缓存，所以不交出 <c>byte[]</c>。空正文是长度 0，不是 <c>null</c>。
+    /// </remarks>
+    public ReadOnlyMemory<byte>? RawBody { get; internal set; }
+
+    /// <summary>缓存落库用的正文缓冲：与 <see cref="RawBody"/> 指向同一块数组，落库或失败收尾后由管线清空（不跟着响应对象一直存活）。</summary>
+    internal byte[]? RawBodyBuffer { get; set; }
 
     /// <summary>把非泛型响应复制成 <typeparamref name="TData"/> 的响应；只在响应拦截器换掉响应对象时使用。</summary>
     internal AxiosResponse<TData> AsTyped<TData>()
@@ -97,6 +117,7 @@ public class AxiosResponse
             ProtocolVersion = ProtocolVersion,
             BodyBytes = BodyBytes,
             RawBody = RawBody,
+            RawBodyBuffer = RawBodyBuffer,
             Headers = Headers,
             Config = Config,
             Request = Request

@@ -11,6 +11,7 @@ public sealed partial class AxiosConfig
         private Action<AxiosResponseInfo, ReadOnlyMemory<byte>>? _onRawResponse;
         private Func<HttpRequestMessage, AxiosConfig, CancellationToken, ValueTask>? _onSendingRequest;
         private string? _timeoutMessage;
+        private bool _captureRawResponseBody;
 
         /// <summary>
         /// 本次请求的遥测采集档位，<c>null</c>（默认）= <see cref="TelemetryCapture.Path"/>；
@@ -91,6 +92,26 @@ public sealed partial class AxiosConfig
             }
         }
 
+        /// <summary>
+        /// 把响应正文的原始字节留在 <see cref="AxiosResponse.RawBody"/> 上（默认 <c>false</c>）：请求返回后仍可读，供记日志与排查。
+        /// </summary>
+        /// <remarks>
+        /// 打开后整段正文跟着响应对象一起存活（默认只在错误场景留文本，见 <see cref="AxiosResponse.RawText"/>），
+        /// 大正文场景请只在需要排查的那几次请求上开。网络流式响应（<see cref="ResponseType.Stream"/>）没有完整字节，开了也没有；
+        /// 短路 / 缓存命中的正文不受此限。
+        /// 与 <see cref="OnRawResponse"/> 的差别是「回调里借用一次」还是「随响应交付」；两者看到的字节一致。
+        /// 按请求显式写 <c>false</c> 会关掉实例默认值；省略则继承。
+        /// </remarks>
+        public bool CaptureRawResponseBody
+        {
+            get => _captureRawResponseBody;
+            set
+            {
+                _captureRawResponseBody = value;
+                CaptureRawResponseBodySet = true;
+            }
+        }
+
         /// <summary>自定义超时错误消息（对应 axios timeoutMessage），为空时使用默认文案。</summary>
         /// <remarks>按请求显式写 <c>null</c> 会清除实例默认值；省略则继承。</remarks>
         public string? TimeoutMessage
@@ -115,6 +136,8 @@ public sealed partial class AxiosConfig
 
         internal bool TimeoutMessageSet { get; private set; }
 
+        internal bool CaptureRawResponseBodySet { get; private set; }
+
         /// <summary>
         /// 把 <paramref name="incoming"/> 里显式赋值过的项覆盖到本实例（合并层内部使用）。
         /// 用 <c>*Set</c> 而不是「非 null」判定：按请求写 <c>null</c> 表示清除实例默认值，省略才继承。
@@ -131,6 +154,12 @@ public sealed partial class AxiosConfig
             {
                 _timeoutMessage = incoming._timeoutMessage;
                 TimeoutMessageSet = true;
+            }
+
+            if (incoming.CaptureRawResponseBodySet)
+            {
+                _captureRawResponseBody = incoming._captureRawResponseBody;
+                CaptureRawResponseBodySet = true;
             }
 
             if (incoming.OnUploadProgressSet)
@@ -172,6 +201,7 @@ public sealed partial class AxiosConfig
             OnRawResponseSet = false;
             OnSendingRequestSet = false;
             TimeoutMessageSet = false;
+            CaptureRawResponseBodySet = false;
         }
 
         /// <summary>浅拷贝（合并层用）：回调委托与字符串按引用共享；<c>*Set</c> 标记随副本一起保留。</summary>

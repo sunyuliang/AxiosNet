@@ -297,6 +297,13 @@ public sealed partial class AxiosClient
                 }
             }
 
+            // 失败路径不会落库：内部缓冲只服务单飞共享（上面已复制一份），再挂着只会让整段错误正文
+            // 跟着异常一起存活。对外的 RawBody 视图（若开启）是独立引用，不受影响。
+            if (ex is AxiosException { Response: { } failedResponse })
+            {
+                failedResponse.RawBodyBuffer = null;
+            }
+
             // 记录后原样抛出，不改动异常。
             if (telemetryEnabled)
             {

@@ -139,8 +139,8 @@ public sealed partial class AxiosClient
         }
         finally
         {
-            // 条目已持有正文（可能与响应共用同一块内存），响应不必再拉着原始字节。
-            response.RawBody = null;
+            // 落库缓冲到此为止（条目已持有正文，可能与响应共用同一块内存）；对外的 RawBody 视图若开启仍随响应存活。
+            response.RawBodyBuffer = null;
 
             if (flight is not null)
             {
@@ -160,7 +160,7 @@ public sealed partial class AxiosClient
         => response.Status is >= 200 and <= 299
            && response.Status != 206
            && !response.Headers.ContainsKey("Content-Range")
-           && response.RawBody is not null;
+           && response.RawBodyBuffer is not null;
 
     /// <summary>从响应里做一条缓存条目；调用方先用 <see cref="IsStorable"/> 挡掉不可能落库的响应。</summary>
     /// <remarks>
@@ -172,7 +172,7 @@ public sealed partial class AxiosClient
         AxiosCacheEntryPolicy policy,
         DateTimeOffset receivedAt)
     {
-        var body = response.RawBody!;
+        var body = response.RawBodyBuffer!;
         var headers = BuildResponseHeaderValues(response);
 
         return new AxiosShortCircuit
@@ -203,7 +203,7 @@ public sealed partial class AxiosClient
     /// 条目能否直接与响应共用正文：<c>Data</c> 不是这块数组，且没有 transformResponse（它可能把数组包进自己的对象）。
     /// </summary>
     private static bool CanShareBody(AxiosResponse response)
-        => !ReferenceEquals(response.Data, response.RawBody)
+        => !ReferenceEquals(response.Data, response.RawBodyBuffer)
            && response.Config?.HasTransformResponse is not true;
 
     /// <summary>
@@ -270,7 +270,7 @@ public sealed partial class AxiosClient
             return null;
         }
 
-        var body = response.RawBody;
+        var body = response.RawBodyBuffer;
         var limit = cache.Options.MaxSharedFailureBodyBytes;
         if (body is null || limit == 0 || body.Length > limit)
         {
@@ -321,7 +321,7 @@ public sealed partial class AxiosClient
     /// </summary>
     /// <remarks>
     /// 状态码与正文都取库里的那一份（304 没有正文）；响应拦截器与 <c>validateStatus</c> 看到的都是合并后的响应。
-    /// 正文不复制：<see cref="AxiosResponse.RawBody"/> 与条目共用同一块内存（重新落库时由 <see cref="TryCreateCacheEntry"/> 按需复制）。
+    /// 正文不复制：<see cref="AxiosResponse.RawBodyBuffer"/> 与条目共用同一块内存（重新落库时由 <see cref="TryCreateCacheEntry"/> 按需复制）。
     /// </remarks>
     private static AxiosAttemptResult CompleteNotModified(
         HttpResponseMessage message,
@@ -338,7 +338,7 @@ public sealed partial class AxiosClient
 
         // 这次确实发出了一条请求：与「命中不发请求」区分开。
         response.Request = request;
-        response.RawBody = config.CacheCaptureRawBody ? merged.Body : null;
+        response.RawBodyBuffer = config.CacheCaptureRawBody ? merged.Body : null;
         response.CacheRevalidated = true;
 
         if (!statusAccepted)

@@ -89,6 +89,26 @@ public sealed class ObservabilityMergeTests
     }
 
     [Fact]
+    public void MergeFrom_ExplicitFalse_TurnsOffInstanceDefault()
+    {
+        var target = new AxiosConfig.ObservabilitySettings { CaptureRawResponseBody = true };
+
+        target.MergeFrom(new AxiosConfig.ObservabilitySettings { CaptureRawResponseBody = false });
+
+        Assert.False(target.CaptureRawResponseBody);
+    }
+
+    [Fact]
+    public void MergeFrom_OmittedBool_KeepsInstanceDefault()
+    {
+        var target = new AxiosConfig.ObservabilitySettings { CaptureRawResponseBody = true };
+
+        target.MergeFrom(new AxiosConfig.ObservabilitySettings());
+
+        Assert.True(target.CaptureRawResponseBody);
+    }
+
+    [Fact]
     public void Clone_PreservesExplicitNullMarkers()
     {
         var source = new AxiosConfig.ObservabilitySettings

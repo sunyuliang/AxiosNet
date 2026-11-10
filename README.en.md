@@ -2,8 +2,8 @@
 
 [![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2262%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2251%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2500%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2489%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -470,6 +470,25 @@ await client.GetAsync<User>("users/1", c =>
 - Fires once per body read, including retries that are abandoned and hedging branches that lose; under hedging several branches fire **concurrently**, so the callback must be thread-safe. It runs synchronously and a thrown exception aborts the request (`ERR_BAD_RESPONSE`, original exception in `Cause`).
 - A per-request value replaces the instance default, like every other `Observability` item.
 
+#### Body on the response object
+
+Besides the callback, the response object itself carries two read-only entries that are still readable after the call returns:
+
+| Member | When it has a value | Notes |
+| --- | --- | --- |
+| `RawText` | The status was rejected by `ValidateStatus`, or body parsing / `transformResponse` failed | Error body as a string. Successful responses do not keep the whole text, so a large body never outlives the call; when parsing failed, `Data` is `null` while this still holds the original text; a failed streaming response rescues a snippet first; use `CaptureRawResponseBody` for raw bytes |
+| `RawBody` | Non-streaming responses with `Observability.CaptureRawResponseBody` turned on | `ReadOnlyMemory<byte>?`, the same bytes `OnRawResponse` sees (decompressed, not decoded). `null` by default, so nothing extra is held |
+
+```csharp
+var response = await client.GetAsync<User>("users/1", c => c.Observability.CaptureRawResponseBody = true);
+
+logger.LogInformation("raw body: {Body}", Encoding.UTF8.GetString(response.RawBody!.Value.Span));
+```
+
+- `RawBody` is a read-only view rather than a `byte[]`: the underlying array may be shared with a cache entry, so handing it out would let callers poison the cache. An empty body is length 0, not `null`.
+- Turning it on keeps the whole body alive with the response — do it for the requests you are debugging. For durable archives, copy inside `OnRawResponse` instead.
+- Streaming responses (`ResponseType.Stream`) have no full byte array, so there is no `RawBody` even when enabled; short-circuit / cache-hit bodies are not affected.
+
 ### Methods and URLs
 
 | Method | Notes |
@@ -580,7 +599,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 
 ## Configuration
 
-`AxiosConfig` top level is the request itself (13 configurable leaves); everything else is grouped into six groups: `Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`. That is 7 groups and 70 leaves in total (13 + 3 + 9 + 19 + 10 + 6 + 10); each leaf has exactly one storage field, one doc comment and one entry point, and instance defaults and per-request overrides use the same properties.
+`AxiosConfig` top level is the request itself (13 configurable leaves); everything else is grouped into six groups: `Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`. That is 7 groups and 71 leaves in total (13 + 3 + 9 + 19 + 10 + 7 + 10); each leaf has exactly one storage field, one doc comment and one entry point, and instance defaults and per-request overrides use the same properties.
 
 ### Configuration reference
 
@@ -621,7 +640,7 @@ The other four sub-objects (created lazily on first access):
 | `Serialization` | `JsonOptions` (web style) / `BodySerializers` (instance registry, always present on a client) / `TextEncoding` (`null` = UTF-8 send, auto-detect receive) / `QueryEncoder` / `FormFieldName` / `CollectionFormat` (`Brackets`) / `ValueText` / `TransformRequest` / `TransformResponse` |
 | `Resilience` | `Retry` (`Policy` = `null`, no retries / `OnRetry`) / `Circuit` (`Policy` = `null`, no breaker / `OnRejected`) / `Hedging` (`MaxHedges` = `0`, max 16 / `Delay` = 80ms) / `Failover` (`Endpoints` = `null` / `FailureThreshold` = 2 / `Cooldown` = 30s / `MaxCooldown` = 5min) / `Concurrency` (`MaxInFlight` / `MaxQueue` / `QueueTimeout`, all `null`) / `Idempotency` (`Enabled` = `false` / `HeaderName` = `Idempotency-Key` / `Key` / `KeyFactory`) / `TotalTimeout` (`null` = none, shared across retries / endpoints / hedges) / `AllowUnsafeRetry` (`false`, the only switch that lets non-idempotent methods through) |
 | `Transport` | `Proxy` / `Credentials` (`null`, instance-level only) / `Pool` (`null`, frozen when the pool is built) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`) / `Profile` (`null` = default profile) / `Auth` (`null`; one of static Basic / token / complete header value / provider) / `WithCredentials` (`false`, instance-level only) / `MaxRedirects` (5, instance-level only) / `MaxRate` (`null` = unlimited) |
-| `Observability` | `Capture` (`null` = `TelemetryCapture.Path`; `Off` / `Path` / `Query` / `NoUrl`) / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage` |
+| `Observability` | `Capture` (`null` = `TelemetryCapture.Path`; `Off` / `Path` / `Query` / `NoUrl`) / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` (`false`) / `OnSendingRequest` / `TimeoutMessage` |
 
 > Assigning `null` per request explicitly turns off an instance default `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`, which is different from "not set".
 
@@ -646,7 +665,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 
 - **Instance-level only**: `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` (fixed when the pool is built) and `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
 - **`Params` / `Body` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Body = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Body`; write `Body = null` to send an empty body.
-- **The six `Observability` leaves merge the same way**: leaving one untouched inherits the instance default; writing `null` per request clears the instance default. This covers `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage`, matching `Body` / `ContentType` / `Compression` / `CancellationToken`.
+- **The seven `Observability` leaves merge the same way**: leaving one untouched inherits the instance default; writing `null` (or `false` for the boolean leaf) per request clears / turns off the instance default. This covers `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`, matching `Body` / `ContentType` / `Compression` / `CancellationToken`.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
 - Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
 - **The static facade can be reset**: `Axios.Reset()` disposes the global default instance, and the next access to `Axios.Defaults` / `Axios.Interceptors` or the next request rebuilds it from scratch. In-flight requests are unaffected (disposal does not abort them), and the old defaults and interceptors are dropped — useful to isolate global state between tests, or to recover after the default instance was disposed by mistake (a disposed instance throws `ERR_CANCELED` for every request).
@@ -670,7 +689,7 @@ var again = await b.RequestAsync(first.Config!);    // b's instance-level settin
 | `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` | The current instance's defaults |
 | `Serialization.BodySerializers` | The current instance's registry (media types registered on the source instance do not travel) |
 | `Serialization.ValueText` | The current instance's default (the source instance's hook is its own instance-level setting and does not travel with the config; pass a hook per request through a direct call's `configure`) |
-| The six `Observability` leaves (`Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `OnSendingRequest` / `TimeoutMessage`) | Callbacks inherited from the source instance do not travel (including the `Config` produced by shortcut methods); callbacks / `null` explicitly written into the config by the caller are kept, because that is request-level intent |
+| The seven `Observability` leaves (`Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`) | Callbacks inherited from the source instance do not travel (including the `Config` produced by shortcut methods); callbacks / `null` explicitly written into the config by the caller are kept, because that is request-level intent |
 | `ShortCircuit` | Not applied (a short-circuit response belongs to that call only) |
 
 Everything else is copied as per-request items, in three groups:
@@ -1362,6 +1381,7 @@ How it divides the work with the other extension points:
 | Shape outgoing `Body` before serialization | `transformRequest` |
 | Rewrite the final request message before sending (signing, timestamps, idempotency keys; per attempt) | `c.Observability.OnSendingRequest` |
 | Get the raw response bytes before deserialization (per attempt) | `c.Observability.OnRawResponse` |
+| Read the body text / raw bytes after the call returns (logging, debugging) | `response.RawText` (error body) / `c.Observability.CaptureRawResponseBody` + `response.RawBody` |
 | Shape incoming `Data` after deserialization (per attempt) | `transformResponse` |
 | Shape the final response, turn an exception into a response | Response interceptor |
 | Observe or steer **each attempt** (auditing included) | Attempt middleware |

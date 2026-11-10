@@ -344,7 +344,7 @@ internal static class ResponseReader
         {
             // 只要状态码与响应头已经到手，错误就必须能读到响应上下文：声明的长度预检、段式读取超限、
             // 响应过大、原始字节 / 下载进度回调失败都走这里；流式消费期（ReadAsync 返回之后）没有上下文可补。
-            AttachResponseContext(ex, config, request, target, status, statusText, message.Version, headers, lenient ? rawText : null);
+            AttachResponseContext(ex, config, request, target, status, statusText, message.Version, headers, rawText, rawBody, bodyBytes);
             throw;
         }
 
@@ -352,14 +352,14 @@ internal static class ResponseReader
         var response = target ?? new AxiosResponse();
         response.Data = data;
 
-        // 只在状态码不合法时保留原文，避免大正文跟着响应对象一直存活。
+        // 成功路径只在状态码不合法时保留原文，避免大正文跟着响应对象一直存活；失败路径由 AttachResponseContext 保留。
         response.RawText = lenient ? rawText : null;
         response.Status = status;
         response.StatusText = statusText;
         // 实际协商出的协议版本（降级是静默的）。
         response.ProtocolVersion = message.Version;
         response.BodyBytes = bodyBytes;
-        response.RawBody = config.CacheCaptureRawBody ? rawBody : null;
+        ApplyRawBody(response, rawBody, config);
         response.Headers = headers;
         response.Config = config;
         response.Request = request;
@@ -367,8 +367,9 @@ internal static class ResponseReader
     }
 
     /// <summary>
-    /// 响应已经存在、但正文解析失败时，把响应上下文补进错误里（<see cref="AxiosException.Response"/> 的契约：
-    /// 反序列化失败等「有响应」的错误必须能读到状态码与响应头）。网络路径与短路 / 缓存命中路径共用这一份口径。
+    /// 响应已经存在、但装配失败时（正文读取 / 解析 / transformResponse / 回调），把响应上下文补进错误里
+    /// （<see cref="AxiosException.Response"/> 的契约：反序列化失败等「有响应」的错误必须能读到状态码与响应头）。
+    /// 网络路径与短路 / 缓存命中路径共用这一份口径。
     /// </summary>
     private static void AttachResponseContext(
         AxiosException exception,
@@ -379,7 +380,9 @@ internal static class ResponseReader
         string statusText,
         Version? protocolVersion,
         IReadOnlyDictionary<string, IEnumerable<string>> headers,
-        string? rawText)
+        string? rawText,
+        byte[]? rawBytes,
+        long? bodyBytes)
     {
         var failed = target ?? new AxiosResponse();
         failed.Data = null;
@@ -387,10 +390,30 @@ internal static class ResponseReader
         failed.Status = status;
         failed.StatusText = statusText;
         failed.ProtocolVersion = protocolVersion;
+        failed.BodyBytes = bodyBytes;
         failed.Headers = headers;
         failed.Config = config;
         failed.Request = request;
+
+        // 与成功路径同一口径：重试复用的目标对象不能残留上一次尝试的正文（原文、字节数与缓存缓冲都要重写）。
+        ApplyRawBody(failed, rawBytes, config);
         exception.Response = failed;
+    }
+
+    /// <summary>把正文缓冲与对外视图写进响应：缓冲只留给缓存落库（落库后由管线清空），视图只在显式开启时保留。</summary>
+    private static void ApplyRawBody(AxiosResponse response, byte[]? rawBytes, AxiosConfig config)
+    {
+        response.RawBodyBuffer = config.CacheCaptureRawBody ? rawBytes : null;
+        SetRawBodyView(response, rawBytes, config);
+    }
+
+    /// <summary>对外暴露的原始字节是只读视图：与缓存条目可能共用同一块数组，调用方改不得。</summary>
+    private static void SetRawBodyView(AxiosResponse response, byte[]? rawBytes, AxiosConfig config)
+    {
+        // 这里的 null 必须显式转成可空：直接写 null 会走 byte[] → ReadOnlyMemory 的隐式转换，得到「有值但长度为 0」。
+        response.RawBody = config.ObservabilityOrNull?.CaptureRawResponseBody is true && rawBytes is not null
+            ? rawBytes.AsMemory()
+            : (ReadOnlyMemory<byte>?)null;
     }
 
     /// <summary>是否需要把响应字节解码成文本：arraybuffer / stream / byte[] 以及非文本媒体类型只要字节，其余都要文本。</summary>
@@ -480,12 +503,33 @@ internal static class ResponseReader
         // 解码推迟到真正需要文本的分支：JSON 业务对象走序列化器的字节入口，不做 UTF-16 往返。
         string? text = null;
 
-        object? data = ConvertData(config, request, dataType, bytes, ref text, charSet, textual, mediaType, lenient);
+        // 需要文本时补齐解码（只解一次）：解析 / 转换失败与 lenient 兜底都靠它拿原文。
+        string? EnsureText()
+        {
+            if (text is null && NeedsText(config, dataType, textual))
+            {
+                text = ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.TextEncoding);
+            }
+
+            return text;
+        }
+
+        object? data;
+        try
+        {
+            data = ConvertData(config, request, dataType, bytes, ref text, charSet, textual, mediaType, lenient);
+        }
+        catch
+        {
+            // 解析失败也要把原文交回异常响应（此时 Data 为 null，原文是排查坏正文的唯一线索）。
+            rawText = EnsureText();
+            throw;
+        }
 
         // lenient 需要保留原文：转换过程没解过码时补一次。
-        if (lenient && text is null && NeedsText(config, dataType, textual))
+        if (lenient)
         {
-            text = ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.TextEncoding);
+            EnsureText();
         }
 
         rawText = text;
@@ -500,8 +544,16 @@ internal static class ResponseReader
                 {
                     data = transform(data, config);
                 }
-                catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // 转换失败时 Data 不再可用，原文是排查输入的唯一线索：与解析失败同一口径补进异常响应。
+                    rawText = EnsureText();
+
+                    if (ex is AxiosException)
+                    {
+                        throw;
+                    }
+
                     throw AxiosException.ResponseTransformFailed(config, request, ex);
                 }
             }
@@ -581,7 +633,7 @@ internal static class ResponseReader
             catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadResponse && ex.Response is null)
             {
                 // 与网络路径同口径：短路 / 缓存命中的正文超限与解析失败同样把状态码与响应头带进错误。
-                AttachResponseContext(ex, config, null, target, status, statusText, reply.ProtocolVersion, headers, lenient ? rawText : null);
+                AttachResponseContext(ex, config, null, target, status, statusText, reply.ProtocolVersion, headers, rawText, reply.Body, bodyBytes);
                 throw;
             }
         }
@@ -589,8 +641,8 @@ internal static class ResponseReader
         {
             data = reply.Data;
 
-            // 已成型结果里只有字符串能充当错误原文。
-            rawText = lenient ? data as string : null;
+            // 已成型结果里只有字符串能充当错误原文；是否保留由下面的 lenient 统一决定。
+            rawText = data as string;
         }
 
         var response = target ?? new AxiosResponse();
@@ -600,6 +652,9 @@ internal static class ResponseReader
         response.StatusText = statusText;
         response.ProtocolVersion = reply.ProtocolVersion;
         response.BodyBytes = bodyBytes;
+
+        // 短路 / 缓存命中的正文同样可以留在响应上；视图只读，不会污染条目。
+        SetRawBodyView(response, reply.Body, config);
         response.Headers = headers;
         response.Config = config;
 
