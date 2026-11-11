@@ -6,6 +6,8 @@ namespace AxiosNet;
 /// <remarks>
 /// <b>请求失败</b>一律是本类型（派生类型同样如此，<c>catch (AxiosException)</c> 全都接得住）；
 /// 调用方传参非法（头名不是合法 token、用户名含冒号、<c>ContentType</c> 为空白等）仍抛 BCL 的 <see cref="ArgumentException"/>。
+/// 状态码被拒绝时，<see cref="Exception.Message"/> 会附上服务端响应正文的片段（最多 512 字符），
+/// 日志里能直接看到服务端给出的原因；完整原文见 <see cref="ResponseBody"/>。
 /// </remarks>
 public class AxiosException : Exception
 {
@@ -81,6 +83,15 @@ public class AxiosException : Exception
     /// <summary>HTTP 状态码（有响应时可用，等价于 <c>Response.Status</c>）。</summary>
     public int? Status => Response?.Status;
 
+    /// <summary>
+    /// 失败响应的正文原文（等价于 <c>Response.RawText</c>），供直接读日志 / 排查用，不必再穿透到响应对象。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="AxiosResponse.RawText"/> 同一口径：状态码被拒绝、响应装配失败时保留；二进制响应、流式成功响应为 <c>null</c>。
+    /// 消息里的正文片段有长度上限，需要完整正文时用本属性。
+    /// </remarks>
+    public string? ResponseBody => Response?.RawText;
+
     /// <summary>熔断拒绝时的建议等待时间（只有 <see cref="ErrCircuitOpen"/> 才可能有值，库不会据此自动重试）。</summary>
     public TimeSpan? RetryAfter { get; }
 
@@ -125,6 +136,10 @@ public class AxiosException : Exception
     }
 
     /// <summary>对应 axios <c>error.toJSON()</c>：可直接序列化进日志的结构化快照。</summary>
+    /// <remarks>
+    /// 比 axios 多一项 <c>responseBody</c>：失败响应的正文片段（与消息同一口径，最多 512 字符）。
+    /// 结构化日志里通常只看 message，把服务端原因一并带上才不用再回头翻响应。
+    /// </remarks>
     public IReadOnlyDictionary<string, object?> ToJson()
     {
         var request = Request;
@@ -136,6 +151,7 @@ public class AxiosException : Exception
             ["status"] = Status,
             ["method"] = request?.Method.Method,
             ["url"] = request?.RequestUri?.ToString(),
+            ["responseBody"] = ResponseBody is { } body ? BodySnippet(body) : null,
             ["isAxiosError"] = true,
             ["stack"] = StackTrace
         };
@@ -380,6 +396,37 @@ public class AxiosException : Exception
             ? value
             : value[..MaxUrlInMessage] + $"...(truncated, {value.Length} chars)";
 
+    // 异常消息 / toJSON 里响应正文的字符上限：超长错误页（HTML）不该把日志撑爆。
+    private const int MaxBodyInMessage = 512;
+
+    /// <summary>消息尾部追加正文片段：空正文不追加（保持原文案），换行压平，超长截断。</summary>
+    private static string BodySuffix(string? body)
+        => string.IsNullOrWhiteSpace(body) ? string.Empty : ": " + BodySnippet(body);
+
+    /// <summary>
+    /// 正文片段：去首尾空白、把 CR/LF 折成空格（多行日志不会被拆散），超长时截断并标出原始长度。
+    /// 只折叠换行，不改写其余空白——JSON 字符串里的空格可能是有意义的。
+    /// </summary>
+    private static string BodySnippet(string body)
+    {
+        var text = body.Trim();
+
+        if (text.Contains('\n') || text.Contains('\r'))
+        {
+            var builder = new StringBuilder(text.Length);
+            foreach (var c in text)
+            {
+                builder.Append(c is '\r' or '\n' ? ' ' : c);
+            }
+
+            text = builder.ToString().Trim();
+        }
+
+        return text.Length <= MaxBodyInMessage
+            ? text
+            : text[..MaxBodyInMessage] + $"...(truncated, {text.Length} chars)";
+    }
+
     /// <summary>选项值非法（<c>ERR_BAD_OPTION_VALUE</c>）：消息直接来自校验点。</summary>
     internal static AxiosException InvalidOption(string message, AxiosConfig? config = null)
         => InvalidOption(message, config, null);
@@ -423,8 +470,11 @@ public class AxiosException : Exception
         }
 
         var code = response.Status >= 500 ? ErrBadResponse : ErrBadRequest;
+
+        // 状态码本身说明不了业务原因：把服务端正文片段带进消息，日志里不用再翻 Response.RawText。
+        // 重定向分支不带正文：那里的重点是「怎么调 MaxRedirects」，正文多是跳转页，反而干扰阅读。
         return new AxiosException(
-            $"Request failed with status code {response.Status}",
+            $"Request failed with status code {response.Status}{BodySuffix(response.RawText)}",
             code,
             config,
             request,
@@ -459,14 +509,16 @@ public class AxiosException : Exception
     }
 
     /// <summary>响应正文反序列化失败（<c>ERR_BAD_RESPONSE</c>），消息带目标类型名。</summary>
-    internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, Type targetType, Exception inner)
-        => BadResponse(config, request, targetType.Name, inner);
+    /// <remarks><paramref name="body"/> 为解析失败时的正文原文（调用方已解码时传入）：消息里附上片段，日志能直接看到坏在哪。</remarks>
+    internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, Type targetType, Exception inner, string? body = null)
+        => BadResponse(config, request, targetType.Name, inner, body);
 
     /// <summary>响应正文反序列化失败，目标名由调用方给出（避免再取 <c>Type</c>）。</summary>
-    internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner)
+    /// <remarks><paramref name="body"/> 为空时只在消息里写目标类型，不追加正文片段。</remarks>
+    internal static AxiosException BadResponse(AxiosConfig? config, HttpRequestMessage? request, string targetName, Exception inner, string? body = null)
     {
         return new AxiosException(
-            $"Response body could not be deserialized to '{targetName}'",
+            $"Response body could not be deserialized to '{targetName}'{BodySuffix(body)}",
             ErrBadResponse,
             config,
             request,

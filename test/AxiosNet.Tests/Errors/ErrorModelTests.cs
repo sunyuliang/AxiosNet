@@ -245,6 +245,132 @@ public sealed class ErrorModelTests
         Assert.Contains("404", ex.Message);
     }
 
+    // ------------------------------------------------------------------
+    // 错误消息里的响应正文片段：状态被拒 / 解析失败时，日志应能直接看到服务端原因
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Status404_MessageAndResponseBody_CarryServerReason()
+    {
+        const string body = "{\"error\":\"user not found\",\"requestId\":\"r-1\"}";
+        await using var server = TestHttpServer.Start(_ => new TestResponse(404, Body: Encoding.UTF8.GetBytes(body)));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "users/1"));
+
+        // 只给状态码时日志看不出是哪个业务错误；正文片段要和状态码一起出现。
+        Assert.Contains("status code 404", ex.Message);
+        Assert.Contains(body, ex.Message);
+
+        // 消息里的片段是截断过的，完整原文走 ResponseBody（与 Response.RawText 同一口径）。
+        Assert.Equal(body, ex.ResponseBody);
+        Assert.Equal(body, ex.Response!.RawText);
+    }
+
+    [Fact]
+    public async Task StatusError_HugeBody_IsTruncatedInMessageButKeptWholeInResponseBody()
+    {
+        // 错误页可能是几十 KB 的 HTML：消息必须有上限，正文另外保留完整一份。
+        var body = new string('x', 2_000);
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            502,
+            Body: Encoding.UTF8.GetBytes(body),
+            ContentType: "text/html; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
+
+        Assert.Contains("truncated", ex.Message);
+        Assert.Contains("2000 chars", ex.Message);
+        Assert.True(ex.Message.Length < 1024, $"异常消息长度 {ex.Message.Length}");
+        Assert.Equal(body, ex.ResponseBody);
+    }
+
+    [Fact]
+    public async Task StatusError_MultilineBody_IsFlattenedIntoOneLineMessage()
+    {
+        var body = "upstream failed\n  at Service.Do\n  at Controller.Handle";
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            500,
+            Body: Encoding.UTF8.GetBytes(body),
+            ContentType: "text/plain; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
+
+        // 换行折成空格：多行堆栈不会把一条日志拆成多行；首尾空白仍然去掉。
+        Assert.DoesNotContain('\n', ex.Message);
+        Assert.DoesNotContain('\r', ex.Message);
+        Assert.Contains("upstream failed", ex.Message);
+        Assert.Contains("Controller.Handle", ex.Message);
+    }
+
+    [Fact]
+    public async Task StatusError_WithoutBody_KeepsPlainMessage()
+    {
+        // 没有正文时不追加分隔符：保持「Request failed with status code 500」这句话原样。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(500));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
+
+        Assert.Equal("Request failed with status code 500", ex.Message);
+
+        // 空正文解码为 ""（与 Response.RawText 同口径），不是 null；两者都不该进消息。
+        Assert.True(string.IsNullOrEmpty(ex.ResponseBody));
+    }
+
+    [Fact]
+    public async Task DeserializationFailure_MessageCarriesResponseBody()
+    {
+        // 200 + 非 JSON：类型不匹配时，原文比异常栈更直接地说明问题。
+        const string body = "this is not json";
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: Encoding.UTF8.GetBytes(body),
+            ContentType: "text/plain; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<Person>(server.Url));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.Contains("'Person'", ex.Message);
+        Assert.Contains(body, ex.Message);
+    }
+
+    [Fact]
+    public async Task DynamicParseFailure_MessageCarriesResponseBody()
+    {
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            200,
+            Body: Encoding.UTF8.GetBytes("boom"),
+            ContentType: "application/json; charset=utf-8"));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync<dynamic>(server.Url));
+
+        Assert.Equal(AxiosException.ErrBadResponse, ex.Code);
+        Assert.Contains("dynamic JSON", ex.Message);
+        Assert.Contains("boom", ex.Message);
+    }
+
+    [Fact]
+    public async Task ToJson_IncludesBoundedResponseBodySnippet()
+    {
+        var body = new string('y', 2_000);
+        await using var server = TestHttpServer.Start(_ => new TestResponse(500, Body: Encoding.UTF8.GetBytes(body)));
+        using var client = new AxiosClient();
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
+        var json = ex.ToJson();
+
+        // 结构化日志里只看 message 不用再回头翻响应；片段同样有上限，不把快照撑大。
+        var snippet = Assert.IsType<string>(json["responseBody"]);
+        Assert.Contains("truncated", snippet);
+        Assert.Contains("2000 chars", snippet);
+        Assert.True(snippet.Length < 1024, $"responseBody 片段长度 {snippet.Length}");
+    }
+
     [Fact]
     public async Task Status500_UsesBadResponseCode()
     {

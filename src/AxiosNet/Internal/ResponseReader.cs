@@ -830,13 +830,13 @@ internal static class ResponseReader
                     }
                 }
 
-                // 非 JSON 响应走统一错误模型。
+                // 非 JSON 响应走统一错误模型；原文一并带上，与标量 / 业务对象解析失败同一口径。
                 if (lenient)
                 {
                     return json;
                 }
 
-                throw AxiosException.BadResponse(config, request, "dynamic JSON", ex);
+                throw AxiosException.BadResponse(config, request, "dynamic JSON", ex, json);
             }
         }
 
@@ -975,7 +975,8 @@ internal static class ResponseReader
                     return raw;
                 }
 
-                throw AxiosException.BadResponse(config, request, dataType, ex);
+                // 标量解析失败同样把原文带进消息：数值 / 布尔 / 日期这类响应，看到原值就知道是格式还是编码问题。
+                throw AxiosException.BadResponse(config, request, dataType, ex, raw);
             }
         }
 
@@ -1026,7 +1027,8 @@ internal static class ResponseReader
                 return fallback;
             }
 
-            throw AxiosException.BadResponse(config, request, dataType, ex);
+            // 业务对象解析失败：正文片段是最直接的排查线索（字段名 / 类型与 DTO 不符时一眼可见）。
+            throw AxiosException.BadResponse(config, request, dataType, ex, fallback);
         }
     }
 

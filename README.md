@@ -66,14 +66,14 @@ dotnet tool install -g AxiosNet.Cli               # 可选：从 OpenAPI 生成�
 
 using AxiosNet;
 
-//字符串形式
+//字符串形式：返回完整响应（Status / Headers / Data）
 var rsp=await Axios.GetAsync<string>("https://api.example.com/users/1");
 
-//动态对象形式
+//动态对象形式：Data 的运行时类型是 AxiosDynamic
 var dyUser=await Axios.GetAsync<dynamic>("https://api.example.com/users/1");
 
-//强类型形式
-var user=await Axios.GetAsync<User>("https://api.example.com/users/1");
+//强类型形式：Data 已反序列化为 User
+var user=(await Axios.GetAsync<User>("https://api.example.com/users/1")).Data!;
 
 ```
 
@@ -490,6 +490,7 @@ logger.LogInformation("raw body: {Body}", Encoding.UTF8.GetString(response.RawBo
 - `RawBody` 是只读视图而不是 `byte[]`：底层数组可能与缓存条目共用，交出去改了就污染缓存。空正文是长度 0，不是 `null`。
 - 打开后整段正文随响应对象一起存活，只在需要排查的那几次请求上开；长期留档用 `OnRawResponse` 自己复制。
 - 流式响应（`ResponseType.Stream`）没有完整字节，开了也没有 `RawBody`；短路 / 缓存命中的正文不受此限。
+- 失败时已抛出的异常上也有一份捷径：`AxiosException.ResponseBody` 就是 `Response.RawText`，不必先判空 `Response`。
 
 ### 方法与 URL
 
@@ -555,14 +556,18 @@ try
 }
 catch (AxiosException ex)
 {
-    Console.WriteLine(ex.Code);      // ERR_BAD_REQUEST
-    Console.WriteLine(ex.Status);    // 404
-    Console.WriteLine(ex.Cause);     // 底层异常，可能为 null
-    Console.WriteLine(ex.ToJson());  // 结构化快照，可直接进日志
+    Console.WriteLine(ex.Code);         // ERR_BAD_REQUEST
+    Console.WriteLine(ex.Status);       // 404
+    Console.WriteLine(ex.Message);      // Request failed with status code 404: {...}（附服务端正文片段）
+    Console.WriteLine(ex.ResponseBody); // 服务端错误体原文（完整，不截断）
+    Console.WriteLine(ex.Cause);        // 底层异常，可能为 null
+    Console.WriteLine(ex.ToJson());     // 结构化快照，可直接进日志
 }
 
 if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 ```
+
+状态码被拒绝（4xx / 5xx）或正文解析失败时，`Message` 会附上响应正文片段（最多 512 字符，换行折成空格）：只打 `ex.Message` 也能看到服务端给出的原因。完整原文用 `ex.ResponseBody`（等价于 `ex.Response.RawText`）；`ToJson()` 里对应 `responseBody`。
 
 | Code | 触发场景 |
 | --- | --- |
@@ -2040,7 +2045,7 @@ var cache = new AxiosCache(new AxiosCacheOptions
 
 client.Defaults.Caching = cache;               // 挂在实例默认值上，整个实例生效
 
-var user = await client.GetAsync<User>("users/1");    // 发请求并落库
+var first = await client.GetAsync<User>("users/1");   // 发请求并落库
 var again = await client.GetAsync<User>("users/1");   // 命中：没有发出去
 ```
 

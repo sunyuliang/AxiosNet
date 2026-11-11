@@ -66,14 +66,14 @@ Direct one-line calls:
 
 using AxiosNet;
 
-// string form
+// string form: returns the full response (Status / Headers / Data)
 var rsp=await Axios.GetAsync<string>("https://api.example.com/users/1");
 
-// dynamic object form
+// dynamic object form: Data is an AxiosDynamic at runtime
 var dyUser=await Axios.GetAsync<dynamic>("https://api.example.com/users/1");
 
-// strongly typed form
-var user=await Axios.GetAsync<User>("https://api.example.com/users/1");
+// strongly typed form: Data is already deserialized to User
+var user=(await Axios.GetAsync<User>("https://api.example.com/users/1")).Data!;
 
 ```
 
@@ -488,6 +488,7 @@ logger.LogInformation("raw body: {Body}", Encoding.UTF8.GetString(response.RawBo
 - `RawBody` is a read-only view rather than a `byte[]`: the underlying array may be shared with a cache entry, so handing it out would let callers poison the cache. An empty body is length 0, not `null`.
 - Turning it on keeps the whole body alive with the response — do it for the requests you are debugging. For durable archives, copy inside `OnRawResponse` instead.
 - Streaming responses (`ResponseType.Stream`) have no full byte array, so there is no `RawBody` even when enabled; short-circuit / cache-hit bodies are not affected.
+- On failure the thrown exception carries a shortcut: `AxiosException.ResponseBody` is exactly `Response.RawText`, so no null check on `Response` is needed.
 
 ### Methods and URLs
 
@@ -553,14 +554,18 @@ try
 }
 catch (AxiosException ex)
 {
-    Console.WriteLine(ex.Code);      // ERR_BAD_REQUEST
-    Console.WriteLine(ex.Status);    // 404
-    Console.WriteLine(ex.Cause);     // inner exception, may be null
-    Console.WriteLine(ex.ToJson());  // structured snapshot, safe to log
+    Console.WriteLine(ex.Code);         // ERR_BAD_REQUEST
+    Console.WriteLine(ex.Status);       // 404
+    Console.WriteLine(ex.Message);      // Request failed with status code 404: {...} (server body snippet appended)
+    Console.WriteLine(ex.ResponseBody); // full error body as returned by the server
+    Console.WriteLine(ex.Cause);        // inner exception, may be null
+    Console.WriteLine(ex.ToJson());     // structured snapshot, safe to log
 }
 
 if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 ```
+
+When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appends a response-body snippet (at most 512 characters, newlines folded to spaces), so logging `ex.Message` alone still shows the server's reason. Use `ex.ResponseBody` (same as `ex.Response.RawText`) for the full text; `ToJson()` exposes it as `responseBody`.
 
 | Code | Triggered by |
 | --- | --- |
@@ -2036,7 +2041,7 @@ var cache = new AxiosCache(new AxiosCacheOptions
 
 client.Defaults.Caching = cache;               // on instance defaults: applies to the whole instance
 
-var user = await client.GetAsync<User>("users/1");    // sent and stored
+var first = await client.GetAsync<User>("users/1");   // sent and stored
 var again = await client.GetAsync<User>("users/1");   // hit: nothing was sent
 ```
 
