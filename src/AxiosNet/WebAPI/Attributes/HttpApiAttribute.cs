@@ -19,7 +19,7 @@ public class HttpApiAttribute : Attribute
     {
         if (method is null)
         {
-            throw new ArgumentNullException(nameof(method), "HTTP 方法不能为 null。");
+            throw new System.ArgumentNullException(nameof(method), "HTTP 方法不能为 null。");
         }
 
         if (string.IsNullOrWhiteSpace(path))

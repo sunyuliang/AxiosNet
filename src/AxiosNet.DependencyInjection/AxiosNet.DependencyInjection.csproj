@@ -16,7 +16,7 @@
     <PackageId>AxiosNet.DependencyInjection</PackageId>
     <Title>AxiosNet.DependencyInjection - AxiosNet 的依赖注入扩展（.NET 6+ / .NET Framework 4.7.2+）</Title>
     <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z），与另两个包同 tag 同版本 -->
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
     <Description>AxiosNet / AxiosNet.WebAPI 的 .NET 依赖注入扩展：AddAxiosClient 把 AxiosClient 注册为单例，AddApiClient 把 ApiClient 注册为单例（自建 / 门面 / 命名多站点三种模式），多站点经 IApiClientResolver 按键取用；连接池、拦截器与实例默认值随容器生命周期共享。除两个 AxiosNet 包外仅依赖微软第一方 Microsoft.Extensions.DependencyInjection.Abstractions，无第三方运行时依赖。DI extensions for AxiosNet and AxiosNet.WebAPI: AddAxiosClient and AddApiClient register the clients as singletons (self-built / facade / named multi-site modes), with IApiClientResolver for multi-site resolution. A netstandard2.0 asset covers .NET Framework 4.7.2+ / .NET Core 2.0+ alongside the main package. 随主包提供 netstandard2.0 兼容资产，覆盖 .NET Framework 4.7.2+ / .NET Core 2.0+（依赖微软第一方 BCL 兼容包）。</Description>

@@ -64,7 +64,7 @@ public sealed class XmlContentSerializer : IContentSerializer
         EnsureSupported();
         if (value is null)
         {
-            throw new ArgumentNullException(nameof(value), "XmlSerializer 无法序列化 null 根对象。");
+            throw new System.ArgumentNullException(nameof(value), "XmlSerializer 无法序列化 null 根对象。");
         }
 
         var serializer = For(type);

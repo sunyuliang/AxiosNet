@@ -116,6 +116,11 @@ namespace System.Runtime.CompilerServices
     /// 模块初始化器标记（WebAPI 的 FormatRegistration 用它注册格式化读取器）。
     /// Roslyn 会把带本标记的方法编进 &lt;Module&gt;.cctor，CLR 从 .NET Framework 1.0 起就执行它。
     /// </summary>
+    /// <remarks>
+    /// 必须保持 <c>internal</c>：一旦公开，引用本兼容资产的 net5+ 编译里
+    /// <c>System.Runtime</c> 与 AxiosNet 会各有一份同名公共类型，生成代码绑定该名字时直接 CS0433。
+    /// 消费方的生成代码由源生成器按需补一份同名 <c>internal</c> 声明（见 <c>SourceGen</c> 的模块初始化器补位）。
+    /// </remarks>
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
     internal sealed class ModuleInitializerAttribute : Attribute
     {

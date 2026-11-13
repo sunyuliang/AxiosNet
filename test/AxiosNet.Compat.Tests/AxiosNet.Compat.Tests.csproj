@@ -56,4 +56,17 @@
     <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <!-- 源生成器只挂在 net472 宿主上，它带来两层护栏：
+         1) 编译期：生成代码写进<b>本工程</b>的编译，net472 因此会真正编译一遍（生成的 [ModuleInitializer]
+            引用的补位类型一旦退回不可见，这里立刻 CS0122 构建失败）；
+         2) 运行期：声明式请求改走生成元数据而不是反射回退，等于在真实 .NET Framework 上验证注册链路。
+         net8.0 宿主刻意不挂：本工程对 AxiosNet 有 InternalsVisibleTo，兼容资产里那份 internal
+         ModuleInitializerAttribute 在这里也可见，会与 System.Runtime 的公开版撞成 CS0433——
+         那是「测试工程可见 internal」的特例，不代表真实消费方，所以只在没有公开版可用的一端挂生成器。 -->
+    <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
 </Project>

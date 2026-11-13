@@ -23,7 +23,7 @@ namespace AxiosNet.SourceGen
     public sealed partial class RequestModelGenerator : IIncrementalGenerator
     {
         internal const string GeneratorName = "AxiosNet.SourceGen";
-        internal const string GeneratorVersion = "1.5.0";
+        internal const string GeneratorVersion = "1.6.0";
 
         /// <summary>生成器入口：请求模型、接口代理、对象形状、启动期校验与 DI 注册扩展各自独立成管线。</summary>
         public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -47,6 +47,25 @@ namespace AxiosNet.SourceGen
             InitializeShapes(context, options);
             InitializeValidation(context, collectedModels, interfaces, options);
             InitializeDependencyInjection(context, interfaces, options);
+            InitializeModuleInitializerShim(context, options);
+        }
+
+        // 模块初始化器补位：目标框架的 BCL 没有 ModuleInitializerAttribute 时，在消费方编译里补一份 internal 声明。
+        // 判定先收成一个布尔再进管线：直接吃 Compilation 会让这条输出在每次无关编辑后都重跑，把增量缓存打穿。
+        private static void InitializeModuleInitializerShim(
+            IncrementalGeneratorInitializationContext context,
+            IncrementalValueProvider<GeneratorOptions> options)
+        {
+            var required = context.CompilationProvider.Select(static (compilation, _) => ModuleInitializerShim.IsRequired(compilation));
+            context.RegisterSourceOutput(required.Combine(options), static (output, pair) =>
+            {
+                if (!pair.Left || !pair.Right.Enabled)
+                {
+                    return;
+                }
+
+                output.AddSource(ModuleInitializerShim.HintName, ModuleInitializerShim.Emit());
+            });
         }
 
         // 语法层粗筛：非接口的类型声明且带特性；是不是请求模型留给语义层判定。

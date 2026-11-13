@@ -37,7 +37,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             // 否则 net6.0 会由 STJ 的 Type 重载抛出 JsonException，与 net8.0 的异常类型不一致。
             if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
             {
-                throw new ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
+                throw new System.ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
             }
 
             return "null";

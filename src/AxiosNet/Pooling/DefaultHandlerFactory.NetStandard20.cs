@@ -20,8 +20,9 @@ internal static partial class DefaultHandlerFactory
             AllowAutoRedirect = o.AllowAutoRedirect,
             MaxAutomaticRedirections = o.MaxAutomaticRedirections,
 
-            // Framework 的 DecompressionMethods 没有 Brotli：只放行 gzip / deflate，
-            // 免得把一个平台不认识的枚举值交给 HttpClientHandler 而在运行期抛参数异常。
+            // Framework 的 DecompressionMethods 没有 Brotli：只放行 gzip / deflate。
+            // ValidateOptions 已经拒绝越界位（含 Brotli），这里再掩一次只是防御：
+            // 万一有人绕过建池校验直接调本方法，也不会把平台不认识的枚举值交给 HttpClientHandler。
             AutomaticDecompression = o.AutomaticDecompression
                 ? o.Decompression & (DecompressionMethods.GZip | DecompressionMethods.Deflate)
                 : DecompressionMethods.None,

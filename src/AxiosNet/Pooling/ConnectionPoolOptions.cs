@@ -14,6 +14,9 @@ namespace AxiosNet.Pooling;
 /// <see cref="PooledConnectionLifetime"/>、<see cref="PooledConnectionIdleTimeout"/>、<see cref="ConnectTimeout"/>、
 /// <see cref="EnableMultipleHttp2Connections"/>、<see cref="KeepAlivePingDelay"/>、<see cref="KeepAlivePingTimeout"/>。
 /// 把它们设为非默认值会在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝，而不是静默忽略。
+/// 注意：<b>默认值本身在该资产上同样不生效</b>——默认的 10 分钟连接轮换、2 分钟空闲回收、15 秒建连超时
+/// 都没有可映射的位置，兼容资产的连接生命周期与建连超时完全由 <c>HttpClientHandler</c> / 运行时决定。
+/// 需要这些语义时请用 <see cref="HandlerFactory"/> 接管默认档 Handler，或让消费方运行 .NET 6+。
 /// 例外：显式设置 <see cref="HandlerFactory"/> 接管默认档 Handler 时，这些选项由工厂决定语义，不做拒绝
 /// （命名传输档的 <see cref="ConnectionTransportOptions.HandlerFactory"/> 只作用于该档，不能给默认档豁免）。
 /// </remarks>

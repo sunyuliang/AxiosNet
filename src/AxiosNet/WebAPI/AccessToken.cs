@@ -42,7 +42,12 @@ public sealed class AccessTokenOptions
     public Func<CancellationToken, ValueTask<AccessToken>> AcquireAsync { get; }
 
     /// <summary>刷新令牌的回调（通常是 <c>grant_type=refresh_token</c>）；<c>null</c> 时回落到 <see cref="AcquireAsync"/>。</summary>
+    /// <remarks>netstandard2.0 兼容资产上是普通 <c>set</c>：跨程序集的 <c>init</c> 在 .NET Framework 消费方无法写入。</remarks>
+#if NETSTANDARD2_0
+    public Func<CancellationToken, ValueTask<AccessToken>>? RefreshAsync { get; set; }
+#else
     public Func<CancellationToken, ValueTask<AccessToken>>? RefreshAsync { get; init; }
+#endif
 
     /// <summary>提前多久刷新，默认 1 分钟；实际提前量不超过令牌寿命的一半（短寿命令牌不会「刚拿到就该刷」）。</summary>
     public TimeSpan RefreshAhead

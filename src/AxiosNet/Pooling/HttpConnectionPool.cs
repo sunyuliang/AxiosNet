@@ -344,7 +344,7 @@ public sealed class HttpConnectionPool : IDisposable
     {
         if (key is null)
         {
-            throw new ArgumentNullException(nameof(key), "命名池的 key 不能为 null。");
+            throw new System.ArgumentNullException(nameof(key), "命名池的 key 不能为 null。");
         }
 
         if (string.IsNullOrWhiteSpace(key))

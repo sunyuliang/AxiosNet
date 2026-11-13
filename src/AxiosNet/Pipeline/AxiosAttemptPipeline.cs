@@ -150,7 +150,7 @@ public sealed class AxiosAttemptPipeline
         if (anchor is null)
         {
             // 用调用方的公共参数名（anchor / target），不固定成 nameof(anchor)。
-            throw new ArgumentNullException(paramName);
+            throw new System.ArgumentNullException(paramName);
         }
 
         var index = Array.IndexOf(_middleware, anchor);
@@ -182,7 +182,7 @@ public sealed class AxiosAttemptPipeline
         var copy = new AxiosAttemptMiddleware[middleware.Length];
         for (var i = 0; i < middleware.Length; i++)
         {
-            copy[i] = middleware[i] ?? throw new ArgumentNullException(nameof(middleware), $"第 {i} 个中间件是 null。");
+            copy[i] = middleware[i] ?? throw new System.ArgumentNullException(nameof(middleware), $"第 {i} 个中间件是 null。");
         }
 
         RejectDuplicateBuiltIns(copy);

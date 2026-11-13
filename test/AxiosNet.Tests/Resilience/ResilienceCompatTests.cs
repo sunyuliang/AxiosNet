@@ -97,41 +97,60 @@ public sealed class ResilienceCompatTests
     [Fact]
     public async Task Hedging_OnNonIdempotentPost_IsGatedByTheSameSwitch()
     {
-        await using var server = TestHttpServer.Start(async request =>
+        // 关闭：幂等闸门拦住 POST，只应有一条分支发出。
+        await using (var gated = TestHttpServer.Start(async _ =>
         {
             await Task.Delay(25);
             return TestJson.Response(new { ok = true });
-        });
-
-        // 关闭：POST 只发一条。
-        using (var client = new AxiosClient(new AxiosConfig
+        }))
         {
-            BaseAddress = server.Url,
-            Resilience =
+            using var client = new AxiosClient(new AxiosConfig
             {
-                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
-            }
-            }))
-        {
+                BaseAddress = gated.Url,
+                Resilience =
+                {
+                    Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+                }
+            });
+
             await client.PostAsync("x", new { id = 1 });
+
+            Assert.Single(gated.Received);
         }
 
-        Assert.Equal(1, server.Received.Count);
+        // 打开：同一条 POST 必须真的被对冲成两条。
+        // 服务端「收到两条分支才回包」：否则胜出者可能在线程池被抢占时先拿到响应、把还没发出去的败者收掉，
+        // 断言就会随机变成 1 条。等两条都到齐再回包，把「确实发出了两条」变成确定性事实而不是时序巧合。
+        var arrived = 0;
+        var bothArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // 打开：同一条 POST 被对冲成两条。
-        using (var client = new AxiosClient(new AxiosConfig
+        await using (var hedged = TestHttpServer.Start(async _ =>
         {
-            BaseAddress = server.Url,
-            Resilience =
+            if (Interlocked.Increment(ref arrived) >= 2)
             {
-                AllowUnsafeRetry = true,
-                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+                bothArrived.TrySetResult();
             }
-            }))
-        {
-            await client.PostAsync("x", new { id = 1 });
-        }
 
-        Assert.Equal(3, server.Received.Count);
+            await bothArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            return TestJson.Response(new { ok = true });
+        }))
+        {
+            using var client = new AxiosClient(new AxiosConfig
+            {
+                BaseAddress = hedged.Url,
+                Resilience =
+                {
+                    AllowUnsafeRetry = true,
+                    Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
+                }
+            });
+
+            var failure = await Record.ExceptionAsync(() => client.PostAsync("x", new { id = 1 }));
+
+            // 只有一条分支时服务端会等满 5 秒才超时，失败信息必须指向真正的原因，而不是一个 500。
+            Assert.True(arrived >= 2, $"只发出了 {arrived} 条对冲分支：AllowUnsafeRetry 没有对 POST 放开对冲。");
+            Assert.Null(failure);
+            Assert.Equal(2, hedged.Received.Count);
+        }
     }
 }

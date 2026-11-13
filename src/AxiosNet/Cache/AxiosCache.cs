@@ -60,8 +60,17 @@ public sealed class AxiosCacheOptions
     public bool ConditionalRequests { get; set; } = true;
 
     /// <summary>条目存储，<c>null</c> = 内置 <see cref="MemoryCacheStore"/>；接 Redis / 共享缓存时换成自己的实现。</summary>
-    /// <remarks>只在构造 <see cref="AxiosCache"/> 时读取一次（换存储请新建一个缓存实例），故为 <c>init</c>。</remarks>
+    /// <remarks>
+    /// 只在构造 <see cref="AxiosCache"/> 时读取一次（换存储请新建一个缓存实例），故为 <c>init</c>。
+    /// netstandard2.0 兼容资产上是普通 <c>set</c>：跨程序集的 <c>init</c> 在 .NET Framework 消费方无法写入
+    /// （编译器只在 corlib 里解析 <c>IsExternalInit</c>），只有 set 才能让对象初始化器编译通过；
+    /// 「构造期读一次」的语义仍由 <see cref="AxiosCache"/> 保证，不因可写而改变。
+    /// </remarks>
+#if NETSTANDARD2_0
+    public IAxiosCacheStore? Store { get; set; }
+#else
     public IAxiosCacheStore? Store { get; init; }
+#endif
 
     /// <summary>内置内存存储的条目上限，默认 1024（必须大于零）；自建 <see cref="Store"/> 时本项不生效（上限归存储自己管）。</summary>
     public int MaxEntries { get; set; } = 1024;

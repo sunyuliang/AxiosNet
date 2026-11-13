@@ -29,7 +29,12 @@ public sealed class FormData : Dictionary<string, object?>
     public Dictionary<string, ValueFormat> Formats { get; } = new(StringComparer.Ordinal);
 
     /// <summary>数据来源名称：装配期错误用它做上下文（普通字典没有这个名字）。</summary>
+    /// <remarks>netstandard2.0 兼容资产上是普通 <c>set</c>：跨程序集的 <c>init</c> 在 .NET Framework 消费方无法写入。</remarks>
+#if NETSTANDARD2_0
+    public string? SourceName { get; set; }
+#else
     public string? SourceName { get; init; }
+#endif
 
     /// <summary>回收本容器里已取得的流与内容（装配中途失败时用），单个部件释放失败不影响其余项。</summary>
     public void DisposeOwned() => AxiosNet.Internal.MultipartOwnership.DisposeOwned(Values);

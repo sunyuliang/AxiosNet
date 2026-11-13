@@ -31,7 +31,7 @@
     <PackageId>AxiosNet</PackageId>
     <Title>AxiosNet - axios 风格 HTTP 客户端 + 声明式 API 客户端（.NET 6+ / .NET Framework 4.7.2+）</Title>
     <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z） -->
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
     <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计）。同一包内置声明式 API 客户端（AxiosNet.WebAPI 命名空间，对标 Refit）：定义请求模型（路由/参数特性）+ 授权，调用只剩一句 client.RequestAsync(request)，返回类型由请求模型自动确定，底层仍是完整管线。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。三目标：net6.0 / net8.0 覆盖 .NET 6 及以上全部运行时（6/7/8/9/10/11，零第三方运行时依赖），netstandard2.0 兼容资产覆盖 .NET Framework 4.7.2+ 与 .NET Core 2.0+（依赖 9 个微软第一方 BCL 兼容包，功能子集见 README）。An axios-style HTTP client for .NET — tri-targeted netstandard2.0 / net6.0 / net8.0, runs on .NET 6/7/8/9/10/11 and .NET Framework 4.7.2+ / .NET Core 2.0+. The same package also includes a declarative API client (namespace AxiosNet.WebAPI, Refit-style): request models with route/parameter attributes + authorization, one call client.RequestAsync(request). For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
