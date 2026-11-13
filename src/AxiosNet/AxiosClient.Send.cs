@@ -129,7 +129,11 @@ public sealed partial class AxiosClient
     /// 池化后稳态复用、不再为它分配状态机盒。返回值沿尝试中间件链只被 await 一次（契约见
     /// <see cref="AxiosAttemptHandler"/>）。
     /// </remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<AxiosAttemptResult> SendTerminalAsync(
         HttpRequestMessage request,
         AxiosAttemptContext ctx)
@@ -327,7 +331,11 @@ public sealed partial class AxiosClient
     /// 返回的 <see cref="ValueTask{TResult}"/> 必须且只被 await 一次：唯一调用点是 <see cref="SendTerminalAsync"/>，
     /// 拿到后立即等待，不外传、不缓存、不并发消费。
     /// </remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private static async ValueTask<HttpResponseMessage> SendRequestAsync(
         HttpClient client,
         HttpRequestMessage request,
@@ -370,7 +378,11 @@ public sealed partial class AxiosClient
     /// 返回的 <see cref="ValueTask{TResult}"/> 必须且只被 await 一次：唯一调用点是 <see cref="SendTerminalAsync"/>，
     /// 拿到后立即解构等待，不外传、不缓存、不并发消费。
     /// </remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private static async ValueTask<(AxiosResponse Response, bool StatusAccepted)> ReadResponseAsync(
         HttpResponseMessage responseMessage,
         HttpRequestMessage request,

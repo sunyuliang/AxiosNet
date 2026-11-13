@@ -38,7 +38,7 @@ internal static class EncodingResolver
 
         if (trimmed.Equals(Latin1Name, StringComparison.OrdinalIgnoreCase))
         {
-            return Encoding.Latin1;
+            return PlatformCompat.Latin1;
         }
 
         try

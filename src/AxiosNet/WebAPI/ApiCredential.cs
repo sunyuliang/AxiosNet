@@ -35,9 +35,13 @@ public interface IApiCredentialProvider
 
     /// <summary>作废当前凭据；401 之后由库调用，让下一次取凭据必然拿到新值。只有托管落点形态才会被调用。</summary>
     /// <param name="staleToken">刚才被拒的值（<see cref="ApiCredential.Value"/>），拿不到时为 <c>null</c>，表示无条件作废。</param>
+#if NETSTANDARD2_0
+    void Invalidate(string? staleToken = null);
+#else
     void Invalidate(string? staleToken = null)
     {
     }
+#endif
 }
 
 /// <summary>凭据形态：决定库把值写到哪里、以及 401 后是否重放。</summary>
@@ -133,13 +137,13 @@ public static class CredentialProviders
             throw new ArgumentException("令牌不能为空白：要表达「本次不带凭据」请用 CredentialProviders.Fixed(ApiCredential.None)。", nameof(token));
         }
 
-        return new DelegateCredentialProvider((_, _) => ValueTask.FromResult(ApiCredential.Token(token)));
+        return new DelegateCredentialProvider((_, _) => PlatformCompat.FromResult(ApiCredential.Token(token)));
     }
 
     /// <summary>固定凭据。</summary>
     /// <param name="credential">每次请求都返回的凭据描述。</param>
     public static IApiCredentialProvider Fixed(ApiCredential credential)
-        => new DelegateCredentialProvider((_, _) => ValueTask.FromResult(credential));
+        => new DelegateCredentialProvider((_, _) => PlatformCompat.FromResult(credential));
 
     /// <summary>按委托取凭据。</summary>
     /// <param name="getAsync">每次请求调用一次的取凭据委托。</param>

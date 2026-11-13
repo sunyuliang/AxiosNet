@@ -60,7 +60,8 @@ public sealed class ContentSerializerRegistry
                 return;
             }
 
-            var next = new Dictionary<string, IContentSerializer>(current, StringComparer.Ordinal) { [key] = serializer };
+            var next = CopyEntries(current);
+            next[key] = serializer;
             _entries = next;
         }
     }
@@ -83,7 +84,7 @@ public sealed class ContentSerializerRegistry
                 return false;
             }
 
-            var next = new Dictionary<string, IContentSerializer>(current, StringComparer.Ordinal);
+            var next = CopyEntries(current);
             next.Remove(key);
             _entries = next;
             return true;
@@ -136,5 +137,22 @@ public sealed class ContentSerializerRegistry
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 按 Ordinal 复制一份登记表（写时复制）。netstandard2.0 的 Dictionary 构造不接受 IReadOnlyDictionary，
+    /// 因此三个资产统一走这份显式复制，语义一致。
+    /// </summary>
+    /// <param name="source">当前登记表。</param>
+    /// <returns>独立副本。</returns>
+    private static Dictionary<string, IContentSerializer> CopyEntries(IReadOnlyDictionary<string, IContentSerializer> source)
+    {
+        var copy = new Dictionary<string, IContentSerializer>(StringComparer.Ordinal);
+        foreach (var pair in source)
+        {
+            copy[pair.Key] = pair.Value;
+        }
+
+        return copy;
     }
 }

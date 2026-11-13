@@ -17,8 +17,11 @@ internal static class ScalarTypes
             || t == typeof(decimal)
             || t == typeof(DateTime)
             || t == typeof(DateTimeOffset)
+#if !NETSTANDARD2_0
+            // DateOnly / TimeOnly 是 .NET 6 类型，兼容资产上不视作标量。
             || t == typeof(DateOnly)
             || t == typeof(TimeOnly)
+#endif
             || t == typeof(TimeSpan)
             || t == typeof(Guid)
             || t == typeof(Uri);

@@ -489,9 +489,31 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
         return -1;
     }
 
-    // 副本列表上写入时要边改边找：AsSpan 直接看列表底层数组，不复制、不分配。
+    // 批量合并 / 删除要边改边找。net6+ 用 CollectionsMarshal 直接看 List 底层数组（不复制、不分配）；
+    // netstandard2.0 没有 CollectionsMarshal：按索引读列表，同样是零分配
+    //（旧实现每次 Put/Remove 都 ToArray 复制整张表，批量合并因此退化成 O(n²) 分配）。
     private static int IndexOf(List<Entry> items, string name)
-        => IndexOf(CollectionsMarshal.AsSpan(items), name);
+    {
+#if NETSTANDARD2_0
+        if (name.Length == 0)
+        {
+            return -1;
+        }
+
+        var meta = Entry.MetaOf(name);
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i].Meta == meta && string.Equals(items[i].Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+#else
+        return IndexOf(CollectionsMarshal.AsSpan(items), name);
+#endif
+    }
 
     // 头名只去首尾空白：中间的空格留给 ValidateName 判非法，而不是悄悄改掉。
     private static string NormalizeName(string name) => name.Trim();

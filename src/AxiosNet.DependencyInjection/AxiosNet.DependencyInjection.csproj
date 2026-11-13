@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 与 AxiosNet 相同：net6.0 / net8.0 双目标，.NET 8+ 取 net8.0 资产、旧运行时取 net6.0 资产。
-         本包是薄封装，两个目标编译同一份源码，没有条件编译。 -->
-    <TargetFrameworks>net6.0;net8.0</TargetFrameworks>
+    <!-- 与 AxiosNet 主包相同：net6.0 / net8.0 覆盖 .NET 6+，netstandard2.0 兼容资产覆盖
+         .NET Framework 4.7.2+ / .NET Core 2.0+。NuGet 按兼容性自动选资产，主路径行为不变。
+         本包是薄封装，三个目标编译同一份源码；唯一的条件编译是 Compatibility/ 下的
+         ArgumentNullException.ThrowIfNull 别名，业务代码没有 #if。 -->
+    <TargetFrameworks>netstandard2.0;net6.0;net8.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -12,13 +14,13 @@
   <!-- ===== NuGet 包元数据 ===== -->
   <PropertyGroup>
     <PackageId>AxiosNet.DependencyInjection</PackageId>
-    <Title>AxiosNet.DependencyInjection - AxiosNet 的依赖注入扩展</Title>
+    <Title>AxiosNet.DependencyInjection - AxiosNet 的依赖注入扩展（.NET 6+ / .NET Framework 4.7.2+）</Title>
     <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z），与另两个包同 tag 同版本 -->
     <Version>1.5.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>AxiosNet / AxiosNet.WebAPI 的 .NET 依赖注入扩展：AddAxiosClient 把 AxiosClient 注册为单例，AddApiClient 把 ApiClient 注册为单例（自建 / 门面 / 命名多站点三种模式），多站点经 IApiClientResolver 按键取用；连接池、拦截器与实例默认值随容器生命周期共享。除两个 AxiosNet 包外仅依赖微软第一方 Microsoft.Extensions.DependencyInjection.Abstractions，无第三方运行时依赖。DI extensions for AxiosNet and AxiosNet.WebAPI: AddAxiosClient and AddApiClient register the clients as singletons (self-built / facade / named multi-site modes), with IApiClientResolver for multi-site resolution.</Description>
-    <PackageTags>axios;http;httpclient;api-client;dependency-injection;di;singleton;multi-site;named-client;aspnetcore;generic-host;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
+    <Description>AxiosNet / AxiosNet.WebAPI 的 .NET 依赖注入扩展：AddAxiosClient 把 AxiosClient 注册为单例，AddApiClient 把 ApiClient 注册为单例（自建 / 门面 / 命名多站点三种模式），多站点经 IApiClientResolver 按键取用；连接池、拦截器与实例默认值随容器生命周期共享。除两个 AxiosNet 包外仅依赖微软第一方 Microsoft.Extensions.DependencyInjection.Abstractions，无第三方运行时依赖。DI extensions for AxiosNet and AxiosNet.WebAPI: AddAxiosClient and AddApiClient register the clients as singletons (self-built / facade / named multi-site modes), with IApiClientResolver for multi-site resolution. A netstandard2.0 asset covers .NET Framework 4.7.2+ / .NET Core 2.0+ alongside the main package. 随主包提供 netstandard2.0 兼容资产，覆盖 .NET Framework 4.7.2+ / .NET Core 2.0+（依赖微软第一方 BCL 兼容包）。</Description>
+    <PackageTags>axios;http;httpclient;api-client;dependency-injection;di;singleton;multi-site;named-client;aspnetcore;generic-host;csharp;dotnet;netstandard;netframework;net6;net7;net8;net9;net10;net11</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>
@@ -48,6 +50,14 @@
     <ProjectReference Include="..\AxiosNet\AxiosNet.csproj" />
     <!-- 唯一外部依赖：微软第一方 DI 抽象（IServiceCollection / ServiceDescriptor），不含任何第三方包 -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="6.0.0" />
+  </ItemGroup>
+
+  <!-- netstandard2.0 兼容资产：IAsyncDisposable / ValueTask 由这两个微软第一方包提供。
+       Microsoft.Extensions.DependencyInjection.Abstractions 6.0.0 自带 netstandard2.0 资产，无需降版本；
+       这些依赖只进兼容资产，net6.0 / net8.0 仍由运行时自带 BCL。 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
   </ItemGroup>
 
   <!-- SourceLink：与另两个包相同，仅在 GitHub Actions（镜像仓库）里启用 -->

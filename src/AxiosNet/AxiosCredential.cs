@@ -135,7 +135,7 @@ public sealed class AxiosCredential
     internal ValueTask<AxiosCredential?> ResolveAsync(AxiosCredentialContext context, CancellationToken cancellationToken)
         => _form == Form.Provider
             ? _provider!.GetAsync(context, cancellationToken)
-            : ValueTask.FromResult<AxiosCredential?>(this);
+            : PlatformCompat.FromResult<AxiosCredential?>(this);
 
     /// <summary>凭据 → <c>Authorization</c> 头值；提供方形态由 <see cref="ResolveAsync"/> 先解成静态形态。</summary>
     internal string? ToHeaderValue()
@@ -181,9 +181,13 @@ public interface IAxiosCredentialProvider
 
     /// <summary>作废当前凭据，让下一次取凭据拿到新值；默认空实现。</summary>
     /// <param name="staleValue">刚才被拒的值，<c>null</c> 表示无条件作废。</param>
+#if NETSTANDARD2_0
+    void Invalidate(string? staleValue = null);
+#else
     void Invalidate(string? staleValue = null)
     {
     }
+#endif
 }
 
 /// <summary>凭据提供方拿到的内核上下文（本次请求的生效配置）。</summary>

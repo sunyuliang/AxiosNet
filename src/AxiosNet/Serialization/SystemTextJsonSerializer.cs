@@ -46,6 +46,12 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         return SerializeCore(value, type, AxiosJson.GetOptions(config));
     }
 
+#if NETSTANDARD2_0
+    /// <summary>JSON 走文本出口，不提供二进制序列化；返回 <c>null</c> 让库改用 <see cref="Serialize(object, Type, AxiosConfig)"/>。</summary>
+    /// <remarks>显式实现而不是依赖接口默认方法：netstandard2.0 兼容资产不支持默认接口实现。</remarks>
+    public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
+#endif
+
     /// <inheritdoc />
     public object? Deserialize(string json, Type type, AxiosConfig config)
         => DeserializeCore(json, type, AxiosJson.GetOptions(config));

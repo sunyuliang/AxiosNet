@@ -1,10 +1,11 @@
 # AxiosNet
 
-[![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
+[![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2500%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2489%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2647%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2562%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -14,8 +15,8 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 项 | 值 |
 | --- | --- |
 | 包 | `AxiosNet`（核心 + 声明式客户端同包）、`AxiosNet.DependencyInjection`（可选）、`AxiosNet.Cli`（可选，设计期 dotnet tool） |
-| 目标框架 | `net6.0` / `net8.0` 双目标：.NET 8 及以上取 `lib/net8.0`，.NET 6 / 7 取 `lib/net6.0` |
-| 依赖 | 零第三方，只用 BCL |
+| 目标框架 | 三目标 `netstandard2.0` / `net6.0` / `net8.0`：.NET 8+ 取 `lib/net8.0`，.NET 6 / 7 取 `lib/net6.0`，.NET Framework 4.7.2+ / .NET Core 2.0+ / .NET 5 取 `lib/netstandard2.0`（[兼容资产](#net-standard-20-兼容资产)） |
+| 依赖 | 零第三方；`net6.0` / `net8.0` 只用 BCL，`netstandard2.0` 兼容资产另带 9 个微软第一方 BCL 兼容包（NuGet 自动带入） |
 | 风格 | 全异步：`Task` + `CancellationToken` |
 | 观测 | trace / metrics / events 默认开启，无人订阅时零产出 |
 
@@ -32,7 +33,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 错误与配置 | [错误处理](#错误处理) · [配置](#配置)（[配置速查](#配置速查) / [客户端](#客户端) / [拦截器](#拦截器) / [数据转换与序列化](#数据转换与序列化) / [连接与传输](#连接与传输) / [可观测性](#可观测性)） |
 | 治理与缓存 | [治理](#治理)（[重试](#重试) / [熔断](#熔断) / [并发对冲](#并发对冲) / [备用端点](#备用端点) / [幂等键](#幂等键) / [尝试管线](#尝试管线) / [短路响应](#短路响应)） · [缓存](#缓存) |
 | 声明式 | [声明式客户端](#声明式客户端)（[模型式](#模型式-api) / [接口式](#接口式-api) / [值格式化](#值格式化) / [OpenAPI 导入](#从-openapi-导入) / [凭据与令牌管理](#凭据与令牌管理)） |
-| 运行时与参考 | [运行时与 AOT](#运行时与-aot) · [参考](#参考)（[能力地图](#能力地图) / [与 axios 对照](#与-axios-对照) / [依赖注入](#依赖注入) / [示例项目](#示例项目) / [构建与测试](#构建与测试) / [项目结构](#项目结构)） |
+| 运行时与参考 | [运行时与 AOT](#运行时与-aot) · [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产) · [参考](#参考)（[能力地图](#能力地图) / [与 axios 对照](#与-axios-对照) / [依赖注入](#依赖注入) / [示例项目](#示例项目) / [构建与测试](#构建与测试) / [项目结构](#项目结构)） |
 | 其它 | [License](#license) |
 
 按目标选入口：
@@ -40,6 +41,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 想做什么 | 从哪读 |
 | --- | --- |
 | 第一次使用 | [安装](#安装) → [快速上手](#快速上手) → [能力地图](#能力地图) |
+| 在 .NET Framework / .NET Core 2.x / 3.x 上使用 | [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产) |
 | 从 axios 迁移 | [与 axios 对照](#与-axios-对照) → 有意差异 → [快速上手](#快速上手) |
 | 只查某个选项 | [配置速查](#配置速查) |
 | 做服务端治理 | [治理](#治理) |
@@ -48,6 +50,8 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 ## 安装
 
 > 从 1.x 升级：字段改名与行为收紧见 [1.5 破坏性变更](docs/breaking-changes-1.5.md)。
+
+> 运行时基线：现代资产覆盖 .NET 6 及以上；兼容资产覆盖 .NET Framework 4.7.2+、.NET Core 2.0+（含 3.1）与 .NET 5。NuGet 自动选资产，无需任何配置。.NET Core 1.0 / 1.1 只支持到 `netstandard1.6`，不在支持范围内；能力边界见 [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产)。
 
 ```bash
 dotnet add package AxiosNet                       # 核心客户端 + 声明式 API 客户端（同一包）
@@ -1224,7 +1228,7 @@ breaker.Reset();                                                 // 运维手工
 
 状态机：`Closed` →（连续失败达 `FailureThreshold`，**或**窗口内失败率达 `FailureRateThreshold`）→ `Open` →（冷却 `BreakDuration`）→ `HalfOpen` →（连续 `RecoverySuccesses` 次探测成功）→ `Closed`；期间任何探测失败**立刻**回 `Open` 并重新计时。
 
-**两条打开规则为什么并存**：只看连续失败，低流量的「半死不活」下游永远熔不断——每夹一次成功就把计数清零，而它恰恰最该被熔断；只看窗口失败率，小流量又填不满样本。所以各管一段：样本攒够看比率，攒不够时连续失败兜底。窗口是**按最近 N 次结果**算的，与时间无关（不记时间戳，也不需要定期清理），旧账靠覆盖自然衰减。
+**两条打开规则并存**：连续失败与滚动窗口失败率取「或」——样本攒够看比率，攒不够时连续失败兜底。窗口是**按最近 N 次结果**算的，与时间无关（不记时间戳，也不需要定期清理），旧账靠覆盖自然衰减。
 
 失败口径与重试门禁对齐（**取消 / 4xx 不计失败**）：
 
@@ -1369,7 +1373,6 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 ```
 
 - **上下文 `AxiosAttemptContext` 是只读结构体**，字段：`Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`；只能用 `WithXxx` 派生副本。
-- 它是结构体而不是类，因为中间件链构造期编译一次、每次尝试零分配，且并发类中间件需要按分支拷贝上下文。
 - **两个编号分开走**：`AttemptNumber` 由重试推进，`EndpointIndex` 由备用端点推进（`0` = 请求自己的地址）。换端点不推进尝试号，所以同一个尝试号下可能有多条尝试事件。
 - **中间件恒在链上，是否干活由它自己看 `ctx.Config` 决定**：没配重试策略时重试中间件就是纯直通。链因此可以在构造时固化，不必每次请求重建。
 - **审计默认在链上**：`Attempt.Audit` 是默认链第 6 项（闸门之后、终端之前），订阅 `AxiosNet.Attempt` 就能拿到每次尝试的耗时 / 状态码 / 错误码，不订阅时只做一次开关判定、不建状态机。它已在链上，再 `Append(Attempt.Audit)` 会被当作重复内置项拒绝。`Append` 的自定义项排在它内侧（更靠近终端），因此它们的执行时间计入审计的事件耗时。
@@ -1732,7 +1735,7 @@ config.Serialization.JsonOptions =
 | 模型式（默认） | 每个操作一个 `ApiRequest<T>` 请求模型 | `client.RequestAsync(new XxxRequest { ... })` |
 | 接口式（`--style interface`） | 每个 tag 一个接口 | `client.Create<T>()` |
 
-两种形态都只有声明、不含运行时代码：模型与接口代理都由源生成器在编译期烘焙，JIT 与 Native AOT 同一路径。工具自身的 YAML 解析是设计期依赖，`AxiosNet` 运行时仍零第三方依赖。
+两种形态都只有声明、不含运行时代码：模型与接口代理都由源生成器在编译期烘焙，JIT 与 Native AOT 同一路径。工具自身的 YAML 解析是设计期依赖，`AxiosNet` 的 `net6.0` / `net8.0` 运行时仍零第三方依赖。
 
 ```bash
 # 一次性安装（全局 dotnet tool，命令 axiosnet-gen；net6.0 / net8.0 双目标，.NET 6 及以上都能跑）
@@ -2148,13 +2151,48 @@ var again = await client.GetAsync<User>("users/1");   // 命中：没有发出�
 
 ## 运行时与 AOT
 
-类库 `net6.0` / `net8.0` 双目标：.NET 8 及以上引用 `lib/net8.0`，.NET 6 / 7 引用 `lib/net6.0`，无需配置。两份资产来自同一份源码，运行时行为不随 TFM 变化（都绑定到消费方运行时自带的 BCL）；`net8.0` 目标的价值是可以使用 net8 一档的 BCL 和 net7+ 的分析器。不支持 .NET Framework 与 .NET Core 3.1 及更早。
+类库三目标 `netstandard2.0` / `net6.0` / `net8.0`：.NET 8 及以上引用 `lib/net8.0`，.NET 6 / 7 引用 `lib/net6.0`，其余受支持的运行时引用 `lib/netstandard2.0`，由 NuGet 按兼容性自动选，无需配置。三份资产来自同一份源码；现代两份绑定到消费方运行时自带的 BCL，行为不随 TFM 变化。
 
-两个目标都声明 `IsTrimmable`（自身裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`，AOT 分析器 0 警告（`net6.0` 目标上 SDK 不提供该分析器）。
+`net6.0` / `net8.0` 两个目标都声明 `IsTrimmable`（自身裁剪 0 警告），`net8.0` 目标另开 `IsAotCompatible`，AOT 分析器 0 警告（`net6.0` 目标上 SDK 不提供该分析器）。兼容资产不参与裁剪 / AOT 分析。
+
+### .NET Standard 2.0 兼容资产
+
+`lib/netstandard2.0` 是功能子集，用来覆盖 **.NET Framework 4.7.2+ / .NET Core 2.0+（含 3.1）/ .NET 5**。
+.NET Core 1.0 / 1.1 只支持到 `netstandard1.6`，同一份资产无法覆盖，因此不在支持范围内；
+.NET 6 及以上永远取 `lib/net6.0` / `lib/net8.0`，不会落到兼容资产上，主路径行为不受影响。
+
+它是同一份源码按 `NETSTANDARD2_0` 条件编译的产物，公共入口尽量保持一致，以下能力被移除或降级：
+
+| 项 | `net6.0` / `net8.0` | `netstandard2.0` 兼容资产 |
+| --- | --- | --- |
+| 默认 HTTP 版本 | HTTP/2（可协商降级） | HTTP/1.1；显式要求 HTTP/2、HTTP/3 会在发送前拒绝 |
+| 传输层 | `SocketsHttpHandler` | `HttpClientHandler`，只映射两边都有的选项（连接数上限、TLS 协议版本、压缩、重定向、Cookie、代理、凭据、证书校验回调） |
+| 连接级选项 | 连接生命周期 / 并发上限 / h2 ping / `ConnectTimeout` / `ConnectCallback` / `SslOptions` | 只映射两边都有的项（`MaxConnectionsPerServer`、`EnabledSslProtocols`、压缩、重定向、Cookie、代理、凭据、证书校验回调）；`PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `EnableMultipleHttp2Connections` / `KeepAlivePing*` 设为非默认值时在建池阶段以 `ERR_BAD_OPTION_VALUE` 拒绝（不静默忽略；用 `ConnectionPoolOptions.HandlerFactory` 接管默认档 Handler 时改由工厂决定）；`ConnectCallback` / `ConfigureSslOptions` / `KeepAlivePingPolicy` 不在兼容资产 API 上；`CreateDefaultHandler()` 返回 `HttpMessageHandler` |
+| `HttpVersionPolicy` / HTTP/3 | 可用（h3 还需运行时支持） | 枚举形状保留但不写入请求（该枚举在 `AxiosNet` 命名空间，而非 `System.Net.Http`）；显式要求 HTTP/2 / HTTP/3 时无论策略都前置拒绝 |
+| 请求体压缩 | gzip / deflate / Brotli | 仅 gzip；deflate / Brotli 在选项校验阶段以 `ERR_BAD_OPTION_VALUE` 拒绝 |
+| 自动解压 | gzip / deflate / br | gzip / deflate（Framework 的枚举没有 Brotli） |
+| `IContentSerializer` / 缓存 / 凭据接口 | 带默认接口实现 | 默认实现改成纯声明，自定义实现须显式实现全部成员 |
+| 带令牌的 `HttpContent` / `Stream` override | 传播 `CancellationToken` | `HttpContent` 重载在进入 / 返回边界检查令牌（内部缓冲无法逐块中断）；`Stream` 的 Memory 重载与 `DisposeAsync()` 走兼容实现 |
+| `DateOnly` / `TimeOnly` 格式化与解析 | 支持 | 不支持（这两个类型不在 ns2.0 契约里） |
+| 方法级 `[AsyncMethodBuilder]`（池化 `ValueTask`） | 启用 | 不启用 |
+| 裁剪 / AOT 标注与分析器 | 启用 | 只在编译期补空标注，不跑分析器 |
+
+依赖只进 `netstandard2.0` 依赖组：9 个微软第一方 BCL 兼容包（`System.Text.Json`、`System.Net.Http.Json`、
+`System.Memory`、`System.Threading.Tasks.Extensions`、`Microsoft.Bcl.AsyncInterfaces`、
+`System.Diagnostics.DiagnosticSource`、`System.Reflection.DispatchProxy`、
+`System.Runtime.CompilerServices.Unsafe`、`System.ComponentModel.Annotations`）；现代两个 TFM 的依赖组为空。
+`AxiosNet.DependencyInjection` 同步提供 `lib/netstandard2.0` 资产。源生成器本身是 `netstandard2.0` 的 Roslyn 组件，
+与消费方 TFM 无关，三份资产都随包分发。
+
+兼容资产有独立的运行时测试工程 `test/AxiosNet.Compat.Tests`：它只引用类库的 `netstandard2.0` 产物
+（`SetTargetFramework`），因此 polyfill、shim 与全部 `#if NETSTANDARD2_0` 分支都会被真正执行。
+宿主有两个：`net8.0`（跨平台）与 `net472`（Windows，真正跑在 .NET Framework 上，覆盖只有该运行时才有的分支——
+例如 `Type.IsByRefLike` 缺失时的 `[IsByRefLike]` 兜底）。CI 在 `ubuntu-latest` 上跑 net8.0 宿主，
+另有一个 `windows-latest` job 只跑 net472 宿主。
 
 ### 请求模型与接口：内置源生成器
 
-包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并为接口级声明生成真实代理类（含继承接口、授权、multipart、流式、方法级编码），全部在模块初始化器里注册。它取代了旧版「root 模型程序集」的做法：
+包内自带 C# 源生成器（打包在 `analyzers/dotnet/cs`，引用即生效），编译期为每个带路由特性的请求模型烘焙元数据声明，并为接口级声明生成真实代理类（含继承接口、授权、multipart、流式、方法级编码），全部在模块初始化器里注册：
 
 - **零配置**：不需要 `TrimmerRootAssembly`，也不需要手写注册；
 - **两条路径同一份声明**：生成器只写事实（路由 / 成员 / 绑定 / 授权），校验与绑定计划仍由运行时共享构建器完成，JIT 与 AOT 的行为、错误文本一致；
@@ -2240,7 +2278,7 @@ AOT 下不可用的能力：
 
 启动末尾想锁死元数据可调用隐藏 API `AxiosMetadata.Freeze()`：之后任何真正写入（新程序集的模块初始化器、手工注册）都会抛错并指出类型与程序集；等价重复注册仍是空操作。不调用它完全不影响使用。
 
-**已知限制**：等价重复注册「保留先注册的一份」是为「多个互不引用的程序集各为同一接口生成代理」设计的。在可卸载 `AssemblyLoadContext`（插件热重载）里，第二次注册会被静默丢弃，代理工厂仍指向先注册那次加载的程序集——重载插件时不要依赖注册表自动换新，改用独立的进程或卸载后重新进入新的 `AssemblyLoadContext` 边界。
+**已知限制**：在可卸载 `AssemblyLoadContext`（插件热重载）里，第二次注册会被静默丢弃，代理工厂仍指向先注册那次加载的程序集——重载插件时不要依赖注册表自动换新，改用独立的进程或卸载后重新进入新的 `AssemblyLoadContext` 边界。
 
 ## 参考
 
@@ -2390,7 +2428,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 
 ### 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **54 项**：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **56 项**：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -2400,7 +2438,7 @@ dotnet run --project samples/AxiosNet.Simple
 
 | 套件 | 项数 | 覆盖 |
 | --- | ---: | --- |
-| 核心 | 37 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档 |
+| 核心 | 39 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档、缓存身份键、响应对象上的正文 |
 | 声明式 | 17 | GET 详情 / 列表、POST 创建、统一凭据扩展点与 `[AllowAnonymous]` / 本客户端自举取令牌、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、值格式化（`[Format]` / `Serialization.ValueText` 优先级）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
 
 另有两个示例：
@@ -2418,29 +2456,18 @@ dotnet test AxiosNet.sln
 dotnet build AxiosNet.sln -c Release
 ```
 
+主库与 `AxiosNet.DependencyInjection` 各编译 `netstandard2.0` / `net6.0` / `net8.0` 三份资产；CLI、测试与示例项目仍是 `net6.0` / `net8.0` 双目标（它们不是运行时库）。
+
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2231 / 2220 | `net8.0` / `net6.0` | 4451 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2507 / 2496 | `net8.0` / `net6.0` | 5003 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
-| **合计** | **2371 / 2286** | | **4657** |
+| **合计** | **2647 / 2562** | | **5209** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
-- `net8.0` 比 `net6.0` 净多 11 条：差额来自只在 net8 分支编译的 `AotJsonTests` 与 `FormatAttributeTests` 的 JSON 桥（`JsonSerializerOptions.TypeInfoResolver` / `JsonTypeInfo.Properties` 是 .NET 7+ API）。
-- `net6.0` 另有 2 条独有的 `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*`，断言的是「没有 `TypeInfoResolver` 时的报错」。
-- 合计行的 `net6.0` 列不含只跑 net8 的 `AxiosNet.Cli.Tests`（74 条）。
-- `AxiosNet.Cli.Tests` 只在本地跑 —— CI 的 `TEST_PROJECTS` 只列前两个项目，生成器快照与 CLI fixtures 不进门禁。
-
-测试用自研 `TcpListener` HTTP/1.1 Keep-Alive 服务器跑真实 TCP 往返，覆盖请求编码、拦截器与转换、错误码、超时取消、进度限速、连接池与协议协商、传输档、流式响应、重试、熔断、并发对冲、备用端点与端点健康记忆、短路响应、响应缓存、遥测、声明式绑定、接口级代理、对象形状（生成 vs 反射）与 DI 注册。
-
-行覆盖率 **91.8%**、分支覆盖率 **87.3%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）。几点口径：
-
-- 测试项目引用源生成器后，覆盖率统计同时包含 `AxiosNet` 与 `AxiosNet.SourceGen` 两个程序集，两次采集有 ±0.1 抖动。
-- 对比历史值请沿用同一配置：下面的命令是 Debug，Release 下序列点更少、行分母会明显变小，两种口径不可混用。
-- 生成器的 DI 注册扩展只在 `AxiosNet.DependencyInjection.Tests` 里被驱动（主测试项目不引用 DI 包），它的行不在本口径内。
-
-采集时必须排除两类用例——性能比值与分配护栏在插桩下都会失真（护栏按「每请求分配字节数」断言，插桩本身就在分配）：
+行覆盖率 **92.1%**、分支覆盖率 **87.6%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \
@@ -2449,50 +2476,17 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 
 普通 `dotnet test` 仍然全跑（含被排除的这几类）。
 
-#### 运行时矩阵
-
-「编译目标」与「运行时」是两个维度，覆盖的东西不同：
-
-| 维度 | CI 覆盖 | 为什么必须逐项跑 |
-| --- | --- | --- |
-| 编译目标 | `net6.0` / `net8.0` 两份 `lib/` 资产 | 源码里有 9 处 `NET*_OR_GREATER` 条件编译，另一侧分支在别的目标里根本没进 IL |
-| 运行时 | .NET 6.0 与 .NET 10.0 | 同一份 `lib/net8.0` 资产被 .NET 8 / 9 / 10 / 11 加载，BCL 实现各不相同 |
-
-前一个维度由 `build-test` 覆盖（`dotnet test` 不带 `-f`，两个 TFM 各执行一次）；后一个维度由 `test-runtime` 覆盖——不改 `TargetFrameworks`、不加 TFM、不改包结构，只用 host 前滚让 `net8.0` 测试宿主在更高版本的运行时上执行，也就是消费者引用 `net8.0` 资产的主流形态：
-
-```bash
-DOTNET_ROLL_FORWARD=LatestMajor dotnet test <project> -f net8.0
-```
-
-必须是 `LatestMajor`：`Major` 会优先留在同一 major 的最新补丁（8.0.x），只有 `LatestMajor` 才真的跨 major。执行前先断言目标运行时已安装——前滚找不到更高版本时会静默回落到 net8，回落之后测试照样全绿，覆盖等于没做。
-
-只加 .NET 10、不加 9 / 11：.NET 8 与 9 同在 2026-11-10 退出支持，10 是 LTS（到 2028-11-14）且是当前唯一处于活动支持期的版本，11 尚未 GA。并发性能用例不参与这一轮——它判的是与 `HttpClient` 的配对比值，换运行时等于换基线；要验高版本运行时上的性能得另建基线。
-
 #### Native AOT 验证
 
-CI 另有一组 `aot` 任务（`win-x64` / `linux-x64` 矩阵），把 `IL2026` / `IL3050` / `IL3051` 与 DAM 那组（`IL2070` / `IL2072` / `IL2075` / `IL2087` / `IL2098`）直接当错误，因此「发布成功」等于「裁剪与 AOT 分析都是 0 警告」。DAM 那组必须一起收紧：本库大量依赖 `DynamicallyAccessedMembers` 与抑制标注，这类警告最容易只在包消费方发布时才暴露。
-
 ```bash
-# 示例：不再 root 整个程序集，能否通过完全取决于源生成器烘焙的元数据
+# 发布并运行 AOT 示例
 dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn=false \
   -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051%3BIL2070%3BIL2072%3BIL2075%3BIL2087%3BIL2098
 ./samples/AxiosNet.Aot/bin/Release/net8.0/linux-x64/publish/AxiosNet.Aot
 
-# 包消费：pack → 只引用包的临时项目 → AOT 发布 → 运行
+# 包消费验证：pack → 只引用包的临时项目 → AOT 发布 → 运行
 bash eng/aot-package-smoke.sh
 ```
-
-`eng/aot-package-smoke.sh` 先断言 nupkg 里带 `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` 与 `buildTransitive/AxiosNet.props`，再把包装进一个只引用它的临时项目发布运行。
-
-它补的是示例覆盖不到的一环：示例用 `ProjectReference`，看不到「包内分析器是否真的生效」与「包内 dll 的 AOT 标注是否自洽」。脚本每次用唯一版本号打包，避免 NuGet 复用全局缓存里的旧 dll（版本不变时它不会重新解包，等于一直在验证上一次的包）。
-
-体积与启动都在预算内才算过：示例与包 smoke 都断言发布产物不超过预算 —— win-x64 上限 9 MiB（当前示例 8.3 MiB、包 smoke 8.1 MiB），linux-x64 上限 11 MiB（当前 10.2 MiB）。两个平台差约 2 MiB 属平台差异、不是体积退化：Linux 把 OpenSSL、`System.Native`、压缩、globalization 这些 shim 全部静态链进可执行文件，Windows 走系统 DLL 或预烘焙的 `Aot.lib`，所以预算按平台分别定。
-
-超了基本只有两种原因：又引入了反射依赖把代码拉回来，或程序集被整体 root（`TrimmerRootAssembly` / 生成器没生效）。启动 + 完整跑完用 10 s 拦网，只拦数量级退化，不当性能结论；性能对比看 `test/AxiosNet.Benchmarks`。
-
-生成代码本身也有快照基线（`test/AxiosNet.Tests/WebAPI/Aot/Snapshots/GeneratedSources.snap.txt`）：生成器输出一变，diff 就直接落在基线文件上；用 `AXIOS_UPDATE_SNAPSHOTS=1` 重生成并逐行审阅。
-
-已知代价：接口代理每次调用仍有 1 次实参数组分配——实参要交给共享绑定（`IValueSource.GetValue(object target)` 按位置取值），生成器只烘焙声明、不复刻绑定逻辑。要真做到零分配得把绑定计划按方法内联，那等于把校验与绑定规则复制成 N 份，与「单一构建入口」冲突，因此不做；代理层能省的（每次调用的只读包装）已经改成按需创建。
 
 #### 用例按功能分类
 
@@ -2510,36 +2504,14 @@ bash eng/aot-package-smoke.sh
 | `Connectivity/` | 连接池（含命名共享池、命名传输档）、Handler 注入、HTTP/2·3 协商与降级、重定向、本机 h3 能力探测 |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener 三路遥测、尝试审计事件 |
 | `Errors/` | 错误模型、错误码、`ToJson` 快照 |
-| `Regression/` | 分配护栏（独占集合 + 精确计数；`AllocationTests` 走进程级均值，`AllocationSweepTests` 走线程级多窗最小值——被测路径同步完成时真实值是个定值，噪声只会往上加）、并发吞吐 |
+| `Regression/` | 分配护栏、并发吞吐 |
 | `WebAPI/` | 声明式模型绑定与校验、授权、流式、接口级代理与启动期校验、请求模型源生成器（生成路径 vs 反射路径逐字段对照） |
 | `Architecture/` | 架构护栏：核心不得引用 `WebAPI/` 扩展（扫源码断言，破坏「可整体删除」即失败） |
 | `Infrastructure/` | 测试基建：HTTP 服务器、模型、遥测探针、独占集合 |
 
-时序敏感用例（断言上限耗时、靠「占位 vs 预算」区分口径）与分配用例各自独占运行，见 `Infrastructure/TimingCollection.cs`、`Infrastructure/AllocationCollection.cs`。
-
-`AxiosNet.DependencyInjection.Tests` 同规则分两组：`Registration/`（注册扩展与命名注册）、`Lifecycle/`（并发解析与持有者释放）。
-
-`AxiosNet.Cli.Tests` 把生成结果当成可编译的产物来验：fixtures 快照（petstore / Swagger 2 / 3.1 / 对抗性文档）、生成代码连同 AxiosNet 源生成器一起编译并断言模型数等于操作数（`--style interface` 下断言代理数等于接口数）、输出确定性与 `--check`、覆盖保护与清单跟踪、`--dry-run`、参数解析与导入报告。生成客户端对真实服务端的往返由示例 `OpenApiGeneratedExample`（→ `DemoApiServer`）覆盖。
-
 #### 性能基准
 
-[`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) 是独立 BenchmarkDotNet 项目（单目标 `net8.0`、`IsPackable=false`、不被 `src/` 引用），把「这次优化有没有效果」变成可读数字。它不参与 `dotnet test`，CI 也不跑（基准对机器状态敏感）。
-
-**与并发正确性测试的分工**
-
-- `AxiosNet.Tests/ConcurrencyPerformanceTests` 判**并发正确性**，拦塌方：5 轮取最好一轮，要求 ≥ 85% 能力线（Debug 70%）；中位 ≥ 75%（Debug 60%）当地板，防整体退化。
-- 量化「快了多少」看基准：基准给分项成本；正确性测试只回答「有没有退到不可用」。
-- 它判的是配对比值，两侧编译状态必须可比：`HttpClient` 是 ReadyToRun，进程起来就是优化代码；本库是普通 IL，要先跑 Tier0、等分层编译换成 Tier1 + PGO。因此 CI 里它**独占进程、排在整套用例之前**，整套用例按功能过滤掉它后逐 TFM 串行跑。
-
-**预热为什么按比值收敛**
-
-- 编译爬坡按时钟推进，runner 越慢越忙、固定预热里换掉的比例越少，测到的就是编译进度而不是代码。
-- 所以预热不拍固定秒数：1 秒一窗，至少 4 窗、最多 10 窗，最近 3 窗的比值极差 ≤ 3 个百分点才开始判定轮。实测前 4 窗可能一直平在 82%~87%，第 5~6 窗才跳到 95%；收敛后判定轮稳定在 93.5%~96.2%，固定 2 秒预热的对照组第 1 轮只有 84.1%。
-- 分层编译保持默认开启（真机稳态靠 PGO，不做特殊配置）。
-
-**没达标先看 CPU 份额**
-
-比值没达标时，先看进程实际拿到的 CPU 份额（`Process.TotalProcessorTime` ÷ 墙钟 ÷ 核数，判定轮取中位）。同一台机器同一份代码实测：吃到 50%~56% 时比值稳定在 77%~87%；被挤到 30%~32% 时比值在 54%~90% 之间乱跳。因此门槛定在 42%，够不着就只打印数字、不做断言——达标不用解释，没达标才看这个门槛。
+[`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) 是独立 BenchmarkDotNet 项目，用于测量请求管线、配置合并、序列化、流式分帧与大正文等各项成本：
 
 ```bash
 dotnet run -c Release --project test/AxiosNet.Benchmarks                       # 交互菜单
@@ -2547,7 +2519,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*Merge*'  
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isolated
 ```
 
-默认**同进程**执行（不生成临时项目、不重建）；要写进提交信息或与历史基线对比时加 `--isolated`（临时项目 + 每用例独立进程），两种方式的绝对耗时不能混比（`Allocated` 两者都可信）。
+默认**同进程**执行（不生成临时项目、不重建）；`--isolated` 用每用例独立进程跑（临时项目 + 重建），两种方式的绝对耗时不能混比（`Allocated` 两者都可信）。
 
 | 组 | 热点 | 基线 |
 | --- | --- | --- |
@@ -2562,27 +2534,27 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | `LargeBodyDownloadBenchmarks` | 大正文下载（1 / 8 / 32MB：缓冲成 `byte[]` vs 流式读完） | `HttpClient_Download_Buffered` |
 | `LargeBodyJsonBenchmarks` | 大正文 JSON 响应（1 / 8 / 32MB：`byte[]` / 强类型 / `JsonElement`） | `HttpClient_GetBytes` |
 
-读法、前后对比流程与已知噪声见 [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md)。
+读法与分组说明见 [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md)。
 
-跨实现横向对比另见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：
+跨实现横向对比见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：
 
 - 同一回环服务器、同一负载（默认 8 并发 × 1s × 10 轮、每轮轮转顺序），对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告。
 - 加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁；不设阈值时只出数字、不判定。
-- 它不进 CI、也不被 `dotnet test` 收集（`IsTestProject=false`，放在 sln 里只为 IDE 直接打开）。
-- 口径、读法与一次本机参考数据见该工程 README；整理成结论（功能 / 性能 / 易用性 + 选型建议）的版本见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
+- 结论版（功能 / 性能 / 易用性 + 选型建议）见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
 
 ### 项目结构
 
 ```
 .
 ├─ src/
-│  ├─ AxiosNet/                       # 类库（net6.0 / net8.0 双目标）
+│  ├─ AxiosNet/                       # 类库（netstandard2.0 / net6.0 / net8.0 三目标）
 │  │  ├─ Axios.cs                     # 静态门面
 │  │  ├─ AxiosClient*.cs              # 实例 + 请求管线 + 快捷方法
 │  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 六个分组）
 │  │  ├─ AxiosHeaders.cs              # 请求头
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
 │  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs（顶层公共类型）
+│  │  ├─ Compatibility/               # netstandard2.0 兼容层：编译期 polyfill / global using 别名 / BCL 扩展 / 平台 helper
 │  │  ├─ Cache/                       # AxiosCache（响应缓存 + 单飞）/ IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
 │  │  ├─ Pipeline/                    # 尝试中间件链：AxiosAttemptPipeline + 内置重试 / 备用端点 / 熔断 / 对冲 / 闸门 / 审计
@@ -2596,9 +2568,9 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Reflection/                  # 对象形状与 STJ 的反射回退（只在 JIT 下可达，AOT 镜像里整块裁掉）
 │  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
-│  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包）
+│  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包，同为三目标；Compatibility/ 放本包的 polyfill）
 │  └─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
-├─ samples/                           # Simple（54 项）/ DI / Aot
+├─ samples/                           # Simple（56 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）
@@ -2607,12 +2579,6 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet（单实现分项成本）
    └─ AxiosNet.Comparison/             # 跨实现横向对比（RPS / p99 / 分配，可选门禁）
 ```
-
-目录约定三条：
-
-- 领域目录（`Metadata/`、`Serialization/`、`Internal/`）按功能分家；
-- **只在 JIT 下可达的反射实现一律放进 `Reflection/` 目录**，且只有两处：根级 `Reflection/` 装跨领域共用的底层（对象形状反射、STJ 反射回退），`WebAPI/Reflection/` 装属于声明式 API 这个领域的反射读取与 `DispatchProxy` 回退（不在 `Reflection/` 目录里的代码不直接碰反射）；
-- **`WebAPI/` 是可整体删除的扩展**：删掉它，核心与原始 HTTP 照样编译、照样能用，所以核心不得反向引用它（对象形状、字典映射、生成注册表、AOT 守卫与异常都因此住在 `Metadata/` 与 `Internal/`）。
 
 公开特性统一收在 `WebAPI/Attributes/`（命名空间 `AxiosNet.WebAPI.Attributes`），其余公开类型留在 `WebAPI/` 根。
 

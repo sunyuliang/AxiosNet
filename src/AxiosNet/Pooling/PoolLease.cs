@@ -26,7 +26,7 @@ public sealed class PoolLease : IDisposable
 
     /// <summary>
     /// 本次租约是否复用了池中已存在的 origin 节点；<c>false</c> 表示顺手新建了节点。
-    /// 它不是「TCP 连接是否复用」，连接级复用发生在 <see cref="SocketsHttpHandler"/> 内部。
+    /// 它不是「TCP 连接是否复用」，连接级复用发生在 <c>SocketsHttpHandler</c> 内部。
     /// </summary>
     public bool EndpointReused { get; }
 

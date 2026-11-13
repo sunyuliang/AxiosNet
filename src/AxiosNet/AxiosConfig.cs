@@ -761,8 +761,14 @@ public sealed partial class AxiosConfig
             SortedDictionary<string, string> dictionary => new SortedDictionary<string, string>(dictionary, dictionary.Comparer),
             SortedList<string, object?> dictionary => new SortedList<string, object?>(dictionary, dictionary.Comparer),
             SortedList<string, string> dictionary => new SortedList<string, string>(dictionary, dictionary.Comparer),
+#if NETSTANDARD2_0
+            // netstandard2.0 的 ConcurrentDictionary 没有 Comparer 属性；克隆沿用 Ordinal（库内字典的默认比较器）。
+            ConcurrentDictionary<string, object?> dictionary => new ConcurrentDictionary<string, object?>(dictionary, StringComparer.Ordinal),
+            ConcurrentDictionary<string, string> dictionary => new ConcurrentDictionary<string, string>(dictionary, StringComparer.Ordinal),
+#else
             ConcurrentDictionary<string, object?> dictionary => new ConcurrentDictionary<string, object?>(dictionary, dictionary.Comparer),
             ConcurrentDictionary<string, string> dictionary => new ConcurrentDictionary<string, string>(dictionary, dictionary.Comparer),
+#endif
 
             // 其余 IDictionary 实现退化成 Dictionary。
             IDictionary<string, object?> dictionary => new Dictionary<string, object?>(dictionary),

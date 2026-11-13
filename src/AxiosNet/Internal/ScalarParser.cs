@@ -122,6 +122,8 @@ internal static class ScalarParser
             return true;
         }
 
+#if !NETSTANDARD2_0
+        // netstandard2.0 兼容资产没有 DateOnly / TimeOnly，解析这两种标量在该资产上不可用。
         if (target == typeof(DateOnly))
         {
             if (!DateOnly.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
@@ -143,6 +145,7 @@ internal static class ScalarParser
             value = parsed;
             return true;
         }
+#endif
 
         if (typeof(IConvertible).IsAssignableFrom(target))
         {

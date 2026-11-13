@@ -54,8 +54,6 @@ public sealed class SerializationFallbackTests
     [Fact]
     public async Task TextEncoding_AppliesToRequestAndResponse()
     {
-        static string DecodeLatin1(byte[] bytes) => Encoding.Latin1.GetString(bytes);
-
         await using var server = TestHttpServer.Start(request =>
             new TestResponse(200, Body: Encoding.Latin1.GetBytes("café"), ContentType: "text/plain; charset=utf-8"));
 

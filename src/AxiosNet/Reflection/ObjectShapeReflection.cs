@@ -53,7 +53,7 @@ internal static class ObjectShapeReflection
 
     /// <summary>ref struct / 指针：无法装箱成 object，形状里一律跳过（与生成器口径一致）。</summary>
     private static bool IsUnboxable(Type type)
-        => type.IsByRefLike || type.IsPointer
+        => PlatformCompat.IsByRefLike(type) || type.IsPointer
 #if NET7_0_OR_GREATER
             || type.IsFunctionPointer
 #endif

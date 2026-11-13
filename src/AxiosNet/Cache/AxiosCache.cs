@@ -688,7 +688,7 @@ public sealed class AxiosCache
 
     /// <summary>凭据摘要：SHA-256 的前 8 字节转十六进制（16 个字符），只够区分身份、不足以还原原值。</summary>
     private static string Digest(string value)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 8));
+        => PlatformCompat.Sha256HexPrefix8(value);
 }
 
 /// <summary>一次在途发送的登记：领导者发送完成后把结果交给跟随者。</summary>

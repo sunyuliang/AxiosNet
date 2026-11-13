@@ -79,7 +79,11 @@ internal static class ResponseReader
     /// 多出数据时转段式累积，恰好命中时零拷贝交出。
     /// </summary>
     /// <remarks>池化状态机：正文读取会在 I/O 上挂起；返回值由唯一调用点 <c>ReadAllBytesAsync</c> 立即 await 一次。</remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private static async ValueTask<byte[]> ReadDeclaredLengthAsync(
         Stream stream,
         AxiosConfig config,
@@ -150,7 +154,11 @@ internal static class ResponseReader
     /// <paramref name="current"/> / <paramref name="filled"/> 允许调用方交进一段已读过若干字节的池化段。
     /// </summary>
     /// <remarks>池化状态机：返回值只被一处立即 await（<c>ReadAllBytesAsync</c> 或 <c>ReadDeclaredLengthAsync</c> 的转交）。</remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private static async ValueTask<byte[]> ReadSegmentedAsync(
         Stream stream,
         AxiosConfig config,
@@ -205,8 +213,8 @@ internal static class ResponseReader
                 total += read;
             }
 
-            // 装配成精确长度的成品；超过 Array.MaxLength 时换成统一错误模型。
-            if (total > Array.MaxLength)
+            // 装配成精确长度的成品；超过 PlatformCompat.ArrayMaxLength 时换成统一错误模型。
+            if (total > PlatformCompat.ArrayMaxLength)
             {
                 throw AxiosException.ResponseTooLarge(config, request, total);
             }
@@ -262,7 +270,11 @@ internal static class ResponseReader
     /// 普通 <c>async Task</c> 每次会分配状态机盒，池化后稳态复用。返回的 <see cref="ValueTask{TResult}"/>
     /// 必须且只被 await 一次：唯一调用点是 <c>ReadResponseAsync</c>，拿到后立即等待，不外传、不缓存。
     /// </remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     public static async ValueTask<AxiosResponse> ReadAsync(
         HttpResponseMessage message,
         HttpRequestMessage request,

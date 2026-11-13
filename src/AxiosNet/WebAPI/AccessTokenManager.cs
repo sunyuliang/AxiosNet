@@ -219,7 +219,8 @@ public sealed class AccessTokenManager : IApiCredentialProvider, IDisposable
             return TimeSpan.Zero;
         }
 
-        var half = lifetime / 2;
+        // TimeSpan / int 是 net6+ 的运算符：用 ticks 拆半，三个目标行为一致。
+        var half = TimeSpan.FromTicks(lifetime.Ticks / 2);
         return _options.RefreshAhead < half ? _options.RefreshAhead : half;
     }
 }

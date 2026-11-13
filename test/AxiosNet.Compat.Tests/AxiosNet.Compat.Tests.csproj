@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 两个宿主都只引用类库的 netstandard2.0 产物：
+         net8.0 让 Compatibility/ 里的 polyfill、shim 与全部 #if NETSTANDARD2_0 分支被真正执行；
+         net472 在真实的 .NET Framework 上再跑一遍，覆盖只有该运行时才有的分支
+         （例如 Type.IsByRefLike 缺失时的 [IsByRefLike] 兜底）。
+         net472 只在 Windows 上可运行：Linux 上既不构建也不参与 dotnet test。 -->
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('Windows'))">net8.0;net472</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <!-- 没装 4.7.2 targeting pack 的机器也能构建（参考程序集随包提供，运行仍需本机 4.7.2+ 运行时）。 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- .NET Framework 的 System.Net.Http 不在默认引用集里（net8 由共享框架提供）。 -->
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 与兼容资产的条件依赖保持一致：ProjectReference 的 SetTargetFramework 只影响编译期解析，
+         两个宿主的还原图并不相同——net8.0 不会带出 netstandard2.0 那 9 个 BCL 补位包，
+         net472 会按被引用工程的 netstandard2.0 依赖组带入。这里显式列出，保证两个宿主拿到同一套版本。 -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="System.Net.Http.Json" Version="8.0.1" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="8.0.1" />
+    <PackageReference Include="System.Reflection.DispatchProxy" Version="4.7.1" />
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+    <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
+    <!-- DI 扩展的兼容资产只依赖 DI 抽象包；容器实现由测试宿主提供，用来真正跑一遍注册 / 解析。 -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SetTargetFramework 让多目标类库按指定 TFM 解析，而不是按 net8.0 就近选择现代资产。 -->
+    <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+    <ProjectReference Include="..\..\src\AxiosNet.DependencyInjection\AxiosNet.DependencyInjection.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+
+</Project>

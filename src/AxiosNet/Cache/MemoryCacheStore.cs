@@ -61,7 +61,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     {
         if (_entries.TryGetValue(key, out var entry))
         {
-            if (entry.ExpiresAt > Environment.TickCount64)
+            if (entry.ExpiresAt > PlatformCompat.TickCount64())
             {
                 return new ValueTask<AxiosShortCircuit?>(entry.Reply);
             }
@@ -108,7 +108,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
 
         // 亚毫秒的存活时长按 1 毫秒算：计时器的分辨率就是毫秒。
         var ttlMs = Math.Max(1, (long)Math.Ceiling(timeToLive.TotalMilliseconds));
-        var expiresAt = Environment.TickCount64 + ttlMs;
+        var expiresAt = PlatformCompat.TickCount64() + ttlMs;
 
         lock (_writeLock)
         {
@@ -169,7 +169,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
     /// <summary>在写锁内清掉全部过期条目（含带校验器的：容量压力下它们同样要让位）；清完由调用方重新判容量。</summary>
     private void PurgeExpiredLocked()
     {
-        var now = Environment.TickCount64;
+        var now = PlatformCompat.TickCount64();
         foreach (var pair in _entries)
         {
             if (pair.Value.ExpiresAt <= now
@@ -208,7 +208,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
         /// <summary>缓存下来的短路响应（正文已缓冲，可直接复用）。</summary>
         internal AxiosShortCircuit Reply { get; }
 
-        /// <summary>到期时刻（<see cref="Environment.TickCount64"/> 口径，单调递增）。</summary>
+        /// <summary>到期时刻（<see cref="PlatformCompat.TickCount64()"/> 口径，单调递增）。</summary>
         internal long ExpiresAt { get; }
 
         /// <summary>条目的近似尺寸（<see cref="SetCore"/> 写入时算好，摘除时按它退还给字节计量）。</summary>

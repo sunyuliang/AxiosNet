@@ -411,7 +411,7 @@ internal sealed class BindingAccumulator
 
     /// <summary>约定上携带请求体的方法（默认 Body 只在这些方法上生效；其余方法未标注成员一律 Query）。</summary>
     private static bool IsBodyMethod(HttpMethod method)
-        => method == HttpMethod.Post || method == HttpMethod.Put || method == HttpMethod.Patch;
+        => method == HttpMethod.Post || method == HttpMethod.Put || method == PlatformCompat.PatchMethod;
 
     /// <summary>特性上没写名字就用成员名；显式给了空白串同样回退（与「省略参数」语义一致）。</summary>
     private static string ResolveName(string explicitName, string fallback)

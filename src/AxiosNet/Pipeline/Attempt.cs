@@ -343,9 +343,11 @@ public static partial class Attempt
         var request = new HttpRequestMessage(template.Method, uri ?? template.RequestUri)
         {
             Version = template.Version,
-
+#if !NETSTANDARD2_0
             // 策略必须一起搬，否则 RequestVersionExact 会变回默认的 OrLower。
+            // netstandard2.0 的 HttpRequestMessage 没有 VersionPolicy 属性。
             VersionPolicy = template.VersionPolicy
+#endif
         };
 
         // 换了目标地址就不搬 Host：HttpClient 只认 Headers.Host，搬过去会让镜像按原端点的虚拟主机路由。
@@ -363,8 +365,15 @@ public static partial class Attempt
 
         // 自定义中间件写进 Options 的内容（如 HttpRequestOptions 上的开关）要跟着走，否则重发一次就丢。
         // HttpRequestOptions 的索引器是显式实现，Set 只认带类型的 HttpRequestOptionsKey，这里走字典接口。
+#if NETSTANDARD2_0
+        // netstandard2.0 没有 HttpRequestMessage.Options：用旧的 Properties 字典搬运同一批选项。
+        var options = request.Properties;
+        var sourceOptions = template.Properties;
+#else
         var options = (IDictionary<string, object?>)request.Options;
-        foreach (var option in template.Options)
+        var sourceOptions = template.Options;
+#endif
+        foreach (var option in sourceOptions)
         {
             options[option.Key] = option.Value;
         }

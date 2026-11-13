@@ -46,9 +46,12 @@ internal abstract class DelegatingStream : Stream
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => ReadCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-    // 新版 Memory 重载：直接进核心，不再包一层 Task。
+#if !NETSTANDARD2_0
+    // 新版 Memory 重载：直接进核心，不再包一层 Task。netstandard2.0 的 Stream 没有该虚方法，
+    // 那里的调用由 System.Memory 包提供的扩展方法接到数组重载上。
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         => ReadCoreAsync(buffer, cancellationToken);
+#endif
 
     /// <summary>读核心：默认透传内层流；包装流在此叠加超时 / 进度 / 限速语义。</summary>
     protected virtual ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
@@ -62,9 +65,11 @@ internal abstract class DelegatingStream : Stream
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => WriteCoreAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-    // 新版 Memory 重载：直接进核心。
+#if !NETSTANDARD2_0
+    // 新版 Memory 重载：直接进核心。netstandard2.0 的 Stream 没有该虚方法。
     public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         => WriteCoreAsync(buffer, cancellationToken);
+#endif
 
     /// <summary>写核心：默认透传内层流。</summary>
     protected virtual ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
@@ -103,6 +108,17 @@ internal abstract class DelegatingStream : Stream
         base.Dispose(disposing);
     }
 
+#if NETSTANDARD2_0
+    /// <summary>
+    /// 兼容资产的异步释放：netstandard2.0 的 <see cref="Stream"/> 没有异步释放契约，
+    /// 这里退化成同步释放，但保留同名方法让调用方的 <c>await using</c> 模式仍然成立。
+    /// </summary>
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return default;
+    }
+#else
     // 异步释放：先异步关内层，同样只执行一次，最后交给基类。
     public override async ValueTask DisposeAsync()
     {
@@ -123,6 +139,7 @@ internal abstract class DelegatingStream : Stream
 
         await base.DisposeAsync().ConfigureAwait(false);
     }
+#endif
 
     /// <summary>释放附加资源（CTS / 租约 / 响应消息）；在内层流释放之后调用，抛异常不得跳过其余释放。</summary>
     protected virtual void OnReleased()

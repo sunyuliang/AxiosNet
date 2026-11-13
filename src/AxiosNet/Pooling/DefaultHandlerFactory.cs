@@ -1,95 +1,32 @@
-using System.Net.Security;
-using System.Net.Sockets;
-using System.Security.Authentication;
-
 namespace AxiosNet.Pooling;
 
-/// <summary>按 <see cref="ConnectionPoolOptions"/> 与一条传输档构建库默认的 <see cref="SocketsHttpHandler"/>。</summary>
-internal static class DefaultHandlerFactory
+/// <summary>按 <see cref="ConnectionPoolOptions"/> 与一条传输档构建库默认的内层 Handler。</summary>
+/// <remarks>
+/// net6.0 / net8.0 资产用 <c>SocketsHttpHandler</c>（连接级生命周期、并发上限、HTTP/2、ping、TLS 细粒度全可配）。
+/// netstandard2.0 兼容资产退化为 <c>HttpClientHandler</c>，只映射两边都有的选项：
+/// 连接数上限、响应头上限、压缩、重定向、Cookie、代理、凭据、TLS 协议版本、证书校验回调；
+/// 连接生命周期 / ConnectTimeout / ConnectCallback / SslOptions / h2 ping 在该资产上不存在，降级清单见 README。
+/// 两套实现分别在 <c>DefaultHandlerFactory.NetStandard20.cs</c> 与 <c>DefaultHandlerFactory.Upstream.cs</c>。
+/// </remarks>
+internal static partial class DefaultHandlerFactory
 {
-    /// <summary>
-    /// 按选项构建一个 <see cref="SocketsHttpHandler"/>；需要 Cookie 但未给容器时新建一个。
-    /// 池级策略（连接数、生命周期、压缩、重定向、HTTP/2、ping）取 <paramref name="o"/>，
-    /// 出口设置（代理、凭据、TLS、建连回调）取 <paramref name="transport"/>。
-    /// </summary>
+#if NETSTANDARD2_0
+    /// <summary>按选项构建一个 Handler；需要 Cookie 但未给容器时新建一个。</summary>
     /// <param name="o">池选项。</param>
     /// <param name="transport">本次节点所属传输档（默认档由池从池选项投影得到）。</param>
     /// <param name="cookieContainer">该档该 origin 的 Cookie 容器（档打开 <see cref="ConnectionTransportOptions.UseCookies"/> 时非空）。</param>
+    /// <returns>netstandard2.0 兼容资产返回 <c>HttpClientHandler</c>。</returns>
+    public static HttpMessageHandler Create(
+#else
+    /// <summary>按选项构建一个 Handler；需要 Cookie 但未给容器时新建一个。</summary>
+    /// <param name="o">池选项。</param>
+    /// <param name="transport">本次节点所属传输档（默认档由池从池选项投影得到）。</param>
+    /// <param name="cookieContainer">该档该 origin 的 Cookie 容器（档打开 <see cref="ConnectionTransportOptions.UseCookies"/> 时非空）。</param>
+    /// <returns>net6.0 / net8.0 返回 <c>SocketsHttpHandler</c>。</returns>
     public static SocketsHttpHandler Create(
+#endif
         ConnectionPoolOptions o,
         ConnectionTransportOptions transport,
         CookieContainer? cookieContainer = null)
-    {
-        var handler = new SocketsHttpHandler
-        {
-            MaxConnectionsPerServer = o.MaxConnectionsPerServer,
-            PooledConnectionLifetime = JitterLifetime(o.PooledConnectionLifetime),
-            PooledConnectionIdleTimeout = o.PooledConnectionIdleTimeout,
-            ConnectTimeout = o.ConnectTimeout,
-            ConnectCallback = transport.ConnectCallback,
-            MaxResponseHeadersLength = o.MaxResponseHeadersLength,
-            AllowAutoRedirect = o.AllowAutoRedirect,
-            MaxAutomaticRedirections = o.MaxAutomaticRedirections,
-            AutomaticDecompression = o.AutomaticDecompression
-                ? o.Decompression
-                : DecompressionMethods.None,
-
-            // h2 并发度受服务端 MAX_CONCURRENT_STREAMS 限制，打开后按 MaxConnectionsPerServer 继续加连接。
-            EnableMultipleHttp2Connections = o.EnableMultipleHttp2Connections,
-
-            // h2 keep-alive：三项只对 h2 生效，h1 没有 ping 帧。
-            KeepAlivePingDelay = o.KeepAlivePingDelay,
-            KeepAlivePingTimeout = o.KeepAlivePingTimeout,
-            KeepAlivePingPolicy = o.KeepAlivePingPolicy,
-            UseCookies = transport.UseCookies,
-            UseProxy = transport.Proxy is not null,
-            Proxy = transport.Proxy,
-            Credentials = transport.Credentials
-        };
-
-        if (transport.UseCookies)
-        {
-            handler.CookieContainer = cookieContainer ?? new CookieContainer();
-        }
-
-        if (transport.ServerCertificateCustomValidationCallback is not null
-            || transport.EnabledSslProtocols is not null
-            || transport.ConfigureSslOptions is not null)
-        {
-            handler.SslOptions = new SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = transport.ServerCertificateCustomValidationCallback,
-                EnabledSslProtocols = transport.EnabledSslProtocols ?? SslProtocols.None
-            };
-
-            // 扩展入口放最后：回调内的赋值是最终值（客户端证书也在这里挂）。
-            transport.ConfigureSslOptions?.Invoke(handler.SslOptions);
-        }
-
-        return handler;
-    }
-
-    /// <summary>
-    /// 给连接寿命加 ±10% 抖动。抖动只落在真正建 Handler 的那一刻，
-    /// 不写回 <see cref="ConnectionPoolOptions"/>。
-    /// </summary>
-    /// <remarks><see cref="TimeSpan.Zero"/>（不复用）与 <see cref="Timeout.InfiniteTimeSpan"/>（不限期）保持原样。</remarks>
-    internal static TimeSpan JitterLifetime(TimeSpan lifetime)
-    {
-        if (lifetime <= TimeSpan.Zero)
-        {
-            return lifetime;
-        }
-
-        var ticks = lifetime.Ticks * (0.9d + (Random.Shared.NextDouble() * 0.2d));
-
-        // 截断成 0 在 SocketsHttpHandler 里表示「连接不复用」：至少保留 1 tick。
-        if (ticks < 1d)
-        {
-            ticks = 1d;
-        }
-
-        // 夹到 TimeSpan 上限，避免抖动制造溢出。
-        return ticks >= TimeSpan.MaxValue.Ticks ? TimeSpan.MaxValue : TimeSpan.FromTicks((long)ticks);
-    }
+        => CreateCore(o, transport, cookieContainer);
 }

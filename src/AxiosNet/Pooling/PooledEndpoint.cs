@@ -5,7 +5,7 @@ namespace AxiosNet.Pooling;
 
 /// <summary>
 /// 单个 origin（scheme://host:port）对应的池化节点：持有一个 Handler
-/// （默认 <see cref="SocketsHttpHandler"/>，也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）与其上的 HttpClient。
+/// （默认 <c>SocketsHttpHandler</c>，也可由 <see cref="ConnectionPoolOptions.HandlerFactory"/> 提供）与其上的 HttpClient。
 /// </summary>
 internal sealed class PooledEndpoint : IDisposable
 {
@@ -17,7 +17,7 @@ internal sealed class PooledEndpoint : IDisposable
     /// <summary>origin 文本（<c>scheme://host:port</c>），也用于 HandlerFactory 上下文与统计展示。</summary>
     public string Origin { get; }
 
-    /// <summary>该 origin 上的 Handler（默认 <see cref="SocketsHttpHandler"/>，或工厂返回的实例）；由本节点释放。</summary>
+    /// <summary>该 origin 上的 Handler（默认 <c>SocketsHttpHandler</c>，或工厂返回的实例）；由本节点释放。</summary>
     public HttpMessageHandler Handler { get; }
 
     /// <summary>发往该 origin 的请求共用这一个 HttpClient（超时交给请求级控制）。</summary>

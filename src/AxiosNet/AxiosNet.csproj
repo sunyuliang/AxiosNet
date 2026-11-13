@@ -1,22 +1,24 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 双目标：net6.0 是运行基线（.NET 6 / 7 消费方取 lib/net6.0），net8.0 是分析基线（.NET 8+ 取 lib/net8.0）。
-         源码同一份；NET7_0_OR_GREATER / NET8_0_OR_GREATER 条件编译共 9 处，只出现在「旧目标没有该 API / 特性」的位置：
-         System.Text.Json 的 AOT / 反射分叉 4 处、XmlSerializer 的 RequiresDynamicCode 与 IL3051 标注 2 处、
-         JsonSerializerJit 的反射开关探测 1 处、枚举取值按底层类型的重载 1 处、IsFunctionPointer 1 处。
-         （net6 没有 AOT 分析器，标注在那个目标上无意义。）
-         运行时行为不随 TFM 变化——两者都绑定到消费方运行时自带的 BCL；
-         多出 net8.0 目标的实际收益是 net7+ 才可用的分析器：AOT 分析器在 net6.0 目标上被 SDK 直接拒绝（NETSDK1210）。
-         不使用 netstandard：连接池依赖 SocketsHttpHandler，netstandard2.0 里没有该类型。 -->
-    <TargetFrameworks>net6.0;net8.0</TargetFrameworks>
+    <!-- 三目标：net6.0 是 .NET 6 / 7 消费方资产，net8.0 是 .NET 8+ 消费方资产（同时启用 AOT 分析器），
+         netstandard2.0 是兼容资产（.NET Framework 4.7.2+ / .NET Core 2.0+ / .NET 5+ 中无法取到前两者时兜底）。
+         NuGet 按兼容性自动选资产：.NET 6+ 永远取 net6.0 / net8.0，不会落到兼容资产上，因此主路径行为不变。
+         源码同一份，条件编译分两类：
+         (1) NET7_0_OR_GREATER / NET8_0_OR_GREATER 共 9 处，只包 net7+ 专属 API 与 AOT 标注；
+         (2) NETSTANDARD2_0 分支，只包「netstandard2.0 契约里根本不存在的类型 / 虚方法 / 语言特性」：
+             SocketsHttpHandler 家族配置、HttpVersionPolicy、默认接口实现、带令牌的 HttpContent 与 Stream override、
+             方法级 AsyncMethodBuilder。兼容资产是功能子集，降级清单见 README「.NET Standard 2.0 兼容资产」。
+         netstandard2.0 目标额外引用 9 个微软第一方 BCL 兼容包（见下方条件 ItemGroup），这些依赖只进兼容资产。 -->
+    <TargetFrameworks>netstandard2.0;net6.0;net8.0</TargetFrameworks>
     <!-- net6.0 默认 C# 10，显式用最新语言版本（测试项目同样如此） -->
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- 声明本程序集可被裁剪（消费方 PublishTrimmed / PublishAot 时按需裁剪），
          同时启用裁剪分析器：反射入口的 DynamicallyAccessedMembers 标注与抑制理由必须始终自洽。 -->
-    <IsTrimmable>true</IsTrimmable>
+    <!-- 裁剪分析需要 net6+ 的 BCL 标注：netstandard2.0 目标上开它会与兼容包里的 internal 标注冲突。 -->
+    <IsTrimmable Condition="'$(TargetFramework)' != 'netstandard2.0'">true</IsTrimmable>
     <!-- AOT 分析器（IL3050）只在 net7.0+ 目标上可用：net6.0 目标被 SDK 判为「不支持」并给 NETSDK1210。 -->
     <IsAotCompatible Condition="'$(TargetFramework)' == 'net8.0'">true</IsAotCompatible>
     <!-- 「WebAPI 可整体删除」的实证开关：为 true 时把 WebAPI/ 下的源码与嵌入资源排除出编译，
@@ -27,13 +29,13 @@
   <!-- ===== NuGet 包元数据 ===== -->
   <PropertyGroup>
     <PackageId>AxiosNet</PackageId>
-    <Title>AxiosNet - axios 风格 HTTP 客户端 + 声明式 API 客户端（.NET 6+）</Title>
+    <Title>AxiosNet - axios 风格 HTTP 客户端 + 声明式 API 客户端（.NET 6+ / .NET Framework 4.7.2+）</Title>
     <!-- 本地默认版本；CI 发布时由 tag 覆盖（-p:Version=x.y.z） -->
     <Version>1.5.0</Version>
     <Authors>sunyuliang</Authors>
     <Copyright>Copyright (c) 2026 sunyuliang</Copyright>
-    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计），零第三方运行时依赖。同一包内置声明式 API 客户端（AxiosNet.WebAPI 命名空间，对标 Refit）：定义请求模型（路由/参数特性）+ 授权，调用只剩一句 client.RequestAsync(request)，返回类型由请求模型自动确定，底层仍是完整管线。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。支持 .NET 6 及以上全部运行时（6/7/8/9/10/11）：net6.0 / net8.0 双目标，.NET 8+ 自动取 net8.0 资产、旧运行时取 net6.0 资产，无需配置。An axios-style HTTP client for .NET — dual-targeted net6.0 / net8.0, runs on .NET 6/7/8/9/10/11. The same package also includes a declarative API client (namespace AxiosNet.WebAPI, Refit-style): request models with route/parameter attributes + authorization, one call client.RequestAsync(request). For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
-    <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;declarative;refit;restsharp;flurl;typed-client;connection-pool;csharp;dotnet;net6;net7;net8;net9;net10;net11</PackageTags>
+    <Description>用 .NET 实现的 axios 风格 HTTP 客户端：API 与 JS axios 一一对应，内置按 origin 隔离的连接池（连接复用、并发上限、空闲驱逐、可观测统计）。同一包内置声明式 API 客户端（AxiosNet.WebAPI 命名空间，对标 Refit）：定义请求模型（路由/参数特性）+ 授权，调用只剩一句 client.RequestAsync(request)，返回类型由请求模型自动确定，底层仍是完整管线。DI 单例注入扩展见配套包 AxiosNet.DependencyInjection。三目标：net6.0 / net8.0 覆盖 .NET 6 及以上全部运行时（6/7/8/9/10/11，零第三方运行时依赖），netstandard2.0 兼容资产覆盖 .NET Framework 4.7.2+ 与 .NET Core 2.0+（依赖 9 个微软第一方 BCL 兼容包，功能子集见 README）。An axios-style HTTP client for .NET — tri-targeted netstandard2.0 / net6.0 / net8.0, runs on .NET 6/7/8/9/10/11 and .NET Framework 4.7.2+ / .NET Core 2.0+. The same package also includes a declarative API client (namespace AxiosNet.WebAPI, Refit-style): request models with route/parameter attributes + authorization, one call client.RequestAsync(request). For singleton DI registration see the companion package AxiosNet.DependencyInjection.</Description>
+    <PackageTags>axios;http;httpclient;http-client;rest;json;api-client;declarative;refit;restsharp;flurl;typed-client;connection-pool;csharp;dotnet;netstandard;netframework;net6;net7;net8;net9;net10;net11</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryUrl>https://github.com/sunyuliang/AxiosNet</RepositoryUrl>
@@ -53,9 +55,35 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
+  <!-- netstandard2.0 的引用程序集缺少 [NotNullWhen(false)] 一类 nullable 注解：
+       string.IsNullOrWhiteSpace / IsNullOrEmpty 在 net6.0 / net8.0 上判空后能把变量收窄为非空，
+       在兼容资产上却仍是 string?，于是「判空后 Trim()」「new[] { value }」等写法会报
+       CS8602 / CS8603 / CS8604 / CS8620。经逐条核对，全部是同一份源码在注解齐全的两个目标上零警告的假阳性。
+       只在这一个目标上屏蔽这四个码；net6.0 / net8.0 的完整 nullable 检查保持不变，新增代码不会漏检。 -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <NoWarn>$(NoWarn);CS8602;CS8603;CS8604;CS8620</NoWarn>
+  </PropertyGroup>
+
+  <!-- ===== netstandard2.0 兼容资产：微软第一方 BCL 兼容包 =====
+       这些 API 在 net6.0 / net8.0 目标里由运行时自带，只有兼容资产需要显式引用；
+       PrivateAssets 不设，依赖需要随兼容资产流到消费方（否则 Framework / .NET Core 2.x 加载不到）。
+       全部是 Microsoft 出品的 BCL 补位包，不含任何第三方实现。 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="System.Net.Http.Json" Version="8.0.1" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="8.0.1" />
+    <PackageReference Include="System.Reflection.DispatchProxy" Version="4.7.1" />
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+    <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
+  </ItemGroup>
+
   <!-- 测试需要确定性地复现熔断淘汰的「快照后状态被并发推进」竞态（CircuitBreaker 的内部测试钩子）。 -->
   <ItemGroup>
     <InternalsVisibleTo Include="AxiosNet.Tests" />
+    <InternalsVisibleTo Include="AxiosNet.Compat.Tests" />
   </ItemGroup>
 
   <!-- WebAPI 目录是可整体删除的扩展：开关打开后连嵌入资源一起排除，内核不得依赖它们。 -->

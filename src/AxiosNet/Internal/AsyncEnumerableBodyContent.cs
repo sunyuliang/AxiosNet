@@ -19,17 +19,23 @@ internal sealed class AsyncEnumerableBodyContent : HttpContent
     public static AsyncEnumerableBodyContent FromMemoryChunks(IAsyncEnumerable<ReadOnlyMemory<byte>> chunks)
         => new(chunks.GetAsyncEnumerator);
 
-    // net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，必须实现。
+    // 无令牌重载在 netstandard2.0 上是唯一入口：把写出逻辑抽成共用核心，两个重载只是令牌不同。
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-        => SerializeToStreamAsync(stream, context, CancellationToken.None);
+        => WriteChunksAsync(stream, CancellationToken.None);
 
+#if !NETSTANDARD2_0
     /// <summary>写正文：把异步可枚举的块逐块写进流；长度不可知，只能分块传输。</summary>
-    protected override async Task SerializeToStreamAsync(
+    protected override Task SerializeToStreamAsync(
         Stream stream,
         TransportContext? context,
         CancellationToken cancellationToken)
+        => WriteChunksAsync(stream, cancellationToken);
+#endif
+
+    /// <summary>逐块写出：令牌在这个时刻才拿得到，交给调用方的迭代器（[EnumeratorCancellation] 会接住它）。</summary>
+    /// <remarks>netstandard2.0 的 HttpContent 不提供带令牌的虚重载，那里固定传 <see cref="CancellationToken.None"/>。</remarks>
+    private async Task WriteChunksAsync(Stream stream, CancellationToken cancellationToken)
     {
-        // 令牌在这个时刻才拿得到：交给调用方的迭代器（[EnumeratorCancellation] 会接住它）。
         var enumerator = _open(cancellationToken);
         await using (enumerator.ConfigureAwait(false))
         {

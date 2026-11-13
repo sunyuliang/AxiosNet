@@ -62,7 +62,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
                 "重试预算容量必须 >= 1：一次重试都不放行请直接不设置 Retry.Policy（或把 MaxRetries 设为 0）。");
         }
 
-        if (!double.IsFinite(refillPerSecond) || refillPerSecond < 0)
+        if (!PlatformCompat.IsFinite(refillPerSecond) || refillPerSecond < 0)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(refillPerSecond),

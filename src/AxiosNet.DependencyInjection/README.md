@@ -2,7 +2,7 @@
 
 [简体中文](#依赖注入扩展) | [English](#dependency-injection-extensions)
 
-**.NET 依赖注入扩展 for [AxiosNet](https://www.nuget.org/packages/AxiosNet)（含包内声明式客户端，命名空间 `AxiosNet.WebAPI`）** — `AddAxiosClient` / `AddApiClient` 把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`。
+**.NET 依赖注入扩展 for [AxiosNet](https://www.nuget.org/packages/AxiosNet)（含包内声明式客户端，命名空间 `AxiosNet.WebAPI`）** — `AddAxiosClient` / `AddApiClient` 把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`。本包与主包同步提供 `lib/netstandard2.0` 资产，覆盖 .NET Framework 4.7.2+ / .NET Core 2.0+（该资产随主包带入微软第一方 BCL 兼容包，详见文末「Runtime support」）。
 
 ## 依赖注入扩展
 
@@ -252,4 +252,4 @@ Managed tokens are written by the library using the `[Authorize]` scheme; a prov
 
 ## Runtime support
 
-Dual-target `net6.0` / `net8.0` — runs on .NET 6 / 7 / 8 / 9 / 10 / 11 (.NET 8+ picks `lib/net8.0`). No third-party runtime dependencies.
+Tri-target `netstandard2.0` / `net6.0` / `net8.0`. .NET 6 / 7 / 8 / 9 / 10 / 11 pick `lib/net6.0` / `lib/net8.0` and have no third-party runtime dependencies; .NET Framework 4.7.2+ / .NET Core 2.0+ / .NET 5 pick `lib/netstandard2.0`, the compatibility asset, which pulls in first-party Microsoft BCL compatibility packages through `AxiosNet`. The DI extension API is identical on all three assets. .NET Core 1.0 / 1.1 is out of scope (it only supports up to `netstandard1.6`).

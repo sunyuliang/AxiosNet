@@ -160,7 +160,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         var factor = BackoffFactor > 0 ? Math.Pow(BackoffFactor, context.Attempt - 1) : 1d;
         var milliseconds = Delay.TotalMilliseconds * factor;
 
-        if (!double.IsFinite(milliseconds))
+        if (!PlatformCompat.IsFinite(milliseconds))
         {
             return Clamp(MaxDelay);
         }
@@ -168,7 +168,7 @@ public sealed class RetryPolicy : IAxiosRetryPolicy
         if (Jitter && milliseconds > 0)
         {
             // 50%–100% 抖动：打散同时重试的客户端。
-            milliseconds *= 0.5d + (Random.Shared.NextDouble() * 0.5d);
+            milliseconds *= 0.5d + (PlatformCompat.NextJitter() * 0.5d);
         }
 
         return Clamp(TimeSpan.FromMilliseconds(milliseconds));

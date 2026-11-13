@@ -36,8 +36,13 @@ public interface IAxiosCacheStore
     /// 所以只实现四个方法的老存储不用改；需要按响应头做自己的策略（例如共享存储拒绝 <c>private</c>、按 <c>Vary</c> 分区、
     /// 用 <c>stale-while-revalidate</c> 延长可服务窗口）时再覆写它。
     /// </remarks>
+#if NETSTANDARD2_0
+    // 兼容资产没有默认接口实现：实现者必须自己提供本重载（可只转发到四参重载）。
+    ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken);
+#else
     ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
         => SetAsync(key, entry, policy.TimeToLive, cancellationToken);
+#endif
 
     /// <summary>摘掉一条，返回是否真的摘到了。</summary>
     ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken);

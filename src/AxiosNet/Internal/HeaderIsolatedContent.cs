@@ -24,8 +24,11 @@ internal sealed class HeaderIsolatedContent : HttpContent
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         => _inner.CopyToAsync(stream);
 
+#if !NETSTANDARD2_0
+    /// <summary>带令牌的写出：netstandard2.0 的 HttpContent 没有该虚重载，那里只保留无令牌版本。</summary>
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
         => _inner.CopyToAsync(stream, context, cancellationToken);
+#endif
 
     protected override bool TryComputeLength(out long length)
     {

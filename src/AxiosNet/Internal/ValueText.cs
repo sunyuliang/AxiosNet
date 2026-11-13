@@ -95,9 +95,9 @@ internal static class ValueText
     {
         // 查询串 / 表单没有二进制表示，用 base64（可逆）；multipart 的二进制由通道当文件处理，不经过这里。
         byte[] bytes => Convert.ToBase64String(bytes),
-        ReadOnlyMemory<byte> memory => Convert.ToBase64String(memory.Span),
-        Memory<byte> memory => Convert.ToBase64String(memory.Span),
-        ArraySegment<byte> segment => Convert.ToBase64String(segment.AsSpan()),
+        ReadOnlyMemory<byte> memory => PlatformCompat.ToBase64String(memory.Span),
+        Memory<byte> memory => PlatformCompat.ToBase64String(memory.Span),
+        ArraySegment<byte> segment => PlatformCompat.ToBase64String(segment.AsSpan()),
         string text => text,
         bool flag => flag ? "true" : "false",
         char character => character.ToString(),
@@ -107,8 +107,11 @@ internal static class ValueText
         DateTimeOffset dateTimeOffset => channel == ValueTextChannel.ScalarBody
             ? dateTimeOffset.ToString("O", CultureInfo.InvariantCulture)
             : dateTimeOffset.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+#if !NETSTANDARD2_0
+        // DateOnly / TimeOnly 是 .NET 6 类型，netstandard2.0 兼容资产没有它们，也不解析这两种标量。
         DateOnly date => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         TimeOnly time => time.ToString("O", CultureInfo.InvariantCulture),
+#endif
         Enum enumValue => enumValue.ToString(),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? string.Empty

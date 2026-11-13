@@ -24,15 +24,22 @@ internal sealed class ProgressHttpContent : HttpContent
         _meter = new TrafficMeter(ContentHeaderCopy.CopyFrom(inner, this), callback, maxRate);
     }
 
-    // net6.0 上无令牌的 SerializeToStreamAsync(Stream, TransportContext) 仍是抽象成员，必须实现。
+    // 无令牌重载在 netstandard2.0 上是唯一入口：把写出逻辑抽成共用核心，两个重载只是令牌不同。
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-        => SerializeToStreamAsync(stream, context, CancellationToken.None);
+        => WriteWithProgressAsync(stream, CancellationToken.None);
 
+#if !NETSTANDARD2_0
     /// <summary>写正文：内部内容的字节流经计量包装写出，边写边回调进度，结束后补发最后一帧。</summary>
-    protected override async Task SerializeToStreamAsync(
+    protected override Task SerializeToStreamAsync(
         Stream stream,
         TransportContext? context,
         CancellationToken cancellationToken)
+        => WriteWithProgressAsync(stream, cancellationToken);
+#endif
+
+    /// <summary>带进度计量地写出一轮正文。</summary>
+    /// <remarks>netstandard2.0 的 HttpContent 不提供带令牌的虚重载，那里固定传 <see cref="CancellationToken.None"/>。</remarks>
+    private async Task WriteWithProgressAsync(Stream stream, CancellationToken cancellationToken)
     {
         // 新的一轮写出：累计值与计时器保留，只解除「已完成」状态并重设本轮起点
         _meter.Restart();

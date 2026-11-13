@@ -55,8 +55,16 @@ internal static class Compression
     private static Stream CreateCompressor(Stream output, AxiosCompression compression) => compression switch
     {
         AxiosCompression.Gzip => new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true),
+#if NETSTANDARD2_0
+        // ZLibStream / BrotliStream 是 .NET 6+ 类型。不能用裸 DeflateStream 冒充 zlib 包装（见上方注释），
+        // 因此兼容资产只提供 gzip。正常路径上 ValidateCompression 已用 ERR_BAD_OPTION_VALUE 提前拒绝，
+        // 这里的 PNSE 只是绕过选项校验直接构造正文时的最后兜底。
+        AxiosCompression.Deflate or AxiosCompression.Brotli => throw new PlatformNotSupportedException(
+            "netstandard2.0 兼容资产只支持 gzip 请求体压缩：该运行时没有 ZLibStream / BrotliStream。"),
+#else
         AxiosCompression.Deflate => new ZLibStream(output, CompressionLevel.Fastest, leaveOpen: true),
         AxiosCompression.Brotli => new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true),
+#endif
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, "未定义的请求体压缩算法。")
     };
 }

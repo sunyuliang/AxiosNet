@@ -88,6 +88,41 @@ public sealed class HttpConnectionPool : IDisposable
             throw AxiosException.InvalidOption($"MaxConnectionsPerServer 必须大于 0（当前 {options.MaxConnectionsPerServer}）。", config);
         }
 
+#if NETSTANDARD2_0
+        // 兼容资产的默认 Handler 是 HttpClientHandler：下列连接级选项没有可映射的位置，设置了也不会生效。
+        // 在构造期显式拒绝（默认值放行），避免「配了却没反应」的静默失效。
+        // 只有全局 HandlerFactory 才接管默认档；命名传输档的工厂只作用于该档（见 PooledEndpoint.CreateHandler），
+        // 不能拿它给默认档豁免，否则默认档上这些选项依旧静默失效。
+        if (options.HandlerFactory is null)
+        {
+            if (options.PooledConnectionLifetime != ConnectionPoolOptions.DefaultPooledConnectionLifetime)
+            {
+                throw UnmappedOnCompatibilityAsset("PooledConnectionLifetime", config);
+            }
+
+            if (options.PooledConnectionIdleTimeout != ConnectionPoolOptions.DefaultPooledConnectionIdleTimeout)
+            {
+                throw UnmappedOnCompatibilityAsset("PooledConnectionIdleTimeout", config);
+            }
+
+            if (options.ConnectTimeout != ConnectionPoolOptions.DefaultConnectTimeout)
+            {
+                throw UnmappedOnCompatibilityAsset("ConnectTimeout", config);
+            }
+
+            if (!options.EnableMultipleHttp2Connections)
+            {
+                throw UnmappedOnCompatibilityAsset("EnableMultipleHttp2Connections", config);
+            }
+
+            if (options.KeepAlivePingDelay != Timeout.InfiniteTimeSpan
+                || options.KeepAlivePingTimeout != ConnectionPoolOptions.DefaultKeepAlivePingTimeout)
+            {
+                throw UnmappedOnCompatibilityAsset("KeepAlivePingDelay / KeepAlivePingTimeout", config);
+            }
+        }
+#endif
+
         if (IsNegativeLimit(options.PooledConnectionLifetime))
         {
             throw AxiosException.InvalidOption("PooledConnectionLifetime 不能为负（0 表示连接不复用；不限生命周期请用 Timeout.InfiniteTimeSpan）。", config);
@@ -148,15 +183,24 @@ public sealed class HttpConnectionPool : IDisposable
 
         // DecompressionMethods.All 在 BCL 里是 -1（每一位都亮），属合法的「全开」；
         // 超出 gzip / deflate / br 的位按配置错误拦下。
+#if NETSTANDARD2_0
+        // 兼容资产没有 Brotli / All：合法位只有 gzip / deflate，直接按位判定。
+        const DecompressionMethods knownDecompression =
+            DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        const string allowedDecompression = "GZip / Deflate 的任意组合";
+        var requestedDecompression = options.Decompression;
+#else
         const DecompressionMethods knownDecompression =
             DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli;
+        const string allowedDecompression = "GZip / Deflate / Brotli 的组合或 All";
         var requestedDecompression = options.Decompression == DecompressionMethods.All
             ? knownDecompression
             : options.Decompression;
+#endif
         if ((requestedDecompression & ~knownDecompression) != 0)
         {
             throw AxiosException.InvalidOption(
-                $"Decompression 含不支持的算法（当前 {options.Decompression}）：只允许 GZip / Deflate / Brotli 的组合或 All，"
+                $"Decompression 含不支持的算法（当前 {options.Decompression}）：只允许 {allowedDecompression}，"
                 + "一个都不解压请设为 None（或把 AutomaticDecompression 设为 false）。", config);
         }
 
@@ -197,7 +241,8 @@ public sealed class HttpConnectionPool : IDisposable
                 config);
         }
 
-        // 枚举只认两个值，别的值底层会当成「不 ping」。
+#if !NETSTANDARD2_0
+        // 枚举只认两个值，别的值底层会当成「不 ping」。兼容资产没有该枚举与 h2 ping 能力，整块校验不适用。
         if (options.KeepAlivePingPolicy is not (HttpKeepAlivePingPolicy.WithActiveRequests or HttpKeepAlivePingPolicy.Always))
         {
             throw AxiosException.InvalidOption(
@@ -205,11 +250,22 @@ public sealed class HttpConnectionPool : IDisposable
                 + "只支持 WithActiveRequests（只在有在途请求时 ping）与 Always。",
                 config);
         }
+#endif
     }
 
     /// <summary>是否为非法的负时长（<see cref="Timeout.InfiniteTimeSpan"/> 表示「不限」，放行）。</summary>
     private static bool IsNegativeLimit(TimeSpan value)
         => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
+
+#if NETSTANDARD2_0
+    private static AxiosException UnmappedOnCompatibilityAsset(string optionName, AxiosConfig? config)
+        => AxiosException.InvalidOption(
+            $"{optionName} 在 netstandard2.0 兼容资产上无法生效：该资产由 HttpClientHandler 承载，"
+            + "没有连接生命周期 / 建连超时 / h2 ping 的配置入口。请让消费方运行 .NET 6+ 以取到 net6.0 / net8.0 资产，"
+            + "或用 ConnectionPoolOptions.HandlerFactory 接管默认档 Handler（命名传输档的工厂只作用于该档）；"
+            + "空闲节点驱逐可改用 IdleHandlerLifetime（该选项在兼容资产上有效）。",
+            config);
+#endif
 
     // ---- 命名共享池 ----
 
@@ -318,6 +374,9 @@ public sealed class HttpConnectionPool : IDisposable
            && a.PooledConnectionLifetime == b.PooledConnectionLifetime
            && a.PooledConnectionIdleTimeout == b.PooledConnectionIdleTimeout
            && a.ConnectTimeout == b.ConnectTimeout
+#if !NETSTANDARD2_0
+           && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
+#endif
            && a.MaxResponseHeadersLength == b.MaxResponseHeadersLength
            && a.IdleHandlerLifetime == b.IdleHandlerLifetime
            && a.EvictionInterval == b.EvictionInterval
@@ -332,14 +391,17 @@ public sealed class HttpConnectionPool : IDisposable
            && a.EnableMultipleHttp2Connections == b.EnableMultipleHttp2Connections
            && a.KeepAlivePingDelay == b.KeepAlivePingDelay
            && a.KeepAlivePingTimeout == b.KeepAlivePingTimeout
+#if !NETSTANDARD2_0
            && a.KeepAlivePingPolicy == b.KeepAlivePingPolicy
+#endif
            && a.MaxEndpointCount == b.MaxEndpointCount
            && a.EnabledSslProtocols == b.EnabledSslProtocols
-           && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
            && ReferenceEquals(a.Proxy, b.Proxy)
            && ReferenceEquals(a.Credentials, b.Credentials)
            && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
+#if !NETSTANDARD2_0
            && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
+#endif
            && ReferenceEquals(a.HandlerFactory, b.HandlerFactory)
            && SameTransports(a.Transports, b.Transports);
 
@@ -373,8 +435,10 @@ public sealed class HttpConnectionPool : IDisposable
            && ReferenceEquals(a.Proxy, b.Proxy)
            && ReferenceEquals(a.Credentials, b.Credentials)
            && ReferenceEquals(a.ServerCertificateCustomValidationCallback, b.ServerCertificateCustomValidationCallback)
+#if !NETSTANDARD2_0
            && ReferenceEquals(a.ConfigureSslOptions, b.ConfigureSslOptions)
            && ReferenceEquals(a.ConnectCallback, b.ConnectCallback)
+#endif
            && ReferenceEquals(a.HandlerFactory, b.HandlerFactory);
 
     /// <summary>池实际生效的选项（副本；修改它不会影响池）。</summary>

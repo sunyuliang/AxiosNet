@@ -111,6 +111,20 @@ public sealed class XmlContentSerializer : IContentSerializer
         return For(type).Deserialize(reader);
     }
 
+#if NETSTANDARD2_0
+    /// <summary>XML 走文本出口，不提供二进制序列化；返回 <c>null</c> 让库改用 <see cref="Serialize(object, Type, AxiosConfig)"/>。</summary>
+    /// <remarks>显式实现而不是依赖接口默认方法：netstandard2.0 兼容资产不支持默认接口实现。</remarks>
+    public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
+
+    /// <summary>字节入口按响应字符集解码后转调文本入口，与接口默认实现同一优先级。</summary>
+    /// <remarks>显式实现而不是依赖接口默认方法：netstandard2.0 兼容资产不支持默认接口实现。</remarks>
+    public object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
+        => Deserialize(
+            ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.TextEncoding),
+            type,
+            config);
+#endif
+
     /// <summary>AOT / 裁剪下把「序列化器不工作」提前成一条可读错误，而不是运行期随机失败。</summary>
     private static void EnsureSupported()
     {

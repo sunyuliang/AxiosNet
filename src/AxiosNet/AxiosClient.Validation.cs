@@ -63,9 +63,26 @@ public sealed partial class AxiosClient
     /// <summary>
     /// 「明确要求 HTTP/3」时的前置护栏：只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>，
     /// <c>RequestVersionOrLower</c> 的降级是正常路径；判据是本机能力 <see cref="Http3Support"/>。
+    /// netstandard2.0 兼容资产没有 h2 / h3 能力：只要 <c>version.Major &gt; 1</c> 就无条件拒绝，不看 policy。
     /// </summary>
     internal static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
     {
+#if NETSTANDARD2_0
+        // 兼容资产只有 HttpClientHandler：HTTP/2 / HTTP/3 都发不出去。在这里明确拒绝，
+        // 而不是让 Framework 静默按 1.1 发出、让调用方以为自己用了高版本协议。
+        if (version.Major > 1)
+        {
+            throw AxiosException.InvalidOption(
+                $"netstandard2.0 兼容资产只支持 HTTP/1.1，无法按 HTTP/{version} 发送请求："
+                + "请让消费方运行 .NET 6+ 以取到 net6.0 / net8.0 资产（NuGet 自动选择），"
+                + "或把 Transport.HttpVersion 设为 1.1。",
+                config);
+        }
+
+        _ = uri;
+        _ = policy;
+        return;
+#else
         if (version.Major < 3 || policy == HttpVersionPolicy.RequestVersionOrLower)
         {
             return;
@@ -88,6 +105,7 @@ public sealed partial class AxiosClient
                 + "想要「有 h3 就用 h3、没有就自动降级」，请把 VersionPolicy 设为 RequestVersionOrLower。",
                 config);
         }
+#endif
     }
 
     /// <summary>限制类配置的取值范围校验：负值一律报错；<c>Timeout=0</c> 不超时，<c>MaxRate=0</c> 不限速。</summary>
@@ -115,6 +133,17 @@ public sealed partial class AxiosClient
                 throw AxiosException.InvalidOption(
                     $"Compression 取值 {(int)compression} 未定义：可选 AxiosCompression.None / Gzip / Deflate / Brotli。", config);
             }
+
+#if NETSTANDARD2_0
+            // 兼容资产没有 ZLibStream / BrotliStream，只能用 gzip 压缩器。在选项校验阶段就用统一错误码拒绝，
+            // 而不是等请求体构建到一半再抛 PlatformNotSupportedException 绕过 AxiosException 体系。
+            if (compression is AxiosCompression.Deflate or AxiosCompression.Brotli)
+            {
+                throw AxiosException.InvalidOption(
+                    "netstandard2.0 兼容资产只支持 gzip 请求体压缩：该运行时没有 ZLibStream / BrotliStream，"
+                    + "请改用 AxiosCompression.Gzip 或关闭 Compression。", config);
+            }
+#endif
 
             if (compression != AxiosCompression.None && config.HasHeaders && config.Headers.Has("Content-Encoding"))
             {

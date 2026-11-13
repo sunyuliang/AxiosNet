@@ -79,7 +79,12 @@ public static partial class Attempt
             {
                 try
                 {
+#if NETSTANDARD2_0
+                    // 兼容资产没有 HttpRequestMessage.VersionPolicy；校验在版本 >1.1 时一律拒绝，策略不参与。
+                    AxiosClient.ValidateHttp3Request(uri, template.Version, default, ctx.Config);
+#else
                     AxiosClient.ValidateHttp3Request(uri, template.Version, template.VersionPolicy, ctx.Config);
+#endif
                 }
                 catch (AxiosException ex) when (ex.Code == AxiosException.ErrBadOptionValue)
                 {

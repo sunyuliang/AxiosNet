@@ -50,7 +50,7 @@ internal sealed class ApiCredentialProviderAdapter : IAxiosCredentialProvider
         if (_snapshot is { } snapshot)
         {
             _snapshot = null;
-            return ValueTask.FromResult(Apply(snapshot, context.Config));
+            return PlatformCompat.FromResult(Apply(snapshot, context.Config));
         }
 
         // 上下文用内核合并后的生效配置：托管落点写进的是本次真正发送的那份配置。
@@ -58,7 +58,7 @@ internal sealed class ApiCredentialProviderAdapter : IAxiosCredentialProvider
 
         // 常见提供方同步完成（缓存令牌 / 静态令牌）：走同步返回，避免 async ValueTask 状态机的开销。
         return pending.IsCompletedSuccessfully
-            ? ValueTask.FromResult(Apply(pending.Result, context.Config))
+            ? PlatformCompat.FromResult(Apply(pending.Result, context.Config))
             : AwaitAsync(pending, context.Config);
     }
 

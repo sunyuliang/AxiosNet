@@ -10,13 +10,22 @@ public static class Http3Support
     /// <summary>BCL 的 HTTP/3 开关名：.NET 6 上默认关闭，.NET 7 起默认打开。</summary>
     internal const string SwitchName = "System.Net.SocketsHttpHandler.Http3Support";
 
+#if !NETSTANDARD2_0
     /// <summary>QUIC 能力的权威来源（<c>QuicConnection.IsSupported</c> 是 .NET 7 才有的 API）。</summary>
     private const string QuicConnectionTypeName = "System.Net.Quic.QuicConnection, System.Net.Quic";
+#endif
 
     static Http3Support()
     {
+#if NETSTANDARD2_0
+        // 兼容资产的 HttpClientHandler 既没有 QUIC 实现也没有 h3 开关，能力恒为 false。
+        // 放在这里而不是 Probe 里，避免同一方法里出现不可达代码。
+        IsSupported = false;
+        UnsupportedReason = "netstandard2.0 兼容资产没有 SocketsHttpHandler / QUIC 实现，只支持 HTTP/1.1";
+#else
         IsSupported = Probe(out var reason);
         UnsupportedReason = reason;
+#endif
     }
 
     /// <summary>本机能否跑 HTTP/3。</summary>
@@ -25,6 +34,7 @@ public static class Http3Support
     /// <summary>不支持时的人类可读原因（支持时为 <c>null</c>），直接写进错误信息。</summary>
     public static string? UnsupportedReason { get; }
 
+#if !NETSTANDARD2_0
     /// <summary>探测顺序：先看开关，再看 QUIC。</summary>
     private static bool Probe(out string? reason)
     {
@@ -68,4 +78,5 @@ public static class Http3Support
         // 只确认开关打开且 QUIC 未被否定。
         return true;
     }
+#endif
 }

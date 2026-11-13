@@ -45,6 +45,7 @@ public sealed class ConnectionTransportOptions
     /// <summary>该档允许的 TLS 协议版本。</summary>
     public SslProtocols? EnabledSslProtocols { get; set; }
 
+#if !NETSTANDARD2_0
     /// <summary>
     /// TLS 选项扩展入口：在库构造的 <see cref="SslClientAuthenticationOptions"/> 上做最后调整，
     /// 客户端证书（mTLS）也在这里挂 —— 回调内的赋值不会被覆盖。
@@ -56,6 +57,9 @@ public sealed class ConnectionTransportOptions
     /// 回调必须自己尊重取消令牌；TLS 仍由 Handler 在返回的流上完成。
     /// </summary>
     public Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>>? ConnectCallback { get; set; }
+#endif
+    // netstandard2.0 兼容资产没有 SslClientAuthenticationOptions / SocketsHttpConnectionContext，
+    // 上面两项在该资产上不存在；需要完全接管传输层时请用下面的 HandlerFactory。
 
     /// <summary>
     /// 该档的自定义 Handler 工厂（完全接管传输层）；为 <c>null</c> 时用库默认 Handler。

@@ -92,7 +92,7 @@ public sealed class PutAttribute : HttpApiAttribute
 public sealed class PatchAttribute : HttpApiAttribute
 {
     /// <inheritdoc />
-    public PatchAttribute(string path) : base(HttpMethod.Patch, path)
+    public PatchAttribute(string path) : base(PlatformCompat.PatchMethod, path)
     {
     }
 }

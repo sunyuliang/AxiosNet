@@ -17,12 +17,14 @@ public sealed partial class AxiosConfig
         public ConnectionPoolOptions? Pool { get; set; }
 
         /// <summary>
-        /// HTTP 版本，<c>null</c>（默认）= HTTP/2（<see cref="System.Net.HttpVersion.Version20"/>），配合默认协商策略可降级到 1.1。
+        /// HTTP 版本，<c>null</c>（默认）= HTTP/2（<c>HttpVersion.Version20</c>），配合默认协商策略可降级到 1.1；
+        /// netstandard2.0 兼容资产上默认 1.1，显式要求 2.0 / 3.0 会在发送前以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
         /// 设 <c>Version30</c> 即要求 h3（环境支持见 <see cref="Http3Support"/>）；按请求项：单次请求覆盖实例默认值。
         /// </summary>
         /// <remarks>
-        /// 显式写 <c>null</c> 是「显式回到库默认 HTTP/2」，会压过实例默认值（不只是「未设置」）：
-        /// 实例设了 1.1、单次请求写 <c>null</c> → 本次用 2.0。要沿用实例默认值就不要碰本项。
+        /// 显式写 <c>null</c> 是「显式回到库默认版本」（现代资产 HTTP/2，netstandard2.0 兼容资产 HTTP/1.1），
+        /// 会压过实例默认值（不只是「未设置」）：
+        /// 实例设了 1.1、单次请求写 <c>null</c> → 本次用 2.0（兼容资产上仍为 1.1）。要沿用实例默认值就不要碰本项。
         /// 通用入口（<see cref="AxiosClient.RequestAsync(AxiosConfig)"/>）与快捷方法口径一致。
         /// </remarks>
         public Version? HttpVersion
@@ -41,8 +43,10 @@ public sealed partial class AxiosConfig
         internal bool HttpVersionSet { get; set; }
 
         /// <summary>
-        /// 版本协商策略（<see cref="System.Net.Http.HttpVersionPolicy"/>），默认 <c>RequestVersionOrLower</c>（服务端不支持就降级）；
+        /// 版本协商策略（<c>HttpVersionPolicy</c>），默认 <c>RequestVersionOrLower</c>（服务端不支持就降级）；
         /// <c>RequestVersionExact</c> 表示只用该版本，协商不上就报错。按请求项：单次请求覆盖实例默认值。
+        /// netstandard2.0 兼容资产只有 HTTP/1.1：<see cref="HttpVersion"/> 显式设为 2.0 / 3.0 时本项不参与协商，
+        /// 无论取值都会在发送前以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝（不存在降级路径）。
         /// </summary>
         /// <remarks>
         /// 显式写 <c>null</c> 同样是「显式回到库默认 <c>RequestVersionOrLower</c>」，会压过实例默认值；

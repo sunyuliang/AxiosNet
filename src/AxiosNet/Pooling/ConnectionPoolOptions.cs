@@ -9,8 +9,23 @@ namespace AxiosNet.Pooling;
 /// 连接池配置：每个 origin 的最大连接数、连接生命周期、空闲回收等底层 Handler 选项。
 /// 需要插入自己的 <see cref="DelegatingHandler"/>（日志/签名/重试）时用 <see cref="HandlerFactory"/>。
 /// </summary>
+/// <remarks>
+/// netstandard2.0 兼容资产由 <c>HttpClientHandler</c> 承载，下列连接级选项没有可映射的位置：
+/// <see cref="PooledConnectionLifetime"/>、<see cref="PooledConnectionIdleTimeout"/>、<see cref="ConnectTimeout"/>、
+/// <see cref="EnableMultipleHttp2Connections"/>、<see cref="KeepAlivePingDelay"/>、<see cref="KeepAlivePingTimeout"/>。
+/// 把它们设为非默认值会在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝，而不是静默忽略。
+/// 例外：显式设置 <see cref="HandlerFactory"/> 接管默认档 Handler 时，这些选项由工厂决定语义，不做拒绝
+/// （命名传输档的 <see cref="ConnectionTransportOptions.HandlerFactory"/> 只作用于该档，不能给默认档豁免）。
+/// </remarks>
 public sealed class ConnectionPoolOptions
 {
+    // 默认值只在这里定义一份：ConnectionPoolOptions 的属性初值与 HttpConnectionPool 的兼容资产校验共用，
+    // 避免两处各写一份导致「改了默认值反而被判成非默认」。
+    internal static readonly TimeSpan DefaultPooledConnectionLifetime = TimeSpan.FromMinutes(10);
+    internal static readonly TimeSpan DefaultPooledConnectionIdleTimeout = TimeSpan.FromMinutes(2);
+    internal static readonly TimeSpan DefaultConnectTimeout = TimeSpan.FromSeconds(15);
+    internal static readonly TimeSpan DefaultKeepAlivePingTimeout = TimeSpan.FromSeconds(20);
+
     /// <summary>每个 origin 允许的最大并发 TCP 连接数（默认 100）。</summary>
     public int MaxConnectionsPerServer { get; set; } = 100;
 
@@ -18,14 +33,15 @@ public sealed class ConnectionPoolOptions
     /// 池化连接的最大存活时间（默认 10 分钟，到期优雅轮换）；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。
     /// 实际落到 Handler 的值有 ±10% 抖动，本属性保持你设置的原值。
     /// </summary>
-    public TimeSpan PooledConnectionLifetime { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan PooledConnectionLifetime { get; set; } = DefaultPooledConnectionLifetime;
 
     /// <summary>连接在池中空闲多久后关闭（默认 2 分钟）；<see cref="Timeout.InfiniteTimeSpan"/> 表示一直保留。</summary>
-    public TimeSpan PooledConnectionIdleTimeout { get; set; } = TimeSpan.FromMinutes(2);
+    public TimeSpan PooledConnectionIdleTimeout { get; set; } = DefaultPooledConnectionIdleTimeout;
 
     /// <summary>建立 TCP/TLS 连接的超时时间（默认 15 秒）。</summary>
-    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
+    public TimeSpan ConnectTimeout { get; set; } = DefaultConnectTimeout;
 
+#if !NETSTANDARD2_0
     /// <summary>
     /// 自定义建连回调（直通 <see cref="SocketsHttpHandler.ConnectCallback"/>）：接管「把目标端点变成一条流」这一步，
     /// 为 <c>null</c> 时用 BCL 默认建连。
@@ -36,9 +52,12 @@ public sealed class ConnectionPoolOptions
     /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
     /// </remarks>
     public Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>>? ConnectCallback { get; set; }
+#endif
+    // netstandard2.0 兼容资产没有 SocketsHttpConnectionContext / SocketsHttpHandler，
+    // 因此不暴露本项；需要自定义拨号时用 HandlerFactory 自行接管整个 Handler。
 
     /// <summary>
-    /// 响应头体积上限（单位 KB，必须大于 0，默认 64，对应 <see cref="SocketsHttpHandler.MaxResponseHeadersLength"/>）。
+    /// 响应头体积上限（单位 KB，必须大于 0，默认 64，对应 <c>SocketsHttpHandler.MaxResponseHeadersLength</c>）。
     /// 超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>（HTTP/1.1 与 HTTP/2 都生效）。
     /// 0 或负数在建池时就以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
     /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
@@ -93,15 +112,21 @@ public sealed class ConnectionPoolOptions
     public bool AutomaticDecompression { get; set; } = true;
 
     /// <summary>
-    /// 自动解压启用的算法集合（默认 <see cref="DecompressionMethods.All"/>，即 gzip / deflate / br 全开）。
+    /// 自动解压启用的算法集合（默认 <c>DecompressionMethods.All</c>，即 gzip / deflate / br 全开；兼容资产上为 GZip | Deflate）。
     /// </summary>
     /// <remarks>
-    /// 接受 <see cref="DecompressionMethods.GZip"/> / <see cref="DecompressionMethods.Deflate"/> / <see cref="DecompressionMethods.Brotli"/>
-    /// 的任意组合，或 <see cref="DecompressionMethods.All"/>（BCL 里为 -1，等价于全开）；<see cref="DecompressionMethods.None"/>
+    /// 接受 <c>DecompressionMethods.GZip</c> / <c>DecompressionMethods.Deflate</c> / <c>DecompressionMethods.Brotli</c>
+    /// 的任意组合，或 <c>DecompressionMethods.All</c>（BCL 里为 -1，等价于全开）；<see cref="DecompressionMethods.None"/>（兼容资产没有 Brotli / All，只认 GZip / Deflate）
     /// 表示一个都不解压，其余位在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
     /// 只在 <see cref="AutomaticDecompression"/> 为 true 时生效：客户端只宣告、也只解压这里列出的编码。
     /// </remarks>
-    public DecompressionMethods Decompression { get; set; } = DecompressionMethods.All;
+    public DecompressionMethods Decompression { get; set; } =
+#if NETSTANDARD2_0
+        // Framework 的枚举没有 Brotli / All，兼容资产只放行 gzip / deflate。
+        DecompressionMethods.GZip | DecompressionMethods.Deflate;
+#else
+        DecompressionMethods.All;
+#endif
 
     /// <summary>HTTP/2 下是否允许同一 origin 打开多条连接（默认 true）；只用 HTTP/1.1 时无影响。</summary>
     public bool EnableMultipleHttp2Connections { get; set; } = true;
@@ -122,13 +147,16 @@ public sealed class ConnectionPoolOptions
     /// <remarks>
     /// 一般取值小于 <see cref="KeepAlivePingDelay"/>；本项不做「必须小于」的校验，反过来配置不会报错。
     /// </remarks>
-    public TimeSpan KeepAlivePingTimeout { get; set; } = TimeSpan.FromSeconds(20);
+    public TimeSpan KeepAlivePingTimeout { get; set; } = DefaultKeepAlivePingTimeout;
 
+#if !NETSTANDARD2_0
     /// <summary>
     /// 何时发送 keep-alive ping（默认 <see cref="HttpKeepAlivePingPolicy.WithActiveRequests"/>，只在有在途请求时发）；
     /// <see cref="HttpKeepAlivePingPolicy.Always"/> 在完全空闲时也维持连接。
     /// </summary>
     public HttpKeepAlivePingPolicy KeepAlivePingPolicy { get; set; } = HttpKeepAlivePingPolicy.WithActiveRequests;
+#endif
+    // netstandard2.0 兼容资产的 HttpClientHandler 没有 h2 keep-alive ping，本项在该资产上不存在。
 
     /// <summary>
     /// 池内 origin 节点数上限，默认 1024；0 或负数不限制（软上限：容量检查与插入非原子）。
@@ -136,7 +164,7 @@ public sealed class ConnectionPoolOptions
     /// </summary>
     public int MaxEndpointCount { get; set; } = 1024;
 
-    /// <summary>代理；为 null 时不使用系统/环境代理，需要时设为 <see cref="System.Net.Http.HttpClient.DefaultProxy"/>。</summary>
+    /// <summary>代理；为 null 时不使用系统/环境代理，需要时设为 <c>HttpClient.DefaultProxy</c>。</summary>
     public IWebProxy? Proxy { get; set; }
 
     /// <summary>凭据（WithCredentials 时使用系统默认凭据）。</summary>
@@ -148,8 +176,12 @@ public sealed class ConnectionPoolOptions
     /// <summary>限制 TLS 协议版本。</summary>
     public SslProtocols? EnabledSslProtocols { get; set; }
 
+#if !NETSTANDARD2_0
     /// <summary>TLS 选项扩展入口：在库构造的 <see cref="SslClientAuthenticationOptions"/> 上做最后调整（回调内的赋值不会被覆盖）。</summary>
     public Action<SslClientAuthenticationOptions>? ConfigureSslOptions { get; set; }
+#endif
+    // netstandard2.0 兼容资产没有 SslClientAuthenticationOptions；服务端证书校验请用
+    // ServerCertificateCustomValidationCallback，客户端证书请用 HandlerFactory 自行挂载。
 
     /// <summary>
     /// 自定义 Handler 工厂：每个 origin 节点创建时调用一次（节点被驱逐 / 重建后会再次调用），
@@ -208,8 +240,10 @@ public sealed class ConnectionPoolOptions
         Credentials = Credentials,
         ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
         EnabledSslProtocols = EnabledSslProtocols,
+#if !NETSTANDARD2_0
         ConfigureSslOptions = ConfigureSslOptions,
         ConnectCallback = ConnectCallback,
+#endif
         HandlerFactory = HandlerFactory,
         UseCookies = UseCookies
     };
@@ -218,37 +252,50 @@ public sealed class ConnectionPoolOptions
     /// 复制一份独立实例：池内部持有的是副本（<see cref="HttpConnectionPool.Options"/> 也返回副本）。
     /// 引用型字段（代理、委托）按引用共享，不做深拷贝。
     /// </summary>
-    public ConnectionPoolOptions Clone() => new()
+    public ConnectionPoolOptions Clone()
     {
-        MaxConnectionsPerServer = MaxConnectionsPerServer,
-        PooledConnectionLifetime = PooledConnectionLifetime,
-        PooledConnectionIdleTimeout = PooledConnectionIdleTimeout,
-        ConnectTimeout = ConnectTimeout,
-        ConnectCallback = ConnectCallback,
-        MaxResponseHeadersLength = MaxResponseHeadersLength,
-        IdleHandlerLifetime = IdleHandlerLifetime,
-        EvictionInterval = EvictionInterval,
-        AllowAutoRedirect = AllowAutoRedirect,
-        MaxAutomaticRedirections = MaxAutomaticRedirections,
-        UseCookies = UseCookies,
-        CookieCapacity = CookieCapacity,
-        CookiePerDomainCapacity = CookiePerDomainCapacity,
-        CookieMaxCookieSize = CookieMaxCookieSize,
-        AutomaticDecompression = AutomaticDecompression,
-        Decompression = Decompression,
-        EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,
-        KeepAlivePingDelay = KeepAlivePingDelay,
-        KeepAlivePingTimeout = KeepAlivePingTimeout,
-        KeepAlivePingPolicy = KeepAlivePingPolicy,
-        MaxEndpointCount = MaxEndpointCount,
-        Proxy = Proxy,
-        Credentials = Credentials,
-        ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
-        EnabledSslProtocols = EnabledSslProtocols,
-        ConfigureSslOptions = ConfigureSslOptions,
-        HandlerFactory = HandlerFactory,
-        _transports = CloneTransports(_transports)
-    };
+        var copy = new ConnectionPoolOptions
+        {
+            MaxConnectionsPerServer = MaxConnectionsPerServer,
+            PooledConnectionLifetime = PooledConnectionLifetime,
+            PooledConnectionIdleTimeout = PooledConnectionIdleTimeout,
+            ConnectTimeout = ConnectTimeout,
+            MaxResponseHeadersLength = MaxResponseHeadersLength,
+            IdleHandlerLifetime = IdleHandlerLifetime,
+            EvictionInterval = EvictionInterval,
+            AllowAutoRedirect = AllowAutoRedirect,
+            MaxAutomaticRedirections = MaxAutomaticRedirections,
+            UseCookies = UseCookies,
+            CookieCapacity = CookieCapacity,
+            CookiePerDomainCapacity = CookiePerDomainCapacity,
+            CookieMaxCookieSize = CookieMaxCookieSize,
+            AutomaticDecompression = AutomaticDecompression,
+            Decompression = Decompression,
+            EnableMultipleHttp2Connections = EnableMultipleHttp2Connections,
+            KeepAlivePingDelay = KeepAlivePingDelay,
+            KeepAlivePingTimeout = KeepAlivePingTimeout,
+            MaxEndpointCount = MaxEndpointCount,
+            Proxy = Proxy,
+            Credentials = Credentials,
+            ServerCertificateCustomValidationCallback = ServerCertificateCustomValidationCallback,
+            EnabledSslProtocols = EnabledSslProtocols,
+            HandlerFactory = HandlerFactory,
+            _transports = CloneTransports(_transports)
+        };
+
+        CopyTfmOnlyOptions(this, copy);
+        return copy;
+    }
+
+    /// <summary>复制仅在现代资产上存在的选项（netstandard2.0 契约里没有这 3 个属性）。</summary>
+    private static void CopyTfmOnlyOptions(ConnectionPoolOptions source, ConnectionPoolOptions target)
+    {
+#if !NETSTANDARD2_0
+        target.ConnectCallback = source.ConnectCallback;
+        target.KeepAlivePingPolicy = source.KeepAlivePingPolicy;
+        target.ConfigureSslOptions = source.ConfigureSslOptions;
+#endif
+    }
 
     /// <summary>深拷贝命名传输档字典（键区分大小写）：克隆后改一份不会串到另一份。</summary>
     private static Dictionary<string, ConnectionTransportOptions>? CloneTransports(

@@ -2,9 +2,10 @@
 # 普通 push / PR 只做构建 + 测试（不发布），避免回归只能等到打 tag 才暴露。
 # 认证方式：NuGet Trusted Publishing（OIDC），不需要长期 API Key，也不需要 NUGET_API_KEY 密钥。
 #
-# 发布前置条件：build-test（双 TFM 全量用例）、test-runtime（net8.0 资产在高版本运行时上的全量
-# 用例）与 aot（win / linux 冒烟 + 包消费 smoke）都成功，publish 才会启动；任一失败或取消，
-# 任何包都不会被推送——不会出现「发了一半」。
+# 发布前置条件：build-test（三套资产所在的目标框架各跑一遍门禁用例，Evidence 诊断用例除外）、test-runtime
+# （net8.0 资产在高版本运行时上的全量用例）、compat-net472（兼容资产在真实 .NET Framework 上）
+# 与 aot（win / linux 冒烟 + 包消费 smoke）都成功，
+# publish 才会启动；任一失败或取消，任何包都不会被推送——不会出现「发了一半」。
 #
 # 幂等：每次运行都先探测 nuget.org 上这个版本在不在，在库就只补缺失的符号，不在库才推一次。
 # 探测必须容忍摄入延迟——包推成功后公开索引（flat container）最长约 30 分钟才生效，这段窗口里
@@ -15,8 +16,8 @@
 # 主库自身零外部依赖）与 AxiosNet.Cli（设计期 dotnet tool，命令 axiosnet-gen，从 OpenAPI 生成声明式客户端）。
 # 三个包用同一 tag 同步发版（monorepo 锁步版本）：publish / verify-published 按 matrix 逐包执行同一套流程，
 # 包项目由 matrix.package 注入 PACKAGE_PROJECT，各步骤内的发布状态机逻辑与单包时代逐字不变。
-# 两种包形态共用这套流程：类库包资产在 lib/<tfm>/（双目标），工具包在 tools/<tfm>/any/（单目标），
-# 凡是按资产路径取值的步骤都同时认这两种前缀。
+# 两种包形态共用这套流程：类库包资产在 lib/<tfm>/（三目标：netstandard2.0 / net6.0 / net8.0），
+# 工具包在 tools/<tfm>/any/（单目标），凡是按资产路径取值的步骤都同时认这两种前缀。
 #
 # 与 nuget.org「Trusted Publishing」策略必须逐项一致（大小写不敏感，但内容要相同）：
 #   Repository Owner : sunyuliang        ← 仓库：https://github.com/sunyuliang/AxiosNet
@@ -60,9 +61,12 @@ jobs:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      # AxiosNet.Compat.Tests 真正编译并执行 netstandard2.0 兼容资产（net8.0 测试宿主 +
+      # SetTargetFramework 引用 lib/netstandard2.0；.NET Framework 那一侧由 compat-net472 job 覆盖）：
+      # 漏掉它，兼容资产就只在 pack 时被动编译、无人执行。
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
-        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj
+        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj        test/AxiosNet.Compat.Tests/AxiosNet.Compat.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -71,8 +75,9 @@ jobs:
       - name: 安装 .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          # 类库是 net6.0 / net8.0 双目标，测试项目同样双目标（两种运行时各测对应资产），
-          # 因此 6.0 运行时必须显式安装（runner 镜像不保证保留已 EOL 的 6.0）
+          # 类库是三目标，测试项目则各测各的：AxiosNet.Tests 双 TFM（net6.0 / net8.0 各测对应资产），
+          # AxiosNet.Compat.Tests 用 net8.0 宿主测 netstandard2.0 兼容资产（它由 8.0 SDK 自带的 netstandard
+          # 引用程序集编译，不需要额外 SDK），因此只需显式装 6.0 运行时（runner 镜像不保证保留已 EOL 的 6.0）
           dotnet-version: |
             8.0.x
             6.0.x
@@ -123,7 +128,7 @@ jobs:
         run: |
           for project in $TEST_PROJECTS; do
             dotnet test "$project" --configuration Release --no-build --no-restore \
-              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests" \
+              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests&Category!=Evidence" \
               --logger "console;verbosity=normal"
           done
 
@@ -144,15 +149,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 只列需要额外验证的运行时；net6 / net8 由 build-test 直接覆盖（两份资产各配自己的运行时）
+        # 只列需要额外验证的运行时；net6 / net8 由 build-test 直接覆盖（netstandard2.0 兼容资产由
+        # build-test 里的 AxiosNet.Compat.Tests 以 net8.0 宿主执行，这里的前滚也让它顺带在高版本运行时上跑一遍）
         dotnet: ['10.0.x']
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+      # AxiosNet.Compat.Tests 真正编译并执行 netstandard2.0 兼容资产（net8.0 测试宿主 +
+      # SetTargetFramework 引用 lib/netstandard2.0；.NET Framework 那一侧由 compat-net472 job 覆盖）：
+      # 漏掉它，兼容资产就只在 pack 时被动编译、无人执行。
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
-        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj
+        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj        test/AxiosNet.Compat.Tests/AxiosNet.Compat.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -202,9 +211,50 @@ jobs:
           for project in $TEST_PROJECTS; do
             dotnet test "$project" --configuration Release --no-build --no-restore \
               -f net8.0 \
-              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests" \
+              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests&Category!=Evidence" \
               --logger "console;verbosity=normal"
           done
+
+  compat-net472:
+    name: compat asset on .NET Framework 4.7.2
+    # netstandard2.0 资产的主要消费方之一是 .NET Framework：只在 net8 宿主上跑会漏掉
+    # 只有 Framework 才走的分支（Type.IsByRefLike 缺失、HttpClientHandler 等）。
+    # 该 TFM 只在 Windows 上构建（test csproj 按 OS 条件多目标），Ubuntu 上的 job 不受影响。
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 确认 .NET Framework 4.7.2+ 运行时
+        # Windows runner 自带 4.8，但显式断言一次：否则运行时缺失时 dotnet test 会报得含糊。
+        shell: pwsh
+        run: |
+          $release = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full').Release
+          if ($release -lt 461808) {
+            Write-Error "本机 .NET Framework 低于 4.7.2（Release=$release），net472 用例无法执行"
+            exit 1
+          }
+          "已安装 .NET Framework Release=$release"
+
+      - name: 还原依赖
+        run: dotnet restore test/AxiosNet.Compat.Tests/AxiosNet.Compat.Tests.csproj
+
+      - name: 构建 net472
+        run: dotnet build test/AxiosNet.Compat.Tests/AxiosNet.Compat.Tests.csproj --configuration Release --no-restore -f net472
+
+      - name: 运行 net472 用例（兼容资产真的跑在 .NET Framework 上）
+        run: dotnet test test/AxiosNet.Compat.Tests/AxiosNet.Compat.Tests.csproj --configuration Release --no-build --no-restore -f net472 --logger "console;verbosity=normal"
 
   aot:
     name: native aot (${{ matrix.rid }})
@@ -294,7 +344,7 @@ jobs:
     # 前置 job 只在 workflow_dispatch 下被跳过，而 publish 只跑 tag，所以 tag 事件下它们必定真实执行。
     # 本 job 内不重复跑 test-runtime：它已作为门禁；也不装高版本 SDK —— 这里的 SDK 版本决定 pack 产物，
     # 加一个更高的 SDK 会让 muxer 改用它构建，发布包的构建环境就与历史版本不一致了。
-    needs: [build-test, test-runtime, aot]
+    needs: [build-test, test-runtime, compat-net472, aot]
     runs-on: ubuntu-latest
     # 必须与 nuget.org 策略里填的 Environment 完全一致（策略填了就必须匹配）
     environment: build-nuget
@@ -316,9 +366,12 @@ jobs:
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
       NUGET_SOURCE: https://api.nuget.org/v3/index.json
       PACKAGE_PROJECT: ${{ matrix.package }}
+      # AxiosNet.Compat.Tests 真正编译并执行 netstandard2.0 兼容资产（net8.0 测试宿主 +
+      # SetTargetFramework 引用 lib/netstandard2.0；.NET Framework 那一侧由 compat-net472 job 覆盖）：
+      # 漏掉它，兼容资产就只在 pack 时被动编译、无人执行。
       TEST_PROJECTS: |
         test/AxiosNet.Tests/AxiosNet.Tests.csproj        test/AxiosNet.DependencyInjection.Tests/AxiosNet.DependencyInjection.Tests.csproj
-        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj
+        test/AxiosNet.Cli.Tests/AxiosNet.Cli.Tests.csproj        test/AxiosNet.Compat.Tests/AxiosNet.Compat.Tests.csproj
 
     steps:
       - name: 检出代码
@@ -411,7 +464,7 @@ jobs:
               --configuration Release \
               --no-build \
               --no-restore \
-              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests" \
+              --filter "FullyQualifiedName!~ConcurrencyPerformanceTests&Category!=Evidence" \
               --logger "console;verbosity=normal"
           done
 
@@ -433,7 +486,8 @@ jobs:
             echo "::error::pack 未生成 snupkg，源码映射将不可用，终止发布"
             exit 1
           fi
-          # 资产目录：类库包是 lib/<tfm>/（双目标），dotnet tool 包是 tools/<tfm>/any/（单目标）。
+          # 资产目录：类库包是 lib/<tfm>/（三目标：netstandard2.0 / net6.0 / net8.0），
+          # dotnet tool 包是 tools/<tfm>/any/（单目标）。
           # 不论哪种形态，nupkg 里每个资产目录都必须有同名 PDB，缺了哪个目录，那个目录的消费者就 F11 不进源码。
           ASSET_DIRS="$(unzip -l artifacts/*.nupkg | grep -oE '(lib|tools)/[^/]+(/any)?/[^/]+\.dll' | sed -E 's#/[^/]+\.dll$##' | sort -u | tr '\n' ' ' || true)"
           PDB_DIRS="$(unzip -l artifacts/*.snupkg | grep -oE '(lib|tools)/[^/]+(/any)?/[^/]+\.pdb' | sed -E 's#/[^/]+\.pdb$##' | sort -u | tr '\n' ' ' || true)"
@@ -443,6 +497,20 @@ jobs:
             echo "::error::snupkg 的 PDB 未覆盖 nupkg 的全部资产目录，缺失目录的源码映射将不可用，终止发布"
             exit 1
           fi
+          # 两个类库包都是三目标（AxiosNet / AxiosNet.DependencyInjection）：少一个 lib/<tfm>，那一类运行时
+          # （.NET Framework 4.7.2+ / .NET Core 2.x 取 netstandard2.0）在 NuGet 侧不会报错，只会表现为
+          # 「装上了但用不了」——所以在这里按包项目硬校验。dotnet tool 包是单目标，跳过。
+          case "$(basename "$PACKAGE_PROJECT" .csproj)" in
+            AxiosNet|AxiosNet.DependencyInjection)
+              for tfm in netstandard2.0 net6.0 net8.0; do
+                if ! printf '%s' "$ASSET_DIRS" | grep -q "lib/$tfm"; then
+                  echo "::error::$PACKAGE_PROJECT 缺少 lib/$tfm 资产（现有：$ASSET_DIRS），该类运行时将取不到实现，终止发布"
+                  exit 1
+                fi
+              done
+              echo "$(basename "$PACKAGE_PROJECT" .csproj) 三目标资产齐全：lib/netstandard2.0 lib/net6.0 lib/net8.0"
+              ;;
+          esac
 
       - name: 换取 nuget.org 短期 API Key（OIDC 受信发布）
         id: nuget-login

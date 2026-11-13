@@ -281,7 +281,7 @@ internal static class InterfaceDeclaration
                 errors.Add($"{parameterDisplay} 是 ref / out / in 参数：接口级声明不支持按引用传递。");
             }
 
-            if (parameter.ParameterType.IsByRefLike)
+            if (PlatformCompat.IsByRefLike(parameter.ParameterType))
             {
                 errors.Add($"{parameterDisplay} 的类型 {parameter.ParameterType.Name} 是 ref struct：无法跨越接口调用绑定。");
             }

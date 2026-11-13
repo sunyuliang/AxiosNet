@@ -140,19 +140,19 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.patch 携带请求体，返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true), null);
+        => SendAsync(Shortcut(url, PlatformCompat.PatchMethod, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios.patch 携带请求体，Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true));
+        => SendTypedAsync<T>(Shortcut(url, PlatformCompat.PatchMethod, configure, cancellationToken, data, bodyProvided: true));
 
     /// <summary>对应 axios.patch，用调用方传入的配置发送（url / method 以参数为准），返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchAsync(string url, AxiosConfig config)
-        => SendAsync(WithUrl(config, url, HttpMethod.Patch), null);
+        => SendAsync(WithUrl(config, url, PlatformCompat.PatchMethod), null);
 
     /// <summary>对应 axios.patch，用调用方传入的配置发送（url / method 以参数为准），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, AxiosConfig config)
-        => SendTypedAsync<T>(WithUrl(config, url, HttpMethod.Patch));
+        => SendTypedAsync<T>(WithUrl(config, url, PlatformCompat.PatchMethod));
 
     // ------------------------------------------------------------------
     // 表单快捷方法（对应 axios postForm / putForm / patchForm）
@@ -176,11 +176,11 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios patchForm。</summary>
     public Task<AxiosResponse> PatchFormAsync(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendAsync(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true), null);
+        => SendAsync(FormShortcut(url, PlatformCompat.PatchMethod, configure, cancellationToken, data, bodyProvided: true), null);
 
     /// <summary>对应 axios patchForm。</summary>
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, object? data = null, Action<AxiosConfig>? configure = null, CancellationToken cancellationToken = default)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, configure, cancellationToken, data, bodyProvided: true));
+        => SendTypedAsync<T>(FormShortcut(url, PlatformCompat.PatchMethod, configure, cancellationToken, data, bodyProvided: true));
 
     // ------------------------------------------------------------------
     // CancellationToken 显式重载（令牌不再走 data 参数）。
@@ -236,11 +236,11 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.patch 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(Shortcut(url, HttpMethod.Patch, null, cancellationToken, tokenProvided: true), null);
+        => SendAsync(Shortcut(url, PlatformCompat.PatchMethod, null, cancellationToken, tokenProvided: true), null);
 
     /// <summary>对应 axios.patch 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(Shortcut(url, HttpMethod.Patch, null, cancellationToken, tokenProvided: true));
+        => SendTypedAsync<T>(Shortcut(url, PlatformCompat.PatchMethod, null, cancellationToken, tokenProvided: true));
 
     /// <summary>对应 axios.postForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PostFormAsync(string url, CancellationToken cancellationToken)
@@ -260,11 +260,11 @@ public sealed partial class AxiosClient
 
     /// <summary>对应 axios.patchForm 的显式取消令牌重载（令牌不作请求体），返回非泛型响应。</summary>
     public Task<AxiosResponse> PatchFormAsync(string url, CancellationToken cancellationToken)
-        => SendAsync(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null, bodyProvided: true), null);
+        => SendAsync(FormShortcut(url, PlatformCompat.PatchMethod, null, cancellationToken, null, bodyProvided: true), null);
 
     /// <summary>对应 axios.patchForm 的显式取消令牌重载（令牌不作请求体），Data 反序列化为 <typeparamref name="T"/>。</summary>
     public Task<AxiosResponse<T>> PatchFormAsync<T>(string url, CancellationToken cancellationToken)
-        => SendTypedAsync<T>(FormShortcut(url, HttpMethod.Patch, null, cancellationToken, null, bodyProvided: true));
+        => SendTypedAsync<T>(FormShortcut(url, PlatformCompat.PatchMethod, null, cancellationToken, null, bodyProvided: true));
 
     /// <summary>表单快捷方法入口：默认 multipart/form-data，实例默认已是表单编码时保留实例值。</summary>
     private AxiosConfig FormShortcut(

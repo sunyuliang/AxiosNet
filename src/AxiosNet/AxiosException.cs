@@ -607,11 +607,11 @@ public class AxiosException : Exception
             null);
     }
 
-    /// <summary>响应体超过单数组上限（<see cref="Array.MaxLength"/>，约 2GB），无法装进 <c>Response.Data</c>。</summary>
+    /// <summary>响应体超过单数组上限（<see cref="PlatformCompat.ArrayMaxLength"/>，约 2GB），无法装进 <c>Response.Data</c>。</summary>
     internal static AxiosException ResponseTooLarge(AxiosConfig config, HttpRequestMessage request, long actual)
     {
         return new AxiosException(
-            $"Response body of {actual} bytes exceeds the maximum array length ({Array.MaxLength}): "
+            $"Response body of {actual} bytes exceeds the maximum array length ({PlatformCompat.ArrayMaxLength}): "
             + "Response.Data cannot hold it as a single byte[]. "
             + "Set Limits.MaxResponseBytes to fail earlier, or use ResponseType.Stream to read it incrementally.",
             ErrBadResponse,

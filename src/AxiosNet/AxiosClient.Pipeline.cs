@@ -25,7 +25,11 @@ public sealed partial class AxiosClient
     /// <c>PoolingAsyncValueTaskMethodBuilder</c> 复用状态机盒；返回的 <c>ValueTask</c> 由 <c>AsTask()</c>
     /// 一次性转成 Task 后交给调用方，池化源只被消费一次。
     /// </remarks>
+    // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
+    // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
+#if !NETSTANDARD2_0
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<AxiosResponse> SendAsyncCore(
         AxiosConfig perCallConfig,
         Type? dataType,
@@ -443,7 +447,7 @@ public sealed partial class AxiosClient
         /// <summary>最终请求 URL（已合并 baseURL / params 并转义）。</summary>
         public Uri Uri { get; }
 
-        /// <summary>请求的 HTTP 版本（默认 2.0）。</summary>
+        /// <summary>请求的 HTTP 版本（现代资产默认 2.0，netstandard2.0 兼容资产默认 1.1）。</summary>
         public Version Version { get; }
 
         /// <summary>版本协商策略（默认 <see cref="HttpVersionPolicy.RequestVersionOrLower"/>）。</summary>
@@ -452,15 +456,21 @@ public sealed partial class AxiosClient
 
     /// <summary>
     /// 阶段 5b —— 成型：拼出最终 URL、确定协议协商参数，并做 HTTP/3 的前置校验。
-    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>；明文 http:// 不改写版本；
-    /// 强制 1.1 写 Version11，要 h3 写 Version30。
+    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>（netstandard2.0 兼容资产默认 1.1）；
+    /// 明文 http:// 不改写版本；强制 1.1 写 Version11，要 h3 写 Version30。
     /// </summary>
     private static RequestPlan BuildRequestPlan(AxiosConfig config)
     {
         var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.QueryEncoder, config: config);
 
         var connection = config.TransportOrNull;
+#if NETSTANDARD2_0
+        // 兼容资产的 HttpClientHandler 只能发 HTTP/1.1：默认版本必须是 1.1，
+        // 不能沿用 2.0（Framework 的 System.Net.Http 里连 HttpVersion.Version20 字段都不存在）。
+        var httpVersion = connection?.HttpVersion ?? HttpVersion.Version11;
+#else
         var httpVersion = connection?.HttpVersion ?? HttpVersion.Version20;
+#endif
         var versionPolicy = connection?.VersionPolicy ?? HttpVersionPolicy.RequestVersionOrLower;
 
         // HTTP/3 前置校验：只在真的要 h3 时执行。
@@ -478,7 +488,9 @@ public sealed partial class AxiosClient
         var template = new HttpRequestMessage(config.Method, plan.Uri)
         {
             Version = plan.Version,
+#if !NETSTANDARD2_0
             VersionPolicy = plan.VersionPolicy
+#endif
         };
 
         try

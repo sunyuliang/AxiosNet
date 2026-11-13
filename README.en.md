@@ -1,10 +1,11 @@
 ﻿# AxiosNet
 
-[![.NET](https://img.shields.io/badge/.NET-6.0%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
+[![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2500%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2489%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.8%25_(branch_87.3%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2647%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2562%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -14,8 +15,8 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Item | Value |
 | --- | --- |
 | Packages | `AxiosNet` (core + declarative client in one package), `AxiosNet.DependencyInjection` (optional), `AxiosNet.Cli` (optional, design-time dotnet tool) |
-| Target | Dual-target `net6.0` / `net8.0`: .NET 8+ consumes `lib/net8.0`, .NET 6 / 7 consumes `lib/net6.0` |
-| Dependencies | Zero third-party, BCL only |
+| Target | Tri-target `netstandard2.0` / `net6.0` / `net8.0`: .NET 8+ consumes `lib/net8.0`, .NET 6 / 7 consumes `lib/net6.0`, .NET Framework 4.7.2+ / .NET Core 2.0+ / .NET 5 consume `lib/netstandard2.0` ([compatibility asset](#net-standard-20-compatibility-asset)) |
+| Dependencies | Zero third-party; `net6.0` / `net8.0` use the BCL only, the `netstandard2.0` asset adds nine first-party Microsoft BCL compatibility packages (pulled in by NuGet) |
 | Style | Async first: `Task` + `CancellationToken` |
 | Telemetry | Trace / metrics / events on by default, zero cost when nobody listens |
 
@@ -32,7 +33,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 | Errors and configuration | [Errors](#errors) · [Configuration](#configuration) ([Configuration reference](#configuration-reference) / [Clients](#clients) / [Interceptors](#interceptors) / [Data transforms and serialization](#data-transforms-and-serialization) / [Connections and transport](#connections-and-transport) / [Observability](#observability)) |
 | Resilience and cache | [Resilience](#resilience) ([Retries](#retries) / [Circuit breaker](#circuit-breaker) / [Concurrent hedging](#concurrent-hedging) / [Backup endpoints](#backup-endpoints) / [Idempotency keys](#idempotency-keys) / [Attempt pipeline](#attempt-pipeline) / [Short circuit](#short-circuit)) · [Caching](#caching) |
 | Declarative | [Declarative client](#declarative-client) ([Model-based](#model-based-api) / [Interface-based](#interface-based-api) / [Value formatting](#value-formatting) / [OpenAPI import](#openapi-import) / [Credentials and token management](#credentials-and-token-management)) |
-| Runtime and reference | [Runtime and AOT](#runtime-and-aot) · [Reference](#reference) ([Capability map](#capability-map) / [axios comparison](#axios-comparison) / [Dependency injection](#dependency-injection) / [Samples](#samples) / [Build and test](#build-and-test) / [Project layout](#project-layout)) |
+| Runtime and reference | [Runtime and AOT](#runtime-and-aot) · [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) · [Reference](#reference) ([Capability map](#capability-map) / [axios comparison](#axios-comparison) / [Dependency injection](#dependency-injection) / [Samples](#samples) / [Build and test](#build-and-test) / [Project layout](#project-layout)) |
 | Other | [License](#license) |
 
 Pick an entry point:
@@ -40,6 +41,7 @@ Pick an entry point:
 | Goal | Read |
 | --- | --- |
 | First use | [Install](#install) → [Quick start](#quick-start) → [Capability map](#capability-map) |
+| Running on .NET Framework / .NET Core 2.x / 3.x | [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) |
 | Migrating from axios | [axios comparison](#axios-comparison) → intentional differences → [Quick start](#quick-start) |
 | Look up one option | [Configuration reference](#configuration-reference) |
 | Server-side resilience | [Resilience](#resilience) |
@@ -48,6 +50,8 @@ Pick an entry point:
 ## Install
 
 > Upgrading from 1.x: see [breaking changes in 1.5](docs/breaking-changes-1.5.en.md) for renames and tightened behavior.
+
+> Runtime baseline: the modern assets cover .NET 6 and later; the compatibility asset covers .NET Framework 4.7.2+, .NET Core 2.0+ (including 3.1) and .NET 5. NuGet picks the asset automatically. .NET Core 1.0 / 1.1 only supports up to `netstandard1.6` and is out of scope; see [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) for the capability boundaries.
 
 ```bash
 dotnet add package AxiosNet                       # core client + declarative API client (one package)
@@ -1221,7 +1225,7 @@ breaker.Reset();                                                 // manual recov
 
 State machine: `Closed` → (consecutive failures reach `FailureThreshold`, **or** the window failure rate reaches `FailureRateThreshold`) → `Open` → (`BreakDuration` elapses) → `HalfOpen` → (`RecoverySuccesses` consecutive probe successes) → `Closed`; any failed probe returns to `Open` **immediately** and restarts the timer.
 
-**Why both opening rules exist**: consecutive failures alone can never trip on low-volume traffic — one success in between resets the counter, and a downstream failing half the time is exactly what deserves tripping. A rate alone needs enough samples, which low traffic never produces. So each covers a range: rate once the window is full, consecutive failures until then. The window is **the last N results**, not a time window — no timestamps, no periodic sweep, old entries age out by being overwritten.
+**Two opening rules, combined with OR**: rate once the window is full, consecutive failures until then. The window is **the last N results**, not a time window — no timestamps, no periodic sweep, old entries age out by being overwritten.
 
 Failure accounting matches the retry gate (**cancels and 4xx never count**):
 
@@ -1366,7 +1370,6 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 ```
 
 - **`AxiosAttemptContext` is a read-only struct**; its fields are `Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`, derivable only through `WithXxx`.
-- It is a struct, not a class, because the chain is compiled once at construction (zero allocation per attempt) and concurrent middleware need to copy the context per branch.
 - **Two independent counters**: retries advance `AttemptNumber`, failover advances `EndpointIndex` (`0` = the request's own URL). Failover does not advance the attempt number, so one attempt number can carry several attempt events.
 - **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through. That is what lets the chain be frozen at construction instead of rebuilt per request.
 - **Auditing is on by default**: `Attempt.Audit` is the sixth link (after the gate, before the terminal), so subscribing to `AxiosNet.Attempt` gives you every attempt's duration / status / error code; with no subscriber it only evaluates the switch and builds no state machine. It is already on the chain — `Append(Attempt.Audit)` is rejected as a duplicate built-in. Links added with `Append` sit inside it (closer to the terminal), so their execution time is counted in the audit event.
@@ -1730,7 +1733,7 @@ When the contract already exists, you do not have to write any of the declaratio
 | Model-based (default) | one `ApiRequest<T>` request model per operation | `client.RequestAsync(new XxxRequest { ... })` |
 | Interface-based (`--style interface`) | one interface per tag | `client.Create<T>()` |
 
-Both styles are declarations only — request models and proxies are baked at compile time by the source generator, the same path for JIT and Native AOT. The tool's YAML parser is a design-time dependency — the `AxiosNet` runtime stays free of third-party packages.
+Both styles are declarations only — request models and proxies are baked at compile time by the source generator, the same path for JIT and Native AOT. The tool's YAML parser is a design-time dependency — the `net6.0` / `net8.0` `AxiosNet` runtime stays free of third-party packages.
 
 ```bash
 # Install once (global dotnet tool, command axiosnet-gen; ships net6.0 + net8.0, runs on .NET 6 and up)
@@ -2144,13 +2147,49 @@ The library interprets responses as a **private cache**: `private` / `public` do
 
 ## Runtime and AOT
 
-The library targets `net6.0` and `net8.0`: .NET 8 and later consume `lib/net8.0`, .NET 6 / 7 consume `lib/net6.0`, with no configuration. Both assets come from the same sources and behave the same at runtime (each binds to the BCL of the runtime it runs on); the `net8.0` target exists so the library can use net8-era BCL APIs and the net7+ analyzers. .NET Framework and .NET Core 3.1 or earlier are not supported.
+The library targets `netstandard2.0`, `net6.0` and `net8.0`: .NET 8 and later consume `lib/net8.0`, .NET 6 / 7 consume `lib/net6.0`, and the other supported runtimes consume `lib/netstandard2.0`. NuGet picks the asset automatically, no configuration needed. All three assets come from the same sources; the two modern ones bind to the BCL of the runtime they run on and behave alike.
 
-`IsTrimmable` is declared on both targets (the library trims with 0 warnings), and the `net8.0` target also sets `IsAotCompatible` — the AOT analyzer reports 0 warnings (the SDK does not offer that analyzer for a `net6.0` target).
+`IsTrimmable` is declared on `net6.0` and `net8.0` (both trim with 0 warnings), and `net8.0` also sets `IsAotCompatible` — the AOT analyzer reports 0 warnings (the SDK does not offer that analyzer for a `net6.0` target). The compatibility asset is not part of trimming / AOT analysis.
+
+### .NET Standard 2.0 compatibility asset
+
+`lib/netstandard2.0` is a functional subset covering **.NET Framework 4.7.2+ / .NET Core 2.0+ (including 3.1) / .NET 5**.
+.NET Core 1.0 / 1.1 only supports up to `netstandard1.6` and cannot be covered by the same asset, so it is out of scope.
+.NET 6 and later always pick `lib/net6.0` / `lib/net8.0` and never fall back to the compatibility asset, so the main path is unaffected.
+
+It is the same source compiled with the `NETSTANDARD2_0` branches. Public entry points are kept as close as possible; the following capabilities are removed or downgraded:
+
+| Item | `net6.0` / `net8.0` | `netstandard2.0` asset |
+| --- | --- | --- |
+| Default HTTP version | HTTP/2 (negotiates down) | HTTP/1.1; explicitly asking for HTTP/2 or HTTP/3 is rejected before sending |
+| Transport | `SocketsHttpHandler` | `HttpClientHandler`, with the options both handlers share (connection cap, TLS versions, decompression, redirects, cookies, proxy, credentials, certificate callback) |
+| Connection-level options | connection lifetime / concurrency cap / h2 ping / `ConnectTimeout` / `ConnectCallback` / `SslOptions` | only the mapped subset above; `PooledConnectionLifetime` / `PooledConnectionIdleTimeout` / `ConnectTimeout` / `EnableMultipleHttp2Connections` / `KeepAlivePing*` set to a non-default value are rejected at pool construction with `ERR_BAD_OPTION_VALUE` (never silently ignored; setting `ConnectionPoolOptions.HandlerFactory` to take over the default profile hands these to your factory); `ConnectCallback` / `ConfigureSslOptions` / `KeepAlivePingPolicy` are not in the compat asset API; `CreateDefaultHandler()` returns `HttpMessageHandler` |
+| `HttpVersionPolicy` / HTTP/3 | available (h3 also needs runtime support) | enum shape kept but not written to the request; explicitly asking for HTTP/2 or HTTP/3 is rejected up front regardless of the policy |
+| Request body compression | gzip / deflate / Brotli | gzip only; deflate / Brotli are rejected during option validation with `ERR_BAD_OPTION_VALUE` |
+| Automatic decompression | gzip / deflate / br | gzip / deflate (the Framework enum has no Brotli) |
+| `IContentSerializer` / cache / credential interfaces | default interface implementations | those defaults become plain declarations, so custom implementations must implement every member |
+| Token-aware `HttpContent` / `Stream` overrides | propagate `CancellationToken` | `HttpContent` overloads check the token at the entry / return boundary (inner buffering cannot be interrupted per chunk); `Memory` overloads and `DisposeAsync()` use the compat implementations |
+| `DateOnly` / `TimeOnly` formatting and parsing | supported | not supported (neither type exists in the ns2.0 contract) |
+| Method-level `[AsyncMethodBuilder]` (pooled `ValueTask`) | enabled | not enabled |
+| Trimming / AOT annotations and analyzers | enabled | compile-time empty annotations only, no analyzers |
+
+Dependencies are declared only in the `netstandard2.0` group: nine first-party Microsoft BCL compatibility packages
+(`System.Text.Json`, `System.Net.Http.Json`, `System.Memory`, `System.Threading.Tasks.Extensions`,
+`Microsoft.Bcl.AsyncInterfaces`, `System.Diagnostics.DiagnosticSource`, `System.Reflection.DispatchProxy`,
+`System.Runtime.CompilerServices.Unsafe`, `System.ComponentModel.Annotations`); the two modern TFM groups are empty.
+`AxiosNet.DependencyInjection` ships a matching `lib/netstandard2.0` asset. The source generator is itself a
+`netstandard2.0` Roslyn component and is independent of the consumer's TFM; it ships with all three assets.
+
+The compatibility asset has its own runtime test project, `test/AxiosNet.Compat.Tests`. It references only the
+library's `netstandard2.0` output (`SetTargetFramework`), so the polyfills, shims and every `#if NETSTANDARD2_0`
+branch are actually executed. It has two hosts: `net8.0` (cross-platform) and `net472` (Windows, running on the real
+.NET Framework, covering branches that only exist there — for example the `[IsByRefLike]` fallback when
+`Type.IsByRefLike` is missing). CI runs the net8.0 host on `ubuntu-latest` and a dedicated `windows-latest` job for
+the net472 host.
 
 ### Request models and interfaces: built-in source generator
 
-The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute, and emits real proxy classes for interface-based declarations (inherited interfaces, authorization, multipart, streaming, method-level encoding), registering both from a module initializer. It replaces the old "root the model assembly" approach:
+The package ships a C# source generator (packed under `analyzers/dotnet/cs`, active as soon as the package is referenced). At compile time it bakes a metadata declaration for every request model that carries a route attribute, and emits real proxy classes for interface-based declarations (inherited interfaces, authorization, multipart, streaming, method-level encoding), registering both from a module initializer:
 
 - **Zero configuration**: no `TrimmerRootAssembly`, no hand-written registration;
 - **One declaration for both paths**: the generator only writes facts (route / members / bindings / authorization); validation and the binding plan still run through the shared runtime builder, so JIT and AOT behave the same and produce the same error text;
@@ -2236,7 +2275,7 @@ When `AxiosNet.DependencyInjection` is referenced, the generator additionally em
 
 To lock metadata down at the end of startup, call the hidden `AxiosMetadata.Freeze()`: any real write afterwards (a later-loaded assembly's module initializer, a manual registration) throws with the type and assembly named, while equivalent duplicate registrations stay no-ops. Not calling it changes nothing.
 
-**Known limitation**: keeping the first registration for equivalent duplicates is designed for "several mutually unreferenced assemblies each generate a proxy for the same interface". Inside a collectible `AssemblyLoadContext` (plugin hot reload), the second registration is silently dropped and the proxy factory still points at the assembly loaded by the first one — do not rely on the registry refreshing itself when a plugin is reloaded; use a separate process, or cross a fresh `AssemblyLoadContext` boundary after unloading.
+**Known limitation**: inside a collectible `AssemblyLoadContext` (plugin hot reload), the second registration is silently dropped and the proxy factory still points at the assembly loaded by the first one — do not rely on the registry refreshing itself when a plugin is reloaded; use a separate process, or cross a fresh `AssemblyLoadContext` boundary after unloading.
 
 ## Reference
 
@@ -2385,7 +2424,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 
 ### Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **54 items**:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **56 items**:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -2395,7 +2434,7 @@ It opens an interactive menu (reflection lists every sample; type a number to ru
 
 | Suite | Items | Coverage |
 | --- | ---: | --- |
-| Core | 37 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles |
+| Core | 39 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles, cache identity keys, raw body on the response object |
 | Declarative | 17 | GET detail / list, POST create, the unified credential provider with `[AllowAnonymous]` / same-client token bootstrap, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), value formatting (`[Format]` / `Serialization.ValueText` priority), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
 
 Two more samples:
@@ -2413,28 +2452,18 @@ dotnet test AxiosNet.sln
 dotnet build AxiosNet.sln -c Release
 ```
 
+The library and `AxiosNet.DependencyInjection` each compile three assets — `netstandard2.0` / `net6.0` / `net8.0`; the CLI, test and sample projects stay dual-target `net6.0` / `net8.0` (they are not runtime libraries).
+
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2231 / 2220 | `net8.0` / `net6.0` | 4451 |
+| `AxiosNet.Tests` (core + declarative) | 2507 / 2496 | `net8.0` / `net6.0` | 5003 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| **Total** | **2371 / 2286** | | **4657** |
+| **Total** | **2647 / 2562** | | **5209** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-- `net8.0` has 11 more cases than `net6.0`: the difference comes from cases that only compile on the net8 branch — `AotJsonTests` and the JSON bridge in `FormatAttributeTests` (`JsonSerializerOptions.TypeInfoResolver` / `JsonTypeInfo.Properties` are .NET 7+ APIs).
-- `net6.0` alone has the two `JsonSerializerTargetFrameworkParityTests.ReflectionDisabled_*` cases, which assert the error raised when no `TypeInfoResolver` exists.
-- The `net6.0` column of the total row excludes `AxiosNet.Cli.Tests` (74 cases), which only runs on net8.
-- `AxiosNet.Cli.Tests` runs locally only — CI's `TEST_PROJECTS` lists just the first two projects, so generator snapshots and CLI fixtures are not part of the gate.
-
-Tests run real TCP round-trips against a home-grown `TcpListener` HTTP/1.1 keep-alive server, covering request encoding, interceptors and transforms, error codes, timeouts and cancellation, progress and rate limiting, pooling, transport profiles and protocol negotiation, streaming, retries, circuit breaking, concurrent hedging, backup endpoints and endpoint health memory, short circuits, response cache, telemetry, declarative binding, interface proxies, object shapes (generated vs reflected) and DI registration.
-
-Line coverage **91.8%**, branch coverage **87.3%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites). A few rules:
-
-- Now that the test project references the source generator, coverage includes both the `AxiosNet` and `AxiosNet.SourceGen` assemblies; repeated runs wobble by ±0.1.
-- Compare history only against the same configuration — the command below is Debug; a Release build emits fewer sequence points, so the line denominator shrinks noticeably and the two are not interchangeable.
-- The generator's DI registration extension is only driven by `AxiosNet.DependencyInjection.Tests` (the main test project does not reference the DI package), so those lines fall outside this measurement.
-Collection must exclude two kinds of cases — throughput ratios and allocation guards both skew under instrumentation (the guards assert bytes allocated per request, and instrumentation itself allocates):
+Line coverage **92.1%**, branch coverage **87.6%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \
@@ -2443,50 +2472,17 @@ dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat
 
 A plain `dotnet test` still runs everything, excluded classes included.
 
-#### Runtime matrix
-
-"Compile target" and "runtime" are two different dimensions, and they cover different things:
-
-| Dimension | CI coverage | Why each entry must be exercised |
-| --- | --- | --- |
-| Compile target | the two `lib/` assets, `net6.0` and `net8.0` | the library source has nine `NET*_OR_GREATER` sites; the other side of each is not even compiled into IL under the other target |
-| Runtime | .NET 6.0 and .NET 10.0 | the same `lib/net8.0` asset is loaded by .NET 8 / 9 / 10 / 11, each with a different BCL implementation |
-
-The first dimension is covered by `build-test` (`dotnet test` without `-f`, so each TFM runs once); the second by `test-runtime` — no `TargetFrameworks` change, no extra TFM, no packaging change, just host roll-forward putting the `net8.0` test host on a newer runtime, which is exactly how a consumer on a newer runtime loads the `net8.0` asset:
-
-```bash
-DOTNET_ROLL_FORWARD=LatestMajor dotnet test <project> -f net8.0
-```
-
-It must be `LatestMajor`: `Major` prefers the latest patch within the same major (8.0.x), and only `LatestMajor` crosses majors. Assert the target runtime is installed first — when roll-forward finds nothing newer it falls back silently to net8, and the run still goes green while covering nothing.
-
-Only .NET 10 is added, not 9 or 11: .NET 8 and 9 both go out of support on 2026-11-10, 10 is LTS (through 2028-11-14) and the only version currently in active support, and 11 has not shipped. The concurrency performance suite does not take part in this pass — it judges the ratio against `HttpClient`, and changing the runtime changes the baseline; performance on a newer runtime needs its own baseline.
-
 #### Native AOT verification
 
-A separate `aot` CI job (`win-x64` / `linux-x64` matrix) treats `IL2026` / `IL3050` / `IL3051` plus the DAM group (`IL2070` / `IL2072` / `IL2075` / `IL2087` / `IL2098`) as errors, so "publish succeeded" means both trimming and AOT analysis are warning-free. The DAM group has to be tightened together with the rest: the library leans heavily on `DynamicallyAccessedMembers` and suppression annotations, and that class of warning is the one most likely to surface only when a package consumer publishes.
-
 ```bash
-# Sample: the app no longer roots the whole assembly — passing depends entirely on generated metadata
+# Publish and run the AOT sample
 dotnet publish samples/AxiosNet.Aot -c Release -r linux-x64 -p:TrimmerSingleWarn=false \
   -p:WarningsAsErrors=IL2026%3BIL3050%3BIL3051%3BIL2070%3BIL2072%3BIL2075%3BIL2087%3BIL2098
 ./samples/AxiosNet.Aot/bin/Release/net8.0/linux-x64/publish/AxiosNet.Aot
 
-# Package consumer: pack → throwaway project that only references the package → publish → run
+# Package-consumer check: pack → throwaway project that only references the package → publish → run
 bash eng/aot-package-smoke.sh
 ```
-
-`eng/aot-package-smoke.sh` first asserts the nupkg carries `analyzers/dotnet/cs/AxiosNet.SourceGen.dll` and `buildTransitive/AxiosNet.props`, then publishes and runs a throwaway project that references nothing but the package.
-
-This covers what the sample cannot: the sample uses a `ProjectReference`, so it never proves the packaged analyzer actually loads or that the packaged dll's AOT annotations hold up. The script packs under a unique version every run — NuGet will not re-extract a package whose version it already has, which would silently keep re-testing the previous build.
-
-Size and startup are part of the budget: both the sample and the package smoke assert the published binary stays under budget — 9 MiB on win-x64 (currently 8.3 MiB for the sample, 8.1 MiB for the package smoke) and 11 MiB on linux-x64 (currently 10.2 MiB). The ~2 MiB platform gap is not a size regression: on Linux the OpenSSL, `System.Native`, compression and globalization shims are linked statically into the executable, while Windows uses system DLLs or pre-built `Aot.lib` files, so the budget is set per platform.
-
-Exceeding it usually means one of two things: a reflection dependency crept back in, or the assembly is being rooted wholesale again (`TrimmerRootAssembly` / the generator is not actually running). Startup plus a full run is gated at 10 s, which only catches order-of-magnitude regressions and is not a performance verdict; use `test/AxiosNet.Benchmarks` for that.
-
-The generated code has a snapshot baseline too (`test/AxiosNet.Tests/WebAPI/Aot/Snapshots/GeneratedSources.snap.txt`): any change in generator output shows up as a diff in that file — regenerate with `AXIOS_UPDATE_SNAPSHOTS=1` and review it line by line.
-
-Known cost: an interface proxy still allocates one argument array per call, because the arguments are handed to the shared binder (`IValueSource.GetValue(object target)` reads them by position); the generator bakes declarations only and never duplicates the binding logic. Truly zero-allocation would require inlining the binding plan per method, which copies the validation and binding rules N times and conflicts with the single-build-entry design, so it is not done. What the proxy layer can avoid — the per-call read-only wrapper — is now created on demand.
 
 #### Test suite organised by feature
 
@@ -2504,36 +2500,14 @@ The folder layout of `test/AxiosNet.Tests` is the feature list — pick the fold
 | `Connectivity/` | Connection pool (incl. named shared pools and named transport profiles), handler injection, HTTP/2·3 negotiation and downgrade, redirects, local h3 capability probe |
 | `Diagnostics/` | Activity / Meter / DiagnosticListener telemetry, attempt audit events |
 | `Errors/` | Error model, error codes, `ToJson` snapshot |
-| `Regression/` | Allocation guards (isolated collection + precise counting; `AllocationTests` uses process-wide averages, `AllocationSweepTests` uses thread-local minima over several windows — when the measured path completes synchronously the true value is a constant and noise only adds), concurrent throughput |
+| `Regression/` | Allocation guards, concurrent throughput |
 | `WebAPI/` | Declarative model binding and validation, authorization, streaming, interface proxies and startup validation, the request-model source generator (field-by-field parity between generated and reflection paths) |
 | `Architecture/` | Architecture guardrails: the core must not reference the `WebAPI/` extension (a source scan fails if "removable as a whole" is broken) |
 | `Infrastructure/` | Test plumbing: HTTP server, models, telemetry probe, isolated collections |
 
-Timing-sensitive cases (upper-bound duration assertions, telling "placeholder vs budget" apart) and allocation cases each run in isolation — see `Infrastructure/TimingCollection.cs` and `Infrastructure/AllocationCollection.cs`.
-
-`AxiosNet.DependencyInjection.Tests` follows the same rule with two groups: `Registration/` (registration extensions and named clients) and `Lifecycle/` (concurrent resolution and holder disposal).
-
-`AxiosNet.Cli.Tests` treats generated output as a compilable artifact: fixture snapshots (petstore / Swagger 2 / 3.1 / adversarial documents), compiling generated code together with the AxiosNet source generator and asserting one request model per operation (one proxy per interface under `--style interface`), determinism and `--check`, overwrite protection and manifest tracking, `--dry-run`, option parsing and the import report. The round trip from a generated client to a real server is covered by the `OpenApiGeneratedExample` sample (→ `DemoApiServer`).
-
 #### Benchmarks
 
-[`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) is a standalone BenchmarkDotNet project (single target `net8.0`, `IsPackable=false`, not referenced by `src/`) that turns "did this change help?" into numbers. It is not part of `dotnet test` and CI does not run it (benchmarks are machine-sensitive).
-
-**Division of labour with the concurrency correctness test**
-
-- `AxiosNet.Tests/ConcurrencyPerformanceTests` judges **concurrency correctness** and stops collapses: the best of 5 rounds must reach the 85% capability line (Debug 70%), and the median must stay above the 75% floor (Debug 60%) to catch overall regressions.
-- Use the benchmarks to quantify "how much faster": they give per-item cost; the correctness test only answers "did it fall below usable?".
-- It judges a paired ratio, so both sides' compilation state has to be comparable: `HttpClient` ships ReadyToRun and is optimized from the first call, while this library is plain IL that starts in Tier0 and waits for tiering to promote it to Tier1 + PGO. That is why CI gives it a **dedicated process placed before the heavy suite**, which filters it out and then runs per TFM, one after the other.
-
-**Why warmup converges on the ratio**
-
-- The compilation ramp advances by wall clock, so a slower and busier runner gets less of it done inside a fixed warmup — the rounds end up measuring compilation progress, not code.
-- The warmup therefore uses no fixed number of seconds: one-second windows, at least 4 and at most 10, and judging starts only once the last 3 windows' ratios span 3 percentage points or less. Measured: the first 4 windows can sit flat at 82–87% and only jump to ~95% at window 5–6; after convergence the judged rounds sit at 93.5–96.2%, whereas the fixed 2-second warmup control run started at 84.1% in round 1.
-- Tiered compilation stays on by default (real-world steady state relies on PGO; no special configuration).
-
-**When the ratio misses, look at the CPU share first**
-
-- When the ratio misses the line, first check the **CPU share the process actually got** (`Process.TotalProcessorTime` ÷ wall clock ÷ core count, median over the judged rounds). On one machine with one build, the ratio stayed at 77–87% while the process got 50–56% of the CPU, but swung between 54% and 90% once it was squeezed down to 30–32%. The threshold is therefore 42%; below it the numbers are printed but not asserted — a passing run needs no explanation, so the threshold only matters on a miss.
+[`test/AxiosNet.Benchmarks`](test/AxiosNet.Benchmarks) is a standalone BenchmarkDotNet project for measuring the cost of the request pipeline, config merging, serialization, stream framing and large bodies:
 
 ```bash
 dotnet run -c Release --project test/AxiosNet.Benchmarks                        # interactive menu
@@ -2541,7 +2515,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*Merge*'  
 dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isolated
 ```
 
-By default it runs **in-process** (no temp project, no rebuild). Add `--isolated` when writing commit notes or comparing against a historical baseline (BDN temp project + one process per case); absolute timings from the two modes are not comparable (`Allocated` is trustworthy in both).
+By default it runs **in-process** (no temp project, no rebuild). `--isolated` uses one process per case (BDN temp project + rebuild); absolute timings from the two modes are not comparable (`Allocated` is trustworthy in both).
 
 | Group | Hot spot | Baseline |
 | --- | --- | --- |
@@ -2556,27 +2530,27 @@ By default it runs **in-process** (no temp project, no rebuild). Add `--isolated
 | `LargeBodyDownloadBenchmarks` | Large downloads (1 / 8 / 32MB: buffered `byte[]` vs streamed) | `HttpClient_Download_Buffered` |
 | `LargeBodyJsonBenchmarks` | Large JSON responses (1 / 8 / 32MB: `byte[]` / typed / `JsonElement`) | `HttpClient_GetBytes` |
 
-Readings, before/after workflow and known noise: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
+Reading guide and group details: [`test/AxiosNet.Benchmarks/README.md`](test/AxiosNet.Benchmarks/README.md).
 
 For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison):
 
 - One loopback server, one load profile (8 concurrent × 1s × 10 rounds by default, with the implementation order rotated every round), comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV.
 - Add `--min-ratio` / `--max-alloc-ratio` to use it as a regression gate; without thresholds it only reports, never judges.
-- It is not part of CI and is not collected by `dotnet test` (`IsTestProject=false`; it sits in the solution only so the IDE can open it).
-- Methodology, reading guide and one sample run live in that project's README; the write-up with conclusions (features / performance / ergonomics plus selection advice) is [`docs/http-client-comparison.md`](docs/http-client-comparison.md).
+- The write-up with conclusions (features / performance / ergonomics plus selection advice) is [`docs/http-client-comparison.md`](docs/http-client-comparison.md).
 
 ### Project layout
 
 ```
 .
 ├─ src/
-│  ├─ AxiosNet/                       # library (dual target net6.0 / net8.0)
+│  ├─ AxiosNet/                       # library (tri-target netstandard2.0 / net6.0 / net8.0)
 │  │  ├─ Axios.cs                     # static facade
 │  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
 │  │  ├─ AxiosConfig*.cs              # configuration (top level + six groups)
 │  │  ├─ AxiosHeaders.cs              # request headers
 │  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
 │  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs (top-level public types)
+│  │  ├─ Compatibility/               # netstandard2.0 shims: compile-time polyfills / global using aliases / BCL extensions / platform helpers
 │  │  ├─ Cache/                       # AxiosCache (response cache + single flight) / IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # request / response interceptors
 │  │  ├─ Pipeline/                    # attempt middleware chain: AxiosAttemptPipeline + built-in retry / failover / breaker / hedging / gate + optional audit
@@ -2590,9 +2564,9 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ Reflection/                  # object-shape and STJ reflection fallbacks (JIT-only, trimmed away entirely under AOT)
 │  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
-│  ├─ AxiosNet.DependencyInjection/   # DI extensions (separate package)
+│  ├─ AxiosNet.DependencyInjection/   # DI extensions (separate package, tri-target too; Compatibility/ holds its polyfills)
 │  └─ AxiosNet.Cli/                   # design-time tool axiosnet-gen: OpenAPI / Swagger → declarative C# (see "OpenAPI import")
-├─ samples/                           # Simple (54 items) / DI / Aot
+├─ samples/                           # Simple (56 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")
@@ -2601,12 +2575,6 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
    ├─ AxiosNet.Benchmarks/             # BenchmarkDotNet (per-stage cost of one implementation)
    └─ AxiosNet.Comparison/             # cross-implementation comparison (RPS / p99 / allocations, optional gate)
 ```
-
-Three folder rules:
-
-- Feature directories (`Metadata/`, `Serialization/`, `Internal/`) split by concern;
-- **JIT-only reflection implementations always live under a `Reflection/` folder, of which there are exactly two**: the root `Reflection/` holds the cross-feature building blocks (object-shape reflection, the STJ reflection fallback), while `WebAPI/Reflection/` holds the reflection readers and `DispatchProxy` fallback that belong to the declarative API feature (code outside a `Reflection/` folder does not touch reflection directly);
-- **`WebAPI/` is an extension that can be deleted as a whole**: remove it and the core still compiles and plain HTTP still works, so the core must never reference it back (object shapes, dictionary maps, the generated-metadata registry and the AOT guards/exception therefore live in `Metadata/` and `Internal/`).
 
 Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAPI.Attributes`); other public types stay at the `WebAPI/` root.
 

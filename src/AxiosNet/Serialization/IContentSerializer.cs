@@ -25,7 +25,13 @@ public interface IContentSerializer
     /// 本格式对应的媒体类型（<c>Content-Type</c> 主值，如 <c>application/json</c>）。
     /// 请求方向未显式设置 <see cref="AxiosConfig.ContentType"/> 时由库写进请求头；默认 <c>null</c> 表示不自报。
     /// </summary>
+#if NETSTANDARD2_0
+    // netstandard2.0 运行时不支持默认接口实现（CS8701），兼容资产上退化为纯声明：
+    // 实现者必须显式给出全部成员。net6.0 / net8.0 资产仍保留默认实现，第三方实现者不受影响。
+    string? MediaType { get; }
+#else
     string? MediaType => null;
+#endif
 
     /// <summary>
     /// 把业务对象序列化为该格式的文本。编码取 <c>ContentType</c> 声明的 charset → <see cref="AxiosConfig.SerializationSettings.TextEncoding"/> → UTF-8；
@@ -38,7 +44,11 @@ public interface IContentSerializer
     /// 把业务对象序列化为该格式的<b>字节</b>（二进制格式的请求出口）；返回 <c>null</c>（默认）表示改用 <see cref="Serialize"/> 的文本。
     /// 返回的内存会被直接交给请求内容，生命周期必须覆盖到整条请求结束。
     /// </summary>
+#if NETSTANDARD2_0
+    ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config);
+#else
     ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
+#endif
 
     /// <summary>
     /// 把该格式的文本反序列化为业务对象，返回值原样进入 <c>Response.Data</c>；
@@ -54,6 +64,10 @@ public interface IContentSerializer
     /// 与「先解码再解析」的旧路径一致，因此本入口不必处理非法 UTF-8。
     /// 默认实现按响应字符集解码后转调文本入口，文本格式的序列化器无需实现本方法。
     /// </summary>
+#if NETSTANDARD2_0
+    object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);
+#else
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config)
         => Deserialize(ResponseTextDecoder.Decode(data.Span, config.Response?.CharSet, config.SerializationOrNull?.TextEncoding), type, config);
+#endif
 }
