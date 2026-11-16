@@ -15,7 +15,11 @@ public static class AxiosClientServiceCollectionExtensions
     /// 对应「一个 axios instance 贯穿整个应用」的用法。
     /// </summary>
     /// <param name="services">服务集合。</param>
-    /// <param name="configure">对实例默认值（<see cref="AxiosClient.Defaults"/>）的配置（BaseAddress、超时、头、序列化器、连接池选项等），null 表示全默认。</param>
+    /// <param name="configure">对实例默认值（<see cref="AxiosClient.Defaults"/>）的配置（BaseAddress、超时、头、序列化器等），null 表示全默认。</param>
+    /// <param name="options">
+    /// 实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）：这些决定连接层与闸门形态，
+    /// 只能在构造期给，<paramref name="configure"/> 里写不了。
+    /// </param>
     /// <param name="pipeline">
     /// 尝试管线，null 表示用 <see cref="AxiosAttemptPipeline.Default"/>。它在客户端构造时编译一次并固化，
     /// 此后不可变；按请求定制请用请求 / 响应拦截器。
@@ -28,6 +32,7 @@ public static class AxiosClientServiceCollectionExtensions
     public static IServiceCollection AddAxiosClient(
         this IServiceCollection services,
         Action<AxiosConfig>? configure = null,
+        AxiosClientOptions? options = null,
         AxiosAttemptPipeline? pipeline = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -40,7 +45,7 @@ public static class AxiosClientServiceCollectionExtensions
 
         var defaults = new AxiosConfig();
         configure?.Invoke(defaults);
-        services.TryAdd(ServiceDescriptor.Singleton(typeof(AxiosClient), _ => new AxiosClient(defaults, pipeline: pipeline)));
+        services.TryAdd(ServiceDescriptor.Singleton(typeof(AxiosClient), _ => new AxiosClient(defaults, options, pipeline: pipeline)));
         return services;
     }
 }

@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2749%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2617%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.3%25_(branch_87.7%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2714%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2572%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -189,6 +189,19 @@ Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `O
 >
 > This trips people up mostly when instance defaults and per-request overrides are mixed; see [instance defaults vs. per-request](#clients).
 
+**Four overload shapes, one per need** (the same set for every verb, on both `AxiosClient` and `Axios`):
+
+| You want | Call | Returns |
+| --- | --- | --- |
+| The response without deserializing | `GetAsync(url, c => …, ct)` | `AxiosResponse` (`Data` is `object`) |
+| Deserialized into `T` | `GetAsync<T>(url, c => …, ct)` | `AxiosResponse<T>` |
+| A request body | `GetAsync(url, data, c => …, ct)`; body verbs read `PostAsync(url, data)` (`data` has a default) | either of the above |
+| Only a cancellation token | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
+
+- The last three parameters (`data` / `configure` / `cancellationToken`) all have defaults, so `GetAsync(url)` is enough; `GetAsync(url, ct)` is the **explicit-token** shape, so a token is never mistaken for a body.
+- To send one request with a **pre-built config**, use `RequestAsync(config)` (available on both the client and the static facade; the config carries its own url / method). On the instance, `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` additionally take `(url, config)`: the url / method arguments override the same fields in the config, and **your object is never mutated in place**. The form verbs (`PostFormAsync` etc.) deliberately have no such shape — their whole point is to set the form `ContentType`; use `RequestAsync` when you have a config.
+- Putting an `AxiosConfig` or a `CancellationToken` into the `data` position throws `ERR_BAD_OPTION_VALUE` right away and tells you where to go: `object? data` accepts anything, so without the guard it would either **send your config / token as the body** or degrade into a "body serialization failed" message that has nothing to do with the real mistake.
+
 ### Query parameters
 
 `Params` accepts anonymous objects and collections, or an already-encoded query string; the flattening and escaping rules follow.
@@ -290,7 +303,7 @@ await http.PostAsync<UploadResult>("ingest", ReadChunks(file), c =>
 - **Chunk size is yours**: each chunk is written as-is, never split or merged; 64–256 KB is the usual sweet spot, and tiny chunks amplify the chunked-framing overhead.
 - **Byte chunks only**: an `IAsyncEnumerable<T>` (say `IAsyncEnumerable<Order>`) is not a body and fails with `ERR_BAD_OPTION_VALUE` plus guidance; write JSON arrays to a `Stream` or `byte[]` first.
 - **Cancellation**: the request token reaches your iterator (accept it via `[EnumeratorCancellation]`), and cancellation stops the enumeration.
-- **307 / 308 redirects**: redirects are followed by default, and those status codes resend the body — the library re-enumerates the sequence, so the producer must be restartable (the iterator is opened again, or a custom implementation returns a new enumerator each time). For one-shot sources (say relaying an already-consumed network stream) set `Transport.MaxRedirects = 0` on the client options (equivalent to `Transport.Pool.AllowAutoRedirect = false` when the pool is built).
+- **307 / 308 redirects**: redirects are followed by default, and those status codes resend the body — the library re-enumerates the sequence, so the producer must be restartable (the iterator is opened again, or a custom implementation returns a new enumerator each time). For one-shot sources (say relaying an already-consumed network stream) set `AxiosClientOptions.MaxRedirects = 0` (equivalent to the pool's `AllowAutoRedirect = false`).
 - **`PipeReader`**: net6 / net8 base frameworks do not ship `System.IO.Pipelines`, and the library does not take a dependency for it; wrap it with `pipe.Reader.AsStream()` and pass the `Stream` (same chunk-by-chunk path as a non-seekable stream).
 
 ### Response types and downloads
@@ -548,27 +561,30 @@ All seven verbs also have an overload that takes a full `AxiosConfig` (`GetAsync
 `MaxRate` limits **bytes per second** and cannot stop "hundreds of tiny requests per second" — that pressure comes from the number of in-flight requests:
 
 ```csharp
-var client = Axios.Create(c =>
-{
-    c.Resilience.Concurrency.MaxInFlight = 4;                 // at most 4 in flight
-    c.Resilience.Concurrency.MaxQueue = 16;                       // at most 16 queued; beyond that reject with ERR_QUEUE_FULL
-    c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(2);    // once queued, wait at most 2s
-});
+using var client = new AxiosClient(
+    new AxiosConfig { BaseAddress = "https://api.example.com" },
+    new AxiosClientOptions
+    {
+        MaxInFlight = 4,        // at most 4 in flight for this instance (instance-level: fixed at construction)
+        MaxQueue = 16,          // at most 16 queued; beyond that reject with ERR_QUEUE_FULL
+    });
 
+// How long to wait is a per-request item: one call can raise or lower its own cap
+await client.GetAsync("slow", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(2));
 await client.GetAsync("fast", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.Zero);   // fail immediately when full
 ```
 
-| Item | Default | Meaning |
-| --- | --- | --- |
-| `MaxInFlight` | `null` (unlimited) | Max in-flight requests for this instance; positive integer |
-| `MaxQueue` | `null` (unlimited) | Queue depth cap: beyond it the request fails with `ERR_QUEUE_FULL`; positive integer, only meaningful with `MaxInFlight` |
-| `QueueTimeout` | `null` (wait forever) | Slot wait limit: `null` wait / `Zero` don't queue / `>0` fail on timeout; the wait is also capped by the remaining `Resilience.TotalTimeout` |
+| Item | Where | Default | Meaning |
+| --- | --- | --- | --- |
+| `MaxInFlight` | `AxiosClientOptions` | `null` (unlimited) | Max in-flight requests for this instance; positive integer |
+| `MaxQueue` | `AxiosClientOptions` | `null` (unlimited) | Queue depth cap: beyond it the request fails with `ERR_QUEUE_FULL`; positive integer, only meaningful with `MaxInFlight` |
+| `QueueTimeout` | `Resilience.Concurrency` | `null` (wait forever) | Slot wait limit: `null` wait / `Zero` don't queue / `>0` fail on timeout; the wait is also capped by the remaining `Resilience.TotalTimeout` |
 
 - Queue timeout throws **`ERR_QUEUE_TIMEOUT`**, a full queue throws **`ERR_QUEUE_FULL`** (neither is `ECONNABORTED`): nothing was sent, so react by slowing down / scaling out / backing off.
 - Both are "the entrance is crowded", not "the downstream failed": the default policy does not retry and does not fail over — another endpoint cannot fix local slot contention, so the caller should back off and try again.
 - When a later attempt is rejected at the gate after an earlier real failure, the real failure is the one surfaced (same rule as hedging): "no queue slot" never hides the fault that explains the request.
 - Rejections are counted by `axiosnet.client.gate.rejections` (`axiosnet.gate.reason` = `queue_timeout` / `queue_full`); watch it together with `gate.queue_depth` for backpressure level.
-- `MaxQueue` is fixed together with `MaxInFlight` on the first gated request: a different per-request value, or mutating `Defaults` after construction, throws `ERR_BAD_OPTION_VALUE` (a request that never mentions this option is not a statement, so the gate's value stands). For "never queue" use `QueueTimeout = TimeSpan.Zero`.
+- `MaxInFlight` / `MaxQueue` are instance-level options (see "Instance-level options" below): fixed at construction, `0` or a negative value throws at construction, and they cannot be written per request. The gate is created on the first gated request and its capacity is pinned to them. `QueueTimeout` is the opposite — a per-request item, so one call can change how long it waits.
 - Queueing **does not** count against `Timeout` (each retry attempt gets its own) but **does** count against `Resilience.TotalTimeout`; it can be cancelled with a `CancellationToken`.
 - A slot covers the whole in-flight span: each retry attempt takes one (backoff does not hold it), and **a streaming response holds it until the body stream is disposed**.
 - **Self-deadlock risk**: sending a child request on the same instance from inside an interceptor or progress callback competes for the same slots. Set a `QueueTimeout` or use a separate instance.
@@ -613,7 +629,7 @@ When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appe
 | `ERR_CIRCUIT_OPEN` | Circuit is open, request **not sent** (`RetryAfter` suggests how long to wait) |
 | `ERR_POOL_EXHAUSTED` | Pool origin cardinality saturated (all in flight, no evictable idle node); request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry |
 | `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme, or a URL longer than 65519 characters (the pre-.NET 10 `Uri` limit, now enforced by the library itself) |
-| `ERR_TOO_MANY_REDIRECTS` | Redirects followed beyond `Transport.MaxRedirects`. With `MaxRedirects = 0` the code is `ERR_BAD_REQUEST` plus a distinct message ("redirects are disabled") so "disabled" and "over the limit" stay distinguishable |
+| `ERR_TOO_MANY_REDIRECTS` | Redirects followed beyond `AxiosClientOptions.MaxRedirects`. With `MaxRedirects = 0` the code is `ERR_BAD_REQUEST` plus a distinct message ("redirects are disabled") so "disabled" and "over the limit" stay distinguishable |
 | `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…); an ill-formed declarative **model / interface** (missing route attribute, unbound placeholder, several bodies, … — the original exception is in `Cause`) |
 
 Branch on `ex.ErrorCode` (an enum you can exhaustively `switch`) or `ex.Code` (the axios-aligned string); never parse the message:
@@ -702,9 +718,7 @@ The other four sub-objects (created lazily on first access). Each leaf is listed
 | `Failover.FailureThreshold` | 2 | consecutive failures before an endpoint cools down (`0` disables health memory) |
 | `Failover.Cooldown` | 30s | endpoint cooldown |
 | `Failover.MaxCooldown` | 5min | cooldown ceiling |
-| `Concurrency.MaxInFlight` | `null` | in-flight cap; instance-level, frozen on the first gated request |
-| `Concurrency.MaxQueue` | `null` | queue cap; instance-level |
-| `Concurrency.QueueTimeout` | `null` | `null` waits forever / `Zero` never queues / `>0` times out |
+| `Concurrency.QueueTimeout` | `null` | slot wait cap: `null` waits forever / `Zero` never queues / `>0` times out (in-flight cap and queue depth live on `AxiosClientOptions`) |
 | `Idempotency.Enabled` | `false` | whether to write an idempotency key |
 | `Idempotency.HeaderName` | `Idempotency-Key` | header name |
 | `Idempotency.Key` | `null` | fixed key for this request |
@@ -716,16 +730,13 @@ The other four sub-objects (created lazily on first access). Each leaf is listed
 
 | Leaf | Default | Notes |
 | --- | --- | --- |
-| `Proxy` | `null` | instance-level only |
-| `Credentials` | `null` | instance-level only |
-| `Pool` | `null` | frozen when the pool is built |
 | `HttpVersion` | `null` (= 2.0) | request version |
 | `VersionPolicy` | `null` (= `OrLower`) | version negotiation |
 | `Profile` | `null` (= default profile) | transport profile name |
 | `Auth` | `null` | one of static Basic / token / complete header value / provider |
-| `WithCredentials` | `false` | instance-level only |
-| `MaxRedirects` | 5 | instance-level only |
 | `MaxRate` | `null` (unlimited) | send-side rate limit |
+
+> Proxy / credentials / cookies / redirect count / the pool are not on `Transport`: they shape the connection-level handler and are frozen when the pool is built, so they live on `AxiosClientOptions` (see "Instance-level options" below).
 
 **`Observability`**
 
@@ -741,7 +752,7 @@ The other four sub-objects (created lazily on first access). Each leaf is listed
 
 > Assigning `null` per request explicitly turns off an instance default `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`, which is different from "not set".
 
-> **`Resilience` and `Resilience.Concurrency` are read-only facades and cannot be replaced as a whole**: those two groups are assignable leaf by leaf only (`config.Resilience.Retry.Policy = ...`, `config.Resilience.Concurrency.MaxInFlight = ...`); `config.Resilience = other.Resilience` does not compile. Both facades hold a back-reference to their owning config and use it to read and write the "not set / set" flags, so swapping in an externally constructed instance would desynchronise the flags from the storage. `Limits` / `Serialization` / `Transport` / `Observability` are ordinary properties and can be replaced as a whole. To reset a whole governance group: assign each leaf back to `null` / its default, or start from a fresh `AxiosConfig`.
+> **`Resilience` and `Resilience.Concurrency` are read-only facades and cannot be replaced as a whole**: those two groups are assignable leaf by leaf only (`config.Resilience.Retry.Policy = ...`, `config.Resilience.Concurrency.QueueTimeout = ...`); `config.Resilience = other.Resilience` does not compile. Both facades hold a back-reference to their owning config and use it to read and write the "not set / set" flags, so swapping in an externally constructed instance would desynchronise the flags from the storage. `Limits` / `Serialization` / `Transport` / `Observability` are ordinary properties and can be replaced as a whole. To reset a whole governance group: assign each leaf back to `null` / its default, or start from a fresh `AxiosConfig`.
 
 ### Clients
 
@@ -755,6 +766,27 @@ Three client shapes, identical capabilities underneath:
 
 `Axios.Create("https://api.example.com")` is shorthand for `Axios.Create(c => c.BaseAddress = ...)`, with an optional second `Action<AxiosConfig>` argument for defaults.
 
+**Instance-level options (`AxiosClientOptions`)**: proxy / credentials / cookies / redirect count / pool / concurrency capacity decide the shape of the **connection layer and the gate**, and are fixed when the instance is built. They are therefore not on `AxiosConfig` — there is no way to write them into a single request, and the **compiler rejects it**:
+
+```csharp
+using var http = new AxiosClient(
+    new AxiosConfig { BaseAddress = "https://api.example.com" },                     // defaults for per-request items
+    new AxiosClientOptions { MaxInFlight = 4, MaxQueue = 16, MaxRedirects = 3 });    // instance-level
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `Proxy` | `null` | proxy; mutually exclusive with `Pool.Proxy` |
+| `Credentials` | `null` | explicit credentials; mutually exclusive with `Pool.Credentials` |
+| `WithCredentials` | `false` | use the system default credentials / cookie container (equivalent to the pool's `UseCookies` plus a `DefaultCredentials` fallback) |
+| `MaxRedirects` | 5 | redirect follow limit; `0` = do not follow; a negative value throws at construction |
+| `Pool` | `null` | options for the pool this instance builds; mutually exclusive with the `pool` / `poolOptions` constructor arguments |
+| `MaxInFlight` | `null` (unlimited) | in-flight cap (gate capacity); positive integer, `0` / negative throws at construction |
+| `MaxQueue` | `null` (unlimited) | queue depth cap; only meaningful with `MaxInFlight` |
+
+- **Fixed at construction**: `client.Options` is a snapshot of that moment, already back-filled with the pool's effective values — what you read is the real behaviour. Mutating it afterwards rebuilds neither the pool nor the gate; build a new instance to change the shape (the pool can be shared).
+- **With an injected handler or a shared `pool`**, proxy / credentials / cookies / redirects are their business: writing those on `AxiosClientOptions` throws `ERR_BAD_OPTION_VALUE`; configure the handler or `ConnectionPoolOptions` instead.
+
 **Instance defaults vs per-request**: what you set in `Axios.Create` are instance defaults; the trailing `configure` argument configures a single request. `configure` receives a **copy** of the instance defaults, so you can really remove a default header:
 
 ```csharp
@@ -762,7 +794,7 @@ await http.GetAsync("slow", c => c.Timeout = TimeSpan.FromSeconds(30));   // thi
 await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // default header removed
 ```
 
-- **Instance-level only**: `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` (fixed when the pool is built) and `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
+- **Instance-level items have no per-request entry point**: the seven options on `AxiosClientOptions` cannot be written into `AxiosConfig` — putting them in the wrong place is a compile error, never a silent no-op. The other half stays per-request: `Transport.Profile` / `MaxRate` / `HttpVersion` / `VersionPolicy`, `Resilience.Concurrency.QueueTimeout`, `Timeout`, and so on.
 - **`Params` / `Body` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Body = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). Note the asymmetry in the shortcut `data` slot: the omitted `data` of `PostAsync(url)` *is* an explicit `null` (**drops** `Defaults.Body`), while `DeleteAsync(url)` binds the **no-`data`** overload (**inherits** `Defaults.Body`) — see [Body and ContentType](#body-and-contenttype-json-default) for the per-overload difference.
 - **The seven `Observability` leaves merge the same way**: leaving one untouched inherits the instance default; writing `null` (or `false` for the boolean leaf) per request clears / turns off the instance default. This covers `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`, matching `Body` / `ContentType` / `Compression` / `CancellationToken`.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
@@ -784,8 +816,8 @@ var again = await b.RequestAsync(first.Config!);    // b's instance-level settin
 | --- | --- |
 | `BaseAddress` | The current instance's default |
 | `CancellationToken` | The current instance's default (to swap the token, pass `cancellationToken:` to a shortcut) |
-| `Transport.Auth` / `Proxy` / `Credentials` / `WithCredentials` / `Pool` / `MaxRedirects` | The current instance's defaults (the previous call's per-request `Auth` is not carried over) |
-| `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` | The current instance's defaults |
+| `Transport.Auth` | The current instance's defaults (the previous call's per-request `Auth` is not carried over) |
+| The seven `AxiosClientOptions` items (proxy / credentials / cookies / redirects / pool / concurrency capacity) | The current instance's values; they are not on the config at all, so a replay cannot carry them |
 | `Serialization.BodySerializers` | The current instance's registry (media types registered on the source instance do not travel) |
 | `Serialization.ValueText` | The current instance's default (the source instance's hook is its own instance-level setting and does not travel with the config; pass a hook per request through a direct call's `configure`) |
 | The seven `Observability` leaves (`Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`) | Callbacks inherited from the source instance do not travel (including the `Config` produced by shortcut methods); callbacks / `null` explicitly written into the config by the caller are kept, because that is request-level intent |
@@ -980,7 +1012,7 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
 | `MaxResponseHeadersLength` | 64 KB | Response header size cap; must be `> 0` (the handler has no "0 = unlimited"); enforced for h1 and h2, overflow fails with `ERR_NETWORK` |
 | `IdleHandlerLifetime` | 5 min | How long an idle origin node is kept |
 | `EvictionInterval` | 30 s | Background sweep interval; `<= 0` disables the timer |
-| `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | Auto-redirect; `MaxRedirects = 0` disables |
+| `AllowAutoRedirect` / `MaxAutomaticRedirections` | `true` / 5 | Auto-redirect; `AxiosClientOptions.MaxRedirects = 0` disables |
 | `AutomaticDecompression` | `true` | Master switch for response decompression; off is equivalent to `DecompressionMethods.None` |
 | `Decompression` | `All` | Algorithms: any combination of `GZip` / `Deflate` / `Brotli`, or `All` (everything, the default); `None` disables, unknown bits throw `ERR_BAD_OPTION_VALUE` at pool construction |
 | `EnableMultipleHttp2Connections` | `true` | Under h2, allow more connections up to `MaxConnectionsPerServer` |
@@ -1086,7 +1118,7 @@ await client.GetAsync(url, c => c.Transport.HttpVersion = HttpVersion.Version30)
 - The version actually used is `response.ProtocolVersion`; the intent is `Config.Transport.HttpVersion`.
 - Check h3 availability with `Http3Support.IsSupported` / `UnsupportedReason` (.NET 6 disables h3 by default: set `System.Net.SocketsHttpHandler.Http3Support=true` in runtimeconfig or `DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP3SUPPORT=1`, and MsQuic must be present).
 - `HttpVersion` / `VersionPolicy` are per-request: settable on instance defaults and per call; retries keep them.
-- `WithCredentials = true` uses `CredentialCache.DefaultCredentials`; connection-level auth such as NTLM / Negotiate does not work over h2 — set `Version11` explicitly for IIS / domain services.
+- `AxiosClientOptions.WithCredentials = true` uses `CredentialCache.DefaultCredentials`; connection-level auth such as NTLM / Negotiate does not work over h2 — set `Version11` explicitly for IIS / domain services.
 
 #### Custom handlers
 
@@ -1114,7 +1146,7 @@ using var client2 = new AxiosClient(
 ```
 
 - `HandlerFactory` is called once per origin and must return an independent instance; the pool disposes it. Returning `null` throws `InvalidOperationException` on the first request to that origin.
-- With an injected handler, `client.Pool` is `null` and `UsesConnectionPool` is `false`; connection-level options (`Transport.MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials`) become the handler's business, and setting them on defaults throws `ERR_BAD_OPTION_VALUE`.
+- With an injected handler, `client.Pool` is `null` and `UsesConnectionPool` is `false`; connection-level options (`MaxRedirects` / `WithCredentials` / `Proxy` / `Credentials` on `AxiosClientOptions`) become the handler's business, and setting them there throws `ERR_BAD_OPTION_VALUE`.
 - Timeouts, progress, rate limiting and size caps are unaffected.
 
 ### Observability
@@ -1208,6 +1240,31 @@ await client.GetAsync<object>("health", c => c.Observability.Capture = Telemetry
 await client.GetAsync<object>("api",    c => c.Observability.Capture = TelemetryCapture.NoUrl);     // omit the URL
 await client.GetAsync<object>("api?token=...", c => c.Observability.Capture = TelemetryCapture.Query);   // include the query in url.full
 ```
+
+**Bring your own observability implementation**: all three outputs (spans / metrics / events) sit behind `IAxiosTelemetrySink`, so assigning `AxiosTelemetry.Sink` replaces the built-in pipeline **wholesale** (it is not additive) — use this when you do not want OpenTelemetry and would rather feed your own tracing / metrics pipeline directly:
+
+```csharp
+// Derive AxiosTelemetrySink (every member is a no-op) and override only what you care about
+internal sealed class MySink : AxiosTelemetrySink
+{
+    public override bool IsEnabled(AxiosConfig? config) => true;      // gate at the door: false means everything is skipped
+
+    public override void RequestSucceeded(
+        AxiosConfig config, Uri uri, AxiosResponse response, long startTimestamp, in AxiosRequestTrace trace)
+        => MyMetrics.Record(uri, response.Status, AxiosTelemetry.ElapsedSeconds(startTimestamp));
+
+    public override void RequestFailed(
+        AxiosConfig? config, Uri? uri, Exception exception, long startTimestamp, in AxiosRequestTrace trace)
+        => MyMetrics.RecordFailure(uri, exception);
+}
+
+AxiosTelemetry.Sink = new MySink();             // process-wide; set it once at startup
+AxiosTelemetry.Sink = AxiosTelemetrySink.Off;   // or switch the built-in pipeline off entirely
+```
+
+- `AxiosRequestTrace` is the handle `StartRequest` hands out (a struct whose default means "not observed"); `Stop` / `SetRequestBodySize` dispatch back to the sink that created it, and `State` carries that sink's own payload (the built-in one stores an `Activity`).
+- Implementations must be thread-safe and must **not throw**: observability must never change the outcome of a request (every built-in method is wrapped in `try/catch`).
+- Once replaced, subscribing through `AxiosTelemetry.ActivitySourceName` / `MeterName` / `DiagnosticListenerName` produces nothing; whether `Observability.Capture` is honoured is up to the implementation (`IsEnabled` receives the effective config for the request).
 
 ## Resilience
 
@@ -1361,7 +1418,7 @@ await client.GetAsync("orders", c => c.Resilience.Hedging.MaxHedges = 0);
 The first send goes out immediately; every `Delay` another branch follows. **The first success wins** (elapsed time is never compared — whoever returns first), the rest are cancelled and cleaned up. If every branch fails, the failure goes to the outer retry.
 
 - **The breaker sits outside the whole group and records once**: one logical attempt = one entry, matching the retry accounting. So "one fails, one succeeds" counts as a success and "all fail" counts as a single failure — extra branches never inflate the failure count.
-- **Concurrency budget is `1 + MaxHedges` times**: each branch passes the gate and holds its own slot. Size `Resilience.Concurrency.MaxInFlight` accordingly — too small with `QueueTimeout = Zero` makes branches fail with `ERR_QUEUE_TIMEOUT` at the gate, silently defeating the hedge (it is a latency optimisation, never a failure).
+- **Concurrency budget is `1 + MaxHedges` times**: each branch passes the gate and holds its own slot. Size `AxiosClientOptions.MaxInFlight` accordingly — too small with `QueueTimeout = Zero` makes branches fail with `ERR_QUEUE_TIMEOUT` at the gate, silently defeating the hedge (it is a latency optimisation, never a failure).
 - **Waiting for losers is capped**: after a winner appears the call waits at most 2 seconds for the losers to finish (returning earlier would keep leases and slots occupied); past that the cleanup continues in the background and releases resources when the branch really ends. Built-in middleware honours `ctx.AttemptToken` and finishes immediately; custom middleware that ignores it can hold the caller for 2 seconds at most. When the caller cancels, the cleanup is not awaited at all (it continues in the background), so cancellation takes effect immediately.
 - **`transformResponse` and response-side callbacks run once per branch** (losers included): make side-effecting transforms idempotent, or turn hedging off.
 - **These requests are sent once**, with no downgrade and no error: streaming responses (a loser's body would have no reader), non-idempotent methods (unless `Resilience.AllowUnsafeRetry`), bodies that cannot be replayed concurrently (`Stream` / multipart / upload progress wrappers), and requests with shared response-side state (`OnDownloadProgress` or `MaxRate > 0` — progress would be reported twice and the rate cap doubled).
@@ -1459,7 +1516,7 @@ var pipeline = AxiosAttemptPipeline.Default.Append(next => async (request, ctx) 
 using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy(2), pipeline: pipeline);
 ```
 
-- **`AxiosAttemptContext` is a read-only struct**; its fields are `Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Slot`, derivable only through `WithXxx`.
+- **`AxiosAttemptContext` is a read-only struct**; its fields are `Config` / `Uri` / `AttemptNumber` / `EndpointIndex` / `AttemptToken` / `ExternalToken` / `DataType` / `Target` / `StreamResponse` / `Retry` / `Circuit` / `Hedging` / `Failover` / `Lease`, derivable only through `WithXxx`.
 - **Two independent counters**: retries advance `AttemptNumber`, failover advances `EndpointIndex` (`0` = the request's own URL). Failover does not advance the attempt number, so one attempt number can carry several attempt events.
 - **Built-ins are always on the chain and decide for themselves** by reading `ctx.Config`: with no retry policy the retry middleware is a straight pass-through. That is what lets the chain be frozen at construction instead of rebuilt per request.
 - **Auditing is on by default**: `Attempt.Audit` is the sixth link (after the gate, before the terminal), so subscribing to `AxiosNet.Attempt` gives you every attempt's duration / status / error code; with no subscriber it only evaluates the switch and builds no state machine. It is already on the chain — `Append(Attempt.Audit)` is rejected as a duplicate built-in. Links added with `Append` sit inside it (closer to the terminal), so their execution time is counted in the audit event.
@@ -1467,6 +1524,7 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 - **Reorder and remove**: `AxiosAttemptPipeline.Create(...)` lists the whole chain explicitly (first = outermost); `Remove(Attempt.Gate)` drops one. The pipeline is immutable — every edit returns a new instance. Duplicating a built-in throws.
 - **There is no "put it outermost" API**: that position runs once per request and is exactly what response interceptors already do. `InsertBefore(Attempt.Retry, ...)` refuses explicitly and points at `client.Interceptors.Response`, which additionally offers `OnRejected`, runtime add/remove, and short-circuit coverage.
 - **You do not manage the concurrency slot**: the gate releases it itself — a middleware that skips `next` (returning its own response) or throws cannot leak it. The only case where the gate does not release it is a **library-produced** streamed response: the slot travels with the body into `StreamOwner` and is released when the stream is disposed, so the request keeps occupying its quota while the body downloads. A `StreamOwner` built by a middleware is not that case: the gate still releases its own slot, and a self-built owner gets no concurrency quota.
+- **Middleware can register cross-terminal resources of its own**: `ctx.WithLease(lease)` appends an `IDisposable` to the context (an audit session, a batch handle, an external lease…) without overwriting one that is already registered. Once registered, **do not dispose it yourself**: the terminal disposes everything on the failure path, and on a streamed success it hands the whole set to `StreamOwner`; disposal runs in **reverse** registration order (a later resource may depend on an earlier one). If you throw halfway through, you still own the cleanup — nobody else runs when the terminal never executes.
 - **Whoever creates it, disposes it**: a request message cloned by a middleware is that middleware's to dispose (the template still belongs to the pipeline). When replacing a response you must dispose the previous `AxiosAttemptResult.StreamOwner`, or carry it into the new result (`new AxiosAttemptResult(newResponse, old.StreamOwner)`) — it holds the pool lease and the concurrency slot, and dropping it leaks both.
 - **Middleware time is not counted against `Timeout`**: the budget starts inside the terminal, and gate queuing plus any middleware prologue happen outside it.
 - **The pipeline is supplied at construction only**: `AttemptPipeline` is get-only and `Compile` is internal, so a client that already exists cannot gain middleware. To change the chain, derive a new client — pass the same `Pool` to reuse connections, and `Defaults.Clone()` so each client holds its own config:
@@ -2451,7 +2509,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | Capability | What you get | How |
 | --- | --- | --- |
 | [Progress and throttling](#progress-rate-and-size-limits) | Upload/download progress, byte rate cap, size caps | `c.Observability.OnDownloadProgress` / `c.Transport.MaxRate` |
-| [In-flight gate](#in-flight-concurrency-cap) | Cap concurrent requests; queue depth can be capped | `c.Resilience.Concurrency.MaxInFlight` + `MaxQueue` / `QueueTimeout` |
+| [In-flight gate](#in-flight-concurrency-cap) | Cap concurrent requests; queue depth can be capped | `new AxiosClientOptions { MaxInFlight, MaxQueue }` + `QueueTimeout` |
 | [Retries](#retries) | Exponential backoff / jitter / `Retry-After` / idempotency gate / global retry budget | `c.Resilience.Retry.Policy = RetryPolicy.Exponential(...)` |
 | [Circuit breaker](#circuit-breaker) | Per-host Closed/Open/HalfOpen state machine: rolling-window failure rate plus a consecutive-failure rule, with slow-start recovery | `c.Resilience.Circuit.Policy = new CircuitBreaker()` |
 | [Concurrent hedging](#concurrent-hedging) | Fire several copies of one request, first success wins | `c.Resilience.Hedging.MaxHedges = 1` |
@@ -2510,7 +2568,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | — (needs cockatiel or similar) | `c.Resilience.Hedging.MaxHedges` (concurrent hedging), `c.Resilience.Failover.Endpoints` (backup endpoints) |
 | — (needs the OTel JS SDK) | Built-in `ActivitySource` / `Meter` / `DiagnosticListener` |
 | — (axios-cache-interceptor and friends) | `c.Caching = new AxiosCache(...)` (built-in cache + single flight), `c.ShortCircuit` (hand-rolled cache hit / mock / offline replay) |
-| — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `Resilience.Concurrency.MaxInFlight` / `MaxQueue` / `QueueTimeout`, `IAsyncEnumerable` streaming request bodies |
+| — (no equivalent) | `HttpConnectionPool`, declarative `ApiClient`, `RequestStreamAsync`, `AxiosClientOptions.MaxInFlight` / `MaxQueue`, `Resilience.Concurrency.QueueTimeout`, `IAsyncEnumerable` streaming request bodies |
 
 Intentional differences from axios:
 
@@ -2540,6 +2598,10 @@ builder.Services.AddAxiosClient(                             // ...and swap the 
     configure: config => config.Timeout = TimeSpan.FromSeconds(10),
     pipeline: AxiosAttemptPipeline.Default.Append(auditAttempt));
 
+builder.Services.AddAxiosClient(                             // instance-level options: proxy / cookies / redirects / pool / capacity
+    configure: config => config.BaseAddress = "https://api.example.com",
+    options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 });
+
 builder.Services.AddApiClient("https://api.example.com",     // declarative client with its own transport
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
     configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
@@ -2553,8 +2615,8 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 
 | Extension | Registers |
 | --- | --- |
-| `AddAxiosClient(configure, pipeline)` | Singleton `AxiosClient` (optional attempt pipeline) |
-| `AddApiClient(baseAddress, configureDefaults, configure)` | Singleton `ApiClient` (owns its transport) |
+| `AddAxiosClient(configure, options, pipeline)` | Singleton `AxiosClient` (instance-level options + optional attempt pipeline) |
+| `AddApiClient(baseAddress, configureDefaults, options, configure)` | Singleton `ApiClient` (owns its transport) |
 | `AddApiClient(configure)` | Singleton `ApiClient` (reuses the container's `AxiosClient`) |
 | `AddApiClient(name, baseAddress, ...)` | Singleton `IApiClientResolver` + named site |
 | `AddApiInterface<T>()` / `AddApiInterface<T>(name)` | Singleton interface proxy (default / named site) |
@@ -2603,15 +2665,15 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2562 / 2551 | `net8.0` / `net6.0` | 5113 |
-| `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
+| `AxiosNet.Tests` (core + declarative) | 2514 / 2503 | `net8.0` / `net6.0` | 5017 |
+| `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
-| `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 47 / 42 | `net8.0` / `net472` | 89 |
-| **Total** | **2749 / 2659** | | **5408** |
+| `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
+| **Total** | **2714 / 2624** | | **5338** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **92.3%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **92.2%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

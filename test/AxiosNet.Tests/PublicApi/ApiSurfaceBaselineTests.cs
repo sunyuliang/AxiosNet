@@ -246,13 +246,17 @@ internal static class ApiSurface
 
         var interfaces = type.GetInterfaces()
             .Select(TypeName)
-            .OrderBy(name => name, StringComparer.Ordinal);
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
 
         var baseType = type.BaseType is { } parent && parent != typeof(object) && parent != typeof(ValueType)
             ? $" : {TypeName(parent)}"
             : string.Empty;
 
-        return $"T:{type.FullName} [{kind}]{baseType} implements {string.Join(",", interfaces)}";
+        // 没有接口时不留「implements 」的尾巴：行尾空格过不了 git diff --check，基线里也不该有。
+        var implemented = interfaces.Count == 0 ? string.Empty : $" implements {string.Join(",", interfaces)}";
+
+        return $"T:{type.FullName} [{kind}]{baseType}{implemented}";
     }
 
     /// <summary>属性访问器形态：<c>get</c> / <c>get;set</c>（<c>init</c> 也算 set，二进制上只差 modreq）。</summary>

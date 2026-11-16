@@ -152,6 +152,46 @@ public static class AxiosTelemetry
     internal const string CircuitStateOpen = "open";
     internal const string CircuitStateHalfOpen = "half_open";
 
+    /// <summary>
+    /// 观测实现：默认写内置的 <see cref="ActivitySource"/> / <see cref="Meter"/> / <see cref="DiagnosticListener"/>。
+    /// 换成自己的实现即<b>整套</b>接管（内置那套同时停用，不是叠加）；设 <see cref="AxiosTelemetrySink.Off"/> 即彻底关掉。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 进程级开关，**启动时设一次**。三类回调的派发口径不同：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>
+    /// <b>观测句柄</b>（<see cref="IAxiosTelemetrySink.StartRequest"/> 交出的
+    /// <see cref="AxiosRequestTrace"/>）：<see cref="IAxiosTelemetrySink.StopRequest"/> /
+    /// <see cref="IAxiosTelemetrySink.SetRequestBodySize"/> 回到<b>创建它的那个实现</b>上，
+    /// 所以请求在途时替换不会把一条请求劈成两家（默认句柄 = 不观测，天然是空操作）。
+    /// </item>
+    /// <item>
+    /// <b>成对水位</b>（<see cref="IAxiosTelemetrySink.EnterRequest"/> / <see cref="IAxiosTelemetrySink.ExitRequest"/>、
+    /// <see cref="IAxiosTelemetrySink.EnterLease"/> / <see cref="IAxiosTelemetrySink.ExitLease"/>、
+    /// <see cref="IAxiosTelemetrySink.EnterPool"/> / <see cref="IAxiosTelemetrySink.ExitPool"/>）按本属性的<b>当前值</b>派发：
+    /// 一对进出之间换过实现，就会「进的记在旧实现上、出的记在新实现上」，两边的水位一起错位
+    /// （租约与池的存活期可以长达整条流式响应，或者整个进程）。它们没有句柄可带，所以
+    /// <b>不要在还有在途请求 / 未归还租约时替换</b>；启动时设一次就不存在这个问题。
+    /// </item>
+    /// <item>
+    /// <b>事件类</b>（成功 / 失败 / 缓存 / 重试 / 尝试审计…）按本属性的当前值派发：它们描述的是「此刻发生了什么」，
+    /// 换实现后新实现接着收剩余事件，符合「整套接管」的语义。
+    /// </item>
+    /// </list>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">赋值为 <c>null</c>（要关掉请用 <see cref="AxiosTelemetrySink.Off"/>）。</exception>
+    public static IAxiosTelemetrySink Sink
+    {
+        get => _sink;
+        set => _sink = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    /// <summary>当前实现（默认 <see cref="BuiltInTelemetrySink"/>）。</summary>
+    /// <remarks>每次观测都要读它（含池与闸门的热路径），<c>volatile</c> 保证换上之后读到的就是新的，不会在某个核心上一直读旧值。</remarks>
+    private static volatile IAxiosTelemetrySink _sink = BuiltInTelemetrySink.Instance;
+
     internal static readonly ActivitySource Source;
 
     internal static readonly DiagnosticListener Listener;

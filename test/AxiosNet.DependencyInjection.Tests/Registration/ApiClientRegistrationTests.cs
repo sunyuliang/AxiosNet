@@ -51,6 +51,25 @@ public sealed class ApiClientRegistrationTests
     }
 
     [Fact]
+    public void AddApiClient_Options_AppliedToUnderlyingClient()
+    {
+        // 自建模式下底层 AxiosClient 由 DI 造，实例级七项只能经 options 传进去；
+        // 丢了这条，容器里的声明式客户端就永远开不了 Cookie / 配不了并发上限。
+        using var provider = BuildProvider(services =>
+            services.AddApiClient("https://api.example.com", options: new AxiosClientOptions
+            {
+                WithCredentials = true,
+                MaxInFlight = 2
+            }));
+
+        var axios = provider.GetRequiredService<ApiClient>().Axios;
+
+        Assert.True(axios.Options.WithCredentials);
+        Assert.Equal(2, axios.Options.MaxInFlight);
+        Assert.True(axios.Pool!.Options.UseCookies);
+    }
+
+    [Fact]
     public void AddApiClient_CalledTwice_SecondConfigureDefaultsDoesNotRun()
     {
         // 与 AddAxiosClient 同一契约：第二次注册被 TryAdd 抑制时，configureDefaults 的

@@ -129,7 +129,7 @@ public sealed class StatusMessageContextTests
             "http://user:pass@example.test/boom?token=SECRET123");
         var response = new AxiosResponse { Status = 500, RawText = "boom" };
 
-        var ex = AxiosException.FromResponse(config, request, response, attemptNumber: 1);
+        var ex = AxiosException.FromResponse(config, request, response, AxiosClientOptions.DefaultMaxRedirects, attemptNumber: 1);
 
         Assert.DoesNotContain("pass", ex.Message);
         Assert.DoesNotContain("user:", ex.Message);

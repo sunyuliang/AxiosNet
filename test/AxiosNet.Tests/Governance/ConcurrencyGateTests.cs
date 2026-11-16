@@ -293,9 +293,9 @@ public sealed class ConcurrencyGateTests
         var config = new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Resilience = { Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = {  MaxInFlight = 1, MaxQueue = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
+            Resilience = { Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = { QueueTimeout = TimeSpan.FromSeconds(5) } }
         };
-        using var client = new AxiosClient(config);
+        using var client = new AxiosClient(config, new AxiosClientOptions { MaxInFlight = 1, MaxQueue = 1 });
 
         var occupying = client.GetAsync("hold");
         await WaitUntilAsync(() => primary.Received.Count >= 1, "第一条请求占住槽位");
@@ -314,74 +314,44 @@ public sealed class ConcurrencyGateTests
         await queued;
     }
 
-    [Fact]
-    public async Task PerRequestDifferentMaxQueue_ThrowsBadOptionValue()
-    {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 2);
-
-        // 先跑一条，确保闸门已按 (2, 2) 建出来
-        await client.GetAsync(server.Url + "warmup");
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = 3));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Contains("MaxQueue", ex.Message);
-
-        // 复述实例的值放行
-        var ok = await client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = 2);
-        Assert.Equal(200, ok.Status);
-    }
-
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public async Task InvalidMaxQueue_ThrowsBadOptionValue(int value)
+    public void InvalidMaxInFlight_ThrowsAtConstruction(int value)
     {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = new AxiosClient();
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = value));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Empty(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestDifferentLimit_ThrowsBadOptionValue()
-    {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = LimitedClient(maxConcurrency: 2);
-
-        // 先跑一条，确保闸门已按 2 建出来
-        await client.GetAsync(server.Url + "warmup");
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 8));
+        // 容量是实例级选项：非法值在构造期就拒绝，不用等到首个请求。
+        var ex = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(options: new AxiosClientOptions { MaxInFlight = value }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("MaxInFlight", ex.Message);
-
-        // 复述实例的值放行（与 Proxy / MaxRedirects 同一策略）
-        var ok = await client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 2);
-        Assert.Equal(200, ok.Status);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public async Task InvalidMaxInFlight_ThrowsBadOptionValue(int value)
+    public void InvalidMaxQueue_ThrowsAtConstruction(int value)
     {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = new AxiosClient();
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = value));
+        var ex = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 2, MaxQueue = value }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Empty(server.Received);
+        Assert.Contains("MaxQueue", ex.Message);
+    }
+
+    [Fact]
+    public async Task Capacity_ComesFromOptionsOnly_RequestConfigCannotChangeIt()
+    {
+        await using var server = SlowServer(delayMs: 0);
+        using var client = LimitedClient(maxConcurrency: 1);
+
+        await client.GetAsync(server.Url + "warmup");
+
+        // 容量只有构造期一个入口：单次请求上写不进去，所以「按请求改容量」这条路径不存在，
+        // 按请求能改的只有排队等待时长。
+        var response = await client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(5));
+
+        Assert.Equal(200, response.Status);
     }
 
     [Fact]
@@ -397,24 +367,21 @@ public sealed class ConcurrencyGateTests
     }
 
     [Fact]
-    public async Task DefaultsSetAfterConstruction_StillTakesEffect()
+    public async Task GateIsCreatedFromOptions_LazilyOnFirstRequest()
     {
         await using var server = SlowServer();
-        using var client = new AxiosClient();
+        using var client = LimitedClient(maxConcurrency: 1);
 
-        // 无上限时先跑一条：闸门是「首个受限请求」才建的，不该被这条提前固化
-        await client.GetAsync(server.Url + "before");
+        // 没请求前不建闸门（默认请求零分配），首个受限请求才建
+        Assert.Null(typeof(AxiosClient).GetField("_gate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(client));
 
-        client.Defaults.Resilience.Concurrency.MaxInFlight = 1;
+        await client.GetAsync(server.Url + "first");
 
-        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => client.GetAsync(server.Url + "x")));
-
-        // 后 4 条被压到串行（峰值可能仍是 before 那一条留下的 1）
-        Assert.True(server.PeakConcurrentRequests <= 1, $"peak = {server.PeakConcurrentRequests}");
+        Assert.NotNull(typeof(AxiosClient).GetField("_gate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(client));
     }
 
     [Fact]
-    public async Task ReplayingConfigFromAnotherInstance_KeepsTargetGate()
+    public async Task ReplayingConfigFromAnotherInstance_DoesNotCarryCapacity()
     {
         await using var server = SlowServer(delayMs: 0);
 
@@ -424,91 +391,13 @@ public sealed class ConcurrencyGateTests
 
         var first = await source.GetAsync(server.Url + "x");
 
-        // 回放生效配置不该把来源实例的闸门搬过来（否则要么凭空加闸，要么撞上「上限不同」）
+        // 容量不在配置上，回放天然搬不过来：不会凭空给目标加闸，也不会撞上「上限不同」
         var replayed = await target.RequestAsync(first.Config!);
         Assert.Equal(200, replayed.Status);
 
-        // 目标实例的闸门仍是 2：可以复述、写 1 会报错
-        await target.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 2);
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            target.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxInFlight = 1));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
-    [Fact]
-    public async Task ReplayingConfigWithQueueLengthFromAnotherInstance_KeepsTargetQueueCap()
-    {
-        await using var server = SlowServer(delayMs: 0);
-
-        // 来源实例：并发 2、排队上限 1；目标实例：并发 2、排队上限 3
-        using var source = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
-        using var target = LimitedClient(maxConcurrency: 2, maxQueueLength: 3);
-
-        var first = await source.GetAsync(server.Url + "x");
-
-        // 排队上限与并发上限同属实例级：回放不该把来源实例的 1 搬过来（否则撞上「上限不同」）
-        var replayed = await target.RequestAsync(first.Config!);
-        Assert.Equal(200, replayed.Status);
-
-        // 目标闸门仍是 (2, 3)
-        await target.GetAsync(server.Url + "restate", c => c.Resilience.Concurrency.MaxQueue = 3);
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            target.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = 1));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
-    [Fact]
-    public async Task ReplayedQueueLength_DoesNotPinSourceCapOnTargetGate()
-    {
-        await using var server = SlowServer(delayMs: 0);
-
-        // 来源实例带排队上限，目标实例没设：回放不该把 1 悄悄钉在目标的闸门上
-        using var source = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
-        using var target = LimitedClient(maxConcurrency: 2);
-
-        var first = await source.GetAsync(server.Url + "x");
-        Assert.Equal(200, (await target.RequestAsync(first.Config!)).Status);
-
-        // 目标闸门是 (2, 不限)：显式要「不限」放行，显式写 1 报错
-        await target.GetAsync(server.Url + "y", c => c.Resilience.Concurrency.MaxQueue = null);
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            target.GetAsync(server.Url + "z", c => c.Resilience.Concurrency.MaxQueue = 1));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
-    [Fact]
-    public async Task PerRequestQueueLength_DoesNotPoisonLaterRequests()
-    {
-        await using var server = SlowServer(delayMs: 0);
-
-        // 实例默认只设并发上限：闸门由「这一次带排队上限的请求」建出来
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Resilience = { Concurrency = {  MaxInFlight = 2  } }
-        });
-
-        await client.GetAsync(server.Url + "first", c => c.Resilience.Concurrency.MaxQueue = 1);
-
-        // 后续请求没提排队上限不等于「要求不限」：闸门照用
-        await client.GetAsync(server.Url + "plain");
-        await client.GetAsync(server.Url + "concurrency-only", c => c.Resilience.Concurrency.MaxInFlight = 2);
-        await client.GetAsync(server.Url + "restate", c => c.Resilience.Concurrency.MaxQueue = 1);
-    }
-
-    [Fact]
-    public async Task PerRequestNullQueueLength_AgainstGateWithCap_Throws()
-    {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
-
-        await client.GetAsync(server.Url + "warmup");
-
-        // 显式 null 是「要求不限排队」：与实例级的 1 不一致，照样报错，不能当成「没表态」静默放行
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Resilience.Concurrency.MaxQueue = null));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        // 目标实例照自己的容量工作
+        var again = await target.GetAsync(server.Url + "y");
+        Assert.Equal(200, again.Status);
     }
 
     [Fact]
@@ -544,35 +433,6 @@ public sealed class ConcurrencyGateTests
         await occupying;
     }
 
-    [Fact]
-    public async Task RaisedLimitAfterGateCreated_ThrowsInsteadOfSilentlyIgnoring()
-    {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = LimitedClient(maxConcurrency: 1);
-
-        await client.GetAsync(server.Url + "warmup");
-
-        client.Defaults.Resilience.Concurrency.MaxInFlight = 4;
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
-    [Fact]
-    public async Task RaisedQueueLengthAfterGateCreated_ThrowsInsteadOfSilentlyIgnoring()
-    {
-        await using var server = SlowServer(delayMs: 0);
-        using var client = LimitedClient(maxConcurrency: 2, maxQueueLength: 1);
-
-        await client.GetAsync(server.Url + "warmup");
-
-        // 实例默认表过态（1），构造后改成 3 同样撞上已固化的闸门：不能因为「本次没按请求写」就静默放过
-        client.Defaults.Resilience.Concurrency.MaxQueue = 3;
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "x"));
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
     /// <summary>让服务端每个请求都停一会儿：没有闸门时并发数会明显超过 1。</summary>
     private static TestHttpServer SlowServer(int delayMs = 80)
         => TestHttpServer.Start(async _ =>
@@ -602,16 +462,19 @@ public sealed class ConcurrencyGateTests
         TimeSpan? queueTimeout = null,
         TimeSpan? timeout = null)
     {
-        var config = new AxiosConfig
+        var config = new AxiosConfig();
+
+        // 排队等待时长按请求可变，留在配置上；容量（MaxInFlight / MaxQueue）是实例级选项。
+        if (queueTimeout is { } queue)
         {
-            Resilience = { Concurrency = {  MaxInFlight = maxConcurrency, MaxQueue = maxQueueLength, QueueTimeout = queueTimeout  } }
-        };
+            config.Resilience.Concurrency.QueueTimeout = queue;
+        }
 
         if (timeout is { } value)
         {
             config.Timeout = value;
         }
 
-        return new AxiosClient(config);
+        return new AxiosClient(config, new AxiosClientOptions { MaxInFlight = maxConcurrency, MaxQueue = maxQueueLength });
     }
 }

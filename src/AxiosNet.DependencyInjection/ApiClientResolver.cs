@@ -26,13 +26,14 @@ public interface IApiClientResolver
     bool TryGet(string name, [MaybeNullWhen(false)] out ApiClient client);
 }
 
-/// <summary>命名站点的注册数据（内部）：站点名 + 底层客户端默认值 + 对 ApiClient 自身的配置。</summary>
+/// <summary>命名站点的注册数据（内部）：站点名 + 底层客户端默认值 + 实例级选项 + 对 ApiClient 自身的配置。</summary>
 internal sealed class ApiClientDefinition
 {
-    public ApiClientDefinition(string name, AxiosConfig defaults, Action<ApiClient>? configure)
+    public ApiClientDefinition(string name, AxiosConfig defaults, AxiosClientOptions? options, Action<ApiClient>? configure)
     {
         Name = name;
         Defaults = defaults;
+        Options = options;
         Configure = configure;
     }
 
@@ -41,6 +42,9 @@ internal sealed class ApiClientDefinition
 
     /// <summary>该站点的默认配置：每站点一份，注册之间的改动不会互相污染。</summary>
     public AxiosConfig Defaults { get; }
+
+    /// <summary>该站点底层客户端的实例级选项（代理 / 凭据 / Cookie / 重定向 / 自建池 / 并发容量）；null 表示全默认。</summary>
+    public AxiosClientOptions? Options { get; }
 
     /// <summary>客户端创建后的最后一步配置（拦截器、默认头等）；null 表示不再额外设置。</summary>
     public Action<ApiClient>? Configure { get; }
@@ -168,7 +172,7 @@ internal sealed class ApiClientResolver : IApiClientResolver, IDisposable, IAsyn
             }
 
             // 每站点自建底层客户端，由本解析器持有并在容器退出时释放；创建失败时 holder 当场释放，不登记。
-            var holder = new ApiClientOwnedAxiosClient(definition.Defaults);
+            var holder = new ApiClientOwnedAxiosClient(definition.Defaults, definition.Options);
 
             ApiClient created;
             try

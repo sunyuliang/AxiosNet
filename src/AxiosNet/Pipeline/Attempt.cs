@@ -180,7 +180,7 @@ public static partial class Attempt
                     retry.OnRetry?.Invoke(retryContext);
 
                     // 观测点放在「决定重试」这一刻，与 OnRetry 同一语义。
-                    AxiosTelemetry.RequestRetried(retryContext, ctx.Uri);
+                    AxiosTelemetry.Sink.RequestRetried(retryContext, ctx.Uri);
 
                     if (delay > TimeSpan.Zero)
                     {
@@ -291,7 +291,7 @@ public static partial class Attempt
     }
 
     /// <summary>
-    /// 并发槽位：占到的槽位写进上下文交给终端，由终端统一归还（失败路径）或接管（流式成功路径）。
+    /// 并发槽位：占到的槽位登记进上下文交给终端，由终端统一归还（失败路径）或接管（流式成功路径）。
     /// 排队用本次尝试的令牌，所以被放弃的尝试（例如对冲的败者）在闸门里排队时也能立刻收掉。
     /// </summary>
     /// <remarks>
@@ -300,8 +300,10 @@ public static partial class Attempt
     /// 槽位就再也没人还了，后续请求会一直卡到 <c>QueueTimeout</c>。
     /// 槽位的 <see cref="IDisposable.Dispose"/> 是幂等的（内部用 <c>Interlocked.Exchange</c>），
     /// 所以「终端已归还 + 闸门再归还一次」是安全的重复释放，不会误伤别人的槽位。
+    /// 登记槽位用 <see cref="AxiosAttemptContext.WithLease"/>：它<b>追加</b>而不是覆盖，
+    /// 内层中间件自己登记的租约因此不会被槽位顶掉（反过来也不会）。
     /// 自建 <see cref="AxiosAttemptResult.StreamOwner"/> 的中间件也算「不调终端」：闸门照常归还槽位，
-    /// 自建凭证拿不到这份并发额度（只有库内流式凭证才会让槽位随正文继续占用）。
+    /// 自建凭证拿不到这份并发额度（只有库内流式凭证才会让租约随正文继续占用）。
     /// </remarks>
     private static async ValueTask<AxiosAttemptResult> WithSlotAsync(
         AxiosAttemptHandler next,
@@ -322,7 +324,7 @@ public static partial class Attempt
         AxiosAttemptResult result;
         try
         {
-            result = await next(request, ctx.WithSlot(slot)).ConfigureAwait(false);
+            result = await next(request, ctx.WithLease(slot)).ConfigureAwait(false);
         }
         catch
         {
@@ -331,9 +333,9 @@ public static partial class Attempt
             throw;
         }
 
-        // 成功路径：流式响应把槽位随正文转交给了 StreamOwner —— 此刻归还会让还在下载的正文
+        // 成功路径：流式响应把上下文里的租约随正文转交给了 StreamOwner —— 此刻归还会让还在下载的正文
         // 不再计入并发额度。其余情况（含中间件自己造的响应与自建凭证）都归还，幂等。
-        if (!result.SlotTransferred)
+        if (!result.LeasesTransferred)
         {
             slot.Dispose();
         }

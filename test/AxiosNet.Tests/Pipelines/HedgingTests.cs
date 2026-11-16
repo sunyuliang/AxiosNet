@@ -325,8 +325,8 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
-        });
+            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = { QueueTimeout = TimeSpan.FromSeconds(5) } }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var stopwatch = Stopwatch.StartNew();
         var response = await client.GetAsync("x");
@@ -359,8 +359,8 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 2, QueueTimeout = TimeSpan.Zero  } }
-        });
+            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = { QueueTimeout = TimeSpan.Zero } }
+        }, new AxiosClientOptions { MaxInFlight = 2 });
 
         // 先用一条长请求占住一个槽位（它自己不对冲，否则两条分支会把两个槽位都占掉）。
         var occupying = client.GetAsync("hold", c => c.Resilience.Hedging.MaxHedges = 0);
@@ -398,8 +398,8 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Resilience = { Hedging = new() { MaxHedges = 2, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 2, MaxQueue = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
-        });
+            Resilience = { Hedging = new() { MaxHedges = 2, Delay = TimeSpan.Zero }, Concurrency = { QueueTimeout = TimeSpan.FromSeconds(5) } }
+        }, new AxiosClientOptions { MaxInFlight = 2, MaxQueue = 1 });
 
         var occupying = client.GetAsync("hold", c => c.Resilience.Hedging.MaxHedges = 0);
         await WaitUntilAsync(() => server.Received.Count >= 1);
@@ -434,8 +434,8 @@ public sealed class HedgingTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = {  MaxInFlight = 2, QueueTimeout = TimeSpan.Zero  } }
-        });
+            Resilience = { Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }, Concurrency = { QueueTimeout = TimeSpan.Zero } }
+        }, new AxiosClientOptions { MaxInFlight = 2 });
 
         var response = await client.GetAsync("x");
 

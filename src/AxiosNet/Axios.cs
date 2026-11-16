@@ -63,20 +63,23 @@ public static class Axios
     /// <summary>
     /// 对应 axios.create(config)。注入 <paramref name="handler"/> 时不使用连接池。
     /// <paramref name="pool"/> 与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// <paramref name="options"/> 是实例级选项（代理 / 凭据 / Cookie / 重定向 / 并发容量），构造期固化。
     /// <paramref name="pipeline"/> 为 <c>null</c> 时用 <see cref="AxiosAttemptPipeline.Default"/>。
     /// </summary>
     public static AxiosClient Create(
         AxiosConfig? defaults = null,
+        AxiosClientOptions? options = null,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
         bool disposeHandler = true,
         AxiosAttemptPipeline? pipeline = null)
-        => new(defaults, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
+        => new(defaults, options: options, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
 
     /// <summary>对应 axios.create(config)，用 Action 配置默认项；<paramref name="pipeline"/> 为 <c>null</c> 时用 <see cref="AxiosAttemptPipeline.Default"/>。</summary>
     public static AxiosClient Create(
         Action<AxiosConfig> configureDefaults,
+        AxiosClientOptions? options = null,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
@@ -86,7 +89,7 @@ public static class Axios
         ArgumentNullException.ThrowIfNull(configureDefaults);
         var config = new AxiosConfig();
         configureDefaults(config);
-        return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
+        return new AxiosClient(config, options: options, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
     }
 
     /// <summary>
@@ -96,6 +99,7 @@ public static class Axios
     public static AxiosClient Create(
         string baseAddress,
         Action<AxiosConfig>? configureDefaults = null,
+        AxiosClientOptions? options = null,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
@@ -109,7 +113,7 @@ public static class Axios
 
         var config = new AxiosConfig { BaseAddress = baseAddress };
         configureDefaults?.Invoke(config);
-        return new AxiosClient(config, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
+        return new AxiosClient(config, options: options, pool: pool, poolOptions: poolOptions, handler: handler, disposeHandler: disposeHandler, pipeline: pipeline);
     }
 
     /// <summary>对应 axios(config)，用全局默认实例发送。</summary>

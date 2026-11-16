@@ -22,10 +22,6 @@ public sealed partial class AxiosClient
     {
         var merged = Defaults.Clone();
 
-        // 克隆带过来的标记属于上一份配置，必须清掉，否则本次合并会把继承值与显式设置混为一谈。
-        // 只清 WithCredentials / MaxRedirects 两项：Proxy / Credentials 没有 *Set 标记，靠引用为空判断。
-        merged.ClearInstanceOptionFlags();
-
         // 可观测性回调组的 *Set 标记只描述「显式写过」：Defaults.Clone() 带过来的标记是来源实例默认值，
         // 不是按请求意图。不清掉的话，回放 response.Config 会把来源实例的回调 / 清空意图搬到目标实例上
         // （与缓存、CancellationToken 同一套「实例来源不搬运」口径）。只清标记、留值，本次请求照常继承。
@@ -163,12 +159,6 @@ public sealed partial class AxiosClient
         if (perCall.ResilienceOrNull is { } incomingResilience)
         {
             merged.Resilience.MergeFrom(incomingResilience);
-        }
-
-        // 并发三项属实例级：库产出的配置（回放 response.Config 等）不搬运，连同 *Set 标记还原本实例默认值。
-        if (instanceSourced)
-        {
-            merged.Resilience.Concurrency.ResetFrom(Defaults);
         }
 
         if (perCall.SerializationOrNull is { } incomingSerialization)

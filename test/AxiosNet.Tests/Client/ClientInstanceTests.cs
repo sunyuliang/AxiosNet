@@ -2,6 +2,7 @@
 using AxiosNet.Pooling;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
+using System.Reflection;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
@@ -20,61 +21,82 @@ namespace AxiosNet.Tests.Client;
 /// </summary>
 public sealed class ClientInstanceTests
 {
+    // ===============================================================
+    // 实例级选项写不到按请求上：AxiosConfig 上根本没有这七个成员
+    // ===============================================================
+
+    /// <summary>
+    /// 代理 / 凭据 / Cookie / 重定向次数 / 连接池 / 并发容量这七项决定连接层与闸门的形态，构造期固化。
+    /// 它们在 <see cref="AxiosClientOptions"/> 上，<see cref="AxiosConfig"/> 上不存在 ——
+    /// 「写不进去」是编译期的事，所以这里用反射取证：能编译就说明 API 面漏了。
+    /// </summary>
     [Fact]
-    public async Task RequestAsync_PerRequestWithCredentials_Throws()
+    public void InstanceLevelOptions_AreNotOnAxiosConfig()
     {
-        await using var server = TestHttpServer.Start(_ => Json());
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        Assert.Null(typeof(AxiosConfig.TransportSettings).GetProperty("Proxy"));
+        Assert.Null(typeof(AxiosConfig.TransportSettings).GetProperty("Credentials"));
+        Assert.Null(typeof(AxiosConfig.TransportSettings).GetProperty("WithCredentials"));
+        Assert.Null(typeof(AxiosConfig.TransportSettings).GetProperty("MaxRedirects"));
+        Assert.Null(typeof(AxiosConfig.TransportSettings).GetProperty("Pool"));
+        Assert.Null(typeof(AxiosConfig.ConcurrencySettings).GetProperty("MaxInFlight"));
+        Assert.Null(typeof(AxiosConfig.ConcurrencySettings).GetProperty("MaxQueue"));
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig
-            {
-                Url = "x",
-                Transport = new()
-                {
-                    WithCredentials = true,
-                },
-            }));
+        // 反向：七项都在 AxiosClientOptions 上，且可写（对象初始化器语法）。
+        foreach (var name in new[] { "Proxy", "Credentials", "WithCredentials", "MaxRedirects", "Pool", "MaxInFlight", "MaxQueue" })
+        {
+            var property = typeof(AxiosClientOptions).GetProperty(name);
 
-        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+            Assert.NotNull(property);
+            Assert.True(property!.CanWrite, name);
+        }
     }
 
     [Fact]
-    public async Task RequestAsync_PerRequestProxy_Throws()
+    public async Task RequestAsync_ConcurrencyCapacity_ComesFromInstanceOptions()
     {
         await using var server = TestHttpServer.Start(_ => Json());
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
+        using var client = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            new AxiosClientOptions { MaxInFlight = 4 });
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig
-            {
-                Url = "x",
-                Transport = new()
-                {
-                    Proxy = new WebProxy("http://127.0.0.1:1"),
-                },
-            }));
+        // 容量是实例级的：单次请求上没有任何入口能改它，请求照常发出。
+        var response = await client.RequestAsync(new AxiosConfig { Url = "x" });
 
-        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Equal(200, response.Status);
+        Assert.Single(server.Received);
     }
 
     [Fact]
-    public async Task RequestAsync_PerRequestPoolOptions_Throws()
+    public void Constructor_MaxInFlightZero_ThrowsAtConstruction()
     {
-        await using var server = TestHttpServer.Start(_ => Json());
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig
-            {
-                Url = "x",
-                Transport = new()
-                {
-                    Pool = new ConnectionPoolOptions { MaxConnectionsPerServer = 1 },
-                },
-            }));
+        var error = Assert.Throws<AxiosException>(() => new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 0 }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Contains("MaxInFlight", error.Message);
+    }
+
+    [Fact]
+    public void Constructor_MaxQueueZero_ThrowsAtConstruction()
+    {
+        var error = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 2, MaxQueue = 0 }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Contains("MaxQueue", error.Message);
+    }
+
+    [Fact]
+    public void Constructor_OptionsAreSnapshotted()
+    {
+        var options = new AxiosClientOptions { MaxInFlight = 2, MaxRedirects = 0 };
+        using var client = new AxiosClient(options: options);
+
+        // 改调用方那份不影响实例：客户端持有自己的快照。
+        options.MaxInFlight = 9;
+        options.MaxRedirects = 7;
+
+        Assert.Equal(2, client.Options.MaxInFlight);
+        Assert.Equal(0, client.Options.MaxRedirects);
     }
 
     // ===============================================================
@@ -85,13 +107,7 @@ public sealed class ClientInstanceTests
     public void Constructor_PoolOptionsAndDefaultsPoolOptions_Throws()
     {
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(
-            new AxiosConfig
-            {
-                Transport = new()
-                {
-                    Pool = new ConnectionPoolOptions(),
-                },
-            },
+            options: new AxiosClientOptions { Pool = new ConnectionPoolOptions() },
             poolOptions: new ConnectionPoolOptions()));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
@@ -102,20 +118,14 @@ public sealed class ClientInstanceTests
     public void Constructor_ProxyOnBothPoolOptionsAndDefaults_Throws()
     {
         var ex = Assert.Throws<AxiosException>(() => new AxiosClient(
-            new AxiosConfig
-            {
-                Transport = new()
-                {
-                    Proxy = new WebProxy("http://127.0.0.1:9"),
-                },
-            },
+            options: new AxiosClientOptions { Proxy = new WebProxy("http://127.0.0.1:9") },
             poolOptions: new ConnectionPoolOptions { Proxy = new WebProxy("http://127.0.0.1:10") }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
     [Fact]
-    public void Constructor_WritesOwnedPoolEffectiveConnectionOptionsBackToDefaults()
+    public void Constructor_WritesOwnedPoolEffectiveConnectionOptionsBackToOptions()
     {
         var proxy = new WebProxy("http://127.0.0.1:10");
         using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions
@@ -125,25 +135,24 @@ public sealed class ClientInstanceTests
             UseCookies = true,
         });
 
-        // 连接层由 poolOptions 定型：Defaults 的 getter 要反映真正生效的值，而不是调用方没写的那份。
-        var transport = client.Defaults.Transport;
-        Assert.Same(proxy, transport.Proxy);
-        Assert.Equal(0, transport.MaxRedirects);
-        Assert.True(transport.WithCredentials);
+        // 连接层由 poolOptions 定型：Options 的 getter 要反映真正生效的值，而不是调用方没写的那份。
+        Assert.Same(proxy, client.Options.Proxy);
+        Assert.Equal(0, client.Options.MaxRedirects);
+        Assert.True(client.Options.WithCredentials);
 
-        // 回写不是调用方显式设置：标记要清掉，合并层继续按「未设置」处理。
-        Assert.False(transport.MaxRedirectsSet);
-        Assert.False(transport.WithCredentialsSet);
+        // 回写不是调用方显式设置：标记要清掉（否则会被当成「显式要求 5 次重定向」）。
+        Assert.False(client.Options.MaxRedirectsSet);
+        Assert.False(client.Options.WithCredentialsSet);
     }
 
     [Fact]
-    public void Constructor_WritesSharedPoolEffectiveConnectionOptionsBackToDefaults()
+    public void Constructor_WritesSharedPoolEffectiveConnectionOptionsBackToOptions()
     {
         var proxy = new WebProxy("http://127.0.0.1:10");
         using var pool = new HttpConnectionPool(new ConnectionPoolOptions { Proxy = proxy });
         using var client = new AxiosClient(pool: pool);
 
-        Assert.Same(proxy, client.Defaults.Transport.Proxy);
+        Assert.Same(proxy, client.Options.Proxy);
     }
 
     // ===============================================================
@@ -182,161 +191,85 @@ public sealed class ClientInstanceTests
     }
 
     // ------------------------------------------------------------------
-    // 构造后改 Defaults：校验以池为准
+    // 构造后改 Options：不重建池、不改闸门容量（快照语义）
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task PerRequestWithCredentials_RepeatsPoolValue_AfterDefaultsMutated_IsAccepted()
+    public async Task OptionsMutatedAfterConstruction_DoNotAffectPool()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        // 构造后改 defaults：不生效，池仍是 UseCookies = false
-        client.Defaults.Transport.WithCredentials = true;
+        // 构造后改 options：不生效，池仍是 UseCookies = false
+        client.Options.WithCredentials = true;
         Assert.False(client.Pool!.Options.UseCookies);
 
-        // 按请求复述池的真实值 false —— 必须放行。
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false);
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestWithCredentials_RepeatsMutatedDefaults_Throws()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient();
-
-        client.Defaults.Transport.WithCredentials = true; // 未生效
-
-        // 按请求写 true 等于「要求打开 Cookie 容器」，但池没开 —— 必须响亮报错
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
-        Assert.Empty(server.Received);
-
-        // 文案报的「实例生效值」必须是池的真实值（False），不是 Defaults 上的 True
-        Assert.Contains("实例生效值为 False", error.Message);
-    }
-
-    [Fact]
-    public async Task PerRequestWithCredentials_Omitted_AfterDefaultsMutated_DoesNotThrow()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient();
-
-        client.Defaults.Transport.WithCredentials = true;
-
-        // 「静默不生效」落在池上可证伪：池没有因为构造后的赋值打开 Cookie 容器。
-        Assert.False(client.Pool!.Options.UseCookies);
-
-        // 构造后改 defaults 的承诺是「静默不生效」，不是「每个请求都炸」
+        // 构造后改的承诺是「静默不生效」，不是「每个请求都炸」
         var response = await client.GetAsync(server.Url + "x");
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
     }
 
+    [Fact]
+    public async Task OptionsMutatedAfterConstruction_DoNotChangeGateCapacity()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 1 });
+
+        // 首个请求建闸门并固定容量
+        await client.GetAsync(server.Url + "x");
+        client.Options.MaxInFlight = 8;
+
+        // 容量没跟着变：闸门仍是 1（改 Options 不会重建它）
+        var gate = typeof(AxiosClient)
+            .GetField("_gate", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(client);
+
+        Assert.NotNull(gate);
+        Assert.Equal(1, gate!.GetType().GetProperty("MaxConcurrency")!.GetValue(gate));
+    }
+
     // ------------------------------------------------------------------
-    // poolOptions 打开 Cookie：Defaults 上看不出来，只有池知道
+    // WithCredentials：构造期一个入口，池 / Handler 场景各自把关
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task PerRequestWithCredentials_MatchesPoolOptionsUseCookies_IsAccepted()
+    public async Task WithCredentialsFromOptions_OpensCookieContainer()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(
-            poolOptions: new ConnectionPoolOptions { UseCookies = true });
+        using var client = new AxiosClient(options: new AxiosClientOptions { WithCredentials = true });
 
         Assert.True(client.Pool!.Options.UseCookies);
+        Assert.True(client.Options.WithCredentials);
 
-        // defaults 没写 WithCredentials（读出来是 false），但池的生效值是 true
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true);
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestWithCredentials_DiffersFromPoolOptionsUseCookies_Throws()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(
-            poolOptions: new ConnectionPoolOptions { UseCookies = true });
-
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
-        Assert.Empty(server.Received);
-        Assert.Contains("实例生效值为 True", error.Message);
-    }
-
-    // ------------------------------------------------------------------
-    // 共享池：Cookie 容器由池决定，与本实例 defaults 无关
-    // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task SharedPool_PerRequestWithCredentials_RepeatsPoolValue_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var pool = new HttpConnectionPool(new ConnectionPoolOptions { UseCookies = true });
-        using var client = new AxiosClient(pool: pool);
-
-        // 共享池场景 defaults 上不能写连接级选项（构造期就抛），所以只能复述池的值
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true);
+        var response = await client.GetAsync(server.Url + "x");
 
         Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
     }
 
     [Fact]
-    public async Task SharedPool_PerRequestWithCredentials_DiffersFromPoolValue_Throws()
+    public void WithCredentialsOnSharedPool_Throws()
     {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var pool = new HttpConnectionPool();
-        using var client = new AxiosClient(pool: pool);
 
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true));
+        var error = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(options: new AxiosClientOptions { WithCredentials = true }, pool: pool));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
-        Assert.Empty(server.Received);
-    }
-
-    // ------------------------------------------------------------------
-    // 回归：构造期设置照旧生效（口径改成池值后不能把这条弄丢）
-    // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task PerRequestWithCredentials_EqualToConstructionTimeValue_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new() { WithCredentials = true },
-        });
-
-        Assert.True(client.Pool!.Options.UseCookies);
-
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = true);
-
-        Assert.Equal(200, response.Status);
+        Assert.Contains("WithCredentials", error.Message);
     }
 
     [Fact]
-    public async Task PerRequestPoolOptions_ThrowsBadOptionValue()
+    public void WithCredentialsOnInjectedHandler_Throws()
     {
-        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient();
+        // 注入 Handler 时无从得知它的 Cookie 策略：只要写就报错（写 false 也一样）
+        using var handler = new HttpClientHandler();
 
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Transport.Pool = new ConnectionPoolOptions()));
+        var error = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(options: new AxiosClientOptions { WithCredentials = false }, handler: handler));
 
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Empty(server.Received);
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
     }
 
     [Fact]
@@ -476,68 +409,19 @@ public sealed class ClientInstanceTests
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
     }
 
-    [Fact]
-    public async Task PerRequestWithCredentials_EqualToInstanceDefault_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient();
-
-        // 实例没开 WithCredentials（false），按请求写 false 是等价写法
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false);
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestWithCredentials_DiffersFromInstance_Throws()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                WithCredentials = true,
-            },
-        });
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Transport.WithCredentials = false));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Empty(server.Received);
-    }
-
-    [Fact]
-    public async Task InjectedHandler_PerRequestWithCredentials_AlwaysThrows()
-    {
-        // 注入 Handler 时无从得知它的 Cookie 策略，无法判断「是否等价」，即使写 false 也报错
-        using var client = new AxiosClient(handler: new HttpClientHandler());
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("http://127.0.0.1:1/x", c => c.Transport.WithCredentials = false));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
     // ------------------------------------------------------------------
-    // 上面的判定依赖「按请求到底写没写」的 *Set 标记：
-    // perCall 只含按请求项，缺省值是 WithCredentials=false / MaxRedirects=5，
-    // 若改成纯值比较，下面这两条「按请求根本没写」的正常请求会被误判成写了不同的值。
+    // 实例级选项只有构造期一个入口：不存在「按请求复述」这条路
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task PerRequestOptions_Omitted_WithCredentialsTrue_Instance_StillWorks()
+    public async Task OmittedInstanceOptions_DoNotLeakIntoRequests()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                WithCredentials = true,
-            },
-        });
+        using var client = new AxiosClient(
+            options: new AxiosClientOptions { WithCredentials = true, MaxRedirects = 3 });
 
+        // 请求没碰这两项：按实例值走，照常发出
+        // （旧实现靠 *Set 标记区分「没写」与「写了默认值」，现在它们不在配置上，这条守的是「合并不再碰它们」）
         var response = await client.GetAsync(server.Url + "x");
 
         Assert.Equal(200, response.Status);
@@ -545,7 +429,7 @@ public sealed class ClientInstanceTests
     }
 
     [Fact]
-    public async Task PerRequestOptions_Omitted_PoolRedirectLimit3_StillWorks()
+    public async Task OmittedInstanceOptions_PoolRedirectLimit3_StillWorks()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(
@@ -576,19 +460,6 @@ public sealed class ClientInstanceTests
 
         var response = await pending;
         Assert.Equal(200, response.Status);
-    }
-
-    [Fact]
-    public async Task PerRequestProxy_ThrowsBadOptionValue()
-    {
-        await using var server = TestJsonServer();
-        using var client = new AxiosClient();
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
-            server.Url + "x",
-            c => c.Transport.Proxy = new System.Net.WebProxy("http://127.0.0.1:9")));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }
 
     // ------------------------------------------------------------------

@@ -15,146 +15,31 @@ namespace AxiosNet.Tests.Connectivity;
 /// </summary>
 public sealed class RedirectTests
 {
+    /// <summary>
+    /// 重定向次数是实例级选项（<see cref="AxiosClientOptions.MaxRedirects"/>）：重定向在连接层由 Handler 执行，
+    /// 建池时就定型，单次请求上写不进去。这里用反射守住 API 面，防止它悄悄回到配置上。
+    /// </summary>
     [Fact]
-    public async Task RequestAsync_PerRequestMaxRedirects_Throws()
+    public void MaxRedirects_IsAnInstanceLevelOption()
     {
-        await using var server = TestHttpServer.Start(_ => Json());
-        using var client = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
-
-        var error = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.RequestAsync(new AxiosConfig
-            {
-                Url = "x",
-                Transport = new()
-                {
-                    MaxRedirects = 0,
-                },
-            }));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Null(typeof(AxiosConfig.TransportSettings).GetProperty("MaxRedirects"));
+        Assert.NotNull(typeof(AxiosClientOptions).GetProperty("MaxRedirects"));
+        Assert.True(typeof(AxiosClientOptions).GetProperty("MaxRedirects")!.CanWrite);
     }
 
     [Fact]
-    public async Task RequestAsync_PerRequestMaxRedirects_SameAsInstance_IsAllowed()
-    {
-        // 写与实例相同的值等价于不写。
-        await using var server = TestHttpServer.Start(_ => Json());
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = server.Url,
-            Transport = new()
-            {
-                MaxRedirects = 3,
-            },
-        });
-
-        var response = await client.RequestAsync(new AxiosConfig
-        {
-            Url = "x",
-            Transport = new()
-            {
-                MaxRedirects = 3,
-            },
-        });
-
-        Assert.Equal(200, response.Status);
-    }
-
-    // ===============================================================
-    // Bug 1：MaxRedirects 校验短路用属性默认值替代池生效值
-    // ===============================================================
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_EqualToDefaultsButDiffersFromPool_Throws()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-
-        // defaults 上没写 MaxRedirects（属性值仍是默认 5），池实际策略是 3
-        using var client = new AxiosClient(
-            new AxiosConfig { BaseAddress = server.Url },
-            poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
-
-        // 按请求显式写 5 且与默认值相同：仍必须生效（服务端只会重定向 3 次）。
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.Transport.MaxRedirects = 5));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Contains("MaxRedirects", ex.Message);
-        Assert.Empty(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_WhenPoolDisablesRedirect_Throws()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-
-        // AllowAutoRedirect = false 时生效值是 0：按请求写 5 应被静默放行。
-        using var client = new AxiosClient(
-            new AxiosConfig { BaseAddress = server.Url },
-            poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync("x", c => c.Transport.MaxRedirects = 5));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_Unset_DoesNotThrowEvenWhenPoolDiffersFromDefault()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
-
-        // 未显式写过的请求携带的是 Defaults 的属性值 5：不能因为池配了 3 就误抛
-        using var client = new AxiosClient(
-            new AxiosConfig { BaseAddress = server.Url },
-            poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
-
-        var response = await client.GetAsync("x");
-        Assert.Equal(200, response.Status);
-    }
-
-    // ===============================================================
-    // 1. 构造后改 Defaults.MaxRedirects：文档承诺「不生效、不报错」，
-    //    实际每个请求都在 ValidateMaxRedirects 抛 ERR_BAD_OPTION_VALUE。
-    //    根因：MergeConfig / Shortcut 把 Defaults 的 MaxRedirectsSet 一起搬进了生效配置，
-    //    校验层无法区分「本次按请求写的」与「从实例默认继承来的」。
-    // ===============================================================
-
-    [Fact]
-    public async Task DefaultsMaxRedirectsChangedAfterConstruction_DoesNotFailRequests()
+    public async Task OptionsMaxRedirectsChangedAfterConstruction_DoesNotAffectPool()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // AxiosClient.Defaults 的 XML 文档：连接级选项构造后修改不生效，但不会有任何报错。
-        client.Defaults.Transport.MaxRedirects = 3;
+        // 构造后改 options：不重建池，也不报错
+        client.Options.MaxRedirects = 3;
 
-        // 「不生效」必须落在池上可证伪：池仍是默认的 5，而不是改后的 3。
+        // 「不生效」必须落在池上可证伪：池仍是默认的 5，而不是改后的 3
         Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
 
         var response = await client.GetAsync(server.Url + "items");
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-        Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
-    }
-
-    [Fact]
-    public async Task DefaultsMaxRedirectsViaRequestAsync_DoesNotFailRequestsEither()
-    {
-        await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
-        using var client = new AxiosClient();
-
-        // 构造之后再改：与快捷方法入口是同一个根因（*Set 标记随 Clone 泄漏进生效配置）
-        client.Defaults.Transport.MaxRedirects = 2;
-
-        Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
-
-        var response = await client.RequestAsync(new AxiosConfig
-        {
-            Url = server.Url + "items",
-            Method = HttpMethod.Get
-        });
 
         Assert.Equal(200, response.Status);
         Assert.Single(server.Received);
@@ -182,61 +67,6 @@ public sealed class RedirectTests
         Assert.Contains(server.Received, r => r.Path == "/final");
     }
 
-    // ------------------------------------------------------------------
-    // 实例级选项：按请求写「相同的值」放行，写「不同的值」才报错
-    // ------------------------------------------------------------------
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_EqualToPoolOptionsValue_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-
-        // defaults 上没写 MaxRedirects（属性值仍是 5），真正生效的是池上的 3：
-        // 判定必须读池的实际策略，否则这里会被误判成「与生效值 5 不同」而报错。
-        using var client = new AxiosClient(
-            poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
-
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 3);
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_Zero_MatchesDisabledRedirectPool_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-
-        // AllowAutoRedirect = false 时生效值就是 0（不跟随），按请求写 0 属于等价写法
-        using var client = new AxiosClient(
-            poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false });
-
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 0);
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-    }
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_DiffersFromEffectiveValue_Throws()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                MaxRedirects = 5,
-            },
-        });
-
-        // 4 与生效值 5 不同：不会生效，必须响亮报错，而不是静默丢弃
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 4));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Empty(server.Received);
-    }
-
     // poolOptions 的重定向上限与显式配置的优先级
 
     [Fact]
@@ -251,13 +81,7 @@ public sealed class RedirectTests
     public void ExplicitMaxRedirects_OverridesPoolOptions()
     {
         using var client = new AxiosClient(
-            new AxiosConfig
-            {
-                Transport = new()
-                {
-                    MaxRedirects = 12,
-                },
-            },
+            options: new AxiosClientOptions { MaxRedirects = 12 },
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 10 });
 
         Assert.Equal(12, client.Pool!.Options.MaxAutomaticRedirections);
@@ -267,13 +91,7 @@ public sealed class RedirectTests
     public void MaxRedirectsZero_DisablesRedirect_ButKeepsPoolLimit()
     {
         using var client = new AxiosClient(
-            new AxiosConfig
-            {
-                Transport = new()
-                {
-                    MaxRedirects = 0,
-                },
-            },
+            options: new AxiosClientOptions { MaxRedirects = 0 },
             poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 10 });
 
         Assert.False(client.Pool!.Options.AllowAutoRedirect);
@@ -283,35 +101,10 @@ public sealed class RedirectTests
     [Fact]
     public void NegativeMaxRedirects_ThrowsBadOptionValue()
     {
-        var ex = Assert.Throws<AxiosException>(() => new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                MaxRedirects = -1,
-            },
-        }));
+        var ex = Assert.Throws<AxiosException>(() =>
+            new AxiosClient(options: new AxiosClientOptions { MaxRedirects = -1 }));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-    }
-
-    // 按请求写「与生效值相同」的实例级配置放行
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_EqualToEffectiveValue_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                MaxRedirects = 5,
-            },
-        });
-
-        var response = await client.GetAsync(server.Url + "x", c => c.Transport.MaxRedirects = 5);
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
     }
 
     [Fact]
@@ -335,13 +128,31 @@ public sealed class RedirectTests
     }
 
     [Fact]
+    public async Task RedirectLimitMessages_UseConstructionTimeValue_NotMutatedOptions()
+    {
+        await using var server = TestHttpServer.Start(req => new TestResponse(
+            302,
+            Headers: new Dictionary<string, string> { ["Location"] = "/loop" },
+            Body: Array.Empty<byte>()));
+
+        using var client = new AxiosClient();
+
+        // 构造后改 Options 不会改行为；文案也不能跟着改口 —— 否则报错说「已禁用重定向（MaxRedirects = 0）」，
+        // 而请求明明跟着跳了 5 次，调用方会照着文案去改一个根本没生效的项。
+        client.Options.MaxRedirects = 0;
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "loop"));
+
+        Assert.Equal(AxiosException.ErrTooManyRedirects, ex.Code);
+        Assert.Contains("MaxRedirects = 5", ex.Message);
+        Assert.Equal(6, server.Received.Count);
+    }
+
+    [Fact]
     public async Task Redirect_DisabledByMaxRedirectsZero_HasItsOwnMessage_DistinctFromTooMany()
     {
         await using var server = StartRedirectServer();
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new() { MaxRedirects = 0 },
-        });
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 0 });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "redir"));
 
@@ -356,13 +167,7 @@ public sealed class RedirectTests
     public async Task MaxRedirectsZero_DoesNotFollowRedirect()
     {
         await using var server = StartRedirectServer();
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                MaxRedirects = 0,
-            },
-        });
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 0 });
 
         // 3xx 在默认 validateStatus 下视为非法，异常里应带回 302 响应本身
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "redir"));
@@ -382,19 +187,6 @@ public sealed class RedirectTests
 
         Assert.Equal(200, response.Status);
         Assert.Contains(server.Received, r => r.Path == "/final");
-    }
-
-    [Fact]
-    public async Task PerRequestMaxRedirects_ThrowsBadOptionValue()
-    {
-        await using var server = StartRedirectServer();
-        using var client = new AxiosClient();
-
-        var ex = await Assert.ThrowsAsync<AxiosException>(() =>
-            client.GetAsync(server.Url + "redir", c => c.Transport.MaxRedirects = 0));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
-        Assert.Empty(server.Received);
     }
 
     [Theory]
@@ -480,13 +272,7 @@ public sealed class RedirectTests
             "/final" => TestJson.Response(new { ok = true }),
             _ => new TestResponse(404)
         });
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                MaxRedirects = 0,
-            },
-        });
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 0 });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "redir"));
 

@@ -46,7 +46,7 @@ public sealed partial class AxiosClient
         Uri? telemetryUri = null;
         var telemetryEnabled = false;
         var telemetryStart = 0L;
-        Activity? telemetryActivity = null;
+        AxiosRequestTrace telemetryTrace = default;
 
         // 缓存状态：命中直接返回；未命中时由领导者落库并放行跟随者。
         AxiosCache? cache = null;
@@ -110,7 +110,7 @@ public sealed partial class AxiosClient
                 return await CompleteShortCircuitAsync(shortCircuit, config, dataType, target).ConfigureAwait(false);
             }
 
-            var gate = ResolveConcurrencyGate(config);
+            var gate = ResolveConcurrencyGate();
 
             // 总预算换成绝对时间戳：各分支共享同一截止点（跟随者等缓存结果同样受它约束）。
             var deadlineTimestamp = TotalTimeoutBudget.Start(config, entryTimestamp);
@@ -133,7 +133,7 @@ public sealed partial class AxiosClient
                 {
                     if (await configuredCache.TryGetAsync(cacheKey, config, deadlineTimestamp).ConfigureAwait(false) is { } cachedReply)
                     {
-                        AxiosTelemetry.CacheHit(config);
+                        AxiosTelemetry.Sink.CacheHit(config);
                         return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
                     }
 
@@ -152,7 +152,7 @@ public sealed partial class AxiosClient
                                 if (sharedReply is not null)
                                 {
                                     // 跟随者拿到领导者的结果：这次请求同样没发出。
-                                    AxiosTelemetry.CacheHit(config);
+                                    AxiosTelemetry.Sink.CacheHit(config);
                                     cacheMissed = false;
                                     return await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
                                 }
@@ -169,7 +169,7 @@ public sealed partial class AxiosClient
                 // 查过但没有、且这次真要发出去：计一次未命中（绕开缓存的请求不计，命中率口径才干净）。
                 if (cacheMissed)
                 {
-                    AxiosTelemetry.CacheMiss(config);
+                    AxiosTelemetry.Sink.CacheMiss(config);
                 }
 
                 // 由管线决定要不要留原始字节：请求侧已否决落库（no-store / max-age=0）时不必为缓存复制正文。
@@ -194,15 +194,15 @@ public sealed partial class AxiosClient
 
             // 遥测起点必须在 URL 拼好之后，且只数真的进入发送阶段的请求。
             telemetryUri = plan.Uri;
-            if (AxiosTelemetry.IsEnabled(config))
+            if (AxiosTelemetry.Sink.IsEnabled(config))
             {
                 telemetryEnabled = true;
                 telemetryStart = AxiosTelemetry.Timestamp;
-                AxiosTelemetry.EnterRequest();
-                telemetryActivity = AxiosTelemetry.StartRequest(config, plan.Uri);
+                AxiosTelemetry.Sink.EnterRequest();
+                telemetryTrace = AxiosTelemetry.Sink.StartRequest(config, plan.Uri);
             }
 
-            var template = CreateRequestMessage(config, plan, telemetryActivity);
+            var template = CreateRequestMessage(config, plan, telemetryTrace);
 
             // 401 重放要在第二次发送前继续持有正文；只有失败确实是 401 时才把正文交接出去。
             AxiosException? attemptFailure = null;
@@ -237,7 +237,7 @@ public sealed partial class AxiosClient
                 // 面板才看得出「省了多少带宽」。
                 if (result.CacheRevalidated)
                 {
-                    AxiosTelemetry.CacheRevalidated(config, telemetryActivity);
+                    AxiosTelemetry.Sink.CacheRevalidated(config, telemetryTrace);
                 }
 
                 // 落库 + 放行跟随者：两者都要在返回之前完成，跟随者读的就是这份结果。
@@ -252,7 +252,7 @@ public sealed partial class AxiosClient
                 {
                     // 放在落库之后：span 与耗时直方图都覆盖「调用方拿到结果」的完整等待时间（存储慢也算进去）。
                     // 仍必须在 template.Dispose()（外层 finally）之前：之后正文头不可读。
-                    AxiosTelemetry.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryActivity);
+                    AxiosTelemetry.Sink.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryTrace);
                 }
 
                 return result;
@@ -311,7 +311,7 @@ public sealed partial class AxiosClient
             // 记录后原样抛出，不改动异常。
             if (telemetryEnabled)
             {
-                AxiosTelemetry.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryActivity);
+                AxiosTelemetry.Sink.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryTrace);
             }
 
             throw;
@@ -327,11 +327,13 @@ public sealed partial class AxiosClient
 
             if (telemetryEnabled)
             {
-                AxiosTelemetry.ExitRequest();
+                AxiosTelemetry.Sink.ExitRequest();
             }
 
             // 必须收 span，否则后续请求的 span 会错挂。
-            AxiosTelemetry.StopRequest(telemetryActivity);
+            // 走句柄自身的派发（而不是当前的 AxiosTelemetry.Sink）：收尾必须回到「开它的那个实现」上，
+            // 否则请求在途时换过 Sink 就会把 Start / Stop 劈成两家（默认句柄 = 不观测，天然是空操作）。
+            telemetryTrace.Stop();
 
             ReleaseInFlight();
         }
@@ -483,7 +485,7 @@ public sealed partial class AxiosClient
     private static HttpRequestMessage CreateRequestMessage(
         AxiosConfig config,
         RequestPlan plan,
-        Activity? telemetryActivity)
+        AxiosRequestTrace telemetryTrace)
     {
         var template = new HttpRequestMessage(config.Method, plan.Uri)
         {
@@ -532,8 +534,8 @@ public sealed partial class AxiosClient
 
                 template.Content = content;
 
-                // 长度已知时写进 span，未知则不写。
-                AxiosTelemetry.SetRequestBodySize(telemetryActivity, content.Headers.ContentLength);
+                // 长度已知时写进 span，未知则不写（同样走句柄派发，回到开观测的那个实现上）。
+                telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
             }
 
             ApplyHeaders(template, config);

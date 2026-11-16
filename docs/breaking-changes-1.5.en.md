@@ -2,6 +2,11 @@
 
 This is the **1.x → 1.5** migration reference for callers upgrading from `AxiosNet` 1.4.x or earlier to 1.5.x; it matches the public surface shipped since 1.5.0.
 
+> **Changed again after 1.5**: the rows pointing at `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool`
+> and `Resilience.Concurrency.MaxInFlight` / `MaxQueue` have since moved to the constructor argument `AxiosClientOptions`
+> (`new AxiosClient(defaults, options)`, `Axios.Create(defaults, options)`, DI `AddAxiosClient(configure, options)`).
+> Migrating to 1.5 with this table is accurate; when jumping past 1.5, see the Breaking section of the CHANGELOG for those items.
+
 ## Breaking changes in 1.5
 
 | 1.x | 1.5 |

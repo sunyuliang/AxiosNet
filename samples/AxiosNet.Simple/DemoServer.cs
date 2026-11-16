@@ -346,7 +346,7 @@ public sealed class DemoServer : IDisposable
             }
 
             case "GET" when path == "/redirect":
-                // 302：用于演示 Transport.MaxRedirects / 是否跟随重定向
+                // 302：用于演示 AxiosClientOptions.MaxRedirects / 是否跟随重定向
                 return (302, Array.Empty<byte>(), "text/plain", null, "/users/1", null);
 
             case "GET" when path == "/headers":

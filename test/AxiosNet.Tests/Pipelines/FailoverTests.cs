@@ -351,8 +351,8 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Resilience = { Circuit = { Policy = policy }, Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = {  MaxInFlight = 1  } }
-        });
+            Resilience = { Circuit = { Policy = policy }, Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },  }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽
         var holder = client.GetAsync("hold");
@@ -431,8 +431,8 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Resilience = { Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.Zero  } }
-        });
+            Resilience = { Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } }, Concurrency = { QueueTimeout = TimeSpan.Zero } }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var occupying = client.GetAsync("hold");
         await WaitUntilAsync(() => primary.Received.Count >= 1);

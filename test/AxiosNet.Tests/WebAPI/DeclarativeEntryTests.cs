@@ -15,6 +15,22 @@ public sealed class DeclarativeEntryTests
     // ===============================================================
 
     [Fact]
+    public void ApiClientByBaseAddress_Options_ReachTheUnderlyingClient()
+    {
+        // ApiClient(baseAddress, ...) 自建底层 AxiosClient：实例级七项只能经 options 传入，
+        // 写进 configureDefaults 是编译错误（AxiosConfig 上没有它们）。这条钉住入口没丢能力。
+        using var client = new ApiClient(
+            "https://api.example.com",
+            configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(9),
+            options: new AxiosClientOptions { MaxRedirects = 0, MaxInFlight = 2 });
+
+        Assert.Equal(TimeSpan.FromSeconds(9), client.Axios.Defaults.Timeout);
+        Assert.Equal(0, client.Axios.Options.MaxRedirects);
+        Assert.Equal(2, client.Axios.Options.MaxInFlight);
+        Assert.False(client.Axios.Pool!.Options.AllowAutoRedirect);
+    }
+
+    [Fact]
     public async Task CreateByBaseAddress_MergesRelativeUrlAndAppliesDefaults()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 18)));

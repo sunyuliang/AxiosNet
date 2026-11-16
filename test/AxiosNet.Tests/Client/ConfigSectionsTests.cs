@@ -22,7 +22,7 @@ public sealed class ConfigSectionsTests
             BaseAddress = "https://example.com/",
             Timeout = TimeSpan.FromSeconds(7),
             Limits = { MaxResponseBytes = 4096, MaxRequestBytes = 2048 },
-            Transport = { MaxRedirects = 2 },
+            Transport = { Profile = "backup", MaxRate = 2048 },
             Resilience = { AllowUnsafeRetry = true, Retry = new() { Policy = RetryPolicy.Constant(2, TimeSpan.FromMilliseconds(5)) }, Circuit = new() { Policy = new CircuitBreaker(3, TimeSpan.FromSeconds(1)) }, Hedging = new() { MaxHedges = 2, Delay = TimeSpan.FromMilliseconds(7) }, Failover = new() { Endpoints = new[] { new Uri("https://backup.example.com/api") } } },
             Observability = { Capture = TelemetryCapture.Off, TimeoutMessage = "custom-timeout" },
             ValidateStatus = status => status < 500
@@ -35,7 +35,8 @@ public sealed class ConfigSectionsTests
         Assert.Equal(TelemetryCapture.Off, clone.Observability.Capture);
         Assert.Equal("custom-timeout", clone.Observability.TimeoutMessage);
         Assert.NotNull(clone.ValidateStatus);
-        Assert.Equal(2, clone.Transport.MaxRedirects);
+        Assert.Equal("backup", clone.Transport.Profile);
+        Assert.Equal(2048, clone.Transport.MaxRate);
         Assert.Equal(4096, clone.Limits.MaxResponseBytes);
         Assert.Equal(2048, clone.Limits.MaxRequestBytes);
         Assert.NotNull(clone.Resilience.Retry.Policy);

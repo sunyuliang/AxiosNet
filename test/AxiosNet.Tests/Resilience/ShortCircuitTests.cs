@@ -116,8 +116,8 @@ public sealed class ShortCircuitTests
         using var client = new AxiosClient(new AxiosConfig
         {
             // QueueTimeout = 0：名额被占时排队请求立刻失败 —— 短路要是也走闸门，这个用例就会抛错
-            Resilience = { Concurrency = { MaxInFlight = 1, QueueTimeout = TimeSpan.Zero } }
-        });
+            Resilience = { Concurrency = { QueueTimeout = TimeSpan.Zero } }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var held = client.GetAsync(server.Url + "slow");
         await WaitForAsync(() => server.Received.Count == 1);

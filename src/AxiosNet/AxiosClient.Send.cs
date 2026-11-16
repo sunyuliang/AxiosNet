@@ -145,8 +145,8 @@ public sealed partial class AxiosClient
         // 流式正文的所有权随后随返回值交给调用方（拦截器抛异常时由调用方兜底释放）。
         IDisposable? streamOwner = null;
 
-        // 槽位由闸门中间件交给本终端：此后任何失败路径都由这里归还（占位后不能漏）。
-        IDisposable? slot = ctx.Slot;
+        // 租约由闸门 / 前置中间件登记在上下文里，交到本终端：此后任何失败路径都由这里归还（登记了就不能漏）。
+        IDisposable? leases = ctx.Lease;
 
         // 发送前钩子的专用副本：钩子改写只作用于本次发送，不会留在模板上被后续尝试复制。
         HttpRequestMessage? hookedRequest = null;
@@ -211,7 +211,7 @@ public sealed partial class AxiosClient
             {
                 try
                 {
-                    return CompleteNotModified(responseMessage, request, ctx);
+                    return CompleteNotModified(responseMessage, request, ctx, _maxRedirects);
                 }
                 finally
                 {
@@ -241,7 +241,7 @@ public sealed partial class AxiosClient
                     responseMessage.Dispose();
                 }
 
-                throw AxiosException.FromResponse(config, request, response, ctx.AttemptNumber);
+                throw AxiosException.FromResponse(config, request, response, _maxRedirects, ctx.AttemptNumber);
             }
 
             if (ctx.StreamResponse && response.Data is Stream body)
@@ -252,18 +252,20 @@ public sealed partial class AxiosClient
                 Stream wrapped = new TimeoutStream(
                     body, budget.StreamRemaining, ctx.ExternalToken, config, request, budget.EffectiveTimeout);
 
-                // 租约、消息与并发槽位一并转移给流：下载期间该 origin 仍算活跃，流 Dispose 时统一释放。
-                wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease, slot);
+                // 租约（连接租约、登记在上下文里的并发槽位等其他资源）与消息一并转移给流：
+                // 下载期间该 origin 仍算活跃，流 Dispose 时统一释放。
+                wrapped = new ResponseStreamOwner(wrapped, responseMessage, lease, leases);
                 lease = null;
-                slot = null;
+                leases = null;
 
                 response.Data = wrapped;
                 streamOwner = wrapped;
             }
 
-            // 流式成功：槽位已随正文交给 StreamOwner，告知闸门不要再归还（流还活着，该请求仍占并发额度）。
-            // 其余情况槽位都在下面的 finally 里归还，闸门的兜底归还对它只是幂等的重复释放。
-            return new AxiosAttemptResult(response, streamOwner, slotTransferred: streamOwner is not null);
+            // 流式成功：上下文里登记的租约已随正文交给 StreamOwner，告知闸门不要再归还
+            // （流还活着，该请求仍占并发额度）。其余情况租约都在下面的 finally 里归还，
+            // 闸门的兜底归还对它只是幂等的重复释放。
+            return new AxiosAttemptResult(response, streamOwner, leasesTransferred: streamOwner is not null);
         }
         catch (ObjectDisposedException ex)
         {
@@ -274,8 +276,8 @@ public sealed partial class AxiosClient
         {
             lease?.Dispose();
 
-            // 槽位在所有失败路径上都归还；流式成功路径已把它转交给正文流（slot = null）。
-            slot?.Dispose();
+            // 租约在所有失败路径上都归还；流式成功路径已把它转交给正文流（leases = null）。
+            leases?.Dispose();
 
             // 副本只释放自己：正文仍归模板（重试还要用），钩子换掉的正文随副本释放。
             if (hookedRequest is not null)
@@ -320,7 +322,7 @@ public sealed partial class AxiosClient
             throw budget.Translate(ex, ctx.Config, request);
         }
 
-        AxiosTelemetry.TagPoolReuse(lease.EndpointReused);
+        AxiosTelemetry.Sink.TagPoolReuse(lease.EndpointReused);
         return (lease.Client, lease);
     }
 

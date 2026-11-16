@@ -1,6 +1,7 @@
   C:AxiosNet.AxiosAuth()
   C:AxiosNet.AxiosAuth(System.String, System.String)
-  C:AxiosNet.AxiosClient(AxiosNet.AxiosConfig, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  C:AxiosNet.AxiosClient(AxiosNet.AxiosConfig, AxiosNet.AxiosClientOptions, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  C:AxiosNet.AxiosClientOptions()
   C:AxiosNet.AxiosConfig()
   C:AxiosNet.AxiosConfig+CircuitSettings()
   C:AxiosNet.AxiosConfig+FailoverSettings()
@@ -51,11 +52,13 @@
   C:AxiosNet.Retry.RetryPolicy()
   C:AxiosNet.Retry.RetryPolicy(System.Int32, System.Nullable`1<System.TimeSpan>)
   C:AxiosNet.Serialization.ContentSerializerRegistry()
+  C:AxiosNet.Telemetry.AxiosRequestTrace(AxiosNet.Telemetry.IAxiosTelemetrySink, System.Object)
+  C:AxiosNet.Telemetry.AxiosTelemetrySink()
   C:AxiosNet.WebAPI.AccessToken(System.String, System.Nullable`1<System.DateTimeOffset>)
   C:AxiosNet.WebAPI.AccessTokenManager(AxiosNet.WebAPI.AccessTokenOptions)
   C:AxiosNet.WebAPI.AccessTokenOptions(System.Func`2<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask`1<AxiosNet.WebAPI.AccessToken>>)
   C:AxiosNet.WebAPI.ApiClient(AxiosNet.AxiosClient, System.Boolean)
-  C:AxiosNet.WebAPI.ApiClient(System.String, System.Action`1<AxiosNet.AxiosConfig>)
+  C:AxiosNet.WebAPI.ApiClient(System.String, System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.AxiosClientOptions)
   C:AxiosNet.WebAPI.ApiErrorFactory`1()
   C:AxiosNet.WebAPI.ApiError`1(!TError, AxiosNet.WebAPI.ApiErrorContext)
   C:AxiosNet.WebAPI.ApiRequest`1()
@@ -88,6 +91,7 @@
   C:AxiosNet.WebAPI.Attributes.StreamAttribute(AxiosNet.AxiosStreamFormat)
   C:AxiosNet.WebAPI.Serialization.AxiosJsonFormatTypeInfoResolver(System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver)
   E:AxiosNet.Circuit.CircuitBreaker.StateChanged
+  F:AxiosNet.AxiosClientOptions.DefaultMaxRedirects
   F:AxiosNet.AxiosCollectionFormat.Brackets
   F:AxiosNet.AxiosCollectionFormat.Csv
   F:AxiosNet.AxiosCollectionFormat.Multi
@@ -204,9 +208,9 @@
   F:AxiosNet.WebAPI.ApiCredentialKind.Query
   F:AxiosNet.WebAPI.ApiCredentialKind.Token
   F:AxiosNet.WebAPI.ApiCredentialKind.value__
-  M:AxiosNet.Axios.Create(AxiosNet.AxiosConfig, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
-  M:AxiosNet.Axios.Create(System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
-  M:AxiosNet.Axios.Create(System.String, System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  M:AxiosNet.Axios.Create(AxiosNet.AxiosConfig, AxiosNet.AxiosClientOptions, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  M:AxiosNet.Axios.Create(System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.AxiosClientOptions, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  M:AxiosNet.Axios.Create(System.String, System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.AxiosClientOptions, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
   M:AxiosNet.Axios.DeleteAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
   M:AxiosNet.Axios.DeleteAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
   M:AxiosNet.Axios.DeleteAsync(System.String, System.Threading.CancellationToken)
@@ -442,7 +446,7 @@
   M:AxiosNet.Pipeline.AxiosAttemptContext.WithAttemptNumber(System.Int32)
   M:AxiosNet.Pipeline.AxiosAttemptContext.WithAttemptToken(System.Threading.CancellationToken)
   M:AxiosNet.Pipeline.AxiosAttemptContext.WithEndpointIndex(System.Int32)
-  M:AxiosNet.Pipeline.AxiosAttemptContext.WithSlot(System.IDisposable)
+  M:AxiosNet.Pipeline.AxiosAttemptContext.WithLease(System.IDisposable)
   M:AxiosNet.Pipeline.AxiosAttemptContext.WithUri(System.Uri)
   M:AxiosNet.Pipeline.AxiosAttemptHandler.BeginInvoke(System.Net.Http.HttpRequestMessage, AxiosNet.Pipeline.AxiosAttemptContext, System.AsyncCallback, System.Object)
   M:AxiosNet.Pipeline.AxiosAttemptHandler.EndInvoke(System.IAsyncResult)
@@ -503,6 +507,64 @@
   M:AxiosNet.Serialization.SystemTextJsonSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Serialization.XmlContentSerializer.Deserialize(System.String, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Serialization.XmlContentSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosRequestTrace.SetRequestBodySize(System.Nullable`1<System.Int64>)
+  M:AxiosNet.Telemetry.AxiosRequestTrace.Stop()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.AttemptFailed(ref AxiosNet.Pipeline.AxiosAttemptContext, System.Exception, System.Int64)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.AttemptSucceeded(ref AxiosNet.Pipeline.AxiosAttemptContext, System.Nullable`1<System.Int32>, System.Int64)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.CacheHit(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.CacheMiss(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.CacheRevalidated(AxiosNet.AxiosConfig, ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.CacheStoreFailed(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.CacheStored(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.CircuitUntrackedHost()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.EnterLease()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.EnterPool()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.EnterRequest()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.ExitLease()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.ExitPool()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.ExitRequest()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.GateRejected(AxiosNet.AxiosConfig, System.String)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.IsAttemptAuditEnabled(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.IsEnabled(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RecordEndpointCreated()
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RecordEndpointEvicted(System.String)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RecordLease(System.Boolean)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RequestFailed(AxiosNet.AxiosConfig, System.Uri, System.Exception, System.Int64, ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RequestRetried(ref AxiosNet.Retry.AxiosRetryContext, System.Uri)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RequestSucceeded(AxiosNet.AxiosConfig, System.Uri, AxiosNet.AxiosResponse, System.Int64, ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.RetryBudgetRefused(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.SetRequestBodySize(ref AxiosNet.Telemetry.AxiosRequestTrace, System.Nullable`1<System.Int64>)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.StartRequest(AxiosNet.AxiosConfig, System.Uri)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.StopRequest(ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.AxiosTelemetrySink.TagPoolReuse(System.Boolean)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.AttemptFailed(ref AxiosNet.Pipeline.AxiosAttemptContext, System.Exception, System.Int64)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.AttemptSucceeded(ref AxiosNet.Pipeline.AxiosAttemptContext, System.Nullable`1<System.Int32>, System.Int64)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.CacheHit(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.CacheMiss(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.CacheRevalidated(AxiosNet.AxiosConfig, ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.CacheStoreFailed(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.CacheStored(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.CircuitUntrackedHost()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.EnterLease()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.EnterPool()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.EnterRequest()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.ExitLease()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.ExitPool()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.ExitRequest()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.GateRejected(AxiosNet.AxiosConfig, System.String)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.IsAttemptAuditEnabled(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.IsEnabled(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RecordEndpointCreated()
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RecordEndpointEvicted(System.String)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RecordLease(System.Boolean)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RequestFailed(AxiosNet.AxiosConfig, System.Uri, System.Exception, System.Int64, ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RequestRetried(ref AxiosNet.Retry.AxiosRetryContext, System.Uri)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RequestSucceeded(AxiosNet.AxiosConfig, System.Uri, AxiosNet.AxiosResponse, System.Int64, ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.RetryBudgetRefused(AxiosNet.AxiosConfig)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.SetRequestBodySize(ref AxiosNet.Telemetry.AxiosRequestTrace, System.Nullable`1<System.Int64>)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.StartRequest(AxiosNet.AxiosConfig, System.Uri)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.StopRequest(ref AxiosNet.Telemetry.AxiosRequestTrace)
+  M:AxiosNet.Telemetry.IAxiosTelemetrySink.TagPoolReuse(System.Boolean)
   M:AxiosNet.WebAPI.AccessTokenManager.Dispose()
   M:AxiosNet.WebAPI.AccessTokenManager.GetCredentialAsync(AxiosNet.WebAPI.ApiAuthContext, System.Threading.CancellationToken)
   M:AxiosNet.WebAPI.AccessTokenManager.GetTokenAsync(AxiosNet.WebAPI.ApiAuthContext, System.Threading.CancellationToken)
@@ -617,12 +679,18 @@
   P:AxiosNet.AxiosClient.AttemptPipeline:get
   P:AxiosNet.AxiosClient.Defaults:get
   P:AxiosNet.AxiosClient.Interceptors:get
+  P:AxiosNet.AxiosClient.Options:get
   P:AxiosNet.AxiosClient.Pool:get
   P:AxiosNet.AxiosClient.UsesConnectionPool:get
+  P:AxiosNet.AxiosClientOptions.Credentials:get;set
+  P:AxiosNet.AxiosClientOptions.MaxInFlight:get;set
+  P:AxiosNet.AxiosClientOptions.MaxQueue:get;set
+  P:AxiosNet.AxiosClientOptions.MaxRedirects:get;set
+  P:AxiosNet.AxiosClientOptions.Pool:get;set
+  P:AxiosNet.AxiosClientOptions.Proxy:get;set
+  P:AxiosNet.AxiosClientOptions.WithCredentials:get;set
   P:AxiosNet.AxiosConfig+CircuitSettings.OnRejected:get;set
   P:AxiosNet.AxiosConfig+CircuitSettings.Policy:get;set
-  P:AxiosNet.AxiosConfig+ConcurrencySettings.MaxInFlight:get;set
-  P:AxiosNet.AxiosConfig+ConcurrencySettings.MaxQueue:get;set
   P:AxiosNet.AxiosConfig+ConcurrencySettings.QueueTimeout:get;set
   P:AxiosNet.AxiosConfig+FailoverSettings.Cooldown:get;set
   P:AxiosNet.AxiosConfig+FailoverSettings.Endpoints:get;set
@@ -664,15 +732,10 @@
   P:AxiosNet.AxiosConfig+SerializationSettings.TransformResponse:get;set
   P:AxiosNet.AxiosConfig+SerializationSettings.ValueText:get;set
   P:AxiosNet.AxiosConfig+TransportSettings.Auth:get;set
-  P:AxiosNet.AxiosConfig+TransportSettings.Credentials:get;set
   P:AxiosNet.AxiosConfig+TransportSettings.HttpVersion:get;set
   P:AxiosNet.AxiosConfig+TransportSettings.MaxRate:get;set
-  P:AxiosNet.AxiosConfig+TransportSettings.MaxRedirects:get;set
-  P:AxiosNet.AxiosConfig+TransportSettings.Pool:get;set
   P:AxiosNet.AxiosConfig+TransportSettings.Profile:get;set
-  P:AxiosNet.AxiosConfig+TransportSettings.Proxy:get;set
   P:AxiosNet.AxiosConfig+TransportSettings.VersionPolicy:get;set
-  P:AxiosNet.AxiosConfig+TransportSettings.WithCredentials:get;set
   P:AxiosNet.AxiosConfig.BaseAddress:get;set
   P:AxiosNet.AxiosConfig.Body:get;set
   P:AxiosNet.AxiosConfig.Caching:get;set
@@ -851,8 +914,8 @@
   P:AxiosNet.Pipeline.AxiosAttemptContext.ExternalToken:get
   P:AxiosNet.Pipeline.AxiosAttemptContext.Failover:get
   P:AxiosNet.Pipeline.AxiosAttemptContext.Hedging:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Lease:get
   P:AxiosNet.Pipeline.AxiosAttemptContext.Retry:get
-  P:AxiosNet.Pipeline.AxiosAttemptContext.Slot:get
   P:AxiosNet.Pipeline.AxiosAttemptContext.StreamResponse:get
   P:AxiosNet.Pipeline.AxiosAttemptContext.Target:get
   P:AxiosNet.Pipeline.AxiosAttemptContext.Uri:get
@@ -970,6 +1033,10 @@
   P:AxiosNet.Telemetry.AxiosRequestStopEvent.Method:get
   P:AxiosNet.Telemetry.AxiosRequestStopEvent.Response:get
   P:AxiosNet.Telemetry.AxiosRequestStopEvent.Uri:get
+  P:AxiosNet.Telemetry.AxiosRequestTrace.IsActive:get
+  P:AxiosNet.Telemetry.AxiosRequestTrace.State:get
+  P:AxiosNet.Telemetry.AxiosTelemetry.Sink:get;set
+  P:AxiosNet.Telemetry.AxiosTelemetrySink.Off:get
   P:AxiosNet.WebAPI.AccessToken.ExpiresAt:get
   P:AxiosNet.WebAPI.AccessToken.Value:get
   P:AxiosNet.WebAPI.AccessTokenOptions.AcquireAsync:get
@@ -1018,146 +1085,150 @@
   P:AxiosNet.WebAPI.Attributes.QueryAttribute.Name:get
   P:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute.Format:get
   P:AxiosNet.WebAPI.Attributes.StreamAttribute.Format:get
-T:AxiosNet.Axios [static] implements 
-T:AxiosNet.AxiosAuth [sealed class] implements 
+T:AxiosNet.Axios [static]
+T:AxiosNet.AxiosAuth [sealed class]
 T:AxiosNet.AxiosClient [sealed class] implements System.IAsyncDisposable,System.IDisposable
+T:AxiosNet.AxiosClientOptions [sealed class]
 T:AxiosNet.AxiosCollectionFormat [enum]
 T:AxiosNet.AxiosCompression [enum]
-T:AxiosNet.AxiosConfig [sealed class] implements 
-T:AxiosNet.AxiosConfig+CircuitSettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+ConcurrencySettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+FailoverSettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+HedgingSettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+IdempotencySettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+LimitsSettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+ObservabilitySettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+ResilienceSettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+RetrySettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+SerializationSettings [sealed class] implements 
-T:AxiosNet.AxiosConfig+TransportSettings [sealed class] implements 
-T:AxiosNet.AxiosContent [static] implements 
-T:AxiosNet.AxiosContentType [static] implements 
-T:AxiosNet.AxiosCredential [sealed class] implements 
-T:AxiosNet.AxiosCredentialContext [sealed class] implements 
+T:AxiosNet.AxiosConfig [sealed class]
+T:AxiosNet.AxiosConfig+CircuitSettings [sealed class]
+T:AxiosNet.AxiosConfig+ConcurrencySettings [sealed class]
+T:AxiosNet.AxiosConfig+FailoverSettings [sealed class]
+T:AxiosNet.AxiosConfig+HedgingSettings [sealed class]
+T:AxiosNet.AxiosConfig+IdempotencySettings [sealed class]
+T:AxiosNet.AxiosConfig+LimitsSettings [sealed class]
+T:AxiosNet.AxiosConfig+ObservabilitySettings [sealed class]
+T:AxiosNet.AxiosConfig+ResilienceSettings [sealed class]
+T:AxiosNet.AxiosConfig+RetrySettings [sealed class]
+T:AxiosNet.AxiosConfig+SerializationSettings [sealed class]
+T:AxiosNet.AxiosConfig+TransportSettings [sealed class]
+T:AxiosNet.AxiosContent [static]
+T:AxiosNet.AxiosContentType [static]
+T:AxiosNet.AxiosCredential [sealed class]
+T:AxiosNet.AxiosCredentialContext [sealed class]
 T:AxiosNet.AxiosDynamic [sealed class] implements System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IDictionary`2<System.String,System.Object>,System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.IEnumerable,System.Dynamic.IDynamicMetaObjectProvider
 T:AxiosNet.AxiosErrorCode [enum]
 T:AxiosNet.AxiosException [class] : System.Exception implements System.Runtime.Serialization.ISerializable
 T:AxiosNet.AxiosHeaders [sealed class] implements System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.String>>,System.Collections.IEnumerable
 T:AxiosNet.AxiosHeaders+Enumerator [struct] implements System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.String,System.String>>,System.Collections.IEnumerator,System.IDisposable
-T:AxiosNet.AxiosJson [static] implements 
-T:AxiosNet.AxiosProgressEvent [struct] implements 
-T:AxiosNet.AxiosResponse [class] implements 
-T:AxiosNet.AxiosResponseInfo [sealed class] implements 
-T:AxiosNet.AxiosResponse`1 [sealed class] : AxiosNet.AxiosResponse implements 
-T:AxiosNet.AxiosShapeAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.AxiosShortCircuit [sealed class] implements 
+T:AxiosNet.AxiosJson [static]
+T:AxiosNet.AxiosProgressEvent [struct]
+T:AxiosNet.AxiosResponse [class]
+T:AxiosNet.AxiosResponseInfo [sealed class]
+T:AxiosNet.AxiosResponse`1 [sealed class] : AxiosNet.AxiosResponse
+T:AxiosNet.AxiosShapeAttribute [sealed class] : System.Attribute
+T:AxiosNet.AxiosShortCircuit [sealed class]
 T:AxiosNet.AxiosStreamFormat [enum]
-T:AxiosNet.AxiosUrl [static] implements 
-T:AxiosNet.Cache.AxiosCache [sealed class] implements 
-T:AxiosNet.Cache.AxiosCacheEntryPolicy [sealed class] implements 
-T:AxiosNet.Cache.AxiosCacheOptions [sealed class] implements 
-T:AxiosNet.Cache.CacheControlDirectives [sealed class] implements 
+T:AxiosNet.AxiosUrl [static]
+T:AxiosNet.Cache.AxiosCache [sealed class]
+T:AxiosNet.Cache.AxiosCacheEntryPolicy [sealed class]
+T:AxiosNet.Cache.AxiosCacheOptions [sealed class]
+T:AxiosNet.Cache.CacheControlDirectives [sealed class]
 T:AxiosNet.Cache.CacheFreshnessMode [enum]
-T:AxiosNet.Cache.IAxiosCacheRevalidationStore [interface] implements 
-T:AxiosNet.Cache.IAxiosCacheStore [interface] implements 
+T:AxiosNet.Cache.IAxiosCacheRevalidationStore [interface]
+T:AxiosNet.Cache.IAxiosCacheStore [interface]
 T:AxiosNet.Cache.MemoryCacheStore [sealed class] implements AxiosNet.Cache.IAxiosCacheRevalidationStore,AxiosNet.Cache.IAxiosCacheStore
-T:AxiosNet.Circuit.AxiosCircuitContext [struct] implements 
+T:AxiosNet.Circuit.AxiosCircuitContext [struct]
 T:AxiosNet.Circuit.AxiosCircuitState [enum]
-T:AxiosNet.Circuit.AxiosCircuitTransition [struct] implements 
+T:AxiosNet.Circuit.AxiosCircuitTransition [struct]
 T:AxiosNet.Circuit.CircuitBreaker [sealed class] implements AxiosNet.Circuit.IAxiosCircuitPolicy
-T:AxiosNet.Circuit.IAxiosCircuitPolicy [interface] implements 
-T:AxiosNet.FormFile [sealed class] implements 
-T:AxiosNet.Http3Support [static] implements 
-T:AxiosNet.IAxiosCredentialProvider [interface] implements 
-T:AxiosNet.Interceptors.AxiosInterceptors [sealed class] implements 
-T:AxiosNet.Interceptors.RequestInterceptorManager [sealed class] implements 
-T:AxiosNet.Interceptors.ResponseInterceptorManager [sealed class] implements 
+T:AxiosNet.Circuit.IAxiosCircuitPolicy [interface]
+T:AxiosNet.FormFile [sealed class]
+T:AxiosNet.Http3Support [static]
+T:AxiosNet.IAxiosCredentialProvider [interface]
+T:AxiosNet.Interceptors.AxiosInterceptors [sealed class]
+T:AxiosNet.Interceptors.RequestInterceptorManager [sealed class]
+T:AxiosNet.Interceptors.ResponseInterceptorManager [sealed class]
 T:AxiosNet.Metadata.AxiosAotMetadataException [sealed class] : System.InvalidOperationException implements System.Runtime.Serialization.ISerializable
-T:AxiosNet.Metadata.AxiosMetadata [static] implements 
+T:AxiosNet.Metadata.AxiosMetadata [static]
 T:AxiosNet.Metadata.FormData [sealed class] : System.Collections.Generic.Dictionary`2<System.String,System.Object> implements System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IDictionary`2<System.String,System.Object>,System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.Object>,System.Collections.ICollection,System.Collections.IDictionary,System.Collections.IEnumerable,System.Runtime.Serialization.IDeserializationCallback,System.Runtime.Serialization.ISerializable
 T:AxiosNet.Metadata.FormPartOverride [struct] implements System.IEquatable`1<AxiosNet.Metadata.FormPartOverride>
-T:AxiosNet.Metadata.ObjectShapeBuilder [sealed class] implements 
-T:AxiosNet.Metadata.ObjectShapeMemberBuilder [sealed class] implements 
-T:AxiosNet.Metadata.PreformattedValue [sealed class] implements 
-T:AxiosNet.Metadata.ShapeBuilder`1 [sealed class] implements 
-T:AxiosNet.Metadata.ValueFormat [sealed class] implements 
-T:AxiosNet.Metadata.ValueFormatReader [static] implements 
+T:AxiosNet.Metadata.ObjectShapeBuilder [sealed class]
+T:AxiosNet.Metadata.ObjectShapeMemberBuilder [sealed class]
+T:AxiosNet.Metadata.PreformattedValue [sealed class]
+T:AxiosNet.Metadata.ShapeBuilder`1 [sealed class]
+T:AxiosNet.Metadata.ValueFormat [sealed class]
+T:AxiosNet.Metadata.ValueFormatReader [static]
 T:AxiosNet.Metadata.ValueTextChannel [enum]
-T:AxiosNet.Pipeline.Attempt [static] implements 
-T:AxiosNet.Pipeline.AxiosAttemptContext [struct] implements 
+T:AxiosNet.Pipeline.Attempt [static]
+T:AxiosNet.Pipeline.AxiosAttemptContext [struct]
 T:AxiosNet.Pipeline.AxiosAttemptHandler [sealed class] : System.MulticastDelegate implements System.ICloneable,System.Runtime.Serialization.ISerializable
 T:AxiosNet.Pipeline.AxiosAttemptMiddleware [sealed class] : System.MulticastDelegate implements System.ICloneable,System.Runtime.Serialization.ISerializable
-T:AxiosNet.Pipeline.AxiosAttemptPipeline [sealed class] implements 
-T:AxiosNet.Pipeline.AxiosAttemptResult [struct] implements 
-T:AxiosNet.Pooling.ConnectionPoolOptions [sealed class] implements 
+T:AxiosNet.Pipeline.AxiosAttemptPipeline [sealed class]
+T:AxiosNet.Pipeline.AxiosAttemptResult [struct]
+T:AxiosNet.Pooling.ConnectionPoolOptions [sealed class]
 T:AxiosNet.Pooling.ConnectionPoolStatistics [sealed class] implements System.IEquatable`1<AxiosNet.Pooling.ConnectionPoolStatistics>
-T:AxiosNet.Pooling.ConnectionTransportOptions [sealed class] implements 
+T:AxiosNet.Pooling.ConnectionTransportOptions [sealed class]
 T:AxiosNet.Pooling.EndpointStatistics [sealed class] implements System.IEquatable`1<AxiosNet.Pooling.EndpointStatistics>
 T:AxiosNet.Pooling.HttpConnectionPool [sealed class] implements System.IDisposable
 T:AxiosNet.Pooling.PoolLease [sealed class] implements System.IDisposable
-T:AxiosNet.Pooling.PooledHandlerContext [sealed class] implements 
+T:AxiosNet.Pooling.PooledHandlerContext [sealed class]
 T:AxiosNet.ResponseType [enum]
-T:AxiosNet.Retry.AxiosRetryContext [struct] implements 
-T:AxiosNet.Retry.IAxiosRetryPolicy [interface] implements 
+T:AxiosNet.Retry.AxiosRetryContext [struct]
+T:AxiosNet.Retry.IAxiosRetryPolicy [interface]
 T:AxiosNet.Retry.RetryBudgetPolicy [sealed class] implements AxiosNet.Retry.IAxiosRetryPolicy
 T:AxiosNet.Retry.RetryPolicy [sealed class] implements AxiosNet.Retry.IAxiosRetryPolicy
-T:AxiosNet.Serialization.ContentSerializerRegistry [sealed class] implements 
-T:AxiosNet.Serialization.IContentSerializer [interface] implements 
+T:AxiosNet.Serialization.ContentSerializerRegistry [sealed class]
+T:AxiosNet.Serialization.IContentSerializer [interface]
 T:AxiosNet.Serialization.SystemTextJsonSerializer [sealed class] implements AxiosNet.Serialization.IContentSerializer
 T:AxiosNet.Serialization.XmlContentSerializer [sealed class] implements AxiosNet.Serialization.IContentSerializer
-T:AxiosNet.Telemetry.AxiosAttemptEvent [sealed class] implements 
-T:AxiosNet.Telemetry.AxiosRequestFailedEvent [sealed class] implements 
-T:AxiosNet.Telemetry.AxiosRequestStartEvent [sealed class] implements 
-T:AxiosNet.Telemetry.AxiosRequestStopEvent [sealed class] implements 
-T:AxiosNet.Telemetry.AxiosTelemetry [static] implements 
+T:AxiosNet.Telemetry.AxiosAttemptEvent [sealed class]
+T:AxiosNet.Telemetry.AxiosRequestFailedEvent [sealed class]
+T:AxiosNet.Telemetry.AxiosRequestStartEvent [sealed class]
+T:AxiosNet.Telemetry.AxiosRequestStopEvent [sealed class]
+T:AxiosNet.Telemetry.AxiosRequestTrace [struct]
+T:AxiosNet.Telemetry.AxiosTelemetry [static]
+T:AxiosNet.Telemetry.AxiosTelemetrySink [abstract class] implements AxiosNet.Telemetry.IAxiosTelemetrySink
+T:AxiosNet.Telemetry.IAxiosTelemetrySink [interface]
 T:AxiosNet.TelemetryCapture [enum]
-T:AxiosNet.WebAPI.AccessToken [sealed class] implements 
+T:AxiosNet.WebAPI.AccessToken [sealed class]
 T:AxiosNet.WebAPI.AccessTokenManager [sealed class] implements AxiosNet.WebAPI.IApiCredentialProvider,System.IDisposable
-T:AxiosNet.WebAPI.AccessTokenOptions [sealed class] implements 
-T:AxiosNet.WebAPI.ApiAuthContext [sealed class] implements 
+T:AxiosNet.WebAPI.AccessTokenOptions [sealed class]
+T:AxiosNet.WebAPI.ApiAuthContext [sealed class]
 T:AxiosNet.WebAPI.ApiClient [sealed class] implements System.IAsyncDisposable,System.IDisposable
 T:AxiosNet.WebAPI.ApiCredential [struct] implements System.IEquatable`1<AxiosNet.WebAPI.ApiCredential>
 T:AxiosNet.WebAPI.ApiCredentialKind [enum]
-T:AxiosNet.WebAPI.ApiErrorContext [sealed class] implements 
+T:AxiosNet.WebAPI.ApiErrorContext [sealed class]
 T:AxiosNet.WebAPI.ApiErrorFactory`1 [sealed class] implements AxiosNet.WebAPI.IApiErrorFactory
 T:AxiosNet.WebAPI.ApiError`1 [sealed class] : AxiosNet.AxiosException implements System.Runtime.Serialization.ISerializable
-T:AxiosNet.WebAPI.ApiInterfaceInvocation [sealed class] implements 
+T:AxiosNet.WebAPI.ApiInterfaceInvocation [sealed class]
 T:AxiosNet.WebAPI.ApiRequest`1 [abstract class] implements AxiosNet.WebAPI.IApiRequestConfigurable,AxiosNet.WebAPI.IApiRequest`1<!TResponse>
-T:AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.AuthorizeAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.BodyAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.DeleteAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.FormatAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.GetAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.HeadAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.HeaderAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.HeadersAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.HttpApiAttribute [class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.MultipartAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.OptionsAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.PartAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.PatchAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.PathAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.PostAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.PutAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
-T:AxiosNet.WebAPI.Attributes.QueryAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.Attributes.StreamAttribute [sealed class] : System.Attribute implements 
-T:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions [static] implements 
-T:AxiosNet.WebAPI.CredentialProviders [static] implements 
-T:AxiosNet.WebAPI.IApiCredentialProvider [interface] implements 
-T:AxiosNet.WebAPI.IApiErrorFactory [interface] implements 
-T:AxiosNet.WebAPI.IApiRequestConfigurable [interface] implements 
-T:AxiosNet.WebAPI.IApiRequest`1 [interface] implements 
-T:AxiosNet.WebAPI.Metadata.AxiosApiMetadata [static] implements 
-T:AxiosNet.WebAPI.Metadata.InterfaceBuilder [sealed class] implements 
-T:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder [sealed class] implements 
-T:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime [sealed class] implements 
-T:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder [sealed class] implements 
-T:AxiosNet.WebAPI.Metadata.RequestModelBuilder [sealed class] implements 
-T:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder [sealed class] implements 
-T:AxiosNet.WebAPI.Serialization.AxiosJsonFormat [static] implements 
+T:AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.AuthorizeAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.BodyAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.DeleteAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.FormatAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.GetAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.HeadAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.HeaderAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.HeadersAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.HttpApiAttribute [class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.MultipartAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.OptionsAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.PartAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.PatchAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.PathAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.PostAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.PutAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute
+T:AxiosNet.WebAPI.Attributes.QueryAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.Attributes.StreamAttribute [sealed class] : System.Attribute
+T:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions [static]
+T:AxiosNet.WebAPI.CredentialProviders [static]
+T:AxiosNet.WebAPI.IApiCredentialProvider [interface]
+T:AxiosNet.WebAPI.IApiErrorFactory [interface]
+T:AxiosNet.WebAPI.IApiRequestConfigurable [interface]
+T:AxiosNet.WebAPI.IApiRequest`1 [interface]
+T:AxiosNet.WebAPI.Metadata.AxiosApiMetadata [static]
+T:AxiosNet.WebAPI.Metadata.InterfaceBuilder [sealed class]
+T:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder [sealed class]
+T:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime [sealed class]
+T:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder [sealed class]
+T:AxiosNet.WebAPI.Metadata.RequestModelBuilder [sealed class]
+T:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder [sealed class]
+T:AxiosNet.WebAPI.Serialization.AxiosJsonFormat [static]
 T:AxiosNet.WebAPI.Serialization.AxiosJsonFormatTypeInfoResolver [sealed class] implements System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver

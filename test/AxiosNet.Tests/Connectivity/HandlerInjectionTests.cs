@@ -126,13 +126,7 @@ public sealed class HandlerInjectionTests
         using var stub = new StubHandler("{}");
 
         var ex = Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    MaxRedirects = 0,
-                },
-            }, handler: stub));
+            new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 0 }, handler: stub));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("MaxRedirects", ex.Message);
@@ -144,13 +138,9 @@ public sealed class HandlerInjectionTests
         using var stub = new StubHandler("{}");
 
         var ex = Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    Proxy = new WebProxy("http://127.0.0.1:8888"),
-                },
-            }, handler: stub));
+            new AxiosClient(
+                options: new AxiosClientOptions { Proxy = new WebProxy("http://127.0.0.1:8888") },
+                handler: stub));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
     }

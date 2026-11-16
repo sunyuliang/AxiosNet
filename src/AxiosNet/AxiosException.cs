@@ -33,13 +33,13 @@ public class AxiosException : Exception
     public const string ErrBadOptionValue = "ERR_BAD_OPTION_VALUE";
 
     /// <summary>
-    /// 并发闸门排队超时：等不到空闲槽位（<c>Resilience.Concurrency.MaxInFlight</c> +
+    /// 并发闸门排队超时：等不到空闲槽位（<c>AxiosClientOptions.MaxInFlight</c> +
     /// <c>Resilience.Concurrency.QueueTimeout</c>），请求没有发出去。
     /// </summary>
     public const string ErrQueueTimeout = "ERR_QUEUE_TIMEOUT";
 
     /// <summary>
-    /// 并发闸门的排队队列已满（<c>Resilience.Concurrency.MaxQueue</c>）：请求<b>没有发出</b>，
+    /// 并发闸门的排队队列已满（<c>AxiosClientOptions.MaxQueue</c>）：请求<b>没有发出</b>，
     /// 与 <see cref="ErrQueueTimeout"/> 的区别是「连排队名额都没有」。
     /// </summary>
     public const string ErrQueueFull = "ERR_QUEUE_FULL";
@@ -54,7 +54,7 @@ public class AxiosException : Exception
     public const string ErrPoolExhausted = "ERR_POOL_EXHAUSTED";
 
     /// <summary>
-    /// 重定向次数用尽：服务端仍返回 3xx + <c>Location</c>，但已跟随到 <c>Transport.MaxRedirects</c> 上限。
+    /// 重定向次数用尽：服务端仍返回 3xx + <c>Location</c>，但已跟随到 <c>AxiosClientOptions.MaxRedirects</c> 上限。
     /// 与 <c>MaxRedirects = 0</c>（主动关闭跟随，仍报 <see cref="ErrBadRequest"/>）用错误码与文案双向区分。
     /// </summary>
     public const string ErrTooManyRedirects = "ERR_TOO_MANY_REDIRECTS";
@@ -296,8 +296,8 @@ public class AxiosException : Exception
     {
         return new AxiosException(
             $"no free concurrency slot within {waited.TotalMilliseconds:0}ms "
-            + $"(Resilience.Concurrency.MaxInFlight = {maxConcurrency}): "
-            + "reduce parallelism, raise Resilience.Concurrency.MaxInFlight / Resilience.Concurrency.QueueTimeout, "
+            + $"(AxiosClientOptions.MaxInFlight = {maxConcurrency}): "
+            + "reduce parallelism, raise AxiosClientOptions.MaxInFlight / Resilience.Concurrency.QueueTimeout, "
             + "or back off and retry on ERR_QUEUE_TIMEOUT",
             ErrQueueTimeout,
             config,
@@ -306,12 +306,12 @@ public class AxiosException : Exception
             inner);
     }
 
-    /// <summary>并发闸门的排队队列已满：超过 <c>Resilience.Concurrency.MaxQueue</c>，请求没有发出。</summary>
+    /// <summary>并发闸门的排队队列已满：超过 <c>AxiosClientOptions.MaxQueue</c>，请求没有发出。</summary>
     internal static AxiosException QueueFull(AxiosConfig config, HttpRequestMessage? request, int maxQueue, int maxConcurrency)
     {
         return new AxiosException(
-            $"concurrency queue is full (Resilience.Concurrency.MaxQueue = {maxQueue}, MaxInFlight = {maxConcurrency}): "
-            + "reduce parallel callers, raise Resilience.Concurrency.MaxQueue / Resilience.Concurrency.MaxInFlight, "
+            $"concurrency queue is full (AxiosClientOptions.MaxQueue = {maxQueue}, MaxInFlight = {maxConcurrency}): "
+            + "reduce parallel callers, raise AxiosClientOptions.MaxQueue / AxiosClientOptions.MaxInFlight, "
             + "or back off and retry on ERR_QUEUE_FULL",
             ErrQueueFull,
             config,
@@ -364,7 +364,7 @@ public class AxiosException : Exception
         return new AxiosException(
             $"connection pool origin capacity exhausted (MaxEndpointCount = {max}): no idle node to evict "
             + "and all nodes are in use. Raise ConnectionPoolOptions.MaxEndpointCount, "
-            + "cap fan-out with Resilience.Concurrency.MaxInFlight / Resilience.Concurrency.QueueTimeout, call Clear() to reclaim, "
+            + "cap fan-out with AxiosClientOptions.MaxInFlight / Resilience.Concurrency.QueueTimeout, call Clear() to reclaim, "
             + "or back off and retry on ERR_POOL_EXHAUSTED",
             ErrPoolExhausted,
             config,
@@ -489,24 +489,26 @@ public class AxiosException : Exception
     /// <param name="config">本次请求的生效配置（错误码取自它）。</param>
     /// <param name="request">触发本次失败的请求；为 <c>null</c>（如拦截器拒绝路径）时不追加上下文后缀。</param>
     /// <param name="response">非 2xx 的响应。</param>
+    /// <param name="maxRedirects">
+    /// 实例生效的重定向上限（<see cref="AxiosClientOptions.MaxRedirects"/>，<c>0</c> = 不跟随）；只用于把原因写进消息，不参与判定。
+    /// </param>
     /// <param name="attemptNumber">第几次尝试（从 1 起）；未知时传 <c>null</c>，消息不带尝试序号。</param>
     internal static AxiosException FromResponse(
         AxiosConfig config,
         HttpRequestMessage? request,
         AxiosResponse response,
+        int maxRedirects,
         int? attemptNumber = null)
     {
         // 3xx + Location 说明服务端还想跳：要么次数到了上限（ERR_TOO_MANY_REDIRECTS），
         // 要么是调用方把 MaxRedirects 设成 0 主动关闭跟随（仍是 ERR_BAD_REQUEST，文案点明配置）。
         if (IsRedirectStatus(response.Status) && HasLocation(response))
         {
-            var configured = config.TransportOrNull?.MaxRedirects;
-
-            if (configured == 0)
+            if (maxRedirects == 0)
             {
                 return new AxiosException(
                     $"Request failed with status code {response.Status}{RequestSuffix(request, attemptNumber)}: redirects are disabled (MaxRedirects = 0); "
-                    + "set Transport.MaxRedirects > 0 to follow redirects",
+                    + "set AxiosClientOptions.MaxRedirects > 0 to follow redirects",
                     ErrBadRequest,
                     config,
                     request,
@@ -514,10 +516,10 @@ public class AxiosException : Exception
                     null);
             }
 
-            var limit = configured ?? AxiosConfig.DefaultMaxRedirects;
+            var limit = maxRedirects;
             return new AxiosException(
                 $"Request failed with status code {response.Status}{RequestSuffix(request, attemptNumber)}: too many redirects "
-                + $"(stopped after MaxRedirects = {limit}); raise Transport.MaxRedirects, or set it to 0 to stop following",
+                + $"(stopped after MaxRedirects = {limit}); raise AxiosClientOptions.MaxRedirects, or set it to 0 to stop following",
                 ErrTooManyRedirects,
                 config,
                 request,

@@ -218,7 +218,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         // 跟踪表到硬上限且没有可淘汰条目：本次按闭合态直通，不参与熔断（也不记这一维度的账）。
         if (host is null)
         {
-            AxiosTelemetry.CircuitUntrackedHost();
+            AxiosTelemetry.Sink.CircuitUntrackedHost();
             ticket = 0;
             return true;
         }

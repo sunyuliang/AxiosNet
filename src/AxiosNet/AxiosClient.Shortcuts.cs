@@ -383,10 +383,19 @@ public sealed partial class AxiosClient
 
         if (bodyProvided)
         {
-            // 令牌落到 data 上时直接报错。
+            // 令牌 / 配置落到 data 上时直接报错：两者都是「参数放错位置」，
+            // 静默当正文发出去（或退化成一句「正文序列化失败」）只会让人更猜不到问题在哪。
             if (data is CancellationToken)
             {
                 throw AxiosException.InvalidOption("CancellationToken 不能作为请求体传入，请使用 cancellationToken 参数。", config);
+            }
+
+            if (data is AxiosConfig)
+            {
+                throw AxiosException.InvalidOption(
+                    "AxiosConfig 不能作为请求体传入。要按预先造好的配置发送请用 RequestAsync(config)"
+                    + "（实例上另有 XxxAsync(url, config) 重载）；要在快捷方法里改配置请用 configure 参数。",
+                    config);
             }
 
             // 显式 data（含 null）一律写回：null 表示「本次没有正文」，与通用入口写 Body = null 同义。
@@ -399,12 +408,11 @@ public sealed partial class AxiosClient
         return config;
     }
 
-    /// <summary>本次请求生效配置的起点：实例默认值的副本，已标记 <see cref="AxiosConfig.EffectiveMerged"/> 并清掉实例级选项标记。</summary>
+    /// <summary>本次请求生效配置的起点：实例默认值的副本，已标记 <see cref="AxiosConfig.EffectiveMerged"/>。</summary>
     private AxiosConfig NewEffectiveConfig()
     {
         var config = Defaults.Clone();
         config.EffectiveMerged = true;
-        config.ClearInstanceOptionFlags();
 
         // 与 MergeConfig 同一口径：继承来的 *Set 标记不算「调用方显式写过」，清掉后
         // configure 里的显式写会重新置标记，回放这份产物时只搬调用方意图、不搬来源实例默认值。

@@ -261,8 +261,8 @@ public sealed class TotalTimeoutTests
 
         // 只能有一条在途：第二条请求注定要排队
         using var client = new AxiosClient(new AxiosConfig {
-            Resilience = { Concurrency = {  MaxInFlight = 1  } }
-        });
+            Resilience = {  }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         // ① 占住唯一的槽位（等它真的到达服务端，否则第二条可能先抢到槽位）
         var holder = client.GetAsync(server.Url + "holder");
@@ -304,8 +304,8 @@ public sealed class TotalTimeoutTests
         });
 
         using var client = new AxiosClient(new AxiosConfig {
-            Resilience = { Concurrency = {  MaxInFlight = 1  } }
-        });
+            Resilience = {  }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var holder = client.GetAsync(server.Url + "holder");
         var waitForHolder = Stopwatch.StartNew();

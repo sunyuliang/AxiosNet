@@ -3,7 +3,7 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 在途请求并发闸门（<c>Resilience.Concurrency.MaxInFlight</c>）：每个 <see cref="AxiosClient"/> 一个。
+/// 在途请求并发闸门（<c>AxiosClientOptions.MaxInFlight</c>）：每个 <see cref="AxiosClient"/> 一个。
 /// 限速管字节速度，本闸门管同时在途的请求条数；排队可取消、可限深，超时抛 <c>ERR_QUEUE_TIMEOUT</c>，
 /// 队列满抛 <c>ERR_QUEUE_FULL</c>。
 /// </summary>
@@ -82,7 +82,7 @@ internal sealed class ConcurrencyGate
         // 显式「不排队」：满了立刻失败，连计时器都不建（也不计入排队深度 —— 它没有真的等过）。
         if (queueTimeout == TimeSpan.Zero)
         {
-            AxiosTelemetry.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
+            AxiosTelemetry.Sink.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
             throw AxiosException.QueueTimeout(config, request, TimeSpan.Zero, MaxConcurrency);
         }
 
@@ -109,7 +109,7 @@ internal sealed class ConcurrencyGate
         if (MaxQueue is int maxQueue && depth > maxQueue)
         {
             Interlocked.Decrement(ref _queuedLocal);
-            AxiosTelemetry.GateRejected(config, AxiosTelemetry.GateRejectQueueFull);
+            AxiosTelemetry.Sink.GateRejected(config, AxiosTelemetry.GateRejectQueueFull);
             throw AxiosException.QueueFull(config, request, maxQueue, MaxConcurrency);
         }
 
@@ -154,7 +154,7 @@ internal sealed class ConcurrencyGate
             }
             catch (OperationCanceledException ex)
             {
-                AxiosTelemetry.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
+                AxiosTelemetry.Sink.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
                 throw AxiosException.QueueTimeout(config, request, limit, MaxConcurrency, ex);
             }
 

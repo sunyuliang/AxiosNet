@@ -22,22 +22,6 @@ public sealed partial class AxiosConfig
     internal ResilienceSettings? ResilienceOrNull
         => HasResilienceValues ? Resilience : null;
 
-    /// <summary>
-    /// 读并发闸门的<b>三项判定值而不分配门面对象</b>：闸门解析在每请求路径上，走 <see cref="ResilienceOrNull"/> + <see cref="ResilienceSettings.Concurrency"/>
-    /// 会为配了并发的每一条请求多分配两个对象（<see cref="ResilienceSettings"/> + <see cref="ConcurrencySettings"/>）。
-    /// 排队超时不在本方法里出：它另有 <see cref="ConcurrencyQueueTimeout"/>，那条路径上只需要它一项。
-    /// </summary>
-    /// <param name="maxInFlight">在途请求上限。</param>
-    /// <param name="maxQueue">排队条数上限。</param>
-    /// <param name="maxQueueStated">排队上限是否被显式写过（按标记判断，不看值）。</param>
-    internal void ReadConcurrency(out int? maxInFlight, out int? maxQueue, out bool maxQueueStated)
-    {
-        var state = _concurrencyState;
-        maxInFlight = state?.MaxInFlight;
-        maxQueue = state?.MaxQueue;
-        maxQueueStated = state?.MaxQueueSet ?? false;
-    }
-
     /// <summary>等槽位上限（不分配门面）：闸门中间件每次尝试都要取它。</summary>
     internal TimeSpan? ConcurrencyQueueTimeout => _concurrencyState?.QueueTimeout;
 
@@ -48,7 +32,7 @@ public sealed partial class AxiosConfig
             || _idempotency is not null
             || _allowUnsafeRetrySet
             || _totalTimeoutSet
-            || _concurrencyState is { MaxInFlightSet: true } or { MaxQueueSet: true } or { QueueTimeoutSet: true };
+            || _concurrencyState is { QueueTimeoutSet: true };
 
     private bool _allowUnsafeRetry;
 
@@ -57,16 +41,12 @@ public sealed partial class AxiosConfig
 
     private bool _allowUnsafeRetrySet;
 
-    // 并发闸门的三项存储：只在真正碰过闸门设置时才分配。它们曾经是三个顶层字段，
-    // 每个配置对象（包括每次请求合并出来的那份）都要背着这几十字节；改成懒分配后默认请求不再支付。
+    // 排队超时的存储：只在真正碰过这一项时才分配。在途上限与排队深度属实例级选项
+    // （AxiosClientOptions），闸门容量在构造期定死，不存在「按请求改容量」这条路径。
     private ConcurrencyState? _concurrencyState;
 
     private sealed class ConcurrencyState
     {
-        internal int? MaxInFlight;
-        internal bool MaxInFlightSet;
-        internal int? MaxQueue;
-        internal bool MaxQueueSet;
         internal TimeSpan? QueueTimeout;
         internal bool QueueTimeoutSet;
 
@@ -179,23 +159,10 @@ public sealed partial class AxiosConfig
                 Idempotency.MergeFrom(source._idempotency);
             }
 
-            // 并发三项（实例级）在这里合并；「库产出的配置不搬运实例级项」由调用方在合并后还原。
-            if (source._concurrencyState is { } incomingConcurrency)
+            // 排队等待上限按请求项：闸门中间件每次尝试都读它。
+            if (source._concurrencyState is { QueueTimeoutSet: true } incomingQueueTimeout)
             {
-                if (incomingConcurrency.MaxInFlightSet)
-                {
-                    Concurrency.MaxInFlight = incomingConcurrency.MaxInFlight;
-                }
-
-                if (incomingConcurrency.MaxQueueSet)
-                {
-                    Concurrency.MaxQueue = incomingConcurrency.MaxQueue;
-                }
-
-                if (incomingConcurrency.QueueTimeoutSet)
-                {
-                    Concurrency.QueueTimeout = incomingConcurrency.QueueTimeout;
-                }
+                Concurrency.QueueTimeout = incomingQueueTimeout.QueueTimeout;
             }
 
             if (source._totalTimeoutSet)
@@ -210,38 +177,18 @@ public sealed partial class AxiosConfig
         }
     }
 
-    /// <summary>并发闸门（<see cref="ResilienceSettings.Concurrency"/>）：三项直接读写 <see cref="AxiosConfig"/> 上的存储。</summary>
+    /// <summary>并发闸门的排队等待上限（<see cref="ResilienceSettings.Concurrency"/>）：在途上限与排队深度属实例级选项，不在配置上。</summary>
     public sealed class ConcurrencySettings
     {
         private readonly AxiosConfig _owner;
 
         internal ConcurrencySettings(AxiosConfig owner) => _owner = owner;
 
-        /// <summary>实例内在途请求上限，<c>null</c>（默认）不限；闸门在首个受限请求时创建并固定。</summary>
-        public int? MaxInFlight
-        {
-            get => _owner._concurrencyState?.MaxInFlight;
-            set
-            {
-                var state = _owner._concurrencyState ??= new ConcurrencyState();
-                state.MaxInFlight = value;
-                state.MaxInFlightSet = true;
-            }
-        }
-
-        /// <summary>等待槽位的请求条数上限，只在设置 <see cref="MaxInFlight"/> 时有意义。</summary>
-        public int? MaxQueue
-        {
-            get => _owner._concurrencyState?.MaxQueue;
-            set
-            {
-                var state = _owner._concurrencyState ??= new ConcurrencyState();
-                state.MaxQueue = value;
-                state.MaxQueueSet = true;
-            }
-        }
-
-        /// <summary>等待并发槽位的上限，只在设置 <see cref="MaxInFlight"/> 时有意义。</summary>
+        /// <summary>
+        /// 等待并发槽位的上限，只在 <see cref="AxiosClientOptions.MaxInFlight"/> 有值时才有意义；
+        /// <c>null</c>（默认）= 一直等，<see cref="TimeSpan.Zero"/> = 不排队（容量满即刻失败）。
+        /// </summary>
+        /// <remarks>按请求项：单次请求可以改本次的等待上限；容量本身改不了（那是实例级的）。</remarks>
         public TimeSpan? QueueTimeout
         {
             get => _owner._concurrencyState?.QueueTimeout;
@@ -251,28 +198,6 @@ public sealed partial class AxiosConfig
                 state.QueueTimeout = value;
                 state.QueueTimeoutSet = true;
             }
-        }
-
-        /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
-        internal bool MaxQueueSet => _owner._concurrencyState?.MaxQueueSet ?? false;
-
-        /// <summary>库产出的配置不搬运实例级并发项：把三项连同 *Set 标记整体还原到 <paramref name="source"/> 的值。</summary>
-        internal void ResetFrom(AxiosConfig source)
-        {
-            if (source._concurrencyState is not { } incoming)
-            {
-                // 来源没有闸门设置：连同标记一起清空（等同于把三项与 *Set 全设为默认值）。
-                _owner._concurrencyState = null;
-                return;
-            }
-
-            var state = _owner._concurrencyState ??= new ConcurrencyState();
-            state.MaxInFlight = incoming.MaxInFlight;
-            state.MaxInFlightSet = incoming.MaxInFlightSet;
-            state.MaxQueue = incoming.MaxQueue;
-            state.MaxQueueSet = incoming.MaxQueueSet;
-            state.QueueTimeout = incoming.QueueTimeout;
-            state.QueueTimeoutSet = incoming.QueueTimeoutSet;
         }
     }
 }

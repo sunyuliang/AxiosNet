@@ -7,15 +7,6 @@ public sealed partial class AxiosConfig
     /// <summary>传输相关设置（<see cref="AxiosConfig.Transport"/>）。</summary>
     public sealed class TransportSettings
     {
-        /// <summary>代理设置，仅实例级生效（按请求设置抛 <see cref="AxiosException"/>）；注入自定义 Handler 时由 Handler 决定。</summary>
-        public IWebProxy? Proxy { get; set; }
-
-        /// <summary>显式凭据，仅实例级生效（按请求设置抛 <see cref="AxiosException"/>）；注入自定义 Handler 时由 Handler 决定。</summary>
-        public ICredentials? Credentials { get; set; }
-
-        /// <summary>连接池选项，仅在构造 AxiosClient（自建池）时生效；单次请求上设置会抛 <see cref="AxiosException"/>。</summary>
-        public ConnectionPoolOptions? Pool { get; set; }
-
         /// <summary>
         /// HTTP 版本，<c>null</c>（默认）= HTTP/2（<c>HttpVersion.Version20</c>），配合默认协商策略可降级到 1.1；
         /// netstandard2.0 兼容资产上默认 1.1，显式要求 2.0 / 3.0 会在发送前以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
@@ -112,41 +103,6 @@ public sealed partial class AxiosConfig
         /// <summary>是否被显式赋值过（含赋 <c>null</c>），用于合并配置时区分「未设置」与「显式清除」。</summary>
         internal bool AuthSet { get; set; }
 
-        private bool _withCredentials;
-
-        /// <summary>
-        /// 对应 axios withCredentials（使用系统默认凭据 / Cookie），仅实例级生效：按请求写不同的值抛异常，相同的值放行。
-        /// 判「相同」比的是连接池的生效值（<see cref="ConnectionPoolOptions.UseCookies"/>），不是本属性。
-        /// </summary>
-        public bool WithCredentials
-        {
-            get => _withCredentials;
-            set
-            {
-                _withCredentials = value;
-                WithCredentialsSet = true;
-            }
-        }
-
-        /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-        internal bool WithCredentialsSet { get; set; }
-
-        private int _maxRedirects = 5;
-
-        /// <summary>对应 axios maxRedirects，默认 5，0 表示不跟随重定向；仅实例级生效，按请求写不同的值抛异常。</summary>
-        public int MaxRedirects
-        {
-            get => _maxRedirects;
-            set
-            {
-                _maxRedirects = value;
-                MaxRedirectsSet = true;
-            }
-        }
-
-        /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-        internal bool MaxRedirectsSet { get; set; }
-
         private long? _maxRate;
 
         /// <summary>令牌桶限速（字节/秒），<c>null</c>（默认）不限；按请求项，单次请求可以覆盖。</summary>
@@ -166,10 +122,6 @@ public sealed partial class AxiosConfig
         /// <summary>把 <paramref name="incoming"/> 里的按请求传输项覆盖到本实例（合并层内部使用）；HttpVersion / VersionPolicy 由合并层单独处理。</summary>
         internal void MergeFrom(TransportSettings incoming)
         {
-            Proxy = incoming.Proxy ?? Proxy;
-            Credentials = incoming.Credentials ?? Credentials;
-            Pool = incoming.Pool ?? Pool;
-
             if (incoming.ProfileSet)
             {
                 Profile = incoming.Profile;
@@ -178,16 +130,6 @@ public sealed partial class AxiosConfig
             if (incoming.AuthSet)
             {
                 Auth = incoming.Auth;
-            }
-
-            if (incoming.WithCredentialsSet)
-            {
-                WithCredentials = incoming.WithCredentials;
-            }
-
-            if (incoming.MaxRedirectsSet)
-            {
-                MaxRedirects = incoming.MaxRedirects;
             }
 
             if (incoming.MaxRateSet)

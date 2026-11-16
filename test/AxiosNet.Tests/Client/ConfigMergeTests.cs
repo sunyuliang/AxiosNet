@@ -43,22 +43,18 @@ public sealed class ConfigMergeTests
         await using var server = TestHttpServer.Start(_ => Json());
 
         // 源实例把 maxRedirects 定为 3，进的是连接池 Handler。
-        using var source = new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = server.Url,
-            Transport = new()
-            {
-                MaxRedirects = 3,
-            },
-        });
+        using var source = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            new AxiosClientOptions { MaxRedirects = 3 });
         var first = await source.GetAsync("x");
 
-        // 回放不是「按请求写 MaxRedirects」，实例级选项应归目标实例。
+        // 回放不是「按请求写 MaxRedirects」：它根本不在配置上，目标实例按自己的选项工作。
         using var target = new AxiosClient(new AxiosConfig { BaseAddress = server.Url });
         var replayed = await target.RequestAsync(first.Config!);
 
         Assert.Equal(200, replayed.Status);
-        Assert.Equal(5, replayed.Config!.Transport.MaxRedirects);
+        Assert.Equal(3, source.Options.MaxRedirects);
+        Assert.Equal(AxiosClientOptions.DefaultMaxRedirects, target.Options.MaxRedirects);
     }
 
     [Fact]
@@ -417,14 +413,9 @@ public sealed class ConfigMergeTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
-        using var first = new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = server.Url,
-            Transport = new()
-            {
-                Pool = new ConnectionPoolOptions(),
-            },
-        });
+        using var first = new AxiosClient(
+            new AxiosConfig { BaseAddress = server.Url },
+            new AxiosClientOptions { Pool = new ConnectionPoolOptions() });
         first.Defaults.Headers.Set("X-First", "1");
         var response = await first.GetAsync("one");
 

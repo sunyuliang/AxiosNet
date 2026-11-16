@@ -128,7 +128,7 @@ public sealed class RetryBudgetPolicy : IAxiosRetryPolicy
         }
 
         Interlocked.Increment(ref _refusedRetries);
-        AxiosTelemetry.RetryBudgetRefused(context.Config);
+        AxiosTelemetry.Sink.RetryBudgetRefused(context.Config);
 
         // 锁外回调：调用方的代码不该在内部锁里跑。
         OnBudgetExhausted?.Invoke(context);

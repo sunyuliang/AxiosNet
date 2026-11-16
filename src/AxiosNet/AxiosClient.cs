@@ -29,7 +29,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// </summary>
     private readonly AxiosAttemptHandler _attemptPipeline;
 
-    /// <summary>在途并发闸门（<c>Resilience.Concurrency.MaxInFlight</c>）：首个受限请求时按当时上限创建并固定，之后改上限会抛 <c>ERR_BAD_OPTION_VALUE</c>。</summary>
+    /// <summary>在途并发闸门（<see cref="AxiosClientOptions.MaxInFlight"/>）：首个受限请求时按构造期上限创建并固定。</summary>
     private ConcurrencyGate? _gate;
 
     /// <summary>
@@ -39,10 +39,30 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     private FailoverHealth? _failoverHealth;
 
     /// <summary>
-    /// 对应 axios instance.defaults。连接级选项（WithCredentials / MaxRedirects / Proxy / Credentials / PoolOptions）
-    /// 构造时已固化，改后不生效；<c>Resilience.Concurrency.MaxInFlight</c> 的闸门在首个受限请求时创建，此后改会抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 构造期定稿的重定向上限，<b>只用于把原因写进异常消息</b>（真实行为由连接池 / 注入的 Handler 决定）。
     /// </summary>
+    /// <remarks>
+    /// 不从 <see cref="Options"/> 现读：那是「调用方可以改的快照」，构造之后再写会改掉文案、却改不了行为，
+    /// 于是报错说「已禁用重定向（MaxRedirects = 0）」而请求明明跟着跳了 —— 文案不能比行为更不可信。
+    /// </remarks>
+    private readonly int _maxRedirects;
+
+    /// <summary>
+    /// 对应 axios instance.defaults：按请求项的默认值（合并到每次请求上）。
+    /// </summary>
+    /// <remarks>
+    /// 连接层与闸门相关的<b>实例级</b>选项不在这里 —— 它们在 <see cref="Options"/> 上，构造期固化，改后不生效。
+    /// </remarks>
     public AxiosConfig Defaults { get; }
+
+    /// <summary>
+    /// 本实例的实例级选项快照：连接池与并发闸门的形态都在构造期按它定死。
+    /// </summary>
+    /// <remarks>
+    /// 这份是<b>快照</b>，且已把池实际生效的出口（代理 / 凭据 / 重定向次数 / Cookie）写在里面，所以读到的就是真实行为。
+    /// 构造之后改它不会重建池、也不会改闸门容量 —— 要换形态请新建 <see cref="AxiosClient"/>。
+    /// </remarks>
+    public AxiosClientOptions Options { get; }
 
     /// <summary>对应 axios instance.interceptors。</summary>
     public AxiosInterceptors Interceptors { get; } = new();
@@ -59,13 +79,17 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     public bool UsesConnectionPool => _pool is not null;
 
     /// <summary>创建实例（未注入 <paramref name="handler"/> 时走连接池）。</summary>
-    /// <param name="defaults">实例默认配置（对应 axios instance.defaults）。</param>
+    /// <param name="defaults">实例默认配置（对应 axios instance.defaults）：按请求项，每次请求合并到它上面。</param>
+    /// <param name="options">
+    /// 实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）：构造期固化，之后改不生效。
+    /// </param>
     /// <param name="pool">
-    /// 共享连接池；与 <paramref name="poolOptions"/> / <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// 共享连接池；与 <paramref name="poolOptions"/> / <paramref name="options"/> 里的 <see cref="AxiosClientOptions.Pool"/> /
+    /// <paramref name="handler"/> 互斥（同时传入抛 <c>ERR_BAD_OPTION_VALUE</c>）。
     /// </param>
     /// <param name="poolOptions">本实例自建连接池的选项。</param>
     /// <param name="handler">
-    /// 直接注入的 Handler；注入后不创建连接池，连接级选项由它自己决定。
+    /// 直接注入的 Handler；注入后不创建连接池，连接层选项（代理 / 凭据 / Cookie / 重定向）由它自己决定。
     /// </param>
     /// <param name="disposeHandler">释放本实例时是否一并释放注入的 <paramref name="handler"/>。</param>
     /// <param name="pipeline">
@@ -74,6 +98,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// </param>
     public AxiosClient(
         AxiosConfig? defaults = null,
+        AxiosClientOptions? options = null,
         HttpConnectionPool? pool = null,
         ConnectionPoolOptions? poolOptions = null,
         HttpMessageHandler? handler = null,
@@ -81,6 +106,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         AxiosAttemptPipeline? pipeline = null)
     {
         Defaults = defaults ?? new AxiosConfig();
+
+        // 持自己的一份快照：调用方随后改传进来的 options 不影响本实例已建资源。
+        Options = (options ?? new AxiosClientOptions()).Clone();
 
         // 每个实例一份序列化注册表：登记只影响本实例，全局 AxiosContent.Register 继续作为兜底。
         // 配置里自带一份时沿用它（DI 的 configure 回调可以预先放好）。
@@ -90,6 +118,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
         AttemptPipeline = pipeline ?? AxiosAttemptPipeline.Default;
         _attemptPipeline = AttemptPipeline.Compile(SendTerminalAsync, Defaults);
 
+        // 闸门容量与 Handler 无关（闸门是库自己的），所以无条件在构造期校验，不等首个请求。
+        Options.ValidateConcurrency(Defaults);
+
+        // 重定向文案的基准：先取声明值（注入 Handler 的分支就用它，因为那边写不了这一项），
+        // 池分支拿到生效值之后再覆盖一次。
+        _maxRedirects = Options.MaxRedirects;
+
         if (handler is not null)
         {
             if (pool is not null)
@@ -97,14 +132,14 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 throw AxiosException.InvalidOption("不能同时注入 handler 和 pool：注入 handler 时不使用连接池，请二选一。", Defaults);
             }
 
-            if (poolOptions is not null || Defaults.TransportOrNull?.Pool is not null)
+            if (poolOptions is not null || Options.Pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时注入 handler 和连接池选项（poolOptions / defaults.Transport.Pool）："
+                    "不能同时注入 handler 和连接池选项（poolOptions / AxiosClientOptions.Pool）："
                     + "handler 的连接行为由它自己决定，需要池化请改用 ConnectionPoolOptions.HandlerFactory。", Defaults);
             }
 
-            ValidateConnectionLevelOptions(defaults, Defaults, ConnectionLevelMessages.Handler);
+            ValidateConnectionLevelOptions(Options, ConnectionLevelMessages.Handler);
             _customHandler = handler;
             _ownsCustomHandler = disposeHandler;
             _customClient = new HttpClient(handler, disposeHandler: false)
@@ -117,39 +152,42 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         if (pool is not null)
         {
-            if (poolOptions is not null || Defaults.TransportOrNull?.Pool is not null)
+            if (poolOptions is not null || Options.Pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时传入 pool 和 poolOptions / defaults.Transport.Pool："
+                    "不能同时传入 pool 和 poolOptions / AxiosClientOptions.Pool："
                     + "共享池已按自己的 ConnectionPoolOptions 创建，请在创建池时配置，或改为只传 poolOptions 让本实例自建池。", Defaults);
             }
 
-            // 共享池的连接行为已固定，defaults 上的同类选项不生效。
-            ValidateConnectionLevelOptions(defaults, Defaults, ConnectionLevelMessages.SharedPool);
+            // 共享池的连接行为已固定，options 上的同类选项不生效。
+            ValidateConnectionLevelOptions(Options, ConnectionLevelMessages.SharedPool);
 
             _pool = pool;
             _ownsPool = false;
-            // 池实际生效的出口回写 Defaults：getter 与真实连接行为一致。
-            SyncConnectionDefaults();
+            // 池实际生效的出口回写 Options：getter 与真实连接行为一致。
+            SyncOptionsFromPool();
+
+            // 文案基准跟着生效值走（共享池可能关了跟随，而 options 上是没写的默认 5）。
+            _maxRedirects = Options.MaxRedirects;
         }
         else
         {
             // 两处都配时直接报错。
-            if (poolOptions is not null && Defaults.TransportOrNull?.Pool is not null)
+            if (poolOptions is not null && Options.Pool is not null)
             {
                 throw AxiosException.InvalidOption(
-                    "不能同时传入 poolOptions 和 defaults.Transport.Pool：两者描述的是同一个自建连接池，请只在一处配置。", Defaults);
+                    "不能同时传入 poolOptions 和 AxiosClientOptions.Pool：两者描述的是同一个自建连接池，请只在一处配置。", Defaults);
             }
 
-            var effective = (poolOptions ?? Defaults.TransportOrNull?.Pool ?? new ConnectionPoolOptions()).Clone();
+            var effective = (poolOptions ?? Options.Pool ?? new ConnectionPoolOptions()).Clone();
 
             // 池选项非法时在构造期带配置抛错。
             HttpConnectionPool.ValidateOptions(effective, Defaults);
 
             // maxRedirects：0 = 不跟随重定向，> 0 = 覆盖池默认上限；按 *Set 判断是否显式配置。
-            if (Defaults.MaxRedirectsSet)
+            if (Options.MaxRedirectsSet)
             {
-                var maxRedirects = Defaults.TransportOrNull?.MaxRedirects ?? AxiosConfig.DefaultMaxRedirects;
+                var maxRedirects = Options.MaxRedirects;
 
                 if (maxRedirects < 0)
                 {
@@ -169,20 +207,20 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 两处都写时直接报错。
             if (poolOptions is not null)
             {
-                if (poolOptions.Proxy is not null && Defaults.TransportOrNull?.Proxy is not null)
+                if (poolOptions.Proxy is not null && Options.Proxy is not null)
                 {
-                    throw AxiosException.InvalidOption("不能同时在 poolOptions.Proxy 和 defaults.Proxy 上配置代理：请只在一处设置。", Defaults);
+                    throw AxiosException.InvalidOption("不能同时在 poolOptions.Proxy 和 AxiosClientOptions.Proxy 上配置代理：请只在一处设置。", Defaults);
                 }
 
-                if (poolOptions.Credentials is not null && Defaults.TransportOrNull?.Credentials is not null)
+                if (poolOptions.Credentials is not null && Options.Credentials is not null)
                 {
-                    throw AxiosException.InvalidOption("不能同时在 poolOptions.Credentials 和 defaults.Credentials 上配置凭据：请只在一处设置。", Defaults);
+                    throw AxiosException.InvalidOption("不能同时在 poolOptions.Credentials 和 AxiosClientOptions.Credentials 上配置凭据：请只在一处设置。", Defaults);
                 }
             }
 
-            effective.Proxy ??= Defaults.TransportOrNull?.Proxy;
-            effective.Credentials ??= Defaults.TransportOrNull?.Credentials;
-            if (Defaults.TransportOrNull?.WithCredentials is true)
+            effective.Proxy ??= Options.Proxy;
+            effective.Credentials ??= Options.Credentials;
+            if (Options.WithCredentials)
             {
                 effective.UseCookies = true;
                 effective.Credentials ??= CredentialCache.DefaultCredentials;
@@ -190,49 +228,25 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
             _pool = new HttpConnectionPool(effective);
             _ownsPool = true;
-            // 自建池会把 defaults / poolOptions / profile 合成一份生效值：回写 Defaults，
-            // 让 defaults.Proxy / Credentials / MaxRedirects / WithCredentials 的 getter 与实际一致。
-            SyncConnectionDefaults();
+            // 自建池会把 options / poolOptions / 传输档合成一份生效值：回写 Options，
+            // 让 Options.Proxy / Credentials / MaxRedirects / WithCredentials 的 getter 与实际一致。
+            SyncOptionsFromPool();
+
+            // 与共享池同理：文案基准取生效值。
+            _maxRedirects = Options.MaxRedirects;
         }
     }
 
     /// <summary>
-    /// 连接层配置在构造期定型（之后改 defaults 不会重建池）：把池实际生效的出口写回 <see cref="Defaults"/>，
-    /// 使 getter 反映真实行为；同时清掉 setter 留下的 <c>*Set</c> 标记——这些值来自「回写」而非调用方显式设置，
-    /// 后续合并仍按「未设置」处理。
+    /// 连接层配置在构造期定型（之后改 options 不会重建池）：把池实际生效的出口写回 <see cref="Options"/>，
+    /// 使 getter 反映真实行为。
     /// </summary>
-    private void SyncConnectionDefaults()
+    private void SyncOptionsFromPool()
     {
-        if (_pool is null)
+        if (_pool is not null)
         {
-            return;
+            Options.AbsorbPoolEffective(_pool.EffectiveOptions);
         }
-
-        var effective = _pool.EffectiveOptions;
-        var maxRedirects = effective.AllowAutoRedirect ? effective.MaxAutomaticRedirections : 0;
-
-        // 池的出口与「未写过的 defaults」完全一致时不回写：让 Defaults 继续保持没有 Transport 分组。
-        // 一旦回写，Defaults.Clone()（每次 MergeConfig 一次）就多复制一份 TransportSettings（约 160 B/请求）；
-        // 而这份回写的值本来就等于 TransportSettings 的默认值（Proxy / Credentials 为 null、MaxRedirects 5、WithCredentials false），
-        // getter 读到的结果完全一样。调用方自己写过 Transport 时（TransportOrNull 非空）仍照常回写，不能悄悄丢掉它的值。
-        if (Defaults.TransportOrNull is null
-            && effective.Proxy is null
-            && effective.Credentials is null
-            && !effective.UseCookies
-            && maxRedirects == AxiosConfig.DefaultMaxRedirects)
-        {
-            return;
-        }
-
-        var transport = Defaults.Transport;
-        transport.Proxy = effective.Proxy;
-        transport.Credentials = effective.Credentials;
-        transport.MaxRedirects = maxRedirects;
-        transport.WithCredentials = effective.UseCookies;
-
-        // 回写不是「显式设置」：清标记，避免被当成按请求写过的实例级选项。
-        transport.MaxRedirectsSet = false;
-        transport.WithCredentialsSet = false;
     }
 
     // ---- getUri：只组装 URL，不发请求（对应 axios.getUri） ----

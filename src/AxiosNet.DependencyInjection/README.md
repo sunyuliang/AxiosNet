@@ -21,6 +21,12 @@ builder.Services.AddAxiosClient(config =>
     config.Timeout = TimeSpan.FromSeconds(10);
 });
 
+// 实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）走第二个参数：
+// 它们决定连接层与闸门形态，构造期固化，写不进上面的 configure 回调。
+builder.Services.AddAxiosClient(
+    configure: config => config.BaseAddress = "https://api.example.com",
+    options: new AxiosClientOptions { WithCredentials = true, MaxInFlight = 32 });
+
 // 之后直接注入使用
 public sealed class UserService(AxiosClient client)
 {
@@ -34,8 +40,10 @@ public sealed class UserService(AxiosClient client)
 using AxiosNet.WebAPI.DependencyInjection;
 
 // 自建模式：自带 BaseAddress 自建底层客户端（与容器里的 AxiosClient 注册互不相干）
+// options 同样是底层客户端的实例级选项
 builder.Services.AddApiClient("https://api.example.com",
     configureDefaults: config => config.Timeout = TimeSpan.FromSeconds(10),
+    options: new AxiosClientOptions { MaxRedirects = 0, MaxInFlight = 16 },
     configure: client => client.CredentialProvider = CredentialProviders.Fixed(token));
 
 // 门面模式：复用容器中已注册的 AxiosClient 单例（需先 AddAxiosClient）

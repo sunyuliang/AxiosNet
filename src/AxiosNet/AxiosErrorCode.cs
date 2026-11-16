@@ -42,7 +42,7 @@ public enum AxiosErrorCode
     /// <summary><c>ERR_POOL_EXHAUSTED</c>：连接池 origin 基数饱和，请求没有发出。</summary>
     PoolExhausted,
 
-    /// <summary><c>ERR_TOO_MANY_REDIRECTS</c>：重定向次数用尽（<c>Transport.MaxRedirects</c>），仍在 3xx。</summary>
+    /// <summary><c>ERR_TOO_MANY_REDIRECTS</c>：重定向次数用尽（<c>AxiosClientOptions.MaxRedirects</c>），仍在 3xx。</summary>
     TooManyRedirects
 }
 

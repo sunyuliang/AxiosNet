@@ -27,7 +27,7 @@ public readonly struct AxiosAttemptContext
         AxiosConfig.HedgingSettings? hedging,
         AxiosConfig.FailoverSettings? failover,
         ConcurrencyGate? gate,
-        IDisposable? slot,
+        IDisposable? lease,
         long deadlineTimestamp,
         FailoverHealth? failoverHealth)
     {
@@ -45,7 +45,7 @@ public readonly struct AxiosAttemptContext
         Hedging = hedging;
         Failover = failover;
         _gate = gate;
-        Slot = slot;
+        Lease = lease;
         _deadlineTimestamp = deadlineTimestamp;
         _failoverHealth = failoverHealth;
     }
@@ -149,11 +149,11 @@ public readonly struct AxiosAttemptContext
     internal FailoverHealth? FailoverHealth => _failoverHealth;
 
     /// <summary>
-    /// 本次尝试已占到的并发槽位：由闸门中间件填入，终端负责在失败路径归还、
-    /// 在流式成功路径接管（转交给 <see cref="AxiosAttemptResult.StreamOwner"/>）。
-    /// 没有闸门时为 <c>null</c>。
+    /// 本次尝试登记的跨终端租约：由中间件在调用 <c>next</c> 之前登记（闸门槽位、审计会话、批处理句柄…），
+    /// 终端负责在失败路径处置、在流式成功路径随正文转交给调用方。
+    /// <c>null</c> = 没有任何跨终端资源；登记了多个时合成一个（按登记顺序的逆序释放）。
     /// </summary>
-    public IDisposable? Slot { get; }
+    public IDisposable? Lease { get; }
 
     /// <summary>距总预算耗尽还剩多久；<c>null</c> = 没设总预算，<see cref="TimeSpan.Zero"/> = 已耗尽。</summary>
     internal TimeSpan? RemainingTotalTimeout => TotalTimeoutBudget.Remaining(_deadlineTimestamp);
@@ -224,11 +224,11 @@ public readonly struct AxiosAttemptContext
     private AxiosAttemptContext(in AxiosAttemptContext source, Uri uri) : this(source)
         => Uri = uri;
 
-    /// <summary>派生：换本次尝试占到的并发槽位。</summary>
+    /// <summary>派生：换本次尝试登记的跨终端租约。</summary>
     /// <param name="source">来源上下文。</param>
-    /// <param name="slot">新槽位；<c>null</c> 表示没有。</param>
-    private AxiosAttemptContext(in AxiosAttemptContext source, IDisposable? slot) : this(source)
-        => Slot = slot;
+    /// <param name="lease">新的租约；<c>null</c> 表示没有。</param>
+    private AxiosAttemptContext(in AxiosAttemptContext source, IDisposable? lease) : this(source)
+        => Lease = lease;
 
     /// <summary>派生：换一个尝试序号（重试中间件推进尝试时用）。</summary>
     /// <param name="attemptNumber">新的尝试序号（从 <c>1</c> 开始）。</param>
@@ -285,10 +285,30 @@ public readonly struct AxiosAttemptContext
     }
 
     /// <summary>
-    /// 派生：填入本次尝试占到的并发槽位（闸门中间件用）。
-    /// 填进去之后所有权归终端：失败路径它归还，流式成功它随正文转交给调用方。
+    /// 派生：登记一个跨终端租约（闸门中间件登记并发槽位，自定义中间件登记自己占的其他资源）。
+    /// 已经登记过就<b>追加</b>，不会覆盖先登记的那个 —— 覆盖等于让前一个租约再也没人释放；
+    /// 追加后按登记顺序的逆序释放。
     /// </summary>
-    /// <param name="slot">本次尝试占到的槽位；<c>null</c> 表示没有。</param>
+    /// <remarks>
+    /// 登记之后所有权就归终端：失败路径它处置，流式成功路径它随正文转交。
+    /// 但终端<b>只在被调用时</b>才兜底 —— 中间件登记完自己抛异常、或决定不调 <c>next</c> 时，
+    /// 这条链谁也拿不到，<b>登记方必须自己处置</b>（闸门只兜自己的槽位，不会替你释放别人的租约）。
+    /// </remarks>
+    /// <param name="lease">要登记的租约。没有资源要登记就别调用它，不要传 <c>null</c>。</param>
     /// <returns>派生出的副本。</returns>
-    public AxiosAttemptContext WithSlot(IDisposable? slot) => new(in this, slot);
+    /// <exception cref="ArgumentNullException"><paramref name="lease"/> 为 <c>null</c>。</exception>
+    public AxiosAttemptContext WithLease(IDisposable lease)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+
+        // 第一个裸放（零分配）：绝大多数请求里只有一个租约（闸门槽位）。
+        if (Lease is null)
+        {
+            return new(in this, lease);
+        }
+
+        // 第二个起合成链表：最新的在最前，Dispose 走的就是逆序。
+        var earlier = Lease as AxiosAttemptLeases ?? new AxiosAttemptLeases(Lease, null);
+        return new(in this, new AxiosAttemptLeases(lease, earlier));
+    }
 }

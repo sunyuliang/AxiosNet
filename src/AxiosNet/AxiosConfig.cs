@@ -395,7 +395,7 @@ public sealed partial class AxiosConfig
     /// <summary>这份配置是否已是合并后的生效配置，管线据此跳过二次合并；<see cref="Clone"/> 不继承它。</summary>
     internal bool EffectiveMerged { get; set; }
 
-    /// <summary>这份配置里的实例级选项（WithCredentials / MaxRedirects / Proxy / Credentials / PoolOptions）是实例的生效值，合并时沿用本实例默认值；随 <see cref="Clone"/> 继承。</summary>
+    /// <summary>这份配置里的实例级项（<c>BaseAddress</c> / <c>CancellationToken</c> / 序列化注册表等）已按实例生效值填好，合并时沿用本实例默认值；随 <see cref="Clone"/> 继承。</summary>
     internal bool InstanceOptionsInherited { get; set; }
 
     // 401 重放与凭据解析的按请求状态：默认请求从不触碰，故只在真正用到时才分配。
@@ -571,17 +571,8 @@ public sealed partial class AxiosConfig
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool CancellationTokenSet { get; private set; }
 
-    /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-    internal bool WithCredentialsSet => _transport?.WithCredentialsSet ?? false;
-
-    /// <summary>是否被显式赋值过，用于拒绝「按请求设置实例级选项」。</summary>
-    internal bool MaxRedirectsSet => _transport?.MaxRedirectsSet ?? false;
-
     /// <summary>是否被显式赋值过，用于合并配置时区分「未设置」与「默认值」。</summary>
     internal bool MaxRateSet => _transport?.MaxRateSet ?? false;
-
-    /// <summary>未显式设置 <c>MaxRedirects</c> 时的生效值（与 <see cref="AxiosNet.Pooling.ConnectionPoolOptions"/> 的默认一致）。</summary>
-    internal const int DefaultMaxRedirects = 5;
 
     /// <summary>流式单帧上限的默认值（8 MB），与设为 <c>null</c> 等价。</summary>
     public const int DefaultStreamFrameBytes = 8 * 1024 * 1024;
@@ -634,16 +625,6 @@ public sealed partial class AxiosConfig
     /// <see cref="Clone"/> 不复制它。
     /// </summary>
     public AxiosResponseInfo? Response { get; internal set; }
-
-    /// <summary>清掉实例级选项的「显式赋值过」标记。</summary>
-    internal void ClearInstanceOptionFlags()
-    {
-        if (_transport is not null)
-        {
-            _transport.WithCredentialsSet = false;
-            _transport.MaxRedirectsSet = false;
-        }
-    }
 
     /// <summary>深拷贝（Headers / transform 链 / Params / Data 的字典容器独立；其余引用成员按引用共享）。</summary>
     /// <remarks>克隆一份生效配置（如 <see cref="AxiosResponse.Config"/>）后，它仍是「库产出的配置」：回放时实例级项取自目标实例，改 <c>BaseAddress</c> 之类不会生效。</remarks>

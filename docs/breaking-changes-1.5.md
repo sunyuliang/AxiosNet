@@ -2,6 +2,11 @@
 
 本文是 **1.x → 1.5** 的迁移对照，适用于从 `AxiosNet` 1.4.x 及更早版本升级到 1.5.x 的调用方；内容与 1.5.0 起发布的公共面一致。
 
+> **1.5 之后又变了一次**：下表里指向 `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool`
+> 与 `Resilience.Concurrency.MaxInFlight` / `MaxQueue` 的几项，现已整体移到构造参数 `AxiosClientOptions`
+> （`new AxiosClient(defaults, options)`、`Axios.Create(defaults, options)`、DI 的 `AddAxiosClient(configure, options)`）。
+> 照本表迁移到 1.5 是准确的；迁到更高版本时这些项请看 CHANGELOG 的 Breaking 段。
+
 ## 1.5 破坏性变更
 
 | 1.x | 1.5 |

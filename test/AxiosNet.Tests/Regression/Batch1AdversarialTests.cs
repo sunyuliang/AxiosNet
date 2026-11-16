@@ -44,8 +44,6 @@ public sealed class Batch1AdversarialTests
         Assert.Null(config.RetainedReplayContent);
 
         var concurrency = config.Resilience.Concurrency;
-        Assert.Null(concurrency.MaxInFlight);
-        Assert.Null(concurrency.MaxQueue);
         Assert.Null(concurrency.QueueTimeout);
 
         _ = config.Serialization; // 只创建分组本身，不创建值格式化状态
@@ -92,15 +90,15 @@ public sealed class Batch1AdversarialTests
     }
 
     [Fact]
-    public void WritingNullConcurrency_IsAnExplicitSetting_SoTheHolderExists()
+    public void WritingNullQueueTimeout_IsAnExplicitSetting_SoTheHolderExists()
     {
         var config = new AxiosConfig();
 
-        config.Resilience.Concurrency.MaxInFlight = null;
+        config.Resilience.Concurrency.QueueTimeout = null;
 
-        // 显式 null 代表「关闭实例默认值」，是有语义的写入，必须留下 *Set 标记。
+        // 显式 null 代表「一直等」，是有语义的写入，必须留下 *Set 标记。
         Assert.NotNull(Holder(config, "_concurrencyState"));
-        Assert.Null(config.Resilience.Concurrency.MaxInFlight);
+        Assert.Null(config.Resilience.Concurrency.QueueTimeout);
         Assert.NotNull(config.ResilienceOrNull);
     }
 
@@ -133,25 +131,21 @@ public sealed class Batch1AdversarialTests
     public void Clone_CopiesHoldersAndIsolatesTheirLeaves()
     {
         var source = new AxiosConfig();
-        source.Resilience.Concurrency.MaxInFlight = 3;
-        source.Resilience.Concurrency.MaxQueue = 2;
         source.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(1);
         source.Serialization.QueryEncoder = _ => "a=1";
         source.Serialization.FormFieldName = (prefix, key) => key;
 
         var clone = source.Clone();
 
-        Assert.Equal(3, clone.Resilience.Concurrency.MaxInFlight);
-        Assert.Equal(2, clone.Resilience.Concurrency.MaxQueue);
         Assert.Equal(TimeSpan.FromSeconds(1), clone.Resilience.Concurrency.QueueTimeout);
         Assert.NotNull(clone.Serialization.QueryEncoder);
         Assert.NotNull(clone.Serialization.FormFieldName);
         Assert.NotEqual(ValueTextHolder(source), ValueTextHolder(clone));
 
-        clone.Resilience.Concurrency.MaxInFlight = 9;
+        clone.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(9);
         clone.Serialization.QueryEncoder = _ => "b=2";
 
-        Assert.Equal(3, source.Resilience.Concurrency.MaxInFlight);
+        Assert.Equal(TimeSpan.FromSeconds(1), source.Resilience.Concurrency.QueueTimeout);
         Assert.Equal("a=1", source.Serialization.QueryEncoder!(null));
     }
 
@@ -193,38 +187,6 @@ public sealed class Batch1AdversarialTests
     }
 
     [Fact]
-    public void ConcurrencyResetFrom_NoSourceState_ClearsHolder()
-    {
-        var target = new AxiosConfig();
-        target.Resilience.Concurrency.MaxInFlight = 4;
-        target.Resilience.Concurrency.MaxQueue = 1;
-        target.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(2);
-
-        target.Resilience.Concurrency.ResetFrom(new AxiosConfig());
-
-        Assert.Null(Holder(target, "_concurrencyState"));
-        Assert.Null(target.Resilience.Concurrency.MaxInFlight);
-        Assert.Null(target.Resilience.Concurrency.MaxQueue);
-        Assert.Null(target.Resilience.Concurrency.QueueTimeout);
-        Assert.Null(target.ResilienceOrNull);
-    }
-
-    [Fact]
-    public void ConcurrencyResetFrom_CopiesValuesAndSetFlags()
-    {
-        var source = new AxiosConfig();
-        source.Resilience.Concurrency.MaxInFlight = 7;
-        source.Resilience.Concurrency.MaxQueue = null;
-
-        var target = new AxiosConfig();
-        target.Resilience.Concurrency.ResetFrom(source);
-
-        Assert.Equal(7, target.Resilience.Concurrency.MaxInFlight);
-        Assert.Null(target.Resilience.Concurrency.MaxQueue);
-        Assert.NotNull(target.ResilienceOrNull);
-    }
-
-    [Fact]
     public void CloneOfEffectiveConfig_DoesNotCarryRequestScopedReplayState()
     {
         // 模拟管线里写进去的请求级状态，再按「库产出的配置」克隆：回放时不得复用上一轮的正文。
@@ -243,29 +205,24 @@ public sealed class Batch1AdversarialTests
         Assert.Equal("Bearer tok", clone.ResolvedAuthorization);
     }
 
-    // ─────────────────────── 2. SyncConnectionDefaults 条件回写 ───────────────────────
+    // ─────────────────── 2. 连接层生效值回写到 Options（快照） ───────────────────
 
     [Fact]
-    public void DefaultPool_DoesNotCreateTransportGroup_AndGettersMatchPool()
+    public void DefaultPool_OptionsMatchPool()
     {
         using var client = new AxiosClient(new AxiosConfig());
 
-        // 不回写路径：默认值本来就和池一致，不能再往 Defaults 上挂一个空/满的 Transport 组。
-        Assert.Null(client.Defaults.TransportOrNull);
-        AssertConnectionDefaultsMatchPool(client);
+        AssertOptionsMatchPool(client);
     }
 
     [Fact]
-    public void ExplicitDefaultsRedirects_AreWrittenBackAndFlagsCleared()
+    public void ExplicitOptionsRedirects_AreWrittenBackAndFlagsCleared()
     {
-        var defaults = new AxiosConfig();
-        defaults.Transport.MaxRedirects = 2;
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 2 });
 
-        using var client = new AxiosClient(defaults);
-
-        Assert.False(client.Defaults.MaxRedirectsSet);
-        Assert.Equal(2, client.Defaults.TransportOrNull!.MaxRedirects);
-        AssertConnectionDefaultsMatchPool(client);
+        Assert.False(client.Options.MaxRedirectsSet);
+        Assert.Equal(2, client.Options.MaxRedirects);
+        AssertOptionsMatchPool(client);
         Assert.Equal(2, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
     }
 
@@ -276,10 +233,10 @@ public sealed class Batch1AdversarialTests
             new AxiosConfig(),
             poolOptions: new ConnectionPoolOptions { UseCookies = true, MaxAutomaticRedirections = 7 });
 
-        Assert.True(client.Defaults.Transport.WithCredentials);
-        Assert.False(client.Defaults.TransportOrNull!.WithCredentialsSet);
+        Assert.True(client.Options.WithCredentials);
+        Assert.False(client.Options.WithCredentialsSet);
         Assert.NotNull(client.Pool!.Cookies);
-        AssertConnectionDefaultsMatchPool(client);
+        AssertOptionsMatchPool(client);
     }
 
     [Fact]
@@ -291,9 +248,9 @@ public sealed class Batch1AdversarialTests
 
         using var client = new AxiosClient(new AxiosConfig(), poolOptions: options);
 
-        Assert.Same(proxy, client.Defaults.TransportOrNull!.Proxy);
-        Assert.Same(credentials, client.Defaults.TransportOrNull!.Credentials);
-        AssertConnectionDefaultsMatchPool(client);
+        Assert.Same(proxy, client.Options.Proxy);
+        Assert.Same(credentials, client.Options.Credentials);
+        AssertOptionsMatchPool(client);
     }
 
     [Fact]
@@ -303,8 +260,8 @@ public sealed class Batch1AdversarialTests
             new AxiosConfig(),
             poolOptions: new ConnectionPoolOptions { AllowAutoRedirect = false, MaxAutomaticRedirections = 9 });
 
-        Assert.Equal(0, client.Defaults.TransportOrNull!.MaxRedirects);
-        AssertConnectionDefaultsMatchPool(client);
+        Assert.Equal(0, client.Options.MaxRedirects);
+        AssertOptionsMatchPool(client);
     }
 
     [Fact]
@@ -312,58 +269,24 @@ public sealed class Batch1AdversarialTests
     {
         using var pool = new HttpConnectionPool(
             new ConnectionPoolOptions { UseCookies = true, MaxAutomaticRedirections = 6 });
-        using var client = new AxiosClient(new AxiosConfig(), pool);
+        using var client = new AxiosClient(new AxiosConfig(), pool: pool);
 
-        Assert.Equal(6, client.Defaults.TransportOrNull!.MaxRedirects);
-        Assert.True(client.Defaults.TransportOrNull!.WithCredentials);
-        AssertConnectionDefaultsMatchPool(client);
+        Assert.Equal(6, client.Options.MaxRedirects);
+        Assert.True(client.Options.WithCredentials);
+        AssertOptionsMatchPool(client);
     }
 
     [Fact]
-    public void CustomHandler_NeverCreatesTransportGroup()
+    public void CustomHandler_NeverTouchesOptions()
     {
         using var client = new AxiosClient(new AxiosConfig(), handler: new HttpClientHandler());
 
         Assert.Null(client.Pool);
-        Assert.Null(client.Defaults.TransportOrNull);
-    }
 
-    [Fact]
-    public async Task RecitingEffectiveConnectionValuesPerRequest_IsAccepted()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-
-        using var client = new AxiosClient(
-            new AxiosConfig { BaseAddress = server.Url },
-            poolOptions: new ConnectionPoolOptions { UseCookies = true, MaxAutomaticRedirections = 4 });
-
-        var response = await client.GetAsync(
-            "secure",
-            c =>
-            {
-                c.Transport.MaxRedirects = 4;
-                c.Transport.WithCredentials = true;
-            });
-
-        Assert.Equal(200, response.Status);
-        Assert.Single(server.Received);
-    }
-
-    [Fact]
-    public async Task ConflictingConnectionValuePerRequest_IsRejected()
-    {
-        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
-
-        using var client = new AxiosClient(
-            new AxiosConfig { BaseAddress = server.Url },
-            poolOptions: new ConnectionPoolOptions { UseCookies = true, MaxAutomaticRedirections = 4 });
-
-        var error = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(
-            "secure",
-            c => c.Transport.MaxRedirects = 5));
-
-        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
-        Assert.Empty(server.Received);
+        // 注入 Handler 时连接行为由 Handler 决定：Options 保持库默认值，不回写。
+        Assert.Equal(AxiosClientOptions.DefaultMaxRedirects, client.Options.MaxRedirects);
+        Assert.False(client.Options.WithCredentials);
+        Assert.Null(client.Options.Proxy);
     }
 
     // ─────────────────────────── 3. 单槽位凭据 Transport.Auth ───────────────────────────
@@ -707,8 +630,6 @@ public sealed class Batch1AdversarialTests
             config.RetainBodyContent.ToString(),
             config.RetainedReplayContent is null ? "-" : "content",
             config.ResilienceOrNull is null ? "-" : "resilience",
-            config.Resilience.Concurrency.MaxInFlight?.ToString() ?? "-",
-            config.Resilience.Concurrency.MaxQueue?.ToString() ?? "-",
             config.Resilience.Concurrency.QueueTimeout?.ToString() ?? "-",
             config.Serialization.ValueText is null ? "-" : "valueText",
             config.Serialization.QueryEncoder is null ? "-" : "query",
@@ -716,16 +637,16 @@ public sealed class Batch1AdversarialTests
             config.Serialization.ValueTextSet.ToString(),
         });
 
-    private static void AssertConnectionDefaultsMatchPool(AxiosClient client)
+    /// <summary>Options 里的连接层四项必须等于池的生效值：读到的就是真实行为。</summary>
+    private static void AssertOptionsMatchPool(AxiosClient client)
     {
         var options = client.Pool!.EffectiveOptions;
-        var transport = client.Defaults.TransportOrNull;
 
         var expectedMaxRedirects = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
-        Assert.Equal(expectedMaxRedirects, transport?.MaxRedirects ?? 5);
-        Assert.Equal(options.UseCookies, transport?.WithCredentials ?? false);
-        Assert.Equal(options.Proxy, transport?.Proxy);
-        Assert.Equal(options.Credentials, transport?.Credentials);
+        Assert.Equal(expectedMaxRedirects, client.Options.MaxRedirects);
+        Assert.Equal(options.UseCookies, client.Options.WithCredentials);
+        Assert.Same(options.Proxy, client.Options.Proxy);
+        Assert.Same(options.Credentials, client.Options.Credentials);
     }
 
     private sealed class CountingCoreProvider(AxiosCredential? credential) : IAxiosCredentialProvider

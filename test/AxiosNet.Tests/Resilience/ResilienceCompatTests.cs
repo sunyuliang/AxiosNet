@@ -27,15 +27,16 @@ public sealed class ResilienceCompatTests
     }
 
     [Fact]
-    public void ConcurrencyFacade_ReadsAndWritesTheSameLimitFields()
+    public void ConcurrencyFacade_ReadsAndWritesQueueTimeout()
     {
         var config = new AxiosConfig();
 
-        config.Resilience.Concurrency.MaxInFlight = 4;
-        Assert.Equal(4, config.Resilience.Concurrency.MaxInFlight);
+        // 容量（MaxInFlight / MaxQueue）属实例级选项，配置上只剩按请求可变的排队等待上限。
+        config.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(4);
+        Assert.Equal(TimeSpan.FromSeconds(4), config.Resilience.Concurrency.QueueTimeout);
 
-        config.Resilience.Concurrency.MaxQueue = 16;
-        Assert.Equal(16, config.Resilience.Concurrency.MaxQueue);
+        config.Resilience.Concurrency.QueueTimeout = null;
+        Assert.Null(config.Resilience.Concurrency.QueueTimeout);
     }
 
     [Fact]

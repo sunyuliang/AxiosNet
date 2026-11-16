@@ -39,7 +39,11 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>以 baseAddress 创建自管的 AxiosClient。</summary>
     /// <param name="baseAddress">API 基地址（合并规则与 AxiosNet 的 BaseAddress 一致，请求模型可写绝对 URL 覆盖）。</param>
     /// <param name="configureDefaults">实例默认配置（超时、头、序列化器等），null 表示全默认。</param>
-    public ApiClient(string baseAddress, Action<AxiosConfig>? configureDefaults = null)
+    /// <param name="options">
+    /// 底层客户端的实例级选项（代理 / 凭据 / Cookie / 重定向次数 / 自建池 / 并发容量）：构造期固化，
+    /// 写不进 <paramref name="configureDefaults"/>。
+    /// </param>
+    public ApiClient(string baseAddress, Action<AxiosConfig>? configureDefaults = null, AxiosClientOptions? options = null)
     {
         if (string.IsNullOrWhiteSpace(baseAddress))
         {
@@ -48,7 +52,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
 
         var defaults = new AxiosConfig { BaseAddress = baseAddress };
         configureDefaults?.Invoke(defaults);
-        Axios = new AxiosClient(defaults);
+        Axios = new AxiosClient(defaults, options);
         _ownsAxiosClient = true;
         AxiosClientDeclarativeExtensions.Register(Axios, this);
     }

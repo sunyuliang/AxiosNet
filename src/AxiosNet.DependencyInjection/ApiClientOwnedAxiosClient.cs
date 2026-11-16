@@ -5,9 +5,9 @@ namespace AxiosNet.WebAPI.DependencyInjection;
 /// </summary>
 internal sealed class ApiClientOwnedAxiosClient : IDisposable, IAsyncDisposable
 {
-    public ApiClientOwnedAxiosClient(AxiosConfig defaults)
+    public ApiClientOwnedAxiosClient(AxiosConfig defaults, AxiosClientOptions? options = null)
     {
-        Client = new AxiosClient(defaults);
+        Client = new AxiosClient(defaults, options);
     }
 
     public AxiosClient Client { get; }

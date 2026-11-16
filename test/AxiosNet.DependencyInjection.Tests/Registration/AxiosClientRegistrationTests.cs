@@ -58,6 +58,27 @@ public sealed class AxiosClientRegistrationTests
     }
 
     [Fact]
+    public void AddAxiosClient_Options_AppliedToInstance()
+    {
+        // 实例级七项（代理 / 凭据 / Cookie / 重定向 / 池 / 并发容量）不在 AxiosConfig 上，
+        // 容器里唯一能表达它们的地方就是 options 参数；这条用例钉住「DI 入口没有丢能力」。
+        using var provider = BuildProvider(services => services.AddAxiosClient(
+            configure: config => config.BaseAddress = "https://api.example.com",
+            options: new AxiosClientOptions { WithCredentials = true, MaxRedirects = 0, MaxInFlight = 3, MaxQueue = 1 }));
+
+        var client = provider.GetRequiredService<AxiosClient>();
+
+        Assert.True(client.Options.WithCredentials);
+        Assert.Equal(0, client.Options.MaxRedirects);
+        Assert.Equal(3, client.Options.MaxInFlight);
+        Assert.Equal(1, client.Options.MaxQueue);
+
+        // 真的落到资源上，而不只是回写到快照里
+        Assert.True(client.Pool!.Options.UseCookies);
+        Assert.False(client.Pool.Options.AllowAutoRedirect);
+    }
+
+    [Fact]
     public async Task AddAxiosClient_ResolvedClient_SendsRequestsAgainstServer()
     {
         await using var server = TestHttpServer.Start(_ =>

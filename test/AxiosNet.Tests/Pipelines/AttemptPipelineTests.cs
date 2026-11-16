@@ -200,9 +200,7 @@ public sealed class AttemptPipelineTests
 
         var with = new ConcurrentQueue<IDisposable?>();
         using (var client = new AxiosClient(
-                   new AxiosConfig {
-            Resilience = { Concurrency = {  MaxInFlight = 4  } }
-        },
+                   options: new AxiosClientOptions { MaxInFlight = 4 },
                    pipeline: AxiosAttemptPipeline.Default.Append(SlotRecorder(with))))
         {
             await client.GetAsync(server.Url + "x");
@@ -218,7 +216,7 @@ public sealed class AttemptPipelineTests
     private static AxiosAttemptMiddleware SlotRecorder(ConcurrentQueue<IDisposable?> slots)
         => next => async (request, ctx) =>
         {
-            slots.Enqueue(ctx.Slot);
+            slots.Enqueue(ctx.Lease);
             return await next(request, ctx);
         };
 
@@ -231,7 +229,7 @@ public sealed class AttemptPipelineTests
         var pipeline = AxiosAttemptPipeline.Default.Append(_ => (request, ctx) =>
             new ValueTask<AxiosAttemptResult>(new AxiosAttemptResult(new AxiosResponse { Status = 204, Data = "stub" })));
 
-        using var client = new AxiosClient(Limited(1), pipeline: pipeline);
+        using var client = new AxiosClient(QueueWait(), Concurrency(1), pipeline: pipeline);
 
         Assert.Equal(204, (await client.GetAsync(server.Url + "a")).Status);
 
@@ -257,7 +255,7 @@ public sealed class AttemptPipelineTests
             return next(request, ctx);
         });
 
-        using var client = new AxiosClient(Limited(1), pipeline: pipeline);
+        using var client = new AxiosClient(QueueWait(), Concurrency(1), pipeline: pipeline);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(server.Url + "a"));
 
@@ -273,7 +271,7 @@ public sealed class AttemptPipelineTests
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
-        using var client = new AxiosClient(Limited(1));
+        using var client = new AxiosClient(QueueWait(), Concurrency(1));
 
         var streamed = await client.GetAsync(server.Url + "a", c => c.ResponseType = ResponseType.Stream);
         var body = (Stream)streamed.Data!;
@@ -303,7 +301,7 @@ public sealed class AttemptPipelineTests
             return new AxiosAttemptResult(replaced, attempt.StreamOwner);
         });
 
-        using var client = new AxiosClient(Limited(1), pipeline: pipeline);
+        using var client = new AxiosClient(QueueWait(), Concurrency(1), pipeline: pipeline);
 
         var streamed = await client.GetAsync(server.Url + "a", c => c.ResponseType = ResponseType.Stream);
         var body = (Stream)streamed.Data!;
@@ -331,7 +329,7 @@ public sealed class AttemptPipelineTests
                 new AxiosResponse { Status = 204, Data = owner },
                 owner)));
 
-        using var client = new AxiosClient(Limited(1), pipeline: pipeline);
+        using var client = new AxiosClient(QueueWait(), Concurrency(1), pipeline: pipeline);
 
         Assert.Equal(204, (await client.GetAsync(server.Url + "a")).Status);
 
@@ -373,10 +371,14 @@ public sealed class AttemptPipelineTests
         Assert.Equal(CancellationToken.None, insideExternal);
     }
 
-    private static AxiosConfig Limited(int maxConcurrency) => new()
+    /// <summary>排队等待上限 300ms（按请求项，留在配置上）。</summary>
+    private static AxiosConfig QueueWait() => new()
     {
-        Resilience = { Concurrency = { MaxInFlight = maxConcurrency, QueueTimeout = TimeSpan.FromMilliseconds(300) } }
+        Resilience = { Concurrency = { QueueTimeout = TimeSpan.FromMilliseconds(300) } }
     };
+
+    /// <summary>实例级并发容量：构造期固化，按请求改不了。</summary>
+    private static AxiosClientOptions Concurrency(int maxConcurrency) => new() { MaxInFlight = maxConcurrency };
 
     // ------------------------------------------------------------------
     // 编排校验
@@ -576,8 +578,8 @@ public sealed class AttemptPipelineTests
 
         using var client = new AxiosClient(new AxiosConfig
         {
-            Resilience = { Retry = { Policy = policy }, Concurrency = { MaxInFlight = 1, QueueTimeout = TimeSpan.FromMilliseconds(200) } }
-        });
+            Resilience = { Retry = { Policy = policy }, Concurrency = { QueueTimeout = TimeSpan.FromMilliseconds(200) } }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var holding = client.GetAsync(server.Url + "hold");
         await WaitUntilAsync(() => server.Received.Count >= 1, "第一条请求占住槽位");

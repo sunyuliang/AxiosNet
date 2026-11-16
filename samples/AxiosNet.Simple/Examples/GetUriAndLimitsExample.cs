@@ -2,7 +2,7 @@ using AxiosNet;
 
 namespace AxiosNet.Simple.Examples;
 
-/// <summary>15. P0 能力：getUri 预览、Limits.MaxResponseBytes 拦截超大响应、Transport.MaxRedirects = 0 不跟随重定向。</summary>
+/// <summary>15. P0 能力：getUri 预览、Limits.MaxResponseBytes 拦截超大响应、AxiosClientOptions.MaxRedirects = 0 不跟随重定向。</summary>
 public sealed class GetUriAndLimitsExample : IExample
 {
     /// <summary>1 MB 上限的专用客户端：配置固定，首次运行创建后跨运行复用。</summary>
@@ -13,9 +13,9 @@ public sealed class GetUriAndLimitsExample : IExample
 
     public int Number => 15;
 
-    public string Title => "getUri 预览 / Limits.MaxResponseBytes / Transport.MaxRedirects = 0";
+    public string Title => "getUri 预览 / Limits.MaxResponseBytes / AxiosClientOptions.MaxRedirects = 0";
 
-    /// <summary>示例入口：getUri 预览 / Limits.MaxResponseBytes / Transport.MaxRedirects = 0。</summary>
+    /// <summary>示例入口：getUri 预览 / Limits.MaxResponseBytes / AxiosClientOptions.MaxRedirects = 0。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         SampleConsole.Section(Number, Title);
@@ -46,12 +46,10 @@ public sealed class GetUriAndLimitsExample : IExample
             Console.WriteLine($"  大响应被拦截: code={ex.Code}, message={ex.Message}");
         }
 
-        // 3) Transport.MaxRedirects = 0：不跟随重定向（实例级配置，构造时就固定）
-        var noRedirect = _noRedirect ??= new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = context.BaseUrl,
-            Transport = new() { MaxRedirects = 0 }
-        });
+        // 3) AxiosClientOptions.MaxRedirects = 0：不跟随重定向（实例级选项，构造时就固定）
+        var noRedirect = _noRedirect ??= new AxiosClient(
+            new AxiosConfig { BaseAddress = context.BaseUrl },
+            new AxiosClientOptions { MaxRedirects = 0 });
 
         try
         {
@@ -63,7 +61,7 @@ public sealed class GetUriAndLimitsExample : IExample
             Console.WriteLine($"  未跟随重定向: status={ex.Status}, location={ex.Response?.GetHeader("Location")}, code={ex.Code}");
         }
 
-        // 4) 对照：默认 Transport.MaxRedirects = 5，会跟到 /users/1
+        // 4) 对照：默认 MaxRedirects = 5，会跟到 /users/1
         var followed = await http.GetAsync<string>("redirect", c => c.ResponseType = ResponseType.Text);
         Console.WriteLine($"  默认跟随重定向: status={followed.Status}");
     }

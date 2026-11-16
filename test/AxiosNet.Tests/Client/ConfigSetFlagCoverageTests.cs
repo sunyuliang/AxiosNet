@@ -57,9 +57,6 @@ public sealed class ConfigSetFlagCoverageTests
         ["SerializationSettings.FormFieldName"] = "委托：非空即整块替换",
         ["SerializationSettings.TransformRequest"] = "转换链：按 TransformRequestCount / TransformInheritedRequest 计长度，不用标记",
         ["SerializationSettings.TransformResponse"] = "转换链：按 TransformResponseCount / TransformInheritedResponse 计长度，不用标记",
-        ["TransportSettings.Proxy"] = "代理对象：靠引用为空判断（MergeConfig 注释已声明），整块替换",
-        ["TransportSettings.Credentials"] = "凭据对象：靠引用为空判断（MergeConfig 注释已声明），整块替换",
-        ["TransportSettings.Pool"] = "连接池对象：非空即整块替换"
     };
 
     /// <summary>反射遍历整个配置面（<see cref="AxiosConfig"/> 及其递归嵌套的公共设置类）。</summary>
@@ -166,7 +163,7 @@ public sealed class ConfigSetFlagCoverageTests
 
         foreach (var type in ConfigSurface())
         {
-            // 两级查找：门面委托型属性（如 ConcurrencySettings.MaxInFlight）的标记声明在根配置上，
+            // 两级查找：门面委托型属性（如 ConcurrencySettings.QueueTimeout）的标记声明在根配置上，
             // 不查根就全成了「缺标记」。
             var flags = type == typeof(AxiosConfig)
                 ? SetFlags(type)

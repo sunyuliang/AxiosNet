@@ -391,8 +391,8 @@ public sealed class CompatIntegrationTests
         });
         server.ExtraResponseHeaders = "Location: /next\r\n";
 
-        // MaxRedirects 是实例级选项（建池时固化），只能写在实例默认值上。
-        using var client = new AxiosClient(new AxiosConfig { Transport = { MaxRedirects = 2 } });
+        // MaxRedirects 是实例级选项（建池时固化），只能写在 AxiosClientOptions 上。
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 2 });
 
         var error = await Record.ExceptionAsync(() => client.GetAsync(server.Url + "loop"));
 

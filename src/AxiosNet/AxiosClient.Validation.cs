@@ -9,30 +9,22 @@ namespace AxiosNet;
 // AxiosClient 的构造期与按请求校验：连接级选项、限制范围、并发闸门、HTTP/3。
 public sealed partial class AxiosClient
 {
-    /// <summary>连接级选项无法按 defaults 生效时的构造期校验（注入 handler / 共享池共用）。</summary>
-    private static void ValidateConnectionLevelOptions(
-        AxiosConfig? defaults,
-        AxiosConfig config,
-        ConnectionLevelMessages messages)
+    /// <summary>连接级选项无法按 <paramref name="options"/> 生效时的构造期校验（注入 handler / 共享池共用）。</summary>
+    private static void ValidateConnectionLevelOptions(AxiosClientOptions options, ConnectionLevelMessages messages)
     {
-        if (defaults is null)
+        if (options.MaxRedirectsSet)
         {
-            return;
+            throw AxiosException.InvalidOption(messages.MaxRedirects);
         }
 
-        if (defaults.MaxRedirectsSet)
+        if (options.WithCredentialsSet)
         {
-            throw AxiosException.InvalidOption(messages.MaxRedirects, config);
+            throw AxiosException.InvalidOption(messages.WithCredentials);
         }
 
-        if (defaults.WithCredentialsSet)
+        if (options.Proxy is not null || options.Credentials is not null)
         {
-            throw AxiosException.InvalidOption(messages.WithCredentials, config);
-        }
-
-        if (defaults.TransportOrNull?.Proxy is not null || defaults.TransportOrNull?.Credentials is not null)
-        {
-            throw AxiosException.InvalidOption(messages.ProxyCredentials, config);
+            throw AxiosException.InvalidOption(messages.ProxyCredentials);
         }
     }
 
@@ -50,13 +42,13 @@ public sealed partial class AxiosClient
 
         /// <summary>共享连接池：连接级选项由池决定。</summary>
         public static ConnectionLevelMessages SharedPool { get; } = new(
-            "共享连接池时 MaxRedirects 由池决定（重定向由各 origin 的 Handler 处理），"
+            "共享连接池时不能设 AxiosClientOptions.MaxRedirects（重定向由各 origin 的 Handler 处理），"
             + "请在创建 ConnectionPoolOptions 时设置 AllowAutoRedirect / MaxAutomaticRedirections，"
             + "或不传 pool 让本实例自建池。",
-            "共享连接池时 WithCredentials 由池决定（Cookie 容器在连接层），"
+            "共享连接池时不能设 AxiosClientOptions.WithCredentials（Cookie 容器在连接层），"
             + "请在创建 ConnectionPoolOptions 时设置 UseCookies / Credentials，"
             + "或不传 pool 让本实例自建池。",
-            "共享连接池时 Proxy / Credentials 由池决定，"
+            "共享连接池时不能设 AxiosClientOptions.Proxy / Credentials，"
             + "请在 ConnectionPoolOptions.Proxy / Credentials 上设置，或不传 pool 让本实例自建池。");
     }
 
@@ -171,22 +163,8 @@ public sealed partial class AxiosClient
             throw AxiosException.InvalidOption($"Limits.MaxRequestBytes 不能为负（当前 {limits.MaxRequestBytes}）：不限制请设为 null。", config);
         }
 
-        // 并发上限：0 与负数都没有语义，一律报错。
-        if (config.ResilienceOrNull?.Concurrency.MaxInFlight is int maxConcurrency && maxConcurrency < 1)
-        {
-            throw AxiosException.InvalidOption(
-                $"Resilience.Concurrency.MaxInFlight 必须是正整数（当前 {maxConcurrency}）：不限制请设为 null，"
-                + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
-        }
-
-        // 排队深度上限：0 与负数都没有语义（「不排队」由 QueueTimeout = Zero 表达）。
-        if (config.ResilienceOrNull?.Concurrency.MaxQueue is int maxQueue && maxQueue < 1)
-        {
-            throw AxiosException.InvalidOption(
-                $"Resilience.Concurrency.MaxQueue 必须是正整数（当前 {maxQueue}）：不限制排队深度请设为 null，"
-                + "要「不排队」请把 QueueTimeout 设为 TimeSpan.Zero。", config);
-        }
-
+        // 并发上限 / 排队深度的取值范围在构造期由 AxiosClientOptions 校验（那是实例级项）；
+        // 这里只剩按请求可变的排队等待时长。
         if (config.ResilienceOrNull?.Concurrency.QueueTimeout is { } queueTimeout && queueTimeout < TimeSpan.Zero)
         {
             throw AxiosException.InvalidOption($"Resilience.Concurrency.QueueTimeout 不能为负（当前 {queueTimeout}）：要不排队请设为 TimeSpan.Zero，要一直等请设为 null。", config);
@@ -437,106 +415,35 @@ public sealed partial class AxiosClient
         return Interlocked.CompareExchange(ref _failoverHealth, created, null) ?? created;
     }
 
-    /// <summary>解析（必要时懒创建）本实例的并发闸门：容量在创建时固定，本次生效上限与已建闸门不一致就报错；本次没要求上限时沿用已有闸门（没有则不建），排队上限只有显式写过（*Set）才参与比较。</summary>
-    private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
+    /// <summary>
+    /// 解析（必要时懒创建）本实例的并发闸门：容量取构造期的 <see cref="AxiosClientOptions.MaxInFlight"/>，
+    /// 创建后固定；没配在途上限就不建闸门（默认请求零分配）。
+    /// </summary>
+    private ConcurrencyGate? ResolveConcurrencyGate()
     {
-        // 直接读内部存储，不经过 ResilienceOrNull + Concurrency 两个门面：那会为配了并发的
-        // 每一条请求多分配两个对象，而这里只是取三个值。
-        config.ReadConcurrency(out var requested, out var requestedQueue, out var queueStated);
         var existing = Volatile.Read(ref _gate);
-
         if (existing is not null)
         {
-            if (requested is int value && value != existing.MaxConcurrency)
-            {
-                throw ConcurrencyMismatch(config, value, existing.MaxConcurrency);
-            }
-
-            if (queueStated && requestedQueue != existing.MaxQueue)
-            {
-                throw QueueMismatch(config, requestedQueue, existing.MaxQueue);
-            }
-
             return existing;
         }
 
-        if (requested is not int limit)
+        if (Options.MaxInFlight is not int limit)
         {
             return null;
         }
 
-        var created = new ConcurrencyGate(limit, requestedQueue);
+        var created = new ConcurrencyGate(limit, Options.MaxQueue);
 
-        // 并发首请求：输的一方用赢家的闸门，容量不同则报错。
-        var winner = Interlocked.CompareExchange(ref _gate, created, null);
-        if (winner is null)
-        {
-            return created;
-        }
-
-        if (winner.MaxConcurrency != limit)
-        {
-            throw ConcurrencyMismatch(config, limit, winner.MaxConcurrency);
-        }
-
-        if (queueStated && winner.MaxQueue != requestedQueue)
-        {
-            throw QueueMismatch(config, requestedQueue, winner.MaxQueue);
-        }
-
-        return winner;
+        // 并发首请求：输的一方用赢家的闸门（容量对所有人都一样，不存在不一致）。
+        return Interlocked.CompareExchange(ref _gate, created, null) ?? created;
     }
 
-    /// <summary>并发上限与已建闸门不一致时的报错：讲清这是实例级配置、按请求写不会生效。</summary>
-    private static AxiosException ConcurrencyMismatch(AxiosConfig config, int requested, int effective)
-    {
-        return AxiosException.InvalidOption(
-            $"Resilience.Concurrency.MaxInFlight 是实例级配置（并发闸门在首个受限请求时创建并固定为 {effective}），"
-            + $"本次生效配置要求 {requested}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
-            + "要改变上限请新建 AxiosClient 并在 defaults 上设置。",
-            config);
-    }
-
-    /// <summary>排队上限与已建闸门不一致时的报错（null 在消息里显示为「不限」）。</summary>
-    private static AxiosException QueueMismatch(AxiosConfig config, int? requested, int? effective)
-    {
-        static string Text(int? value) => value is int v ? v.ToString() : "null（不限）";
-
-        return AxiosException.InvalidOption(
-            $"Resilience.Concurrency.MaxQueue 是实例级配置（排队上限与并发闸门一起在首个受限请求时创建并固定为 {Text(effective)}），"
-            + $"本次生效配置要求 {Text(requested)}。按请求写不同的值不会生效，构造之后改 Defaults 也不会重建闸门；"
-            + "要改变排队上限请新建 AxiosClient 并在 defaults 上设置。",
-            config);
-    }
-
-    /// <summary>实例级选项（Proxy / Credentials / PoolOptions / WithCredentials / MaxRedirects）在构造池时已固定：按请求复述实例的等价设置放行，写入别的值报错（WithCredentials / MaxRedirects 按值比，其余按引用比）。</summary>
+    /// <summary>
+    /// 按请求可变的传输项守卫：代理 / 凭据 / Cookie / 重定向次数 / 连接池都是实例级选项（<see cref="AxiosClient.Options"/>），
+    /// 已经不在这份配置上，写不进去；这里只剩「凭据来源与 Authorization 头互斥」与「传输档必须已登记」两条。
+    /// </summary>
     private void ValidatePerRequestOptions(AxiosConfig config)
     {
-        var requested = config.TransportOrNull;
-        var defaultsTransport = Defaults.TransportOrNull;
-
-        if (requested?.Proxy is not null && !ReferenceEquals(requested.Proxy, defaultsTransport?.Proxy))
-        {
-            throw AxiosException.InvalidOption(
-                "Proxy 是实例级配置（连接池在构造 AxiosClient 时创建），请改用 new AxiosClient(new AxiosConfig { Transport = new() { Proxy = ... } }) "
-                + "或 ConnectionPoolOptions.Proxy。", config);
-        }
-
-        if (requested?.Credentials is not null && !ReferenceEquals(requested.Credentials, defaultsTransport?.Credentials))
-        {
-            throw AxiosException.InvalidOption("Credentials 是实例级配置，请在 AxiosClient 的 defaults 或 ConnectionPoolOptions 上设置。", config);
-        }
-
-        // 池在构造时已建好，按请求改它一律报错。
-        if (requested?.Pool is not null && !ReferenceEquals(requested.Pool, defaultsTransport?.Pool))
-        {
-            throw AxiosException.InvalidOption(
-                "Pool 是实例级配置（连接池在构造 AxiosClient 时创建），"
-                + "请通过 AxiosClient 构造参数或 defaults.Transport.Pool 设置。", config);
-        }
-
-        ValidateWithCredentials(config);
-        ValidateMaxRedirects(config);
         ValidateProfileTransport(config);
         ValidateCredentialConflict(config);
     }
@@ -585,82 +492,5 @@ public sealed partial class AxiosClient
         throw AxiosException.InvalidOption(
             $"选中命名传输档 '{profile}' 后，实际连接只使用该档的出口设置，默认档的 Proxy / Credentials 不会生效。"
             + "请把出口设置配置到该档（ConnectionPoolOptions.AddTransport），或去掉 Profile 使用默认档。", config);
-    }
-
-    /// <summary>
-    /// <c>WithCredentials</c> 只允许复述实例生效值；注入自定义 Handler 时只要写就报错。
-    /// 生效值取池的 <see cref="ConnectionPoolOptions.UseCookies"/>。
-    /// </summary>
-    private void ValidateWithCredentials(AxiosConfig config)
-    {
-        if (_customClient is not null)
-        {
-            if (config.WithCredentialsSet)
-            {
-                throw AxiosException.InvalidOption(
-                    "注入自定义 handler 时 WithCredentials 完全由 handler 决定（Cookie 容器在连接层），"
-                    + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", config);
-            }
-
-            return;
-        }
-
-        // 本次没写这一项直接放行。
-        if (!config.WithCredentialsSet)
-        {
-            return;
-        }
-
-        var requestedValue = config.TransportOrNull?.WithCredentials ?? false;
-
-        // 生效值按本次请求选中的传输档判：每个档各有自己的 Cookie 容器（命名档不继承默认档的 WithCredentials）。
-        var effective = _pool!.GetCookies(config.ProfileOrNull) is not null;
-
-        if (requestedValue == effective)
-        {
-            return;
-        }
-
-        throw AxiosException.InvalidOption(
-            $"WithCredentials 是实例级配置（影响 Cookie 容器与系统凭据），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {requestedValue}，实例生效值为 {effective}。"
-            + "要改变它请新建 AxiosClient 并在 defaults 上设置。", config);
-    }
-
-    /// <summary><c>MaxRedirects</c> 只允许写与实例生效值相同的值；生效值取池的实际策略（<c>AllowAutoRedirect = false</c> 时视为 0）。</summary>
-    private void ValidateMaxRedirects(AxiosConfig config)
-    {
-        if (_customClient is not null)
-        {
-            if (config.MaxRedirectsSet)
-            {
-                throw AxiosException.InvalidOption(
-                    "注入自定义 handler 时 MaxRedirects 由 handler 决定（重定向在连接层处理），"
-                    + "本库无法判断按请求写的值与实际行为是否等价，请在 handler 上配置。", config);
-            }
-
-            return;
-        }
-
-        // 未显式写过直接放行。
-        if (!config.MaxRedirectsSet)
-        {
-            return;
-        }
-
-        var options = _pool!.EffectiveOptions;
-        var effective = options.AllowAutoRedirect ? options.MaxAutomaticRedirections : 0;
-
-        var requestedMaxRedirects = config.TransportOrNull?.MaxRedirects ?? AxiosConfig.DefaultMaxRedirects;
-
-        if (requestedMaxRedirects == effective)
-        {
-            return;
-        }
-
-        throw AxiosException.InvalidOption(
-            $"MaxRedirects 是实例级配置（重定向由连接池 Handler 处理），按请求只能写与实例相同的值；"
-            + $"当前按请求为 {requestedMaxRedirects}，实例生效值为 {effective}（0 表示不跟随重定向）。"
-            + "要改变它请新建 AxiosClient 并在 defaults 或 ConnectionPoolOptions 上设置。", config);
     }
 }

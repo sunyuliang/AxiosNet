@@ -22,11 +22,9 @@ public sealed class QueueBackpressureExample : IExample
         SampleConsole.Section(Number, Title);
 
         // 2 个在途名额 + 1 个排队位：同时来 4 条慢请求 —— 2 条在跑、1 条排队、1 条被拒
-        var capped = _capped ??= new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = context.BaseUrl,
-            Resilience = { Concurrency = {  MaxInFlight = 2, MaxQueue = 1  } }
-        });
+        var capped = _capped ??= new AxiosClient(
+            new AxiosConfig { BaseAddress = context.BaseUrl },
+            new AxiosClientOptions { MaxInFlight = 2, MaxQueue = 1 });
 
         Console.WriteLine("  闸门: MaxInFlight = 2, MaxQueue = 1，同时发起 4 条 400ms 的请求");
 
@@ -42,11 +40,9 @@ public sealed class QueueBackpressureExample : IExample
         Console.WriteLine($"  总耗时 {stopwatch.ElapsedMilliseconds}ms（两批 400ms 串行执行）");
 
         // 对照：不设 MaxQueue（null = 不限排队深度）时，同样 4 条都排进队列，全部成功
-        var unlimitedQueue = _unlimitedQueue ??= new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = context.BaseUrl,
-            Resilience = { Concurrency = {  MaxInFlight = 2  } }
-        });
+        var unlimitedQueue = _unlimitedQueue ??= new AxiosClient(
+            new AxiosConfig { BaseAddress = context.BaseUrl },
+            new AxiosClientOptions { MaxInFlight = 2 });
 
         var relaxed = await Task.WhenAll(Enumerable.Range(1, 4).Select(async _ =>
         {
@@ -56,7 +52,7 @@ public sealed class QueueBackpressureExample : IExample
 
         Console.WriteLine($"  对照（MaxQueue = null）: 4 条全部成功，status = {string.Join(",", relaxed)}");
         Console.WriteLine("  说明: 被拒的请求没有发出去，也不回退到备用端点 —— 它是「入口太挤」，换端点解决不了；调用方应退避后重试");
-        Console.WriteLine("  说明: MaxQueue 与 MaxInFlight 一起在首个受限请求时固化，构造之后改 Defaults 不会重建闸门");
+        Console.WriteLine("  说明: MaxInFlight / MaxQueue 是实例级选项（AxiosClientOptions），构造期固化 —— 写不到单次请求上");
         Console.WriteLine("  说明: 想让请求「不排队」用 QueueTimeout = TimeSpan.Zero（报 ERR_QUEUE_TIMEOUT）；排队等待计入 TotalTimeout，不计入 Timeout");
 
         async Task<string> RunOneAsync(int i)

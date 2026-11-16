@@ -46,14 +46,11 @@ public sealed class ConfigMergeCoverageTests
     private static readonly Dictionary<string, string> Exempt = new(StringComparer.Ordinal)
     {
         // 对象型容器：合并层按「非空即整块替换」处理，没有逐叶子标记可搬。
-        ["TransportSettings.Proxy"] = "代理对象：整块替换，靠引用为空判断",
-        ["TransportSettings.Credentials"] = "凭据对象：整块替换，靠引用为空判断",
-        ["TransportSettings.Pool"] = "连接池对象：非空即整块替换",
         ["SerializationSettings.JsonOptions"] = "序列化器选项对象：非空即整块替换",
         ["SerializationSettings.BodySerializers"] = "序列化器表：整体替换（表内按内容协商选择）",
         ["TransportSettings.Auth"] = "凭据四选一：标记由 AxiosCredential 自身承载，合并走 TryCopyFrom",
-        ["TransportSettings.HttpVersion"] = "由 MergeConfig 显式按 *Set 合并（AxiosClient.Config.cs:198/203）；端到端行为见 Connectivity/HttpVersionTests，MergeFrom 只补其余项",
-        ["TransportSettings.VersionPolicy"] = "由 MergeConfig 显式按 *Set 合并（AxiosClient.Config.cs:198/203）；端到端行为见 Connectivity/HttpVersionTests，MergeFrom 只补其余项",
+        ["TransportSettings.HttpVersion"] = "由 MergeConfig 显式按 *Set 合并（AxiosClient.Config.cs:188/193）；端到端行为见 Connectivity/HttpVersionTests，MergeFrom 只补其余项",
+        ["TransportSettings.VersionPolicy"] = "由 MergeConfig 显式按 *Set 合并（AxiosClient.Config.cs:188/193）；端到端行为见 Connectivity/HttpVersionTests，MergeFrom 只补其余项",
         ["FailoverSettings.Endpoints"] = "端点表：不可变快照，与 EndpointsSet 一起搬",
         ["SerializationSettings.ValueText"] = "实例级项：按请求写它会抛 ERR_BAD_OPTION_VALUE，合并层不搬运（见 README「值格式化」）",
         ["SerializationSettings.TransformRequest"] = "转换链：按 TransformRequestCount / TransformInheritedRequest 计长度，不用标记",
@@ -345,25 +342,21 @@ public sealed class ConfigMergeCoverageTests
     }
 
     /// <summary>
-    /// 并发三项单独按「值」验证：它们的标记写在根配置的私有懒分配状态里，
-    /// 新建配置时那个状态对象还不存在（正是这三项「默认请求不付这几十字节」的实现方式），
+    /// 排队等待上限单独按「值」验证：它的标记写在根配置的私有懒分配状态里，
+    /// 新建配置时那个状态对象还不存在（正是「默认请求不付这几十字节」的实现方式），
     /// 因此没法像其他叶子那样只翻标记。这里用合法值走一遍真实合并。
     /// </summary>
     [Fact]
-    public void ConcurrencyLeaves_AreCarriedOverByMergeFrom()
+    public void QueueTimeoutLeaf_IsCarriedOverByMergeFrom()
     {
         var source = new AxiosConfig();
-        source.Resilience.Concurrency.MaxInFlight = 4;
-        source.Resilience.Concurrency.MaxQueue = 8;
         source.Resilience.Concurrency.QueueTimeout = TimeSpan.FromSeconds(2);
 
         var target = new AxiosConfig();
-        Assert.Null(target.Resilience.Concurrency.MaxInFlight);
+        Assert.Null(target.Resilience.Concurrency.QueueTimeout);
 
         target.Resilience.MergeFrom(source.Resilience);
 
-        Assert.Equal(4, target.Resilience.Concurrency.MaxInFlight);
-        Assert.Equal(8, target.Resilience.Concurrency.MaxQueue);
         Assert.Equal(TimeSpan.FromSeconds(2), target.Resilience.Concurrency.QueueTimeout);
     }
 

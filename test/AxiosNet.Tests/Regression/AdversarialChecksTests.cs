@@ -450,8 +450,8 @@ public sealed class AdversarialChecksTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = server.Url,
-            Resilience = { Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.FromMilliseconds(300)  } }
-        });
+            Resilience = { Concurrency = { QueueTimeout = TimeSpan.FromMilliseconds(300) } }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync("first", c =>
             c.Observability.OnSendingRequest = (_, _, _) => throw new InvalidOperationException("boom")));

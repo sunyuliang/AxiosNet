@@ -20,7 +20,8 @@ public static class ApiClientServiceCollectionExtensions
     /// </summary>
     /// <param name="services">服务集合。</param>
     /// <param name="baseAddress">API 基地址（合并规则与 <see cref="AxiosConfig.BaseAddress"/> 一致）。</param>
-    /// <param name="configureDefaults">底层客户端实例默认值（超时、头、序列化器、连接池选项等）。</param>
+    /// <param name="configureDefaults">底层客户端实例默认值（超时、头、序列化器等）。</param>
+    /// <param name="options">底层客户端的实例级选项（代理 / 凭据 / Cookie / 重定向 / 自建池 / 并发容量）：构造期固化，写不进默认值。</param>
     /// <param name="configure">对 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.CredentialProvider"/>）。</param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
@@ -31,6 +32,7 @@ public static class ApiClientServiceCollectionExtensions
         this IServiceCollection services,
         string baseAddress,
         Action<AxiosConfig>? configureDefaults = null,
+        AxiosClientOptions? options = null,
         Action<ApiClient>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -48,7 +50,7 @@ public static class ApiClientServiceCollectionExtensions
         var defaults = new AxiosConfig { BaseAddress = baseAddress };
         configureDefaults?.Invoke(defaults);
 
-        services.TryAdd(ServiceDescriptor.Singleton(typeof(ApiClientOwnedAxiosClient), _ => new ApiClientOwnedAxiosClient(defaults)));
+        services.TryAdd(ServiceDescriptor.Singleton(typeof(ApiClientOwnedAxiosClient), _ => new ApiClientOwnedAxiosClient(defaults, options)));
         services.TryAdd(ServiceDescriptor.Singleton(typeof(ApiClient), sp => ApiClientFactory.Create(sp, sp.GetRequiredService<ApiClientOwnedAxiosClient>().Client, configure)));
         return services;
     }
@@ -59,7 +61,8 @@ public static class ApiClientServiceCollectionExtensions
     /// <param name="services">服务集合。</param>
     /// <param name="name">站点名（区分大小写，同一容器内必须唯一）。</param>
     /// <param name="baseAddress">该站点的 API 基地址（合并规则与 <see cref="AxiosConfig.BaseAddress"/> 一致）。</param>
-    /// <param name="configureDefaults">该站点底层客户端的实例默认值（超时、头、序列化器、连接池选项等）。</param>
+    /// <param name="configureDefaults">该站点底层客户端的实例默认值（超时、头、序列化器等）。</param>
+    /// <param name="options">该站点底层客户端的实例级选项（代理 / 凭据 / Cookie / 重定向 / 自建池 / 并发容量）。</param>
     /// <param name="configure">对该站点 <see cref="ApiClient"/> 自身的配置（典型用法是设置 <see cref="ApiClient.CredentialProvider"/>）。</param>
     /// <returns>原 <paramref name="services"/>，支持链式注册。</returns>
     /// <remarks>
@@ -73,6 +76,7 @@ public static class ApiClientServiceCollectionExtensions
         string name,
         string baseAddress,
         Action<AxiosConfig>? configureDefaults = null,
+        AxiosClientOptions? options = null,
         Action<ApiClient>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -100,7 +104,7 @@ public static class ApiClientServiceCollectionExtensions
 
         // 解析器是各站点客户端的唯一出口（TryAdd：多个站点共用同一个解析器单例）
         services.TryAddSingleton<IApiClientResolver, ApiClientResolver>();
-        services.AddSingleton(new ApiClientDefinition(name, defaults, configure));
+        services.AddSingleton(new ApiClientDefinition(name, defaults, options, configure));
         return services;
     }
 

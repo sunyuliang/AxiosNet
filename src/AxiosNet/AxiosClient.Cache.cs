@@ -104,7 +104,7 @@ public sealed partial class AxiosClient
                 // 总预算已经花完：不准备正文、也不等存储 —— 缓存是加速手段，不能反过来拖住返回。
                 if (TotalTimeoutBudget.IsExhausted(TotalTimeoutBudget.Remaining(deadlineTimestamp)))
                 {
-                    AxiosTelemetry.CacheStoreFailed(config);
+                    AxiosTelemetry.Sink.CacheStoreFailed(config);
                     return;
                 }
 
@@ -120,12 +120,12 @@ public sealed partial class AxiosClient
                     if (await cache.TrySetAsync(
                             key, reply, policy, TotalTimeoutBudget.Remaining(deadlineTimestamp)).ConfigureAwait(false))
                     {
-                        AxiosTelemetry.CacheStored(config);
+                        AxiosTelemetry.Sink.CacheStored(config);
                     }
                     else
                     {
                         // 存储没接住：跟随者别去读一条不存在的条目，自己发。
-                        AxiosTelemetry.CacheStoreFailed(config);
+                        AxiosTelemetry.Sink.CacheStoreFailed(config);
                         reply = null;
                     }
                 }
@@ -134,7 +134,7 @@ public sealed partial class AxiosClient
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // 缓存是加速手段，任何一步出错都只让这次不入缓存。
-            AxiosTelemetry.CacheStoreFailed(config);
+            AxiosTelemetry.Sink.CacheStoreFailed(config);
             reply = null;
         }
         finally
@@ -323,10 +323,15 @@ public sealed partial class AxiosClient
     /// 状态码与正文都取库里的那一份（304 没有正文）；响应拦截器与 <c>validateStatus</c> 看到的都是合并后的响应。
     /// 正文不复制：<see cref="AxiosResponse.RawBodyBuffer"/> 与条目共用同一块内存（重新落库时由 <see cref="TryCreateCacheEntry"/> 按需复制）。
     /// </remarks>
+    /// <param name="message">收到的 304 响应。</param>
+    /// <param name="request">本次请求（写进 <see cref="AxiosResponse.Request"/>）。</param>
+    /// <param name="ctx">本次尝试的上下文。</param>
+    /// <param name="maxRedirects">实例生效的重定向上限，只用于把原因写进异常消息。</param>
     private static AxiosAttemptResult CompleteNotModified(
         HttpResponseMessage message,
         HttpRequestMessage request,
-        in AxiosAttemptContext ctx)
+        in AxiosAttemptContext ctx,
+        int maxRedirects)
     {
         var config = ctx.Config;
         var merged = MergeNotModified(config.RevalidationEntry!, message);
@@ -343,7 +348,7 @@ public sealed partial class AxiosClient
 
         if (!statusAccepted)
         {
-            throw AxiosException.FromResponse(config, request, response, ctx.AttemptNumber);
+            throw AxiosException.FromResponse(config, request, response, maxRedirects, ctx.AttemptNumber);
         }
 
         return new AxiosAttemptResult(response);

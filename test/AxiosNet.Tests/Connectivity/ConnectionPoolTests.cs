@@ -671,45 +671,19 @@ public sealed class ConnectionPoolTests
         using var pool = new HttpConnectionPool();
 
         Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    MaxRedirects = 0,
-                },
-            }, pool: pool));
+            new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 0 }, pool: pool));
         Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    WithCredentials = true,
-                },
-            }, pool: pool));
+            new AxiosClient(options: new AxiosClientOptions { WithCredentials = true }, pool: pool));
         Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    Proxy = new System.Net.WebProxy("http://127.0.0.1:9"),
-                },
-            }, pool: pool));
+            new AxiosClient(
+                options: new AxiosClientOptions { Proxy = new System.Net.WebProxy("http://127.0.0.1:9") },
+                pool: pool));
         Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    Credentials = System.Net.CredentialCache.DefaultCredentials,
-                },
-            }, pool: pool));
+            new AxiosClient(
+                options: new AxiosClientOptions { Credentials = System.Net.CredentialCache.DefaultCredentials },
+                pool: pool));
         Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    Pool = new ConnectionPoolOptions(),
-                },
-            }, pool: pool));
+            new AxiosClient(options: new AxiosClientOptions { Pool = new ConnectionPoolOptions() }, pool: pool));
     }
 
     [Fact]
@@ -730,13 +704,7 @@ public sealed class ConnectionPoolTests
         using var pool = new HttpConnectionPool();
 
         var ex = Assert.Throws<AxiosException>(() =>
-            new AxiosClient(new AxiosConfig
-            {
-                Transport = new()
-                {
-                    MaxRedirects = 0,
-                },
-            }, pool: pool));
+            new AxiosClient(options: new AxiosClientOptions { MaxRedirects = 0 }, pool: pool));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("MaxRedirects", ex.Message);
@@ -883,13 +851,7 @@ public sealed class ConnectionPoolTests
     [Fact]
     public void WithCredentials_EnablesCookiesAndDefaultCredentialsOnPool()
     {
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            Transport = new()
-            {
-                WithCredentials = true,
-            },
-        });
+        using var client = new AxiosClient(options: new AxiosClientOptions { WithCredentials = true });
 
         Assert.True(client.Pool!.Options.UseCookies);
         Assert.NotNull(client.Pool.Options.Credentials);

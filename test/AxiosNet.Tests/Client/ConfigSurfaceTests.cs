@@ -83,22 +83,18 @@ public sealed class ConfigSurfaceTests
             {
                 Concurrency =
                 {
-                    MaxInFlight = 3,
-                    MaxQueue = 7,
                     QueueTimeout = TimeSpan.FromMilliseconds(250)
                 }
             }
         };
 
-        Assert.Equal(3, config.Resilience.Concurrency.MaxInFlight);
-        Assert.Equal(7, config.Resilience.Concurrency.MaxQueue);
         Assert.Equal(TimeSpan.FromMilliseconds(250), config.Resilience.Concurrency.QueueTimeout);
 
-        // 并发三项不再借 Limits 存储：没碰 Limits 时它保持未设置。
+        // 并发项不借 Limits 存储：没碰 Limits 时它保持未设置。
         Assert.Null(config.LimitsOrNull);
 
-        config.Resilience.Concurrency.MaxInFlight = 5;
-        Assert.Equal(5, config.Resilience.Concurrency.MaxInFlight);
+        config.Resilience.Concurrency.QueueTimeout = TimeSpan.FromMilliseconds(500);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), config.Resilience.Concurrency.QueueTimeout);
     }
 
     [Fact]

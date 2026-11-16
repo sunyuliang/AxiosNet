@@ -50,7 +50,7 @@ public sealed class AxiosFacadeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var pool = new HttpConnectionPool();
 
-        using var client = Axios.Create(new AxiosConfig(), pool);
+        using var client = Axios.Create(new AxiosConfig(), pool: pool);
 
         Assert.Same(pool, client.Pool);
         var response = await client.GetAsync(server.Url + "x");
@@ -64,7 +64,7 @@ public sealed class AxiosFacadeTests
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var pool = new HttpConnectionPool();
 
-        using var client = Axios.Create(c => c.BaseAddress = server.Url, pool);
+        using var client = Axios.Create(c => c.BaseAddress = server.Url, pool: pool);
 
         Assert.Same(pool, client.Pool);
         var response = await client.GetAsync("x");

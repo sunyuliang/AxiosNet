@@ -37,6 +37,24 @@ public sealed class NamedApiClientRegistrationTests
     }
 
     [Fact]
+    public void AddApiClient_NamedSite_Options_AppliedPerSite()
+    {
+        // 站点级 options 必须跟着站点走：a 开 Cookie、b 不开，互不影响。
+        using var provider = BuildProvider(services =>
+        {
+            services.AddApiClient("a", "https://a.example.com", options: new AxiosClientOptions { WithCredentials = true });
+            services.AddApiClient("b", "https://b.example.com");
+        });
+
+        var resolver = provider.GetRequiredService<IApiClientResolver>();
+
+        Assert.True(resolver.Get("a").Axios.Options.WithCredentials);
+        Assert.True(resolver.Get("a").Axios.Pool!.Options.UseCookies);
+        Assert.False(resolver.Get("b").Axios.Options.WithCredentials);
+        Assert.False(resolver.Get("b").Axios.Pool!.Options.UseCookies);
+    }
+
+    [Fact]
     public void AddApiClient_Named_ConfigureThrows_PropagatesWithoutCorruptingOtherSites()
     {
         using var provider = BuildProvider(services =>

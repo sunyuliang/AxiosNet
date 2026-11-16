@@ -290,25 +290,25 @@ internal sealed class TimeoutStream : DelegatingStream
 }
 
 /// <summary>
-/// 流式响应的所有权包装：把连接池租约、<see cref="HttpResponseMessage"/> 与并发槽位的生命周期
-/// 绑定到调用方手里的响应流上，流 Dispose 时一并释放。
+/// 流式响应的所有权包装：把连接池租约、<see cref="HttpResponseMessage"/> 与上下文里登记的跨终端租约
+/// （并发槽位等）的生命周期绑定到调用方手里的响应流上，流 Dispose 时一并释放。
 /// 注入自定义 Handler 的实例没有租约，<c>lease</c> 传 <c>null</c>。
 /// </summary>
 internal sealed class ResponseStreamOwner : DelegatingStream
 {
     private readonly HttpResponseMessage? _message;
     private readonly PoolLease? _lease;
-    private readonly IDisposable? _slot;
+    private readonly IDisposable? _leases;
 
-    public ResponseStreamOwner(Stream inner, HttpResponseMessage? message, PoolLease? lease, IDisposable? slot = null)
+    public ResponseStreamOwner(Stream inner, HttpResponseMessage? message, PoolLease? lease, IDisposable? leases = null)
         : base(inner)
     {
         _message = message;
         _lease = lease;
-        _slot = slot;
+        _leases = leases;
     }
 
-    /// <summary>释放响应消息、租约与并发槽位；前一个抛异常也不跳过其余释放。内层流由基类释放。</summary>
+    /// <summary>释放响应消息、连接租约与登记的跨终端租约；前一个抛异常也不跳过其余释放。内层流由基类释放。</summary>
     protected override void OnReleased()
     {
         try
@@ -323,7 +323,7 @@ internal sealed class ResponseStreamOwner : DelegatingStream
             }
             finally
             {
-                _slot?.Dispose();
+                _leases?.Dispose();
             }
         }
     }

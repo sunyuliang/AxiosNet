@@ -23,7 +23,7 @@ public static partial class Attempt
         ArgumentNullException.ThrowIfNull(next);
 
         return (request, ctx) =>
-            AxiosTelemetry.IsAttemptAuditEnabled(ctx.Config)
+            AxiosTelemetry.Sink.IsAttemptAuditEnabled(ctx.Config)
                 ? AuditAsync(next, request, ctx)
                 : next(request, ctx);
     };
@@ -41,7 +41,7 @@ public static partial class Attempt
             var result = await next(request, ctx).ConfigureAwait(false);
 
             // is { } 防止中间件返回 default 结果时变成空引用。
-            AxiosTelemetry.AttemptSucceeded(ctx, result.Response is { } response ? response.Status : null, startTimestamp);
+            AxiosTelemetry.Sink.AttemptSucceeded(ctx, result.Response is { } response ? response.Status : null, startTimestamp);
 
             return result;
         }
@@ -50,7 +50,7 @@ public static partial class Attempt
             // 被胜出者收掉的对冲败者不算失败的尝试。
             if (!IsCleanupCancellation(exception, ctx))
             {
-                AxiosTelemetry.AttemptFailed(ctx, exception, startTimestamp);
+                AxiosTelemetry.Sink.AttemptFailed(ctx, exception, startTimestamp);
             }
 
             throw;

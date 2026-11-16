@@ -673,15 +673,13 @@ public sealed class ErrorModelTests
     [Fact]
     public void PoolOptionError_FromClientConstructor_CarriesDefaults()
     {
-        var defaults = new AxiosConfig
+        var defaults = new AxiosConfig { BaseAddress = "http://127.0.0.1:1/" };
+        var options = new AxiosClientOptions
         {
-            Transport = new()
-            {
-                Pool = new ConnectionPoolOptions { MaxConnectionsPerServer = 0 },
-            },
+            Pool = new ConnectionPoolOptions { MaxConnectionsPerServer = 0 },
         };
 
-        var ex = Assert.Throws<AxiosException>(() => new AxiosClient(defaults));
+        var ex = Assert.Throws<AxiosException>(() => new AxiosClient(defaults, options));
 
         Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Same(defaults, ex.Config);

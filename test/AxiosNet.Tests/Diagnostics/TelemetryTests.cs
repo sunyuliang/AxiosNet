@@ -262,9 +262,8 @@ public sealed class TelemetryTests
         var path = UniquePath("gate-depth");
         using var probe = new TelemetryProbe(server.Port, path);
 
-        using var client = new AxiosClient(new AxiosConfig {
-            Resilience = { Concurrency = {  MaxInFlight = 1  } }
-        });
+        // 容量走实例级选项：配置上只剩按请求可变的那些项，这里一项都不需要
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 1 });
 
         // 第一条占住唯一槽位（等它真的到达服务端，否则第二条可能先抢到槽位）
         var first = client.GetAsync(server.Url + path);
@@ -300,8 +299,8 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Resilience = { Concurrency = {  MaxInFlight = 1, MaxQueue = 1, QueueTimeout = TimeSpan.FromSeconds(5)  } }
-        });
+            Resilience = { Concurrency = { QueueTimeout = TimeSpan.FromSeconds(5) } }
+        }, new AxiosClientOptions { MaxInFlight = 1, MaxQueue = 1 });
 
         var first = client.GetAsync(server.Url + path);
         await WaitUntilAsync(() => server.Received.Count >= 1);
@@ -334,8 +333,8 @@ public sealed class TelemetryTests
         using var probe = new TelemetryProbe(server.Port, path);
         using var client = new AxiosClient(new AxiosConfig
         {
-            Resilience = { Concurrency = {  MaxInFlight = 1, QueueTimeout = TimeSpan.Zero  } }
-        });
+            Resilience = { Concurrency = { QueueTimeout = TimeSpan.Zero } }
+        }, new AxiosClientOptions { MaxInFlight = 1 });
 
         var first = client.GetAsync(server.Url + path);
         await WaitUntilAsync(() => server.Received.Count >= 1);

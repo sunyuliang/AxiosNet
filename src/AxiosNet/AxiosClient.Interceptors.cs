@@ -127,7 +127,7 @@ public sealed partial class AxiosClient
         {
             if (!statusAccepted)
             {
-                throw AxiosException.FromResponse(config, null, response);
+                throw AxiosException.FromResponse(config, null, response, _maxRedirects);
             }
 
             return Task.FromResult(response);
