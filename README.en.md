@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2717%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2575%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2725%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2583%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -782,9 +782,9 @@ using var http = new AxiosClient(
 | `MaxRedirects` | 5 | redirect follow limit; `0` = do not follow; a negative value throws at construction |
 | `Pool` | `null` | options for the pool this instance builds; mutually exclusive with the `pool` / `poolOptions` constructor arguments |
 | `MaxInFlight` | `null` (unlimited) | in-flight cap (gate capacity); positive integer, `0` / negative throws at construction |
-| `MaxQueue` | `null` (unlimited) | queue depth cap; only meaningful with `MaxInFlight` |
+| `MaxQueue` | `null` (unlimited) | queue depth cap; must be a positive integer and **requires `MaxInFlight`** (no gate, no queue — writing it alone throws at construction) |
 
-- **Fixed at construction**: `client.Options` is a snapshot of that moment, already back-filled with the pool's effective values — what you read is the real behaviour. Mutating it afterwards rebuilds neither the pool nor the gate; build a new instance to change the shape (the pool can be shared).
+- **Fixed at construction**: `client.Options` is a snapshot of that moment, already back-filled with the pool's effective values — what you read is the real behaviour (`Options.Pool` is the effective one too, even when it came from `poolOptions` or a shared pool). The snapshot is **frozen** when construction ends: assigning to it throws `ERR_BAD_OPTION_VALUE` instead of silently doing nothing. Build a new instance to change the shape (the pool can be shared).
 - **With an injected handler or a shared `pool`**, proxy / credentials / cookies / redirects are their business: writing those on `AxiosClientOptions` throws `ERR_BAD_OPTION_VALUE`; configure the handler or `ConnectionPoolOptions` instead.
 
 **Instance defaults vs per-request**: what you set in `Axios.Create` are instance defaults; the trailing `configure` argument configures a single request. `configure` receives a **copy** of the instance defaults, so you can really remove a default header:
@@ -1247,7 +1247,7 @@ await client.GetAsync<object>("api?token=...", c => c.Observability.Capture = Te
 // Derive AxiosTelemetrySink (every member is a no-op) and override only what you care about
 internal sealed class MySink : AxiosTelemetrySink
 {
-    public override bool IsEnabled(AxiosConfig? config) => true;      // gate at the door: false means everything is skipped
+    public override bool IsEnabled(AxiosConfig? config) => true;      // request-level switch: false means no observation
 
     public override void RequestSucceeded(
         AxiosConfig config, Uri uri, AxiosResponse response, long startTimestamp, in AxiosRequestTrace trace)
@@ -1262,9 +1262,11 @@ AxiosTelemetry.Sink = new MySink();             // process-wide; set it once at 
 AxiosTelemetry.Sink = AxiosTelemetrySink.Off;   // or switch the built-in pipeline off entirely
 ```
 
-- `AxiosRequestTrace` is the handle `StartRequest` hands out (a struct whose default means "not observed"); `Stop` / `SetRequestBodySize` dispatch back to the sink that created it, and `State` carries that sink's own payload (the built-in one stores an `Activity`).
-- Implementations must be thread-safe and must **not throw**: observability must never change the outcome of a request (every built-in method is wrapped in `try/catch`).
+- `AxiosRequestTrace` is the handle `StartRequest` hands out (a struct whose default means "not observed"); `Stop` / `SetRequestBodySize` dispatch back to the sink that created it, and `State` carries that sink's own payload (the built-in one stores an `Activity`). Success / failure reports go to the implementation the request started with, so one request is never split across two sinks.
+- Implementations must be thread-safe; **throwing does not affect the request**: the dispatch layer (`AxiosTelemetry.Dispatch`) swallows contract violations where they happen — a 200 never turns into an exception because observability is broken, a real failure is never masked by one, and the in-flight counter still returns to zero (if `EnterRequest` throws, no `ExitRequest` is paired, so the water level never goes negative).
+- `IsEnabled` governs the **request-level lifecycle** only (opening the handle, success / failure reports); cache hits, retries, gate rejections, pool and lease events do not consult it — override them and they will be called. Use `AxiosTelemetrySink.Off` to silence everything.
 - Once replaced, subscribing through `AxiosTelemetry.ActivitySourceName` / `MeterName` / `DiagnosticListenerName` produces nothing; whether `Observability.Capture` is honoured is up to the implementation (`IsEnabled` receives the effective config for the request).
+- **Extending it**: upgrades are recompile-only, but a new version may add members to `IAxiosTelemetrySink` (the `netstandard2.0` asset has no default interface methods). Derive from `AxiosTelemetrySink` (all-no-op base class) rather than implementing the interface yourself — members added to the base class never break your build.
 
 ## Resilience
 
@@ -2665,11 +2667,11 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2517 / 2506 | `net8.0` / `net6.0` | 5023 |
+| `AxiosNet.Tests` (core + declarative) | 2525 / 2514 | `net8.0` / `net6.0` | 5039 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2717 / 2627** | | **5344** |
+| **Total** | **2725 / 2635** | | **5360** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

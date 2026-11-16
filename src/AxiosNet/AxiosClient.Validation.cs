@@ -10,21 +10,24 @@ namespace AxiosNet;
 public sealed partial class AxiosClient
 {
     /// <summary>连接级选项无法按 <paramref name="options"/> 生效时的构造期校验（注入 handler / 共享池共用）。</summary>
-    private static void ValidateConnectionLevelOptions(AxiosClientOptions options, ConnectionLevelMessages messages)
+    /// <param name="options">本实例的选项。</param>
+    /// <param name="config">实例配置：挂到异常上，便于日志里定位是哪个客户端没配成。</param>
+    /// <param name="messages">对应场景的报错文案。</param>
+    private static void ValidateConnectionLevelOptions(AxiosClientOptions options, AxiosConfig config, ConnectionLevelMessages messages)
     {
         if (options.MaxRedirectsSet)
         {
-            throw AxiosException.InvalidOption(messages.MaxRedirects);
+            throw AxiosException.InvalidOption(messages.MaxRedirects, config);
         }
 
         if (options.WithCredentialsSet)
         {
-            throw AxiosException.InvalidOption(messages.WithCredentials);
+            throw AxiosException.InvalidOption(messages.WithCredentials, config);
         }
 
         if (options.Proxy is not null || options.Credentials is not null)
         {
-            throw AxiosException.InvalidOption(messages.ProxyCredentials);
+            throw AxiosException.InvalidOption(messages.ProxyCredentials, config);
         }
     }
 

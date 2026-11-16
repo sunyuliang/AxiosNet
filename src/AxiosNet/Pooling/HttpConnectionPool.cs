@@ -75,7 +75,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
 
         // 存活池数（进程级水位）：先校验后计数。
-        AxiosTelemetry.Sink.EnterPool();
+        AxiosTelemetry.Dispatch.EnterPool();
     }
 
     /// <summary>
@@ -569,7 +569,7 @@ public sealed class HttpConnectionPool : IDisposable
                     createdNode = true;
 
                     // 节点创建事件：此刻没有持锁，可同步回调。
-                    AxiosTelemetry.Sink.RecordEndpointCreated();
+                    AxiosTelemetry.Dispatch.RecordEndpointCreated();
                 }
             }
 
@@ -586,7 +586,7 @@ public sealed class HttpConnectionPool : IDisposable
                 Interlocked.Increment(ref _totalLeases);
 
                 // 只有成功拿到租约才计入指标。
-                AxiosTelemetry.Sink.RecordLease(reused: !createdNode);
+                AxiosTelemetry.Dispatch.RecordLease(reused: !createdNode);
                 return new PoolLease(this, endpoint, endpointReused: !createdNode);
             }
 
@@ -617,7 +617,7 @@ public sealed class HttpConnectionPool : IDisposable
     {
         if (_endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(endpoint.Key, endpoint)))
         {
-            AxiosTelemetry.Sink.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose);
+            AxiosTelemetry.Dispatch.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose);
         }
     }
 
@@ -709,7 +709,7 @@ public sealed class HttpConnectionPool : IDisposable
                 endpoint.ReleaseResources();
 
                 // 先释放再上报：回调抛异常不能让节点漏掉 Handler。
-                AxiosTelemetry.Sink.RecordEndpointEvicted(reason);
+                AxiosTelemetry.Dispatch.RecordEndpointEvicted(reason);
             }
         }
 
@@ -807,7 +807,7 @@ public sealed class HttpConnectionPool : IDisposable
                 endpoint.ReleaseResources();
             }
 
-            AxiosTelemetry.Sink.RecordEndpointEvicted(reason);
+            AxiosTelemetry.Dispatch.RecordEndpointEvicted(reason);
         }
     }
 
@@ -819,7 +819,7 @@ public sealed class HttpConnectionPool : IDisposable
             if (_endpoints.TryRemove(pair))
             {
                 pair.Value.Dispose();
-                AxiosTelemetry.Sink.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonClear);
+                AxiosTelemetry.Dispatch.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonClear);
             }
         }
     }
@@ -882,7 +882,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
 
         // 与存活池数成对：Dispose 幂等，不会重复减。
-        AxiosTelemetry.Sink.ExitPool();
+        AxiosTelemetry.Dispatch.ExitPool();
 
         _evictionTimer?.Dispose();
 
@@ -911,7 +911,7 @@ public sealed class HttpConnectionPool : IDisposable
             foreach (var endpoint in pending)
             {
                 endpoint.ReleaseResources();
-                AxiosTelemetry.Sink.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose);
+                AxiosTelemetry.Dispatch.RecordEndpointEvicted(AxiosTelemetry.EvictionReasonDispose);
             }
         }
     }

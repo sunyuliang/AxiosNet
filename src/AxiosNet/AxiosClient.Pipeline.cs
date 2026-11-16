@@ -44,7 +44,11 @@ public sealed partial class AxiosClient
         // 遥测状态全是局部量；后三项在 URL 拼好后才定。
         AxiosConfig? config = null;
         Uri? telemetryUri = null;
-        var telemetryEnabled = false;
+
+        // 本次请求认下的观测实现（判开 / 记进 / 开 span / 上报成败 / 记出 都落在同一个实现上）。
+        // 类型取护栏而不是接口：进出配对要用它自己的快照判定（见 telemetryEntered 处的说明）。
+        GuardedTelemetrySink? telemetry = null;
+        var telemetryEntered = false;
         var telemetryStart = 0L;
         AxiosRequestTrace telemetryTrace = default;
 
@@ -133,7 +137,7 @@ public sealed partial class AxiosClient
                 {
                     if (await configuredCache.TryGetAsync(cacheKey, config, deadlineTimestamp).ConfigureAwait(false) is { } cachedReply)
                     {
-                        AxiosTelemetry.Sink.CacheHit(config);
+                        AxiosTelemetry.Dispatch.CacheHit(config);
                         return await CompleteShortCircuitAsync(cachedReply, config, dataType, target).ConfigureAwait(false);
                     }
 
@@ -152,7 +156,7 @@ public sealed partial class AxiosClient
                                 if (sharedReply is not null)
                                 {
                                     // 跟随者拿到领导者的结果：这次请求同样没发出。
-                                    AxiosTelemetry.Sink.CacheHit(config);
+                                    AxiosTelemetry.Dispatch.CacheHit(config);
                                     cacheMissed = false;
                                     return await CompleteShortCircuitAsync(sharedReply, config, dataType, target).ConfigureAwait(false);
                                 }
@@ -169,7 +173,7 @@ public sealed partial class AxiosClient
                 // 查过但没有、且这次真要发出去：计一次未命中（绕开缓存的请求不计，命中率口径才干净）。
                 if (cacheMissed)
                 {
-                    AxiosTelemetry.Sink.CacheMiss(config);
+                    AxiosTelemetry.Dispatch.CacheMiss(config);
                 }
 
                 // 由管线决定要不要留原始字节：请求侧已否决落库（no-store / max-age=0）时不必为缓存复制正文。
@@ -194,16 +198,26 @@ public sealed partial class AxiosClient
 
             // 遥测起点必须在 URL 拼好之后，且只数真的进入发送阶段的请求。
             telemetryUri = plan.Uri;
-            if (AxiosTelemetry.Sink.IsEnabled(config))
+
+            // 一次请求只认一个实现：判开 / 记进 / 开 span 必须是同一个对象。分三次读 AxiosTelemetry.Sink
+            // 会在运行期换实现时被劈到不同实现上（水位两边各错一半、span 无主），而这里拿到的这份
+            // 会一路用到收尾，所以「进」与「出」也一定落在同一实现上。
+            telemetry = AxiosTelemetry.Dispatch;
+            if (telemetry.IsEnabled(config))
             {
                 telemetryStart = AxiosTelemetry.Timestamp;
 
-                // 「已进」只能在 EnterRequest() 真的返回之后才置位：可替换实现是第三方代码，它抛异常时
-                // 这个标记会让 finally 补一次没配对的 ExitRequest，内置实现的水位（在途计数）从此变成负数，
+                // 「已进」只在 EnterRequest() 真的返回之后才置位：可替换实现是第三方代码，
+                // 它抛异常时这个标记会让 finally 补一次没配对的 ExitRequest，水位（在途计数）从此变成负数，
                 // 之后所有看板数据都是假的 —— 违约实现只该毁掉自己的观测，不该毁掉别人的读数。
-                AxiosTelemetry.Sink.EnterRequest();
-                telemetryEnabled = true;
-                telemetryTrace = AxiosTelemetry.Sink.StartRequest(config, plan.Uri);
+                // 判定交给护栏在同一份快照上做：这里不能再读一次 AxiosTelemetry.Sink，否则两次读之间换实现
+                // 就会「进记在新实现、出记在旧实现」，新实现的在途数永久多一条。
+                telemetryEntered = telemetry.TryEnterRequest();
+
+                if (telemetryEntered)
+                {
+                    telemetryTrace = telemetry.StartRequest(config, plan.Uri);
+                }
             }
 
             var template = CreateRequestMessage(config, plan, telemetryTrace);
@@ -241,7 +255,7 @@ public sealed partial class AxiosClient
                 // 面板才看得出「省了多少带宽」。
                 if (result.CacheRevalidated)
                 {
-                    AxiosTelemetry.Sink.CacheRevalidated(config, telemetryTrace);
+                    AxiosTelemetry.Dispatch.CacheRevalidated(config, telemetryTrace);
                 }
 
                 // 落库 + 放行跟随者：两者都要在返回之前完成，跟随者读的就是这份结果。
@@ -252,11 +266,11 @@ public sealed partial class AxiosClient
                     flight = null;
                 }
 
-                if (telemetryEnabled)
+                if (telemetryEntered)
                 {
                     // 放在落库之后：span 与耗时直方图都覆盖「调用方拿到结果」的完整等待时间（存储慢也算进去）。
                     // 仍必须在 template.Dispose()（外层 finally）之前：之后正文头不可读。
-                    AxiosTelemetry.Sink.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryTrace);
+                    telemetry!.RequestSucceeded(config, plan.Uri, result, telemetryStart, telemetryTrace);
                 }
 
                 return result;
@@ -312,10 +326,11 @@ public sealed partial class AxiosClient
                 failedResponse.RawBodyBuffer = null;
             }
 
-            // 记录后原样抛出，不改动异常。
-            if (telemetryEnabled)
+            // 记录后原样抛出，不改动异常。上报走本次请求认下的那个实现、并已被派发层兜住异常：
+            // 观测写错了只能丢掉这条失败事件，绝不能把「超时」换成「观测异常」。
+            if (telemetryEntered)
             {
-                AxiosTelemetry.Sink.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryTrace);
+                telemetry!.RequestFailed(config, telemetryUri, ex, telemetryStart, telemetryTrace);
             }
 
             throw;
@@ -330,12 +345,15 @@ public sealed partial class AxiosClient
             }
 
             // 三段收尾彼此**不可连坐**：观测实现是第三方代码（AxiosTelemetry.Sink 可替换），
-            // 任一段抛异常时其余两段照样要执行 —— 否则「观测写错了」会被放大成资源泄漏 / span 错挂。
+            // 任一段出事其余两段照样要执行 —— 否则「观测写错了」会被放大成资源泄漏 / span 错挂。
+            // 而且三段都不许把异常带给调用方：请求已经成功 / 已经失败，结论不能被收尾改写。
             try
             {
-                if (telemetryEnabled)
+                if (telemetryEntered)
                 {
-                    AxiosTelemetry.Sink.ExitRequest();
+                    // 与 EnterRequest 配对的必须是同一个实现（= 进去的那个），所以用捕获到的这份，
+                    // 而不是此刻的 AxiosTelemetry.Sink；派发层已兜住异常。
+                    telemetry!.ExitRequest();
                 }
             }
             finally
@@ -345,7 +363,14 @@ public sealed partial class AxiosClient
                     // 必须收 span，否则后续请求的 span 会错挂。
                     // 走句柄自身的派发（而不是当前的 AxiosTelemetry.Sink）：收尾必须回到「开它的那个实现」上，
                     // 否则请求在途时换过 Sink 就会把 Start / Stop 劈成两家（默认句柄 = 不观测，天然是空操作）。
-                    telemetryTrace.Stop();
+                    // 句柄绕过派发层直连实现，所以异常要在这里兜。
+                    try
+                    {
+                        telemetryTrace.Stop();
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                    }
                 }
                 finally
                 {
@@ -551,8 +576,15 @@ public sealed partial class AxiosClient
 
                 template.Content = content;
 
-                // 长度已知时写进 span，未知则不写（同样走句柄派发，回到开观测的那个实现上）。
-                telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
+                // 长度已知时写进 span，未知则不写（同样走句柄派发，回到开观测的那个实现上；
+                // 句柄绕过派发层，所以这里要兜异常 —— 一行标签写不进去，不该让请求发不出去）。
+                try
+                {
+                    telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                }
             }
 
             ApplyHeaders(template, config);

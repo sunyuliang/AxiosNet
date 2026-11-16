@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace AxiosNet.Pipeline;
 
 /// <summary>
@@ -33,8 +35,12 @@ internal sealed class AxiosAttemptLeases : IDisposable
     public int Count => _next is null ? 1 : _next.Count + 1;
 
     /// <summary>
-    /// 逆序释放全部租约。重复调用只生效一次；某个租约抛异常也不跳过其余（异常照常抛给调用方）。
+    /// 逆序释放全部租约。重复调用只生效一次；某个租约抛异常也不跳过其余。
     /// </summary>
+    /// <remarks>
+    /// 失败会被<b>全部收集</b>而不是「后一个盖掉前一个」：只有一个失败时按原样重抛（类型与堆栈都保留），
+    /// 多个失败时抛 <see cref="AggregateException"/>。收集只在失败路径上分配，正常请求零成本。
+    /// </remarks>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -42,13 +48,30 @@ internal sealed class AxiosAttemptLeases : IDisposable
             return;
         }
 
-        try
+        List<Exception>? failures = null;
+
+        for (AxiosAttemptLeases? node = this; node is not null; node = node._next)
         {
-            _lease.Dispose();
+            try
+            {
+                node._lease.Dispose();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                (failures ??= new List<Exception>(2)).Add(ex);
+            }
         }
-        finally
+
+        if (failures is null)
         {
-            _next?.Dispose();
+            return;
         }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw new AggregateException("多个跨终端租约在释放时失败（按登记顺序的逆序尝试过全部）。", failures);
     }
 }

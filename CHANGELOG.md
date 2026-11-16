@@ -2,7 +2,7 @@
 
 本项目的所有重要变更记录在此文件。
 
-格式基于 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
+格式基于 [Keep a Changelog](https://keepachangelog.com/)。版本号沿用 [Semantic Versioning](https://semver.org/) 的 `主.次.修订` 形式，但 **`1.x` 内允许带破坏性变更**：破坏性项单独写进「Changed (Breaking)」并在 `docs/breaking-changes-*.md` 给出迁移对照，**不发 2.0**——这个库的实际使用面小、迭代快，一次迁移文档比一个没人敢跳的大版本号更有用。
 
 > **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
 
@@ -11,7 +11,8 @@
 ### Added
 
 - 观测实现可整套替换：新增 `IAxiosTelemetrySink`、`AxiosTelemetrySink`（全空实现的基类）与观测句柄 `AxiosRequestTrace`，赋 `AxiosTelemetry.Sink` 即接管 span / 指标 / 事件三路输出，内置那套**同时停用**（不是叠加）；赋 `AxiosTelemetrySink.Off` 则彻底关掉。此前 `AxiosTelemetry` 是静态类，包外只能按 `ActivitySource` / `Meter` 名字订阅再自行翻译，既接不进公司自己的管道，也关不掉内置的那套。默认行为不变（`Sink` 默认指向内置实现）。
-  - 可替换实现是第三方代码，它违约抛异常时只毁掉自己的观测、不毁掉库的不变量：在途请求计数照常归零（否则 `Dispose()` 永远等不到 0，池与 Handler 一直不释放），且「进 / 出」成对水位不会被打成负数（`EnterRequest` 抛了就不补 `ExitRequest`）。异常本身照常上抛，与其它用户回调一致。
+  - 可替换实现是第三方代码，它违约抛异常时**只丢掉那一次观测，不改写请求结果**：派发统一经 `AxiosTelemetry.Dispatch` 的护栏，`finally` 里的收尾异常不再把一条 200 换成观测异常、也不再盖掉真正的失败原因；在途请求计数照常归零（否则 `Dispose()` 永远等不到 0，池与 Handler 一直不释放）——`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负。
+  - `IsEnabled` 的管辖范围写明：只管请求级生命周期（开句柄 / 成功 / 失败上报），缓存、重试、闸门、池与租约这些事件不看它；要整体静音用 `AxiosTelemetrySink.Off`。
 - 源生成器新增两条编译期诊断：`AXA016`（路由模板里的 `{name}` 没有任何成员用 `[Path]` 绑定，名字比对大小写不敏感）与 `AXA017`（多个成员显式标了 `[Body]`）。二者此前只在运行期由绑定构建器报错。
 - 缓存条目可导出与重建：新增 `AxiosShortCircuit.Restore(...)`，供自定义 `IAxiosCacheStore` 从自己的存储格式重建条目；新增只读视图 `MultiValueHeaderValues` / `CachedAt` / `CachedAge`，用于把多值响应头、落库时刻与落库龄期写进自己的存储格式。此前这三项在包外读写不到，自建 Redis / 共享缓存会静默丢失多条 `Set-Cookie` / `Vary` 的全部值、`ETag` / `Last-Modified` 的优先来源，以及 `Age` 的推进。
 - 新增 `AxiosResponse<T>.DataOrThrow()`：正文为空时抛 `AxiosException(ERR_BAD_RESPONSE)`（消息带期望的类型名，异常带 `Config` / `Response`），用于替代 `Data!` —— 后者遇到空正文会退化成不带请求上下文的 `NullReferenceException`。空正文合法时继续用 `Data`。
@@ -21,12 +22,15 @@
 
 - 实例级选项独立成 `AxiosClientOptions`：代理 / 凭据 / Cookie / 重定向次数 / 连接池 / 并发容量这七项决定连接层与闸门的形态，构造实例时定型，所以从 `AxiosConfig` 上移除（`Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool`、`Resilience.Concurrency.MaxInFlight` / `MaxQueue`），改为构造参数 `new AxiosClient(defaults, options)`；`Axios.Create` 的三个重载同步加 `AxiosClientOptions? options`。写错位置现在是**编译错误**，不再等到发请求时抛 `ERR_BAD_OPTION_VALUE`；带 `*Set` 标记的运行期守卫、闸门容量不一致的报错一并删除。
   - 容量类的非法值（`MaxInFlight` / `MaxQueue` 为 0 或负数）改在**构造期**报错；`MaxRedirects` 为负同样在构造期报错。
-  - 新增只读快照 `AxiosClient.Options`：已回填连接池的实际生效值（代理 / 凭据 / 重定向 / Cookie），读到就是真实行为；构造后改它不影响任何已生效行为（不重建池、不改闸门容量）。
+  - 新增**只读**快照 `AxiosClient.Options`：已回填连接池的实际生效值（代理 / 凭据 / 重定向 / Cookie / 池选项），读到就是真实行为；构造结束时冻结，之后赋值**抛 `ERR_BAD_OPTION_VALUE`**（此前是「静默改了不生效」——那和本项「写错位置要立刻报错」的立论自相矛盾）。
+  - `MaxQueue` 必须与 `MaxInFlight` 同时给：没有闸门就没有队列，只写排队深度现在构造期报错，不再静默忽略。
+  - `AxiosClientOptions.Clone()` 转为公开：容器 / 门面是「先登记、后惰性创建」，登记时留一份副本，避免两者之间被改。
   - 闸门容量在**构造期定稿**：闸门仍是首个受限请求才创建，但容量取构造时的 `MaxInFlight` / `MaxQueue`。否则「构造后改这两项」会变成「没发过请求的实例上生效、发过的实例上不生效」——同一次赋值两种结果，最难排查。
   - 按请求可变的另一半保持不变：`Transport.Profile` / `MaxRate` / `HttpVersion` / `VersionPolicy`、`Resilience.Concurrency.QueueTimeout`、`Timeout` 等仍在 `AxiosConfig` 上。
   - 包装入口同步加 `options`，否则这些能力从容器 / 声明式入口根本够不到：`AddAxiosClient(configure, options, pipeline)`、`AddApiClient(baseAddress, configureDefaults, options, configure)`、`AddApiClient(name, baseAddress, configureDefaults, options, configure)`、`new ApiClient(baseAddress, configureDefaults, options)`。`options` 都插在「配置」之后、「管线 / 门面配置」之前，按位置传旧参数会编译失败（类型不同，不会静默错位）。
 - 跨终端资源从「一格槽位」改为可登记多个：`AxiosAttemptContext.Slot` → `Lease`，`WithSlot(IDisposable?)` → `WithLease(IDisposable)`（`null` 直接抛 `ArgumentNullException` —— 它是「悄悄丢掉前一个租约」的入口）。登记改为**追加**而不是覆盖，释放走登记顺序的逆序；`AxiosAttemptResult.SlotTransferred` 随之改名 `LeasesTransferred`，含义扩成「上下文里登记的租约全部已随正文转交」。此前一次尝试只能携带一个跨终端资源，闸门槽位与流式正文的所有权凭证只能靠一个布尔区分主人，第二个资源（审计会话、外部租约、批处理句柄）无处安放，抢同一格就会泄漏前一个。
   - 常见路径零分配不变：只有一个租约（绝大多数请求就是闸门槽位）时直接裸放，登记第二个才合成链表节点。
+  - 释放时**收集全部失败**再抛：只有一个失败按原样重抛（类型与堆栈保留），多个失败抛 `AggregateException`。此前 `try/finally` 链里后一个异常会盖掉前一个，「谁还漏着」这条线索直接消失。
 
 ### Changed
 

@@ -58,7 +58,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 对应 axios instance.defaults：按请求项的默认值（合并到每次请求上）。
     /// </summary>
     /// <remarks>
-    /// 连接层与闸门相关的<b>实例级</b>选项不在这里 —— 它们在 <see cref="Options"/> 上，构造期固化，改后不生效。
+    /// 连接层与闸门相关的<b>实例级</b>选项不在这里 —— 它们在 <see cref="Options"/> 上，构造期固化。
     /// </remarks>
     public AxiosConfig Defaults { get; }
 
@@ -66,8 +66,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// 本实例的实例级选项快照：连接池与并发闸门的形态都在构造期按它定死。
     /// </summary>
     /// <remarks>
-    /// 这份是<b>快照</b>，且已把池实际生效的出口（代理 / 凭据 / 重定向次数 / Cookie）写在里面，所以读到的就是真实行为。
-    /// 构造之后改它不影响<b>任何</b>已生效行为（不是「下次生效」：不重建池、也不改闸门容量），要换形态请新建 <see cref="AxiosClient"/>。
+    /// 这份是<b>快照</b>，且已把池实际生效的出口（代理 / 凭据 / 重定向次数 / Cookie / 池选项）写在里面，
+    /// 所以读到的就是真实行为。构造结束时它被<b>冻结</b>：再赋值抛 <c>ERR_BAD_OPTION_VALUE</c>，
+    /// 而不是「改了没效果」—— 静默无效是这类配置最难查的失败方式。要换形态请新建 <see cref="AxiosClient"/>。
     /// </remarks>
     public AxiosClientOptions Options { get; }
 
@@ -150,7 +151,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                     + "handler 的连接行为由它自己决定，需要池化请改用 ConnectionPoolOptions.HandlerFactory。", Defaults);
             }
 
-            ValidateConnectionLevelOptions(Options, ConnectionLevelMessages.Handler);
+            ValidateConnectionLevelOptions(Options, Defaults, ConnectionLevelMessages.Handler);
             _customHandler = handler;
             _ownsCustomHandler = disposeHandler;
             _customClient = new HttpClient(handler, disposeHandler: false)
@@ -158,6 +159,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
                 // 超时由 AxiosClient 按请求统一控制
                 Timeout = Timeout.InfiniteTimeSpan
             };
+
+            // 注入 Handler 是唯一的提前返回分支：冻结与另一条出口一样要落在这里。
+            Options.Freeze();
             return;
         }
 
@@ -171,7 +175,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             }
 
             // 共享池的连接行为已固定，options 上的同类选项不生效。
-            ValidateConnectionLevelOptions(Options, ConnectionLevelMessages.SharedPool);
+            ValidateConnectionLevelOptions(Options, Defaults, ConnectionLevelMessages.SharedPool);
 
             _pool = pool;
             _ownsPool = false;
@@ -246,6 +250,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
             // 与共享池同理：文案基准取生效值。
             _maxRedirects = Options.MaxRedirects;
         }
+
+        // 构造收尾：选项固化。此后改 Options 一律报错（改了没效果是这类配置最难查的失败方式），
+        // 要换出口或容量只能新建实例。
+        Options.Freeze();
     }
 
     /// <summary>

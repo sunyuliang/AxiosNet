@@ -82,7 +82,7 @@ internal sealed class ConcurrencyGate
         // 显式「不排队」：满了立刻失败，连计时器都不建（也不计入排队深度 —— 它没有真的等过）。
         if (queueTimeout == TimeSpan.Zero)
         {
-            AxiosTelemetry.Sink.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
+            AxiosTelemetry.Dispatch.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
             throw AxiosException.QueueTimeout(config, request, TimeSpan.Zero, MaxConcurrency);
         }
 
@@ -109,7 +109,7 @@ internal sealed class ConcurrencyGate
         if (MaxQueue is int maxQueue && depth > maxQueue)
         {
             Interlocked.Decrement(ref _queuedLocal);
-            AxiosTelemetry.Sink.GateRejected(config, AxiosTelemetry.GateRejectQueueFull);
+            AxiosTelemetry.Dispatch.GateRejected(config, AxiosTelemetry.GateRejectQueueFull);
             throw AxiosException.QueueFull(config, request, maxQueue, MaxConcurrency);
         }
 
@@ -154,7 +154,7 @@ internal sealed class ConcurrencyGate
             }
             catch (OperationCanceledException ex)
             {
-                AxiosTelemetry.Sink.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
+                AxiosTelemetry.Dispatch.GateRejected(config, AxiosTelemetry.GateRejectTimeout);
                 throw AxiosException.QueueTimeout(config, request, limit, MaxConcurrency, ex);
             }
 

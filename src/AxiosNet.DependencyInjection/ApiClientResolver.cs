@@ -33,7 +33,9 @@ internal sealed class ApiClientDefinition
     {
         Name = name;
         Defaults = defaults;
-        Options = options;
+
+        // 留一份副本：注册到「首次解析」之间是惰性的，期间调用方改自己那个对象不该改变容器里的站点行为。
+        Options = options?.Clone();
         Configure = configure;
     }
 

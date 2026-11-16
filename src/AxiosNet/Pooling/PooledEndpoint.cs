@@ -122,7 +122,7 @@ internal sealed class PooledEndpoint : IDisposable
             Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
 
             // 进程级活跃租约水位（ObservableGauge 收集时读）。
-            AxiosTelemetry.Sink.EnterLease();
+            AxiosTelemetry.Dispatch.EnterLease();
             return true;
         }
     }
@@ -152,7 +152,7 @@ internal sealed class PooledEndpoint : IDisposable
         // 只有真的减掉了才减水位，避免重复 Release 让计数变成负数。
         if (released)
         {
-            AxiosTelemetry.Sink.ExitLease();
+            AxiosTelemetry.Dispatch.ExitLease();
         }
 
         if (retire)

@@ -51,15 +51,26 @@ public readonly struct AxiosRequestTrace
 /// </para>
 /// <para>
 /// 实现通常派生 <see cref="AxiosTelemetrySink"/>（全空实现）只覆写需要的几个方法。
-/// 所有方法都可能在并发线程上被调用，实现必须自行保证线程安全；也<b>不允许抛出</b>——
-/// 观测异常不能影响请求结果（内置实现全部包了 try/catch）。
+/// 所有方法都可能在并发线程上被调用，实现必须自行保证线程安全；也<b>不应该抛出</b>——
+/// 派发层（<see cref="AxiosTelemetry.Dispatch"/>）会把异常就地吞掉，抛出来只会丢掉自己这次的观测，
+/// 不会影响请求结果。
+/// </para>
+/// <para>
+/// <b>开关只管到哪一层</b>：<see cref="IsEnabled"/> 决定的是<b>请求级生命周期</b>
+/// （<see cref="StartRequest"/> / <see cref="StopRequest"/> / <see cref="SetRequestBodySize"/> /
+/// <see cref="RequestSucceeded"/> / <see cref="RequestFailed"/>）要不要发生；
+/// 缓存 / 重试 / 闸门 / 池 / 租约 这些<b>事件与水位</b>不经过它，实现只要覆写就会收到。
+/// 需要整体关闭请用 <see cref="AxiosTelemetrySink.Off"/>，而不是让 <see cref="IsEnabled"/> 返回 <c>false</c>。
 /// </para>
 /// </remarks>
 public interface IAxiosTelemetrySink
 {
-    /// <summary>本次请求是否要观测（<paramref name="config"/> 为 <c>null</c> 视为「没表态」）。</summary>
-    /// <param name="config">本次请求的生效配置。</param>
-    /// <returns><c>true</c> = 后续观测调用会真正做事。</returns>
+    /// <summary>
+    /// 本次请求要不要观测。只作用于请求级生命周期（开 / 收句柄与成功 / 失败上报）；
+    /// 事件类（缓存 / 重试 / 闸门 / 池 / 租约 / 尝试审计）不看这个开关。
+    /// </summary>
+    /// <param name="config">本次请求的生效配置；<c>null</c> 表示「没表态」，按默认处理。</param>
+    /// <returns><c>true</c> = 会为本次请求开观测句柄并上报成败。</returns>
     bool IsEnabled(AxiosConfig? config);
 
     /// <summary>请求已成型（拦截器与 transformRequest 跑完）：开始观测。</summary>
@@ -77,7 +88,13 @@ public interface IAxiosTelemetrySink
     /// <param name="size">正文字节数。</param>
     void SetRequestBodySize(in AxiosRequestTrace trace, long? size);
 
-    /// <summary>请求进入发送管线：在途数 +1（与 <see cref="ExitRequest"/> 必须成对）。</summary>
+    /// <summary>
+    /// 请求进入发送管线：在途数 +1（与 <see cref="ExitRequest"/> 必须成对）。
+    /// </summary>
+    /// <remarks>
+    /// 抛异常只会让本次请求不再上报请求级观测（库按「进」有没有成功决定收尾要不要补一次「出」，
+    /// 失败就不补，水位不会变成负数），不影响请求结果。
+    /// </remarks>
     void EnterRequest();
 
     /// <summary>请求离开发送管线：在途数 -1。</summary>
@@ -114,6 +131,10 @@ public interface IAxiosTelemetrySink
     void CircuitUntrackedHost();
 
     /// <summary>请求成功结束。</summary>
+    /// <remarks>
+    /// 派给<b>本次请求开始时认下的那个实现</b>（不是「此刻的 <see cref="AxiosTelemetry.Sink"/>」）：
+    /// 它带着 <paramref name="trace"/>，而 <see cref="AxiosRequestTrace.State"/> 是开观测那家的载体。
+    /// </remarks>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="uri">最终 URL。</param>
     /// <param name="response">交付给调用方的响应。</param>
@@ -122,6 +143,7 @@ public interface IAxiosTelemetrySink
     void RequestSucceeded(AxiosConfig config, Uri uri, AxiosResponse response, long startTimestamp, in AxiosRequestTrace trace);
 
     /// <summary>请求失败结束。配置或 URL 未成型时对应参数为 <c>null</c>（例如 URL 都没拼出来）。</summary>
+    /// <remarks>与 <see cref="RequestSucceeded"/> 同一口径：派给本次请求开头认下的那个实现。</remarks>
     /// <param name="config">本次请求的生效配置。</param>
     /// <param name="uri">最终 URL。</param>
     /// <param name="exception">抛给调用方的异常。</param>
@@ -186,8 +208,10 @@ public interface IAxiosTelemetrySink
 /// <see cref="IAxiosTelemetrySink"/> 的全空实现：派生它只覆写关心的几个方法。
 /// </summary>
 /// <remarks>
-/// 默认「不观测」（<see cref="IsEnabled"/> 返回 <c>false</c>）：派生类覆写某个事件方法之后，
-/// 记得同时覆写 <see cref="IsEnabled"/> 返回 <c>true</c>，否则调用方在门口就把整段观测跳过了。
+/// 默认「不观测」（<see cref="IsEnabled"/> 返回 <c>false</c>）：覆写请求级方法
+/// （<see cref="StartRequest"/> / <see cref="RequestSucceeded"/> / <see cref="RequestFailed"/>）时
+/// 要同时让 <see cref="IsEnabled"/> 返回 <c>true</c>，否则这些方法不会被调到；
+/// 覆写事件类方法（缓存 / 重试 / 闸门 / 池 / 租约…）则不必动 <see cref="IsEnabled"/>，它们不受该开关管辖。
 /// </remarks>
 public abstract class AxiosTelemetrySink : IAxiosTelemetrySink
 {

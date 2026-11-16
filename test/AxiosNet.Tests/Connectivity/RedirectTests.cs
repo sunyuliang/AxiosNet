@@ -28,15 +28,15 @@ public sealed class RedirectTests
     }
 
     [Fact]
-    public async Task OptionsMaxRedirectsChangedAfterConstruction_DoesNotAffectPool()
+    public async Task OptionsMaxRedirectsMutatedAfterConstruction_Throws_AndPoolIsUntouched()
     {
         await using var server = TestHttpServer.Start(req => TestJson.Echo(req));
         using var client = new AxiosClient();
 
-        // 构造后改 options：不重建池，也不报错
-        client.Options.MaxRedirects = 3;
+        // 构造后改 options：报错，不重建池
+        Assert.Throws<AxiosException>(() => client.Options.MaxRedirects = 3);
 
-        // 「不生效」必须落在池上可证伪：池仍是默认的 5，而不是改后的 3
+        // 「没生效」必须落在池上可证伪：池仍是默认的 5
         Assert.Equal(5, client.Pool!.EffectiveOptions.MaxAutomaticRedirections);
 
         var response = await client.GetAsync(server.Url + "items");
@@ -128,24 +128,22 @@ public sealed class RedirectTests
     }
 
     [Fact]
-    public async Task RedirectLimitMessages_UseConstructionTimeValue_NotMutatedOptions()
+    public async Task RedirectLimitMessages_UseEffectivePoolValue_NotTheDeclaredDefault()
     {
         await using var server = TestHttpServer.Start(req => new TestResponse(
             302,
             Headers: new Dictionary<string, string> { ["Location"] = "/loop" },
             Body: Array.Empty<byte>()));
 
-        using var client = new AxiosClient();
-
-        // 构造后改 Options 不会改行为；文案也不能跟着改口 —— 否则报错说「已禁用重定向（MaxRedirects = 0）」，
-        // 而请求明明跟着跳了 5 次，调用方会照着文案去改一个根本没生效的项。
-        client.Options.MaxRedirects = 0;
+        // 共享池把上限压到 2：文案必须说 2（生效值），而不是 options 上那个没写过的默认 5 ——
+        // 否则调用方会照着文案去改一个根本没生效的项。
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions { MaxAutomaticRedirections = 2 });
+        using var client = new AxiosClient(pool: pool);
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url + "loop"));
 
         Assert.Equal(AxiosException.ErrTooManyRedirects, ex.Code);
-        Assert.Contains("MaxRedirects = 5", ex.Message);
-        Assert.Equal(6, server.Received.Count);
+        Assert.Contains("MaxRedirects = 2", ex.Message);
     }
 
     [Fact]

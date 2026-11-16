@@ -93,6 +93,27 @@ public sealed class AttemptLeaseTests
         Assert.Equal(1, second.DisposeCount);
     }
 
+    /// <summary>
+    /// 多个租约都抛异常时，失败要<b>全部</b>报出来：只抛最后一个会让「谁还漏着」这条线索直接消失。
+    /// </summary>
+    [Fact]
+    public void Composite_ReportsEveryFailure_WhenSeveralLeasesThrow()
+    {
+        var log = new List<string>();
+        var first = new RecordingLease("first", log, throwOnDispose: true);
+        var second = new RecordingLease("second", log, throwOnDispose: true);
+
+        var leases = EmptyContext().WithLease(first).WithLease(second).Lease!;
+
+        var error = Assert.Throws<AggregateException>(() => leases.Dispose());
+
+        Assert.Equal(2, error.InnerExceptions.Count);
+        Assert.All(error.InnerExceptions, inner => Assert.IsType<InvalidOperationException>(inner));
+        Assert.Equal(new[] { "second", "first" }, log);
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(1, second.DisposeCount);
+    }
+
     /// <summary><c>WithLease(null)</c> 是「悄悄丢掉前一个租约」的入口，直接拦下。</summary>
     [Fact]
     public void WithLease_RejectsNull()

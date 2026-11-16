@@ -104,7 +104,7 @@ public sealed partial class AxiosClient
                 // 总预算已经花完：不准备正文、也不等存储 —— 缓存是加速手段，不能反过来拖住返回。
                 if (TotalTimeoutBudget.IsExhausted(TotalTimeoutBudget.Remaining(deadlineTimestamp)))
                 {
-                    AxiosTelemetry.Sink.CacheStoreFailed(config);
+                    AxiosTelemetry.Dispatch.CacheStoreFailed(config);
                     return;
                 }
 
@@ -120,12 +120,12 @@ public sealed partial class AxiosClient
                     if (await cache.TrySetAsync(
                             key, reply, policy, TotalTimeoutBudget.Remaining(deadlineTimestamp)).ConfigureAwait(false))
                     {
-                        AxiosTelemetry.Sink.CacheStored(config);
+                        AxiosTelemetry.Dispatch.CacheStored(config);
                     }
                     else
                     {
                         // 存储没接住：跟随者别去读一条不存在的条目，自己发。
-                        AxiosTelemetry.Sink.CacheStoreFailed(config);
+                        AxiosTelemetry.Dispatch.CacheStoreFailed(config);
                         reply = null;
                     }
                 }
@@ -134,7 +134,7 @@ public sealed partial class AxiosClient
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // 缓存是加速手段，任何一步出错都只让这次不入缓存。
-            AxiosTelemetry.Sink.CacheStoreFailed(config);
+            AxiosTelemetry.Dispatch.CacheStoreFailed(config);
             reply = null;
         }
         finally

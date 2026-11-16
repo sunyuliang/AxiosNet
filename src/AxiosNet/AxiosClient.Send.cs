@@ -322,7 +322,7 @@ public sealed partial class AxiosClient
             throw budget.Translate(ex, ctx.Config, request);
         }
 
-        AxiosTelemetry.Sink.TagPoolReuse(lease.EndpointReused);
+        AxiosTelemetry.Dispatch.TagPoolReuse(lease.EndpointReused);
         return (lease.Client, lease);
     }
 

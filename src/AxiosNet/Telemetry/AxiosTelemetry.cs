@@ -166,6 +166,8 @@ public static class AxiosTelemetry
     /// <see cref="AxiosRequestTrace"/>）：<see cref="IAxiosTelemetrySink.StopRequest"/> /
     /// <see cref="IAxiosTelemetrySink.SetRequestBodySize"/> 回到<b>创建它的那个实现</b>上，
     /// 所以请求在途时替换不会把一条请求劈成两家（默认句柄 = 不观测，天然是空操作）。
+    /// 同理，<see cref="IAxiosTelemetrySink.RequestSucceeded"/> / <see cref="IAxiosTelemetrySink.RequestFailed"/>
+    /// 也派给「本次请求开始时认下的那个实现」：它们带着这条句柄，发给另一家等于让对方去解析别人格式的 <c>State</c>。
     /// </item>
     /// <item>
     /// <b>成对水位</b>（<see cref="IAxiosTelemetrySink.EnterRequest"/> / <see cref="IAxiosTelemetrySink.ExitRequest"/>、
@@ -174,23 +176,50 @@ public static class AxiosTelemetry
     /// 一对进出之间换过实现，就会「进的记在旧实现上、出的记在新实现上」，两边的水位一起错位
     /// （租约与池的存活期可以长达整条流式响应，或者整个进程）。它们没有句柄可带，所以
     /// <b>不要在还有在途请求 / 未归还租约时替换</b>；启动时设一次就不存在这个问题。
+    /// 请求级的 <see cref="IAxiosTelemetrySink.EnterRequest"/> / <see cref="IAxiosTelemetrySink.ExitRequest"/>
+    /// 例外：一次请求内的这一对一定落在同一个实现上（进入时认下，收尾时仍用它），所以只在「请求进行中换掉」
+    /// 的边界上会漏给新实现半条，不影响已有请求的配对。
     /// </item>
     /// <item>
-    /// <b>事件类</b>（成功 / 失败 / 缓存 / 重试 / 尝试审计…）按本属性的当前值派发：它们描述的是「此刻发生了什么」，
+    /// <b>事件类</b>（缓存 / 重试 / 闸门 / 尝试审计…）按本属性的当前值派发：它们描述的是「此刻发生了什么」，
     /// 换实现后新实现接着收剩余事件，符合「整套接管」的语义。
     /// </item>
     /// </list>
+    /// <para>
+    /// 库内派发都经 <see cref="Dispatch"/> 的护栏（见 <see cref="GuardedTelemetrySink"/>）：实现违约抛异常时
+    /// 只丢掉那一次观测，不会改写请求结果、也不会盖掉真正的失败原因。
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">赋值为 <c>null</c>（要关掉请用 <see cref="AxiosTelemetrySink.Off"/>）。</exception>
     public static IAxiosTelemetrySink Sink
     {
         get => _sink;
-        set => _sink = value ?? throw new ArgumentNullException(nameof(value));
+        set
+        {
+            var installed = value ?? throw new ArgumentNullException(nameof(value));
+
+            // 先换派发层再发布实现：读者只经 Dispatch 派发，两字段之间没有「旧实现配新护栏」的窗口。
+            _dispatch = new GuardedTelemetrySink(installed);
+            _sink = installed;
+        }
     }
 
     /// <summary>当前实现（默认 <see cref="BuiltInTelemetrySink"/>）。</summary>
     /// <remarks>每次观测都要读它（含池与闸门的热路径），<c>volatile</c> 保证换上之后读到的就是新的，不会在某个核心上一直读旧值。</remarks>
     private static volatile IAxiosTelemetrySink _sink = BuiltInTelemetrySink.Instance;
+
+    /// <summary>
+    /// 库内派发入口：<see cref="Sink"/> 的护栏包装（违约异常就地结束）。
+    /// </summary>
+    /// <remarks>
+    /// 调用点用这个而不是 <see cref="Sink"/>：观测实现是第三方代码，它抛异常不能外溢到请求路径。
+    /// 强类型返回 <see cref="GuardedTelemetrySink"/> 是为了让「进 / 出」配对判定（<see cref="GuardedTelemetrySink.TryEnterRequest"/>）
+    /// 也发生在同一份快照上，不必回头再读一次 <see cref="Sink"/>。
+    /// </remarks>
+    internal static GuardedTelemetrySink Dispatch => _dispatch;
+
+    /// <summary>派发层（随 <see cref="Sink"/> 一起替换，与 <see cref="_sink"/> 一一对应）。</summary>
+    private static volatile GuardedTelemetrySink _dispatch = new(BuiltInTelemetrySink.Instance);
 
     internal static readonly ActivitySource Source;
 

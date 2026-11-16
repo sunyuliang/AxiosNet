@@ -180,7 +180,7 @@ public static partial class Attempt
                     retry.OnRetry?.Invoke(retryContext);
 
                     // 观测点放在「决定重试」这一刻，与 OnRetry 同一语义。
-                    AxiosTelemetry.Sink.RequestRetried(retryContext, ctx.Uri);
+                    AxiosTelemetry.Dispatch.RequestRetried(retryContext, ctx.Uri);
 
                     if (delay > TimeSpan.Zero)
                     {

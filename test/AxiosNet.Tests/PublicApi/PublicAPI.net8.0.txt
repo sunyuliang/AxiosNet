@@ -338,6 +338,7 @@
   M:AxiosNet.AxiosClient.RequestAsync(System.Action`1<AxiosNet.AxiosConfig>)
   M:AxiosNet.AxiosClient.RequestAsync`1(AxiosNet.AxiosConfig)
   M:AxiosNet.AxiosClient.RequestAsync`1(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.AxiosClientOptions.Clone()
   M:AxiosNet.AxiosConfig.Clone()
   M:AxiosNet.AxiosConfig.SetQuery(System.String, System.Object)
   M:AxiosNet.AxiosContent.Register(System.String, AxiosNet.Serialization.IContentSerializer)

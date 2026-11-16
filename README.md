@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2717%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2575%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2725%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2583%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -586,7 +586,7 @@ await client.GetAsync("fast", c => c.Resilience.Concurrency.QueueTimeout = TimeS
 - 两者都是「入口太挤」而不是「下游失败」：默认策略不重试、也不换备用端点——换端点解决不了本实例的槽位竞争，调用方退避后再试。
 - 中途某次尝试撞上闸门拒绝时，如果前面已经有真实失败，抛出的仍是那条真实失败（与对冲同一口径）：「没排上队」不会盖掉能定位问题的故障。
 - 拒绝计数在 `axiosnet.client.gate.rejections`（`axiosnet.gate.reason` = `queue_timeout` / `queue_full`），可与 `gate.queue_depth` 一起看背压水位。
-- `MaxInFlight` / `MaxQueue` 是实例级选项（见上文「实例级选项」）：构造期固化、0 或负数构造期报错，按请求写不进去；闸门在首个受限请求时才建，但容量取的是**构造期**的值 —— 构造之后再改这两项不影响已建实例（也不会出现「改完在没发过请求的实例上生效、发过的不生效」）。`QueueTimeout` 相反，是按请求项：单次请求可以改本次等多久。
+- `MaxInFlight` / `MaxQueue` 是实例级选项（见上文「实例级选项」）：构造期固化、0 或负数构造期报错、只写 `MaxQueue` 也报错，按请求写不进去；闸门在首个受限请求时才建，但容量取的是**构造期**的值 —— 构造后再改 `client.Options` 会直接抛错（不会再出现「改完在没发过请求的实例上生效、发过的不生效」）。`QueueTimeout` 相反，是按请求项：单次请求可以改本次等多久。
 - 排队**不计入** `Timeout`（重试每次尝试各自计一次），排队期间可用 `CancellationToken` 取消。
 - 槽位覆盖「真正在途」全程：重试每次尝试各自取槽（退避不占位），**流式响应一直占到正文流释放**。
 - **自锁风险**：在拦截器 / 进度回调里用同一实例发子请求会互抢槽位，请给 `QueueTimeout` 设上限或换实例。
@@ -784,9 +784,9 @@ using var http = new AxiosClient(
 | `MaxRedirects` | 5 | 跟随重定向上限；`0` = 不跟随；负数构造期报错 |
 | `Pool` | `null` | 自建池选项；与构造参数 `pool` / `poolOptions` 互斥 |
 | `MaxInFlight` | `null`（不限） | 在途上限（闸门容量）；正整数，0 / 负数构造期报错 |
-| `MaxQueue` | `null`（不限） | 排队深度上限；只在设了 `MaxInFlight` 时起作用 |
+| `MaxQueue` | `null`（不限） | 排队深度上限；必须是正整数，且**必须同时设 `MaxInFlight`**（没有闸门就没有队列，只写它会构造期报错） |
 
-- **构造期固化**：`client.Options` 是当时的快照，并且已回填池的实际生效值——读到的就是真实行为。构造之后改它不会重建池、也不改闸门容量；要换形态请新建实例（连接池可以共享）。
+- **构造期固化**：`client.Options` 是当时的快照，并且已回填池的实际生效值——读到的就是真实行为（`Options.Pool` 也是生效的那份，哪怕是 `poolOptions` 或共享池给的）。这份快照在构造结束时**冻结**：再赋值抛 `ERR_BAD_OPTION_VALUE`，而不是「改了没效果」。要换形态请新建实例（连接池可以共享）。
 - **注入自定义 Handler 或共享 `pool` 时**，代理 / 凭据 / Cookie / 重定向都归它们决定：在 `AxiosClientOptions` 上写这几项抛 `ERR_BAD_OPTION_VALUE`，请改用 handler 或 `ConnectionPoolOptions`。
 
 **实例默认值 vs 单次请求**：`Axios.Create` 里配的是实例默认值，快捷方法末尾的 `configure` 配本次请求。`configure` 拿到的是实例默认值的**副本**，所以能真正摘掉默认头：
@@ -1250,7 +1250,7 @@ await client.GetAsync<object>("api?token=...", c => c.Observability.Capture = Te
 // 派生 AxiosTelemetrySink（全空实现），只覆写关心的几个方法
 internal sealed class MySink : AxiosTelemetrySink
 {
-    public override bool IsEnabled(AxiosConfig? config) => true;      // 门口开关：不覆写会一直是 false
+    public override bool IsEnabled(AxiosConfig? config) => true;      // 请求级开关：不覆写就一直不观测
 
     public override void RequestSucceeded(
         AxiosConfig config, Uri uri, AxiosResponse response, long startTimestamp, in AxiosRequestTrace trace)
@@ -1265,9 +1265,11 @@ AxiosTelemetry.Sink = new MySink();        // 进程级，启动时设一次
 AxiosTelemetry.Sink = AxiosTelemetrySink.Off;   // 或者彻底关掉内置观测
 ```
 
-- `AxiosRequestTrace` 是 `StartRequest` 交出的观测句柄（结构体，默认值 = 不观测），`Stop` / `SetRequestBodySize` 按它派发回创建它的那个实现；`State` 放实现自己的载体（内置实现放的是 `Activity`）。
-- 实现要自己保证线程安全，且**不允许抛异常**：观测不能影响请求结果（内置实现全部包了 `try/catch`）。
+- `AxiosRequestTrace` 是 `StartRequest` 交出的观测句柄（结构体，默认值 = 不观测），`Stop` / `SetRequestBodySize` 按它派发回创建它的那个实现；`State` 放实现自己的载体（内置实现放的是 `Activity`）。成功 / 失败上报也派给**本次请求开头认下的那个实现**，所以一条请求的观测不会在换实现时被劈成两家。
+- 实现要自己保证线程安全；**抛异常不影响请求**：派发层（`AxiosTelemetry.Dispatch`）把违约异常就地吞掉——一条 200 不会因为观测写错变成异常，真正的失败原因也不会被观测异常盖掉，在途计数照常归零（`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负）。
+- `IsEnabled` 只管**请求级生命周期**（开句柄、成功 / 失败上报）；缓存命中、重试、闸门拒绝、池与租约这些事件不看它，覆写就收得到。要整体静音请用 `AxiosTelemetrySink.Off`。
 - 换掉之后 `AxiosTelemetry.ActivitySourceName` / `MeterName` / `DiagnosticListenerName` 那些订阅方式就不再有产出；`Observability.Capture` 是否生效也交给实现自己判（`IsEnabled` 收到的是本次请求的生效配置）。
+- **扩展方式**：跟着库升级只需重编译，但新版本可能给 `IAxiosTelemetrySink` 加成员（`netstandard2.0` 资产没有默认接口实现）。请派生 `AxiosTelemetrySink`（全空基类）而不是自己实现接口——基类补成员不会让你的实现编译失败。
 
 ## 治理
 
@@ -2665,11 +2667,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2517 / 2506 | `net8.0` / `net6.0` | 5023 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2525 / 2514 | `net8.0` / `net6.0` | 5039 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2717 / 2627** | | **5344** |
+| **合计** | **2725 / 2635** | | **5360** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

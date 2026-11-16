@@ -191,20 +191,20 @@ public sealed class ClientInstanceTests
     }
 
     // ------------------------------------------------------------------
-    // 构造后改 Options：不重建池、不改闸门容量（快照语义）
+    // 构造后 Options 冻结：改就报错，而不是「改了没效果」
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task OptionsMutatedAfterConstruction_DoNotAffectPool()
+    public async Task OptionsMutatedAfterConstruction_Throws_AndPoolIsUntouched()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient();
 
-        // 构造后改 options：不生效，池仍是 UseCookies = false
-        client.Options.WithCredentials = true;
+        // 构造后改 options：报错（静默无效是这类配置最难查的失败方式），池仍是 UseCookies = false
+        Assert.Throws<AxiosException>(() => client.Options.WithCredentials = true);
         Assert.False(client.Pool!.Options.UseCookies);
 
-        // 构造后改的承诺是「静默不生效」，不是「每个请求都炸」
+        // 报错只发生在赋值那一行，不影响已建实例发请求
         var response = await client.GetAsync(server.Url + "x");
 
         Assert.Equal(200, response.Status);
@@ -212,16 +212,17 @@ public sealed class ClientInstanceTests
     }
 
     [Fact]
-    public async Task OptionsMutatedAfterConstruction_DoNotChangeGateCapacity()
+    public async Task OptionsMutatedAfterGateCreated_Throws_AndCapacityStays()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 1 });
 
         // 首个请求建闸门并固定容量
         await client.GetAsync(server.Url + "x");
-        client.Options.MaxInFlight = 8;
 
-        // 容量没跟着变：闸门仍是 1（改 Options 不会重建它）
+        Assert.Throws<AxiosException>(() => client.Options.MaxInFlight = 8);
+
+        // 容量没跟着变：闸门仍是 1
         var gate = typeof(AxiosClient)
             .GetField("_gate", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(client);
@@ -231,14 +232,16 @@ public sealed class ClientInstanceTests
     }
 
     [Fact]
-    public async Task OptionsMutatedBeforeFirstRequest_DoNotChangeGateCapacity()
+    public async Task OptionsMutatedAfterConstruction_Throws_AndGateCapacityStaysAtConstructionValue()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
         using var client = new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 1 });
 
-        // 闸门是首个请求才建的：容量必须在构造期就定稿，否则「改得生效与否」取决于闸门建没建，
-        // 同一次赋值在「发过请求」和「没发过请求」的实例上表现不同 —— 那是最难排查的一类不一致。
-        client.Options.MaxInFlight = 8;
+        // 构造后 Options 是冻结快照：改它报错，而不是「改了没效果」。
+        // 闸门是首个请求才建的，如果快照可写，同一次赋值在「发过请求」和「没发过请求」的实例上
+        // 会有两种结果 —— 那是最难排查的一类不一致；冻结把这条路彻底堵死。
+        var error = Assert.Throws<AxiosException>(() => client.Options.MaxInFlight = 8);
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
 
         await client.GetAsync(server.Url + "x");
 
@@ -248,6 +251,57 @@ public sealed class ClientInstanceTests
 
         Assert.NotNull(gate);
         Assert.Equal(1, gate!.GetType().GetProperty("MaxConcurrency")!.GetValue(gate));
+    }
+
+    [Fact]
+    public void Options_AreFrozenForEveryMember()
+    {
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 2 });
+
+        // 冻结覆盖全部成员：漏一个就是「这一项改了没效果」的静默陷阱。
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.MaxInFlight = 3).Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.MaxQueue = 3).Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.MaxRedirects = 1).Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.WithCredentials = true).Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.Proxy = null).Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.Credentials = null).Code);
+        Assert.Equal(AxiosException.ErrBadOptionValue, Assert.Throws<AxiosException>(() => client.Options.Pool = null).Code);
+
+        // 读到的仍是构造期那组值。
+        Assert.Equal(2, client.Options.MaxInFlight);
+    }
+
+    [Fact]
+    public void Constructor_MaxQueueWithoutMaxInFlight_ThrowsAtConstruction()
+    {
+        // 没有闸门就没有队列：只写排队深度等于什么都没配，报错而不是静默忽略。
+        var error = Assert.Throws<AxiosException>(() => new AxiosClient(options: new AxiosClientOptions { MaxQueue = 4 }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+        Assert.Contains("MaxInFlight", error.Message);
+    }
+
+    [Theory]
+    [InlineData(-1, null)]
+    [InlineData(1, -1)]
+    public void Constructor_NegativeCapacity_ThrowsAtConstruction(int maxInFlight, int? maxQueue)
+    {
+        var error = Assert.Throws<AxiosException>(() => new AxiosClient(
+            options: new AxiosClientOptions { MaxInFlight = maxInFlight, MaxQueue = maxQueue }));
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, error.Code);
+    }
+
+    [Fact]
+    public void Options_PoolSnapshot_IsFilledFromThePoolActuallyInUse()
+    {
+        // 构造时用的是 poolOptions：快照里的 Pool 必须是生效的那份，而不是 null ——
+        // 否则读者看到「没有池选项」，会以为这个实例走的是默认池。
+        using var client = new AxiosClient(poolOptions: new ConnectionPoolOptions { MaxAutomaticRedirections = 3 });
+
+        Assert.NotNull(client.Options.Pool);
+        Assert.Equal(3, client.Options.Pool!.MaxAutomaticRedirections);
+        Assert.Equal(3, client.Options.MaxRedirects);
     }
 
     // ------------------------------------------------------------------

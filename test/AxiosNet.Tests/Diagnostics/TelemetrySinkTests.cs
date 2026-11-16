@@ -97,14 +97,16 @@ public sealed class TelemetrySinkTests
 
         Assert.Equal(200, status);
 
-        // 收尾回到开它的实现上：Start 与 Stop 必须配对
+        // 收尾回到开它的实现上：Start / Stop / 成败上报 必须落在同一家
         Assert.Equal(1, started.StartedCount);
         Assert.Equal(1, started.StoppedCount);
         Assert.Equal(0, swapped.StartedCount);
         Assert.Equal(0, swapped.StoppedCount);
 
-        // 事件类回调按当前值派发：新实现没看见 Start，但能拿到完整的结果
-        Assert.True(swapped.Succeeded);
+        // 成败上报带着句柄（句柄里的 State 是开它的那家自己的载体），所以也归开它的实现：
+        // 把它发给另一家等于让对方去解析别人格式的 State。
+        Assert.True(started.Succeeded);
+        Assert.False(swapped.Succeeded);
     }
 
     /// <summary><see cref="AxiosTelemetrySink.Off"/> 把观测彻底关掉，而请求语义不变。</summary>
@@ -138,34 +140,39 @@ public sealed class TelemetrySinkTests
         => Assert.Throws<ArgumentNullException>(() => AxiosTelemetry.Sink = null!);
 
     /// <summary>
-    /// 观测实现抛异常时，库自己的不变量不能跟着坏：在途计数必须照常归零，否则 <c>Dispose()</c> 永远等不到 0，
-    /// 池与 Handler 一直不释放。
+    /// 观测实现违约抛异常时，<b>请求结果与库的不变量都不能被改写</b>：请求照常成功，
+    /// 在途计数照常归零（否则 <c>Dispose()</c> 永远等不到 0，池与 Handler 一直不释放），span 照常收。
     /// </summary>
     /// <remarks>
-    /// 契约上实现「不允许抛出」，但可替换的实现是第三方代码，收尾那一步在 <c>finally</c> 里，
-    /// 漏掉归还会把「观测写错了」升级成「客户端泄漏」。异常本身照常上抛（与其它用户回调一致），这里只钉不变量。
-    /// 三段收尾彼此不可连坐：`ExitRequest` 抛了，span 仍要收（收了才不串到后续请求上），在途计数仍要归零。
+    /// 契约上实现「不应该抛出」，但可替换实现是第三方代码，而且收尾那一步在 <c>finally</c> 里：
+    /// 异常一旦外溢，一条 200 就被换成 <see cref="InvalidOperationException"/>，真正的失败原因也会被盖掉。
+    /// 所以派发层（<c>AxiosTelemetry.Dispatch</c>）把异常就地吞掉，三段收尾彼此不连坐。
     /// </remarks>
     [Fact]
-    public async Task SinkThrowingOnExitRequest_StillReleasesTheClient()
+    public async Task SinkThrowingOnExitRequest_StillSucceedsAndReleasesTheClient()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
         var original = AxiosTelemetry.Sink;
         var sink = new ThrowingSink();
         using var client = new AxiosClient();
+        int status;
         try
         {
             AxiosTelemetry.Sink = sink;
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(server.Url + "x"));
+            // 观测写错了只该丢掉观测：请求本身仍然是一条成功的 200。
+            status = (await client.GetAsync(server.Url + "x")).Status;
         }
         finally
         {
             AxiosTelemetry.Sink = original;
         }
 
-        // span 照常收：收尾回到「开它的那个实现」上，与当前 Sink 无关。
+        Assert.Equal(200, status);
+
+        // 「出」被调到一次（异常在派发层结束），span 照常收。
+        Assert.Equal(1, sink.Exits);
         Assert.Equal(1, sink.Stops);
 
         client.Dispose();
@@ -176,37 +183,96 @@ public sealed class TelemetrySinkTests
     }
 
     /// <summary>
-    /// 「进」那一步抛异常时，<b>不能</b>再补一次「出」：没配对的水位会把内置实现在途计数打成负数，
-    /// 此后所有读数都是假的（违约实现只该毁掉自己的观测）。
+    /// 「进」那一步抛异常时，<b>不能</b>再补一次「出」：没配对的水位会把实现在途计数打成负数，
+    /// 此后所有读数都是假的。配对与否由派发层的护栏在同一份快照上判定（进成功才置位）。
     /// </summary>
     /// <remarks>
     /// 与上一条同一族：入口标记若在进入成功之前就置位，收尾分支会当成「已经进过」。
+    /// 请求本身同样不受影响 —— 观测挂了不等于请求挂了。
     /// </remarks>
     [Fact]
-    public async Task SinkThrowingOnEnterRequest_GetsNoPairedExitAndClientStillReleases()
+    public async Task SinkThrowingOnEnterRequest_GetsNoPairedExitAndClientStillSucceeds()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
 
         var original = AxiosTelemetry.Sink;
         var sink = new ThrowingEnterSink();
         using var client = new AxiosClient();
+        int status;
         try
         {
             AxiosTelemetry.Sink = sink;
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetAsync(server.Url + "x"));
+            status = (await client.GetAsync(server.Url + "x")).Status;
         }
         finally
         {
             AxiosTelemetry.Sink = original;
         }
 
+        Assert.Equal(200, status);
+
         Assert.Equal(1, sink.Enters);
         Assert.Equal(0, sink.Exits);
+
+        // 没进去就没有句柄：既不该开 span，也不该收。
+        Assert.Equal(0, sink.Starts);
+        Assert.Equal(0, sink.Stops);
 
         client.Dispose();
         Assert.Equal(0, PrivateInt(client, "_inFlight"));
         Assert.Equal(1, PrivateInt(client, "_resourcesDisposed"));
+    }
+
+    /// <summary>事件类回调抛异常同样只丢事件：缓存 / 池 / 闸门 的观测写错不能把请求变成失败。</summary>
+    [Fact]
+    public async Task SinkThrowingOnEvents_DoesNotAffectTheRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var original = AxiosTelemetry.Sink;
+        var sink = new ThrowingEventSink();
+        using var client = new AxiosClient();
+        int status;
+        try
+        {
+            AxiosTelemetry.Sink = sink;
+
+            status = (await client.GetAsync(server.Url + "x")).Status;
+        }
+        finally
+        {
+            AxiosTelemetry.Sink = original;
+        }
+
+        Assert.Equal(200, status);
+        Assert.True(sink.EventsSeen > 0);
+    }
+
+    /// <summary>句柄绕过派发层直连实现：开观测抛异常时退化成「本次没有观测」，请求照常发。</summary>
+    [Fact]
+    public async Task SinkThrowingOnStartRequest_DoesNotAffectTheRequest()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+
+        var original = AxiosTelemetry.Sink;
+        var sink = new ThrowingStartSink();
+        using var client = new AxiosClient();
+        int status;
+        try
+        {
+            AxiosTelemetry.Sink = sink;
+
+            status = (await client.GetAsync(server.Url + "x")).Status;
+        }
+        finally
+        {
+            AxiosTelemetry.Sink = original;
+        }
+
+        Assert.Equal(200, status);
+        Assert.Equal(1, sink.Starts);
+        Assert.Equal(0, sink.Stops);
     }
 
     /// <summary>读实例私有 <see cref="int"/> 字段（护栏用例钉的是「库自己怎么记数」，只能这么看）。</summary>
@@ -314,7 +380,11 @@ public sealed class TelemetrySinkTests
     /// <summary>违约实现：在「请求离开」那一步抛异常，并记录 span 有没有被收（应当照收）。</summary>
     private sealed class ThrowingSink : AxiosTelemetrySink
     {
+        private int _exits;
         private int _stops;
+
+        /// <summary><see cref="ExitRequest"/> 被调用几次（异常应停在派发层，调用点看到的是正常返回）。</summary>
+        public int Exits => Volatile.Read(ref _exits);
 
         /// <summary><see cref="StopRequest"/> 被调用几次。</summary>
         public int Stops => Volatile.Read(ref _stops);
@@ -329,7 +399,11 @@ public sealed class TelemetrySinkTests
         public override void StopRequest(in AxiosRequestTrace trace) => Interlocked.Increment(ref _stops);
 
         /// <inheritdoc />
-        public override void ExitRequest() => throw new InvalidOperationException("观测实现违约");
+        public override void ExitRequest()
+        {
+            Interlocked.Increment(ref _exits);
+            throw new InvalidOperationException("观测实现违约");
+        }
     }
 
     /// <summary>违约实现：在「请求进入」那一步抛异常，并记录「出」被叫了几次（不该有）。</summary>
@@ -337,6 +411,8 @@ public sealed class TelemetrySinkTests
     {
         private int _enters;
         private int _exits;
+        private int _starts;
+        private int _stops;
 
         /// <summary>「进」被调用几次。</summary>
         public int Enters => Volatile.Read(ref _enters);
@@ -344,8 +420,24 @@ public sealed class TelemetrySinkTests
         /// <summary>「出」被调用几次。</summary>
         public int Exits => Volatile.Read(ref _exits);
 
+        /// <summary>开观测被调用几次（没进去就不该开）。</summary>
+        public int Starts => Volatile.Read(ref _starts);
+
+        /// <summary>收观测被调用几次（没开过就不该收）。</summary>
+        public int Stops => Volatile.Read(ref _stops);
+
         /// <inheritdoc />
         public override bool IsEnabled(AxiosConfig? config) => true;
+
+        /// <inheritdoc />
+        public override AxiosRequestTrace StartRequest(AxiosConfig config, Uri uri)
+        {
+            Interlocked.Increment(ref _starts);
+            return new AxiosRequestTrace(this, state: null);
+        }
+
+        /// <inheritdoc />
+        public override void StopRequest(in AxiosRequestTrace trace) => Interlocked.Increment(ref _stops);
 
         /// <inheritdoc />
         public override void EnterRequest()
@@ -356,6 +448,76 @@ public sealed class TelemetrySinkTests
 
         /// <inheritdoc />
         public override void ExitRequest() => Interlocked.Increment(ref _exits);
+    }
+
+    /// <summary>违约实现：事件类回调全部抛异常（缓存 / 闸门 / 池 / 重试都在其中）。</summary>
+    private sealed class ThrowingEventSink : AxiosTelemetrySink
+    {
+        private int _events;
+
+        /// <summary>被调到的事件次数（证明真的走到了那些回调，而不是「一个都没触发所以没出事」）。</summary>
+        public int EventsSeen => Volatile.Read(ref _events);
+
+        /// <inheritdoc />
+        public override bool IsEnabled(AxiosConfig? config) => true;
+
+        /// <inheritdoc />
+        public override AxiosRequestTrace StartRequest(AxiosConfig config, Uri uri) => new(this, state: null);
+
+        /// <inheritdoc />
+        public override void CacheHit(AxiosConfig? config) => Blow();
+
+        /// <inheritdoc />
+        public override void CacheMiss(AxiosConfig? config) => Blow();
+
+        /// <inheritdoc />
+        public override void RecordLease(bool reused) => Blow();
+
+        /// <inheritdoc />
+        public override void TagPoolReuse(bool reused) => Blow();
+
+        /// <inheritdoc />
+        public override void EnterLease() => Blow();
+
+        /// <inheritdoc />
+        public override void ExitLease() => Blow();
+
+        /// <inheritdoc />
+        public override void RequestSucceeded(AxiosConfig config, Uri uri, AxiosResponse response, long startTimestamp, in AxiosRequestTrace trace)
+            => Blow();
+
+        /// <summary>记一次「确实被调到」然后违约。</summary>
+        private void Blow()
+        {
+            Interlocked.Increment(ref _events);
+            throw new InvalidOperationException("观测实现违约");
+        }
+    }
+
+    /// <summary>违约实现：开观测那一步抛异常（句柄路径绕过派发层，靠调用点的 try/catch 兜）。</summary>
+    private sealed class ThrowingStartSink : AxiosTelemetrySink
+    {
+        private int _starts;
+        private int _stops;
+
+        /// <summary>开观测被调用几次。</summary>
+        public int Starts => Volatile.Read(ref _starts);
+
+        /// <summary>收观测被调用几次（没开成就没有句柄，不该收）。</summary>
+        public int Stops => Volatile.Read(ref _stops);
+
+        /// <inheritdoc />
+        public override bool IsEnabled(AxiosConfig? config) => true;
+
+        /// <inheritdoc />
+        public override AxiosRequestTrace StartRequest(AxiosConfig config, Uri uri)
+        {
+            Interlocked.Increment(ref _starts);
+            throw new InvalidOperationException("观测实现违约");
+        }
+
+        /// <inheritdoc />
+        public override void StopRequest(in AxiosRequestTrace trace) => Interlocked.Increment(ref _stops);
     }
 
     /// <summary>轮询等待某个条件成立；超时即失败（带上在等什么）。</summary>
