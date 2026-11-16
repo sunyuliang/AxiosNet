@@ -564,6 +564,22 @@ public sealed class ConfigMergeTests
     }
 
     [Fact]
+    public async Task Shortcut_OmittedPostBody_ClearsInheritedDefault()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(new AxiosConfig
+        {
+            Body = new { inherited = true },
+        });
+
+        // PostAsync 的 data 是「有默认值的可选参数」：省略它编译成 data: null，与上一条用例等价。
+        // 与 DeleteAsync（另有「不带 data」的重载，会继承默认正文）不对称，两者只差在重载形态上。
+        await client.PostAsync(server.Url + "x");
+
+        Assert.Empty(Assert.Single(server.Received).Body);
+    }
+
+    [Fact]
     public async Task Shortcut_OmittedBody_KeepsInheritedDefault()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));

@@ -8,7 +8,7 @@ namespace AxiosNet.Retry;
 /// </summary>
 /// <remarks>
 /// 只拦重试不拦首发：内层策略说重试时才扣令牌，扣不到就放弃重试，把这次失败原样抛给调用方。
-/// 令牌桶按策略对象共享：挂在 <c>Defaults.Retry.Policy</c> 上时本实例的所有请求共用一只桶。
+/// 令牌桶按策略对象共享：挂在 <c>Defaults.Resilience.Retry.Policy</c> 上时本实例的所有请求共用一只桶。
 /// 线程安全，每次判定只在锁内做一次时间戳换算、不分配；<see cref="RefusedRetries"/> 与
 /// <see cref="OnBudgetExhausted"/> 用于本地观测，进程级指标见
 /// <c>axiosnet.client.retry.budget_exhausted</c>（无标签，受 <c>Observability.Capture</c> 控制）。
@@ -16,10 +16,10 @@ namespace AxiosNet.Retry;
 /// <example>
 /// <code>
 /// // 瞬时最多放行 20 次重试，之后每秒补 5 次；内层策略仍是默认的「3 次、指数退避」
-/// client.Defaults.Retry.Policy = new RetryBudgetPolicy(capacity: 20, refillPerSecond: 5);
+/// client.Defaults.Resilience.Retry.Policy = new RetryBudgetPolicy(capacity: 20, refillPerSecond: 5);
 ///
 /// // 也可以包住自定义策略：预算只管「放不放行」，可重试判定 / 次数 / 等待时间仍由内层决定
-/// client.Defaults.Retry.Policy = new RetryBudgetPolicy(
+/// client.Defaults.Resilience.Retry.Policy = new RetryBudgetPolicy(
 ///     RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200)),
 ///     capacity: 50,
 ///     refillPerSecond: 10);

@@ -20,7 +20,7 @@ public sealed partial class ApiClient
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var metadata = RequestModelMetadata.Get(request.GetType());
+        var metadata = AcquireMetadata(request.GetType());
         var format = metadata.HasStreamAttribute
             ? metadata.StreamFormat
             : AxiosStreamFormat.NewlineDelimitedJson;
@@ -54,7 +54,7 @@ public sealed partial class ApiClient
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var metadata = RequestModelMetadata.Get(request.GetType());
+        var metadata = AcquireMetadata(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
         return await SendStreamAsync<TItem>(request, metadata.Authorization, config, cancellationToken, format)

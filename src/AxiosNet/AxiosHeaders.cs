@@ -424,26 +424,48 @@ public sealed class AxiosHeaders : IEnumerable<KeyValuePair<string, string>>
     }
 
     /// <summary>把 <paramref name="incoming"/> 覆盖合并进 <paramref name="current"/>，产出一版新数组。</summary>
+    /// <remarks>
+    /// 一次分配到位（与 <see cref="ApplyOps"/> 同一模式）：先数出真正要新增几条，直接按最终长度
+    /// <c>new Entry[]</c>，先拷 <paramref name="current"/>，再把 <paramref name="incoming"/> 逐条写进数组。
+    /// 旧实现先建 <see cref="List{T}"/>、再 <c>ToArray()</c> 拷一份，每个带自定义头的请求都白付两次数组分配
+    /// （调用点在 <c>AxiosClient.Config.cs</c> 的每请求合并上）。
+    /// <para>语义不变：同名覆盖在原位置、新名按 <paramref name="incoming"/> 的顺序追加到尾部。</para>
+    /// </remarks>
     private static Entry[] Merge(Entry[] current, Entry[] incoming)
     {
+        // 先数：只有「current 里没有、incoming 前面也没出现过」的名字才占新槽位。
+        // incoming 自带同重名时不能重复计数，否则数组尾部会留下空槽位（Entry 是结构体，默认值不是合法头）。
+        // 第二个判定（IndexOf(incoming[0..i])）在公开路径上不可达 —— AxiosHeaders.Set 就按大小写不敏感去重，
+        // 造不出同名条目；保留它只是防未来的内部数组来源（例如手工拼的快照），不要当热点去优化。
         var added = 0;
         for (var i = 0; i < incoming.Length; i++)
         {
-            if (IndexOf(current, incoming[i].Name) < 0)
+            if (IndexOf(current, incoming[i].Name) < 0
+                && IndexOf(incoming.AsSpan(0, i), incoming[i].Name) < 0)
             {
                 added++;
             }
         }
 
-        var merged = new List<Entry>(current.Length + added);
-        merged.AddRange(current);
+        var merged = new Entry[current.Length + added];
+        Array.Copy(current, merged, current.Length);
 
+        // 已占用的槽位数：新名从这里往后追加，因此顺序就是 incoming 的顺序。
+        var written = current.Length;
         for (var i = 0; i < incoming.Length; i++)
         {
-            Put(merged, incoming[i].Name, incoming[i].Value);
+            var index = IndexOf(merged.AsSpan(0, written), incoming[i].Name);
+            if (index >= 0)
+            {
+                merged[index] = incoming[i];
+                continue;
+            }
+
+            merged[written] = incoming[i];
+            written++;
         }
 
-        return merged.ToArray();
+        return merged;
     }
 
     /// <summary>写入（覆盖同名、否则追加）。构造期与批量合并用，O(N) 扫描。</summary>

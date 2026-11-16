@@ -1,0 +1,1163 @@
+  C:AxiosNet.AxiosAuth()
+  C:AxiosNet.AxiosAuth(System.String, System.String)
+  C:AxiosNet.AxiosClient(AxiosNet.AxiosConfig, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  C:AxiosNet.AxiosConfig()
+  C:AxiosNet.AxiosConfig+CircuitSettings()
+  C:AxiosNet.AxiosConfig+FailoverSettings()
+  C:AxiosNet.AxiosConfig+HedgingSettings()
+  C:AxiosNet.AxiosConfig+IdempotencySettings()
+  C:AxiosNet.AxiosConfig+LimitsSettings()
+  C:AxiosNet.AxiosConfig+ObservabilitySettings()
+  C:AxiosNet.AxiosConfig+RetrySettings()
+  C:AxiosNet.AxiosConfig+SerializationSettings()
+  C:AxiosNet.AxiosConfig+TransportSettings()
+  C:AxiosNet.AxiosDynamic()
+  C:AxiosNet.AxiosDynamic(System.Collections.Generic.IDictionary`2<System.String,System.Object>)
+  C:AxiosNet.AxiosException(System.String, System.String, AxiosNet.AxiosConfig, System.Net.Http.HttpRequestMessage, AxiosNet.AxiosResponse, System.Exception, System.Nullable`1<System.TimeSpan>)
+  C:AxiosNet.AxiosHeaders()
+  C:AxiosNet.AxiosHeaders(System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.String>>)
+  C:AxiosNet.AxiosProgressEvent(System.Int64, System.Nullable`1<System.Int64>, System.Nullable`1<System.Double>, System.Nullable`1<System.TimeSpan>, System.Boolean)
+  C:AxiosNet.AxiosResponse()
+  C:AxiosNet.AxiosResponse`1()
+  C:AxiosNet.AxiosShapeAttribute()
+  C:AxiosNet.AxiosShortCircuit()
+  C:AxiosNet.Cache.AxiosCache(AxiosNet.Cache.AxiosCacheOptions)
+  C:AxiosNet.Cache.AxiosCacheOptions()
+  C:AxiosNet.Cache.MemoryCacheStore(System.Int32, System.Int64)
+  C:AxiosNet.Circuit.AxiosCircuitContext(System.String, System.Uri, AxiosNet.AxiosConfig, System.Exception, System.TimeSpan, System.Nullable`1<System.Int32>)
+  C:AxiosNet.Circuit.AxiosCircuitTransition(System.String, AxiosNet.Circuit.AxiosCircuitState, AxiosNet.Circuit.AxiosCircuitState)
+  C:AxiosNet.Circuit.CircuitBreaker()
+  C:AxiosNet.Circuit.CircuitBreaker(System.Int32, System.TimeSpan)
+  C:AxiosNet.FormFile(System.String, System.Byte[], System.String)
+  C:AxiosNet.FormFile(System.String, System.IO.Stream, System.String)
+  C:AxiosNet.Interceptors.AxiosInterceptors()
+  C:AxiosNet.Interceptors.RequestInterceptorManager()
+  C:AxiosNet.Interceptors.ResponseInterceptorManager()
+  C:AxiosNet.Metadata.FormData()
+  C:AxiosNet.Metadata.FormPartOverride(System.String, System.String, System.Boolean)
+  C:AxiosNet.Metadata.PreformattedValue(System.String)
+  C:AxiosNet.Pipeline.AxiosAttemptHandler(System.Object, System.IntPtr)
+  C:AxiosNet.Pipeline.AxiosAttemptMiddleware(System.Object, System.IntPtr)
+  C:AxiosNet.Pipeline.AxiosAttemptResult(AxiosNet.AxiosResponse)
+  C:AxiosNet.Pipeline.AxiosAttemptResult(AxiosNet.AxiosResponse, System.IDisposable)
+  C:AxiosNet.Pooling.ConnectionPoolOptions()
+  C:AxiosNet.Pooling.ConnectionPoolStatistics(System.Int32, System.Int64, System.Collections.Generic.IReadOnlyList`1<AxiosNet.Pooling.EndpointStatistics>)
+  C:AxiosNet.Pooling.ConnectionTransportOptions()
+  C:AxiosNet.Pooling.EndpointStatistics(System.String, System.Int32, System.DateTime, System.Boolean, System.String)
+  C:AxiosNet.Pooling.HttpConnectionPool(AxiosNet.Pooling.ConnectionPoolOptions)
+  C:AxiosNet.Retry.AxiosRetryContext(System.Int32, System.Int32, System.Exception, AxiosNet.AxiosConfig, AxiosNet.AxiosResponse, System.TimeSpan)
+  C:AxiosNet.Retry.RetryBudgetPolicy(AxiosNet.Retry.IAxiosRetryPolicy, System.Int32, System.Double)
+  C:AxiosNet.Retry.RetryBudgetPolicy(System.Int32, System.Double)
+  C:AxiosNet.Retry.RetryPolicy()
+  C:AxiosNet.Retry.RetryPolicy(System.Int32, System.Nullable`1<System.TimeSpan>)
+  C:AxiosNet.Serialization.ContentSerializerRegistry()
+  C:AxiosNet.WebAPI.AccessToken(System.String, System.Nullable`1<System.DateTimeOffset>)
+  C:AxiosNet.WebAPI.AccessTokenManager(AxiosNet.WebAPI.AccessTokenOptions)
+  C:AxiosNet.WebAPI.AccessTokenOptions(System.Func`2<System.Threading.CancellationToken,System.Threading.Tasks.ValueTask`1<AxiosNet.WebAPI.AccessToken>>)
+  C:AxiosNet.WebAPI.ApiClient(AxiosNet.AxiosClient, System.Boolean)
+  C:AxiosNet.WebAPI.ApiClient(System.String, System.Action`1<AxiosNet.AxiosConfig>)
+  C:AxiosNet.WebAPI.ApiErrorFactory`1()
+  C:AxiosNet.WebAPI.ApiError`1(!TError, AxiosNet.WebAPI.ApiErrorContext)
+  C:AxiosNet.WebAPI.ApiRequest`1()
+  C:AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute()
+  C:AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute()
+  C:AxiosNet.WebAPI.Attributes.AuthorizeAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.BodyAttribute()
+  C:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.DeleteAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.FormatAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.FormatAttribute(System.Type, System.String)
+  C:AxiosNet.WebAPI.Attributes.GetAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.HeadAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.HeaderAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute()
+  C:AxiosNet.WebAPI.Attributes.HeadersAttribute(System.String[])
+  C:AxiosNet.WebAPI.Attributes.HttpApiAttribute(System.Net.Http.HttpMethod, System.String)
+  C:AxiosNet.WebAPI.Attributes.HttpApiAttribute(System.String, System.String)
+  C:AxiosNet.WebAPI.Attributes.MultipartAttribute()
+  C:AxiosNet.WebAPI.Attributes.OptionsAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.PartAttribute()
+  C:AxiosNet.WebAPI.Attributes.PartAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.PatchAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.PathAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.PostAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.PutAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.QueryAttribute(System.String)
+  C:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute(AxiosNet.AxiosCollectionFormat)
+  C:AxiosNet.WebAPI.Attributes.StreamAttribute()
+  C:AxiosNet.WebAPI.Attributes.StreamAttribute(AxiosNet.AxiosStreamFormat)
+  C:AxiosNet.WebAPI.Serialization.AxiosJsonFormatTypeInfoResolver(System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver)
+  E:AxiosNet.Circuit.CircuitBreaker.StateChanged
+  F:AxiosNet.AxiosCollectionFormat.Brackets
+  F:AxiosNet.AxiosCollectionFormat.Csv
+  F:AxiosNet.AxiosCollectionFormat.Multi
+  F:AxiosNet.AxiosCollectionFormat.Pipes
+  F:AxiosNet.AxiosCollectionFormat.Ssv
+  F:AxiosNet.AxiosCollectionFormat.Tsv
+  F:AxiosNet.AxiosCollectionFormat.value__
+  F:AxiosNet.AxiosCompression.Brotli
+  F:AxiosNet.AxiosCompression.Deflate
+  F:AxiosNet.AxiosCompression.Gzip
+  F:AxiosNet.AxiosCompression.None
+  F:AxiosNet.AxiosCompression.value__
+  F:AxiosNet.AxiosConfig.DefaultStreamFrameBytes
+  F:AxiosNet.AxiosConfig.FormUrlEncodedContentType
+  F:AxiosNet.AxiosConfig.JsonContentType
+  F:AxiosNet.AxiosConfig.MaxStreamFrameBytesLimit
+  F:AxiosNet.AxiosConfig.MinStreamFrameBytes
+  F:AxiosNet.AxiosContentType.FormUrlEncoded
+  F:AxiosNet.AxiosContentType.Json
+  F:AxiosNet.AxiosContentType.JsonPatch
+  F:AxiosNet.AxiosContentType.MultipartFormData
+  F:AxiosNet.AxiosContentType.OctetStream
+  F:AxiosNet.AxiosContentType.ProblemJson
+  F:AxiosNet.AxiosContentType.TextHtml
+  F:AxiosNet.AxiosContentType.TextPlain
+  F:AxiosNet.AxiosContentType.Xml
+  F:AxiosNet.AxiosErrorCode.BadOptionValue
+  F:AxiosNet.AxiosErrorCode.BadRequest
+  F:AxiosNet.AxiosErrorCode.BadResponse
+  F:AxiosNet.AxiosErrorCode.Canceled
+  F:AxiosNet.AxiosErrorCode.CircuitOpen
+  F:AxiosNet.AxiosErrorCode.ConnAborted
+  F:AxiosNet.AxiosErrorCode.InvalidUrl
+  F:AxiosNet.AxiosErrorCode.Network
+  F:AxiosNet.AxiosErrorCode.PoolExhausted
+  F:AxiosNet.AxiosErrorCode.QueueFull
+  F:AxiosNet.AxiosErrorCode.QueueTimeout
+  F:AxiosNet.AxiosErrorCode.TooManyRedirects
+  F:AxiosNet.AxiosErrorCode.Unknown
+  F:AxiosNet.AxiosErrorCode.value__
+  F:AxiosNet.AxiosException.ErrBadOptionValue
+  F:AxiosNet.AxiosException.ErrBadRequest
+  F:AxiosNet.AxiosException.ErrBadResponse
+  F:AxiosNet.AxiosException.ErrCanceled
+  F:AxiosNet.AxiosException.ErrCircuitOpen
+  F:AxiosNet.AxiosException.ErrConnAborted
+  F:AxiosNet.AxiosException.ErrInvalidUrl
+  F:AxiosNet.AxiosException.ErrNetwork
+  F:AxiosNet.AxiosException.ErrPoolExhausted
+  F:AxiosNet.AxiosException.ErrQueueFull
+  F:AxiosNet.AxiosException.ErrQueueTimeout
+  F:AxiosNet.AxiosException.ErrTooManyRedirects
+  F:AxiosNet.AxiosStreamFormat.JsonArray
+  F:AxiosNet.AxiosStreamFormat.NewlineDelimitedJson
+  F:AxiosNet.AxiosStreamFormat.ServerSentEvents
+  F:AxiosNet.AxiosStreamFormat.value__
+  F:AxiosNet.Cache.CacheFreshnessMode.Configured
+  F:AxiosNet.Cache.CacheFreshnessMode.Intersection
+  F:AxiosNet.Cache.CacheFreshnessMode.Server
+  F:AxiosNet.Cache.CacheFreshnessMode.value__
+  F:AxiosNet.Circuit.AxiosCircuitState.Closed
+  F:AxiosNet.Circuit.AxiosCircuitState.HalfOpen
+  F:AxiosNet.Circuit.AxiosCircuitState.Open
+  F:AxiosNet.Circuit.AxiosCircuitState.value__
+  F:AxiosNet.Metadata.ValueTextChannel.Form
+  F:AxiosNet.Metadata.ValueTextChannel.Header
+  F:AxiosNet.Metadata.ValueTextChannel.Multipart
+  F:AxiosNet.Metadata.ValueTextChannel.Path
+  F:AxiosNet.Metadata.ValueTextChannel.Query
+  F:AxiosNet.Metadata.ValueTextChannel.ScalarBody
+  F:AxiosNet.Metadata.ValueTextChannel.value__
+  F:AxiosNet.ResponseType.ArrayBuffer
+  F:AxiosNet.ResponseType.Dynamic
+  F:AxiosNet.ResponseType.Json
+  F:AxiosNet.ResponseType.Stream
+  F:AxiosNet.ResponseType.Text
+  F:AxiosNet.ResponseType.value__
+  F:AxiosNet.Telemetry.AxiosTelemetry.ActiveLeasesInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.ActivePoolsInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.ActiveRequestsInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.ActivitySourceName
+  F:AxiosNet.Telemetry.AxiosTelemetry.AttemptFailedEventName
+  F:AxiosNet.Telemetry.AxiosTelemetry.AttemptStopEventName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CacheHitsInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CacheMissesInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CacheRevalidationsInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CacheStoreFailuresInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CacheStoresInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CircuitStateInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.CircuitUntrackedInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.DiagnosticListenerName
+  F:AxiosNet.Telemetry.AxiosTelemetry.GateQueueDepthInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.GateRejectionsInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.MeterName
+  F:AxiosNet.Telemetry.AxiosTelemetry.PoolEndpointsCreatedInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.PoolEndpointsEvictedInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.PoolLeasesInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RequestDurationInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RequestFailedEventName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RequestStartEventName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RequestStopEventName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RetriesInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RetryBudgetExhaustedInstrumentName
+  F:AxiosNet.Telemetry.AxiosTelemetry.RetryEventName
+  F:AxiosNet.Telemetry.AxiosTelemetry.SharedPoolsInstrumentName
+  F:AxiosNet.TelemetryCapture.NoUrl
+  F:AxiosNet.TelemetryCapture.Off
+  F:AxiosNet.TelemetryCapture.Path
+  F:AxiosNet.TelemetryCapture.Query
+  F:AxiosNet.TelemetryCapture.value__
+  F:AxiosNet.WebAPI.ApiCredentialKind.Custom
+  F:AxiosNet.WebAPI.ApiCredentialKind.Header
+  F:AxiosNet.WebAPI.ApiCredentialKind.None
+  F:AxiosNet.WebAPI.ApiCredentialKind.Query
+  F:AxiosNet.WebAPI.ApiCredentialKind.Token
+  F:AxiosNet.WebAPI.ApiCredentialKind.value__
+  M:AxiosNet.Axios.Create(AxiosNet.AxiosConfig, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  M:AxiosNet.Axios.Create(System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  M:AxiosNet.Axios.Create(System.String, System.Action`1<AxiosNet.AxiosConfig>, AxiosNet.Pooling.HttpConnectionPool, AxiosNet.Pooling.ConnectionPoolOptions, System.Net.Http.HttpMessageHandler, System.Boolean, AxiosNet.Pipeline.AxiosAttemptPipeline)
+  M:AxiosNet.Axios.DeleteAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.DeleteAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.DeleteAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.DeleteAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.DeleteAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.DeleteAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.GetUri(AxiosNet.AxiosConfig)
+  M:AxiosNet.Axios.GetUri(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.Axios.HeadAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.HeadAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.HeadAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.HeadAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.HeadAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.HeadAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.IsAxiosError(System.Exception)
+  M:AxiosNet.Axios.IsCancel(System.Exception)
+  M:AxiosNet.Axios.OptionsAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.OptionsAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.OptionsAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.OptionsAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.OptionsAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.OptionsAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchFormAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchFormAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchFormAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PatchFormAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostFormAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostFormAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostFormAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PostFormAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutFormAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutFormAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutFormAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.PutFormAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Axios.RequestAsync(AxiosNet.AxiosConfig)
+  M:AxiosNet.Axios.RequestAsync(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.Axios.RequestAsync`1(AxiosNet.AxiosConfig)
+  M:AxiosNet.Axios.RequestAsync`1(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.Axios.Reset()
+  M:AxiosNet.AxiosClient.DeleteAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.DeleteAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.DeleteAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.DeleteAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.DeleteAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.DeleteAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.DeleteAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.DeleteAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.Dispose()
+  M:AxiosNet.AxiosClient.DisposeAsync()
+  M:AxiosNet.AxiosClient.GetAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.GetAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.GetAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.GetAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.GetAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.GetAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.GetAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.GetAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.GetUri(AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.GetUri(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.AxiosClient.HeadAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.HeadAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.HeadAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.HeadAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.HeadAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.HeadAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.HeadAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.HeadAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.OptionsAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.OptionsAsync(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.OptionsAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.OptionsAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.OptionsAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.OptionsAsync`1(System.String, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.OptionsAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.OptionsAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.PatchAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.PatchAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchFormAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchFormAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchFormAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PatchFormAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.PostAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.PostAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostFormAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostFormAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostFormAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PostFormAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutAsync(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.PutAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutAsync`1(System.String, AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.PutAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutFormAsync(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutFormAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutFormAsync`1(System.String, System.Object, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.PutFormAsync`1(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.AxiosClient.RequestAsync(AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.RequestAsync(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.AxiosClient.RequestAsync`1(AxiosNet.AxiosConfig)
+  M:AxiosNet.AxiosClient.RequestAsync`1(System.Action`1<AxiosNet.AxiosConfig>)
+  M:AxiosNet.AxiosConfig.Clone()
+  M:AxiosNet.AxiosConfig.SetQuery(System.String, System.Object)
+  M:AxiosNet.AxiosContent.Register(System.String, AxiosNet.Serialization.IContentSerializer)
+  M:AxiosNet.AxiosContent.Unregister(System.String)
+  M:AxiosNet.AxiosCredential.Basic(AxiosNet.AxiosAuth)
+  M:AxiosNet.AxiosCredential.Basic(System.String, System.String)
+  M:AxiosNet.AxiosCredential.Bearer(System.String, System.String)
+  M:AxiosNet.AxiosCredential.Header(System.String)
+  M:AxiosNet.AxiosCredential.Provider(AxiosNet.IAxiosCredentialProvider)
+  M:AxiosNet.AxiosDynamic.Add(System.Collections.Generic.KeyValuePair`2<System.String,System.Object>)
+  M:AxiosNet.AxiosDynamic.Add(System.String, System.Object)
+  M:AxiosNet.AxiosDynamic.Clear()
+  M:AxiosNet.AxiosDynamic.Contains(System.Collections.Generic.KeyValuePair`2<System.String,System.Object>)
+  M:AxiosNet.AxiosDynamic.ContainsKey(System.String)
+  M:AxiosNet.AxiosDynamic.CopyTo(System.Collections.Generic.KeyValuePair`2<System.String,System.Object>[], System.Int32)
+  M:AxiosNet.AxiosDynamic.GetEnumerator()
+  M:AxiosNet.AxiosDynamic.Remove(System.Collections.Generic.KeyValuePair`2<System.String,System.Object>)
+  M:AxiosNet.AxiosDynamic.Remove(System.String)
+  M:AxiosNet.AxiosDynamic.TryGetValue(System.String, out System.Object)
+  M:AxiosNet.AxiosException.ToJson()
+  M:AxiosNet.AxiosHeaders+Enumerator.Dispose()
+  M:AxiosNet.AxiosHeaders+Enumerator.MoveNext()
+  M:AxiosNet.AxiosHeaders+Enumerator.Reset()
+  M:AxiosNet.AxiosHeaders.Clear()
+  M:AxiosNet.AxiosHeaders.Clone()
+  M:AxiosNet.AxiosHeaders.Delete(System.String)
+  M:AxiosNet.AxiosHeaders.Get(System.String)
+  M:AxiosNet.AxiosHeaders.GetEnumerator()
+  M:AxiosNet.AxiosHeaders.Has(System.String)
+  M:AxiosNet.AxiosHeaders.Set(System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.String>>)
+  M:AxiosNet.AxiosHeaders.Set(System.String, System.String)
+  M:AxiosNet.AxiosProgressEvent.ToString()
+  M:AxiosNet.AxiosResponse.GetHeader(System.String)
+  M:AxiosNet.AxiosResponse.GetRequestHeader(System.String)
+  M:AxiosNet.AxiosResponseInfo.GetHeader(System.String)
+  M:AxiosNet.AxiosResponse`1.DataOrThrow()
+  M:AxiosNet.AxiosShortCircuit.From(System.Object, System.Int32)
+  M:AxiosNet.AxiosShortCircuit.Json(System.String, System.Int32)
+  M:AxiosNet.AxiosShortCircuit.Restore(System.Byte[], System.Collections.Generic.IDictionary`2<System.String,System.String>, System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.Collections.Generic.IEnumerable`1<System.String>>, System.Nullable`1<System.DateTimeOffset>, System.Nullable`1<System.TimeSpan>, System.String, System.Int32, System.String, System.Version)
+  M:AxiosNet.AxiosUrl.EncodePathSegment(System.String)
+  M:AxiosNet.Cache.AxiosCache.ClearAsync(System.Threading.CancellationToken)
+  M:AxiosNet.Cache.AxiosCache.CreateKey(AxiosNet.AxiosConfig, System.Uri)
+  M:AxiosNet.Cache.AxiosCache.IsCacheable(AxiosNet.AxiosConfig)
+  M:AxiosNet.Cache.AxiosCache.KeyFor(AxiosNet.AxiosConfig, System.Uri)
+  M:AxiosNet.Cache.AxiosCache.RemoveAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.IAxiosCacheRevalidationStore.GetRevalidationAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.IAxiosCacheStore.ClearAsync(System.Threading.CancellationToken)
+  M:AxiosNet.Cache.IAxiosCacheStore.GetAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.IAxiosCacheStore.RemoveAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.IAxiosCacheStore.SetAsync(System.String, AxiosNet.AxiosShortCircuit, AxiosNet.Cache.AxiosCacheEntryPolicy, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.IAxiosCacheStore.SetAsync(System.String, AxiosNet.AxiosShortCircuit, System.TimeSpan, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.MemoryCacheStore.ClearAsync(System.Threading.CancellationToken)
+  M:AxiosNet.Cache.MemoryCacheStore.GetAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.MemoryCacheStore.GetRevalidationAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.MemoryCacheStore.RemoveAsync(System.String, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.MemoryCacheStore.SetAsync(System.String, AxiosNet.AxiosShortCircuit, AxiosNet.Cache.AxiosCacheEntryPolicy, System.Threading.CancellationToken)
+  M:AxiosNet.Cache.MemoryCacheStore.SetAsync(System.String, AxiosNet.AxiosShortCircuit, System.TimeSpan, System.Threading.CancellationToken)
+  M:AxiosNet.Circuit.AxiosCircuitTransition.ToString()
+  M:AxiosNet.Circuit.CircuitBreaker.GetRetryAfter(AxiosNet.Circuit.AxiosCircuitContext)
+  M:AxiosNet.Circuit.CircuitBreaker.GetState(System.String)
+  M:AxiosNet.Circuit.CircuitBreaker.Record(AxiosNet.Circuit.AxiosCircuitContext)
+  M:AxiosNet.Circuit.CircuitBreaker.Reset()
+  M:AxiosNet.Circuit.CircuitBreaker.Reset(System.String)
+  M:AxiosNet.Circuit.CircuitBreaker.ShouldAllow(AxiosNet.Circuit.AxiosCircuitContext)
+  M:AxiosNet.Circuit.IAxiosCircuitPolicy.GetRetryAfter(AxiosNet.Circuit.AxiosCircuitContext)
+  M:AxiosNet.Circuit.IAxiosCircuitPolicy.Record(AxiosNet.Circuit.AxiosCircuitContext)
+  M:AxiosNet.Circuit.IAxiosCircuitPolicy.ShouldAllow(AxiosNet.Circuit.AxiosCircuitContext)
+  M:AxiosNet.FormFile.FromBytes(System.String, System.Byte[], System.String)
+  M:AxiosNet.FormFile.FromPath(System.String, System.String)
+  M:AxiosNet.FormFile.FromPath(System.String, System.String, System.String)
+  M:AxiosNet.IAxiosCredentialProvider.GetAsync(AxiosNet.AxiosCredentialContext, System.Threading.CancellationToken)
+  M:AxiosNet.IAxiosCredentialProvider.Invalidate(System.String)
+  M:AxiosNet.Interceptors.RequestInterceptorManager.Clear()
+  M:AxiosNet.Interceptors.RequestInterceptorManager.Eject(System.Int32)
+  M:AxiosNet.Interceptors.RequestInterceptorManager.Use(System.Func`2<AxiosNet.AxiosConfig,AxiosNet.AxiosConfig>, System.Func`2<System.Exception,AxiosNet.AxiosConfig>)
+  M:AxiosNet.Interceptors.RequestInterceptorManager.Use(System.Func`2<AxiosNet.AxiosConfig,System.Threading.Tasks.Task`1<AxiosNet.AxiosConfig>>, System.Func`2<System.Exception,System.Threading.Tasks.Task`1<AxiosNet.AxiosConfig>>)
+  M:AxiosNet.Interceptors.ResponseInterceptorManager.Clear()
+  M:AxiosNet.Interceptors.ResponseInterceptorManager.Eject(System.Int32)
+  M:AxiosNet.Interceptors.ResponseInterceptorManager.Use(System.Func`2<AxiosNet.AxiosResponse,AxiosNet.AxiosResponse>, System.Func`2<System.Exception,AxiosNet.AxiosResponse>)
+  M:AxiosNet.Interceptors.ResponseInterceptorManager.Use(System.Func`2<AxiosNet.AxiosResponse,System.Threading.Tasks.Task`1<AxiosNet.AxiosResponse>>, System.Func`2<System.Exception,System.Threading.Tasks.Task`1<AxiosNet.AxiosResponse>>)
+  M:AxiosNet.Metadata.AxiosMetadata.Freeze()
+  M:AxiosNet.Metadata.AxiosMetadata.RegisterGeneratedMap(System.Type, System.Func`2<System.Object,System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>>)
+  M:AxiosNet.Metadata.AxiosMetadata.RegisterGeneratedShapeFromSample`1(!T, System.Action`1<AxiosNet.Metadata.ShapeBuilder`1<!T>>)
+  M:AxiosNet.Metadata.AxiosMetadata.RegisterMap(System.Type, System.Func`2<System.Object,System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>>)
+  M:AxiosNet.Metadata.AxiosMetadata.RegisterShape(System.Type, System.Action`1<AxiosNet.Metadata.ObjectShapeBuilder>)
+  M:AxiosNet.Metadata.AxiosMetadata.RegisterShapeFromSample`1(!T, System.Action`1<AxiosNet.Metadata.ShapeBuilder`1<!T>>)
+  M:AxiosNet.Metadata.AxiosMetadata.RegisterShape`1()
+  M:AxiosNet.Metadata.FormData.DisposeOwned()
+  M:AxiosNet.Metadata.FormData.DisposeOwnedValues(System.Collections.Generic.IEnumerable`1<System.Object>)
+  M:AxiosNet.Metadata.FormPartOverride.Deconstruct(out System.String, out System.String, out System.Boolean)
+  M:AxiosNet.Metadata.FormPartOverride.Equals(AxiosNet.Metadata.FormPartOverride)
+  M:AxiosNet.Metadata.FormPartOverride.Equals(System.Object)
+  M:AxiosNet.Metadata.FormPartOverride.GetHashCode()
+  M:AxiosNet.Metadata.FormPartOverride.ToString()
+  M:AxiosNet.Metadata.ObjectShapeBuilder.Member(System.String, System.Type, System.Func`2<System.Object,System.Object>)
+  M:AxiosNet.Metadata.ObjectShapeMemberBuilder.FieldName(System.String)
+  M:AxiosNet.Metadata.ObjectShapeMemberBuilder.Format(AxiosNet.Metadata.ValueFormat)
+  M:AxiosNet.Metadata.ObjectShapeMemberBuilder.Ignore()
+  M:AxiosNet.Metadata.PreformattedValue.ToString()
+  M:AxiosNet.Metadata.ShapeBuilder`1.Member(System.String, System.Func`2<!T,System.Object>)
+  M:AxiosNet.Metadata.ShapeBuilder`1.Member(System.String, System.String, System.Boolean, System.Func`2<!T,System.Object>)
+  M:AxiosNet.Metadata.ShapeBuilder`1.Member(System.String, System.String, System.Boolean, System.Func`2<!T,System.Object>, AxiosNet.Metadata.ValueFormat)
+  M:AxiosNet.Metadata.ValueFormat.FromDelegate(System.Func`3<System.Object,AxiosNet.Metadata.ValueTextChannel,System.String>)
+  M:AxiosNet.Metadata.ValueFormat.FromFormat(System.String)
+  M:AxiosNet.Metadata.ValueFormatReader.Register(System.Func`2<System.Reflection.PropertyInfo,AxiosNet.Metadata.ValueFormat>)
+  M:AxiosNet.Pipeline.AxiosAttemptContext.WithAttemptNumber(System.Int32)
+  M:AxiosNet.Pipeline.AxiosAttemptContext.WithAttemptToken(System.Threading.CancellationToken)
+  M:AxiosNet.Pipeline.AxiosAttemptContext.WithEndpointIndex(System.Int32)
+  M:AxiosNet.Pipeline.AxiosAttemptContext.WithSlot(System.IDisposable)
+  M:AxiosNet.Pipeline.AxiosAttemptContext.WithUri(System.Uri)
+  M:AxiosNet.Pipeline.AxiosAttemptHandler.BeginInvoke(System.Net.Http.HttpRequestMessage, AxiosNet.Pipeline.AxiosAttemptContext, System.AsyncCallback, System.Object)
+  M:AxiosNet.Pipeline.AxiosAttemptHandler.EndInvoke(System.IAsyncResult)
+  M:AxiosNet.Pipeline.AxiosAttemptHandler.Invoke(System.Net.Http.HttpRequestMessage, AxiosNet.Pipeline.AxiosAttemptContext)
+  M:AxiosNet.Pipeline.AxiosAttemptMiddleware.BeginInvoke(AxiosNet.Pipeline.AxiosAttemptHandler, System.AsyncCallback, System.Object)
+  M:AxiosNet.Pipeline.AxiosAttemptMiddleware.EndInvoke(System.IAsyncResult)
+  M:AxiosNet.Pipeline.AxiosAttemptMiddleware.Invoke(AxiosNet.Pipeline.AxiosAttemptHandler)
+  M:AxiosNet.Pipeline.AxiosAttemptPipeline.Append(AxiosNet.Pipeline.AxiosAttemptMiddleware)
+  M:AxiosNet.Pipeline.AxiosAttemptPipeline.Create(AxiosNet.Pipeline.AxiosAttemptMiddleware[])
+  M:AxiosNet.Pipeline.AxiosAttemptPipeline.InsertAfter(AxiosNet.Pipeline.AxiosAttemptMiddleware, AxiosNet.Pipeline.AxiosAttemptMiddleware)
+  M:AxiosNet.Pipeline.AxiosAttemptPipeline.InsertBefore(AxiosNet.Pipeline.AxiosAttemptMiddleware, AxiosNet.Pipeline.AxiosAttemptMiddleware)
+  M:AxiosNet.Pipeline.AxiosAttemptPipeline.Remove(AxiosNet.Pipeline.AxiosAttemptMiddleware)
+  M:AxiosNet.Pipeline.AxiosAttemptPipeline.Replace(AxiosNet.Pipeline.AxiosAttemptMiddleware, AxiosNet.Pipeline.AxiosAttemptMiddleware)
+  M:AxiosNet.Pooling.ConnectionPoolOptions.AddTransport(System.String, AxiosNet.Pooling.ConnectionTransportOptions)
+  M:AxiosNet.Pooling.ConnectionPoolOptions.Clone()
+  M:AxiosNet.Pooling.ConnectionPoolStatistics.<Clone>$()
+  M:AxiosNet.Pooling.ConnectionPoolStatistics.Deconstruct(out System.Int32, out System.Int64, out System.Collections.Generic.IReadOnlyList`1<AxiosNet.Pooling.EndpointStatistics>)
+  M:AxiosNet.Pooling.ConnectionPoolStatistics.Equals(AxiosNet.Pooling.ConnectionPoolStatistics)
+  M:AxiosNet.Pooling.ConnectionPoolStatistics.Equals(System.Object)
+  M:AxiosNet.Pooling.ConnectionPoolStatistics.GetHashCode()
+  M:AxiosNet.Pooling.ConnectionPoolStatistics.ToString()
+  M:AxiosNet.Pooling.EndpointStatistics.<Clone>$()
+  M:AxiosNet.Pooling.EndpointStatistics.Deconstruct(out System.String, out System.Int32, out System.DateTime, out System.Boolean, out System.String)
+  M:AxiosNet.Pooling.EndpointStatistics.Equals(AxiosNet.Pooling.EndpointStatistics)
+  M:AxiosNet.Pooling.EndpointStatistics.Equals(System.Object)
+  M:AxiosNet.Pooling.EndpointStatistics.GetHashCode()
+  M:AxiosNet.Pooling.EndpointStatistics.ToString()
+  M:AxiosNet.Pooling.HttpConnectionPool.Clear()
+  M:AxiosNet.Pooling.HttpConnectionPool.ClearCookies()
+  M:AxiosNet.Pooling.HttpConnectionPool.Dispose()
+  M:AxiosNet.Pooling.HttpConnectionPool.EvictIdleEndpoints()
+  M:AxiosNet.Pooling.HttpConnectionPool.GetCookies(System.String)
+  M:AxiosNet.Pooling.HttpConnectionPool.GetOrCreate(System.String, AxiosNet.Pooling.ConnectionPoolOptions)
+  M:AxiosNet.Pooling.HttpConnectionPool.GetStatistics()
+  M:AxiosNet.Pooling.HttpConnectionPool.Lease(System.Uri)
+  M:AxiosNet.Pooling.HttpConnectionPool.LeaseAsync(System.Uri, System.Threading.CancellationToken)
+  M:AxiosNet.Pooling.HttpConnectionPool.Release(System.String)
+  M:AxiosNet.Pooling.HttpConnectionPool.TryGet(System.String, out AxiosNet.Pooling.HttpConnectionPool)
+  M:AxiosNet.Pooling.PoolLease.Dispose()
+  M:AxiosNet.Pooling.PooledHandlerContext.CreateDefaultHandler()
+  M:AxiosNet.Retry.IAxiosRetryPolicy.GetDelay(AxiosNet.Retry.AxiosRetryContext)
+  M:AxiosNet.Retry.IAxiosRetryPolicy.ShouldRetry(AxiosNet.Retry.AxiosRetryContext)
+  M:AxiosNet.Retry.RetryBudgetPolicy.GetDelay(AxiosNet.Retry.AxiosRetryContext)
+  M:AxiosNet.Retry.RetryBudgetPolicy.ShouldRetry(AxiosNet.Retry.AxiosRetryContext)
+  M:AxiosNet.Retry.RetryPolicy.Constant(System.Int32, System.TimeSpan)
+  M:AxiosNet.Retry.RetryPolicy.Exponential(System.Int32, System.TimeSpan, System.Nullable`1<System.TimeSpan>)
+  M:AxiosNet.Retry.RetryPolicy.GetDelay(AxiosNet.Retry.AxiosRetryContext)
+  M:AxiosNet.Retry.RetryPolicy.ShouldRetry(AxiosNet.Retry.AxiosRetryContext)
+  M:AxiosNet.Serialization.ContentSerializerRegistry.Clear()
+  M:AxiosNet.Serialization.ContentSerializerRegistry.Register(System.String, AxiosNet.Serialization.IContentSerializer)
+  M:AxiosNet.Serialization.ContentSerializerRegistry.Unregister(System.String)
+  M:AxiosNet.Serialization.IContentSerializer.Deserialize(System.ReadOnlyMemory`1<System.Byte>, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.IContentSerializer.Deserialize(System.String, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.IContentSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.IContentSerializer.SerializeToBytes(System.Object, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.SystemTextJsonSerializer.Deserialize(System.ReadOnlyMemory`1<System.Byte>, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.SystemTextJsonSerializer.Deserialize(System.String, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.SystemTextJsonSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.XmlContentSerializer.Deserialize(System.String, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.XmlContentSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.WebAPI.AccessTokenManager.Dispose()
+  M:AxiosNet.WebAPI.AccessTokenManager.GetCredentialAsync(AxiosNet.WebAPI.ApiAuthContext, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.AccessTokenManager.GetTokenAsync(AxiosNet.WebAPI.ApiAuthContext, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.AccessTokenManager.GetTokenAsync(System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.AccessTokenManager.Invalidate(System.String)
+  M:AxiosNet.WebAPI.ApiClient.Create(System.Type)
+  M:AxiosNet.WebAPI.ApiClient.Create`1()
+  M:AxiosNet.WebAPI.ApiClient.Dispose()
+  M:AxiosNet.WebAPI.ApiClient.DisposeAsync()
+  M:AxiosNet.WebAPI.ApiClient.GetUri`1(AxiosNet.WebAPI.IApiRequest`1<!TResponse>)
+  M:AxiosNet.WebAPI.ApiClient.RequestAsync`1(AxiosNet.WebAPI.IApiRequest`1<!TResponse>, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.ApiClient.RequestAsync`1(AxiosNet.WebAPI.IApiRequest`1<!TResponse>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.ApiClient.RequestStreamAsync`1(AxiosNet.WebAPI.IApiRequest`1<!TItem>, AxiosNet.AxiosStreamFormat, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.ApiClient.RequestStreamAsync`1(AxiosNet.WebAPI.IApiRequest`1<!TItem>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.ApiClient.ValidateInterfaces(System.Reflection.Assembly)
+  M:AxiosNet.WebAPI.ApiClient.ValidateInterfaces(System.Type[])
+  M:AxiosNet.WebAPI.ApiClient.ValidateModels(System.Reflection.Assembly)
+  M:AxiosNet.WebAPI.ApiClient.ValidateModels(System.Type[])
+  M:AxiosNet.WebAPI.ApiCredential.Custom()
+  M:AxiosNet.WebAPI.ApiCredential.Equals(AxiosNet.WebAPI.ApiCredential)
+  M:AxiosNet.WebAPI.ApiCredential.Equals(System.Object)
+  M:AxiosNet.WebAPI.ApiCredential.GetHashCode()
+  M:AxiosNet.WebAPI.ApiCredential.Header(System.String)
+  M:AxiosNet.WebAPI.ApiCredential.Header(System.String, System.String)
+  M:AxiosNet.WebAPI.ApiCredential.Query(System.String, System.String)
+  M:AxiosNet.WebAPI.ApiCredential.ToString()
+  M:AxiosNet.WebAPI.ApiCredential.Token(System.String)
+  M:AxiosNet.WebAPI.ApiErrorContext.TryReadAsync`1(System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.ApiErrorFactory`1.CreateAsync(AxiosNet.WebAPI.ApiErrorContext, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.ApiRequest`1.Configure(AxiosNet.AxiosConfig)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.Create(AxiosNet.AxiosClient, System.Type)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.Create`1(AxiosNet.AxiosClient)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.GetUri`1(AxiosNet.AxiosClient, AxiosNet.WebAPI.IApiRequest`1<!TResponse>)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.RequestAsync`1(AxiosNet.AxiosClient, AxiosNet.WebAPI.IApiRequest`1<!TResponse>, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.RequestAsync`1(AxiosNet.AxiosClient, AxiosNet.WebAPI.IApiRequest`1<!TResponse>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.RequestStreamAsync`1(AxiosNet.AxiosClient, AxiosNet.WebAPI.IApiRequest`1<!TItem>, AxiosNet.AxiosStreamFormat, System.Action`1<AxiosNet.AxiosConfig>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions.RequestStreamAsync`1(AxiosNet.AxiosClient, AxiosNet.WebAPI.IApiRequest`1<!TItem>, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.CredentialProviders.Create(System.Func`3<AxiosNet.WebAPI.ApiAuthContext,System.Threading.CancellationToken,System.Threading.Tasks.ValueTask`1<AxiosNet.WebAPI.ApiCredential>>, System.Action`1<System.String>)
+  M:AxiosNet.WebAPI.CredentialProviders.Fixed(AxiosNet.WebAPI.ApiCredential)
+  M:AxiosNet.WebAPI.CredentialProviders.Fixed(System.String)
+  M:AxiosNet.WebAPI.IApiCredentialProvider.GetCredentialAsync(AxiosNet.WebAPI.ApiAuthContext, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.IApiCredentialProvider.Invalidate(System.String)
+  M:AxiosNet.WebAPI.IApiErrorFactory.CreateAsync(AxiosNet.WebAPI.ApiErrorContext, System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.IApiRequestConfigurable.Configure(AxiosNet.AxiosConfig)
+  M:AxiosNet.WebAPI.Metadata.AxiosApiMetadata.GetInterfaceMethod(System.Type, System.Int32, System.String)
+  M:AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterGeneratedInterface(System.Type, System.Func`2<AxiosNet.WebAPI.ApiClient,System.Object>, System.Action`1<AxiosNet.WebAPI.Metadata.InterfaceBuilder>)
+  M:AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterInterface(System.Type, System.Func`2<AxiosNet.WebAPI.ApiClient,System.Object>, System.Action`1<AxiosNet.WebAPI.Metadata.InterfaceBuilder>)
+  M:AxiosNet.WebAPI.Metadata.AxiosApiMetadata.RegisterRequestModel(System.Type, System.Action`1<AxiosNet.WebAPI.Metadata.RequestModelBuilder>)
+  M:AxiosNet.WebAPI.Metadata.InterfaceBuilder.Anonymous()
+  M:AxiosNet.WebAPI.Metadata.InterfaceBuilder.Authorize(System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceBuilder.Method(System.String, System.Net.Http.HttpMethod, System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceBuilder.Method(System.String, System.String, System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceBuilder.StaticHeaders(System.String[])
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.Anonymous()
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.Authorize(System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.CancellationToken(System.Int32)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.ContentType(System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.Multipart()
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.Parameter(System.Int32, System.String, System.Type)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.QueryCollectionFormat(AxiosNet.AxiosCollectionFormat)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.ReturnsData(System.Type)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.ReturnsResponse(System.Type)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.ReturnsVoid()
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.StaticHeaders(System.String[])
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder.Stream(AxiosNet.AxiosStreamFormat)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendDataAsync`1(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendResponseAsync`1(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendStreamAsync`1(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken, AxiosNet.AxiosStreamFormat)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendUntypedAsync(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendVoidAsync(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken)
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Body()
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Format(AxiosNet.Metadata.ValueFormat)
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Header(System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.HeaderCollection()
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Ignore()
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Part(System.String, System.String, System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Path(System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Query(System.String)
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Unannotated()
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Anonymous()
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Authorize(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.ContentType(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.ImplementsApiRequest()
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Member(System.String, System.Type, System.Func`2<System.Object,System.Object>)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Member(System.String, System.Type, System.Func`2<System.Object,System.Object>, System.Action`1<AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder>, System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Multipart()
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.QueryCollectionFormat(AxiosNet.AxiosCollectionFormat)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Route(System.Net.Http.HttpMethod, System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Route(System.String, System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.StaticHeaders(System.String[])
+  M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Stream(AxiosNet.AxiosStreamFormat)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Body()
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.ContentType(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.FieldName(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Format(AxiosNet.Metadata.ValueFormat)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Header(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.HeaderCollection()
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Ignore()
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Part(System.String, System.String, System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Path(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Query(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.QueryCollectionFormat(AxiosNet.AxiosCollectionFormat)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Stream(AxiosNet.AxiosStreamFormat)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Unannotated()
+  M:AxiosNet.WebAPI.Serialization.AxiosJsonFormat.ApplyTo(System.Text.Json.JsonSerializerOptions)
+  M:AxiosNet.WebAPI.Serialization.AxiosJsonFormatTypeInfoResolver.GetTypeInfo(System.Type, System.Text.Json.JsonSerializerOptions)
+  P:AxiosNet.Axios.DefaultClient:get
+  P:AxiosNet.Axios.Defaults:get
+  P:AxiosNet.Axios.Interceptors:get
+  P:AxiosNet.AxiosAuth.Password:get;set
+  P:AxiosNet.AxiosAuth.Username:get;set
+  P:AxiosNet.AxiosClient.AttemptPipeline:get
+  P:AxiosNet.AxiosClient.Defaults:get
+  P:AxiosNet.AxiosClient.Interceptors:get
+  P:AxiosNet.AxiosClient.Pool:get
+  P:AxiosNet.AxiosClient.UsesConnectionPool:get
+  P:AxiosNet.AxiosConfig+CircuitSettings.OnRejected:get;set
+  P:AxiosNet.AxiosConfig+CircuitSettings.Policy:get;set
+  P:AxiosNet.AxiosConfig+ConcurrencySettings.MaxInFlight:get;set
+  P:AxiosNet.AxiosConfig+ConcurrencySettings.MaxQueue:get;set
+  P:AxiosNet.AxiosConfig+ConcurrencySettings.QueueTimeout:get;set
+  P:AxiosNet.AxiosConfig+FailoverSettings.Cooldown:get;set
+  P:AxiosNet.AxiosConfig+FailoverSettings.Endpoints:get;set
+  P:AxiosNet.AxiosConfig+FailoverSettings.FailureThreshold:get;set
+  P:AxiosNet.AxiosConfig+FailoverSettings.MaxCooldown:get;set
+  P:AxiosNet.AxiosConfig+HedgingSettings.Delay:get;set
+  P:AxiosNet.AxiosConfig+HedgingSettings.MaxHedges:get;set
+  P:AxiosNet.AxiosConfig+IdempotencySettings.Enabled:get;set
+  P:AxiosNet.AxiosConfig+IdempotencySettings.HeaderName:get;set
+  P:AxiosNet.AxiosConfig+IdempotencySettings.Key:get;set
+  P:AxiosNet.AxiosConfig+IdempotencySettings.KeyFactory:get;set
+  P:AxiosNet.AxiosConfig+LimitsSettings.MaxRequestBytes:get;set
+  P:AxiosNet.AxiosConfig+LimitsSettings.MaxResponseBytes:get;set
+  P:AxiosNet.AxiosConfig+LimitsSettings.MaxStreamFrameBytes:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.Capture:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.CaptureRawResponseBody:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.OnDownloadProgress:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.OnRawResponse:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.OnSendingRequest:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.OnUploadProgress:get;set
+  P:AxiosNet.AxiosConfig+ObservabilitySettings.TimeoutMessage:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.AllowUnsafeRetry:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.Circuit:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.Concurrency:get
+  P:AxiosNet.AxiosConfig+ResilienceSettings.Failover:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.Hedging:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.Idempotency:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.Retry:get;set
+  P:AxiosNet.AxiosConfig+ResilienceSettings.TotalTimeout:get;set
+  P:AxiosNet.AxiosConfig+RetrySettings.OnRetry:get;set
+  P:AxiosNet.AxiosConfig+RetrySettings.Policy:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.BodySerializers:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.CollectionFormat:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.FormFieldName:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.JsonOptions:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.QueryEncoder:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.TextEncoding:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.TransformRequest:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.TransformResponse:get;set
+  P:AxiosNet.AxiosConfig+SerializationSettings.ValueText:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.Auth:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.Credentials:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.HttpVersion:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.MaxRate:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.MaxRedirects:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.Pool:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.Profile:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.Proxy:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.VersionPolicy:get;set
+  P:AxiosNet.AxiosConfig+TransportSettings.WithCredentials:get;set
+  P:AxiosNet.AxiosConfig.BaseAddress:get;set
+  P:AxiosNet.AxiosConfig.Body:get;set
+  P:AxiosNet.AxiosConfig.Caching:get;set
+  P:AxiosNet.AxiosConfig.CancellationToken:get;set
+  P:AxiosNet.AxiosConfig.Compression:get;set
+  P:AxiosNet.AxiosConfig.ContentType:get;set
+  P:AxiosNet.AxiosConfig.Headers:get;set
+  P:AxiosNet.AxiosConfig.Limits:get;set
+  P:AxiosNet.AxiosConfig.Method:get;set
+  P:AxiosNet.AxiosConfig.Observability:get;set
+  P:AxiosNet.AxiosConfig.Params:get;set
+  P:AxiosNet.AxiosConfig.Resilience:get
+  P:AxiosNet.AxiosConfig.Response:get
+  P:AxiosNet.AxiosConfig.ResponseType:get;set
+  P:AxiosNet.AxiosConfig.Serialization:get;set
+  P:AxiosNet.AxiosConfig.ShortCircuit:get;set
+  P:AxiosNet.AxiosConfig.Timeout:get;set
+  P:AxiosNet.AxiosConfig.Transport:get;set
+  P:AxiosNet.AxiosConfig.Url:get;set
+  P:AxiosNet.AxiosConfig.ValidateStatus:get;set
+  P:AxiosNet.AxiosContent.Default:get;set
+  P:AxiosNet.AxiosCredential.IsRefreshable:get
+  P:AxiosNet.AxiosCredentialContext.Config:get
+  P:AxiosNet.AxiosDynamic.Count:get
+  P:AxiosNet.AxiosDynamic.IsReadOnly:get
+  P:AxiosNet.AxiosDynamic.Item:get;set
+  P:AxiosNet.AxiosDynamic.Keys:get
+  P:AxiosNet.AxiosDynamic.Values:get
+  P:AxiosNet.AxiosException.Cause:get
+  P:AxiosNet.AxiosException.Code:get
+  P:AxiosNet.AxiosException.Config:get
+  P:AxiosNet.AxiosException.ErrorCode:get
+  P:AxiosNet.AxiosException.IsAxiosError:get
+  P:AxiosNet.AxiosException.IsRequestConstructionFailure:get
+  P:AxiosNet.AxiosException.IsTotalTimeoutExceeded:get
+  P:AxiosNet.AxiosException.Request:get
+  P:AxiosNet.AxiosException.Response:get
+  P:AxiosNet.AxiosException.ResponseBody:get
+  P:AxiosNet.AxiosException.RetryAfter:get
+  P:AxiosNet.AxiosException.Status:get
+  P:AxiosNet.AxiosHeaders+Enumerator.Current:get
+  P:AxiosNet.AxiosHeaders.Count:get
+  P:AxiosNet.AxiosHeaders.Item:get;set
+  P:AxiosNet.AxiosJson.Options:get;set
+  P:AxiosNet.AxiosProgressEvent.Estimated:get
+  P:AxiosNet.AxiosProgressEvent.Loaded:get
+  P:AxiosNet.AxiosProgressEvent.Progress:get
+  P:AxiosNet.AxiosProgressEvent.Rate:get
+  P:AxiosNet.AxiosProgressEvent.Total:get
+  P:AxiosNet.AxiosProgressEvent.Upload:get
+  P:AxiosNet.AxiosResponse.Config:get;set
+  P:AxiosNet.AxiosResponse.Data:get;set
+  P:AxiosNet.AxiosResponse.Headers:get;set
+  P:AxiosNet.AxiosResponse.ProtocolVersion:get;set
+  P:AxiosNet.AxiosResponse.RawBody:get
+  P:AxiosNet.AxiosResponse.RawText:get
+  P:AxiosNet.AxiosResponse.Request:get;set
+  P:AxiosNet.AxiosResponse.Status:get;set
+  P:AxiosNet.AxiosResponse.StatusText:get;set
+  P:AxiosNet.AxiosResponseInfo.CharSet:get
+  P:AxiosNet.AxiosResponseInfo.Headers:get
+  P:AxiosNet.AxiosResponseInfo.MediaType:get
+  P:AxiosNet.AxiosResponseInfo.Status:get
+  P:AxiosNet.AxiosResponseInfo.StatusText:get
+  P:AxiosNet.AxiosResponse`1.Data:get;set
+  P:AxiosNet.AxiosShortCircuit.Body:get;set
+  P:AxiosNet.AxiosShortCircuit.CachedAge:get
+  P:AxiosNet.AxiosShortCircuit.CachedAt:get
+  P:AxiosNet.AxiosShortCircuit.ContentType:get;set
+  P:AxiosNet.AxiosShortCircuit.Data:get;set
+  P:AxiosNet.AxiosShortCircuit.Headers:get;set
+  P:AxiosNet.AxiosShortCircuit.MultiValueHeaderValues:get
+  P:AxiosNet.AxiosShortCircuit.ProtocolVersion:get;set
+  P:AxiosNet.AxiosShortCircuit.Status:get;set
+  P:AxiosNet.AxiosShortCircuit.StatusText:get;set
+  P:AxiosNet.Cache.AxiosCache.Options:get
+  P:AxiosNet.Cache.AxiosCache.Store:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.Age:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.CacheControl:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.ConfiguredTimeToLive:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.Date:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.Expires:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.HttpFreshnessLifetime:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.Mode:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.TimeToLive:get
+  P:AxiosNet.Cache.AxiosCacheEntryPolicy.Vary:get
+  P:AxiosNet.Cache.AxiosCacheOptions.ConditionalRequests:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.FreshnessMode:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.KeySelector:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.MaxBytes:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.MaxEntries:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.MaxSharedFailureBodyBytes:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.ShouldCache:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.SingleFlight:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.Store:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.StoreTimeout:get;set
+  P:AxiosNet.Cache.AxiosCacheOptions.TimeToLive:get;set
+  P:AxiosNet.Cache.CacheControlDirectives.Extensions:get
+  P:AxiosNet.Cache.CacheControlDirectives.Immutable:get
+  P:AxiosNet.Cache.CacheControlDirectives.MaxAge:get
+  P:AxiosNet.Cache.CacheControlDirectives.MustRevalidate:get
+  P:AxiosNet.Cache.CacheControlDirectives.NoCache:get
+  P:AxiosNet.Cache.CacheControlDirectives.NoStore:get
+  P:AxiosNet.Cache.CacheControlDirectives.NoTransform:get
+  P:AxiosNet.Cache.CacheControlDirectives.Private:get
+  P:AxiosNet.Cache.CacheControlDirectives.Public:get
+  P:AxiosNet.Cache.CacheControlDirectives.Raw:get
+  P:AxiosNet.Cache.CacheControlDirectives.SharedMaxAge:get
+  P:AxiosNet.Cache.CacheControlDirectives.StaleIfError:get
+  P:AxiosNet.Cache.CacheControlDirectives.StaleWhileRevalidate:get
+  P:AxiosNet.Cache.MemoryCacheStore.ApproximateBytes:get
+  P:AxiosNet.Cache.MemoryCacheStore.Count:get
+  P:AxiosNet.Cache.MemoryCacheStore.MaxBytes:get
+  P:AxiosNet.Cache.MemoryCacheStore.MaxEntries:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.Config:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.ErrorCode:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.Exception:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.Host:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.IsFailure:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.IsSuccess:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.Method:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.RetryAfter:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.StatusCode:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.TotalTimeoutExpiredBeforeSend:get
+  P:AxiosNet.Circuit.AxiosCircuitContext.Uri:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.Current:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.Host:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.IsClosed:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.IsEmpty:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.IsHalfOpen:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.IsOpen:get
+  P:AxiosNet.Circuit.AxiosCircuitTransition.Previous:get
+  P:AxiosNet.Circuit.CircuitBreaker.BreakDuration:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.FailureRateThreshold:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.FailureThreshold:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.HalfOpenAttempts:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.KeySelector:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.MaxTrackedHosts:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.MinimumSamples:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.ProbeTimeout:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.RecoverySuccesses:get;set
+  P:AxiosNet.Circuit.CircuitBreaker.TrackedHostCount:get
+  P:AxiosNet.Circuit.CircuitBreaker.WindowSize:get;set
+  P:AxiosNet.FormFile.Content:get
+  P:AxiosNet.FormFile.ContentType:get
+  P:AxiosNet.FormFile.FieldName:get;set
+  P:AxiosNet.FormFile.FileName:get
+  P:AxiosNet.Http3Support.IsSupported:get
+  P:AxiosNet.Http3Support.UnsupportedReason:get
+  P:AxiosNet.IAxiosCredentialProvider.CanRefresh:get
+  P:AxiosNet.Interceptors.AxiosInterceptors.Request:get
+  P:AxiosNet.Interceptors.AxiosInterceptors.Response:get
+  P:AxiosNet.Interceptors.RequestInterceptorManager.Count:get
+  P:AxiosNet.Interceptors.ResponseInterceptorManager.Count:get
+  P:AxiosNet.Metadata.FormData.Formats:get
+  P:AxiosNet.Metadata.FormData.Overrides:get
+  P:AxiosNet.Metadata.FormData.SourceName:get;set
+  P:AxiosNet.Metadata.FormPartOverride.Any:get
+  P:AxiosNet.Metadata.FormPartOverride.ContentType:get;set
+  P:AxiosNet.Metadata.FormPartOverride.FileName:get;set
+  P:AxiosNet.Metadata.FormPartOverride.HasExplicitName:get;set
+  P:AxiosNet.Metadata.PreformattedValue.Text:get
+  P:AxiosNet.Metadata.ValueFormatReader.Current:get
+  P:AxiosNet.Pipeline.Attempt.Audit:get
+  P:AxiosNet.Pipeline.Attempt.Circuit:get
+  P:AxiosNet.Pipeline.Attempt.Failover:get
+  P:AxiosNet.Pipeline.Attempt.Gate:get
+  P:AxiosNet.Pipeline.Attempt.Hedging:get
+  P:AxiosNet.Pipeline.Attempt.Retry:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.AttemptNumber:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.AttemptToken:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Circuit:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Config:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.DataType:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.EndpointIndex:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.ExternalToken:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Failover:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Hedging:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Retry:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Slot:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.StreamResponse:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Target:get
+  P:AxiosNet.Pipeline.AxiosAttemptContext.Uri:get
+  P:AxiosNet.Pipeline.AxiosAttemptPipeline.Default:get
+  P:AxiosNet.Pipeline.AxiosAttemptPipeline.Middleware:get
+  P:AxiosNet.Pipeline.AxiosAttemptResult.Response:get
+  P:AxiosNet.Pipeline.AxiosAttemptResult.StreamOwner:get
+  P:AxiosNet.Pooling.ConnectionPoolOptions.AllowAutoRedirect:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.AutomaticDecompression:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.ConfigureSslOptions:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.ConnectCallback:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.ConnectTimeout:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.CookieCapacity:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.CookieMaxCookieSize:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.CookiePerDomainCapacity:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.Credentials:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.Decompression:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.EnableMultipleHttp2Connections:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.EnabledSslProtocols:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.EvictionInterval:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.HandlerFactory:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.IdleHandlerLifetime:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.KeepAlivePingDelay:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.KeepAlivePingPolicy:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.KeepAlivePingTimeout:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.MaxAutomaticRedirections:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.MaxConnectionsPerServer:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.MaxEndpointCount:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.MaxResponseHeadersLength:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.PooledConnectionIdleTimeout:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.PooledConnectionLifetime:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.Proxy:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.ServerCertificateCustomValidationCallback:get;set
+  P:AxiosNet.Pooling.ConnectionPoolOptions.Transports:get
+  P:AxiosNet.Pooling.ConnectionPoolOptions.UseCookies:get;set
+  P:AxiosNet.Pooling.ConnectionPoolStatistics.EndpointCount:get;set
+  P:AxiosNet.Pooling.ConnectionPoolStatistics.Endpoints:get;set
+  P:AxiosNet.Pooling.ConnectionPoolStatistics.TotalLeases:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.ConfigureSslOptions:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.ConnectCallback:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.Credentials:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.EnabledSslProtocols:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.HandlerFactory:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.Proxy:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.ServerCertificateCustomValidationCallback:get;set
+  P:AxiosNet.Pooling.ConnectionTransportOptions.UseCookies:get;set
+  P:AxiosNet.Pooling.EndpointStatistics.ActiveLeases:get;set
+  P:AxiosNet.Pooling.EndpointStatistics.IsDisposed:get;set
+  P:AxiosNet.Pooling.EndpointStatistics.LastUsedUtc:get;set
+  P:AxiosNet.Pooling.EndpointStatistics.Origin:get;set
+  P:AxiosNet.Pooling.EndpointStatistics.Transport:get;set
+  P:AxiosNet.Pooling.HttpConnectionPool.Cookies:get
+  P:AxiosNet.Pooling.HttpConnectionPool.Options:get
+  P:AxiosNet.Pooling.HttpConnectionPool.SharedCount:get
+  P:AxiosNet.Pooling.PoolLease.Client:get
+  P:AxiosNet.Pooling.PoolLease.EndpointReused:get
+  P:AxiosNet.Pooling.PoolLease.Origin:get
+  P:AxiosNet.Pooling.PooledHandlerContext.BaseAddress:get
+  P:AxiosNet.Pooling.PooledHandlerContext.CookieContainer:get
+  P:AxiosNet.Pooling.PooledHandlerContext.Options:get
+  P:AxiosNet.Pooling.PooledHandlerContext.Origin:get
+  P:AxiosNet.Pooling.PooledHandlerContext.Profile:get
+  P:AxiosNet.Pooling.PooledHandlerContext.Transport:get
+  P:AxiosNet.Retry.AxiosRetryContext.Attempt:get
+  P:AxiosNet.Retry.AxiosRetryContext.Config:get
+  P:AxiosNet.Retry.AxiosRetryContext.Delay:get
+  P:AxiosNet.Retry.AxiosRetryContext.ErrorCode:get
+  P:AxiosNet.Retry.AxiosRetryContext.Exception:get
+  P:AxiosNet.Retry.AxiosRetryContext.MaxRetries:get
+  P:AxiosNet.Retry.AxiosRetryContext.Method:get
+  P:AxiosNet.Retry.AxiosRetryContext.Response:get
+  P:AxiosNet.Retry.AxiosRetryContext.StatusCode:get
+  P:AxiosNet.Retry.IAxiosRetryPolicy.MaxRetries:get
+  P:AxiosNet.Retry.RetryBudgetPolicy.AvailableTokens:get
+  P:AxiosNet.Retry.RetryBudgetPolicy.Capacity:get
+  P:AxiosNet.Retry.RetryBudgetPolicy.Inner:get
+  P:AxiosNet.Retry.RetryBudgetPolicy.MaxRetries:get
+  P:AxiosNet.Retry.RetryBudgetPolicy.OnBudgetExhausted:get;set
+  P:AxiosNet.Retry.RetryBudgetPolicy.RefillPerSecond:get
+  P:AxiosNet.Retry.RetryBudgetPolicy.RefusedRetries:get
+  P:AxiosNet.Retry.RetryPolicy.BackoffFactor:get;set
+  P:AxiosNet.Retry.RetryPolicy.DefaultRetryStatus:get
+  P:AxiosNet.Retry.RetryPolicy.Delay:get;set
+  P:AxiosNet.Retry.RetryPolicy.HonorRetryAfter:get;set
+  P:AxiosNet.Retry.RetryPolicy.Jitter:get;set
+  P:AxiosNet.Retry.RetryPolicy.MaxDelay:get;set
+  P:AxiosNet.Retry.RetryPolicy.MaxRetries:get;set
+  P:AxiosNet.Retry.RetryPolicy.RetryStatusCodes:get;set
+  P:AxiosNet.Retry.RetryPolicy.RetryWhen:get;set
+  P:AxiosNet.Serialization.ContentSerializerRegistry.Count:get
+  P:AxiosNet.Serialization.ContentSerializerRegistry.Default:get;set
+  P:AxiosNet.Serialization.IContentSerializer.MediaType:get
+  P:AxiosNet.Serialization.SystemTextJsonSerializer.Instance:get
+  P:AxiosNet.Serialization.SystemTextJsonSerializer.MediaType:get
+  P:AxiosNet.Serialization.XmlContentSerializer.Instance:get
+  P:AxiosNet.Serialization.XmlContentSerializer.MediaType:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.AttemptNumber:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.Elapsed:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.EndpointIndex:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.ErrorCode:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.Exception:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.Method:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.Status:get
+  P:AxiosNet.Telemetry.AxiosAttemptEvent.Uri:get
+  P:AxiosNet.Telemetry.AxiosRequestFailedEvent.Elapsed:get
+  P:AxiosNet.Telemetry.AxiosRequestFailedEvent.ErrorCode:get
+  P:AxiosNet.Telemetry.AxiosRequestFailedEvent.Exception:get
+  P:AxiosNet.Telemetry.AxiosRequestFailedEvent.Method:get
+  P:AxiosNet.Telemetry.AxiosRequestFailedEvent.Status:get
+  P:AxiosNet.Telemetry.AxiosRequestFailedEvent.Uri:get
+  P:AxiosNet.Telemetry.AxiosRequestStartEvent.Config:get
+  P:AxiosNet.Telemetry.AxiosRequestStartEvent.Method:get
+  P:AxiosNet.Telemetry.AxiosRequestStartEvent.Uri:get
+  P:AxiosNet.Telemetry.AxiosRequestStopEvent.Elapsed:get
+  P:AxiosNet.Telemetry.AxiosRequestStopEvent.Method:get
+  P:AxiosNet.Telemetry.AxiosRequestStopEvent.Response:get
+  P:AxiosNet.Telemetry.AxiosRequestStopEvent.Uri:get
+  P:AxiosNet.WebAPI.AccessToken.ExpiresAt:get
+  P:AxiosNet.WebAPI.AccessToken.Value:get
+  P:AxiosNet.WebAPI.AccessTokenOptions.AcquireAsync:get
+  P:AxiosNet.WebAPI.AccessTokenOptions.RefreshAhead:get;set
+  P:AxiosNet.WebAPI.AccessTokenOptions.RefreshAsync:get;set
+  P:AxiosNet.WebAPI.AccessTokenOptions.RefreshTimeout:get;set
+  P:AxiosNet.WebAPI.ApiAuthContext.Config:get
+  P:AxiosNet.WebAPI.ApiAuthContext.Request:get
+  P:AxiosNet.WebAPI.ApiAuthContext.RequestType:get
+  P:AxiosNet.WebAPI.ApiClient.Axios:get
+  P:AxiosNet.WebAPI.ApiClient.CredentialProvider:get;set
+  P:AxiosNet.WebAPI.ApiClient.ErrorFactory:get;set
+  P:AxiosNet.WebAPI.ApiClient.RetryOnUnauthorized:get;set
+  P:AxiosNet.WebAPI.ApiCredential.Kind:get
+  P:AxiosNet.WebAPI.ApiCredential.Name:get
+  P:AxiosNet.WebAPI.ApiCredential.None:get
+  P:AxiosNet.WebAPI.ApiCredential.Value:get
+  P:AxiosNet.WebAPI.ApiErrorContext.Body:get
+  P:AxiosNet.WebAPI.ApiErrorContext.Config:get
+  P:AxiosNet.WebAPI.ApiErrorContext.Error:get
+  P:AxiosNet.WebAPI.ApiErrorContext.Request:get
+  P:AxiosNet.WebAPI.ApiErrorContext.RequestType:get
+  P:AxiosNet.WebAPI.ApiErrorContext.Response:get
+  P:AxiosNet.WebAPI.ApiErrorContext.Status:get
+  P:AxiosNet.WebAPI.ApiError`1.Error:get
+  P:AxiosNet.WebAPI.ApiError`1.Original:get
+  P:AxiosNet.WebAPI.ApiError`1.Response:get
+  P:AxiosNet.WebAPI.ApiError`1.Status:get
+  P:AxiosNet.WebAPI.ApiError`1.StatusText:get
+  P:AxiosNet.WebAPI.ApiInterfaceInvocation.Arguments:get
+  P:AxiosNet.WebAPI.ApiInterfaceInvocation.InterfaceType:get
+  P:AxiosNet.WebAPI.ApiInterfaceInvocation.MethodName:get
+  P:AxiosNet.WebAPI.Attributes.AuthorizeAttribute.Scheme:get
+  P:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute.ContentType:get
+  P:AxiosNet.WebAPI.Attributes.FormatAttribute.Format:get
+  P:AxiosNet.WebAPI.Attributes.FormatAttribute.FormatterMethod:get
+  P:AxiosNet.WebAPI.Attributes.FormatAttribute.FormatterType:get
+  P:AxiosNet.WebAPI.Attributes.HeaderAttribute.Name:get
+  P:AxiosNet.WebAPI.Attributes.HeadersAttribute.Headers:get
+  P:AxiosNet.WebAPI.Attributes.HttpApiAttribute.Method:get
+  P:AxiosNet.WebAPI.Attributes.HttpApiAttribute.Path:get
+  P:AxiosNet.WebAPI.Attributes.PartAttribute.ContentType:get;set
+  P:AxiosNet.WebAPI.Attributes.PartAttribute.FileName:get;set
+  P:AxiosNet.WebAPI.Attributes.PartAttribute.Name:get
+  P:AxiosNet.WebAPI.Attributes.PathAttribute.Name:get
+  P:AxiosNet.WebAPI.Attributes.QueryAttribute.Name:get
+  P:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute.Format:get
+  P:AxiosNet.WebAPI.Attributes.StreamAttribute.Format:get
+T:AxiosNet.Axios [static] implements 
+T:AxiosNet.AxiosAuth [sealed class] implements 
+T:AxiosNet.AxiosClient [sealed class] implements System.IAsyncDisposable,System.IDisposable
+T:AxiosNet.AxiosCollectionFormat [enum]
+T:AxiosNet.AxiosCompression [enum]
+T:AxiosNet.AxiosConfig [sealed class] implements 
+T:AxiosNet.AxiosConfig+CircuitSettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+ConcurrencySettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+FailoverSettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+HedgingSettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+IdempotencySettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+LimitsSettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+ObservabilitySettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+ResilienceSettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+RetrySettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+SerializationSettings [sealed class] implements 
+T:AxiosNet.AxiosConfig+TransportSettings [sealed class] implements 
+T:AxiosNet.AxiosContent [static] implements 
+T:AxiosNet.AxiosContentType [static] implements 
+T:AxiosNet.AxiosCredential [sealed class] implements 
+T:AxiosNet.AxiosCredentialContext [sealed class] implements 
+T:AxiosNet.AxiosDynamic [sealed class] implements System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IDictionary`2<System.String,System.Object>,System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.IEnumerable,System.Dynamic.IDynamicMetaObjectProvider
+T:AxiosNet.AxiosErrorCode [enum]
+T:AxiosNet.AxiosException [class] : System.Exception implements System.Runtime.Serialization.ISerializable
+T:AxiosNet.AxiosHeaders [sealed class] implements System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.String>>,System.Collections.IEnumerable
+T:AxiosNet.AxiosHeaders+Enumerator [struct] implements System.Collections.Generic.IEnumerator`1<System.Collections.Generic.KeyValuePair`2<System.String,System.String>>,System.Collections.IEnumerator,System.IDisposable
+T:AxiosNet.AxiosJson [static] implements 
+T:AxiosNet.AxiosProgressEvent [struct] implements 
+T:AxiosNet.AxiosResponse [class] implements 
+T:AxiosNet.AxiosResponseInfo [sealed class] implements 
+T:AxiosNet.AxiosResponse`1 [sealed class] : AxiosNet.AxiosResponse implements 
+T:AxiosNet.AxiosShapeAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.AxiosShortCircuit [sealed class] implements 
+T:AxiosNet.AxiosStreamFormat [enum]
+T:AxiosNet.AxiosUrl [static] implements 
+T:AxiosNet.Cache.AxiosCache [sealed class] implements 
+T:AxiosNet.Cache.AxiosCacheEntryPolicy [sealed class] implements 
+T:AxiosNet.Cache.AxiosCacheOptions [sealed class] implements 
+T:AxiosNet.Cache.CacheControlDirectives [sealed class] implements 
+T:AxiosNet.Cache.CacheFreshnessMode [enum]
+T:AxiosNet.Cache.IAxiosCacheRevalidationStore [interface] implements 
+T:AxiosNet.Cache.IAxiosCacheStore [interface] implements 
+T:AxiosNet.Cache.MemoryCacheStore [sealed class] implements AxiosNet.Cache.IAxiosCacheRevalidationStore,AxiosNet.Cache.IAxiosCacheStore
+T:AxiosNet.Circuit.AxiosCircuitContext [struct] implements 
+T:AxiosNet.Circuit.AxiosCircuitState [enum]
+T:AxiosNet.Circuit.AxiosCircuitTransition [struct] implements 
+T:AxiosNet.Circuit.CircuitBreaker [sealed class] implements AxiosNet.Circuit.IAxiosCircuitPolicy
+T:AxiosNet.Circuit.IAxiosCircuitPolicy [interface] implements 
+T:AxiosNet.FormFile [sealed class] implements 
+T:AxiosNet.Http3Support [static] implements 
+T:AxiosNet.IAxiosCredentialProvider [interface] implements 
+T:AxiosNet.Interceptors.AxiosInterceptors [sealed class] implements 
+T:AxiosNet.Interceptors.RequestInterceptorManager [sealed class] implements 
+T:AxiosNet.Interceptors.ResponseInterceptorManager [sealed class] implements 
+T:AxiosNet.Metadata.AxiosAotMetadataException [sealed class] : System.InvalidOperationException implements System.Runtime.Serialization.ISerializable
+T:AxiosNet.Metadata.AxiosMetadata [static] implements 
+T:AxiosNet.Metadata.FormData [sealed class] : System.Collections.Generic.Dictionary`2<System.String,System.Object> implements System.Collections.Generic.ICollection`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IDictionary`2<System.String,System.Object>,System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IReadOnlyCollection`1<System.Collections.Generic.KeyValuePair`2<System.String,System.Object>>,System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.Object>,System.Collections.ICollection,System.Collections.IDictionary,System.Collections.IEnumerable,System.Runtime.Serialization.IDeserializationCallback,System.Runtime.Serialization.ISerializable
+T:AxiosNet.Metadata.FormPartOverride [struct] implements System.IEquatable`1<AxiosNet.Metadata.FormPartOverride>
+T:AxiosNet.Metadata.ObjectShapeBuilder [sealed class] implements 
+T:AxiosNet.Metadata.ObjectShapeMemberBuilder [sealed class] implements 
+T:AxiosNet.Metadata.PreformattedValue [sealed class] implements 
+T:AxiosNet.Metadata.ShapeBuilder`1 [sealed class] implements 
+T:AxiosNet.Metadata.ValueFormat [sealed class] implements 
+T:AxiosNet.Metadata.ValueFormatReader [static] implements 
+T:AxiosNet.Metadata.ValueTextChannel [enum]
+T:AxiosNet.Pipeline.Attempt [static] implements 
+T:AxiosNet.Pipeline.AxiosAttemptContext [struct] implements 
+T:AxiosNet.Pipeline.AxiosAttemptHandler [sealed class] : System.MulticastDelegate implements System.ICloneable,System.Runtime.Serialization.ISerializable
+T:AxiosNet.Pipeline.AxiosAttemptMiddleware [sealed class] : System.MulticastDelegate implements System.ICloneable,System.Runtime.Serialization.ISerializable
+T:AxiosNet.Pipeline.AxiosAttemptPipeline [sealed class] implements 
+T:AxiosNet.Pipeline.AxiosAttemptResult [struct] implements 
+T:AxiosNet.Pooling.ConnectionPoolOptions [sealed class] implements 
+T:AxiosNet.Pooling.ConnectionPoolStatistics [sealed class] implements System.IEquatable`1<AxiosNet.Pooling.ConnectionPoolStatistics>
+T:AxiosNet.Pooling.ConnectionTransportOptions [sealed class] implements 
+T:AxiosNet.Pooling.EndpointStatistics [sealed class] implements System.IEquatable`1<AxiosNet.Pooling.EndpointStatistics>
+T:AxiosNet.Pooling.HttpConnectionPool [sealed class] implements System.IDisposable
+T:AxiosNet.Pooling.PoolLease [sealed class] implements System.IDisposable
+T:AxiosNet.Pooling.PooledHandlerContext [sealed class] implements 
+T:AxiosNet.ResponseType [enum]
+T:AxiosNet.Retry.AxiosRetryContext [struct] implements 
+T:AxiosNet.Retry.IAxiosRetryPolicy [interface] implements 
+T:AxiosNet.Retry.RetryBudgetPolicy [sealed class] implements AxiosNet.Retry.IAxiosRetryPolicy
+T:AxiosNet.Retry.RetryPolicy [sealed class] implements AxiosNet.Retry.IAxiosRetryPolicy
+T:AxiosNet.Serialization.ContentSerializerRegistry [sealed class] implements 
+T:AxiosNet.Serialization.IContentSerializer [interface] implements 
+T:AxiosNet.Serialization.SystemTextJsonSerializer [sealed class] implements AxiosNet.Serialization.IContentSerializer
+T:AxiosNet.Serialization.XmlContentSerializer [sealed class] implements AxiosNet.Serialization.IContentSerializer
+T:AxiosNet.Telemetry.AxiosAttemptEvent [sealed class] implements 
+T:AxiosNet.Telemetry.AxiosRequestFailedEvent [sealed class] implements 
+T:AxiosNet.Telemetry.AxiosRequestStartEvent [sealed class] implements 
+T:AxiosNet.Telemetry.AxiosRequestStopEvent [sealed class] implements 
+T:AxiosNet.Telemetry.AxiosTelemetry [static] implements 
+T:AxiosNet.TelemetryCapture [enum]
+T:AxiosNet.WebAPI.AccessToken [sealed class] implements 
+T:AxiosNet.WebAPI.AccessTokenManager [sealed class] implements AxiosNet.WebAPI.IApiCredentialProvider,System.IDisposable
+T:AxiosNet.WebAPI.AccessTokenOptions [sealed class] implements 
+T:AxiosNet.WebAPI.ApiAuthContext [sealed class] implements 
+T:AxiosNet.WebAPI.ApiClient [sealed class] implements System.IAsyncDisposable,System.IDisposable
+T:AxiosNet.WebAPI.ApiCredential [struct] implements System.IEquatable`1<AxiosNet.WebAPI.ApiCredential>
+T:AxiosNet.WebAPI.ApiCredentialKind [enum]
+T:AxiosNet.WebAPI.ApiErrorContext [sealed class] implements 
+T:AxiosNet.WebAPI.ApiErrorFactory`1 [sealed class] implements AxiosNet.WebAPI.IApiErrorFactory
+T:AxiosNet.WebAPI.ApiError`1 [sealed class] : AxiosNet.AxiosException implements System.Runtime.Serialization.ISerializable
+T:AxiosNet.WebAPI.ApiInterfaceInvocation [sealed class] implements 
+T:AxiosNet.WebAPI.ApiRequest`1 [abstract class] implements AxiosNet.WebAPI.IApiRequestConfigurable,AxiosNet.WebAPI.IApiRequest`1<!TResponse>
+T:AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.AuthorizeAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.BodyAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.DeleteAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.FormatAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.GetAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.HeadAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.HeaderAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.HeadersAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.HttpApiAttribute [class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.MultipartAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.OptionsAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.PartAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.PatchAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.PathAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.PostAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.PutAttribute [sealed class] : AxiosNet.WebAPI.Attributes.HttpApiAttribute implements 
+T:AxiosNet.WebAPI.Attributes.QueryAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.QueryCollectionFormatAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.Attributes.StreamAttribute [sealed class] : System.Attribute implements 
+T:AxiosNet.WebAPI.AxiosClientDeclarativeExtensions [static] implements 
+T:AxiosNet.WebAPI.CredentialProviders [static] implements 
+T:AxiosNet.WebAPI.IApiCredentialProvider [interface] implements 
+T:AxiosNet.WebAPI.IApiErrorFactory [interface] implements 
+T:AxiosNet.WebAPI.IApiRequestConfigurable [interface] implements 
+T:AxiosNet.WebAPI.IApiRequest`1 [interface] implements 
+T:AxiosNet.WebAPI.Metadata.AxiosApiMetadata [static] implements 
+T:AxiosNet.WebAPI.Metadata.InterfaceBuilder [sealed class] implements 
+T:AxiosNet.WebAPI.Metadata.InterfaceMethodBuilder [sealed class] implements 
+T:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime [sealed class] implements 
+T:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder [sealed class] implements 
+T:AxiosNet.WebAPI.Metadata.RequestModelBuilder [sealed class] implements 
+T:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder [sealed class] implements 
+T:AxiosNet.WebAPI.Serialization.AxiosJsonFormat [static] implements 
+T:AxiosNet.WebAPI.Serialization.AxiosJsonFormatTypeInfoResolver [sealed class] implements System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver

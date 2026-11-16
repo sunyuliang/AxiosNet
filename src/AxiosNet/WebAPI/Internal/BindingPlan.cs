@@ -104,7 +104,13 @@ internal sealed class BindingPlan
                 ?? throw new InvalidOperationException(
                     $"路径参数 {source.Description}（占位符 {{{token}}}）为 null：路径缺段无法成行。");
 
-            var text = ValueText.Format(value, ValueTextChannel.Path, source.Format, formatter)
+            var text = FormatMember(
+                    value,
+                    ValueTextChannel.Path,
+                    source.Format,
+                    formatter,
+                    BindingChannel.Path,
+                    source.Description)
                 ?? throw new InvalidOperationException(
                     $"路径参数 {source.Description}（占位符 {{{token}}}）无法转成文本：格式化函数返回了 null，且值本身没有默认形态。");
 
@@ -129,7 +135,11 @@ internal sealed class BindingPlan
 
         foreach (var binding in _queryBindings)
         {
-            var value = FormatQueryValue(binding.Source.GetValue(target), binding.Source.Format, formatter);
+            var value = FormatQueryMember(
+                binding.Source.GetValue(target),
+                binding.Source.Format,
+                formatter,
+                binding.Source.Description);
 
             // 与 axios params 一致：null 参数跳过
             if (value is not null)
@@ -148,7 +158,20 @@ internal sealed class BindingPlan
 
             foreach (var entry in QueryMap.Enumerate(dictionary))
             {
-                var value = FormatQueryValue(entry.Value, map.Source.Format, formatter);
+                // 成员文本只在失败时拼（含字典键）：成功路径不为消息分配字符串。
+                object? value;
+                try
+                {
+                    value = FormatQueryValue(entry.Value, map.Source.Format, formatter);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
+                {
+                    throw new BindingMemberException(
+                        BindingChannel.Query,
+                        $"{map.Source.Description}[{entry.Key}]",
+                        ex);
+                }
+
                 if (value is not null)
                 {
                     // 与具名参数同名时映射值覆盖。
@@ -178,7 +201,13 @@ internal sealed class BindingPlan
                 ClearPendingRemoval(config, binding.Name);
                 config.Headers.Set(
                     binding.Name,
-                    ValueText.Format(value, ValueTextChannel.Header, binding.Source.Format, formatter) ?? string.Empty);
+                    FormatMember(
+                        value,
+                        ValueTextChannel.Header,
+                        binding.Source.Format,
+                        formatter,
+                        BindingChannel.Header,
+                        binding.Source.Description) ?? string.Empty);
             }
         }
 
@@ -199,7 +228,21 @@ internal sealed class BindingPlan
 
                 // 字典值与单值头同一口径：都走「值 → 请求头文本」这一步，实例钩子对两者一视同仁
                 // （成员级 [Format] 在构建期已被拒绝，所以这里没有成员声明可应用）。
-                if (ValueText.Format(entry.Value, ValueTextChannel.Header, memberFormat: null, formatter) is { } text)
+                // 成员文本只在失败时拼（含字典键）：成功路径不为消息分配字符串。
+                string? text;
+                try
+                {
+                    text = ValueText.Format(entry.Value, ValueTextChannel.Header, memberFormat: null, formatter);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
+                {
+                    throw new BindingMemberException(
+                        BindingChannel.Header,
+                        $"{source.Description}[{entry.Key}]",
+                        ex);
+                }
+
+                if (text is not null)
                 {
                     ClearPendingRemoval(config, entry.Key);
                     config.Headers.Set(entry.Key, text);
@@ -222,6 +265,58 @@ internal sealed class BindingPlan
             // 值声明（更具体的一层）优先于更早的删除声明（基类）：写值的同时撤销待删除项。
             ClearPendingRemoval(config, name);
             config.Headers.Set(name, value);
+        }
+    }
+
+    /// <summary>
+    /// 把一个值转成本通道的线上文本；失败时补上「哪条通道、哪个成员」再抛，外层据此报出具体字段。
+    /// </summary>
+    /// <param name="value">成员值。</param>
+    /// <param name="channel">文本通道（路径 / 请求头 / 表单等）。</param>
+    /// <param name="format">成员级格式化声明；<c>null</c> 走通道默认。</param>
+    /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
+    /// <param name="bindingChannel">绑定通道（错误消息用）。</param>
+    /// <param name="member">成员的定位文本。</param>
+    /// <returns>线上文本；<c>null</c> 表示值本身没有默认形态。</returns>
+    private static string? FormatMember(
+        object? value,
+        ValueTextChannel channel,
+        ValueFormat? format,
+        Func<object?, ValueTextChannel, string?>? formatter,
+        BindingChannel bindingChannel,
+        string member)
+    {
+        try
+        {
+            return ValueText.Format(value, channel, format, formatter);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
+        {
+            // 用户的自定义格式化（[Format] 委托 / 实现 IFormattable 的类型 / 实例钩子）可以抛任意异常：
+            // 这里只补「哪个字段」，原始异常保持为 Cause，语义不变。
+            throw new BindingMemberException(bindingChannel, member, ex);
+        }
+    }
+
+    /// <summary>查询参数版本的 <see cref="FormatMember"/>：走查询通道的集合折叠规则。</summary>
+    /// <param name="value">成员值。</param>
+    /// <param name="format">成员级格式化声明；<c>null</c> 走通道默认。</param>
+    /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
+    /// <param name="member">成员的定位文本。</param>
+    /// <returns>查询参数值；<c>null</c> 表示该参数应跳过。</returns>
+    private static object? FormatQueryMember(
+        object? value,
+        ValueFormat? format,
+        Func<object?, ValueTextChannel, string?>? formatter,
+        string member)
+    {
+        try
+        {
+            return FormatQueryValue(value, format, formatter);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not AxiosException)
+        {
+            throw new BindingMemberException(BindingChannel.Query, member, ex);
         }
     }
 

@@ -172,7 +172,7 @@ public sealed class ModelBindingTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => client.GetUri(new DuplicateCaseVariantRequest()));
 
         // {id} 与 {ID} 视为同一占位符（IgnoreCase），不允许重复出现
@@ -385,11 +385,11 @@ public sealed class ModelBindingTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var methodError = Assert.Throws<InvalidOperationException>(
+        var methodError = Assert.Throws<AxiosException>(
             () => client.GetUri(new BlankMethodRequest()));
         Assert.Contains("HTTP 方法不能为空白", methodError.Message);
 
-        var pathError = Assert.Throws<InvalidOperationException>(
+        var pathError = Assert.Throws<AxiosException>(
             () => client.GetUri(new BlankPathRequest()));
         Assert.Contains("路径模板不能为空白", pathError.Message);
     }
@@ -809,7 +809,7 @@ public sealed class ModelBindingTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => client.GetUri(new IgnoreWithQueryRequest()));
 
         Assert.Contains("[ApiIgnore]", ex.Message);
@@ -888,7 +888,7 @@ public sealed class ModelBindingTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => client.GetUri(new PathOnComplexRequest()));
 
         Assert.Contains("Report", ex.Message);
@@ -900,7 +900,7 @@ public sealed class ModelBindingTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => client.GetUri(new HeaderOnComplexRequest()));
 
         Assert.Contains("不是标量", ex.Message);

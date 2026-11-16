@@ -236,16 +236,22 @@ public static partial class Attempt
         var context = new AxiosCircuitContext(CircuitHost(ctx.Uri), ctx.Uri, ctx.Config);
 
         // 内置熔断器额外发一张准入票：迟到的结果凭过期票被丢弃，不污染新一轮。
+        // 建议等待时间一并从同一个临界区带出来（熔断打开期间每个请求都是拒绝，`GetRetryAfter` 会再查一次表、再锁一次）。
         long ticket = 0;
-        var allowed = policy is CircuitBreaker breaker
-            ? breaker.ShouldAllow(context, out ticket)
-            : policy.ShouldAllow(context);
+        TimeSpan retryAfter;
+        bool allowed;
+        if (policy is CircuitBreaker breaker)
+        {
+            allowed = breaker.ShouldAllow(context, out ticket, out retryAfter);
+        }
+        else
+        {
+            allowed = policy.ShouldAllow(context);
+            retryAfter = allowed ? TimeSpan.Zero : policy.GetRetryAfter(context);
+        }
 
         if (!allowed)
         {
-            // 建议等待时间：策略说不准时给零，错误消息里就不带「retry after」。
-            var retryAfter = policy.GetRetryAfter(context);
-
             // 回调在抛错之前调用，其异常按约定原样抛出；上下文带上建议等待时间。
             ctx.Circuit!.OnRejected?.Invoke(new AxiosCircuitContext(context.Host, ctx.Uri, ctx.Config, retryAfter: retryAfter));
 
@@ -307,7 +313,7 @@ public static partial class Attempt
             ctx.Config,
             request,
             ctx.AttemptToken,
-            ctx.Config.ResilienceOrNull?.Concurrency.QueueTimeout,
+            ctx.Config.ConcurrencyQueueTimeout,
 
             // 总预算比排队上限更紧时由它封顶：TotalTimeout 不约束排队就等于没约束「整条请求」。
             ctx.RemainingTotalTimeout,

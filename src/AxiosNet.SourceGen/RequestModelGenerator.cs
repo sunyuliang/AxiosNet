@@ -266,6 +266,9 @@ namespace AxiosNet.SourceGen
 
             diagnostics.AddRange(memberDiags);
 
+            // 两条「声明自相矛盾」的检查：放在成员都解析完之后，因为它们要看绑定结果。
+            CheckDeclarationConsistency(symbol, routePath!, members, location, diagnostics);
+
             var (multipart, allowAnonymous, authorizeScheme) = ReadDeclarationLevelAttributes(symbol, wellKnown, location, diagnostics);
             var encoding = ReadEncodingDeclarations(symbol, wellKnown);
 
@@ -287,6 +290,172 @@ namespace AxiosNet.SourceGen
                 encoding.QueryCollectionFormat,
                 encoding.HasStreamAttribute,
                 encoding.StreamFormat);
+        }
+
+        /// <summary>
+        /// 两条「声明自相矛盾」的编译期检查：路由占位符没有 <c>[Path]</c> 绑定（AXA016）、多个成员显式 <c>[Body]</c>（AXA017）。
+        /// </summary>
+        /// <remarks>
+        /// 这两条在运行期由绑定构建器也会报（<c>BindingAccumulator</c>），但那是<b>跑起来才知道</b>；
+        /// 声明式层的用户期望是「写错就编译不过」，所以在这里提前。
+        /// 刻意只查「显式 <c>[Body]</c> 多于一个」：「未标注属性默认当正文」的歧义规则更细（<c>[ApiIgnore]</c> / 唯一未标注 / 显式覆盖），静态判断容易误报，留给运行期。
+        /// </remarks>
+        /// <param name="symbol">请求模型类型。</param>
+        /// <param name="routePath">路由模板（已从特性取出的路径部分）。</param>
+        /// <param name="members">已解析的成员。</param>
+        /// <param name="location">诊断位置。</param>
+        /// <param name="diagnostics">诊断收集器。</param>
+        private static void CheckDeclarationConsistency(
+            INamedTypeSymbol symbol,
+            string routePath,
+            ImmutableArray<RequestMemberInfo>.Builder members,
+            Location location,
+            ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+        {
+            foreach (var token in RoutePlaceholders(routePath))
+            {
+                if (!HasPathBinding(members, token))
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        Diagnostics.MissingPathBinding,
+                        ToEquatable(new[] { "请求模型 " + symbol.Name, routePath, token }),
+                        location));
+                }
+            }
+
+            var bodies = new List<string>();
+            foreach (var member in members)
+            {
+                foreach (var binding in member.Bindings)
+                {
+                    if (binding.Body)
+                    {
+                        bodies.Add(member.Description);
+                        break;
+                    }
+                }
+            }
+
+            if (bodies.Count > 1)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    Diagnostics.MultipleBodyMembers,
+                    ToEquatable(new[]
+                    {
+                        "请求模型 " + symbol.Name,
+                        bodies.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        string.Join(" / ", bodies)
+                    }),
+                    location));
+            }
+        }
+
+        /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），跳过 <c>{{</c> 转义、空名与非标识符内容。</summary>
+        /// <remarks>
+        /// 文法必须与运行期 <c>BindingAccumulator.PathTokenRegex</c>（<c>\{([A-Za-z_][A-Za-z0-9_]*)\}</c>）一致。
+        /// 运行期只认标识符，<c>{id:int}</c> / <c>{id:regex(\d{3})}</c> 这类模板在运行期报的是
+        /// 「含无法识别的花括号」；这里若把整段 <c>id:int</c> 当占位符名，就会报出
+        /// 「含占位符 {id:int}，但没有成员标注 [Path]」——用户照它补 <c>[Path("id:int")]</c> 仍过不了运行期，
+        /// 等于把人指错方向。因此文法不匹配的花括号在这里<b>跳过</b>，交给运行期那条更准确的诊断。
+        /// </remarks>
+        /// <param name="template">路由模板。</param>
+        /// <returns>占位符名序列。</returns>
+        private static IEnumerable<string> RoutePlaceholders(string template)
+        {
+            var index = 0;
+            while (index < template.Length)
+            {
+                var open = template.IndexOf('{', index);
+                if (open < 0)
+                {
+                    yield break;
+                }
+
+                if (open + 1 < template.Length && template[open + 1] == '{')
+                {
+                    index = open + 2;
+                    continue;
+                }
+
+                var close = template.IndexOf('}', open + 1);
+                if (close < 0)
+                {
+                    yield break;
+                }
+
+                if (IsPlaceholderName(template, open + 1, close - open - 1))
+                {
+                    yield return template.Substring(open + 1, close - open - 1);
+                }
+
+                index = close + 1;
+            }
+        }
+
+        /// <summary>模板里这两朵花括号之间是否是一个运行期认得的占位符名（<c>[A-Za-z_][A-Za-z0-9_]*</c>）。</summary>
+        /// <param name="template">路由模板。</param>
+        /// <param name="start">名字起点。</param>
+        /// <param name="length">名字长度。</param>
+        /// <returns>合法返回 <c>true</c>；空名 / 约束表达式等非法形态返回 <c>false</c>。</returns>
+        private static bool IsPlaceholderName(string template, int start, int length)
+        {
+            if (length == 0 || !IsNameStart(template[start]))
+            {
+                return false;
+            }
+
+            for (var i = start + 1; i < start + length; i++)
+            {
+                var c = template[i];
+                if (!IsNameStart(c) && !(c >= '0' && c <= '9'))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>占位符名的首字符集合：ASCII 字母或下划线。</summary>
+        /// <param name="c">待判定字符。</param>
+        /// <returns>合法返回 <c>true</c>。</returns>
+        private static bool IsNameStart(char c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+
+        /// <summary>是否有成员用 <c>[Path]</c> 绑定了这个占位符。</summary>
+        /// <remarks>
+        /// 判定必须与运行期 <c>BindingAccumulator.ResolveName</c> 同口径：<b>空 / 空白名回退成员名</b>，名字 <c>Trim</c> 后
+        /// 大小写不敏感比较。用 <c>PathName ?? member.Name</c> 会把 <c>[Path]</c>（无参 → 构造参数是空串，不是 null）
+        /// 与 <c>[Path(" ")]</c> 判成「没绑定」，对最普通的写法误报；反过来多认一遍 <c>[JsonPropertyName]</c> 则相反 ——
+        /// 编译期放过、运行期照旧报错，等于把诊断落空。
+        /// </remarks>
+        /// <param name="members">已解析的成员。</param>
+        /// <param name="token">占位符名。</param>
+        /// <returns>已绑定返回 <c>true</c>。</returns>
+        private static bool HasPathBinding(ImmutableArray<RequestMemberInfo>.Builder members, string token)
+        {
+            foreach (var member in members)
+            {
+                foreach (var binding in member.Bindings)
+                {
+                    if (!binding.Path)
+                    {
+                        continue;
+                    }
+
+                    // 大小写不敏感：运行期 tokenSpellings / bindingsByName 都是 OrdinalIgnoreCase，
+                    // 这里若用 Ordinal，`{id}` 配 `Id` 这种最普通的写法会被误报。
+                    var name = string.IsNullOrWhiteSpace(binding.PathName)
+                        ? member.Name
+                        : binding.PathName!.Trim();
+
+                    if (string.Equals(name, token, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         // 单个属性 → 一条成员绑定：解析 Path / Query / Header / Body / Part，并写好取值的表达式。

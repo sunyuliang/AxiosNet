@@ -20,14 +20,14 @@ public sealed class MethodAndUrlTests
     // ===============================================================
 
     [Fact]
-    public void InvalidHttpMethodToken_ThrowsInvalidOperationException_AndCachesSameMessage()
+    public void InvalidHttpMethodToken_ThrowsAxiosException_AndCachesSameMessage()
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        // 模型定义错误统一归一为 InvalidOperationException（ApiClient 的文档承诺），
+        // 模型定义错误统一归一为 AxiosException(ERR_BAD_OPTION_VALUE)，原始异常在 Cause；
         // 且进缓存：每次调用抛同一份消息，不重新执行特性构造
-        var first = Assert.Throws<InvalidOperationException>(() => client.GetUri(new BadMethodRequest()));
-        var second = Assert.Throws<InvalidOperationException>(() => client.GetUri(new BadMethodRequest()));
+        var first = Assert.Throws<AxiosException>(() => client.GetUri(new BadMethodRequest()));
+        var second = Assert.Throws<AxiosException>(() => client.GetUri(new BadMethodRequest()));
 
         Assert.Equal(first.Message, second.Message);
     }

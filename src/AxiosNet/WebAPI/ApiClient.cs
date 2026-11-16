@@ -81,7 +81,8 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     /// <summary>发送请求模型描述的请求，返回类型由请求模型的 <see cref="IApiRequest{TResponse}"/> 泛型确定。</summary>
     /// <param name="request">请求模型实例（路径 / 查询 / 头 / 正文的取值来源）。</param>
     /// <param name="cancellationToken">外部取消令牌。</param>
-    /// <exception cref="InvalidOperationException">请求模型定义非法（缺路由特性、占位符未绑定、多个请求体等）。</exception>
+    /// <exception cref="AxiosException">请求模型定义非法（缺路由特性、占位符未绑定、多个请求体等），错误码 <c>ERR_BAD_OPTION_VALUE</c>，内部异常在 <c>Cause</c>。</exception>
+    /// <exception cref="AxiosAotMetadataException">Native AOT 下缺少该模型的生成元数据（源生成器未启用）。</exception>
     public Task<AxiosResponse<TResponse>> RequestAsync<TResponse>(
         IApiRequest<TResponse> request,
         CancellationToken cancellationToken = default)
@@ -103,7 +104,7 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var metadata = RequestModelMetadata.Get(request.GetType());
+        var metadata = AcquireMetadata(request.GetType());
         var config = BuildConfig(metadata, request, configure, cancellationToken);
 
         var auth = ApplyAuthorization(metadata.Authorization, request, config);
@@ -122,9 +123,39 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     public string GetUri<TResponse>(IApiRequest<TResponse> request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var metadata = RequestModelMetadata.Get(request.GetType());
+        var metadata = AcquireMetadata(request.GetType());
         var config = BuildConfig(metadata, request, configure: null, cancellationToken: default);
         return BindingErrors.Run(config, request.GetType().Name, () => Axios.GetUri(config));
+    }
+
+    /// <summary>
+    /// 取请求模型的绑定元数据，并把「模型声明非法」改写成 <see cref="AxiosException"/>。
+    /// </summary>
+    /// <param name="requestType">请求模型类型。</param>
+    /// <returns>构建好的元数据。</returns>
+    /// <remarks>
+    /// 为什么要在这一层改写：<see cref="RequestModelMetadata.Get"/> 内部抛的是裸 <see cref="InvalidOperationException"/>，
+    /// 而它又在 <see cref="BuildConfig"/> <b>之前</b>被调用，因此不受绑定错误那条统一出口保护 ——
+    /// 用户写 <c>catch (AxiosException)</c> 抓不到，异常会一路裸奔到全局处理器。
+    /// <see cref="AxiosAotMetadataException"/> 例外：它是给「源生成器没启用」专用的类型，调用方可能专门捕获它，
+    /// 改写成通用错误码反而丢信息，所以原样透传。
+    /// </remarks>
+    /// <exception cref="AxiosException">模型声明非法（<c>ERR_BAD_OPTION_VALUE</c>），原始异常在 <c>Cause</c>。</exception>
+    private static RequestModelMetadata AcquireMetadata(
+        [DynamicallyAccessedMembers(RequestModelMetadata.ModelMembers)] Type requestType)
+    {
+        try
+        {
+            return RequestModelMetadata.Get(requestType);
+        }
+        catch (AxiosAotMetadataException)
+        {
+            throw;
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw AxiosException.InvalidOption(ex.Message, config: null, inner: ex);
+        }
     }
 
     /// <summary>按请求模型的声明拼出这次请求的配置：路由、静态头、绑定参数与授权都在这条路径上落地。</summary>

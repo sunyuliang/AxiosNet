@@ -494,6 +494,115 @@ public sealed class AllocationTests
             + "的 12 KB 护栏——疑似每个跟随者都复制了一遍正文或重复建头字典。");
     }
 
+    /// <summary>
+    /// <see cref="TimeoutStream"/> 不为取消付分配：不限时（<c>remaining = null</c>）且外部令牌不可取消时，
+    /// 构造只付流对象本身、读一块的增量应当为 0 —— 一个 <see cref="CancellationTokenSource"/> 都不建。
+    /// </summary>
+    /// <remarks>
+    /// 为什么不量「流式响应与缓冲响应的差值」：两条路径各自带着几百 B 的宿主相关开销，同一份代码在不同
+    /// runner 上实测相差 304 B，而两个令牌源只有 248 B —— 差值法换宿主必假红（此前那条 <c>-500 B</c> 护栏
+    /// 只在仓库自带宿主成立，余量 156 B）。这里直接量被测流：固定桩流 + 构造 / 读分开量，读数稳定在个位 B。
+    /// <para>
+    /// 构造门槛 200 B 卡在「流对象本身」与「流对象 + 两个 CTS（248 B）」之间；读取增量实测 0 B，
+    /// 门槛沿用同文件的 64 B 惯例。令牌身份那一层（交给底层的是不是可取消令牌）由
+    /// <c>StreamLazyCancellationTests</c> 的三条结构断言覆盖 —— 突变回「无条件建 CTS」时那里会红。
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TimeoutStream_WithoutTimeoutOrCancellation_PaysNoCts()
+    {
+        var payload = new byte[1024];
+        var inner = new ReusableMemoryStream(payload);
+        var config = new AxiosConfig();
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("http://127.0.0.1:59999/"));
+        var buffer = new byte[256];
+
+        void Construct()
+        {
+            var stream = new TimeoutStream(inner, remaining: null, CancellationToken.None, config, request);
+            stream.Dispose();
+        }
+
+        var constructBytes = MinimumBytes(200, Construct, windows: 5);
+
+        Assert.True(
+            constructBytes < 200,
+            $"不限时且外部令牌不可取消时，构造 TimeoutStream 分配了 {constructBytes} B/次——超出 200 B 护栏："
+            + "没有剩余预算就该一个 CancellationTokenSource 都不建（两个源实测 248 B）。");
+
+        using var stream = new TimeoutStream(inner, remaining: null, CancellationToken.None, config, request);
+
+#pragma warning disable xUnit1031 // 测量窗口内必须同步推进：await 会引入测试自己的分配。
+        void ReadOnce()
+        {
+            inner.Position = 0;
+            stream.ReadAsync(buffer.AsMemory(), CancellationToken.None).GetAwaiter().GetResult();
+        }
+#pragma warning restore xUnit1031
+
+        var readBytes = MinimumBytes(200, ReadOnce, windows: 5);
+
+        Assert.True(
+            readBytes < 64,
+            $"不限时且外部令牌不可取消时，TimeoutStream 读一块分配了 {readBytes} B——超出 64 B 护栏："
+            + "内层同步完成时整条读链路不该有分配（更不该每块新建 CTS）。");
+    }
+
+    /// <summary>包装流会释放内层流，本用例要反复复用同一块内存：忽略释放。</summary>
+    private sealed class ReusableMemoryStream : MemoryStream
+    {
+        public ReusableMemoryStream(byte[] buffer)
+            : base(buffer)
+        {
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+        }
+    }
+
+    /// <summary>
+    /// 请求头合并的分配：一次分配到位。旧实现先建 <see cref="System.Collections.Generic.List{T}"/>、
+    /// 再 <c>ToArray()</c> 拷一份，每次合并两份数组（本用例实测 368 B）；改造后只剩最终那份数组（168 B）。
+    /// </summary>
+    [Fact]
+    public void HeadersMerge_PaysOneArrayPerMerge()
+    {
+        var incoming = new AxiosHeaders();
+        incoming.Set("X-Trace", "2");
+        incoming.Set("X-New", "a");
+        incoming.Set("Accept-Encoding", "gzip");
+
+        // 基线：同样四条 Set、同样的数组增长序列，只是不合并 —— 差值才是合并本身的成本。
+        var withoutMerge = AverageBytes(20_000, () =>
+        {
+            var target = new AxiosHeaders();
+            target.Set("Accept", "application/json");
+            target.Set("X-Trace", "1");
+            target.Set("X-Session", "abc");
+            target.Set("User-Agent", "axios-net");
+        });
+
+        var withMerge = AverageBytes(20_000, () =>
+        {
+            var target = new AxiosHeaders();
+            target.Set("Accept", "application/json");
+            target.Set("X-Trace", "1");
+            target.Set("X-Session", "abc");
+            target.Set("User-Agent", "axios-net");
+            target.MergeFrom(incoming);
+        });
+
+        var mergeCost = withMerge - withoutMerge;
+
+        // 最终数组是 6 条（4 + 2 条新增，1 条同名覆盖）：24 B 对象头 + 6 × 24 B 条目 = 168 B（实测值）。
+        // 旧实现是这份数组再加一份 ToArray 拷贝，实测 368 B；门槛 250 B 卡在两者之间。
+        Assert.True(
+            mergeCost < 250,
+            $"AxiosHeaders.MergeFrom 每次合并多分配 {mergeCost} B（合并 {withMerge} B / 基线 {withoutMerge} B）——"
+            + "超出 250 B 护栏：疑似退化回「List 内部数组 + ToArray 拷贝」的两份分配。");
+    }
+
     private static long AverageBytes(int iterations, Action action)
     {
         action(); // warmup：JIT 与静态缓存不计入

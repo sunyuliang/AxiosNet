@@ -108,7 +108,7 @@ public sealed class FormatAdversarialTests
     {
         using var client = new ApiClient("http://127.0.0.1:1/");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => client.GetUri(new P4Request()));
+        var ex = Assert.Throws<AxiosException>(() => client.GetUri(new P4Request()));
         Assert.Contains("文件部件", ex.Message);
     }
 

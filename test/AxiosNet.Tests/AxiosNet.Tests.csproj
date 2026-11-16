@@ -26,6 +26,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 公共 API 基线随构建复制到输出目录：比对只读输出目录（不依赖源码树 / 不需要写权限），
+         只有 AXIOSNET_REFRESH_API_BASELINE=1 时才写回源码树。 -->
+    <None Update="PublicApi\PublicAPI.*.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AxiosNet\AxiosNet.csproj" />
     <!-- 生成器测试用 CSharpGeneratorDriver 直接驱动；普通引用（非 Analyzer），不会分析本测试项目源码。 -->
     <ProjectReference Include="..\..\src\AxiosNet.SourceGen\AxiosNet.SourceGen.csproj" />

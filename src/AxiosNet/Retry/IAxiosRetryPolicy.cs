@@ -12,7 +12,7 @@ namespace AxiosNet.Retry;
 /// <example>
 /// <code>
 /// // 默认实现：最多重试 3 次，间隔 200ms 起、每次翻倍，带抖动
-/// client.Defaults.Retry.Policy = new RetryPolicy { MaxRetries = 3 };
+/// client.Defaults.Resilience.Retry.Policy = new RetryPolicy { MaxRetries = 3 };
 ///
 /// // 只重试「业务码 5001」：自定义策略
 /// public sealed class BizRetryPolicy : IAxiosRetryPolicy

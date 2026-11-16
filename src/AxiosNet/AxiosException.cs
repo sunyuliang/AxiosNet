@@ -437,8 +437,64 @@ public class AxiosException : Exception
         return new AxiosException(message, ErrBadOptionValue, config, null, null, inner);
     }
 
-    /// <summary>非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>；3xx 且带 <c>Location</c> 时按重定向细分。</summary>
-    internal static AxiosException FromResponse(AxiosConfig config, HttpRequestMessage? request, AxiosResponse response)
+    /// <summary>
+    /// 正文为空但调用方按「一定有正文」取值（<c>AxiosResponse&lt;T&gt;.DataOrThrow()</c> 用）。
+    /// </summary>
+    /// <param name="config">本次请求配置。</param>
+    /// <param name="request">请求对象（可能为 <c>null</c>）。</param>
+    /// <param name="response">本次响应。</param>
+    /// <param name="targetType">期望的正文类型名。</param>
+    /// <returns>统一的 <c>ERR_BAD_RESPONSE</c>。</returns>
+    internal static AxiosException EmptyBody(
+        AxiosConfig? config,
+        HttpRequestMessage? request,
+        AxiosResponse? response,
+        string targetType)
+        => new(
+            $"响应正文为空，不能按 {targetType} 取值：服务端给了成功状态码但没有正文（204 No Content 是常见原因）。"
+            + "若空正文是合法结果，请改用 Data 并处理 null。",
+            ErrBadResponse,
+            config,
+            request,
+            response,
+            innerException: null);
+
+    /// <summary>状态码错误消息里的「方法 + URL（已剥 query / fragment / userinfo）+ 第几次尝试」上下文；拿不到 request（如拦截器拒绝路径）时返回空串，保持现有的状态码前缀不变。</summary>
+    private static string RequestSuffix(HttpRequestMessage? request, int? attemptNumber)
+    {
+        if (request is null)
+        {
+            return string.Empty;
+        }
+
+        var method = request.Method.Method;
+        var location = request.RequestUri is { } uri
+            ? method + " " + Truncate(Sanitize(uri))
+            : method;
+
+        // 防御：当前调用点要么给 attempt，要么 request 为 null；未来新增调用点可能走到这里。
+        return attemptNumber is { } attempt
+            ? $" ({location}, attempt {attempt})"
+            : $" ({location})";
+    }
+
+    /// <summary>只保留 scheme + host + port + path，剥掉 query / fragment / userinfo：异常消息默认进日志，不应泄露令牌或凭据。先剥敏感部分，再交给 <see cref="Truncate"/> 截断；相对 URI 无法解析组件时退回 <see cref="Uri.OriginalString"/>，保证异常路径不再抛。</summary>
+    private static string Sanitize(Uri uri)
+        => uri.IsAbsoluteUri
+            ? uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped)
+            : uri.OriginalString;
+
+    /// <summary>非 2xx 响应：5xx 归 <c>ERR_BAD_RESPONSE</c>，4xx 归 <c>ERR_BAD_REQUEST</c>；3xx 且带 <c>Location</c> 时按重定向细分。
+    /// 所有分支都会在状态码前缀后追加「方法 + URL + 第几次尝试」，便于开了重试 / 换端点 / 对冲后定位打到哪个端点、第几次尝试。</summary>
+    /// <param name="config">本次请求的生效配置（错误码取自它）。</param>
+    /// <param name="request">触发本次失败的请求；为 <c>null</c>（如拦截器拒绝路径）时不追加上下文后缀。</param>
+    /// <param name="response">非 2xx 的响应。</param>
+    /// <param name="attemptNumber">第几次尝试（从 1 起）；未知时传 <c>null</c>，消息不带尝试序号。</param>
+    internal static AxiosException FromResponse(
+        AxiosConfig config,
+        HttpRequestMessage? request,
+        AxiosResponse response,
+        int? attemptNumber = null)
     {
         // 3xx + Location 说明服务端还想跳：要么次数到了上限（ERR_TOO_MANY_REDIRECTS），
         // 要么是调用方把 MaxRedirects 设成 0 主动关闭跟随（仍是 ERR_BAD_REQUEST，文案点明配置）。
@@ -449,7 +505,7 @@ public class AxiosException : Exception
             if (configured == 0)
             {
                 return new AxiosException(
-                    $"Request failed with status code {response.Status}: redirects are disabled (MaxRedirects = 0); "
+                    $"Request failed with status code {response.Status}{RequestSuffix(request, attemptNumber)}: redirects are disabled (MaxRedirects = 0); "
                     + "set Transport.MaxRedirects > 0 to follow redirects",
                     ErrBadRequest,
                     config,
@@ -460,7 +516,7 @@ public class AxiosException : Exception
 
             var limit = configured ?? AxiosConfig.DefaultMaxRedirects;
             return new AxiosException(
-                $"Request failed with status code {response.Status}: too many redirects "
+                $"Request failed with status code {response.Status}{RequestSuffix(request, attemptNumber)}: too many redirects "
                 + $"(stopped after MaxRedirects = {limit}); raise Transport.MaxRedirects, or set it to 0 to stop following",
                 ErrTooManyRedirects,
                 config,
@@ -472,9 +528,10 @@ public class AxiosException : Exception
         var code = response.Status >= 500 ? ErrBadResponse : ErrBadRequest;
 
         // 状态码本身说明不了业务原因：把服务端正文片段带进消息，日志里不用再翻 Response.RawText。
-        // 重定向分支不带正文：那里的重点是「怎么调 MaxRedirects」，正文多是跳转页，反而干扰阅读。
+        // 重定向分支不带正文：那里的重点是「怎么调 MaxRedirects」，正文多是跳转页，反而干扰阅读
+        // （上下文后缀两个分支都带：超限时正是最需要知道「打到哪个端点、第几次尝试」的时刻）。
         return new AxiosException(
-            $"Request failed with status code {response.Status}{BodySuffix(response.RawText)}",
+            $"Request failed with status code {response.Status}{RequestSuffix(request, attemptNumber)}{BodySuffix(response.RawText)}",
             code,
             config,
             request,

@@ -426,7 +426,7 @@ public sealed class MultipartBindingTests
     [Fact]
     public void Multipart_WithBody_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new ConflictingBodyRequest()));
 
         Assert.Contains("[Multipart]", ex.Message);
@@ -436,7 +436,7 @@ public sealed class MultipartBindingTests
     [Fact]
     public void Part_WithoutMultipart_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new PartWithoutMultipartRequest()));
 
         Assert.Contains("[Part]", ex.Message);
@@ -446,7 +446,7 @@ public sealed class MultipartBindingTests
     [Fact]
     public void DuplicatePartName_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new DuplicatePartRequest()));
 
         Assert.Contains("Part", ex.Message);
@@ -456,7 +456,7 @@ public sealed class MultipartBindingTests
     [Fact]
     public void BlankPartName_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new BlankPartNameRequest()));
 
         Assert.Contains("不能为空白", ex.Message);

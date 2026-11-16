@@ -1,4 +1,5 @@
 ﻿
+using AxiosNet;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
@@ -48,7 +49,17 @@ public sealed class InterfaceValidationTests
     [Fact]
     public void ValidateInterfaces_MethodWithoutRoute_IsReported()
     {
-        Assert.NotEmpty(ApiClient.ValidateInterfaces(typeof(IUnroutedApi)));
+        var errors = ApiClient.ValidateInterfaces(typeof(IUnroutedApi));
+        Assert.NotEmpty(errors);
+
+        // 同一份元数据在 Create 时抛出：声明期错误与请求模型同一出口（AxiosException + ERR_BAD_OPTION_VALUE），
+        // 消息与启动期体检逐字一致，原始异常在 Cause —— 否则 catch (AxiosException) 在接口式上会漏。
+        using var client = new ApiClient("http://127.0.0.1:1/");
+        var ex = Assert.Throws<AxiosException>(() => client.Create<IUnroutedApi>());
+
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.IsType<InvalidOperationException>(ex.Cause);
+        Assert.Contains(errors[0], ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

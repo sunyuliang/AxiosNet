@@ -11,13 +11,13 @@ namespace AxiosNet.Retry;
 /// <example>
 /// <code>
 /// // 固定间隔重试 3 次（每次间隔 1 秒，不翻倍、不加抖动）
-/// config.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.FromSeconds(1));
+/// config.Resilience.Retry.Policy = RetryPolicy.Constant(3, TimeSpan.FromSeconds(1));
 ///
 /// // 指数退避：200ms / 400ms / 800ms，单次最长 5 秒
-/// config.Retry.Policy = RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
+/// config.Resilience.Retry.Policy = RetryPolicy.Exponential(3, TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
 ///
 /// // 细粒度控制
-/// config.Retry.Policy = new RetryPolicy
+/// config.Resilience.Retry.Policy = new RetryPolicy
 /// {
 ///     MaxRetries = 5,
 ///     Delay = TimeSpan.FromMilliseconds(100),

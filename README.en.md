@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2694%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2562%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2749%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2617%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.3%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -81,6 +81,19 @@ var user=(await Axios.GetAsync<User>("https://api.example.com/users/1")).Data!;
 
 ```
 
+Production code should use an **instance client**: hold it long-lived, with one set of defaults and one connection pool. **One instance per site — never create one per request** (creating per request degrades into the classic `new HttpClient()` trap; see [Clients](#clients)):
+
+```csharp
+using var http = Axios.Create(c =>
+{
+    c.BaseAddress = "https://api.example.com/";
+    c.Timeout = TimeSpan.FromSeconds(10);   // always set this in production; see the warning below
+});
+var user = (await http.GetAsync<User>("users/1")).Data!;
+```
+
+> **Note: `Timeout` defaults to `TimeSpan.Zero`, i.e. no timeout**, unlike `HttpClient.Timeout` (default 100s). A browser caps request time via its host, but a .NET server does not — with no timeout set, an unresponsive downstream leaves the request **hanging forever (no error code at all)**, with connections and queued requests piling up; in multi-origin / failover scenarios, once the number of **distinct origins reaches `MaxEndpointCount` (1024 by default, can be lowered)** it also exhausts the pool's origin nodes and finally surfaces as `ERR_POOL_EXHAUSTED` — the code points at the pool, but the root cause is still a missing timeout. In server scenarios always set `Timeout` explicitly, or use `Resilience.TotalTimeout` to cap the whole request's budget.
+
 Once endpoints are grouped, the declarative client offers two parallel ways, and **model-based is the default recommendation**: pass a request model directly, or hand an interface to `Create<T>()`. Both share the same client and the same binding / authorization / validation rules (see [Model-based API](#model-based-api) / [Interface-based API](#interface-based-api)).
 
 **Model-based (default recommendation)**
@@ -124,7 +137,7 @@ Five concepts:
 | Client | `Axios` / `AxiosClient` | Process-wide default instance + instance clients, and the declarative entry point |
 | Request | `AxiosConfig` | One request; the top-level leaves |
 | Response | `AxiosResponse<T>` | Status, headers and the parsed body |
-| Error | `AxiosException` | Single exit for every failure, with a stable `Code` |
+| Error | `AxiosException` | Single exit for every request-execution failure, with a stable `Code`; declaration-time errors (an ill-formed model / interface) land here too: `ERR_BAD_OPTION_VALUE`, original exception in `Cause`. The one exception is missing AOT metadata: `AxiosAotMetadataException` exists for "generator not enabled" and is deliberately not folded into it |
 | Endpoint | `IApiRequest<T>` / interfaces | Optional extension: describe an endpoint as a model or interface |
 
 The generic argument decides what `Data` is:
@@ -169,6 +182,12 @@ await http.DeleteAsync("users/1", new { reason = "duplicated" });
 ```
 
 Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `OctetStream` / `Xml` / `JsonPatch` / `ProblemJson` / `TextPlain` / `TextHtml`; a parameterized string works too: `"multipart/form-data; boundary=----axios-net"`.
+
+> **Omitting `data` is the same as writing `data: null`**: `Params` / `Body` merge on "was it assigned", not on "is it `null`" — and a shortcut's `data` slot always means "this request's body" once the slot exists.
+> - `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` take `data` as an **optional parameter with a default**: `PostAsync("orders")` is exactly `PostAsync("orders", data: null)`, so it **drops** `Defaults.Body` and sends an empty body. To send the default body along, use `PostAsync("orders", new AxiosConfig { ... })` (that config never touches `Body`, so the merge inherits it) or go through `RequestAsync`.
+> - `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` have a separate **no-`data`** overload: `DeleteAsync("orders/1")` does not mean "no body this time" and therefore inherits `Defaults.Body`; write `DeleteAsync("orders/1", data: null)` to send an empty one.
+>
+> This trips people up mostly when instance defaults and per-request overrides are mixed; see [instance defaults vs. per-request](#clients).
 
 ### Query parameters
 
@@ -289,6 +308,14 @@ var dyn    = await http.GetAsync<dynamic>("users/1");                     // no 
 
 `<Stream>` / `<byte[]>` / `<dynamic>` switch `ResponseType` automatically — you rarely set it by hand.
 
+**When the body must be there, use `DataOrThrow()`**: `Data` is nullable, so code that is sure of a body often writes `Data!` to silence the compiler — and an actually empty body (204, or a server that forgot to write one) then surfaces as a `NullReferenceException` deep inside business logic with no request context. `DataOrThrow()` turns that into one explicit assertion: an empty body throws `ERR_BAD_RESPONSE`, the message names the expected type, and the exception carries `Config` / `Response`:
+
+```csharp
+var user = (await http.GetAsync<User>("users/1")).DataOrThrow();   // empty body -> ERR_BAD_RESPONSE
+```
+
+Endpoints where an empty body is legitimate (204 deletes, HEAD probes) keep using `Data` and handling `null`.
+
 Downloading:
 
 ```csharp
@@ -342,6 +369,7 @@ await foreach (var order in pages.Data!)
 - **Frame cap**: 8 MB default, valid range 1–64 MB (`Limits.MaxStreamFrameBytes`), out-of-range throws `ERR_BAD_OPTION_VALUE` before sending. There is no "unlimited" mode — a whole frame must fit in memory; peak usage is roughly 2–4× the cap. The cap counts **raw on-wire bytes** (field prefixes, line endings and delimiters included), so each format's usable payload is smaller: 1 B less for NDJSON and JSON Array, and 7 B (LF) or 8 B (CRLF) per line for SSE.
 - **Encoding**: NDJSON / SSE require an ASCII-compatible charset, wide-char encodings throw `ERR_BAD_RESPONSE` when taking the stream; `JsonArray` must be UTF-8. A UTF-8 BOM is skipped.
 - **Ownership**: the stream can be enumerated once; `await foreach` (including `break`) disposes it, manual `MoveNextAsync` callers must `DisposeAsync` themselves.
+- **Always read and write asynchronously**: the synchronous `Read` / `Write` / `Flush` on a response stream block while waiting on the async operation — nothing is missing functionally, but under thread-pool starvation they pin the calling thread (worst case, near-deadlock). Use `ReadAsync` / `CopyToAsync` / `await foreach` on the body; do not read a response stream synchronously.
 - **Explicit `ResponseType`**: the streaming entry points switch to `Stream` only when `ResponseType` was not explicitly set; an explicit non-`Stream` value (per request or instance default) throws `ERR_BAD_OPTION_VALUE` before sending instead of silently overriding the caller's choice.
 - **Errors**: status errors throw at `await`; frame parse failures are `ERR_BAD_RESPONSE`, mid-stream disconnects `ERR_NETWORK`, cancellation `ERR_CANCELED`.
 
@@ -549,7 +577,7 @@ await client.GetAsync("fast", c => c.Resilience.Concurrency.QueueTimeout = TimeS
 
 ## Errors
 
-Every failure throws `AxiosException`:
+Every request-execution failure throws `AxiosException` (except declarative request model-definition errors — see the note below):
 
 ```csharp
 try
@@ -560,16 +588,18 @@ catch (AxiosException ex)
 {
     Console.WriteLine(ex.Code);         // ERR_BAD_REQUEST
     Console.WriteLine(ex.Status);       // 404
-    Console.WriteLine(ex.Message);      // Request failed with status code 404: {...} (server body snippet appended)
+    Console.WriteLine(ex.Message);      // Request failed with status code 404 (GET https://api.example.com/missing, attempt 1): {...} (server body snippet appended)
     Console.WriteLine(ex.ResponseBody); // full error body as returned by the server
     Console.WriteLine(ex.Cause);        // inner exception, may be null
-    Console.WriteLine(ex.ToJson());     // structured snapshot, safe to log
+    Console.WriteLine(ex.ToJson());     // structured snapshot, easy to log; "url" keeps the raw request address (may contain query strings or credentials) - redact before persisting
 }
 
 if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 ```
 
 When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appends a response-body snippet (at most 512 characters, newlines folded to spaces), so logging `ex.Message` alone still shows the server's reason. Use `ex.ResponseBody` (same as `ex.Response.RawText`) for the full text; `ToJson()` exposes it as `responseBody`.
+
+> **Declaration-time and run-time errors are reported separately.** When the **declaration itself** is ill-formed — a route attribute is missing (e.g. `[Get]`), a `{id}` path placeholder has no matching `[Path]` (placeholder unbound), more than one request body is declared, and so on — on a model or on an interface alike, it throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) with the original exception in `Cause`; the source generator already lifts two of those to compile time (`AXA016` / `AXA017`). A well-formed declaration that merely fails to **read or format a value at runtime** (a `null` path value, a throwing formatter, …) throws `AxiosException` with `ERR_BAD_REQUEST`. A single `catch (AxiosException)` covers both; the only other exit is missing AOT metadata (`AxiosAotMetadataException`).
 
 | Code | Triggered by |
 | --- | --- |
@@ -584,7 +614,7 @@ When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appe
 | `ERR_POOL_EXHAUSTED` | Pool origin cardinality saturated (all in flight, no evictable idle node); request never sent; observable, not retried by default — lower fan-out / raise the cap / `Clear()` then retry |
 | `ERR_INVALID_URL` | Invalid URL, relative URL without `BaseAddress`, non-http(s) scheme, or a URL longer than 65519 characters (the pre-.NET 10 `Uri` limit, now enforced by the library itself) |
 | `ERR_TOO_MANY_REDIRECTS` | Redirects followed beyond `Transport.MaxRedirects`. With `MaxRedirects = 0` the code is `ERR_BAD_REQUEST` plus a distinct message ("redirects are disabled") so "disabled" and "over the limit" stay distinguishable |
-| `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…) |
+| `ERR_BAD_OPTION_VALUE` | Invalid option value (instance-level option per request, multipart header/body conflict, scalar `Params`, out-of-range retry / circuit settings…); an ill-formed declarative **model / interface** (missing route attribute, unbound placeholder, several bodies, … — the original exception is in `Cause`) |
 
 Branch on `ex.ErrorCode` (an enum you can exhaustively `switch`) or `ex.Code` (the axios-aligned string); never parse the message:
 
@@ -642,16 +672,76 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `Limits.MaxRequestBytes` | `null` (unlimited) | Request body cap, checked before sending (was `Limits.MaxBodyLength`) |
 | `Limits.MaxStreamFrameBytes` | `null` (= 8 MB) | Streaming frame cap, valid range 1–64 MB (was `Limits.MaxStreamFrameLength`) |
 
-The other four sub-objects (created lazily on first access):
+The other four sub-objects (created lazily on first access). Each leaf is listed with its default, so a full name such as `Resilience.Failover.Cooldown` is searchable:
 
-| Sub-object | Key members (default / notes) |
-| --- | --- |
-| `Serialization` | `JsonOptions` (web style) / `BodySerializers` (instance registry, always present on a client) / `TextEncoding` (`null` = UTF-8 send, auto-detect receive) / `QueryEncoder` / `FormFieldName` / `CollectionFormat` (`Brackets`) / `ValueText` / `TransformRequest` / `TransformResponse` |
-| `Resilience` | `Retry` (`Policy` = `null`, no retries / `OnRetry`) / `Circuit` (`Policy` = `null`, no breaker / `OnRejected`) / `Hedging` (`MaxHedges` = `0`, max 16 / `Delay` = 80ms) / `Failover` (`Endpoints` = `null` / `FailureThreshold` = 2 / `Cooldown` = 30s / `MaxCooldown` = 5min) / `Concurrency` (`MaxInFlight` / `MaxQueue` / `QueueTimeout`, all `null`) / `Idempotency` (`Enabled` = `false` / `HeaderName` = `Idempotency-Key` / `Key` / `KeyFactory`) / `TotalTimeout` (`null` = none, shared across retries / endpoints / hedges) / `AllowUnsafeRetry` (`false`, the only switch that lets non-idempotent methods through) |
-| `Transport` | `Proxy` / `Credentials` (`null`, instance-level only) / `Pool` (`null`, frozen when the pool is built) / `HttpVersion` (`null` = 2.0) / `VersionPolicy` (`null` = `OrLower`) / `Profile` (`null` = default profile) / `Auth` (`null`; one of static Basic / token / complete header value / provider) / `WithCredentials` (`false`, instance-level only) / `MaxRedirects` (5, instance-level only) / `MaxRate` (`null` = unlimited) |
-| `Observability` | `Capture` (`null` = `TelemetryCapture.Path`; `Off` / `Path` / `Query` / `NoUrl`) / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` (`false`) / `OnSendingRequest` / `TimeoutMessage` |
+**`Serialization`**
+
+| Leaf | Default | Notes |
+| --- | --- | --- |
+| `JsonOptions` | web style | `JsonSerializerOptions` |
+| `BodySerializers` | instance registry | body serializers; a client always has one |
+| `TextEncoding` | `null` | send UTF-8, detect on receive from `Content-Type` |
+| `QueryEncoder` | `null` | custom query-string escaping |
+| `FormFieldName` | `null` | field-name shape for form / multipart |
+| `CollectionFormat` | `Brackets` | collection expansion: `a[]=1&a[]=2` |
+| `ValueText` | `null` | default value formatter (declarative requests) |
+| `TransformRequest` | `null` | rewrite the body before sending |
+| `TransformResponse` | `null` | rewrite the result after deserialization |
+
+**`Resilience`**
+
+| Leaf | Default | Notes |
+| --- | --- | --- |
+| `Retry.Policy` | `null` | no retries |
+| `Retry.OnRetry` | `null` | callback before each retry |
+| `Circuit.Policy` | `null` | no breaker |
+| `Circuit.OnRejected` | `null` | callback when the breaker rejects |
+| `Hedging.MaxHedges` | `0` (max 16) | number of hedge branches |
+| `Hedging.Delay` | 80ms | branch n starts at n × Delay |
+| `Failover.Endpoints` | `null` | backup endpoints; `null` disables failover |
+| `Failover.FailureThreshold` | 2 | consecutive failures before an endpoint cools down (`0` disables health memory) |
+| `Failover.Cooldown` | 30s | endpoint cooldown |
+| `Failover.MaxCooldown` | 5min | cooldown ceiling |
+| `Concurrency.MaxInFlight` | `null` | in-flight cap; instance-level, frozen on the first gated request |
+| `Concurrency.MaxQueue` | `null` | queue cap; instance-level |
+| `Concurrency.QueueTimeout` | `null` | `null` waits forever / `Zero` never queues / `>0` times out |
+| `Idempotency.Enabled` | `false` | whether to write an idempotency key |
+| `Idempotency.HeaderName` | `Idempotency-Key` | header name |
+| `Idempotency.Key` | `null` | fixed key for this request |
+| `Idempotency.KeyFactory` | `null` | custom key generator |
+| `TotalTimeout` | `null` | whole-request budget, shared across retries / endpoints / hedges |
+| `AllowUnsafeRetry` | `false` | the only switch that lets non-idempotent methods through |
+
+**`Transport`**
+
+| Leaf | Default | Notes |
+| --- | --- | --- |
+| `Proxy` | `null` | instance-level only |
+| `Credentials` | `null` | instance-level only |
+| `Pool` | `null` | frozen when the pool is built |
+| `HttpVersion` | `null` (= 2.0) | request version |
+| `VersionPolicy` | `null` (= `OrLower`) | version negotiation |
+| `Profile` | `null` (= default profile) | transport profile name |
+| `Auth` | `null` | one of static Basic / token / complete header value / provider |
+| `WithCredentials` | `false` | instance-level only |
+| `MaxRedirects` | 5 | instance-level only |
+| `MaxRate` | `null` (unlimited) | send-side rate limit |
+
+**`Observability`**
+
+| Leaf | Default | Notes |
+| --- | --- | --- |
+| `Capture` | `null` (= `TelemetryCapture.Path`) | `Off` / `Path` / `Query` / `NoUrl` |
+| `OnUploadProgress` | `null` | upload progress callback |
+| `OnDownloadProgress` | `null` | download progress callback |
+| `OnRawResponse` | `null` | raw response bytes callback |
+| `CaptureRawResponseBody` | `false` | whether to keep the raw body |
+| `OnSendingRequest` | `null` | sending-request hook (signing / final request) |
+| `TimeoutMessage` | `null` | custom timeout text |
 
 > Assigning `null` per request explicitly turns off an instance default `Resilience.Retry.Policy` / `Resilience.Circuit.Policy` / `Resilience.Failover.Endpoints`, which is different from "not set".
+
+> **`Resilience` and `Resilience.Concurrency` are read-only facades and cannot be replaced as a whole**: those two groups are assignable leaf by leaf only (`config.Resilience.Retry.Policy = ...`, `config.Resilience.Concurrency.MaxInFlight = ...`); `config.Resilience = other.Resilience` does not compile. Both facades hold a back-reference to their owning config and use it to read and write the "not set / set" flags, so swapping in an externally constructed instance would desynchronise the flags from the storage. `Limits` / `Serialization` / `Transport` / `Observability` are ordinary properties and can be replaced as a whole. To reset a whole governance group: assign each leaf back to `null` / its default, or start from a fresh `AxiosConfig`.
 
 ### Clients
 
@@ -673,7 +763,7 @@ await http.GetAsync("x", c => c.Headers.Delete("X-Foo"));                 // def
 ```
 
 - **Instance-level only**: `Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool` (fixed when the pool is built) and `Resilience.Concurrency.MaxInFlight` / `Resilience.Concurrency.MaxQueue` (fixed on the first gated request). Writing a **different** value per request throws `ERR_BAD_OPTION_VALUE`; repeating the effective value is allowed. This turns "silently ignored" into a loud error.
-- **`Params` / `Body` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Body = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). So `PostAsync(url)` — which passes no `data` — still sends `Defaults.Body`; write `Body = null` to send an empty body.
+- **`Params` / `Body` merge on "was it assigned", not on "is it `null`"**: leaving them untouched inherits the instance default; writing `c.Params = null` / `c.Body = null` explicitly drops the instance default (same idea as using `Headers.Delete` instead of `= null` for headers). Note the asymmetry in the shortcut `data` slot: the omitted `data` of `PostAsync(url)` *is* an explicit `null` (**drops** `Defaults.Body`), while `DeleteAsync(url)` binds the **no-`data`** overload (**inherits** `Defaults.Body`) — see [Body and ContentType](#body-and-contenttype-json-default) for the per-overload difference.
 - **The seven `Observability` leaves merge the same way**: leaving one untouched inherits the instance default; writing `null` (or `false` for the boolean leaf) per request clears / turns off the instance default. This covers `Observability.Capture` / `OnUploadProgress` / `OnDownloadProgress` / `OnRawResponse` / `CaptureRawResponseBody` / `OnSendingRequest` / `TimeoutMessage`, matching `Body` / `ContentType` / `Compression` / `CancellationToken`.
 - **One instance per site — never one per request**: every instance builds its own pool, so `Axios.Create` / `new AxiosClient` each get their own handler set. Creating one per request degrades into the classic `new HttpClient()` pitfall: no keep-alive reuse, connections and handles growing without bound. Change defaults by changing the instance; share connections by sharing a pool (see [Connection pool](#connection-pool)); in DI just register a singleton with `AddAxiosClient`.
 - Dispose a client when done (`using`, or let the DI container own it); pool and handler go with it. In-flight requests are not aborted, the client just stops accepting new ones.
@@ -1379,6 +1469,20 @@ using var client = Axios.Create(c => c.Resilience.Retry.Policy = new RetryPolicy
 - **You do not manage the concurrency slot**: the gate releases it itself — a middleware that skips `next` (returning its own response) or throws cannot leak it. The only case where the gate does not release it is a **library-produced** streamed response: the slot travels with the body into `StreamOwner` and is released when the stream is disposed, so the request keeps occupying its quota while the body downloads. A `StreamOwner` built by a middleware is not that case: the gate still releases its own slot, and a self-built owner gets no concurrency quota.
 - **Whoever creates it, disposes it**: a request message cloned by a middleware is that middleware's to dispose (the template still belongs to the pipeline). When replacing a response you must dispose the previous `AxiosAttemptResult.StreamOwner`, or carry it into the new result (`new AxiosAttemptResult(newResponse, old.StreamOwner)`) — it holds the pool lease and the concurrency slot, and dropping it leaks both.
 - **Middleware time is not counted against `Timeout`**: the budget starts inside the terminal, and gate queuing plus any middleware prologue happen outside it.
+- **The pipeline is supplied at construction only**: `AttemptPipeline` is get-only and `Compile` is internal, so a client that already exists cannot gain middleware. To change the chain, derive a new client — pass the same `Pool` to reuse connections, and `Defaults.Clone()` so each client holds its own config:
+
+  ```csharp
+  var probe = new AxiosClient(
+      old.Defaults.Clone(),
+      pool: old.Pool,                                          // omit it and you get a fresh pool
+      pipeline: old.AttemptPipeline.Append(next => async (req, ctx) =>
+      {
+          var result = await next(req, ctx);                    // observe / intervene in this attempt
+          return result;
+      }));
+  ```
+
+  For per-request customisation without swapping the chain, use an interceptor instead.
 - Read request headers from the response side with `response.GetRequestHeader(name)` (request headers first, then content headers); a short-circuit response has no underlying request message and returns `null`.
 
 How it divides the work with the other extension points:
@@ -1510,6 +1614,21 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 - One property may carry several binding attributes (`[Path]` + `[Header]`): the value is read once and applied to each.
 - Value formatting: `[Format]` on the member wins; everything else uses the instance default `AxiosConfig.Serialization.ValueText`. For declarative requests it must be set on the instance defaults — changing it in the per-request `configure` throws `ERR_BAD_OPTION_VALUE` (see [Value formatting](#value-formatting)).
 
+**Easily confused attribute names**
+
+| Look-alikes | What each one does |
+| --- | --- |
+| `[Header]` / `[Headers]` / `[HeaderCollection]` | property → one request header; static header strings `"Name: Value"` on a class / interface / interface method; dictionary property → a batch of headers |
+| `[Query]` / `[QueryCollectionFormat]` | bind a query parameter; how a collection is expanded (`Brackets` / `Multi` / `Csv` / `Ssv` / `Tsv` / `Pipes`) |
+| `[Body]` / `[BodyContentType]` | bind the body; how that body is encoded (JSON / form / as-is) |
+| `[Authorize]` / `[AllowAnonymous]` | **not** the `Microsoft.AspNetCore.Authorization` ones: these only declare that an endpoint needs credentials, and authentication is still done by `CredentialProvider`; they do not hook into the ASP.NET Core authorization pipeline |
+
+In a web project `using AxiosNet.WebAPI.Attributes;` collides with ASP.NET Core's `AuthorizeAttribute`; alias it:
+
+```csharp
+using AxiosAuthorize = AxiosNet.WebAPI.Attributes.AuthorizeAttribute;
+```
+
 **Encoding and streaming**
 
 Encoding and frame format can be configured per request, or declared directly on the model:
@@ -1544,7 +1663,7 @@ public sealed class StreamEventsRequest : IApiRequest<Chunk> { }
 
 **Validation and errors**
 
-- Invalid models (missing route, unbound placeholder, multiple bodies…) throw `InvalidOperationException` on first call.
+- Invalid models (missing route, unbound placeholder, multiple bodies…) throw `AxiosException` (`ERR_BAD_OPTION_VALUE`, original exception in `Cause`) on first call.
 - Validate at startup with `ApiClient.ValidateModels(typeof(A), ...)` or `ValidateModels(assembly)` — returns all messages, never throws:
   - The type-based overloads work under Native AOT too (generated declarations go straight to the registry).
   - `ValidateModels(assembly)` relies on reflection enumeration — under AOT call the generated `AxiosNet.Generated.AxiosNetValidation_<AssemblyName>.ValidateAll()` instead.
@@ -1635,7 +1754,7 @@ Task<AxiosResponse<User[]>> ListAsync([Query] int[] ids, CancellationToken cance
 
 **Validation and errors**
 
-- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]` / `[BodyContentType]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `InvalidOperationException` from `Create<T>()`.
+- Invalid declarations (missing route, multiple bodies, `[Part]` without `[Multipart]`, `[Multipart]` combined with `[Body]` / `[BodyContentType]`, `[Stream]` on a non-streaming method, duplicate parameter names…) throw `AxiosException` (`ERR_BAD_OPTION_VALUE`, original exception in `Cause`) from `Create<T>()` — the same exit as model-based requests.
 - Validate at startup with `ApiClient.ValidateInterfaces(typeof(IA), ...)` or `ValidateInterfaces(assembly)`: returns all messages, never throws, and aggregates every failing method of the same interface rather than only the first.
   - The type-based overloads work under Native AOT.
   - `ValidateInterfaces(assembly)` throws `PlatformNotSupportedException` under AOT — call the generated `ValidateAll()` instead.
@@ -1720,7 +1839,7 @@ config.Serialization.JsonOptions =
 - **Catching mistakes**, none of the three waits for a request:
   - with `nameof(...)` a typo is an ordinary compile error (`CS0117`);
   - a wrong signature (not `public static` / generic / parameters are not `(object?, ValueTextChannel)` / return is not `string`) is reported at compile time as `AXA015`, with the correct signature spelled out in the message;
-  - a value shape that does not fit the channel (a format string on `bool` / a binary form, `[Format]` on a structured `[Body]` or a file part) throws `InvalidOperationException` while the binding plan is built.
+  - a value shape that does not fit the channel (a format string on `bool` / a binary form, `[Format]` on a structured `[Body]` or a file part) throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) while the binding plan is built.
 - Without the source generator `AXA015` does not run — use `ApiClient.ValidateModels(...)` / `ValidateInterfaces(...)` to surface these at startup instead.
 - **Native AOT**: the source generator bakes the formatter delegate into the metadata (an invalid signature reports `AXA015`), so nothing reflects at runtime. Shapes registered by hand via `RegisterShape<T>()` are not baked: `[Format(typeof(...), nameof(...))]` on them fails explicitly under AOT with a pointer to "enable the source generator or use a format string" instead of silently dropping the format.
 
@@ -2142,6 +2261,7 @@ The library interprets responses as a **private cache**: `private` / `public` do
 - **Storage is pluggable**: `AxiosCache` stores nothing itself — every read and write goes through `IAxiosCacheStore` (`GetAsync` / `SetAsync` ×2 / `RemoveAsync` / `ClearAsync`; an `AxiosShortCircuit` is just status + headers + raw bytes, so it serializes to any backend).
   - The default is the in-process `MemoryCacheStore`; implement the interface for Redis or a cache shared across instances, and attach the same store to several clients to share entries.
   - A failing store only means "not cached this time" — requests still go out; a read that hangs past the remaining `Resilience.TotalTimeout` fails with `ECONNABORTED` instead (see above).
+- **Round-tripping outside the package has to be complete**: a custom `IAxiosCacheStore` must keep entries intact in both directions — on **save**, read the multi-value headers, the store timestamp and the stored age from `MultiValueHeaderValues` / `CachedAt` / `CachedAge` and write them into your own format; on **load**, rebuild the entry with `AxiosShortCircuit.Restore(...)`. Storing only the single-value `Headers` drops the non-first values of repeated `Set-Cookie` / `Vary`, the **preferred** source of `ETag` / `Last-Modified`, and the advancing `Age` — the symptom is "response header semantics change on a hit", with no error raised.
 - **Namespace is `AxiosNet.Cache`** (same as `Retry/` and `Circuit/`): `AxiosCache` / `AxiosCacheOptions` / `CacheFreshnessMode` / `AxiosCacheEntryPolicy` / `CacheControlDirectives` / `IAxiosCacheStore` / `IAxiosCacheRevalidationStore` / `MemoryCacheStore` live there.
 - `AxiosShortCircuit` stays in `AxiosNet` — it is not cache-specific, mocks and replays use it too.
 - Replaying `response.Config` carries the same cache object along (it is shared state, not "the result of that request").
@@ -2251,6 +2371,8 @@ The package ships a C# source generator (packed under `analyzers/dotnet/cs`, act
 | `AXA013` | Warning | Shape type is not accessible to generated code (shape skipped; flattening to it fails explicitly under AOT) |
 | `AXA014` | Error | Invalid encoding declaration on an interface method: blank / control-character `[BodyContentType]`, undefined `[QueryCollectionFormat]` value, or combined with `[Multipart]` |
 | `AXA015` | Error | Invalid `[Format]` declaration: blank format string, or a formatter that does not exist / is not `public static` / does not take `(object?, ValueTextChannel)` / does not return `string` |
+| `AXA016` | Error | A `{name}` in the route template has no member bound to it with `[Path]` (names compare case-insensitively; the placeholder grammar matches the runtime - `[A-Za-z_][A-Za-z0-9_]*` only, so `{{` is a literal and constraint forms such as `{id:int}` are left to the runtime 'unrecognised brace' error) |
+| `AXA017` | Error | More than one member explicitly marked `[Body]`: a request carries one body (the "unmarked property defaults to body" ambiguity is still decided by the runtime builder) |
 
 `System.Text.Json` metadata still has to be registered on demand (source-generated `JsonSerializerContext`):
 
@@ -2343,7 +2465,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 
 | Capability | What you get | How |
 | --- | --- | --- |
-| [Unified errors](#errors) | Every failure is an `AxiosException` with a stable `Code` | `catch (AxiosException ex) { ex.Code }` |
+| [Unified errors](#errors) | Every request-execution failure is an `AxiosException` with a stable `Code` (missing AOT metadata throws `AxiosAotMetadataException` instead) | `catch (AxiosException ex) { ex.Code }` |
 | [Interceptors](#interceptors) | Request and response, sync or async | `client.Interceptors.Request.Use(...)` |
 | [Data transforms](#data-transforms) | The two axios-style transform chains | `c.TransformRequest.Add(...)` |
 | [Swappable serialization](#serialization) | JSON (default) + XML built in, any format pluggable | `AxiosContent.Register(...)` / `Serialization.BodySerializers` |
@@ -2450,9 +2572,12 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
+dotnet run --project samples/AxiosNet.Simple -- --list              # list the menu and exit
+dotnet run --project samples/AxiosNet.Simple -- RetryExample        # run one sample by class name
+dotnet run --project samples/AxiosNet.Simple -- 12 33               # run several by menu number
 ```
 
-It opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit).
+With no arguments it opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit). With arguments it runs them and exits (non-zero exit code if any failed); an argument is a menu number or a class name (case-insensitive) — no need to hunt through 56 entries to check one capability.
 
 | Suite | Items | Coverage |
 | --- | ---: | --- |
@@ -2478,15 +2603,15 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2507 / 2496 | `net8.0` / `net6.0` | 5003 |
+| `AxiosNet.Tests` (core + declarative) | 2562 / 2551 | `net8.0` / `net6.0` | 5113 |
 | `AxiosNet.DependencyInjection.Tests` | 66 | `net8.0` / `net6.0` | 132 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 47 / 42 | `net8.0` / `net472` | 89 |
-| **Total** | **2694 / 2678** | | **5298** |
+| **Total** | **2749 / 2659** | | **5408** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **92.1%**, branch coverage **87.6%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **92.3%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

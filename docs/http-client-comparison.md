@@ -321,7 +321,7 @@ var response = await http.GetAsync<List<User>>("users", c =>
 | Refit | 同上，Polly 挂在传给 `RestService.For` 的 `HttpClient` 上；Refit 自身不提供 |
 | RestSharp | 自己在循环里重试，熔断与缓存全自写 |
 | Flurl | 同上；事件钩子（`OnError`/`OnResponse`）能做记录，但不等于弹性策略 |
-| AxiosNet | 同一个配置对象里写 `c.Retry.Policy`、`c.Circuit.Policy`、`client.Defaults.Cache`，一条请求全部生效 |
+| AxiosNet | 同一个配置对象里写 `c.Resilience.Retry.Policy`、`c.Resilience.Circuit.Policy`、`client.Defaults.Caching`，一条请求全部生效 |
 
 定性评价（**是判断，不是测量**）：
 

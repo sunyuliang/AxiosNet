@@ -109,6 +109,28 @@ public sealed class CacheExample : IExample
             + $"（状态 {(int)etagRevalidated.Status}，Request {(etagRevalidated.Request is null ? "null（未发送）" : "已发出，304 复用缓存正文")}）；"
             + $"紧接着再取 Request = {(etagHit.Request is null ? "null（命中：304 已续上 TTL）" : "有请求消息")}");
 
+        // 10) 自定义缓存后端：条目按「自己的记录」存，读回时用 AxiosShortCircuit.Restore 重建。
+        //     存的时候从 MultiValueHeaderValues / CachedAt / CachedAge 三个只读视图把多值头、落库时刻、
+        //     落库龄期一并抄进自己的记录格式；只存单值 Headers 会静默降级（不报错、行为变样）：
+        //     多条 Set-Cookie / Vary 明细丢失、Age 停在落库那一刻、ETag 提取退化成「只有首值」。
+        //     Restore 是这三个字段唯一的包外写入口 —— 换 Redis / 共享缓存时就是这个形状。
+        var store = new RebuildingStore();
+        using var customClient = new AxiosClient(new AxiosConfig
+        {
+            Caching = new AxiosCache(new AxiosCacheOptions
+            {
+                TimeToLive = TimeSpan.FromSeconds(10),
+                Store = store
+            })
+        });
+
+        var rebuiltUrl = $"{context.BaseUrl}cache/etag";
+        var rebuiltFirst = await customClient.GetAsync<Dictionary<string, int>>(rebuiltUrl);
+        var rebuiltHit = await customClient.GetAsync<Dictionary<string, int>>(rebuiltUrl);
+        Console.WriteLine($"  自定义存储: 首次 served = {rebuiltFirst.Data!["served"]} -> 命中 served = {rebuiltHit.Data!["served"]}"
+            + $"（Request {(rebuiltHit.Request is null ? "null（命中，未发送）" : "已发出")}，"
+            + $"ETag = {rebuiltHit.GetHeader("ETag") ?? "缺"}，重建 {store.RestoredCount} 次）");
+
         Console.WriteLine("  说明: Configured 是默认值（忽略请求与响应两侧的 HTTP 缓存指令）；只缓存 2xx 与拿到原始字节的响应；"
             + "Range 请求、206 部分响应、Vary: * 都不入缓存；流式响应、非 GET / HEAD 默认不入缓存");
         Console.WriteLine("  条件请求默认开启（ConditionalRequests = true）：ETag 优先，否则 Last-Modified；"
@@ -155,5 +177,192 @@ public sealed class CacheExample : IExample
 
         var second = await client.GetAsync<Dictionary<string, int>>(url);
         return (first.Data!["served"], second.Data!["served"]);
+    }
+
+    /// <summary>
+    /// 演示用的「自定义缓存后端」：条目先转成自己的记录（正文字节 + 状态 + 单值头 + 多值头 + 落库时刻 + 龄期），
+    /// 读回时用 <see cref="AxiosShortCircuit.Restore"/> 重建 —— 换 Redis / 共享缓存时就是这个形状。
+    /// </summary>
+    /// <remarks>
+    /// 存的时候三个字段都有只读出口：<see cref="AxiosShortCircuit.MultiValueHeaderValues"/>（每个头的全部值）、
+    /// <see cref="AxiosShortCircuit.CachedAt"/>（落库时刻）、<see cref="AxiosShortCircuit.CachedAge"/>
+    /// （落库那一刻的龄期，等价于 <see cref="AxiosCacheEntryPolicy.Age"/>），所以能原样抄进自己的存储格式。
+    /// <para>
+    /// <b>只存单值 <see cref="AxiosShortCircuit.Headers"/> 会丢什么</b>：多条 <c>Set-Cookie</c> / <c>Vary</c>
+    /// 除首值以外的全部值（折叠成一条会改变语义）、<c>ETag</c> / <c>Last-Modified</c> 的优先来源
+    /// （只填单值字典时条件请求仍可用，但多值条目上的校验器会退化成「只有首值」），
+    /// 以及 <c>Age</c> 的推进 —— 没有落库时刻与龄期，命中时 <c>Age</c> 就永远停在落库那一刻的数值。
+    /// </para>
+    /// </remarks>
+    private sealed class RebuildingStore : IAxiosCacheStore
+    {
+        private readonly Dictionary<string, EntryRecord> _entries = new(StringComparer.Ordinal);
+
+        /// <summary>被 <see cref="AxiosShortCircuit.Restore"/> 重建过几次（示例里用来证明走的是重建路径）。</summary>
+        public int RestoredCount { get; private set; }
+
+        /// <summary>取一条：没有记录返回 <c>null</c>；有则每次都从记录重建一个条目。</summary>
+        /// <param name="key">缓存键。</param>
+        /// <param name="cancellationToken">取消令牌（内存实现用不到）。</param>
+        /// <returns>重建好的条目或 <c>null</c>。</returns>
+        public ValueTask<AxiosShortCircuit?> GetAsync(string key, CancellationToken cancellationToken)
+        {
+            if (!_entries.TryGetValue(key, out var record))
+            {
+                return new ValueTask<AxiosShortCircuit?>((AxiosShortCircuit?)null);
+            }
+
+            RestoredCount++;
+            return new ValueTask<AxiosShortCircuit?>(record.Restore());
+        }
+
+        /// <summary>存一条（老重载，只给 TTL）：示例不做过期清理，条目永不过期 —— 这里只演示往返形状。</summary>
+        /// <param name="key">缓存键。</param>
+        /// <param name="entry">库给的条目：正文 / 状态 / 单值头都从这里取。</param>
+        /// <param name="timeToLive">这条应有的存活时长。</param>
+        /// <param name="cancellationToken">取消令牌（内存实现用不到）。</param>
+        /// <returns>完成的任务。</returns>
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, TimeSpan timeToLive, CancellationToken cancellationToken)
+        {
+            _entries[key] = EntryRecord.From(entry, policy: null);
+            return default;
+        }
+
+        /// <summary>存一条并带上库算好的策略：条目自己带了落库时刻与龄期就用它，否则退回 <see cref="AxiosCacheEntryPolicy.Age"/>。</summary>
+        /// <param name="key">缓存键。</param>
+        /// <param name="entry">库给的条目。</param>
+        /// <param name="policy">写入策略（生效 TTL + HTTP 缓存信息）。</param>
+        /// <param name="cancellationToken">取消令牌（内存实现用不到）。</param>
+        /// <returns>完成的任务。</returns>
+        public ValueTask SetAsync(string key, AxiosShortCircuit entry, AxiosCacheEntryPolicy policy, CancellationToken cancellationToken)
+        {
+            _entries[key] = EntryRecord.From(entry, policy);
+            return default;
+        }
+
+        /// <summary>摘掉一条，返回是否真的摘到了。</summary>
+        /// <param name="key">缓存键。</param>
+        /// <param name="cancellationToken">取消令牌（内存实现用不到）。</param>
+        /// <returns>是否删除了记录。</returns>
+        public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
+            => new(_entries.Remove(key));
+
+        /// <summary>清空。</summary>
+        /// <param name="cancellationToken">取消令牌（内存实现用不到）。</param>
+        /// <returns>完成的任务。</returns>
+        public ValueTask ClearAsync(CancellationToken cancellationToken)
+        {
+            _entries.Clear();
+            return default;
+        }
+
+        /// <summary>存储在「自己格式」里的一条记录：可序列化成任何后端的一条 JSON / 一个哈希。</summary>
+        private sealed class EntryRecord
+        {
+            /// <summary>响应正文字节。</summary>
+            public byte[]? Body { get; init; }
+
+            /// <summary>状态码。</summary>
+            public int Status { get; init; }
+
+            /// <summary>状态码文案。</summary>
+            public string? StatusText { get; init; }
+
+            /// <summary>正文媒体类型。</summary>
+            public string? ContentType { get; init; }
+
+            /// <summary>单值头（每个头的首值）：老派的存储 / 只读首值的后端用它。</summary>
+            public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+            /// <summary>多值头（每个头的全部值）：多条 <c>Set-Cookie</c> / <c>Vary</c> 只能这样存。</summary>
+            public Dictionary<string, string[]> MultiValueHeaders { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+            /// <summary>落库时刻：命中时用它把 <c>Age</c> 推进到当前龄期。</summary>
+            public DateTimeOffset? ReceivedAt { get; init; }
+
+            /// <summary>落库那一刻的龄期（RFC 9111 的 current_age）。</summary>
+            public TimeSpan? StoredAge { get; init; }
+
+            /// <summary>从库给的条目抄一份记录；三个内部字段经只读视图导出，一项都不落下。</summary>
+            /// <param name="entry">库给的条目。</param>
+            /// <param name="policy">库算好的写入策略；老重载（只有 TTL）传 <c>null</c>。</param>
+            /// <returns>可持久化的记录。</returns>
+            public static EntryRecord From(AxiosShortCircuit entry, AxiosCacheEntryPolicy? policy)
+            {
+                var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (entry.Headers is { Count: > 0 } source)
+                {
+                    foreach (var header in source)
+                    {
+                        if (IsSessionCookie(header.Key))
+                        {
+                            continue;
+                        }
+
+                        headers[header.Key] = header.Value;
+                    }
+                }
+
+                // 全部值：条目只给了只读视图，这里按自己的格式复制成数组（模拟序列化到后端）。
+                var multiValueHeaders = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                if (entry.MultiValueHeaderValues is { Count: > 0 } multi)
+                {
+                    foreach (var header in multi)
+                    {
+                        if (IsSessionCookie(header.Key))
+                        {
+                            continue;
+                        }
+
+                        multiValueHeaders[header.Key] = header.Value.ToArray();
+                    }
+                }
+
+                return new EntryRecord
+                {
+                    Body = entry.Body,
+                    Status = entry.Status,
+                    StatusText = entry.StatusText,
+                    ContentType = entry.ContentType,
+                    Headers = headers,
+                    MultiValueHeaders = multiValueHeaders,
+
+                    // 条目自己带了落库时刻 / 龄期就照抄（库落库时填的），拿不到才退回策略里的龄期。
+                    ReceivedAt = entry.CachedAt,
+                    StoredAge = entry.CachedAge ?? policy?.Age
+                };
+            }
+
+            /// <summary>
+            /// 会话 Cookie 头：<b>不入缓存</b>。库自己的落库路径也这样过滤（<c>AxiosClient.Cache</c> 的
+            /// <c>IsSessionCookieHeader</c>）—— 缓存命中会把它回放给下一次请求，共享缓存下等于把别人的会话
+            /// 塞进来。自建存储必须自己守这条，库不会再替你拦。
+            /// </summary>
+            /// <param name="name">头名。</param>
+            /// <returns>是会话 Cookie 头返回 <c>true</c>。</returns>
+            private static bool IsSessionCookie(string name)
+                => string.Equals(name, "Set-Cookie", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(name, "Set-Cookie2", StringComparison.OrdinalIgnoreCase);
+
+            /// <summary>用 <see cref="AxiosShortCircuit.Restore"/> 把记录装回一条缓存条目。</summary>
+            /// <returns>可直接当作命中结果交付的条目。</returns>
+            public AxiosShortCircuit Restore()
+                => AxiosShortCircuit.Restore(
+                    body: Body,
+                    headers: Headers,
+
+                    // 多值字典非空时库只用它建响应头，单值字典整份忽略：两者同源，行为与原来一致。
+                    multiValueHeaders: MultiValueHeaders.Count > 0
+                        ? MultiValueHeaders.ToDictionary(
+                            header => header.Key,
+                            header => (IEnumerable<string>)header.Value,
+                            StringComparer.OrdinalIgnoreCase)
+                        : null,
+                    receivedAt: ReceivedAt,
+                    storedAge: StoredAge,
+                    contentType: ContentType,
+                    status: Status,
+                    statusText: StatusText);
+        }
     }
 }

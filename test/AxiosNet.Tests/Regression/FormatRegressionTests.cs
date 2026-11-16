@@ -114,14 +114,14 @@ public sealed class FormatRegressionTests
     [Fact]
     public void MemoryBytePart_IsRejectedLikeByteArray()
     {
-        Assert.Throws<InvalidOperationException>(
+        Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new MemoryPart()));
     }
 
     [Fact]
     public void BinaryCollectionPart_IsRejectedLikeScalarPart()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new BinaryCollectionPart()));
 
         Assert.Contains("文件部件", ex.Message);

@@ -141,4 +141,20 @@ public sealed class AxiosResponse<TData> : AxiosResponse
         get => base.Data is null ? default : (TData)base.Data;
         set => base.Data = value;
     }
+
+    /// <summary>
+    /// 取正文，<b>空正文直接抛错</b>：把「这里应该有正文」写成一次显式断言，而不是靠 <c>Data!</c> 压掉可空性。
+    /// </summary>
+    /// <returns>非空的正文。</returns>
+    /// <remarks>
+    /// 适用场景：调用方确定这个端点一定有正文（成功状态码 + 非 204）。用 <c>Data!</c> 的话，空正文会变成
+    /// 业务代码深处一个不带请求上下文的 <see cref="NullReferenceException"/>；这里抛的是带
+    /// <c>Code</c> / <c>Config</c> / <c>Response</c> 的统一错误模型（<c>ERR_BAD_RESPONSE</c>）。
+    /// 空正文合法时请继续用 <see cref="Data"/> 并处理 <c>null</c>。
+    /// </remarks>
+    /// <exception cref="AxiosException">正文为空（<c>ERR_BAD_RESPONSE</c>）。</exception>
+    public TData DataOrThrow()
+        => base.Data is null
+            ? throw AxiosException.EmptyBody(Config, Request, this, typeof(TData).Name)
+            : (TData)base.Data;
 }

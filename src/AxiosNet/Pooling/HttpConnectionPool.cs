@@ -824,7 +824,7 @@ public sealed class HttpConnectionPool : IDisposable
         }
     }
 
-    /// <summary>取池的瞬时快照：逐节点在各自的锁内读取，各节点之间可能来自不同时刻。</summary>
+    /// <summary>取池的瞬时快照：逐节点在各自的锁内读取，各节点之间可能来自不同时刻。本方法是诊断入口，内部走 LINQ 与逐节点加锁，不要放在每请求路径上调用。</summary>
     public ConnectionPoolStatistics GetStatistics()
     {
         var endpoints = _endpoints

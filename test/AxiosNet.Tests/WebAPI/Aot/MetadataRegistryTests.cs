@@ -111,7 +111,7 @@ public sealed class MetadataRegistryTests
                 .Query());
 
         using var client = new ApiClient("http://127.0.0.1:1/");
-        var error = Assert.Throws<InvalidOperationException>(
+        var error = Assert.Throws<AxiosException>(
             () => client.GetUri(new BrokenRegistrationRequest()));
 
         Assert.Contains("{id}", error.Message);

@@ -210,7 +210,7 @@ public sealed partial class AxiosClient
         {
             if (retry.MaxRetries < 0)
             {
-                throw AxiosException.InvalidOption($"重试次数 MaxRetries 不能为负（当前 {retry.MaxRetries}）：不重试请设为 0 或不要设置 Retry.Policy。", config);
+                throw AxiosException.InvalidOption($"重试次数 MaxRetries 不能为负（当前 {retry.MaxRetries}）：不重试请设为 0 或不要设置 Resilience.Retry.Policy。", config);
             }
 
             if (retry is RetryPolicy policy)
@@ -338,7 +338,7 @@ public sealed partial class AxiosClient
             {
                 throw AxiosException.InvalidOption(
                     $"熔断阈值 FailureThreshold 必须 >= 1（当前 {breaker.FailureThreshold}）："
-                    + "它表示「连续多少次下游故障后打开熔断」，不熔断请把 Circuit.Policy 设为 null。",
+                    + "它表示「连续多少次下游故障后打开熔断」，不熔断请把 Resilience.Circuit.Policy 设为 null。",
                     config);
             }
 
@@ -408,7 +408,7 @@ public sealed partial class AxiosClient
             {
                 throw AxiosException.InvalidOption(
                     $"熔断冷却时长 BreakDuration 必须 > 0（当前 {breaker.BreakDuration}）："
-                    + "零冷却等价于「一打开就立刻探测」，熔断形同虚设；不熔断请把 Circuit.Policy 设为 null。",
+                    + "零冷却等价于「一打开就立刻探测」，熔断形同虚设；不熔断请把 Resilience.Circuit.Policy 设为 null。",
                     config);
             }
         }
@@ -440,12 +440,9 @@ public sealed partial class AxiosClient
     /// <summary>解析（必要时懒创建）本实例的并发闸门：容量在创建时固定，本次生效上限与已建闸门不一致就报错；本次没要求上限时沿用已有闸门（没有则不建），排队上限只有显式写过（*Set）才参与比较。</summary>
     private ConcurrencyGate? ResolveConcurrencyGate(AxiosConfig config)
     {
-        var concurrency = config.ResilienceOrNull?.Concurrency;
-        var requested = concurrency?.MaxInFlight;
-        var requestedQueue = concurrency?.MaxQueue;
-
-        // 排队上限按 *Set 判断，不看值。
-        var queueStated = concurrency?.MaxQueueSet ?? false;
+        // 直接读内部存储，不经过 ResilienceOrNull + Concurrency 两个门面：那会为配了并发的
+        // 每一条请求多分配两个对象，而这里只是取三个值。
+        config.ReadConcurrency(out var requested, out var requestedQueue, out var queueStated);
         var existing = Volatile.Read(ref _gate);
 
         if (existing is not null)

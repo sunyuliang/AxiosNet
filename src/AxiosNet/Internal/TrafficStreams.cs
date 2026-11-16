@@ -60,6 +60,9 @@ internal sealed class TrafficMeter
         Interlocked.Add(ref _loaded, count);
     }
 
+    /// <summary>是否配置了限速：未配置时写侧走「整块一次写完」的快路径，不必每片算应发时刻。</summary>
+    public bool IsThrottled => _maxRate is long rate && rate > 0;
+
     /// <summary>按平均速率反算「当前应耗时 - 实际耗时」；不限速时返回零。</summary>
     /// <param name="upcoming">还没记入 <see cref="Loaded"/>、即将写出的字节数（写侧按片限速时用）。</param>
     public TimeSpan ComputeDelay(int upcoming = 0)
@@ -366,7 +369,33 @@ internal sealed class ProgressWriteStream : DelegatingStream
 
     // 限速时按窗口切片写：整块一次写进 socket 会让服务端瞬间收完，之后才睡 —— 那不是限流。
     // 切片只切 ReadOnlyMemory 视图（零分配），每片先等到它的应发时刻再写，服务端收包也随之摊开。
-    protected override async ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    protected override ValueTask WriteCoreAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+        // 空写什么都不做：切片路径本来一次循环都不进，这里必须与它一致 ——
+        // 否则 Add(0) 会提前把「本轮计时起点」钉在这一次空写上，还多报一次 0/总量的进度事件。
+        => buffer.IsEmpty
+            ? default
+            : _meter.IsThrottled
+                ? WriteThrottledAsync(buffer, cancellationToken)
+                : WriteAllAsync(buffer, cancellationToken);
+
+    /// <summary>不限速的快路径：整块一次写完再记账，省掉每片的应发时刻计算与循环控制。</summary>
+    /// <remarks>
+    /// 开上传进度但<b>不</b>限速是最常见的组合，此时切片长度恒等于剩余长度、延时恒为零，
+    /// 走循环只是白算两次接口调用。这里的顺序与慢路径一致：<b>先写内层再记账</b>。
+    /// </remarks>
+    /// <param name="buffer">待写出的字节。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    private async ValueTask WriteAllAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    {
+        await Inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        _meter.Add(buffer.Length);
+        ReportUpload();
+    }
+
+    /// <summary>限速路径：按上报窗口切片，每片等到自己的应发时刻再写，写后记账并回报进度。</summary>
+    /// <param name="buffer">待写出的字节。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    private async ValueTask WriteThrottledAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         var offset = 0;
         while (offset < buffer.Length)
@@ -382,16 +411,20 @@ internal sealed class ProgressWriteStream : DelegatingStream
             await Inner.WriteAsync(buffer.Slice(offset, count), cancellationToken).ConfigureAwait(false);
             _meter.Add(count);
             offset += count;
+            ReportUpload();
+        }
+    }
 
-            try
-            {
-                _meter.Report(force: false, upload: true);
-            }
-            catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
-            {
-                // 回调异常换成统一错误模型，避免被包成 HttpRequestException 误报为 ERR_NETWORK。
-                throw _mapCallbackError(ex);
-            }
+    /// <summary>回报上传进度；回调异常换成统一错误模型（避免被包成 <c>HttpRequestException</c> 误报为 <c>ERR_NETWORK</c>）。</summary>
+    private void ReportUpload()
+    {
+        try
+        {
+            _meter.Report(force: false, upload: true);
+        }
+        catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
+        {
+            throw _mapCallbackError(ex);
         }
     }
 }

@@ -30,7 +30,7 @@ namespace AxiosNet.Circuit;
 /// breaker.StateChanged += change =&gt; logger.LogWarning(
 ///     "{Host} 熔断状态：{From} -&gt; {To}", change.Host, change.Previous, change.Current);
 ///
-/// var client = Axios.Create(c =&gt; c.Circuit.Policy = breaker);
+/// var client = Axios.Create(c =&gt; c.Resilience.Circuit.Policy = breaker);
 ///
 /// // 运维手工恢复：清掉所有维度的账（下次请求重新开始计数）
 /// breaker.Reset();
@@ -189,14 +189,31 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     }
 
     /// <inheritdoc />
-    public bool ShouldAllow(AxiosCircuitContext context) => ShouldAllow(context, out _);
+    public bool ShouldAllow(AxiosCircuitContext context) => ShouldAllow(context, out _, out _);
+
+    /// <summary>
+    /// 带准入票的准入判定，只取票不取建议等待时间（测试与只关心放行与否的调用方用）。
+    /// </summary>
+    /// <param name="context">本次尝试的上下文。</param>
+    /// <param name="ticket">放行时的代次；不放行时为当前代次。</param>
+    /// <returns>是否放行。</returns>
+    internal bool ShouldAllow(AxiosCircuitContext context, out long ticket)
+        => ShouldAllow(context, out ticket, out _);
 
     /// <summary>
     /// 带准入票的准入判定（库内管线使用）：票号是放行那一刻的代次，回报时票号过期即视为上一轮的迟到结果。
     /// </summary>
-    internal bool ShouldAllow(AxiosCircuitContext context, out long ticket)
+    /// <param name="context">本次尝试的上下文。</param>
+    /// <param name="ticket">放行时的代次；不放行时为当前代次。</param>
+    /// <param name="retryAfter">
+    /// 拒绝时的建议等待时间（冷却剩余）；放行或说不准时为零。在同一个临界区里算出，
+    /// 调用方不必再调 <see cref="GetRetryAfter"/> —— 熔断打开期间每个请求都是拒绝，这条路径就是热路径。
+    /// </param>
+    internal bool ShouldAllow(AxiosCircuitContext context, out long ticket, out TimeSpan retryAfter)
     {
         var host = GetOrCreate(KeyOf(context));
+
+        retryAfter = TimeSpan.Zero;
 
         // 跟踪表到硬上限且没有可淘汰条目：本次按闭合态直通，不参与熔断（也不记这一维度的账）。
         if (host is null)
@@ -222,6 +239,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                     {
                         // 冷却期未过：不放行，也不消耗探测名额。
                         allowed = false;
+                        retryAfter = RemainingBreak(host);
                         break;
                     }
 
@@ -239,6 +257,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                         host.ProbeSuccesses = 0;
                         transition = Reopen(host);
                         allowed = false;
+                        retryAfter = RemainingBreak(host);
                         break;
                     }
 
@@ -282,8 +301,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
                 return TimeSpan.Zero;
             }
 
-            var remaining = BreakDuration - Elapsed(host.OpenedAt);
-            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+            return RemainingBreak(host);
         }
     }
 
@@ -599,6 +617,13 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
     /// <summary>熔断已持续满 <see cref="BreakDuration"/>：可以进半开尝试探测。</summary>
     private bool IsCooledDown(HostState host) => Elapsed(host.OpenedAt) >= BreakDuration;
+
+    /// <summary>打开态还差多久进半开（已到期则为零）。调用方须持有该状态的锁。</summary>
+    private TimeSpan RemainingBreak(HostState host)
+    {
+        var remaining = BreakDuration - Elapsed(host.OpenedAt);
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+    }
 
     /// <summary>半开态在途探测是否已超出 <see cref="ProbeTimeout"/>（没有在途探测时不算过期）。</summary>
     private bool IsProbeExpired(HostState host)

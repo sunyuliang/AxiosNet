@@ -57,7 +57,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void MissingRouteAttribute_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new NoRouteRequest()));
 
         Assert.Contains("路由特性", ex.Message);
@@ -66,7 +66,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void PlaceholderWithoutPathBinding_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new UnboundPlaceholderRequest()));
 
         Assert.Contains("{uid}", ex.Message);
@@ -75,7 +75,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void PathBindingWithoutPlaceholder_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new UnusedPathRequest()));
 
         Assert.Contains("[Path(\"id\")]", ex.Message);
@@ -84,7 +84,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void UnclosedBraceInTemplate_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new MalformedTemplateRequest()));
 
         Assert.Contains("无法识别的花括号", ex.Message);
@@ -93,7 +93,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void DuplicatePlaceholder_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new DuplicatePlaceholderRequest()));
 
         Assert.Contains("重复使用占位符", ex.Message);
@@ -102,7 +102,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void TwoBodyProperties_AreRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new TwoBodiesRequest()));
 
         Assert.Contains("[Body]", ex.Message);
@@ -113,7 +113,7 @@ public sealed class ModelValidationTests
     public void PathBindingWithoutPlaceholder_IsRejected_EvenWithOtherAttributes()
     {
         // 多特性并存后，[Path] + [Query] 同用合法；但 [Path] 仍要求模板里有对应占位符
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new MixedKindsRequest()));
 
         Assert.Contains("[Path(\"Id\")]", ex.Message);
@@ -122,7 +122,7 @@ public sealed class ModelValidationTests
     [Fact]
     public void DuplicateQueryName_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => CreateClient_ApiClientModelValidation().GetUri(new DuplicateQueryRequest()));
 
         Assert.Contains("同名", ex.Message);
@@ -145,8 +145,8 @@ public sealed class ModelValidationTests
     {
         var client = CreateClient_ApiClientModelValidation();
 
-        var first = Assert.Throws<InvalidOperationException>(() => client.GetUri(new NoRouteRequest()));
-        var second = Assert.Throws<InvalidOperationException>(() => client.GetUri(new NoRouteRequest()));
+        var first = Assert.Throws<AxiosException>(() => client.GetUri(new NoRouteRequest()));
+        var second = Assert.Throws<AxiosException>(() => client.GetUri(new NoRouteRequest()));
 
         Assert.Equal(first.Message, second.Message);
     }
@@ -178,7 +178,7 @@ public sealed class ModelValidationTests
 
         // 生成器对这种模型报 AXA009（生成代码取不到值）。反射路径能取到，但同一份模型
         // 一开源生成器就编译不过——两条路径必须同一口径，这里选「都拒绝」，不静默丢字段。
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<AxiosException>(
             () => client.RequestAsync(new PrivateGetterRequest()));
 
         Assert.Contains("getter 不是 public", ex.Message);

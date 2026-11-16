@@ -12,8 +12,8 @@ namespace AxiosNet.WebAPI.Internal;
 /// <summary>请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）。校验失败同样进入缓存，每次调用都抛同一份错误。</summary>
 internal sealed class RequestModelMetadata
 {
-    // AOT 保留范围：模型类型的公开属性与实现的接口。
-    private const DynamicallyAccessedMemberTypes ModelMembers =
+    /// <summary>AOT 保留范围：模型类型的公开属性与实现的接口。<see cref="ApiClient"/> 的取元数据入口复用同一份标注。</summary>
+    internal const DynamicallyAccessedMemberTypes ModelMembers =
         DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
 
     // 类型 → 构建好的元数据（注册后失效重建）。

@@ -98,9 +98,12 @@ public sealed class BindingAttributesTests
     [Fact]
     public void HeaderCollection_NonStringDictionary_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        // 元数据错误走统一出口：用户 catch (AxiosException) 必须抓得住（此前是裸 InvalidOperationException）。
+        var ex = Assert.ThrowsAny<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new BadHeaderCollectionRequest()));
 
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
+        Assert.IsType<InvalidOperationException>(ex.Cause);
         Assert.Contains("[HeaderCollection]", ex.Message);
         Assert.Contains("IDictionary<string, string>", ex.Message);
     }
@@ -108,9 +111,10 @@ public sealed class BindingAttributesTests
     [Fact]
     public void HeaderAndHeaderCollection_OnSameProperty_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.ThrowsAny<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new ConflictingHeaderRequest()));
 
+        Assert.Equal(AxiosException.ErrBadOptionValue, ex.Code);
         Assert.Contains("二义性", ex.Message);
     }
 

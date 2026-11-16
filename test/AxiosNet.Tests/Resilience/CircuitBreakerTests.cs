@@ -477,6 +477,57 @@ public sealed class CircuitBreakerTests
     }
 
     [Fact]
+    public void ShouldAllow_ReturnsRemainingBreakAsRetryAfter_OnRejection()
+    {
+        var breaker = new CircuitBreaker { FailureThreshold = 1, BreakDuration = LongBreak };
+        var host = "retry-after.example.com";
+
+        // 记账只认已登记的维度：先放行一次把 host 建出来，再回报这次失败。
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out var ticket, out _));
+        breaker.Record(FailedContext(host), ticket);
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+
+        // 拒绝时把冷却剩余一并带出来 —— 管线不再为它二次查表、二次加锁。
+        Assert.False(breaker.ShouldAllow(ContextFor(host), out _, out var retryAfter));
+        Assert.InRange(retryAfter, TimeSpan.FromMilliseconds(1), LongBreak);
+
+        // 与独立查询口径一致（同一临界区里算的同一个值）。
+        var viaQuery = breaker.GetRetryAfter(ContextFor(host));
+        Assert.InRange(Math.Abs((viaQuery - retryAfter).TotalMilliseconds), 0, 50);
+
+        // 放行时不带等待时间。
+        breaker.Reset();
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out _, out var none));
+        Assert.Equal(TimeSpan.Zero, none);
+    }
+
+    [Fact]
+    public void ShouldAllow_ReturnsRemainingBreakAsRetryAfter_WhenProbeExpired()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 1,
+            BreakDuration = ShortBreak,
+            HalfOpenAttempts = 1,
+            ProbeTimeout = TimeSpan.FromMilliseconds(50)
+        };
+
+        var host = "probe-expired.example.com";
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out var ticket, out _));
+        breaker.Record(FailedContext(host), ticket);
+        Thread.Sleep((int)ShortBreak.TotalMilliseconds + 100);
+
+        // 第一次探测领走名额后不回，等它过期。
+        Assert.True(breaker.ShouldAllow(ContextFor(host), out _, out _));
+        Thread.Sleep(150);
+
+        // 探测卡死导致重新打开：同样是拒绝，并且刚打开，等待时间接近整段冷却。
+        Assert.False(breaker.ShouldAllow(ContextFor(host), out _, out var retryAfter));
+        Assert.InRange(retryAfter, TimeSpan.FromMilliseconds(1), ShortBreak);
+    }
+
+    [Fact]
     public void StaleTicket_FromPreviousRound_CannotReopenOrFreeASlot()
     {
         var breaker = new CircuitBreaker

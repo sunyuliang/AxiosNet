@@ -8,7 +8,7 @@ namespace AxiosNet.Circuit;
 /// <code>
 /// // 内置实现：5 次连续失败、或最近 20 次里失败率过半（至少 10 个样本）就熔断；
 /// // 冷却 30 秒后进入半开，连续 3 次探测成功才全量放开
-/// config.Circuit.Policy = new CircuitBreaker
+/// config.Resilience.Circuit.Policy = new CircuitBreaker
 /// {
 ///     FailureThreshold = 5,
 ///     WindowSize = 20,

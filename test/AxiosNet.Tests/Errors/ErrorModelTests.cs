@@ -308,13 +308,14 @@ public sealed class ErrorModelTests
     [Fact]
     public async Task StatusError_WithoutBody_KeepsPlainMessage()
     {
-        // 没有正文时不追加分隔符：保持「Request failed with status code 500」这句话原样。
+        // 没有正文时不追加正文分隔符：前缀「Request failed with status code 500」保持原样。
+        // 新增 method / url / attempt 上下文后，消息会在前缀后追加后缀，故用 Matches 断言前缀边界（防止放过「status code 5000」）。
         await using var server = TestHttpServer.Start(_ => new TestResponse(500));
         using var client = new AxiosClient();
 
         var ex = await Assert.ThrowsAsync<AxiosException>(() => client.GetAsync(server.Url));
 
-        Assert.Equal("Request failed with status code 500", ex.Message);
+        Assert.Matches(@"^Request failed with status code 500( |$)", ex.Message);
 
         // 空正文解码为 ""（与 Response.RawText 同口径），不是 null；两者都不该进消息。
         Assert.True(string.IsNullOrEmpty(ex.ResponseBody));

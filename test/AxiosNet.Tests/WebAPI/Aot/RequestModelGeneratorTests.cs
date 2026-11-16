@@ -229,6 +229,95 @@ public sealed class RequestModelGeneratorTests
         Assert.Contains("二义性", ignoreError.Message);
     }
 
+    /// <summary>
+    /// AXA016 / AXA017：两条「声明自相矛盾」的编译期检查 —— 占位符没人绑、多个显式 <c>[Body]</c>。
+    /// </summary>
+    /// <remarks>
+    /// 这两条在运行期由 <c>BindingAccumulator</c> 也会报，但那是「跑起来才知道」。声明式层的期望是写错就编译不过，所以钉住这个提前量。
+    /// </remarks>
+    [Fact]
+    public void Generator_ReportsMissingPathBindingAndMultipleBodies()
+    {
+        var ns = UniqueNamespace();
+        var source = """
+            using System.Net.Http;
+            using AxiosNet.WebAPI;
+            using AxiosNet.WebAPI.Attributes;
+
+            namespace __NS__;
+
+            public sealed class Person
+            {
+                public string? Name { get; set; }
+            }
+
+            [Get("probe/{id}")]
+            public sealed class MissingPathModel : IApiRequest<Person>
+            {
+                [Query] public string? Name { get; set; }
+            }
+
+            [Post("probe")]
+            public sealed class TwoBodyModel : IApiRequest<Person>
+            {
+                [Body] public string? First { get; set; }
+
+                [Body] public string? Second { get; set; }
+            }
+
+            // 反例：约束式花括号不是占位符 —— 运行期对该模板报的是「含无法识别的花括号」，
+            // AXA016 不该把它当占位符名（否则用户照它补 [Path("id:int")] 仍过不了运行期）。
+            [Get("probe2/{id:int}")]
+            public sealed class ConstrainedPathModel : IApiRequest<Person>
+            {
+                [Query] public string? Name { get; set; }
+            }
+
+            // 正例：三种合法写法都必须放过，否则最普通的声明会被误判成「没绑定」。
+            //   · 无参 [Path]（构造参数是空串而非 null，按属性名 Id 绑定）
+            //   · [Path("slug")] 显式改名
+            //   · [Path(" code ")] 名字带空白（运行期 ResolveName 会 Trim）
+            // 同时挂一个与属性名无关的 [JsonPropertyName]：运行期只认属性名 / 显式名，编译期多认一遍展平字段名
+            // 就会「编译期放过、运行期报错」，所以这里必须仍然按 Id 绑定。
+            [Get("probe3/{Id}/{slug}/{code}")]
+            public sealed class BoundPathModel : IApiRequest<Person>
+            {
+                [Path]
+                [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+                public int Id { get; set; }
+
+                [Path("slug")] public string? Name { get; set; }
+
+                [Path(" code ")] public string? Code { get; set; }
+            }
+            """.Replace("__NS__", ns);
+
+        var (_, diagnostics, _) = RunGenerator(source);
+        DiagnosticCatalogTests.AssertNoUnrenderedPlaceholders(diagnostics);
+
+        var missingPath = diagnostics.Single(static d => d.Id == "AXA016");
+        Assert.Equal(DiagnosticSeverity.Error, missingPath.Severity);
+        Assert.Contains("MissingPathModel", missingPath.GetMessage());
+        Assert.Contains("{id}", missingPath.GetMessage());
+
+        // 文法与运行期 PathTokenRegex 一致：{id:int} 不产生诊断（多产生一条的话上面的 Single 会先炸）。
+        Assert.DoesNotContain(
+            diagnostics,
+            static d => d.Id == "AXA016" && d.GetMessage().Contains("{id:int}", StringComparison.Ordinal));
+
+        // 正例点名：三种合法 [Path] 写法都不该报。上面的 Single 已经保证「全局只有一条 AXA016」，
+        // 这条是防将来把 Single 改成 First / Where 时静默丢掉正例保护。
+        Assert.DoesNotContain(
+            diagnostics,
+            static d => d.Id == "AXA016" && d.GetMessage().Contains("BoundPathModel", StringComparison.Ordinal));
+
+        var multipleBodies = diagnostics.Single(static d => d.Id == "AXA017");
+        Assert.Equal(DiagnosticSeverity.Error, multipleBodies.Severity);
+        Assert.Contains("TwoBodyModel", multipleBodies.GetMessage());
+        Assert.Contains("First", multipleBodies.GetMessage());
+        Assert.Contains("Second", multipleBodies.GetMessage());
+    }
+
     [Fact]
     public void Generator_DisabledByProperty_EmitsNothing()
     {

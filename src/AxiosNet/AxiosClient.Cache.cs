@@ -343,7 +343,7 @@ public sealed partial class AxiosClient
 
         if (!statusAccepted)
         {
-            throw AxiosException.FromResponse(config, request, response);
+            throw AxiosException.FromResponse(config, request, response, ctx.AttemptNumber);
         }
 
         return new AxiosAttemptResult(response);
@@ -402,6 +402,14 @@ public sealed partial class AxiosClient
         {
             Status = stored.Status,
             StatusText = stored.StatusText,
+
+            // 单值字典也要填：条目要能交给外部存储（契约里 Headers 是「每个头的首值」），少了它
+            // 自定义 IAxiosCacheStore 连单值头都拿不到。响应侧不受影响 —— 多值字典非空时
+            // ResponseReader.BuildShortCircuitHeaders 只用多值字典建响应头，单值字典整份忽略。
+            Headers = headers.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value[0],
+                StringComparer.OrdinalIgnoreCase),
             MultiValueHeaders = headers.ToDictionary(
                 entry => entry.Key,
                 entry => (IEnumerable<string>)entry.Value,

@@ -421,7 +421,7 @@ public sealed class FormatAttributeTests
     [Fact]
     public void Format_WithStructuredBody_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new FormatWithStructuredBodyRequest()));
 
         Assert.Contains("结构化正文", ex.Message);
@@ -430,7 +430,7 @@ public sealed class FormatAttributeTests
     [Fact]
     public void Format_WithHeaderCollection_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new FormatWithHeaderCollectionRequest()));
 
         Assert.Contains("逐项格式化没有意义", ex.Message);
@@ -439,7 +439,7 @@ public sealed class FormatAttributeTests
     [Fact]
     public void Format_OnFilePart_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new FormatOnFilePartRequest()));
 
         Assert.Contains("文件按字节发送", ex.Message);
@@ -448,7 +448,7 @@ public sealed class FormatAttributeTests
     [Fact]
     public void FormatString_OnNonFormattable_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new FormatStringOnBoolRequest()));
 
         Assert.Contains("没有实现 IFormattable", ex.Message);
@@ -457,7 +457,7 @@ public sealed class FormatAttributeTests
     [Fact]
     public void FormatString_OnByteArray_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new FormatStringOnBytesRequest()));
 
         Assert.Contains("二进制没有格式串语义", ex.Message);
@@ -466,7 +466,7 @@ public sealed class FormatAttributeTests
     [Fact]
     public void Format_OnNonScalarQuery_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new FormatOnObjectQueryRequest()));
 
         Assert.Contains("不是标量", ex.Message);

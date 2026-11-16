@@ -6,18 +6,30 @@ namespace AxiosNet.Internal;
 /// 流式响应的正文包装：把本次尝试的剩余预算延续到正文读取阶段，并统一正文阶段的取消 / IO 异常。
 /// </summary>
 /// <remarks>
-/// 用剩余预算建 CTS 并与外部取消链接：超时 → <c>ECONNABORTED</c>，其余取消（外部令牌 / 调用方自备令牌 /
-/// 无已知令牌的 OCE）一律 → <c>ERR_CANCELED</c>，原始异常留在 <c>Cause</c>。无条件包装
-/// （<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>），令牌交给底层那一次 I/O；
-/// 同步入口实现为对异步核心的阻塞等待。
+/// 超时 → <c>ECONNABORTED</c>，其余取消（外部令牌 / 调用方自备令牌 / 无已知令牌的 OCE）一律 → <c>ERR_CANCELED</c>，
+/// 原始异常留在 <c>Cause</c>。无条件包装（<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>），
+/// 令牌交给底层那一次 I/O；同步入口实现为对异步核心的阻塞等待。
+/// <para>
+/// 两个令牌源都是<b>按需创建</b>：没有预算（<c>remaining</c> 为 <c>null</c>）且外部令牌不可取消时
+/// 一个 CTS 都不建、<c>Token</c> 直接是 <see cref="CancellationToken.None"/>；没有预算但外部令牌可取消时
+/// 直接把外部令牌当本层令牌（不再包一层「只链接它」的源）；只有计时时直接用计时源；两者都需要才链接。
+/// 这是常态路径（绝大多数流式请求既不限时也不带可取消令牌），省下每请求最多两个 CTS 的分配。
+/// </para>
 /// </remarks>
 internal sealed class TimeoutStream : DelegatingStream
 {
     private readonly AxiosConfig _config;
     private readonly HttpRequestMessage _request;
     private readonly CancellationToken _externalToken;
-    private readonly CancellationTokenSource _timeoutCts;
-    private readonly CancellationTokenSource _linkedCts;
+
+    /// <summary>超时计时源：只有「有剩余预算」时才创建，否则为 <c>null</c>。</summary>
+    private readonly CancellationTokenSource? _timeoutCts;
+
+    /// <summary>监听「外部令牌 + 计时器」的链接源：只在两者都成立时才创建，否则为 <c>null</c>。</summary>
+    private readonly CancellationTokenSource? _linkedCts;
+
+    /// <summary>没有调用方自备令牌时交给底层的令牌（已经算好，避免每次读都重新判断）。</summary>
+    private readonly CancellationToken _token;
 
     /// <summary>构造时预算已耗尽：核心方法入口直接抛 <c>ECONNABORTED</c>，不与已到达的字节赛跑。</summary>
     private readonly bool _budgetExhausted;
@@ -46,14 +58,16 @@ internal sealed class TimeoutStream : DelegatingStream
         _externalToken = externalToken;
         _effectiveTimeout = effectiveTimeout;
 
-        _timeoutCts = new CancellationTokenSource();
-
         // 预算是一次性的：从拿到响应头开始算到正文读完，中途不重置（没有独立的空闲计时）。
-        if (remaining is TimeSpan budget)
+        // 只有真需要计时才建计时源；预算为 0 / 负数时既不建源也不设时，只记下「已耗尽」。
+        var budget = default(TimeSpan);
+        var timed = false;
+        if (remaining is TimeSpan value)
         {
-            if (budget > TimeSpan.Zero)
+            if (value > TimeSpan.Zero)
             {
-                _timeoutCts.CancelAfter(Timeouts.Clamp(budget));
+                budget = value;
+                timed = true;
             }
             else
             {
@@ -61,7 +75,30 @@ internal sealed class TimeoutStream : DelegatingStream
             }
         }
 
-        _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken, _timeoutCts.Token);
+        var outsideCancelable = externalToken.CanBeCanceled;
+
+        if (!timed)
+        {
+            // 不需要计时：外部令牌可取消就直接把它当本层令牌 —— 再包一层「只链接它」的源语义完全一样
+            //（取消只可能来自它），只是多付一次 CTS；不可取消时整条路径都不需要任何取消能力，
+            // 连令牌都不换（一个 CTS 都不建）。
+            _token = outsideCancelable ? externalToken : CancellationToken.None;
+            return;
+        }
+
+        _timeoutCts = new CancellationTokenSource();
+        _timeoutCts.CancelAfter(Timeouts.Clamp(budget));
+
+        if (outsideCancelable)
+        {
+            _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken, _timeoutCts.Token);
+            _token = _linkedCts.Token;
+        }
+        else
+        {
+            // 只有计时器：多建一个链接源没有意义，直接用计时源自己的令牌。
+            _token = _timeoutCts.Token;
+        }
     }
 
     /// <summary>被总预算压小后的真实上限（未压小为 <c>null</c>），只用于错误消息。</summary>
@@ -167,10 +204,17 @@ internal sealed class TimeoutStream : DelegatingStream
     /// </summary>
     private CancellationToken Link(CancellationToken callerToken)
     {
-        var linked = _linkedCts.Token;
+        var linked = _token;
         if (!callerToken.CanBeCanceled || callerToken == linked || callerToken == _externalToken)
         {
             return linked;
+        }
+
+        // 本层没有任何取消来源（既不限时也没有外部令牌）：调用方令牌本身就是唯一来源，
+        // 不必再包一层链接源 —— 语义相同且省一次分配。
+        if (!linked.CanBeCanceled)
+        {
+            return callerToken;
         }
 
         if (callerToken == _cachedCallerToken && _cachedCallerCts is not null)
@@ -201,7 +245,7 @@ internal sealed class TimeoutStream : DelegatingStream
             return;
         }
 
-        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts.Token, callerToken))
+        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts?.Token, callerToken))
         {
             case CancellationKind.Caller:
                 // 调用方自己的令牌已取消：优先级最高，但最终仍是 ERR_CANCELED（与普通请求路径同一出口）。
@@ -222,7 +266,7 @@ internal sealed class TimeoutStream : DelegatingStream
     /// </summary>
     private void ThrowIfTimedOutOrCanceled(CancellationToken callerToken, Exception inner)
     {
-        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts.Token, callerToken))
+        switch (CancellationClassifier.Classify(_externalToken, _timeoutCts?.Token, callerToken))
         {
             case CancellationKind.Timeout:
                 throw AxiosException.Timeout(_config, _request, inner, _effectiveTimeout);
@@ -233,12 +277,15 @@ internal sealed class TimeoutStream : DelegatingStream
         }
     }
 
-    /// <summary>释放链接源与超时计时器；内层流由基类释放。</summary>
+    /// <summary>
+    /// 释放链接源与超时计时器；内层流由基类释放。
+    /// 两个源都是按需创建的，所以只用 <c>?.</c> 释放实际建过的那个，重复 Dispose 也安全。
+    /// </summary>
     protected override void OnReleased()
     {
         _cachedCallerCts?.Dispose();
-        _linkedCts.Dispose();
-        _timeoutCts.Dispose();
+        _linkedCts?.Dispose();
+        _timeoutCts?.Dispose();
     }
 }
 

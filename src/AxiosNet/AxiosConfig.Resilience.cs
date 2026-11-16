@@ -22,8 +22,26 @@ public sealed partial class AxiosConfig
     internal ResilienceSettings? ResilienceOrNull
         => HasResilienceValues ? Resilience : null;
 
-    private bool HasResilienceValues
-        => _retry is not null
+    /// <summary>
+    /// 读并发闸门的<b>三项判定值而不分配门面对象</b>：闸门解析在每请求路径上，走 <see cref="ResilienceOrNull"/> + <see cref="ResilienceSettings.Concurrency"/>
+    /// 会为配了并发的每一条请求多分配两个对象（<see cref="ResilienceSettings"/> + <see cref="ConcurrencySettings"/>）。
+    /// 排队超时不在本方法里出：它另有 <see cref="ConcurrencyQueueTimeout"/>，那条路径上只需要它一项。
+    /// </summary>
+    /// <param name="maxInFlight">在途请求上限。</param>
+    /// <param name="maxQueue">排队条数上限。</param>
+    /// <param name="maxQueueStated">排队上限是否被显式写过（按标记判断，不看值）。</param>
+    internal void ReadConcurrency(out int? maxInFlight, out int? maxQueue, out bool maxQueueStated)
+    {
+        var state = _concurrencyState;
+        maxInFlight = state?.MaxInFlight;
+        maxQueue = state?.MaxQueue;
+        maxQueueStated = state?.MaxQueueSet ?? false;
+    }
+
+    /// <summary>等槽位上限（不分配门面）：闸门中间件每次尝试都要取它。</summary>
+    internal TimeSpan? ConcurrencyQueueTimeout => _concurrencyState?.QueueTimeout;
+
+    private bool HasResilienceValues => _retry is not null
             || _circuit is not null
             || _hedging is not null
             || _failover is not null

@@ -618,7 +618,7 @@ public sealed class AuthorizationTests
     [Fact]
     public void AuthorizeAndAllowAnonymous_OnSameModel_IsRejected()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AxiosException>(
             () => new ApiClient("http://127.0.0.1:1/").GetUri(new ConflictingAuthorizationRequest()));
 
         Assert.Contains("[Authorize]", ex.Message);

@@ -688,6 +688,7 @@ internal static class ResponseReader
         try
         {
             // 多值头（304 合并）优先：Set-Cookie 之类不能折叠的头只能按多值原样交付。
+            // 每个值都非 null：包外唯一入口 AxiosShortCircuit.Restore 已在工厂里归一（见 NormalizeMultiValueHeaders）。
             if (reply.MultiValueHeaders is { Count: > 0 } multi)
             {
                 foreach (var header in multi)

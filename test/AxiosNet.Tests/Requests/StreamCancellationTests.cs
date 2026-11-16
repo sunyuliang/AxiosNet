@@ -1,4 +1,5 @@
 
+using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;
@@ -123,10 +124,73 @@ public sealed class StreamCancellationTests
         }
     }
 
+    /// <summary>
+    /// 不限时（<c>Timeout = Zero</c>）+ 外部可取消令牌：正文阶段<b>不建任何 CTS</b>，
+    /// <c>TimeoutStream</c> 直接把外部令牌当本层令牌（懒建分支 <c>!timed &amp;&amp; outsideCancelable</c>），
+    /// 取消必须真的把挂起的正文读打断。
+    /// </summary>
+    /// <remarks>
+    /// 本类其余「外部取消」用例都显式设了 <c>Timeout</c>，走的是「外部令牌 + 计时器」的<b>链接源</b>分支；
+    /// 这条用例补的正是那个一个 CTS 都不建的常态分支：令牌没被传下去、或传下去的不是外部那一个，
+    /// 表现都是「读一直挂到服务端把正文发完」，因此断言错误码 + 耗时上限，而不只是结构。
+    /// 错误码必须是 <c>ERR_CANCELED</c>，绝不能被归成超时（<c>ECONNABORTED</c>）——不限时路径没有计时源，
+    /// 出现后者只可能是把外部取消当成了超时。
+    /// </remarks>
+    [Fact]
+    public async Task StreamExternalCancel_WithoutTimeout_InterruptsHangingBodyRead()
+    {
+        // 先发响应头、再挂起 20 秒不发正文：读必然阻塞在 socket 上，只有令牌能救。
+        await using var server = TestHttpServer.Start(_ => new TestResponse(
+            Body: new byte[4096],
+            ContentType: "application/octet-stream",
+            BodyDelay: SlowBodyDelay));
+
+        using var client = new AxiosClient();
+        using var cts = new CancellationTokenSource();
+
+        // 显式 Zero：覆盖掉任何实例默认超时，确保本次尝试的剩余预算为 null（= 不建计时源）。
+        var response = await client.GetAsync<Stream>(
+            server.Url + "slow.bin",
+            c => c.Timeout = TimeSpan.Zero,
+            cts.Token);
+        await using var stream = response.Data!;
+
+        var buffer = new byte[512];
+        var clock = Stopwatch.StartNew();
+        var canceller = Task.Run(async () =>
+        {
+            await Task.Delay(150);
+            cts.Cancel();
+        });
+
+        try
+        {
+            var ex = await Assert.ThrowsAsync<AxiosException>(
+                () => stream.ReadAsync(buffer, 0, buffer.Length));
+
+            Assert.Equal(AxiosException.ErrCanceled, ex.Code);
+            Assert.NotEqual(AxiosException.ErrConnAborted, ex.Code);
+            Assert.True(cts.IsCancellationRequested, "取消点没到：上面的失败不能归因于这次外部取消。");
+            Assert.IsAssignableFrom<OperationCanceledException>(ex.Cause);
+
+            // 归因口径（与 CancellationClassifier 同一优先级）：读调用没自备令牌、本次尝试也没有计时源，
+            // 取消只可能来自外部令牌 → 归属 Canceled，最终统一按 ERR_CANCELED 交付。
+            Assert.Equal(
+                nameof(CancellationKind.Canceled),
+                CancellationClassifier.Classify(cts.Token, timeoutToken: null, CancellationToken.None).ToString());
+        }
+        finally
+        {
+            await canceller;
+            clock.Stop();
+        }
+
+        Assert.True(clock.Elapsed < Budget, $"不限时时外部取消没有打断正文读取，耗时 {clock.Elapsed}");
+    }
+
     // ------------------------------------------------------------------
     // 流式响应：同步读 / 异步读
     // ------------------------------------------------------------------
-
     [Fact]
     public async Task StreamRead_Sync_HonorsTimeout()
     {

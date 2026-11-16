@@ -241,7 +241,7 @@ public sealed partial class AxiosClient
                     responseMessage.Dispose();
                 }
 
-                throw AxiosException.FromResponse(config, request, response);
+                throw AxiosException.FromResponse(config, request, response, ctx.AttemptNumber);
             }
 
             if (ctx.StreamResponse && response.Data is Stream body)

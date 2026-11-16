@@ -159,5 +159,28 @@ namespace AxiosNet.SourceGen
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,
             helpLinkUri: HelpLink);
+
+        /// <summary>路由模板里的占位符没有任何成员用 <c>[Path]</c> 绑定它：运行期由绑定构建器报错，这里提前到编译期。</summary>
+        public static readonly DiagnosticDescriptor MissingPathBinding = new DiagnosticDescriptor(
+            "AXA016",
+            "路由占位符没有 [Path] 绑定",
+            "{0} 的路由模板 \"{1}\" 含占位符 {{{2}}}，但没有任何成员标注 [Path] 绑定它。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
+
+        /// <summary>
+        /// 多个成员显式标注 <c>[Body]</c>：一次请求只能有一个正文。
+        /// 只查「显式 <c>[Body]</c> 多于一个」，「未标注属性默认当正文」的歧义留给运行期构建器（规则更细，静态判断易误报）。
+        /// </summary>
+        public static readonly DiagnosticDescriptor MultipleBodyMembers = new DiagnosticDescriptor(
+            "AXA017",
+            "多个成员标注了 [Body]",
+            "{0} 有 {1} 个成员标注了 [Body]（{2}）：一次请求只能有一个请求体。",
+            Category,
+            DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            helpLinkUri: HelpLink);
     }
 }
