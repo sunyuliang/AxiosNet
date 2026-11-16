@@ -37,6 +37,7 @@
 
 ### Changed
 
+- 响应 `Content-Type` 改为**按需解析**：装配响应时只留原始头值（不复制字符串、不构造 `MediaTypeHeaderValue`），媒体类型与字符集在第一次读 `Config.Response.MediaType` / `CharSet`、或正文转换真正用到它们时才拆一次并缓存；引号、转义、多值等形态回落 BCL 解析，结果与 `MediaTypeHeaderValue.TryParse` 逐字一致。字节（`byte[]` / `arraybuffer`）与流式响应一次都不解析，`Content-Type` 缺失 / 非法的判定口径不变。要读正文的响应仍需主值与字符集两段子串（文本、标量、强类型业务对象都一样：UTF-8 字节判定要看字符集），省下的是每条响应一整个媒体类型对象图（256 B；要读正文时换成 88 B 子串）。对外契约不变。
 - 快捷方法的 `data` 位置现在拦住「放错位置的参数」：把 `AxiosConfig` 传进 `data` 抛 `ERR_BAD_OPTION_VALUE`（消息指路 `RequestAsync(config)`），与原有的 `CancellationToken` 护栏同一口径。此前 `object? data` 会把配置对象当正文：静态门面 `Axios.GetAsync(url, config)`（门面没有 `(url, config)` 形态）与表单动词 `PostFormAsync(url, config)` 都能编译，结果要么把配置序列化进正文，要么退化成 `ERR_BAD_REQUEST`「正文序列化失败」——错误码与真实原因无关，而同一行代码在 `AxiosClient` 上走的却是配置形态。**重载数量不变**：把 `(url, config)` 或 `(url, ct)` 删掉会让这两类错用从「明确报错」退化成「静默把配置 / 令牌当正文发出去」，护栏只能加在现有重载内部，不靠删重载来消除歧义。
 - `AxiosException.Message` 对非 2xx 响应追加请求方法与 URL（默认剥 query / userinfo / fragment）与尝试序号，便于开了重试 / 换端点 / 对冲后定位打到哪个端点、第几次尝试；前缀 `Request failed with status code {status}` 保持不变。
 - 声明式装配失败的消息补上「哪一步、哪个字段」：`Request could not be built from 'UserRequest' (query parameter 'UserRequest.Page'): ...`。此前路径 / 查询 / 请求头取值或格式化抛错时只有一句底层消息，`targetName` 只到模型名；现在字典映射还带上键名（如 `UserRequest.Extra[boom]`）。错误码仍是 `ERR_BAD_REQUEST`，`Cause` 仍是该字段上真正抛出的原始异常，未多包一层。

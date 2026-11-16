@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2739%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2597%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2774%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2632%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -2698,11 +2698,11 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2539 / 2528 | `net8.0` / `net6.0` | 5067 |
+| `AxiosNet.Tests` (core + declarative) | 2574 / 2563 | `net8.0` / `net6.0` | 5137 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2739 / 2649** | | **5388** |
+| **Total** | **2774 / 2684** | | **5458** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
@@ -2767,6 +2767,7 @@ By default it runs **in-process** (no temp project, no rebuild). `--isolated` us
 | `ConfigMergeBenchmarks` | `MergeConfig` / header merging | `GetUri_NoMerge` |
 | `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` primitives | — (absolute values) |
 | `TelemetryDispatchBenchmarks` | Telemetry dispatch (per-event cost on the pool / lease hot path) | — (absolute values and deltas) |
+| `ResponseContentTypeBenchmarks` | Response `Content-Type` parsing (typed parse vs raw value + on-demand split) | `Eager_MediaTypeHeaderValue` |
 | `FormEncodingBenchmarks` | Form flattening + percent-encoding | `PostForm_FlatAscii` |
 | `DynamicDeserializationBenchmarks` | `dynamic` deserialization | `Typed` |
 | `StreamingFramingBenchmarks` | Streaming framing (NDJSON / SSE / JSON array) | `Ndjson` |

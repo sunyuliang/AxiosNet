@@ -104,7 +104,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 分组的先后由 `[BenchmarkGroup(..., Order = n)]` 定：
 
 - 输入编号跑一组，跑完回到菜单；
-- `a` = 顺序跑全部（默认作业；不含大正文的 52 个基准约 9~10 分钟，加大正文三组会更久）；
+- `a` = 顺序跑全部（默认作业；不含大正文的 37 个基准约 7~9 分钟——时间取自「45 个基准时本机实测 8 分 41 秒」那一档，加大正文三组会更久）；
 - `s` = 冒烟跑全部（`--job short`，3 轮，只确认跑得通）；
 - `m` = 在同进程 / 隔离之间切换（当前方式印在标题下方，每组摘要末尾也会标一次）；
 - `q` = 退出。
@@ -122,7 +122,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 摘要只**呈现**不判定：没有阈值、没有通过 / 不通过。判定口径仍是下面几节写的那些。
 
 
-## 十一组基准
+## 十二组基准
 
 | 类 | 热点 | 基线 | 读什么 |
 | --- | --- | --- | --- |
@@ -131,6 +131,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `ConfigMergeBenchmarks` | `MergeConfig` + 头合并 | `GetUri_NoMerge` | `Ratio - 1` = 把按请求补丁合到默认值上的增量 |
 | `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` 读写克隆 | 无（看绝对值） | `Allocated`：`Headers_Clone` 应恒为 24 B，`Headers_Set_Same` 应为 0 |
 | `TelemetryDispatchBenchmarks` | 观测派发的一次调用（池 / 租约每次事件） | 无（看绝对值与差值） | `ViaGuard − Direct` = 护栏那一跳；应恒为 0 分配、个位数 ns |
+| `ResponseContentTypeBenchmarks` | 响应 `Content-Type` 的解析（类型化解析 vs 原始值 + 按需拆分） | `Eager_MediaTypeHeaderValue` | `Allocated`：`Lazy_RawOnly` 应比基线少一整个媒体类型对象图（流式 / 字节响应不再付费） |
 | `FormEncodingBenchmarks` | 表单展平 + 百分号编码 | `PostForm_FlatAscii` | 倍数 = 「编码成本 / 基础成本」 |
 | `DynamicDeserializationBenchmarks` | `dynamic` 对象图构建 | `Typed` | `Ratio` = 比强类型贵几倍；`Dynamic_Wide` 看每节点成本 |
 | `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` | `Ratio` = 格式差；`Frames` 三档的**斜率** = 每帧成本 |
@@ -139,7 +140,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `LargeBodyJsonBenchmarks` | 大正文 JSON 响应（1 / 8 / 32MB：`byte[]` / 强类型 / `JsonElement`） | `HttpClient_GetBytes` | `Allocated / 载荷`：`byte[]` ≈ 1×；强类型 ≈ 3.4×；`JsonElement` ≈ 4.1×（文档 + 克隆 + token 元数据），三档线性 = 没有额外整串复制 |
 
 五组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `LargeBodyUpload` / `LargeBodyDownload` / `LargeBodyJson`）
-与六组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming` / `TelemetryDispatch`）
+与七组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming` / `TelemetryDispatch` / `ResponseContentType`）
 不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。大正文三组另有自己的口径：
 `Allocated` 是主轴（确定性量），耗时只用于「同量级 / 谁更快」的判断。
 
@@ -416,6 +417,32 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 - **这一组不能拿端到端数据代替**：同机两轮 `RequestPipeline` 的 `AxiosNet_GetString` 比值是
   1.09 / 1.03、`PostJson` 是 1.24 / 2.14（第二轮 `Error` 占 `Mean` 37%），误差比要看的差值大一个量级。
   要判断「派发变贵了」只能在这里量。
+
+## 响应 Content-Type 组实测（2026-11-16）
+
+同机（Intel Core Ultra 5 125H，Windows 10 22H2，.NET 8.0.31，Release，`--job medium`、**隔离**），
+`--filter '*ResponseContentType*'` 一轮 4 个用例。每条用例都**新建一条响应**、`Content-Type` 以原始字符串种下
+（复用同一条消息会命中 BCL 的解析缓存，量出来接近 0）：
+
+| 变体 | Mean | Allocated |
+| --- | ---: | ---: |
+| `Eager_MediaTypeHeaderValue`（旧：每条响应构造 `MediaTypeHeaderValue`） | 291.1 ns | 544 B |
+| `Lazy_RawOnly`（流式 / arraybuffer / 不读 `Config.Response`） | 112.9 ns | 288 B |
+| `Lazy_Both`（要读正文：文本 / 标量 / 强类型 JSON 都要主值 + 字符集） | 161.4 ns | 376 B |
+| `EndToEnd_TypedJsonGet`（一次强类型 GET 的总量，参照） | 2,767.3 ns | 1.91 KB |
+
+- **288 B 是「造一条响应」的地板**（`HttpResponseMessage` + `ByteArrayContent` + 原始头），与被测逻辑无关：
+  看的是同一地板上的差值与 `Allocated` 绝对值。媒体类型对象图 = 544 − 288 = **256 B**；
+  按需拆分只留子串，主值 + 字符集共 **88 B**。
+- **流式与字节响应现在是 0**：`Lazy_RawOnly` 相对基线少的 256 B 就是旧实现里「每条响应都解析一次」白付的成本。
+- **强类型 JSON 不是「只要主值」**：正文走 UTF-8 字节入口还是先解码，由 `IsUtf8Bytes` 看声明的字符集决定，
+  所以主值与字符集两段都要拆，落在 `Lazy_Both` 那行。曾有一行 `Lazy_MediaTypeOnly`（141.2 ns / 344 B）
+  测的是「只拆主值」，而那条路径在代码里不存在（`MediaTypeOf` 只用于文本性判定，之后仍会取字符集），
+  变体已删除；数字留在这里只作历史对照。
+- **时间同向**：旧路径 291 ns → 只取原始值 113 ns、拆两项 161 ns。BCL 的类型化解析拿不到这个便宜，
+  因为它必须把参数集合与参数对象一并构造出来。
+- 端到端那行是**参照**，不要拿它跟上面几行做差：2.7 µs 里含 HTTP 状态机、序列化与对象图，
+  Content-Type 只占其中一二十纳秒；它的用处是回答「省的这 200 B 占一次请求多少」。
 
 ## 维护约定
 

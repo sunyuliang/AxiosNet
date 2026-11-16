@@ -291,8 +291,9 @@ internal static class ResponseReader
         var statusText = StatusTextMap.Get(status);
 
         // 反序列化 / transformResponse 阶段可读的响应上下文，复用刚建好的 headers。
-        var contentType = message.Content.Headers.ContentType;
-        config.Response = new AxiosResponseInfo(status, statusText, headers, contentType?.MediaType, contentType?.CharSet);
+        // Content-Type 只留原始值：媒体类型 / 字符集按需解析（JSON 主路径一次都不用拆），见 ContentTypeHeader。
+        var rawContentType = ContentTypeHeader.ReadRaw(message.Content.Headers);
+        config.Response = new AxiosResponseInfo(status, statusText, headers, rawContentType);
 
         object? data;
         // 已解码的正文，供错误体读取与诊断（二进制 / 流为 null）。
@@ -346,8 +347,7 @@ internal static class ResponseReader
                     request,
                     dataType,
                     bytes,
-                    contentType?.MediaType,
-                    contentType?.CharSet,
+                    rawContentType,
                     lenient,
                     out rawText);
             }
@@ -499,28 +499,76 @@ internal static class ResponseReader
     /// 从原始字节装配 Data：解码 → 按 responseType / 目标类型转换 → transformResponse，网络与短路响应共用。
     /// <paramref name="rawText"/> 回传解码后的正文（只要字节的分支为 <c>null</c>）。
     /// </summary>
+    /// <remarks>
+    /// <paramref name="rawContentType"/> 传的是 <c>Content-Type</c> 的**原始头值**，不是拆好的媒体类型 / 字符集：
+    /// 媒体类型、字符集、文本性都在真正用到的分支里才解析（字节 / 流 / 不要正文这三条分支一次都不拆）。
+    /// 文本性按**解析出的主值**判定，不能拿原始串直接做前缀匹配——那会把非法头判成二进制。
+    /// </remarks>
     internal static object? ConvertBody(
         AxiosConfig config,
         HttpRequestMessage? request,
         Type? dataType,
         byte[] bytes,
-        string? mediaType,
-        string? charSet,
+        string? rawContentType,
         bool lenient,
         out string? rawText)
     {
-        // 文本还是二进制由 Content-Type 决定（缺失视为文本）。
-        var textual = MediaTypes.IsTextual(mediaType);
-
         // 解码推迟到真正需要文本的分支：JSON 业务对象走序列化器的字节入口，不做 UTF-16 往返。
         string? text = null;
+
+        // 媒体类型、文本性、字符集三者都推迟：数组 / 流 / 不要正文的分支一次都不拆；
+        // 要读正文时主值与字符集都要（UTF-8 字节判定要字符集），不是「只要主值」。
+        string? mediaType = null;
+        var mediaTypeResolved = false;
+
+        string? GetMediaType()
+        {
+            if (!mediaTypeResolved)
+            {
+                mediaType = ContentTypeHeader.MediaTypeOf(rawContentType);
+                mediaTypeResolved = true;
+            }
+
+            return mediaType;
+        }
+
+        // 文本性按**解析出的主值**判定：头解析不出来时与「没带 Content-Type」同一口径（按文本处理）。
+        // 不能拿原始串直接做前缀匹配——那会把非法头判成二进制，JSON 正文会绕过序列化器。
+        var textual = false;
+        var textualResolved = false;
+
+        bool IsTextual()
+        {
+            if (!textualResolved)
+            {
+                textual = MediaTypes.IsTextual(GetMediaType());
+                textualResolved = true;
+            }
+
+            return textual;
+        }
+
+        // 字符集同样推迟：只有真要解码时才拆一次，失败路径反复取用不重复分配。
+        string? charSet = null;
+        var charSetResolved = false;
+
+        string? GetCharSet()
+        {
+            if (!charSetResolved)
+            {
+                charSet = ContentTypeHeader.CharSetOf(rawContentType);
+                charSetResolved = true;
+            }
+
+            return charSet;
+        }
 
         // 需要文本时补齐解码（只解一次）：解析 / 转换失败与 lenient 兜底都靠它拿原文。
         string? EnsureText()
         {
-            if (text is null && NeedsText(config, dataType, textual))
+            if (text is null && NeedsText(config, dataType, IsTextual()))
             {
-                text = ResponseTextDecoder.Decode(bytes, charSet, config.SerializationOrNull?.TextEncoding);
+                text = ResponseTextDecoder.Decode(bytes, GetCharSet(), config.SerializationOrNull?.TextEncoding);
             }
 
             return text;
@@ -529,7 +577,7 @@ internal static class ResponseReader
         object? data;
         try
         {
-            data = ConvertData(config, request, dataType, bytes, ref text, charSet, textual, mediaType, lenient);
+            data = ConvertData(config, request, dataType, bytes, ref text, rawContentType, lenient);
         }
         catch
         {
@@ -606,9 +654,9 @@ internal static class ResponseReader
         var statusText = reply.StatusText ?? StatusTextMap.Get(status);
         var headers = BuildShortCircuitHeaders(reply, config);
 
-        // 与网络路径同一份上下文：Headers 与 response.Headers 同实例。
-        var (mediaType, charSet) = ReadContentType(headers);
-        config.Response = new AxiosResponseInfo(status, statusText, headers, mediaType, charSet);
+        // 与网络路径同一份上下文：Headers 与 response.Headers 同实例；Content-Type 同样只留原始值。
+        var rawContentType = ReadRawContentType(headers);
+        config.Response = new AxiosResponseInfo(status, statusText, headers, rawContentType);
 
         object? data;
         string? rawText = null;
@@ -633,7 +681,7 @@ internal static class ResponseReader
                 }
                 else
                 {
-                    data = ConvertBody(config, null, dataType, body, mediaType, charSet, lenient, out rawText);
+                    data = ConvertBody(config, null, dataType, body, rawContentType, lenient, out rawText);
 
                     // 字节形态原样交出，这里必须复制，保证每份响应都是独立对象。
                     if (ReferenceEquals(data, body))
@@ -756,19 +804,9 @@ internal static class ResponseReader
         return headers;
     }
 
-    /// <summary>从响应头取出媒体类型与字符集（短路响应的头是字典，只能自己解析）。</summary>
-    private static (string? MediaType, string? CharSet) ReadContentType(
-        IReadOnlyDictionary<string, IEnumerable<string>> headers)
-    {
-        if (headers.TryGetValue("Content-Type", out var values)
-            && values.FirstOrDefault() is { Length: > 0 } value
-            && MediaTypeHeaderValue.TryParse(value, out var parsed))
-        {
-            return (parsed.MediaType, parsed.CharSet);
-        }
-
-        return (null, null);
-    }
+    /// <summary>从已建好的响应头字典里取 <c>Content-Type</c> 的原始值（短路响应的头是字典，拿不到内容头视图）。</summary>
+    private static string? ReadRawContentType(IReadOnlyDictionary<string, IEnumerable<string>> headers)
+        => headers.TryGetValue("Content-Type", out var values) ? values.FirstOrDefault() : null;
 
     /// <summary>
     /// 按 responseType / 目标类型把原始字节转换为 Data：字节、文本、dynamic 图、基础类型
@@ -781,11 +819,52 @@ internal static class ResponseReader
         Type? dataType,
         byte[] bytes,
         ref string? text,
-        string? charSet,
-        bool textual,
-        string? mediaType,
+        string? rawContentType,
         bool lenient)
     {
+        // 媒体类型 / 文本性 / 字符集按需解析：字节与「不要正文」的分支一次都不拆，业务对象路径只拆真正用到的那一项。
+        var textual = false;
+        var textualResolved = false;
+
+        bool IsTextual()
+        {
+            if (!textualResolved)
+            {
+                textual = MediaTypes.IsTextual(GetMediaType());
+                textualResolved = true;
+            }
+
+            return textual;
+        }
+
+        string? charSet = null;
+        var charSetResolved = false;
+
+        string? GetCharSet()
+        {
+            if (!charSetResolved)
+            {
+                charSet = ContentTypeHeader.CharSetOf(rawContentType);
+                charSetResolved = true;
+            }
+
+            return charSet;
+        }
+
+        string? mediaType = null;
+        var mediaTypeResolved = false;
+
+        string? GetMediaType()
+        {
+            if (!mediaTypeResolved)
+            {
+                mediaType = ContentTypeHeader.MediaTypeOf(rawContentType);
+                mediaTypeResolved = true;
+            }
+
+            return mediaType;
+        }
+
         // 0) 调用方不要正文（接口声明返回 Task）：请求照发，正文不解析、不分配。
         if (dataType == typeof(void))
         {
@@ -801,7 +880,7 @@ internal static class ResponseReader
         // 2) text 直接给原始文本（不做任何解析）。
         if (config.ResponseType == ResponseType.Text)
         {
-            return DecodeText(ref text, bytes, charSet, config);
+            return DecodeText(ref text, bytes, GetCharSet(), config);
         }
 
         // 3) dynamic 展开：JSON 特有的「无类型对象图」，由框架解析，不经过序列化器。
@@ -813,18 +892,18 @@ internal static class ResponseReader
             }
 
             // UTF-8 直接按字节解析；其它编码（罕见）按解码后的文本解析。
-            var utf8 = IsUtf8Bytes(bytes, charSet, config);
+            var utf8 = IsUtf8Bytes(bytes, GetCharSet(), config);
 
             try
             {
                 return utf8
                     ? DynamicJson.Parse(StripUtf8Bom(bytes))
-                    : DynamicJson.Parse(DecodeText(ref text, bytes, charSet, config));
+                    : DynamicJson.Parse(DecodeText(ref text, bytes, GetCharSet(), config));
             }
             catch (Exception ex) when (ex is not AxiosException)
             {
                 // 非 ASCII 空白（如全角空格）的正文仍视为 null。
-                var json = DecodeText(ref text, bytes, charSet, config);
+                var json = DecodeText(ref text, bytes, GetCharSet(), config);
                 if (IsBlank(json))
                 {
                     return null;
@@ -856,7 +935,7 @@ internal static class ResponseReader
         // 4) 目标类型就是原始内容本身：string 原样返回（支持纯文本），byte[] 直接给字节。
         if (dataType == typeof(string))
         {
-            return DecodeText(ref text, bytes, charSet, config);
+            return DecodeText(ref text, bytes, GetCharSet(), config);
         }
 
         if (dataType == typeof(byte[]))
@@ -874,14 +953,14 @@ internal static class ResponseReader
         if (dataType is null || dataType == typeof(object) || dataType == typeof(JsonElement))
         {
             // 二进制响应没有文档形态，原样给字节。
-            if (!textual)
+            if (!IsTextual())
             {
                 return bytes;
             }
 
             // UTF-8 字节直接解析，省掉 bytes → UTF-16 → UTF-8 的往返。
             // 非法 UTF-8 不能走这条路：JsonDocument 要到取值时才抛，这种元素不能交给调用方；交给下面按解码文本重试。
-            if (IsUtf8Bytes(bytes, charSet, config))
+            if (IsUtf8Bytes(bytes, GetCharSet(), config))
             {
                 var json = StripUtf8Bom(bytes);
 
@@ -901,7 +980,7 @@ internal static class ResponseReader
                 }
             }
 
-            var document = DecodeText(ref text, bytes, charSet, config);
+            var document = DecodeText(ref text, bytes, GetCharSet(), config);
 
             if (!LooksLikeJson(document))
             {
@@ -920,11 +999,11 @@ internal static class ResponseReader
         }
 
         // 7) 二进制响应：不做解码，交给序列化器的字节入口（默认实现按 UTF-8 转调文本入口）。
-        if (!textual)
+        if (!IsTextual())
         {
             try
             {
-                return AxiosContent.Get(config, mediaType).Deserialize(bytes, dataType, config);
+                return AxiosContent.Get(config, GetMediaType()).Deserialize(bytes, dataType, config);
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
@@ -942,7 +1021,7 @@ internal static class ResponseReader
         //    其它类型不解码，直接进第 9 步的字节入口。
         if (ScalarTypes.IsScalarType(dataType) || typeof(IConvertible).IsAssignableFrom(dataType))
         {
-            var raw = DecodeText(ref text, bytes, charSet, config);
+            var raw = DecodeText(ref text, bytes, GetCharSet(), config);
 
             // 字节级判空认不出非 ASCII 空白（如 NBSP）：解码后仍是空白的正文视为 null，
             // 否则能被空串解析成功的标量（Uri.TryCreate）会把空正文变成空值对象。
@@ -958,7 +1037,7 @@ internal static class ResponseReader
 
             try
             {
-                var parsed = AxiosContent.Get(config, mediaType).Deserialize(raw, dataType, config);
+                var parsed = AxiosContent.Get(config, GetMediaType()).Deserialize(raw, dataType, config);
 
                 // 序列化器不复核枚举已定义值，与上面的 TryParse 同一把尺子。
                 if (parsed is Enum enumValue && !ScalarParser.IsAcceptableEnumValue(dataType, enumValue))
@@ -996,18 +1075,18 @@ internal static class ResponseReader
         // 9) 文本响应的业务对象：UTF-8 时交给序列化器的字节入口（零转码），声明其它编码时按编码解码后走文本入口。
         try
         {
-            var serializer = AxiosContent.Get(config, mediaType);
+            var serializer = AxiosContent.Get(config, GetMediaType());
             object? deserialized;
 
             // 非法 UTF-8 不进字节入口：按字节解析的 JSON 不校验字符串内容，坏字节会留到调用方取值时才炸
             // （JsonElement / 字典里的 object 值都这样）；按解码文本（坏字节替换为 U+FFFD）走文本入口，与只解码的旧路径一致。
-            if (IsUtf8Bytes(bytes, charSet, config) && ResponseTextDecoder.IsValidUtf8(bytes))
+            if (IsUtf8Bytes(bytes, GetCharSet(), config) && ResponseTextDecoder.IsValidUtf8(bytes))
             {
                 deserialized = serializer.Deserialize(StripUtf8Bom(bytes), dataType, config);
             }
             else
             {
-                deserialized = serializer.Deserialize(DecodeText(ref text, bytes, charSet, config), dataType, config);
+                deserialized = serializer.Deserialize(DecodeText(ref text, bytes, GetCharSet(), config), dataType, config);
             }
 
             // 序列化器不复核枚举已定义值，与第 8 步同一把尺子。
@@ -1016,7 +1095,7 @@ internal static class ResponseReader
                 // lenient 时不因数据值失败：回退原文，不让正文问题盖住 HTTP 状态错误。
                 if (lenient)
                 {
-                    return DecodeText(ref text, bytes, charSet, config);
+                    return DecodeText(ref text, bytes, GetCharSet(), config);
                 }
 
                 // dataType 可能是 Nullable<Color>，消息里报枚举类型本身。
@@ -1027,7 +1106,7 @@ internal static class ResponseReader
         }
         catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
         {
-            var fallback = DecodeText(ref text, bytes, charSet, config);
+            var fallback = DecodeText(ref text, bytes, GetCharSet(), config);
 
             // 非 ASCII 空白（如 NBSP）的正文视为 null：字节路径没做解码级判空，失败时补上。
             if (IsBlank(fallback))

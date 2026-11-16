@@ -335,7 +335,7 @@ public sealed class AllocationTests
         config.Serialization.BodySerializers.Default = serializer;
 
         object? Convert()
-            => ResponseReader.ConvertBody(config, null, typeof(JsonItem), body, AxiosContentType.Json, "utf-8", lenient: false, out _);
+            => ResponseReader.ConvertBody(config, null, typeof(JsonItem), body, "application/json; charset=utf-8", lenient: false, out _);
 
         var average = AverageBytes(50, () => Convert());
 
