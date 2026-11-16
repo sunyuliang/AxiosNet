@@ -117,7 +117,7 @@ public sealed class CircuitBreakerTests
         var breaker = new CircuitBreaker { FailureThreshold = 2, BreakDuration = TimeSpan.FromSeconds(30) };
         using var client = new AxiosClient(new AxiosConfig
         {
-            Resilience = { Circuit = { Policy = breaker },  }
+            Resilience = { Circuit = { Policy = breaker } }
         }, new AxiosClientOptions { MaxInFlight = 1 });
 
         // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽

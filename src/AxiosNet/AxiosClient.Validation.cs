@@ -416,7 +416,7 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 解析（必要时懒创建）本实例的并发闸门：容量取构造期的 <see cref="AxiosClientOptions.MaxInFlight"/>，
+    /// 解析（必要时懒创建）本实例的并发闸门：容量取构造期定稿的 <see cref="_maxInFlight"/>，
     /// 创建后固定；没配在途上限就不建闸门（默认请求零分配）。
     /// </summary>
     private ConcurrencyGate? ResolveConcurrencyGate()
@@ -427,12 +427,12 @@ public sealed partial class AxiosClient
             return existing;
         }
 
-        if (Options.MaxInFlight is not int limit)
+        if (_maxInFlight is not int limit)
         {
             return null;
         }
 
-        var created = new ConcurrencyGate(limit, Options.MaxQueue);
+        var created = new ConcurrencyGate(limit, _maxQueue);
 
         // 并发首请求：输的一方用赢家的闸门（容量对所有人都一样，不存在不一致）。
         return Interlocked.CompareExchange(ref _gate, created, null) ?? created;

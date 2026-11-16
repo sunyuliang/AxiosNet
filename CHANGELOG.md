@@ -11,6 +11,7 @@
 ### Added
 
 - 观测实现可整套替换：新增 `IAxiosTelemetrySink`、`AxiosTelemetrySink`（全空实现的基类）与观测句柄 `AxiosRequestTrace`，赋 `AxiosTelemetry.Sink` 即接管 span / 指标 / 事件三路输出，内置那套**同时停用**（不是叠加）；赋 `AxiosTelemetrySink.Off` 则彻底关掉。此前 `AxiosTelemetry` 是静态类，包外只能按 `ActivitySource` / `Meter` 名字订阅再自行翻译，既接不进公司自己的管道，也关不掉内置的那套。默认行为不变（`Sink` 默认指向内置实现）。
+  - 可替换实现是第三方代码，它违约抛异常时只毁掉自己的观测、不毁掉库的不变量：在途请求计数照常归零（否则 `Dispose()` 永远等不到 0，池与 Handler 一直不释放），且「进 / 出」成对水位不会被打成负数（`EnterRequest` 抛了就不补 `ExitRequest`）。异常本身照常上抛，与其它用户回调一致。
 - 源生成器新增两条编译期诊断：`AXA016`（路由模板里的 `{name}` 没有任何成员用 `[Path]` 绑定，名字比对大小写不敏感）与 `AXA017`（多个成员显式标了 `[Body]`）。二者此前只在运行期由绑定构建器报错。
 - 缓存条目可导出与重建：新增 `AxiosShortCircuit.Restore(...)`，供自定义 `IAxiosCacheStore` 从自己的存储格式重建条目；新增只读视图 `MultiValueHeaderValues` / `CachedAt` / `CachedAge`，用于把多值响应头、落库时刻与落库龄期写进自己的存储格式。此前这三项在包外读写不到，自建 Redis / 共享缓存会静默丢失多条 `Set-Cookie` / `Vary` 的全部值、`ETag` / `Last-Modified` 的优先来源，以及 `Age` 的推进。
 - 新增 `AxiosResponse<T>.DataOrThrow()`：正文为空时抛 `AxiosException(ERR_BAD_RESPONSE)`（消息带期望的类型名，异常带 `Config` / `Response`），用于替代 `Data!` —— 后者遇到空正文会退化成不带请求上下文的 `NullReferenceException`。空正文合法时继续用 `Data`。
@@ -20,7 +21,8 @@
 
 - 实例级选项独立成 `AxiosClientOptions`：代理 / 凭据 / Cookie / 重定向次数 / 连接池 / 并发容量这七项决定连接层与闸门的形态，构造实例时定型，所以从 `AxiosConfig` 上移除（`Transport.Proxy` / `Credentials` / `WithCredentials` / `MaxRedirects` / `Pool`、`Resilience.Concurrency.MaxInFlight` / `MaxQueue`），改为构造参数 `new AxiosClient(defaults, options)`；`Axios.Create` 的三个重载同步加 `AxiosClientOptions? options`。写错位置现在是**编译错误**，不再等到发请求时抛 `ERR_BAD_OPTION_VALUE`；带 `*Set` 标记的运行期守卫、闸门容量不一致的报错一并删除。
   - 容量类的非法值（`MaxInFlight` / `MaxQueue` 为 0 或负数）改在**构造期**报错；`MaxRedirects` 为负同样在构造期报错。
-  - 新增只读快照 `AxiosClient.Options`：已回填连接池的实际生效值（代理 / 凭据 / 重定向 / Cookie），读到就是真实行为；构造后改它不会重建池、也不改闸门容量。
+  - 新增只读快照 `AxiosClient.Options`：已回填连接池的实际生效值（代理 / 凭据 / 重定向 / Cookie），读到就是真实行为；构造后改它不影响任何已生效行为（不重建池、不改闸门容量）。
+  - 闸门容量在**构造期定稿**：闸门仍是首个受限请求才创建，但容量取构造时的 `MaxInFlight` / `MaxQueue`。否则「构造后改这两项」会变成「没发过请求的实例上生效、发过的实例上不生效」——同一次赋值两种结果，最难排查。
   - 按请求可变的另一半保持不变：`Transport.Profile` / `MaxRate` / `HttpVersion` / `VersionPolicy`、`Resilience.Concurrency.QueueTimeout`、`Timeout` 等仍在 `AxiosConfig` 上。
   - 包装入口同步加 `options`，否则这些能力从容器 / 声明式入口根本够不到：`AddAxiosClient(configure, options, pipeline)`、`AddApiClient(baseAddress, configureDefaults, options, configure)`、`AddApiClient(name, baseAddress, configureDefaults, options, configure)`、`new ApiClient(baseAddress, configureDefaults, options)`。`options` 都插在「配置」之后、「管线 / 门面配置」之前，按位置传旧参数会编译失败（类型不同，不会静默错位）。
 - 跨终端资源从「一格槽位」改为可登记多个：`AxiosAttemptContext.Slot` → `Lease`，`WithSlot(IDisposable?)` → `WithLease(IDisposable)`（`null` 直接抛 `ArgumentNullException` —— 它是「悄悄丢掉前一个租约」的入口）。登记改为**追加**而不是覆盖，释放走登记顺序的逆序；`AxiosAttemptResult.SlotTransferred` 随之改名 `LeasesTransferred`，含义扩成「上下文里登记的租约全部已随正文转交」。此前一次尝试只能携带一个跨终端资源，闸门槽位与流式正文的所有权凭证只能靠一个布尔区分主人，第二个资源（审计会话、外部租约、批处理句柄）无处安放，抢同一格就会泄漏前一个。
@@ -28,7 +30,7 @@
 
 ### Changed
 
-- 快捷方法的 `data` 位置现在拦住「放错位置的参数」：把 `AxiosConfig` 传进 `data` 抛 `ERR_BAD_OPTION_VALUE`（消息指路 `RequestAsync(config)`），与原有的 `CancellationToken` 护栏同一口径。此前 `object? data` 会把配置对象当正文：静态门面 `Axios.GetAsync(url, config)`（门面没有 `(url, config)` 形态）与表单动词 `PostFormAsync(url, config)` 都能编译，结果要么把配置序列化进正文，要么退化成 `ERR_BAD_REQUEST`「正文序列化失败」——错误码与真实原因无关，而同一行代码在 `AxiosClient` 上走的却是配置形态。**重载数量不变**：把 `(url, config)` 或 `(url, ct)` 删掉会让这两类错用从「明确报错」退化成「静默把配置 / 令牌当正文发出去」，取舍见 `docs/evidence-2026-11-16.md` 的 E7 段。
+- 快捷方法的 `data` 位置现在拦住「放错位置的参数」：把 `AxiosConfig` 传进 `data` 抛 `ERR_BAD_OPTION_VALUE`（消息指路 `RequestAsync(config)`），与原有的 `CancellationToken` 护栏同一口径。此前 `object? data` 会把配置对象当正文：静态门面 `Axios.GetAsync(url, config)`（门面没有 `(url, config)` 形态）与表单动词 `PostFormAsync(url, config)` 都能编译，结果要么把配置序列化进正文，要么退化成 `ERR_BAD_REQUEST`「正文序列化失败」——错误码与真实原因无关，而同一行代码在 `AxiosClient` 上走的却是配置形态。**重载数量不变**：把 `(url, config)` 或 `(url, ct)` 删掉会让这两类错用从「明确报错」退化成「静默把配置 / 令牌当正文发出去」，护栏只能加在现有重载内部，不靠删重载来消除歧义。
 - `AxiosException.Message` 对非 2xx 响应追加请求方法与 URL（默认剥 query / userinfo / fragment）与尝试序号，便于开了重试 / 换端点 / 对冲后定位打到哪个端点、第几次尝试；前缀 `Request failed with status code {status}` 保持不变。
 - 声明式装配失败的消息补上「哪一步、哪个字段」：`Request could not be built from 'UserRequest' (query parameter 'UserRequest.Page'): ...`。此前路径 / 查询 / 请求头取值或格式化抛错时只有一句底层消息，`targetName` 只到模型名；现在字典映射还带上键名（如 `UserRequest.Extra[boom]`）。错误码仍是 `ERR_BAD_REQUEST`，`Cause` 仍是该字段上真正抛出的原始异常，未多包一层。
 - 请求模型**声明非法**改走统一出口：`ApiClient.RequestAsync` / `GetUri` / `RequestStreamAsync` 现在抛 `AxiosException(ERR_BAD_OPTION_VALUE)`，原始异常在 `Cause`。此前是裸 `InvalidOperationException`（且发生在 `BuildConfig` 之前，不受绑定错误那条出口保护），`catch (AxiosException)` 抓不到。`AxiosAotMetadataException` 例外，仍原样抛出（专供「源生成器没启用」，调用方可能专门捕获）。

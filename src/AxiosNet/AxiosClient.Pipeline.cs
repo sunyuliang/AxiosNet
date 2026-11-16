@@ -196,9 +196,13 @@ public sealed partial class AxiosClient
             telemetryUri = plan.Uri;
             if (AxiosTelemetry.Sink.IsEnabled(config))
             {
-                telemetryEnabled = true;
                 telemetryStart = AxiosTelemetry.Timestamp;
+
+                // 「已进」只能在 EnterRequest() 真的返回之后才置位：可替换实现是第三方代码，它抛异常时
+                // 这个标记会让 finally 补一次没配对的 ExitRequest，内置实现的水位（在途计数）从此变成负数，
+                // 之后所有看板数据都是假的 —— 违约实现只该毁掉自己的观测，不该毁掉别人的读数。
                 AxiosTelemetry.Sink.EnterRequest();
+                telemetryEnabled = true;
                 telemetryTrace = AxiosTelemetry.Sink.StartRequest(config, plan.Uri);
             }
 
@@ -325,17 +329,30 @@ public sealed partial class AxiosClient
                 config.RevalidationEntry = null;
             }
 
-            if (telemetryEnabled)
+            // 三段收尾彼此**不可连坐**：观测实现是第三方代码（AxiosTelemetry.Sink 可替换），
+            // 任一段抛异常时其余两段照样要执行 —— 否则「观测写错了」会被放大成资源泄漏 / span 错挂。
+            try
             {
-                AxiosTelemetry.Sink.ExitRequest();
+                if (telemetryEnabled)
+                {
+                    AxiosTelemetry.Sink.ExitRequest();
+                }
             }
-
-            // 必须收 span，否则后续请求的 span 会错挂。
-            // 走句柄自身的派发（而不是当前的 AxiosTelemetry.Sink）：收尾必须回到「开它的那个实现」上，
-            // 否则请求在途时换过 Sink 就会把 Start / Stop 劈成两家（默认句柄 = 不观测，天然是空操作）。
-            telemetryTrace.Stop();
-
-            ReleaseInFlight();
+            finally
+            {
+                try
+                {
+                    // 必须收 span，否则后续请求的 span 会错挂。
+                    // 走句柄自身的派发（而不是当前的 AxiosTelemetry.Sink）：收尾必须回到「开它的那个实现」上，
+                    // 否则请求在途时换过 Sink 就会把 Start / Stop 劈成两家（默认句柄 = 不观测，天然是空操作）。
+                    telemetryTrace.Stop();
+                }
+                finally
+                {
+                    // 在途计数是 Dispose 的等待条件，漏一次就永远等不到 0，Dispose 会一直等下去。
+                    ReleaseInFlight();
+                }
+            }
         }
     }
 

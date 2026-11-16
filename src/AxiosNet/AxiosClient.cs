@@ -32,6 +32,13 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// <summary>在途并发闸门（<see cref="AxiosClientOptions.MaxInFlight"/>）：首个受限请求时按构造期上限创建并固定。</summary>
     private ConcurrencyGate? _gate;
 
+    /// <summary>闸门容量（构造期定稿）：首个请求才建闸门，但容量不受「这之间改过 <see cref="Options"/>」影响。</summary>
+    /// <remarks>不现读 <see cref="Options"/>：那是调用方可以改的快照，现读会让「改得生效与否」取决于闸门建没建。</remarks>
+    private readonly int? _maxInFlight;
+
+    /// <summary>排队深度上限（构造期定稿），语义同 <see cref="_maxInFlight"/>。</summary>
+    private readonly int? _maxQueue;
+
     /// <summary>
     /// 备用端点的健康记忆：跨请求共享，主端点持续不可用时不必每条请求都先撞它一次。
     /// 惰性创建（没配备用端点就不会分配）。
@@ -60,7 +67,7 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// 这份是<b>快照</b>，且已把池实际生效的出口（代理 / 凭据 / 重定向次数 / Cookie）写在里面，所以读到的就是真实行为。
-    /// 构造之后改它不会重建池、也不会改闸门容量 —— 要换形态请新建 <see cref="AxiosClient"/>。
+    /// 构造之后改它不影响<b>任何</b>已生效行为（不是「下次生效」：不重建池、也不改闸门容量），要换形态请新建 <see cref="AxiosClient"/>。
     /// </remarks>
     public AxiosClientOptions Options { get; }
 
@@ -120,6 +127,10 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
         // 闸门容量与 Handler 无关（闸门是库自己的），所以无条件在构造期校验，不等首个请求。
         Options.ValidateConcurrency(Defaults);
+
+        // 容量在构造期定稿：闸门虽然首个请求才建，但「什么时候改 Options」不该改变它的容量。
+        _maxInFlight = Options.MaxInFlight;
+        _maxQueue = Options.MaxQueue;
 
         // 重定向文案的基准：先取声明值（注入 Handler 的分支就用它，因为那边写不了这一项），
         // 池分支拿到生效值之后再覆盖一次。

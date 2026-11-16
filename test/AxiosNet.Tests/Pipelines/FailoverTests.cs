@@ -351,7 +351,7 @@ public sealed class FailoverTests
         using var client = new AxiosClient(new AxiosConfig
         {
             BaseAddress = primary.Url,
-            Resilience = { Circuit = { Policy = policy }, Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },  }
+            Resilience = { Circuit = { Policy = policy }, Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } } }
         }, new AxiosClientOptions { MaxInFlight = 1 });
 
         // 占住唯一槽位（到本用例结束才放）：后面的请求只能在闸门里等到预算耗尽

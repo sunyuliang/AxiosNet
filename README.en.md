@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2714%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2572%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2717%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2575%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -584,7 +584,7 @@ await client.GetAsync("fast", c => c.Resilience.Concurrency.QueueTimeout = TimeS
 - Both are "the entrance is crowded", not "the downstream failed": the default policy does not retry and does not fail over — another endpoint cannot fix local slot contention, so the caller should back off and try again.
 - When a later attempt is rejected at the gate after an earlier real failure, the real failure is the one surfaced (same rule as hedging): "no queue slot" never hides the fault that explains the request.
 - Rejections are counted by `axiosnet.client.gate.rejections` (`axiosnet.gate.reason` = `queue_timeout` / `queue_full`); watch it together with `gate.queue_depth` for backpressure level.
-- `MaxInFlight` / `MaxQueue` are instance-level options (see "Instance-level options" below): fixed at construction, `0` or a negative value throws at construction, and they cannot be written per request. The gate is created on the first gated request and its capacity is pinned to them. `QueueTimeout` is the opposite — a per-request item, so one call can change how long it waits.
+- `MaxInFlight` / `MaxQueue` are instance-level options (see "Instance-level options" below): fixed at construction, `0` or a negative value throws at construction, and they cannot be written per request. The gate is only built on the first gated request, but its capacity comes from the **construction-time** values — mutating these two afterwards changes nothing on an existing instance (so you never get "the same assignment works on an instance that has not sent anything yet and does nothing on one that has"). `QueueTimeout` is the opposite — a per-request item, so one call can change how long it waits.
 - Queueing **does not** count against `Timeout` (each retry attempt gets its own) but **does** count against `Resilience.TotalTimeout`; it can be cancelled with a `CancellationToken`.
 - A slot covers the whole in-flight span: each retry attempt takes one (backoff does not hold it), and **a streaming response holds it until the body stream is disposed**.
 - **Self-deadlock risk**: sending a child request on the same instance from inside an interceptor or progress callback competes for the same slots. Set a `QueueTimeout` or use a separate instance.
@@ -2665,11 +2665,11 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2514 / 2503 | `net8.0` / `net6.0` | 5017 |
+| `AxiosNet.Tests` (core + declarative) | 2517 / 2506 | `net8.0` / `net6.0` | 5023 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2714 / 2624** | | **5338** |
+| **Total** | **2717 / 2627** | | **5344** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

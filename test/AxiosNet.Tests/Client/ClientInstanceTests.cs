@@ -230,6 +230,26 @@ public sealed class ClientInstanceTests
         Assert.Equal(1, gate!.GetType().GetProperty("MaxConcurrency")!.GetValue(gate));
     }
 
+    [Fact]
+    public async Task OptionsMutatedBeforeFirstRequest_DoNotChangeGateCapacity()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new { ok = true }));
+        using var client = new AxiosClient(options: new AxiosClientOptions { MaxInFlight = 1 });
+
+        // 闸门是首个请求才建的：容量必须在构造期就定稿，否则「改得生效与否」取决于闸门建没建，
+        // 同一次赋值在「发过请求」和「没发过请求」的实例上表现不同 —— 那是最难排查的一类不一致。
+        client.Options.MaxInFlight = 8;
+
+        await client.GetAsync(server.Url + "x");
+
+        var gate = typeof(AxiosClient)
+            .GetField("_gate", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(client);
+
+        Assert.NotNull(gate);
+        Assert.Equal(1, gate!.GetType().GetProperty("MaxConcurrency")!.GetValue(gate));
+    }
+
     // ------------------------------------------------------------------
     // WithCredentials：构造期一个入口，池 / Handler 场景各自把关
     // ------------------------------------------------------------------

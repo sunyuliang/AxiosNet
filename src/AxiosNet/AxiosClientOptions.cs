@@ -79,7 +79,8 @@ public sealed class AxiosClientOptions
     /// 实例内在途请求上限（并发闸门容量），<c>null</c>（默认）不限；必须是正整数，0 / 负数在构造期报错。
     /// </summary>
     /// <remarks>
-    /// 闸门在首个请求时按本值创建并固定；配了对冲时容量要按 <c>1 + MaxHedges</c> 倍预留。
+    /// 闸门在首个受限请求时创建，容量取<b>构造期</b>的本值并固定（构造之后再改它也不影响容量）。
+    /// 配了对冲时容量要按 <c>1 + MaxHedges</c> 倍预留。
     /// 排队等待的时长不在这里（那个值按请求可变），见 <see cref="AxiosConfig.ResilienceSettings.Concurrency"/>。
     /// </remarks>
     public int? MaxInFlight { get; set; }
