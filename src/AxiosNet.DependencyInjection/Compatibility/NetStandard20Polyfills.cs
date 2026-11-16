@@ -10,6 +10,10 @@ namespace System.Diagnostics.CodeAnalysis
     /// <summary>
     /// 裁剪 / AOT 元数据标注的成员种类位标志；数值与 BCL 保持一致，便于同一份源码在三份资产上编译。
     /// </summary>
+    /// <remarks>
+    /// 每个 <c>Public*</c> 成员等价于 BCL 的 <c>Public | Instance | DeclaredOnly | &lt;种类&gt;</c>；
+    /// <c>NonPublic*</c> 等价于对应的 <c>NonPublic | Instance | DeclaredOnly | &lt;种类&gt;</c>。
+    /// </remarks>
     [Flags]
     internal enum DynamicallyAccessedMemberTypes
     {
@@ -55,7 +59,7 @@ namespace System.Diagnostics.CodeAnalysis
         /// <summary>非公共事件。</summary>
         NonPublicEvents = 0x1000,
 
-        /// <summary>接口实现映射。</summary>
+        /// <summary>实现接口的成员。</summary>
         Interfaces = 0x2000,
 
         /// <summary>全部成员。</summary>

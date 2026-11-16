@@ -30,7 +30,7 @@ public sealed class AccessTokenOptions
     private TimeSpan _refreshAhead = TimeSpan.FromMinutes(1);
     private TimeSpan? _refreshTimeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>创建配置。</summary>
+    /// <summary>用取令牌回调创建配置；刷新回调此时未配置。</summary>
     /// <param name="acquireAsync">首次取令牌（授权码 / 密码 / 客户端凭据换 token）。</param>
     public AccessTokenOptions(Func<CancellationToken, ValueTask<AccessToken>> acquireAsync)
     {

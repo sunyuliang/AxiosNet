@@ -352,11 +352,8 @@ namespace AxiosNet.SourceGen
 
         /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），跳过 <c>{{</c> 转义、空名与非标识符内容。</summary>
         /// <remarks>
-        /// 文法必须与运行期 <c>BindingAccumulator.PathTokenRegex</c>（<c>\{([A-Za-z_][A-Za-z0-9_]*)\}</c>）一致。
-        /// 运行期只认标识符，<c>{id:int}</c> / <c>{id:regex(\d{3})}</c> 这类模板在运行期报的是
-        /// 「含无法识别的花括号」；这里若把整段 <c>id:int</c> 当占位符名，就会报出
-        /// 「含占位符 {id:int}，但没有成员标注 [Path]」——用户照它补 <c>[Path("id:int")]</c> 仍过不了运行期，
-        /// 等于把人指错方向。因此文法不匹配的花括号在这里<b>跳过</b>，交给运行期那条更准确的诊断。
+        /// 文法必须与运行期 <c>BindingAccumulator.PathTokenRegex</c> 一致。不匹配的花括号在这里跳过而不是当成占位符，
+        /// 否则 <c>{id:int}</c> 这类模板会报出误导性的「没有成员标注 [Path]」，交给运行期诊断更准确。
         /// </remarks>
         /// <param name="template">路由模板。</param>
         /// <returns>占位符名序列。</returns>
@@ -676,6 +673,10 @@ namespace AxiosNet.SourceGen
             return (contentType, queryCollectionFormat, hasStreamAttribute, streamFormat);
         }
 
+        /// <summary>在类型自身上找某个特性（不查基类、不查接口）；特性类型未知（<paramref name="attributeType"/> 为 <c>null</c>）时直接返回 <c>null</c>。</summary>
+        /// <param name="type">要检查的类型。</param>
+        /// <param name="attributeType">目标特性的符号；<c>null</c> 表示本编译单元里没有该特性。</param>
+        /// <returns>命中的特性数据；没标时为 <c>null</c>。</returns>
         private static AttributeData? FindOnType(INamedTypeSymbol type, INamedTypeSymbol? attributeType)
         {
             if (attributeType is null)
@@ -694,6 +695,9 @@ namespace AxiosNet.SourceGen
             return null;
         }
 
+        /// <summary>取特性构造器的第一个 <c>int</c> 实参（<c>[QueryCollectionFormat(X)]</c> / <c>[Stream(X)]</c> 的枚举值）；没有则返回 <c>null</c>。</summary>
+        /// <param name="attribute">要读的特性数据。</param>
+        /// <returns>第一个整型实参；不存在或类型不符时为 <c>null</c>。</returns>
         private static int? GetIntArgument(AttributeData attribute)
             => attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int value
                 ? value

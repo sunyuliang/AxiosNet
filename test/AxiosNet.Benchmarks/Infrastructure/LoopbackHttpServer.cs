@@ -6,22 +6,7 @@ using System.Text;
 namespace AxiosNet.Benchmarks.Infrastructure;
 
 /// <summary>
-/// 基准专用的最小 HTTP/1.1 回环服务器：一条连接上「读一个请求头块（顺带跳掉正文）→ 写一份预编码响应」，
-/// Keep-Alive 复用连接。
-/// <para>
-/// 为什么需要它：真实往返里客户端只占一部分时间，服务器侧的每请求成本必须低到可以当背景，
-/// 否则两侧（AxiosNet 与 HttpClient 基线）会被同一个瓶颈压成同一个数字，比值恒为 1。
-/// 这里把服务器压到「每请求一读一写」，且响应字节<b>只在启动时编码一次</b>。
-/// </para>
-/// <para>
-/// 与 <c>test/AxiosNet.Tests/Infrastructure/PerfHttpServer.cs</c> 同形态，但刻意各自独立：
-/// 基准项目不引用测试项目，避免测试基建重构（例如给 TestRequest 加字段）悄悄改变基准口径。
-/// 差异只有一处 —— 这里会按 <c>Content-Length</c> 跳过请求正文，因此能测带正文的请求（POST）。
-/// </para>
-/// <para>
-/// 已知边界：正文支持 <c>Content-Length</c> 与 <c>Transfer-Encoding: chunked</c> 两种框架
-/// （后者用于流式上传）；其他传输编码会在控制台报错并断开连接（而不是把正文当成下一个请求解析，静默把数字搞脏）。
-/// </para>
+/// 基准专用的最小 HTTP/1.1 回环服务器：一条连接上读一个请求头块（按 <c>Content-Length</c> 跳正文）→ 写一份预编码响应，Keep-Alive 复用连接。正文支持定长与 <c>chunked</c>，其他传输编码报错断开。
 /// </summary>
 internal sealed class LoopbackHttpServer : IAsyncDisposable
 {
@@ -182,14 +167,7 @@ internal sealed class LoopbackHttpServer : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// 从请求头块里取正文框架：<c>Content-Length</c>（没有则 0）或 <c>Transfer-Encoding: chunked</c>。
-    /// <para>
-    /// 纯字节扫描，不 <c>GetString</c> + <c>Split</c>：服务器与客户端在同一个进程里，
-    /// 每请求几百字节的字符串分配会变成被测数字旁边的 GC 压力。这里只找三个字面量
-    /// （<c>content-length:</c> / <c>transfer-encoding</c> / <c>chunked</c>），足够覆盖基准自己发出的请求。
-    /// </para>
-    /// </summary>
+    /// <summary>从请求头块里取正文框架：<c>Content-Length</c>（没有则 0）或 <c>Transfer-Encoding: chunked</c>。纯字节扫描，避免每请求的字符串分配变成被测数字旁的 GC 压力。</summary>
     private static (int BodyLength, bool Chunked) ParseFraming(byte[] buffer, int headerEnd)
     {
         var span = buffer.AsSpan(0, headerEnd);

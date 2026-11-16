@@ -98,13 +98,8 @@ internal sealed class RetryBody
     /// 调用方自备的 <see cref="HttpContent"/>：只放行能确定可重放的标准形态，逐层下钻 multipart 部件。
     /// </summary>
     /// <remarks>
-    /// 「长度已知」不等于「可重放」——一次性流包装成自定义内容后照样只发得出一次。
-    /// 所以这里按白名单判断：内存缓冲形态与 JsonContent 放行，其余自定义内容一律在发送前拒绝。
-    /// <para>
-    /// 自引用的 <see cref="MultipartContent"/>（部件里包含自身）在这里**不做**环检测：BCL 的
-    /// <c>TryComputeLength</c> / <c>Dispose</c> / 序列化本身就会沿部件图无限递归，进到本方法之前或之后
-    /// 都会 StackOverflow —— 加一圈访问栈只是把崩溃点挪个位置，用例也测不出来（实测崩在 Dispose）。
-    /// </para>
+    /// 「长度已知」不等于「可重放」，所以按白名单判断：内存缓冲形态与 JsonContent 放行，其余自定义内容在发送前拒绝。
+    /// 自引用的 <see cref="MultipartContent"/> 不做环检测：BCL 自身就会沿部件图无限递归。
     /// </remarks>
     private static void EnsureReplayableContent(HttpContent content, AxiosConfig config)
     {

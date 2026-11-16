@@ -5,28 +5,12 @@ using AxiosNet.Retry;
 namespace AxiosNet.Telemetry;
 
 /// <summary>
-/// 观测派发的护栏：把当前实现包一层，<b>任何成员抛出的异常都在这里结束</b>，不会外溢到请求路径。
+/// 观测派发的护栏：把当前实现包一层，任何成员抛出的异常都在这里结束，不会外溢到请求路径。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 可替换实现是第三方代码（<see cref="AxiosTelemetry.Sink"/> 公开可写）。它的异常一旦外溢，
-/// 后果不是「观测丢了」而是「请求坏了」：<c>finally</c> 里的收尾异常会盖掉请求结果与真正的失败原因，
-/// 缓存 / 闸门 / 池 的事件异常会把一条能成功的请求变成失败。所以派发统一走
-/// <see cref="AxiosTelemetry.Dispatch"/>，违约实现只毁掉自己的观测。
-/// </para>
-/// <para>
-/// 库内没有绕开护栏的旁路：连「进」要不要配对「出」这种判定（<see cref="TryEnterRequest"/>）也由护栏
-/// 在<b>自己那份快照</b>上完成，否则两次读 <see cref="AxiosTelemetry.Sink"/> 之间的替换会把一条请求劈成两家。
-/// </para>
-/// <para>
-/// 每个成员都内联 try/catch 而不是共用一个吃 <see cref="Action"/> 的辅助方法：委托会为
-/// <see cref="IAxiosTelemetrySink.RecordLease"/> / <see cref="IAxiosTelemetrySink.EnterLease"/> 这类
-/// 热路径每次派发多分配一个闭包，而本库的分配不变量是「不随请求条数增长」。
-/// </para>
-/// <para>
-/// <see cref="OutOfMemoryException"/> 不吞：那不是「观测写错了」，进程状态已经不可信，按常规失败处理。
-/// 吞掉之后没有二次上报渠道（库不写日志），需要诊断请在自己的实现内部 try/catch。
-/// </para>
+/// 实现抛异常只毁掉自己的观测，不会改写请求结果、也不会盖掉真正的失败原因。
+/// <see cref="OutOfMemoryException"/> 不吞，按常规失败处理（吞掉后没有二次上报渠道）。
+/// 每个成员内联 try/catch，不共用吃 <see cref="Action"/> 的辅助方法：热路径每次派发会多分配一个闭包。
 /// </remarks>
 internal sealed class GuardedTelemetrySink : IAxiosTelemetrySink
 {

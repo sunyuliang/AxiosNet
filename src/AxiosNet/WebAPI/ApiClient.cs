@@ -19,17 +19,16 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
     public AxiosClient Axios { get; }
 
     /// <summary>
-    /// 凭据提供方：每次请求发送前调用一次，返回的凭据描述决定落头；null 表示匿名访问。<see cref="AllowAnonymousAttribute"/> 声明会清空本次的凭据来源（提供方与实例默认的静态凭据都不生效）。
-    /// 本提供方挂在内核中性的凭据来源位上（不占 <see cref="AxiosConfig.TransportSettings.Auth"/> 槽位）：凭据到 <c>Authorization</c> 头的映射由内核统一完成。
-    /// 与显式 <c>Authorization</c> 头、或已经设置的 <c>Transport.Auth</c> 同时存在时视为配置冲突并报错，不做二选一静默压制。
+    /// 凭据提供方：每次请求发送前调用一次，返回的凭据描述决定落头，<c>null</c> 表示匿名访问。
+    /// 挂在内核中性的凭据来源位上（不占 <see cref="AxiosConfig.TransportSettings.Auth"/> 槽位）；与显式 <c>Authorization</c> 头
+    /// 或 <c>Transport.Auth</c> 同时存在时报配置冲突。声明 <see cref="AllowAnonymousAttribute"/> 会清空本次的凭据来源。
     /// </summary>
     public IApiCredentialProvider? CredentialProvider { get; set; }
 
     /// <summary>
-    /// 收到 401 时用新凭据重放一次，默认开启（只在提供方返回托管凭据、由库写入 <c>Authorization</c> 头时生效）。
-    /// 关掉后 401 直接按错误模型抛出。正文按内核共用分类器判定：数据型正文由请求模型重新装配；内存缓冲的
-    /// <c>HttpContent</c> 只在收到 401 后才做正文快照（管线保留首次发送的正文；受 <c>Limits.MaxRequestBytes</c> 约束，超限则不建快照、本次不重放）；
-    /// 流与含流部件的 multipart 不重放。非幂等方法需显式打开 <c>Resilience.AllowUnsafeRetry</c>（与内核重试同一开关）。
+    /// 收到 401 时用新凭据重放一次，默认开启（仅当提供方返回托管凭据时生效）。
+    /// 缓冲的 <c>HttpContent</c> 在 401 后才做正文快照（受 <c>Limits.MaxRequestBytes</c> 约束）；流与 multipart 不重放；
+    /// 非幂等方法需打开 <c>Resilience.AllowUnsafeRetry</c>。
     /// </summary>
     public bool RetryOnUnauthorized { get; set; } = true;
 

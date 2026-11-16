@@ -161,10 +161,10 @@ public readonly struct AxiosAttemptContext
     /// <summary>区分两个「整数型」派生字段的私有标记：拷贝构造的重载只能靠参数类型区分。</summary>
     private enum IntField
     {
-        /// <summary>尝试序号。</summary>
+        /// <summary>派生时覆写尝试序号。</summary>
         AttemptNumber,
 
-        /// <summary>端点序号。</summary>
+        /// <summary>派生时覆写端点序号。</summary>
         EndpointIndex
     }
 

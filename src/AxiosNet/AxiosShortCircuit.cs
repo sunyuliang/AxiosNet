@@ -4,14 +4,13 @@ using System.Text;
 namespace AxiosNet;
 
 /// <summary>
-/// 短路响应：本次请求<b>不发出去</b>，直接把这份结果当作响应返回；挂在 <see cref="AxiosConfig.ShortCircuit"/> 上。
+/// 短路响应：本次请求不发出去，直接把这份结果当作响应返回；挂在 <see cref="AxiosConfig.ShortCircuit"/> 上。
 /// </summary>
 /// <remarks>
-/// 闸门（排队 / 并发槽位）、编码、连接租约、发送、重试、熔断、遥测 span 都不参与；响应方向照常处理——
-/// 按本次 <c>dataType</c> / responseType 重新解析、跑 transformResponse、过 <see cref="AxiosConfig.ValidateStatus"/>、
-/// 执行响应拦截器。唯一可辨的痕迹是 <see cref="AxiosResponse.Request"/> 为 <c>null</c>。
-/// <para><see cref="Body"/> 是原始字节，按每次调用的类型重新解析；<see cref="Data"/> 是已成型的结果，原样交付。</para>
-/// <para>本对象只描述「这一次请求」：<see cref="AxiosConfig.Clone"/> 会清空它，放在 Defaults 上不生效。</para>
+/// 闸门、编码、连接租约、发送、重试、熔断与遥测 span 都不参与；响应方向照常处理——按本次 responseType 重新解析、
+/// 跑 transformResponse、过 <see cref="AxiosConfig.ValidateStatus"/>、执行响应拦截器。<see cref="AxiosResponse.Request"/> 为 <c>null</c>。
+/// <see cref="Body"/> 是原始字节（按每次调用的类型重新解析），<see cref="Data"/> 是已成型的结果（原样交付）。
+/// 只描述这一次请求：<see cref="AxiosConfig.Clone"/> 会清空它，放在 Defaults 上不生效。
 /// </remarks>
 /// <example>
 /// <code>
@@ -56,22 +55,13 @@ public sealed class AxiosShortCircuit
     internal TimeSpan? StoredAge { get; set; }
 
     /// <summary>
-    /// 响应头的<b>全部值</b>（每个头的每一条）：给自定义 <see cref="Cache.IAxiosCacheStore"/>
-    /// <b>保存</b>条目用的只读出口。
+    /// 响应头的全部值（每个头的每一条）：给 <see cref="Cache.IAxiosCacheStore"/> 保存条目用的只读出口。
     /// </summary>
     /// <remarks>
-    /// 数据来自内部的多值字段（那个成员只对包内可见）；本属性只有 get —— 写入请走 <see cref="Restore"/>。
-    /// 没有多值头时（自己 <c>new</c> 的条目、只填了 <see cref="Headers"/> 的条目）为 <c>null</c>。
-    /// <para>
-    /// 存储只保存 <see cref="Headers"/>（单值）会丢这三样：多条 <c>Set-Cookie</c> / <c>Vary</c> 的全部值、
-    /// <c>ETag</c> / <c>Last-Modified</c> 的<b>优先</b>来源（见 <c>Cache/CacheValidators.cs</c>）、
-    /// 以及同名多值头（如多个 <c>WWW-Authenticate</c>）除首值以外的部分。
-    /// </para>
-    /// <para>
-    /// 返回的是<b>独立快照</b>（深拷贝 + 只读包装，键按大小写不敏感）：调用方对它做任何修改都不会影响条目本身，
-    /// 也不会污染同一条目后续命中 / 落库的结果。每次读取都新建一份，适合「落库那一刻读一次」的用法，
-    /// 不要放进循环里反复取。
-    /// </para>
+    /// 只读，写入请走 <see cref="Restore"/>；没有多值头时为 <c>null</c>。
+    /// 只保存 <see cref="Headers"/>（单值）会丢掉多条 <c>Set-Cookie</c> / <c>Vary</c> 的全部值、<c>ETag</c> / <c>Last-Modified</c>
+    /// 的优先来源，以及同名多值头除首值以外的部分。
+    /// 返回独立快照（深拷贝 + 只读包装，键大小写不敏感），每次读取都新建一份，适合落库时读一次、不要放进循环。
     /// </remarks>
     public IReadOnlyDictionary<string, IEnumerable<string>>? MultiValueHeaderValues
     {
@@ -146,41 +136,17 @@ public sealed class AxiosShortCircuit
         => new() { Status = status, Data = data };
 
     /// <summary>
-    /// 从自己的存储里<b>重建</b>一条缓存条目：自定义 <see cref="Cache.IAxiosCacheStore"/>（Redis / 共享缓存 /
-    /// 自己序列化的文件）取回记录后，用本工厂把各字段一次性装回一个条目，再交给库当作命中结果。
+    /// 从存储记录重建一条缓存条目：自定义 <see cref="Cache.IAxiosCacheStore"/> 取回记录后交给库当作命中结果。
     /// </summary>
     /// <remarks>
-    /// 为什么需要这个入口：<see cref="AxiosShortCircuit"/> 有三个只对包内可见的成员，
-    /// 包外<b>写</b>不进去（读可以走 <see cref="MultiValueHeaderValues"/> / <see cref="CachedAt"/> / <see cref="CachedAge"/>），
-    /// 于是「照自己的格式存、再照自己的格式读回」就会静默降级（不报错、只是行为不对）：
-    /// <list type="bullet">
-    /// <item><see cref="MultiValueHeaders"/>：响应头的<b>全部值</b>。多条 <c>Set-Cookie</c> / <c>Vary</c> 明细
-    /// 单值字典装不下；不给它就只能按首值折叠（或整条丢失），条件请求与 304 合并读到的头因此变样。</item>
-    /// <item><see cref="ReceivedAt"/> + <see cref="StoredAge"/>：落库时刻与落库那一刻的龄期（RFC 9111 的
-    /// <c>current_age</c>）。两者缺一，命中时的 <c>Age</c> 头就停在写入时刻、不再随在缓存里停留的时间推进。</item>
-    /// <item><see cref="MultiValueHeaders"/> 还是 <c>ETag</c> / <c>Last-Modified</c> 的<b>优先</b>来源
-    /// （见 <c>Cache/CacheValidators.cs</c>）：只填 <see cref="Headers"/> 时条件请求仍可用，但多值条目上的
-    /// 校验器会被降级成「只有首值」。</item>
-    /// </list>
-    /// <para>参数与同名属性一一对应，默认值即「这条记录里没有这一项」。<paramref name="body"/> 与
-    /// <see cref="Data"/> 互斥——本工厂只接受原始字节（存储后端存的就是字节）。</para>
-    /// <para>
-    /// <b>注意交付规则</b>：<paramref name="multiValueHeaders"/> 非空时，库只用它建响应头，
-    /// <paramref name="headers"/> 会被整份忽略（见 <c>Internal/ResponseReader.cs</c> 的短路头装配）。
-    /// 因此存储要实现「命中的响应头与原响应一致」，就得像库自己那样两边同源填写：
-    /// 单值字典 = 每个头的首值，多值字典 = 每个头的全部值。只填单值字典同样可用，只是丢掉同名多值。
-    /// </para>
-    /// <para>
-    /// <b>传入的字典按引用收下，本工厂不做复制</b>（复制会落在每次命中的热路径上）：交出所有权后不要再改它们，
-    /// 也不要跨条目复用同一个可变字典。存储实现自然形态是「反序列化出一份新的字典 → 交给本工厂」，那样天然安全。
-    /// 唯一例外：<paramref name="multiValueHeaders"/> 里出现「值整份为 <c>null</c>」的条目时（反序列化常见形态，
-    /// 如 <c>{"Vary":null}</c>），本工厂会复制一份并剔掉这些条目 —— 否则下游按「每个值非 null」读的地方
-    /// （条件请求校验器、导出视图）会直接抛 <see cref="NullReferenceException"/> / <see cref="ArgumentNullException"/>。
-    /// </para>
+    /// 参数与同名属性一一对应，默认值即「记录里没有这一项」；<paramref name="body"/> 与 <see cref="Data"/> 互斥。
+    /// <paramref name="multiValueHeaders"/> 非空时库只用它建响应头，<paramref name="headers"/> 被整份忽略；
+    /// 值整份为 <c>null</c> 的条目视为「没有这个头」。
+    /// 字典按引用收下、不复制：交出所有权后不要再改，也不要跨条目复用同一个可变字典。
     /// </remarks>
-    /// <param name="body">响应原始字节；存储里没有正文时传 <c>null</c>。</param>
-    /// <param name="headers">单值头字典（大小写不敏感地查）；没有传 <c>null</c>。</param>
-    /// <param name="multiValueHeaders">多值头（每个头的全部值）；命中时优先于 <paramref name="headers"/>。值整份为 <c>null</c> 的条目视为「没有这个头」。</param>
+    /// <param name="body">响应原始字节；没有正文时传 <c>null</c>。</param>
+    /// <param name="headers">单值头字典；没有传 <c>null</c>。</param>
+    /// <param name="multiValueHeaders">多值头（每个头的全部值）；命中时优先于 <paramref name="headers"/>。</param>
     /// <param name="receivedAt">落库时刻；与 <paramref name="storedAge"/> 一起决定命中时的 <c>Age</c>。</param>
     /// <param name="storedAge">落库那一刻的龄期（<c>current_age</c>）。</param>
     /// <param name="contentType">正文媒体类型，等价于头里的 <c>Content-Type</c>（两者都给时以本项为准）。</param>
@@ -219,18 +185,8 @@ public sealed class AxiosShortCircuit
     /// 归一多值头：剔掉「值整份为 <c>null</c>」的条目（等同「没有这个头」）。
     /// </summary>
     /// <remarks>
-    /// 为什么必须在入口做：<c>Restore</c> 是包外写入这三个字段的唯一通道，而调用方最常见形态是
-    /// 「反序列化出一份字典交给它」（各存储后端的自然形态）——<c>System.Text.Json</c> 遇到
-    /// <c>{"Vary":null}</c> 就会产出 <c>null</c> 值。下游有<b>两处</b>按 <c>foreach (header.Value)</c>
-    /// 直接读、自己不判空：<see cref="Cache.CacheValidators"/>（条件请求必经，取到 <c>null</c> 值会
-    /// <see cref="NullReferenceException"/>）与本类的 <see cref="MultiValueHeaderValues"/> 导出视图
-    /// （<c>new List&lt;string&gt;(null)</c> 会 <see cref="ArgumentNullException"/>）。
-    /// 另三处读取点（交付装配、304 合并、落库）各自已经跳过 <c>null</c> 值，不受影响 ——
-    /// 在入口归一只是把剩下这两处一起挡住，且这里只付一次遍历。
-    /// <para>
-    /// 分配：没有 null 值时原样返回传入的字典（<b>不复制</b>，常态零分配，与此前「按引用收下」一致）；
-    /// 只有确实存在 null 值时才复制一份干净的。
-    /// </para>
+    /// 下游有按 <c>foreach (header.Value)</c> 不判空的读取点（条件请求校验器、导出视图），<c>null</c> 值会直接抛异常，故在入口归一。
+    /// 没有 <c>null</c> 值时原样返回传入的字典（不复制），确实存在时才复制一份干净的。
     /// </remarks>
     /// <param name="multiValueHeaders">调用方给的字典，可能为 <c>null</c>。</param>
     /// <returns>值全部非 null 的字典（可能是同一个实例）。</returns>

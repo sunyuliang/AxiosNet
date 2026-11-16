@@ -6,10 +6,7 @@ using AxiosNet.Pooling;
 namespace AxiosNet.Compat.Tests;
 
 /// <summary>
-/// 兼容资产上的契约细节回归：
-/// (1) 参数为空时抛出的必须是标准 <see cref="ArgumentNullException"/>，不能是兼容层的派生类
-///     （<c>ArgumentNullExceptionCompat</c> 只用来补 <c>ThrowIfNull</c> 静态方法）；
-/// (2) 配置容器克隆时并发字典回退到 Ordinal 比较器——该属性在 ns2.0 契约与 .NET Framework 运行时里都不存在。
+/// 兼容资产上的契约细节回归：(1) 参数为空必须抛标准 <c>ArgumentNullException</c>，不是兼容层的派生类；(2) 克隆配置容器时并发字典回退到 <c>Ordinal</c> 比较器。
 /// </summary>
 public sealed class CompatContractTests
 {

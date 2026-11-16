@@ -3,10 +3,8 @@ using System;
 namespace AxiosNet;
 
 /// <summary>
-/// URL 构造专用的字符区间拼接入口：net6+ 直接转发 BCL 的 span 重载（只分配结果字符串），
-/// netstandard2.0 没有这些重载，退化成一次 char[] 拷贝再构串。
-/// 集中在这一处，是为了让 <c>UrlBuilder</c> 的拼接语义在三份资产上完全一致，
-/// 同时避免在业务源码里对每个片段写 .ToString()（那会按片段数多分配若干中间字符串）。
+/// URL 构造专用的字符区间拼接入口：net6+ 转发 BCL 的 span 重载（只分配结果字符串），
+/// netstandard2.0 退化成一次 <c>char[]</c> 拷贝再构串。集中在一处以保证三份资产的拼接语义一致。
 /// </summary>
 internal static class SpanStringConcat
 {

@@ -638,6 +638,8 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
     /// </summary>
     private static long _generationEpoch;
 
+    /// <summary>取下一个全局唯一代次（原子自增），见 <see cref="_generationEpoch"/>。</summary>
+    /// <returns>从未被使用过的代次值。</returns>
     private static long NextGenerationEpoch() => Interlocked.Increment(ref _generationEpoch);
 
     /// <summary>切换状态：换一个全局唯一的代次（旧请求的回报按迟到处理）、跟着调整各维度计数，返回迁移记录。</summary>

@@ -1,16 +1,7 @@
 namespace AxiosNet.Benchmarks.Harness;
 
 /// <summary>
-/// 交互式基准菜单：启动时列出全部组（运行时反射发现，见 <see cref="BenchmarkDiscovery"/>），
-/// 输入编号跑一组，跑完回到菜单，直到输入 q 退出 —— 形态与 <c>samples/AxiosNet.Simple/SampleMenu.cs</c> 一致。
-/// <para>
-/// <b>为什么要有菜单</b>：基准的入口成本全在「记参数」上（<c>--filter '*Merge*'</c> 要记得类名、
-/// <c>--job short</c> 要记得它只能冒烟）。菜单把「选哪一组」和「这组怎么读」放在一起，
-/// 敲一个数字就能跑；命令行通道原样保留，脚本与 README 的前后对比流程不受影响。
-/// </para>
-/// <para>
-/// <b>不自动清屏</b>：一轮输出动辄几十行，清屏会把上一组的结果冲掉，而前后两组放在同一屏对比才有意义。
-/// </para>
+/// 交互式基准菜单：启动时反射列出全部组，输入编号跑一组，跑完回到菜单，<c>q</c> 退出。命令行通道原样保留；不自动清屏，前后两组要留在同一屏里对比。
 /// </summary>
 internal static class BenchmarkMenu
 {

@@ -5,9 +5,8 @@ namespace AxiosNet.WebAPI;
 
 /// <summary>
 /// 声明式入口：<c>Axios.Create(url).Create&lt;IUserApi&gt;()</c> / <c>client.RequestAsync(request)</c>。
-/// 一个客户端实例既是原始 HTTP 入口，也是声明式入口，不需要再单独构造门面。
-/// 需要凭据提供方 / 强类型错误工厂时，先构造 <see cref="ApiClient"/> 并设置状态；
-/// 同一个 <see cref="AxiosClient"/> 的门面按需创建并缓存，后续扩展调用复用同一个门面，状态不会丢。
+/// 同一个客户端实例既是原始 HTTP 入口，也是声明式入口。需要凭据提供方 / 强类型错误工厂时先构造 <see cref="ApiClient"/>；
+/// 门面按需创建并缓存，后续扩展调用复用同一个门面。
 /// </summary>
 public static class AxiosClientDeclarativeExtensions
 {

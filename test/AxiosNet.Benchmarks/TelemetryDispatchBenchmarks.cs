@@ -7,26 +7,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 观测派发的一次调用成本：接口直调 → 读 <see cref="AxiosTelemetry.Sink"/> → 经护栏派发。
-/// <para>
-/// <b>为什么单独一个类</b>：池 / 租约的水位与计数走的是「每次事件一次派发」的同步热路径
-/// （<c>RecordLease</c> / <c>TagPoolReuse</c> / <c>EnterLease</c>），一次请求里被调到好几次。
-/// 可替换观测（<see cref="IAxiosTelemetrySink"/>）换来的是一次虚调用，派发护栏
-/// （<c>AxiosTelemetry.Dispatch</c>）又叠了一次虚调用加一个 <c>try/catch</c>——
-/// 这两跳值不值，只能在这里按 ns 量出来，端到端基准（回环 socket ≈ 90 µs/请求）根本分辨不出。
-/// </para>
-/// <para>
-/// <b>怎么读</b>：三个变体打的是同一个内置实现（<see cref="BuiltInTelemetrySink"/>），所以
-/// 内置那部分工作（Meter 计数器 + 标签）在每一行里都有，差值才是派发层的净成本：
-/// <c>Sink_ViaProperty − Sink_Direct</c> = 一次 volatile 读；
-/// <c>Sink_ViaGuard − Sink_Direct</c> = 护栏那一跳（虚调用 + 空 catch 块）。
-/// 现行库内路径 ≈ 两者之和，与「一次回环往返」相差三个数量级就认为不值得优化。
-/// </para>
-/// <para>
-/// <b>护栏为什么用反射拿</b>：<c>AxiosTelemetry.Dispatch</c> 是 internal（库外不该有第二个派发口），
-/// 基准项目不在 <c>InternalsVisibleTo</c> 里。反射只发生在 <see cref="Setup"/>，每操作零成本；
-/// 若哪天它改名，这里会立刻抛异常，不会静默测到别的东西。
-/// </para>
+/// 观测派发的一次调用成本：接口直调 → 读属性 → 经护栏派发。三个变体打的是同一个内置实现，差值才是派发层净成本（一次 volatile 读 + 一次虚调用加 try/catch）；护栏经反射取得，因为它 internal。
 /// </summary>
 [Description("观测派发（池 / 租约热路径）：接口直调 vs 读属性 vs 经护栏")]
 [BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]

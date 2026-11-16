@@ -304,12 +304,10 @@ public sealed class HeadersCopyOnWriteTests
     {
         // 默认头是「每请求拷一份、之后只读」的典型形态：5 个头不应让每请求多分配约 1.2 KB。
         // （≈240 B/头：整份克隆 + 每请求 List 快照）。写时复制之后我们只剩实例本身（24 B，与头数无关）。
-        //
         // 剩下的大头是 BCL 把每个头写进 HttpRequestMessage.Headers —— 它按「字典初始化 + 扩容」计费，
         // 不是按头计费：net8 上 1 头 136 B / 5 头 288 B / 10 头 568 B，net6 上 1 头 296 B / 5 头 600 B。
         // 所以这里不用绝对阈值（换个运行时或改个头数，阈值就变成噪音），改为「现场测一遍裸 BCL 再相减」，
         // 只钉我们自己的那一份：AxiosNet 的边际成本 − 裸 BCL 的边际成本 ≤ 64 B。
-        //
         // 两个成本必须同一口径测：都走进程级计数（见 MeasureRequestAsync）。混用「线程级 + 进程级」
         // 相减会得到一个既不是前者也不是后者的数，护栏照样会假红。
         using var bare = new AxiosClient(handler: new StubHandler());

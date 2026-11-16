@@ -153,6 +153,7 @@ public sealed class CacheIdentityKeyExample : IExample
         return string.IsNullOrEmpty(token) ? key : key + " tk:" + Digest(token);
     }
 
+    /// <summary>造一份只设了一个头的配置。</summary>
     private static AxiosConfig ConfigWithHeader(string name, string value)
     {
         var config = new AxiosConfig();
@@ -160,6 +161,7 @@ public sealed class CacheIdentityKeyExample : IExample
         return config;
     }
 
+    /// <summary>造一份带 <c>OnSendingRequest</c> 钩子的配置：发送前把 <c>X-Api-Key</c> 改写成给定值。</summary>
     private static AxiosConfig Hooked(string apiKey)
     {
         var config = new AxiosConfig();

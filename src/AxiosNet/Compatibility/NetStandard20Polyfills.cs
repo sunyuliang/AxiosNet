@@ -131,10 +131,10 @@ namespace System.Runtime.CompilerServices
     internal sealed class CallerArgumentExpressionAttribute : Attribute
     {
         /// <summary>声明要取哪一个参数的调用处表达式。</summary>
-        /// <param name="parameterName">参数名。</param>
+        /// <param name="parameterName">要捕获表达式的参数名。</param>
         public CallerArgumentExpressionAttribute(string parameterName) => ParameterName = parameterName;
 
-        /// <summary>参数名。</summary>
+        /// <summary>要捕获表达式的参数名；编译器在此参数处填入对应实参的源码文本。</summary>
         public string ParameterName { get; }
     }
 }
@@ -146,6 +146,10 @@ namespace System.Diagnostics.CodeAnalysis
     /// netstandard2.0 的引用程序集把这些标注做成 internal，库无法访问；这里补一份库内私有版本。
     /// 兼容资产不跑裁剪分析器，这些标注只保留源码一致性，没有运行时语义。
     /// </summary>
+    /// <remarks>
+    /// 每个 <c>Public*</c> 成员等价于 BCL 的 <c>Public | Instance | DeclaredOnly | &lt;种类&gt;</c>；
+    /// <c>NonPublic*</c> 等价于对应的 <c>NonPublic | Instance | DeclaredOnly | &lt;种类&gt;</c>。
+    /// </remarks>
     [Flags]
     internal enum DynamicallyAccessedMemberTypes
     {
@@ -191,7 +195,7 @@ namespace System.Diagnostics.CodeAnalysis
         /// <summary>非公共事件。</summary>
         NonPublicEvents = 0x1000,
 
-        /// <summary>接口实现映射。</summary>
+        /// <summary>实现接口的成员。</summary>
         Interfaces = 0x2000,
 
         /// <summary>全部成员。</summary>
@@ -229,7 +233,7 @@ namespace System.Diagnostics.CodeAnalysis
         /// <summary>告警类别。</summary>
         public string Category { get; }
 
-        /// <summary>规则编号。</summary>
+        /// <summary>规则编号，如 <c>IL2026</c>。</summary>
         public string CheckId { get; }
 
         /// <summary>抑制范围。</summary>

@@ -165,6 +165,8 @@ namespace AxiosNet.SourceGen
         }
 
         // 写模块初始化器里的注册项：接口声明数据 + 代理工厂，进程启动时自动登记。
+        // 生成代码分三层：RegisterGeneratedInterface(接口类型, 代理工厂, 元数据构建器) —— 第三段是
+        // 一串链式调用，先写接口级声明，再逐个方法写 `b.Method(...)` 及其参数声明。
         private static void EmitRegistration(StringBuilder builder, InterfaceModelInfo model)
         {
             builder.Append("    [global::System.CodeDom.Compiler.GeneratedCodeAttribute(\"")
@@ -183,6 +185,7 @@ namespace AxiosNet.SourceGen
             builder.AppendLine("                static b =>");
             builder.AppendLine("                {");
 
+            // 接口级声明：静态头、鉴权方案、免鉴权。
             if (model.StaticHeaders.Length > 0)
             {
                 builder.Append("                    b.StaticHeaders(");
@@ -200,6 +203,7 @@ namespace AxiosNet.SourceGen
                 builder.AppendLine("                    b.Anonymous();");
             }
 
+            // 方法级声明：一个方法一条 `b.Method(名, 动词, 路由)` 链，后续每一行都是往这条链上追加配置。
             foreach (var method in model.Methods)
             {
                 builder.Append("                    b.Method(")
@@ -251,6 +255,7 @@ namespace AxiosNet.SourceGen
                         .AppendLine(")");
                 }
 
+                // 参数级声明：`.Parameter(序号, 名, 类型)` 之后再按需追加格式 / 忽略 / 各绑定目标。
                 foreach (var parameter in method.Parameters)
                 {
                     builder.Append("                        .Parameter(")

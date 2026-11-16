@@ -8,7 +8,7 @@ public enum AxiosCompression
     /// <summary>不压缩（用于按请求覆盖实例默认的压缩设置）。</summary>
     None = 0,
 
-    /// <summary>gzip。</summary>
+    /// <summary>gzip（RFC 1952）。</summary>
     Gzip,
 
     /// <summary>deflate（zlib）。</summary>

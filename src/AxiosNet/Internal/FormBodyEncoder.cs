@@ -308,9 +308,16 @@ internal static class FormBodyEncoder
             _options = options;
         }
 
+        /// <summary>数组元素的名字：根数组用 <c>[i]</c>，嵌套数组沿用父名加 <c>[]</c>（表单规则，见 <see cref="IJsonFlattenSink"/>）。</summary>
+        /// <param name="prefix">父级名字；根数组为 <c>null</c>。</param>
+        /// <param name="index">元素下标。</param>
+        /// <returns>该元素在表单里的键名。</returns>
         public string? ArrayItemName(string? prefix, int index)
             => prefix is null ? "[" + index + "]" : prefix + "[]";
 
+        /// <summary>标量叶子按表单规则转义后写入键值对；没有键名的根标量直接丢弃（表单表达不了无名值）。</summary>
+        /// <param name="name">字段名；<c>null</c> 表示根标量，跳过。</param>
+        /// <param name="value">叶子值。</param>
         public void Leaf(string? name, JsonElement value)
         {
             if (name is null)

@@ -44,24 +44,12 @@ public readonly struct AxiosRequestTrace
 /// 库的观测实现：链路、指标与诊断事件全部经它出去，<see cref="AxiosTelemetry.Sink"/> 可整套替换。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 内置实现写 <see cref="System.Diagnostics.ActivitySource"/> / <see cref="System.Diagnostics.Metrics.Meter"/> /
-/// <see cref="System.Diagnostics.DiagnosticListener"/>（OpenTelemetry 按名字订阅即可）；
-/// 换成自己的实现时内置那套<b>整套停用</b>（不建 span、不写指标、不发事件），不是叠加。
-/// </para>
-/// <para>
-/// 实现通常派生 <see cref="AxiosTelemetrySink"/>（全空实现）只覆写需要的几个方法。
-/// 所有方法都可能在并发线程上被调用，实现必须自行保证线程安全；也<b>不应该抛出</b>——
-/// 派发层（<see cref="AxiosTelemetry.Dispatch"/>）会把异常就地吞掉，抛出来只会丢掉自己这次的观测，
-/// 不会影响请求结果。
-/// </para>
-/// <para>
-/// <b>开关只管到哪一层</b>：<see cref="IsEnabled"/> 决定的是<b>请求级生命周期</b>
-/// （<see cref="StartRequest"/> / <see cref="StopRequest"/> / <see cref="SetRequestBodySize"/> /
-/// <see cref="RequestSucceeded"/> / <see cref="RequestFailed"/>）要不要发生；
-/// 缓存 / 重试 / 闸门 / 池 / 租约 这些<b>事件与水位</b>不经过它，实现只要覆写就会收到。
-/// 需要整体关闭请用 <see cref="AxiosTelemetrySink.Off"/>，而不是让 <see cref="IsEnabled"/> 返回 <c>false</c>。
-/// </para>
+/// <see cref="System.Diagnostics.DiagnosticListener"/>；换成自己的实现时内置那套整套停用，不是叠加。
+/// 通常派生本类（全空实现）只覆写需要的方法。实现会在并发线程上被调用，须自行保证线程安全，且不应抛异常
+/// （派发层会吞掉，抛出来只丢掉自己这次的观测）。
+/// <see cref="IsEnabled"/> 只管请求级生命周期，缓存 / 重试 / 闸门 / 池 等事件与水位不经过它；
+/// 整体关闭请用 <see cref="AxiosTelemetrySink.Off"/>。
 /// </remarks>
 public interface IAxiosTelemetrySink
 {

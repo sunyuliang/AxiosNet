@@ -9,23 +9,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 响应 <c>Content-Type</c> 的解析成本：旧的「每条响应都构造 <see cref="MediaTypeHeaderValue"/>」vs 新的
-/// 「只留原始头值、按需拆分」。
-/// <para>
-/// <b>为什么每条都要新建一条响应</b>：BCL 把解析结果缓存在头容器里，同一条消息第二次读
-/// <c>Headers.ContentType</c> 是零分配的——复用同一条消息量到的会是 0，看不出两者的差别。
-/// 真实网络每来一条响应都是新对象，所以这里按「每条响应一次」测。
-/// </para>
-/// <para>
-/// <b>头为什么用 <c>TryAddWithoutValidation</c> 塞原始字符串</b>：网络路径上头就是原始文本，类型化值是在
-/// 第一次读属性时才解析。用 <c>StringContent(..., "application/json")</c> 或 <c>MediaTypeHeaderValue</c> 赋值，
-/// 解析在赋值时就发生了，量到的同样接近 0。
-/// </para>
-/// <para>
-/// 三个变体对应三条真实路径：<c>Eager</c> 是改动前的行为（每条响应都付费）；<c>Lazy_RawOnly</c> 是流式 /
-/// arraybuffer / 从不读 <c>Config.Response</c> 的请求（一次都不拆）；<c>Lazy_Both</c> 是要读正文的请求 ——
-/// 文本、标量、强类型业务对象**都要主值 + 字符集**（UTF-8 字节判定需要字符集），不是「只要主值」。
-/// </para>
+/// 响应 <c>Content-Type</c> 的解析成本：每条响应都构造类型化值（Eager）vs 只留原始头值、按需拆分（Lazy）。每条都新建响应并把头按原始字符串塞进容器，否则头容器缓存会让两边都量到 0。
 /// </summary>
 [Description("响应 Content-Type 解析：类型化解析（旧）vs 原始值 + 按需拆分（新）")]
 [BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "Allocated 是确定性量，看它就够；旧路径每条要付整个媒体类型对象图", Order = 2)]

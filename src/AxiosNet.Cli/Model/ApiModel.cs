@@ -225,7 +225,7 @@ internal sealed class ApiOperation
 /// <summary>一个可绑定到 <c>[Path]</c> / <c>[Query]</c> / <c>[Header]</c> 的参数。</summary>
 internal sealed class ApiParameter
 {
-    /// <summary>参数位置。</summary>
+    /// <summary>绑定位置，决定生成 <c>[Path]</c> / <c>[Query]</c> / <c>[Header]</c> 中的哪一个。</summary>
     public ApiParameterLocation Location { get; set; }
 
     /// <summary>线上键名（OpenAPI 的 <c>name</c>）。</summary>
@@ -234,7 +234,7 @@ internal sealed class ApiParameter
     /// <summary>生成的 C# 成员名（已做名字去重与关键字转义）。</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>参数类型。</summary>
+    /// <summary>参数类型；可空标注由 <see cref="Required"/> 与 <see cref="TypeRef.Nullable"/> 共同决定。</summary>
     public TypeRef Type { get; set; }
 
     /// <summary>是否必填；决定可空标注与接口参数是否带默认值。</summary>
@@ -256,7 +256,7 @@ internal sealed class ApiRequestBody
     /// <summary>生成的正文成员名（默认 <c>body</c>，冲突时自动加序号）。</summary>
     public string BodyName { get; set; } = "body";
 
-    /// <summary>请求体是否必填。</summary>
+    /// <summary>请求体是否必填；非必填时正文成员带可空标注。</summary>
     public bool Required { get; set; }
 
     /// <summary>是否以 multipart/form-data 发送（此时 <see cref="Parts"/> 才是正文）。</summary>
@@ -265,7 +265,7 @@ internal sealed class ApiRequestBody
     /// <summary>multipart 展开后的部件列表。</summary>
     public List<ApiPart> Parts { get; } = new();
 
-    /// <summary>请求体说明。</summary>
+    /// <summary>请求体说明，写进生成代码的 XML 注释。</summary>
     public string? Description { get; set; }
 }
 
@@ -281,13 +281,13 @@ internal sealed class ApiPart
     /// <summary>部件类型；<c>byte[]</c> 视为文件部件。</summary>
     public TypeRef Type { get; set; }
 
-    /// <summary>是否必填。</summary>
+    /// <summary>是否必填；非必填部件在 schema 里允许缺省。</summary>
     public bool Required { get; set; }
 
     /// <summary>是否文件部件（<c>byte[]</c>）。</summary>
     public bool IsFile { get; set; }
 
-    /// <summary>部件说明。</summary>
+    /// <summary>部件说明，写进生成代码的 XML 注释。</summary>
     public string? Description { get; set; }
 }
 
@@ -307,7 +307,7 @@ internal sealed class ApiType
     /// <summary>类型说明（schema 的 description / title）。</summary>
     public string? Description { get; set; }
 
-    /// <summary>类型类别。</summary>
+    /// <summary>类别，决定下面三个列表里只有哪一份有内容。</summary>
     public ApiTypeKind Kind { get; set; }
 
     /// <summary>类属性列表（仅 <see cref="ApiTypeKind.Class"/>）。</summary>
@@ -329,13 +329,13 @@ internal sealed class ApiProperty
     /// <summary>线上键名，写进 <c>[JsonPropertyName]</c>。</summary>
     public string WireName { get; set; } = string.Empty;
 
-    /// <summary>属性类型。</summary>
+    /// <summary>属性类型；可空标注由 <see cref="Required"/> 与 <see cref="TypeRef.Nullable"/> 共同决定。</summary>
     public TypeRef Type { get; set; }
 
     /// <summary>是否在 schema 的 required 列表里。</summary>
     public bool Required { get; set; }
 
-    /// <summary>属性说明。</summary>
+    /// <summary>属性说明，写进生成代码的 XML 注释。</summary>
     public string? Description { get; set; }
 
     /// <summary>是否为 <c>[JsonExtensionData]</c> 兜底属性（保留未知字段）。</summary>

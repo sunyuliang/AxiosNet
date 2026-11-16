@@ -11,9 +11,8 @@ public sealed partial class AxiosConfig
         private long? _maxResponseBytes;
 
         /// <summary>
-        /// 响应体最大字节数：<c>null</c>（默认）不限，与 axios 的 <c>maxContentLength = -1</c> 同口径；
-        /// 超出抛 <see cref="AxiosException"/>，按请求显式设为 <c>null</c> 可清除实例默认上限。
-        /// 普通响应边读边计数，<c>ResponseType.Stream</c> 先按声明长度预检再累计。
+        /// 响应体最大字节数：<c>null</c>（默认）不限（同 axios 的 <c>maxContentLength = -1</c>），超出抛 <see cref="AxiosException"/>。
+        /// 普通响应边读边计数，<see cref="ResponseType.Stream"/> 先按声明长度预检再累计。
         /// </summary>
         public long? MaxResponseBytes
         {
@@ -31,10 +30,9 @@ public sealed partial class AxiosConfig
         private long? _maxRequestBytes;
 
         /// <summary>
-        /// 请求体最大字节数：<c>null</c>（默认）不限；超出抛 <see cref="AxiosException"/>。
-        /// 只对能算出长度的正文生效（JSON / 表单 / <c>byte[]</c> / 可 seek 流）；
-        /// 不可 seek 流、<c>IAsyncEnumerable&lt;byte[]&gt;</c>、multipart 等未知长度正文不拦截，需要硬上限请在调用方自行限制。
-        /// 开启 <see cref="AxiosConfig.Compression"/> 时按压缩后（实际发送）的字节数校验。
+        /// 请求体最大字节数：<c>null</c>（默认）不限，超出抛 <see cref="AxiosException"/>。
+        /// 只对能算出长度的正文生效（JSON / 表单 / <c>byte[]</c> / 可 seek 流）；未知长度正文不拦截。
+        /// 开启 <see cref="AxiosConfig.Compression"/> 时按压缩后的字节数校验。
         /// </summary>
         public long? MaxRequestBytes
         {

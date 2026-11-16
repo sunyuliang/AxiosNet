@@ -5,10 +5,7 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Simple;
 
 /// <summary>
-/// 24 号示例用的极简二进制格式序列化器（真实项目里换成 Protobuf / MessagePack / CBOR）。
-/// 线格式（小端）：<c>[int32 Id][uint8 NameLen][Name(UTF-8)][int32 Quantity][int32 AmountCents]</c>。
-/// 请求方向覆写 <see cref="IContentSerializer.SerializeToBytes"/>（对象 → 字节正文 + 自报媒体类型），
-/// 响应方向覆写字节入口，两个方向都不经过文本。
+/// 24 号示例用的极简二进制序列化器（真实项目换成 Protobuf / MessagePack）：请求方向把对象转成字节正文并自报媒体类型，响应方向从字节入口解析，两个方向都不经过文本。
 /// </summary>
 public sealed class OrderBinarySerializer : IContentSerializer
 {
@@ -49,7 +46,7 @@ public sealed class OrderBinarySerializer : IContentSerializer
         return buffer;
     }
 
-    /// <summary>解码。</summary>
+    /// <summary>把 <c>Serialize</c> 的输出还原成订单对象。</summary>
     public static BinaryOrder Parse(ReadOnlySpan<byte> data)
     {
         var nameLength = data[4];

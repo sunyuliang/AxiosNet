@@ -4,18 +4,7 @@ using BenchmarkDotNet.Running;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 基准入口。两条通道，互不干扰：
-/// <list type="bullet">
-/// <item><b>带参数</b> —— 原样交给 <see cref="BenchmarkSwitcher"/>（<c>--filter</c> / <c>--list</c> /
-/// <c>--job</c> / <c>--exporters</c> 都是 BDN 自己的参数）。脚本、README 的「前后各跑一轮」流程走这条；</item>
-/// <item><b>不带参数</b> —— 交互终端进菜单（选组 → 跑 → 看摘要 → 回到菜单），
-/// 形态与 <c>samples/AxiosNet.Simple</c> 一致；标准输入被重定向时退回打印用法，绝不进菜单
-/// —— 菜单会阻塞在 <c>ReadLine</c> 上，CI / 管道里那就是挂住。</item>
-/// </list>
-/// <para>
-/// 用法见同目录 README.md：<c>dotnet run -c Release</c>（菜单）或
-/// <c>dotnet run -c Release -- --filter '*Merge*'</c>（单组）。
-/// </para>
+/// 基准入口，两条通道：带参数原样交给 BDN（<c>--filter</c> / <c>--list</c> / <c>--job</c> / <c>--exporters</c>）；不带参数进交互菜单。标准输入被重定向时只打印用法，不进菜单（会阻塞在 <c>ReadLine</c> 上）。
 /// </summary>
 public static class Program
 {

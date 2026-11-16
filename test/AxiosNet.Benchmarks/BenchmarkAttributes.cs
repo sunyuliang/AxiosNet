@@ -1,12 +1,7 @@
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 基准类所属的菜单分组。分组是<b>口径声明</b>而不是装饰：数字里含不含 TCP 往返决定了它能不能和
-/// 另一组放在同一个结论里（README「七组基准」一节的边界）。
-/// <para>
-/// 写在基准类自己身上，而不是集中到一张清单：新加一个基准类只改它自己的文件，
-/// 菜单在运行时反射发现 —— 没有「构建 / 发布时登记支持哪些基准」这一步，也就不存在漏登记。
-/// </para>
+/// 基准类所属的菜单分组：决定数字里含不含 TCP 往返，只有同组的结果才能放进同一个结论。分组写在类上，菜单在运行时反射发现。
 /// </summary>
 [AttributeUsage(AttributeTargets.Class)]
 internal sealed class BenchmarkGroupAttribute(string name, string note) : Attribute

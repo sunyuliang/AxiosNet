@@ -14,7 +14,7 @@ internal sealed record MultipartPart(string Name, string? FileName, string? Cont
     /// <summary>按 UTF-8 取文本（仅对普通字段有意义）。</summary>
     public string Text => Encoding.UTF8.GetString(Content);
 
-    /// <summary>是不是文件部件。</summary>
+    /// <summary>是否文件部件：带 <see cref="FileName"/> 即为文件。</summary>
     public bool IsFile => FileName is not null;
 }
 

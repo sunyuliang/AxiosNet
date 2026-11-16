@@ -7,18 +7,12 @@ namespace AxiosNet.Pooling;
 
 /// <summary>
 /// 连接池配置：每个 origin 的最大连接数、连接生命周期、空闲回收等底层 Handler 选项。
-/// 需要插入自己的 <see cref="DelegatingHandler"/>（日志/签名/重试）时用 <see cref="HandlerFactory"/>。
+/// 需要插入自己的 <see cref="DelegatingHandler"/>（日志 / 签名 / 重试）时用 <see cref="HandlerFactory"/>。
 /// </summary>
 /// <remarks>
-/// netstandard2.0 兼容资产由 <c>HttpClientHandler</c> 承载，下列连接级选项没有可映射的位置：
-/// <see cref="PooledConnectionLifetime"/>、<see cref="PooledConnectionIdleTimeout"/>、<see cref="ConnectTimeout"/>、
-/// <see cref="EnableMultipleHttp2Connections"/>、<see cref="KeepAlivePingDelay"/>、<see cref="KeepAlivePingTimeout"/>。
-/// 把它们设为非默认值会在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝，而不是静默忽略。
-/// 注意：<b>默认值本身在该资产上同样不生效</b>——默认的 10 分钟连接轮换、2 分钟空闲回收、15 秒建连超时
-/// 都没有可映射的位置，兼容资产的连接生命周期与建连超时完全由 <c>HttpClientHandler</c> / 运行时决定。
-/// 需要这些语义时请用 <see cref="HandlerFactory"/> 接管默认档 Handler，或让消费方运行 .NET 6+。
-/// 例外：显式设置 <see cref="HandlerFactory"/> 接管默认档 Handler 时，这些选项由工厂决定语义，不做拒绝
-/// （命名传输档的 <see cref="ConnectionTransportOptions.HandlerFactory"/> 只作用于该档，不能给默认档豁免）。
+/// netstandard2.0 资产由 <c>HttpClientHandler</c> 承载，连接生命周期 / 空闲回收 / 建连超时 / h2 ping 这些选项没有映射位置：
+/// 设为非默认值会在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝，默认值本身在该资产上同样不生效。
+/// 需要这些语义时用 <see cref="HandlerFactory"/> 接管默认档，或让消费方运行 .NET 6+。
 /// </remarks>
 public sealed class ConnectionPoolOptions
 {
@@ -60,19 +54,18 @@ public sealed class ConnectionPoolOptions
     // 因此不暴露本项；需要自定义拨号时用 HandlerFactory 自行接管整个 Handler。
 
     /// <summary>
-    /// 响应头体积上限（单位 KB，必须大于 0，默认 64，对应 <c>SocketsHttpHandler.MaxResponseHeadersLength</c>）。
-    /// 超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>（HTTP/1.1 与 HTTP/2 都生效）。
-    /// 0 或负数在建池时就以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
-    /// 仅作用于库默认 Handler；<see cref="HandlerFactory"/> 自建 Handler 时请自行映射。
+    /// 响应头体积上限（KB，必须大于 0，默认 64）。超出时本次请求在响应头解析阶段失败并归一为 <c>ERR_NETWORK</c>；
+    /// 0 或负数在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。仅作用于库默认 Handler。
     /// </summary>
     public int MaxResponseHeadersLength { get; set; } = 64;
 
     /// <summary>
     /// 某个 origin 的 Handler 空闲（无在途租约）多久后从池中驱逐并释放（默认 5 分钟）。
-    /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点都算可驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示不按空闲时间驱逐
-    /// （容量压力 / 关闭池时仍可能被收回）。注意 <c>Zero</c> 与 <c>Infinite</c> 都会让后台定时扫描不启动（见 <see cref="EvictionInterval"/>），
-    /// 此时「可驱逐」只在容量压力或手动 <c>EvictIdleEndpoints()</c> 时生效。
     /// </summary>
+    /// <remarks>
+    /// <see cref="TimeSpan.Zero"/> 表示任何空闲节点都可驱逐，<see cref="Timeout.InfiniteTimeSpan"/> 表示不按空闲时间驱逐。
+    /// 两者都会让后台定时扫描不启动，此时驱逐只在容量压力或手动 <c>EvictIdleEndpoints()</c> 时发生。
+    /// </remarks>
     public TimeSpan IdleHandlerLifetime { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -115,13 +108,11 @@ public sealed class ConnectionPoolOptions
     public bool AutomaticDecompression { get; set; } = true;
 
     /// <summary>
-    /// 自动解压启用的算法集合（默认 <c>DecompressionMethods.All</c>，即 gzip / deflate / br 全开；兼容资产上为 GZip | Deflate）。
+    /// 自动解压启用的算法集合，默认 <c>DecompressionMethods.All</c>（gzip / deflate / br；兼容资产只有 GZip | Deflate）。
     /// </summary>
     /// <remarks>
-    /// 接受 <c>DecompressionMethods.GZip</c> / <c>DecompressionMethods.Deflate</c> / <c>DecompressionMethods.Brotli</c>
-    /// 的任意组合，或 <c>DecompressionMethods.All</c>（BCL 里为 -1，等价于全开）；<see cref="DecompressionMethods.None"/>（兼容资产没有 Brotli / All，只认 GZip / Deflate）
-    /// 表示一个都不解压，其余位在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。
-    /// 只在 <see cref="AutomaticDecompression"/> 为 true 时生效：客户端只宣告、也只解压这里列出的编码。
+    /// 接受 GZip / Deflate / Brotli 的任意组合或 <c>All</c>；<c>None</c> 表示不解压，
+    /// 其余位在建池时以 <c>ERR_BAD_OPTION_VALUE</c> 拒绝。只在 <see cref="AutomaticDecompression"/> 为 true 时生效。
     /// </remarks>
     public DecompressionMethods Decompression { get; set; } =
 #if NETSTANDARD2_0

@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 
 namespace AxiosNet.Compat.Tests;
 
+/// <summary>确认本工程链接到的是 netstandard2.0 兼容资产。</summary>
 public sealed class CompatAssetTests
 {
     [Fact]

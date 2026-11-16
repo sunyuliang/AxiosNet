@@ -123,6 +123,11 @@ internal static class PlatformCompat
 
     private static readonly Func<Type, bool>? ByRefLikeGetter = CreateByRefLikeGetter();
 
+    /// <summary>
+    /// 反射取 <c>Type.IsByRefLike</c> 并编译成委托；属性缺失或签名不符时返回 <c>null</c>，
+    /// 调用方据此退化到「按名字找 [IsByRefLike] 特性」的老路径。只在兼容资产上编译一次。
+    /// </summary>
+    /// <returns>可复用的取值委托；不可用时为 <c>null</c>。</returns>
     private static Func<Type, bool>? CreateByRefLikeGetter()
     {
         var getter = ByRefLikeProperty?.GetGetMethod();

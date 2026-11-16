@@ -39,13 +39,7 @@ internal sealed class BenchmarkGroup(string name, string note, BenchmarkEntry[] 
 }
 
 /// <summary>
-/// 基准目录：<b>运行时反射发现</b>，不维护任何清单。
-/// <para>
-/// 判定标准只有一条：类里有 <c>[Benchmark]</c> 方法。因此新加一个基准类不需要改这里、
-/// 也不需要改 csproj —— 它编译进程序集的那一刻就已经在菜单里了（这正是「要跑哪些由运行时自己选」）。
-/// 缺 <see cref="BenchmarkGroupAttribute"/> 的类不会被藏起来，而是落进「未分组」并在菜单里显示，
-/// 缺 <see cref="BenchmarkHintAttribute"/> 的类读法处会提示补上：漏写可见，不会静默消失。
-/// </para>
+/// 基准目录：运行时反射发现，判据只有一条 —— 类里有 <c>[Benchmark]</c> 方法。缺分组特性的落进「未分组」，缺读法说明的会在菜单里提示。
 /// </summary>
 internal static class BenchmarkDiscovery
 {

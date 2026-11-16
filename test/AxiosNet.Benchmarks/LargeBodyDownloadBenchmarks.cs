@@ -6,17 +6,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 热点七：大正文下载（真实回环 socket）。
-/// <para>
-/// <b>回答的问题</b>：缓冲下载时库侧付出了几次拷贝、内存峰值多大；流式下载是否真的不落内存。
-/// 响应读取的信任上限在 <c>ResponseReader</c> 里：声明长度 ≤ 8MB 时按声明值精确预分配、读满直接交出那个数组（1×）；
-/// &gt; 8MB 走池化分段、装配时只付最终数组（仍是 1×）。所以 <c>Allocated</c> 的预期是：
-/// 缓冲下载 ≈ 1× 载荷，流式下载只有读缓冲，与 <c>Megabytes</c> 无关。
-/// </para>
-/// <para>
-/// <b>读数方式</b>：<c>Ratio</c> 相对 <c>HttpClient_Download_Buffered</c>（时间比，吞吐 = 1 / Ratio）。
-/// 8MB 这一档是预分配路径的边界，和 1MB / 32MB 一起看能区分「预分配」与「段式累积」两条路径的成本。
-/// </para>
+/// 大正文下载（真实回环 socket）：量缓冲下载的拷贝次数与内存峰值，以及流式下载是否真的不落内存。预期 Allocated ≈ 1× 载荷；<c>Ratio</c> 相对 <c>HttpClient_Download_Buffered</c>，吞吐 = 1 / Ratio。
 /// </summary>
 [Description("大正文下载（回环 socket）：1 / 8 / 32MB，缓冲成 byte[] vs 流式读完")]
 [BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]

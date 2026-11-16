@@ -6,15 +6,9 @@ namespace AxiosNet.Internal;
 /// 流式响应的正文包装：把本次尝试的剩余预算延续到正文读取阶段，并统一正文阶段的取消 / IO 异常。
 /// </summary>
 /// <remarks>
-/// 超时 → <c>ECONNABORTED</c>，其余取消（外部令牌 / 调用方自备令牌 / 无已知令牌的 OCE）一律 → <c>ERR_CANCELED</c>，
-/// 原始异常留在 <c>Cause</c>。无条件包装（<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>），
-/// 令牌交给底层那一次 I/O；同步入口实现为对异步核心的阻塞等待。
-/// <para>
-/// 两个令牌源都是<b>按需创建</b>：没有预算（<c>remaining</c> 为 <c>null</c>）且外部令牌不可取消时
-/// 一个 CTS 都不建、<c>Token</c> 直接是 <see cref="CancellationToken.None"/>；没有预算但外部令牌可取消时
-/// 直接把外部令牌当本层令牌（不再包一层「只链接它」的源）；只有计时时直接用计时源；两者都需要才链接。
-/// 这是常态路径（绝大多数流式请求既不限时也不带可取消令牌），省下每请求最多两个 CTS 的分配。
-/// </para>
+/// 超时 → <c>ECONNABORTED</c>，其余取消 → <c>ERR_CANCELED</c>，原始异常留在 <c>Cause</c>。
+/// 无条件包装（<see cref="AxiosConfig.Timeout"/> 为 0 时预算传 <c>null</c>）；两个令牌源都按需创建，
+/// 既无预算又无外部令牌时不建 CTS。
 /// </remarks>
 internal sealed class TimeoutStream : DelegatingStream
 {
@@ -233,10 +227,8 @@ internal sealed class TimeoutStream : DelegatingStream
     }
 
     /// <summary>
-    /// 预算在构造时即耗尽：确定性失败，不与「已到达的字节」赛跑；归属仍按
-    /// <c>Caller → Canceled → Timeout</c> 的同一优先级判定，但最终交给调用方的一律是带库错误码的
-    /// <see cref="AxiosException"/>：取消（含调用方自备令牌）→ <c>ERR_CANCELED</c>，
-    /// 超时 → <c>ECONNABORTED</c>。取消分支保留一个以对应令牌构造的原始 OCE 作 <c>Cause</c>。
+    /// 预算在构造时即耗尽：确定性失败，不与已到达的字节赛跑。归属按 <c>Caller → Canceled → Timeout</c> 判定，
+    /// 取消 → <c>ERR_CANCELED</c>，超时 → <c>ECONNABORTED</c>，取消分支保留原始 OCE 作 <c>Cause</c>。
     /// </summary>
     private void ThrowIfBudgetExhausted(CancellationToken callerToken)
     {

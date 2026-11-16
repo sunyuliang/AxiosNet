@@ -18,6 +18,12 @@ internal interface IJsonFlattenSink
 /// <summary>把 <see cref="JsonElement"/> 展平成键值序列：对象按 <c>a[b]</c> 下钻、数组交给接收方命名、null 跳过。</summary>
 internal static class JsonFlattener
 {
+    /// <summary>递归展平一个 <see cref="JsonElement"/>：对象拼接键路径、数组交给接收方命名、null / undefined 跳过。</summary>
+    /// <param name="prefix">当前层级已拼好的键名；根节点为 <c>null</c>。</param>
+    /// <param name="element">待展平的节点。</param>
+    /// <param name="nameSelector">可选的字段名改写钩子（前缀 / 原名 → 新名）；<c>null</c> 表示沿用原名。</param>
+    /// <param name="sink">接收叶子与数组命名的结构体接收方，按 <c>ref</c> 传递以避免复制与装箱。</param>
+    /// <typeparam name="TSink">接收方类型（结构体，实现 <see cref="IJsonFlattenSink"/>）。</typeparam>
     public static void Flatten<TSink>(
         string? prefix,
         JsonElement element,

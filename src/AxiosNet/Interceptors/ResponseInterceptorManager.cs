@@ -42,7 +42,7 @@ public sealed class ResponseInterceptorManager
         }
     }
 
-    /// <summary>注册同步拦截器。</summary>
+    /// <summary>注册同步拦截器（内部包成已完成任务）。</summary>
     public int Use(
         Func<AxiosResponse, AxiosResponse> onFulfilled,
         Func<Exception, AxiosResponse>? onRejected = null)

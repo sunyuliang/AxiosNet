@@ -8,27 +8,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 热点六：大正文上传（真实回环 socket）。
-/// <para>
-/// <b>回答的问题</b>：正文从 1MB 涨到 32MB 时，AxiosNet 有没有多一次拷贝、有没有把正文缓冲起来？
-/// 上传链路在库内只做「选一个 <see cref="HttpContent"/>」（<c>byte[]</c> / <c>ReadOnlyMemory</c> 零拷贝持有），
-/// 所以预期是：<c>Allocated</c> 只与内容对象同量级（百字节），不随 <c>Megabytes</c> 增长，耗时与裸
-/// <see cref="HttpClient"/> 同量级。
-/// </para>
-/// <para>
-/// <b>两种框架分开测</b>：<c>byte[]</c> / 可 seek <see cref="MemoryStream"/> 带 <c>Content-Length</c>；
-/// 不可 seek 的流（<see cref="NonSeekableStream"/>）、<c>IAsyncEnumerable&lt;byte[]&gt;</c> 与
-/// <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c> 没有长度，走 <c>Transfer-Encoding: chunked</c>。
-/// 三种 chunked 形态走同一条传输路径，差别只在「每一块从哪来」：流是框架按 80KB 缓冲读，
-/// 异步序列是调用方直接给块（不分片再拷贝）。
-/// </para>
-/// <para>
-/// <b>读数方式</b>：<c>Ratio</c> 相对 <c>HttpClient_Upload_ByteArray</c>（同为时间比，吞吐 = 1 / Ratio）。
-/// 上传侧没有「8MB 信任上限」这回事——那个阈值只作用于响应预分配；这里三档尺寸只是刻度。
-/// 流式用例的验收线：<c>Allocated</c> 只随「块数」增长（64KB 一块约 3–4 KB 传输层开销，32MB ≈ 2.2MB），
-/// 不是另存一份正文；时间列只下「同量级」的结论——同进程回环下 <c>RatioSD</c> 可到 0.1–0.6，
-/// 复跑会让 1MB / 8MB 档的先后顺序翻转，谁更快不能当门槛。
-/// </para>
+/// 大正文上传（真实回环 socket）：正文从 1MB 涨到 32MB 时是否多一次拷贝或被缓冲。预期 Allocated 只与内容对象同量级、不随 <c>Megabytes</c> 增长。带长度走 <c>Content-Length</c>，流与异步序列走 <c>chunked</c>。
 /// </summary>
 [Description("大正文上传（回环 socket）：1 / 8 / 32MB，byte[] / ReadOnlyMemory / Stream 与 IAsyncEnumerable（chunked）")]
 [BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]

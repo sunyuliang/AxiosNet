@@ -520,6 +520,7 @@ public sealed partial class AxiosClient
             throw AxiosException.InvalidOption("幂等键工厂返回了空白：每个逻辑请求必须有一个非空键。", config);
         }
 
+        // 写回配置：重试 / 换端点 / 对冲共用这一份键（一个逻辑请求一个键）。
         settings.GeneratedKey = key;
         return key;
     }

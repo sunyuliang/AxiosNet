@@ -10,20 +10,8 @@ namespace AxiosNet.Compat.Tests;
 /// 兼容资产里那些<b>用扩展方法补 BCL 实例方法</b>的成员，逐个钉住它们在 netstandard2.0 资产上的实际语义。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 为什么需要这一组：<see cref="NetStandard20Extensions"/> 里的实现与 net6 / net8 的 BCL 版本<b>同名不同实现</b>，
-/// 语义可能悄悄不同（最典型的是 <c>DisposeAsync</c> 落到 <c>Dispose()</c>、<c>ReadAsync(Memory)</c> 只读一段）。
-/// 同一份业务源码在两个 TFM 上会分别命中两者，因此「编译通过」不能当成行为等价的证据。
-/// </para>
-/// <para>
-/// 这些用例必须<b>显式调用 shim</b>（<c>NetStandard20Extensions.方法名(...)</c>）：测试工程按 net8.0 / net472 编译，
-/// net8 参考程序集里已有同名实例方法，写成 <c>stream.ReadAsync(memory)</c> 会直接绑到 BCL 上，等于什么都没测。
-/// 而 <c>NetStandard20Extensions</c> 由 ns2.0 资产编译，net472 宿主上并不存在这些 BCL 成员，两边都必须走 shim。
-/// </para>
-/// <para>
-/// 分工：<see cref="ShimEvidenceTests"/> 负责「分配数」，<see cref="CompatBehaviorTests"/> 负责 <c>WaitAsync</c> 与
-/// HttpContent 令牌边界，本文件负责剩下的语义面（分段读取、租借缓冲的复制正确性、异步释放退化、Span 编码重载、集合与反射成员）。
-/// </para>
+/// 用例必须显式调用 <c>NetStandard20Extensions.方法名(...)</c>：测试工程按 net8.0 / net472 编译，写成 <c>stream.ReadAsync(memory)</c> 会直接绑到 BCL 上，等于什么都没测。
+/// 分配数看 <see cref="ShimEvidenceTests"/>，<c>WaitAsync</c> 与 HttpContent 令牌边界看 <see cref="CompatBehaviorTests"/>，本文件负责其余语义面。
 /// </remarks>
 public sealed class PolyfillSemanticsTests
 {
@@ -213,6 +201,7 @@ public sealed class PolyfillSemanticsTests
         Assert.Equal(42, fn(21));
     }
 
+    /// <summary>被测的静态方法：交给 <c>CreateDelegate</c> 造委托。</summary>
     private static int Double(int value) => value * 2;
 
     /// <summary>把一整块数组包成 <see cref="Memory{T}"/>：<c>MemoryMarshal.TryGetArray</c> 对它返回 false，可逼出 shim 的租借缓冲路径。</summary>
@@ -222,14 +211,18 @@ public sealed class PolyfillSemanticsTests
 
         public WrappedMemoryManager(byte[] array) => _array = array;
 
+        /// <inheritdoc />
         public override Span<byte> GetSpan() => _array;
 
+        /// <inheritdoc />
         public override MemoryHandle Pin(int elementIndex = 0) => default;
 
+        /// <inheritdoc />
         public override void Unpin()
         {
         }
 
+        /// <summary>空实现：包装层不持有非托管资源。</summary>
         protected override void Dispose(bool disposing)
         {
         }
@@ -256,18 +249,24 @@ public sealed class PolyfillSemanticsTests
             set => throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public override void Flush()
         {
         }
 
+        /// <summary>读取路径不支持（本类只关心写入）。</summary>
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
+        /// <summary>不支持定位。</summary>
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 
+        /// <summary>不支持改变长度。</summary>
         public override void SetLength(long value) => throw new NotSupportedException();
 
+        /// <summary>只累加写入次数，不保存字节。</summary>
         public override void Write(byte[] buffer, int offset, int count) => WriteCount++;
 
+        /// <summary>置 <c>Disposed</c> 后交基类释放。</summary>
         protected override void Dispose(bool disposing)
         {
             Disposed = true;

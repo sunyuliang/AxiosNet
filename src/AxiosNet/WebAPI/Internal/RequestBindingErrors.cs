@@ -43,15 +43,8 @@ internal static class RequestBindingErrors
     /// <param name="channel">失败的通道。</param>
     /// <returns>形如 <c>query parameter</c> 的标签。</returns>
     /// <remarks>
-    /// 每个已知成员都显式列名，兜底臂<b>不返回固定标签</b>：写成 <c>_ => "header"</c> 时，
-    /// 将来给 <see cref="BindingChannel"/> 添第四个成员（例如 <c>Body</c>）编译器一声不响，
-    /// 错误消息会把新通道标成「header」—— 指错地方比没有信息更坏，而消息文本没有测试盯住就不会有人发现。
-    /// 兜底用枚举自身名字，新成员的措辞最多是不够漂亮（<c>Body</c> 而不是「request body」），不会指错。
-    /// <para>
-    /// 这里不能用「列全三臂、去掉兜底」来换取 CS8509：枚举的 switch 表达式去掉 <c>_</c> 后，
-    /// 编译器会改报 CS8524（未处理 <c>(BindingChannel)3</c> 这类未命名取值），是一条<b>永久</b>警告，
-    /// 与本仓「0 条 CS 警告」的构建基线冲突。
-    /// </para>
+    /// 每个已知成员显式列名，兜底臂按枚举自身名字输出，不要改成固定标签：新增通道时会指错地方。
+    /// 也不能去掉兜底臂（会变成 CS8524 永久警告，与本仓 0 条 CS 警告的基线冲突）。
     /// </remarks>
     private static string ChannelLabel(BindingChannel channel) => channel switch
     {

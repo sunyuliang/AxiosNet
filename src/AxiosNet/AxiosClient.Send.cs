@@ -54,9 +54,8 @@ public sealed partial class AxiosClient
         public TimeSpan? EffectiveTimeout => _clampedByTotalTimeout ? _timeout : null;
 
         /// <summary>
-        /// 取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>，本次尝试超时 → <c>ECONNABORTED</c>；
-        /// 其余 OCE（含没有已知令牌的）在普通请求路径归一为 <c>ERR_CANCELED</c>（既有契约：
-        /// 自定义序列化器 / 连接被池清理打断等都不能被误报成解析或网络失败）。
+        /// 取消类异常的归属：调用方取消 → <c>ERR_CANCELED</c>，本次尝试超时 → <c>ECONNABORTED</c>，
+        /// 其余 OCE 归一为 <c>ERR_CANCELED</c>。
         /// </summary>
         public AxiosException Translate(
             OperationCanceledException exception,
@@ -118,17 +117,10 @@ public sealed partial class AxiosClient
         }
     }
 
-    /// <summary>
-    /// 一次尝试的终端：建超时预算 → 取连接 → 发送 → 读取 → 转换。
-    /// 并发槽位由闸门中间件占好并写进上下文（排队时间不计入 <see cref="AxiosConfig.Timeout"/>），
-    /// 这里只负责在所有失败路径归还它；流式成功路径把它随正文转交给调用方。
-    /// 连接租约同理：非流式在这里归还，流式随正文走。
-    /// </summary>
-    /// <remarks>
-    /// 状态机用 <c>PoolingAsyncValueTaskMethodBuilder</c> 池化：每次尝试都要在发送 / 读取上挂起，
-    /// 池化后稳态复用、不再为它分配状态机盒。返回值沿尝试中间件链只被 await 一次（契约见
-    /// <see cref="AxiosAttemptHandler"/>）。
-    /// </remarks>
+        /// <summary>
+        /// 一次尝试的终端：建预算 → 取连接 → 发送 → 读取 → 转换；失败路径归还并发槽位与连接租约，流式成功时随正文转交。
+        /// </summary>
+        /// <remarks>并发槽位由闸门中间件占好，排队时间不计入 <see cref="AxiosConfig.Timeout"/>。</remarks>
     // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
     // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。
 #if !NETSTANDARD2_0

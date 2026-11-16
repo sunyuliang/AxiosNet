@@ -13,6 +13,8 @@ internal sealed class HeaderIsolatedContent : HttpContent
 
     private readonly long? _length;
 
+    /// <summary>用内层正文构造外壳：正文不复制，只把头集合拷成独立副本。</summary>
+    /// <param name="inner">内容还是它的那份正文（重试 / 对冲分支共享的模板）。</param>
     public HeaderIsolatedContent(HttpContent inner)
     {
         _inner = inner;
@@ -21,6 +23,10 @@ internal sealed class HeaderIsolatedContent : HttpContent
         _length = ContentHeaderCopy.CopyFrom(inner, this);
     }
 
+    /// <summary>正文原样转发给内层内容序列化（零额外缓冲）；本类只隔开请求头。</summary>
+    /// <param name="stream">目标流。</param>
+    /// <param name="context">传输上下文（原样忽略）。</param>
+    /// <returns>写出完成的任务。</returns>
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         => _inner.CopyToAsync(stream);
 
@@ -30,6 +36,9 @@ internal sealed class HeaderIsolatedContent : HttpContent
         => _inner.CopyToAsync(stream, context, cancellationToken);
 #endif
 
+    /// <summary>长度沿用构造时从内层复制定型的 <c>Content-Length</c>：未知时返回 <c>false</c>，交给分块传输。</summary>
+    /// <param name="length">已知时为长度，否则为 <c>0</c>。</param>
+    /// <returns>长度是否已知。</returns>
     protected override bool TryComputeLength(out long length)
     {
         if (_length is { } known)

@@ -13,17 +13,13 @@ public sealed class AxiosCacheOptions
     public TimeSpan TimeToLive { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// 缓存时长的取值方式，默认 <see cref="CacheFreshnessMode.Configured"/>：只信 <see cref="TimeToLive"/>，落库前不解析响应头。
+    /// 缓存时长的取值方式，默认 <see cref="CacheFreshnessMode.Configured"/>：只信 <see cref="TimeToLive"/>，不解析响应头。
     /// </summary>
     /// <remarks>
-    /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 会解析响应的
-    /// <c>Cache-Control</c>（<c>max-age</c>）与 <c>Expires</c> / <c>Date</c> / <c>Age</c>，同时解析<b>请求</b>的
-    /// <c>Cache-Control</c> / <c>Pragma</c>，两者取交集：请求 <c>no-store</c> 不读也不写；请求 <c>no-cache</c> /
-    /// <c>max-age=0</c> 跳过新鲜查询（<c>no-cache</c> 仍可落库，开启 <see cref="ConditionalRequests"/> 时还会拿旧条目做条件请求；
-    /// <c>max-age=0</c> 连落库也一并拒绝）；请求 <c>max-age=N</c> 作为落库 TTL 的上限；响应 <c>Vary: *</c> 不落库。
-    /// <c>Configured</c> 是「强制按配置执行」，两侧的 HTTP 指令都不参与取舍。
-    /// <c>s-maxage</c>（库按私有缓存解释）、<c>Vary</c> 分区、<c>stale-*</c> 服务不在库的取舍范围，
-    /// 但这些信息都会随 <see cref="AxiosCacheEntryPolicy"/> 交给自建存储，由存储决定要不要用。
+    /// <see cref="CacheFreshnessMode.Server"/> / <see cref="CacheFreshnessMode.Intersection"/> 会解析响应与请求的
+    /// <c>Cache-Control</c> / <c>Expires</c> / <c>Age</c> 并取交集：请求 <c>no-store</c> 不读不写，<c>no-cache</c> 跳过新鲜查询
+    /// （仍可落库），<c>max-age=N</c> 作落库上限，响应 <c>Vary: *</c> 不落库。
+    /// <c>s-maxage</c>、<c>Vary</c> 分区与 <c>stale-*</c> 不在库内取舍，随 <see cref="AxiosCacheEntryPolicy"/> 交给存储决定。
     /// </remarks>
     public CacheFreshnessMode FreshnessMode { get; set; }
 
@@ -106,21 +102,14 @@ public sealed class AxiosCacheOptions
 }
 
 /// <summary>
-/// 响应缓存：挂在 <see cref="AxiosConfig.Caching"/> 上，命中时不发请求，直接把上次的响应交付（走与短路响应同一条路径）。
+/// 响应缓存：挂在 <see cref="AxiosConfig.Caching"/> 上，命中时不发请求，直接交付上次的响应（与短路响应同一条路径）。
 /// 同一个键的并发请求只发一次，其余等这一次的结果。
 /// </summary>
 /// <remarks>
-/// 一个实例就是一份策略：存活时长、键规则、准入判定都在实例上，要按请求区分就建多个实例。
-/// 它自己不存条目 —— 存取交给 <see cref="IAxiosCacheStore"/>（默认 <see cref="MemoryCacheStore"/>），
-/// 想接 Redis 之类的外部存储就实现那个接口。
-/// 缓存的是<b>原始正文字节</b>，命中时按本次调用的 responseType 与泛型参数重新解析，所以 <c>GetAsync&lt;User&gt;</c> 与
-/// <c>GetAsync&lt;string&gt;</c> 命中同一条目各自得到该有的形态。
-/// 只存 2xx（206 与带 <c>Content-Range</c> 的除外）且拿到原始字节的响应，条目头里也不含 <c>Set-Cookie</c>；
-/// 流式响应、响应拦截器换了响应对象、存储读写失败都不影响这次请求。
-/// 条目过期后，若响应带 <c>ETag</c> / <c>Last-Modified</c> 且存储实现了 <see cref="IAxiosCacheRevalidationStore"/>，
-/// 库会发条件请求：服务端回 <c>304</c> 时直接交付库里的正文（见 <see cref="AxiosCacheOptions.ConditionalRequests"/>）。
-/// 命中不发请求，因此不占并发闸门、不产生遥测 span 与在途计数，<see cref="AxiosResponse.Request"/> 为 <c>null</c>；
-/// 条件请求的 304 确实发出了一次请求，<see cref="AxiosResponse.Request"/> 不为 <c>null</c>。
+/// 一个实例就是一份策略（存活时长、键规则、准入判定）；条目由 <see cref="IAxiosCacheStore"/> 存取，默认 <see cref="MemoryCacheStore"/>。
+/// 缓存原始正文字节，命中时按本次 responseType 与泛型参数重新解析；只存 2xx（206 / <c>Content-Range</c> 除外）且拿到原始字节的响应。
+/// 条目过期后带 <c>ETag</c> / <c>Last-Modified</c> 时会发条件请求，<c>304</c> 直接交付库里正文。
+/// 命中不占并发闸门、不产生遥测 span，<see cref="AxiosResponse.Request"/> 为 <c>null</c>。
 /// </remarks>
 /// <example>
 /// <code>

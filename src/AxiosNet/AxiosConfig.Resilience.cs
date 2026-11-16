@@ -47,12 +47,20 @@ public sealed partial class AxiosConfig
 
     private sealed class ConcurrencyState
     {
+        /// <summary>等槽位上限的按请求覆盖值；<c>null</c> 表示继承实例默认（见 <see cref="ConcurrencyQueueTimeout"/>）。</summary>
         internal TimeSpan? QueueTimeout;
+
+        /// <summary><see cref="QueueTimeout"/> 是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
         internal bool QueueTimeoutSet;
 
+        /// <summary>按指针浅拷贝：两个字段都可独立改写，克隆出的状态不共享。</summary>
         internal ConcurrencyState Clone() => (ConcurrencyState)MemberwiseClone();
     }
 
+    /// <summary>
+    /// <see cref="ResilienceSettings.Concurrency"/> 的门面缓存：首次访问时创建，之后复用，
+    /// 避免热路径上反复 new。门面只转发到本实例、本身无状态，故可长期共享。
+    /// </summary>
     private ConcurrencySettings? _concurrencyFacade;
 
     /// <summary>治理分组：重试 / 熔断 / 对冲 / 备用端点 / 并发闸门 / 幂等键。</summary>

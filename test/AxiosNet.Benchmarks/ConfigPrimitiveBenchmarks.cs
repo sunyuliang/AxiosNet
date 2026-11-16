@@ -5,21 +5,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 配置合并的两个地基原语：<see cref="AxiosConfig.Clone"/> 与 <see cref="AxiosHeaders"/> 的读 / 写 / 克隆。
-/// <para>
-/// <b>为什么单独一个类</b>：它们与「头数」之类的参数无关，放在 <see cref="ConfigMergeBenchmarks"/>
-/// 里会被参数组合重复测多遍，白花时间还让表格难读。这里没有基线 —— 原语看的是绝对 ns 与
-/// <c>Allocated</c>，比值没有意义。
-/// </para>
-/// <para>
-/// <b>两条护栏值得盯</b>：
-/// <list type="bullet">
-/// <item><c>Headers_Clone</c> 应该只有一次 <c>AxiosHeaders</c> 对象分配（24 B）—— 克隆只共享不可变数组；
-/// 一旦谁给 Clone 加了「复制条目数组」，这里的 Allocated 会随头数线性上涨；</item>
-/// <item><c>Headers_Set_Same</c>（幂等写）应该 <b>0 分配</b> —— 相同取值只做一次扫描就返回。
-/// 这条塌了意味着每个请求写默认头都在产垃圾。</item>
-/// </list>
-/// </para>
+/// 配置合并的两个地基原语：<c>AxiosConfig.Clone</c> 与 <c>AxiosHeaders</c> 的读 / 写 / 克隆。没有基线，只看绝对 ns 与 Allocated：<c>Headers_Clone</c> 应为一次 24 B，<c>Headers_Set_Same</c> 应为 0。
 /// </summary>
 [Description("合并原语：AxiosConfig.Clone / AxiosHeaders 读、幂等写、克隆")]
 [BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]

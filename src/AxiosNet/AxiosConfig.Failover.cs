@@ -3,15 +3,14 @@ namespace AxiosNet;
 public sealed partial class AxiosConfig
 {
     /// <summary>
-    /// 备用端点（<see cref="AxiosConfig.ResilienceSettings.Failover"/>）：当前端点用不了时（网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx），
-    /// 把同一份请求嫁接到下一个端点的 base URL 上重发；全部失败才交给重试。<see cref="Endpoints"/> 为空（默认）时不换端点。
+    /// 备用端点：当前端点不可用（网络错误 / 超时 / 池耗尽 / 熔断打开 / 5xx）时，把同一份请求嫁接到下一个端点的 base URL 重发；
+    /// 全部失败才交给重试。<see cref="Endpoints"/> 为空（默认）时不换端点。
     /// </summary>
     /// <remarks>
-    /// 端点提供 origin 与路径前缀，请求自己的 path / query 原样接在后面；顺序即优先级。
-    /// 端点的健康状态跨请求记忆（见 <see cref="FailoverSettings.FailureThreshold"/> / <see cref="FailoverSettings.Cooldown"/>）：
-    /// 健康端点按原顺序排在前面，冷却中的端点退到末尾兜底 —— 全部都在冷却时仍按原顺序逐个试，不会有请求被健康表挡住。
-    /// 换端点要求请求体能按顺序重放（流必须可 seek），并会丢掉调用方显式设过的 <c>Host</c> 头。
-    /// 4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置 / 编程错误与取消不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
+    /// 端点只提供 origin 与路径前缀，请求自己的 path / query 接在后面；顺序即优先级。
+    /// 健康端点排在前面，冷却中的端点退到末尾；全部冷却时仍按原顺序逐个试。
+    /// 换端点要求请求体能重放（流必须可 seek），并会丢掉调用方显式设过的 <c>Host</c> 头。
+    /// 4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置错误与取消不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
     /// 流式响应只在响应头阶段能换端点。
     /// </remarks>
     public sealed class FailoverSettings
@@ -19,13 +18,10 @@ public sealed partial class AxiosConfig
         private IReadOnlyList<Uri>? _endpoints;
 
         /// <summary>
-        /// 备用端点（有序，可带路径前缀），例如 <c>["https://backup1.example.com", "https://backup2.example.com/api"]</c>；
-        /// <c>null</c> / 空集合（默认）= 不换端点。必须是绝对的 <c>http</c> / <c>https</c> 地址，且不能带 query / fragment。
+        /// 备用端点（有序，可带路径前缀），如 <c>["https://backup1.example.com", "https://backup2.example.com/api"]</c>；
+        /// <c>null</c> / 空集合（默认）= 不换端点。必须是绝对 http / https 地址，不能带 query / fragment。
         /// </summary>
-        /// <remarks>
-        /// 赋值时快照成数组，读回来的是这一版内部数组，<b>调用方不得修改</b>（要改请重新赋值）。
-        /// 重复端点（拼出同一个 base URL，尾斜杠不算区别）在发请求前抛 <c>ERR_BAD_OPTION_VALUE</c>。
-        /// </remarks>
+        /// <remarks>赋值时快照成数组，调用方不得修改；重复端点（同一 base URL）在发请求前抛 <c>ERR_BAD_OPTION_VALUE</c>。</remarks>
         public IReadOnlyList<Uri>? Endpoints
         {
             get => _endpoints;

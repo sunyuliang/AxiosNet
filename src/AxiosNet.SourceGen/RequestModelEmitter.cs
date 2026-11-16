@@ -140,6 +140,8 @@ namespace AxiosNet.SourceGen
                 builder.AppendLine("                        m.Ignore();");
             }
 
+            // 一个成员可以同时命中多个绑定目标（如 Path + Query 都用同一个值），
+            // 这里逐项照原样写出去，冲突留给构建期校验统一报错。
             foreach (var binding in member.Bindings)
             {
                 if (binding.Path)

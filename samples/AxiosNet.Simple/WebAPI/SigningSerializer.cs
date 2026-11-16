@@ -5,11 +5,7 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Simple.WebAPI;
 
 /// <summary>
-/// 签名/验签序列化器：装饰任意 <see cref="IContentSerializer"/>（示例里是内置 JSON），
-/// 请求出口对「将要上线的正文文本」算 HMAC-SHA256 写进 X-Signature 头，
-/// 响应入口先验签、再交给内层解析，内容被篡改时在反序列化之前就失败。
-/// 约定：挂了这个序列化器的客户端，对端必须对所有响应签名（严格模式，
-/// 缺 X-Signature 视为验签失败）；二进制格式请改用字节通道做同构装饰。
+/// 签名 / 验签序列化器：装饰任意 <c>IContentSerializer</c>（示例里是内置 JSON），请求出口对将要上线的正文算 HMAC-SHA256 写入 <c>X-Signature</c>，响应入口先验签再交内层解析。
 /// </summary>
 public sealed class SigningSerializer : IContentSerializer
 {

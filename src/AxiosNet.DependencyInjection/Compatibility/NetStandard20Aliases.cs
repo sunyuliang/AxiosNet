@@ -18,10 +18,10 @@ namespace System.Runtime.CompilerServices
     internal sealed class CallerArgumentExpressionAttribute : Attribute
     {
         /// <summary>声明要取哪一个参数的调用处表达式。</summary>
-        /// <param name="parameterName">参数名。</param>
+        /// <param name="parameterName">要捕获表达式的参数名。</param>
         public CallerArgumentExpressionAttribute(string parameterName) => ParameterName = parameterName;
 
-        /// <summary>参数名。</summary>
+        /// <summary>要捕获表达式的参数名；编译器在此参数处填入对应实参的源码文本。</summary>
         public string ParameterName { get; }
     }
 }

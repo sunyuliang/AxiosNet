@@ -13,10 +13,7 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.Compat.Tests;
 
 /// <summary>
-/// 兼容资产的能力冒烟：用最小 TcpListener 服务器把「基本请求 / PATCH / 重试 / 缓存 / 流式 / multipart /
-/// 声明式 API / <c>[Format]</c>（模块初始化器）」在真实运行时上各跑一遍。
-/// 这些路径在 netstandard2.0 上走的是 polyfill / shim / 扩展方法转发，与 net6+ 的代码路径不同，
-/// 只靠类型存在性断言覆盖不到。
+/// 兼容资产的能力冒烟：用最小 <c>TcpListener</c> 服务器把基本请求 / PATCH / 重试 / 缓存 / 流式 / multipart / 声明式 API / 模块初始化器各跑一遍 —— 这些路径在 ns2.0 上走的是 polyfill 与扩展方法转发。
 /// </summary>
 public sealed class CompatIntegrationTests
 {
@@ -404,11 +401,13 @@ public sealed class CompatIntegrationTests
     }
 }
 
-/// <summary>测试用响应模型。</summary>
+/// <summary>测试用响应模型（<c>Name</c> / <c>Age</c> 两个字段）。</summary>
 public sealed class Person
 {
+    /// <summary>用户名字段，用于验证 POCO 反序列化。</summary>
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>用户年龄字段。</summary>
     public int Age { get; set; }
 }
 
@@ -449,10 +448,12 @@ public sealed class AuthorizedRequest : IApiRequest<Person>
 /// <summary>每次取凭据都换一个新值，并记录被作废的次数。</summary>
 internal sealed class RotatingTokenProvider : IApiCredentialProvider
 {
+    /// <summary>已签发令牌的计数，同时用作令牌序号。</summary>
     private int _issued;
 
     public int InvalidateCount { get; private set; }
 
+    /// <summary>每次调用签发一个新令牌（<c>t1</c> / <c>t2</c> …）。</summary>
     public ValueTask<ApiCredential> GetCredentialAsync(ApiAuthContext context, CancellationToken cancellationToken)
         => new(ApiCredential.Token("t" + Interlocked.Increment(ref _issued)));
 
@@ -520,6 +521,9 @@ internal sealed class MiniServer : IDisposable
     /// <summary>附加到每个响应头的原始行（需自带 CRLF），用于构造 <c>Content-Encoding</c> / <c>Location</c> 之类的响应。</summary>
     public string ExtraResponseHeaders { get; set; } = string.Empty;
 
+    /// <summary>在回环地址的随机端口启动服务器。</summary>
+    /// <param name="handler">收到（方法, 路径, 请求头, 正文）后返回（状态码, 附加响应头, 正文）。</param>
+    /// <param name="chunked">是否用分块传输写响应。</param>
     public static MiniServer Start(Func<string, string, string, string, (int, string, byte[])> handler, bool chunked = false)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -527,6 +531,7 @@ internal sealed class MiniServer : IDisposable
         return new MiniServer(listener, handler, chunked);
     }
 
+    /// <summary>接受连接并逐个交给线程池处理，直到取消。</summary>
     private async Task AcceptLoopAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -545,6 +550,7 @@ internal sealed class MiniServer : IDisposable
         }
     }
 
+    /// <summary>解析一个连接上的请求头与正文，调用处理器后写回响应。</summary>
     private async Task HandleAsync(TcpClient client)
     {
         try
@@ -658,6 +664,7 @@ internal sealed class MiniServer : IDisposable
         }
     }
 
+    /// <summary>逐字节读到空行，返回完整的请求头原文；对端先关闭时返回 <c>null</c>。</summary>
     private static async Task<string?> ReadHeadAsync(NetworkStream stream)
     {
         var buffer = new List<byte>(1024);
@@ -685,6 +692,7 @@ internal sealed class MiniServer : IDisposable
         }
     }
 
+    /// <summary>停止监听、取消接受循环并释放取消源。</summary>
     public void Dispose()
     {
         _cts.Cancel();
@@ -693,7 +701,9 @@ internal sealed class MiniServer : IDisposable
     }
 }
 
+/// <summary>UTF-8 编码辅助：把测试里的字面量转成请求 / 响应字节。</summary>
 internal static class Utf8
 {
+    /// <summary>把文本编码成 UTF-8 字节。</summary>
     public static byte[] Text(string text) => Encoding.UTF8.GetBytes(text);
 }

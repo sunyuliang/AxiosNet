@@ -200,7 +200,6 @@ public sealed class AllocationTests
         // 结构断言，而不是分配测量：反复传同一个调用方令牌时，整段循环只应建一次链接源，
         // 因此交给底层的令牌**每次都是同一个**（CancellationToken 按源比较）。
         // 每块新建 linked CTS 会让每块令牌的源各不相同，这里必然失败。
-        //
         // 用令牌身份断言而不是分配差值：线程局部分配计数会被同线程无关分配污染，令牌身份不受运行时噪声影响。
         var first = tokens[0];
         Assert.True(first.CanBeCanceled, "交给底层的令牌应链接了调用方令牌（可取消）。");

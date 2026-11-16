@@ -10,11 +10,9 @@ namespace AxiosNet.SourceGen
     /// 消费方编译里的 <c>ModuleInitializerAttribute</c> 补位。
     /// </summary>
     /// <remarks>
-    /// 生成代码用 <c>[global::System.Runtime.CompilerServices.ModuleInitializerAttribute]</c> 挂注册方法，
-    /// 而 .NET Framework / .NET Core 3.x 的 BCL 没有这个类型。AxiosNet 的兼容资产里有一份 <c>internal</c> 版本，
-    /// 但 internal 跨程序集不可见，直接引用是 CS0122；把库里的那份改成 public 又会让
-    /// 「引用兼容资产的 net5+ 编译」出现两份同名公共类型（CS0433）。
-    /// 因此补位必须落在消费方自己的编译里：这里按需生成一份同名 internal 声明。
+    /// 生成代码用该特性挂注册方法，而 .NET Framework / .NET Core 3.x 的 BCL 没有这个类型；
+    /// 库内兼容资产里的那份是 <c>internal</c>（跨程序集不可见），改成 <c>public</c> 又会与 net5+ 引用产生 CS0433 重名。
+    /// 因此按需在消费方编译里生成一份同名 <c>internal</c> 声明。
     /// </remarks>
     internal static class ModuleInitializerShim
     {

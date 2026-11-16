@@ -44,7 +44,7 @@ public sealed class MemoryCacheStore : IAxiosCacheStore, IAxiosCacheRevalidation
         _maxBytes = maxBytes;
     }
 
-    /// <summary>条目上限。</summary>
+    /// <summary>条目数上限；满了先清过期条目，仍无空位就不缓存新响应（不淘汰未过期条目）。</summary>
     public int MaxEntries => _maxEntries;
 
     /// <summary>近似字节上限；<c>0</c> 表示不限制。</summary>

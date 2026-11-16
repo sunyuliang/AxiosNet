@@ -47,6 +47,10 @@ namespace AxiosNet.SourceGen
     /// <param name="Ignore">被 <c>[ApiIgnore]</c> 标记，展平时跳过。</param>
     /// <param name="FormatExpression">值格式化 lambda 文本（来自 <c>[Format]</c>）；null 表示原样输出。</param>
     /// <param name="Bindings">命中的绑定目标；多个目标同时成立时留给构建期报错。</param>
+    /// <param name="ContentType">成员级 <c>ContentType</c> 声明原文（<c>[BodyContentType]</c>）；<c>null</c> 表示该成员没声明。</param>
+    /// <param name="QueryCollectionFormat">成员级查询集合格式声明（<c>[QueryCollectionFormat]</c> 的枚举值）；<c>null</c> 表示没声明。</param>
+    /// <param name="HasStreamAttribute">成员上是否标了 <c>[Stream]</c>（区分「声明了 0」与「没声明」）。</param>
+    /// <param name="StreamFormat">流式读取格式的枚举值（<c>AxiosStreamFormat</c>），仅 <paramref name="HasStreamAttribute"/> 为真时有意义。</param>
     internal sealed record RequestMemberInfo(
         string Name,
         string FieldName,
@@ -75,6 +79,10 @@ namespace AxiosNet.SourceGen
     /// <param name="Members">待注册的成员及其绑定。</param>
     /// <param name="Diagnostics">这一模型相关的诊断，输出阶段统一上报。</param>
     /// <param name="Emit">是否可以出代码；false 表示这个模型只用来携带诊断。</param>
+    /// <param name="ContentType">类型级 <c>ContentType</c> 声明原文（<c>[BodyContentType]</c>）；<c>null</c> 表示没声明。</param>
+    /// <param name="QueryCollectionFormat">类型级查询集合格式声明（枚举值）；<c>null</c> 表示没声明。</param>
+    /// <param name="HasStreamAttribute">类型上是否标了 <c>[Stream]</c>。</param>
+    /// <param name="StreamFormat">类型级流式读取格式的枚举值；仅 <paramref name="HasStreamAttribute"/> 为真时有意义。</param>
     internal sealed record RequestModelInfo(
         string FullTypeName,
         string ClassName,

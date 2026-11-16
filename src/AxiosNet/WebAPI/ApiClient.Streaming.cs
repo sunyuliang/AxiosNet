@@ -30,11 +30,10 @@ public sealed partial class ApiClient
 
     /// <summary>以指定帧格式（NDJSON / SSE / JSON 数组）逐帧读取流式响应。</summary>
     /// <remarks>
-    /// 三种格式共用同一层字节读取与单帧上限（默认 8 MB）。正文超时与响应头同一份预算（本次尝试的
-    /// <see cref="AxiosConfig.Timeout"/>，已被 <see cref="AxiosConfig.ResilienceSettings.TotalTimeout"/> 压过）：超出抛 <c>ECONNABORTED</c>；
-    /// 不设超时时正文不限时，靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求响应是 UTF-8。
-    /// 响应流只能枚举一次；帧解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。
-    /// 未显式设置 <c>ResponseType</c> 时自动切到 <c>Stream</c>；显式设成非 <c>Stream</c> 抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 三种格式共用同一层字节读取与单帧上限（默认 8 MB）。正文超时与响应头同一份预算，超出抛 <c>ECONNABORTED</c>；
+    /// 不设超时时靠 <paramref name="cancellationToken"/> 退出。JSON 数组模式要求 UTF-8。
+    /// 响应流只能枚举一次；解析失败抛 <c>ERR_BAD_RESPONSE</c>，中途断流抛 <c>ERR_NETWORK</c>，取消抛 <c>ERR_CANCELED</c>。
+    /// <c>ResponseType</c> 未设置时自动切 <c>Stream</c>，显式设成非 <c>Stream</c> 抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </remarks>
     /// <typeparam name="TItem">每个帧反序列化后的类型。</typeparam>
     /// <param name="request">请求模型实例。</param>

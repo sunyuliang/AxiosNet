@@ -59,6 +59,7 @@ internal static class DynamicJson
                 return BoxedBoolean.False;
 
             case JsonValueKind.Number:
+                // 先按 Int64 取（整数值不丢精度，也不走 double 转换），取不到再按 double。
                 if (element.TryGetInt64(out var integer))
                 {
                     return integer;

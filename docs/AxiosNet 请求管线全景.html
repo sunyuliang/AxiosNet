@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AxiosNet 请求管线全景</title>
+<style>
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:#0e0e13;color:#e8e8f0;
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .canvas{width:1240px;margin:0 auto;padding:22px 26px 26px}
+
+  header h1{margin:0 0 4px;font-size:20px;font-weight:500;letter-spacing:.2px}
+  .sub{margin:0 0 12px;font-size:13px;color:#8d8da6}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:#9a9ab0;margin-bottom:16px}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+  .d-purple{background:#6b5cc4}.d-teal{background:#2c8a6e}.d-coral{background:#c9663f}
+  .d-amber{background:#b07f1e}.d-gray{background:#55555f}
+
+  .layout{display:flex;gap:22px;align-items:flex-start}
+  .flow{flex:1;min-width:0}
+  .side{width:322px;flex:none;display:flex;flex-direction:column;gap:12px}
+
+  .group{border:1px solid;border-radius:14px;padding:10px 12px 12px;margin:0}
+  .gt{font-size:12px;margin:0 0 8px;font-weight:500}
+  .g-purple{border-color:#4b3d91;background:#171233}.g-purple>.gt{color:#a99ee6}
+  .g-teal{border-color:#1d6653;background:#0b211b}.g-teal>.gt{color:#5fc7a5}
+  .g-coral{border-color:#833a24;background:#25100a}.g-coral>.gt{color:#df8961}
+  .g-amber{border-color:#8a6316;background:#2a1d05}.g-amber>.gt{color:#e9bb72}
+  .g-gray{border-color:#3c3c46;background:#17171c}.g-gray>.gt{color:#9898a8}
+  .inner{margin:0}
+  .big>.inner{margin-top:0}
+
+  .row{display:flex;align-items:stretch;flex-wrap:nowrap}
+  .node{
+    background:#2a2260;border:1px solid #6b5cc4;border-radius:10px;
+    padding:8px 12px;min-width:0;flex:1;
+  }
+  .node b{display:block;font-size:13px;font-weight:500;color:#ded8ff;line-height:1.35}
+  .node i{display:block;font-size:11px;font-style:normal;color:#a79ce6;margin-top:4px;line-height:1.4}
+  .node.accent{background:#3b2f7e;border-color:#8f80e4}
+  .node.tn{background:#0f2f27;border-color:#2c8a6e}
+  .node.tn b{color:#a9e8d3}.node.tn i{color:#6cc3a4}
+  .node.cr{background:#4a1e12;border-color:#c9663f}
+  .node.cr b{color:#f7c9b3}.node.cr i{color:#dd8f6b}
+  .node.gy{background:#232329;border-color:#55555f}
+  .node.gy b{color:#c9c9d4}.node.gy i{color:#8f8fa0}
+  .node.am{background:#3a2708;border-color:#b07f1e}
+  .node.am b{color:#f5cd8b}.node.am i{color:#c99a4e}
+  .node.wide{width:100%;flex:none}
+
+  .ha{width:22px;flex:none;position:relative;align-self:center;height:1.5px;background:#6a6a86}
+  .ha::after{content:"";position:absolute;right:-1px;top:-3px;
+    border-left:5px solid #6a6a86;border-top:3.5px solid transparent;border-bottom:3.5px solid transparent}
+  .ha.up{background:#c9663f}
+  .ha.up::after{border-left-color:#c9663f}
+
+  .va{width:1.5px;height:15px;background:#6a6a86;margin:0 auto;position:relative}
+  .va::after{content:"";position:absolute;bottom:-1px;left:-3px;
+    border-top:5px solid #6a6a86;border-left:3.5px solid transparent;border-right:3.5px solid transparent}
+  .va.up{background:#c9663f}
+  .va.up::after{bottom:auto;top:-1px;border-top:none;
+    border-bottom:5px solid #c9663f;border-left:3.5px solid transparent;border-right:3.5px solid transparent}
+
+  .strip{
+    background:#3a2708;border:1px solid #b07f1e;border-radius:10px;
+    padding:8px 16px;font-size:12px;color:#f0c983;text-align:center;line-height:1.5
+  }
+  .strip b{color:#ffdda3;font-weight:500}
+
+  .hint{font-size:11px;color:#7e7e95;margin-top:7px;line-height:1.5}
+  .hint em{font-style:normal;color:#c9663f}
+
+  .mw .node{padding:8px 6px;text-align:center;min-width:0}
+  .mw .node b{font-size:11.5px}
+  .mw .node.audit{background:#3a2708;border-color:#b07f1e}
+  .mw .node.audit b{color:#f5cd8b}
+
+  .steps{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+  .steps li{
+    background:#0f2f27;border:1px solid #2c8a6e;border-radius:7px;
+    padding:4px 9px;font-size:11px;color:#9fe0ca;line-height:1.35
+  }
+  .steps li.ret{background:#4a1e12;border-color:#c9663f;color:#f7c9b3}
+  .steps li span{color:#5f9a86;margin-right:5px}
+  .steps li.ret span{color:#b06a4c}
+
+  .card{background:#191920;border:1px solid #33333d;border-radius:12px;padding:12px 14px}
+  .card h2{margin:0 0 9px;font-size:12.5px;font-weight:500;color:#d6d6e2}
+  .card p{margin:0 0 8px;font-size:11.5px;line-height:1.65;color:#9a9aae}
+  .card p:last-child{margin-bottom:0}
+  .card ul,.card ol{margin:0;padding-left:16px}
+  .card li{font-size:11.5px;line-height:1.65;color:#9a9aae;margin-bottom:6px}
+  .card li:last-child{margin-bottom:0}
+  .card.am{border-color:#6d4f12;background:#221705}
+  .card.am h2{color:#e9bb72}
+  .card.am li{color:#b39a6c}
+  .card .k{color:#d8c08a}
+
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th,td{text-align:left;padding:5px 0;border-bottom:1px solid #2b2b34;color:#9a9aae;font-weight:400}
+  th{color:#7d7d93;font-size:11px}
+  td:last-child,th:last-child{text-align:right;color:#c8c8d6;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+
+  footer{margin-top:22px;padding-top:14px;border-top:1px solid #23232c;font-size:11px;color:#6e6e84;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="canvas">
+
+  <header>
+    <h1>AxiosNet 请求管线全景</h1>
+    <p class="sub">一次 SendAsync 的完整路径：拦截 → 转换 → 格式化 → 序列化 → 尝试管线 → 返回 → 收尾，以及遥测在哪几个点写入</p>
+    <div class="legend">
+      <span><i class="dot d-purple"></i>拦截器 / 业务态</span>
+      <span><i class="dot d-teal"></i>尝试管线 / 传输态</span>
+      <span><i class="dot d-coral"></i>序列化 / 反序列化</span>
+      <span><i class="dot d-amber"></i>遥测写入点</span>
+      <span><i class="dot d-gray"></i>收尾</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <main class="flow">
+
+      <div class="group g-purple">
+        <div class="gt">① 请求侧 · 每逻辑请求 1 次</div>
+        <div class="row">
+          <div class="node"><b>合并 + 校验</b><i>实例默认 + 显式项</i></div>
+          <div class="ha"></div>
+          <div class="node"><b>解析凭据</b><i>CredentialProvider</i></div>
+          <div class="ha"></div>
+          <div class="node accent"><b>请求拦截器</b><i>逆序执行 · 可改配置 · 可写短路</i></div>
+          <div class="ha"></div>
+          <div class="node"><b>transformRequest</b><i>object → object</i></div>
+        </div>
+        <div class="hint">在这里设 <em>ShortCircuit</em> 或在下一步命中缓存，都会跳过 ②③④，直接进入响应拦截器</div>
+      </div>
+
+      <div class="va"></div>
+
+      <div class="group g-purple">
+        <div class="gt">② 成型 · 每逻辑请求 1 次</div>
+        <div class="row">
+          <div class="node"><b>值格式化</b><i>6 条通道 → 文本</i></div>
+          <div class="ha"></div>
+          <div class="node"><b>URL / 头 / 表单</b><i>成型后转义</i></div>
+          <div class="ha"></div>
+          <div class="node"><b>缓存查询</b><i>命中即短路 · 单飞</i></div>
+        </div>
+        <div class="hint">值格式化只作用于路径 / 查询 / 头 / 表单 / multipart / 裸标量，结构化正文内部归序列化器</div>
+      </div>
+
+      <div class="va"></div>
+
+      <div class="strip"><b>遥测起点</b>　在途 +1 · 开 span · 建模板时补记请求体大小</div>
+
+      <div class="va"></div>
+
+      <div class="group g-coral">
+        <div class="gt">③ 序列化（请求） · 每逻辑请求 1 次</div>
+        <div class="row">
+          <div class="node cr"><b>IContentSerializer</b><i>对象 → 文本 / 字节</i></div>
+          <div class="ha"></div>
+          <div class="node cr"><b>四层选型</b><i>实例 → 进程 → 兜底 → 内置</i></div>
+          <div class="ha"></div>
+          <div class="node cr"><b>旁路清单</b><i>string · Stream · 表单 · multipart</i></div>
+        </div>
+      </div>
+
+      <div class="va"></div>
+
+      <div class="group g-purple">
+        <div class="gt">④ 响应侧 · 每逻辑请求 1 次：响应拦截器套在整条尝试管线外面</div>
+
+        <div class="node accent wide"><b>响应拦截器链</b><i>按注册顺序执行 · OnRejected 可吞错返回兜底 · 可改最终响应 · 返回 null 就地报错</i></div>
+
+        <div class="va up"></div>
+        <div class="hint" style="margin:0 0 6px;text-align:center;color:#c9663f">响应沿原路返回到拦截器（所以它看不到中间失败的重试）</div>
+
+        <div class="group g-teal inner">
+          <div class="gt">尝试管线 · 每次尝试 1 次（重试 N 次 = N+1 次，再 × 端点数 × 对冲分支）</div>
+          <div class="row mw">
+            <div class="node tn"><b>Retry</b></div>
+            <div class="ha"></div>
+            <div class="node tn"><b>Failover</b></div>
+            <div class="ha"></div>
+            <div class="node tn"><b>Circuit</b></div>
+            <div class="ha"></div>
+            <div class="node tn"><b>Hedging</b></div>
+            <div class="ha"></div>
+            <div class="node tn"><b>Gate</b></div>
+            <div class="ha"></div>
+            <div class="node tn audit"><b>Audit</b></div>
+          </div>
+          <div class="hint">顺序是契约：重试在最外层，所以每次尝试重过端点、熔断、对冲、闸门；审计紧贴终端，只覆盖真正到达终端的尝试</div>
+
+          <div class="va"></div>
+
+          <div class="group g-teal inner">
+            <div class="gt">终端 · 每次尝试内部（SendTerminalAsync）</div>
+            <ol class="steps">
+              <li><span>01</span>预算：min(Timeout, 剩余总预算)</li>
+              <li><span>02</span>OnSendingRequest 钩子</li>
+              <li><span>03</span>池租约 / 自定义 Handler</li>
+              <li><span>04</span>发送（只到响应头）</li>
+              <li><span>05</span>读正文 + validateStatus</li>
+              <li class="ret"><span>06</span>反序列化：字节 / 文本 → 对象</li>
+              <li><span>07</span>transformResponse</li>
+              <li><span>08</span>还租约 / 流式转交 StreamOwner</li>
+            </ol>
+            <div class="hint">第 06 步用请求侧同一个 <em>IContentSerializer</em>，但每次尝试都会执行一次（失败响应也会宽松解析）</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="va"></div>
+
+      <div class="group g-gray">
+        <div class="gt">⑤ 收尾 · 每逻辑请求 1 次（三段互不连坐）</div>
+        <div class="row">
+          <div class="node gy"><b>缓存落库</b><i>写入条目 + 放行跟随者</i></div>
+          <div class="ha"></div>
+          <div class="node am"><b>上报成败 → 关 span</b><i>写进 AxiosTelemetry.Sink</i></div>
+          <div class="ha"></div>
+          <div class="node gy"><b>交付调用方</b><i>含拦截器改写结果</i></div>
+        </div>
+        <div class="hint">失败路径：先 RequestFailed，再 ExitRequest，最后 span.Stop；每一步都兜异常，观测写错不会改写请求结论</div>
+      </div>
+
+    </main>
+
+    <aside class="side">
+
+      <div class="card am">
+        <h2>遥测（旁路 · 只读）</h2>
+        <p><span class="k">请求级</span>：IsEnabled → EnterRequest → StartRequest → SetRequestBodySize → RequestSucceeded / Failed → ExitRequest → Stop</p>
+        <p><span class="k">事件级</span>：CacheHit / Miss / Stored / Revalidated、Retry、RetryBudgetRefused、GateRejected、AttemptStop / Failed、Pool / Lease 计数</p>
+        <p>IsEnabled 只管请求级；事件类不看这个开关，要全关只能用 AxiosTelemetrySink.Off。</p>
+      </div>
+
+      <div class="card am">
+        <h2>AxiosTelemetry.Sink 的落点</h2>
+        <ul>
+          <li>库内所有调用点走 Dispatch（内部的 GuardedTelemetrySink 护栏），不是直接读 Sink</li>
+          <li>默认 BuiltInTelemetrySink → ActivitySource / Meter / DiagnosticListener（名字都是 AxiosNet）</li>
+          <li>自定义：派生 AxiosTelemetrySink（全空基类），只覆写关心的方法</li>
+          <li>换 Sink 是整套替换，内置三路随之停用，不叠加</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>三个例外，不是漏画</h2>
+        <ol>
+          <li>短路与缓存命中：在遥测起点之前返回，不产生 span，只发 CacheHit 这类事件</li>
+          <li>401 重放：门面层再跑一条完整管线，请求拦截器会重跑；不属于同一条管线内的一次尝试</li>
+          <li>连接租约：取连接在终端第 03 步；流式成功时随正文转交 StreamOwner，由流的 Dispose 释放</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>调用次数速查</h2>
+        <table>
+          <tr><th>扩展点</th><th>次数</th></tr>
+          <tr><td>请求拦截器</td><td>1</td></tr>
+          <tr><td>响应拦截器</td><td>1</td></tr>
+          <tr><td>transformRequest</td><td>1</td></tr>
+          <tr><td>值格式化</td><td>每值</td></tr>
+          <tr><td>序列化（请求）</td><td>1</td></tr>
+          <tr><td>反序列化 / transformResponse</td><td>每尝试</td></tr>
+          <tr><td>尝试中间件</td><td>(N+1)×(E+1)×(1+H)</td></tr>
+          <tr><td>请求级遥测</td><td>1</td></tr>
+          <tr><td>尝试审计</td><td>每到达终端的尝试</td></tr>
+        </table>
+      </div>
+
+    </aside>
+  </div>
+
+  <footer>
+    N = 重试次数，E = 备用端点数，H = 对冲分支数。内置中间件恒在链上，是否生效由 ctx.Config 决定；链在客户端构造时编译一次，之后不可变。<br>
+    遥测起点在 URL 成型之后、建模板之前，因此不含合并、校验、请求拦截器、transform 与缓存查询的耗时；终点在缓存落库之后，含重试退避、闸门排队、对冲与落库等待。
+  </footer>
+
+</div>
+</body>
+</html>

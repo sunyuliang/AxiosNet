@@ -123,6 +123,9 @@ public sealed class AxiosCredential
             _ => null,
         };
 
+    /// <summary>从完整头值里截出第一段作认证方案（如 <c>Bearer abc</c> → <c>Bearer</c>）；没有空格分隔时返回 <c>null</c>。</summary>
+    /// <param name="value">完整的 <c>Authorization</c> 头值。</param>
+    /// <returns>方案名；无法识别时为 <c>null</c>。</returns>
     private static string? HeaderScheme(string value)
     {
         var separator = value.IndexOf(' ');

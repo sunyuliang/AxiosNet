@@ -4,18 +4,14 @@ using AxiosNet.Serialization;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 按 <see cref="AxiosConfig.Body"/> 的实际形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。
+/// 按 <see cref="AxiosConfig.Body"/> 的形态与生效 Content-Type 产出请求正文（没有正文返回 <c>null</c>）。
+/// 未显式设置 Content-Type 时用生效序列化器的 <see cref="IContentSerializer.MediaType"/>。
 /// </summary>
 /// <remarks>
-/// 生效 Content-Type 由 <see cref="AxiosConfig.ContentType"/> 决定，未显式设置时采用生效序列化器自报的
-/// <see cref="IContentSerializer.MediaType"/>。分派规则：
-/// <list type="bullet">
-/// <item><c>string</c> / <c>byte[]</c> / <c>Memory</c> / <c>ArraySegment</c> / <c>Stream</c>：原样发送，写入 Content-Type。</item>
-/// <item><see cref="HttpContent"/>：原样透传；只在内容自身没有 Content-Type 且配置显式设过时才补。</item>
-/// <item><c>IAsyncEnumerable&lt;byte[]&gt;</c> / <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c>：按块流式发送，长度未知。</item>
-/// <item>基础类型（数值 / 布尔 / 枚举 / Guid / 日期时间 / Uri…）：直接取文本，不经过序列化器。</item>
-/// <item>结构化数据：json → 序列化器；form-urlencoded → <see cref="FormBodyEncoder"/>；multipart → <see cref="MultipartBodyBuilder"/>。</item>
-/// </list>
+/// <c>string</c> / <c>byte[]</c> / <c>Memory</c> / <c>ArraySegment</c> / <c>Stream</c> 原样发送；
+/// <see cref="HttpContent"/> 原样透传（仅在自身没有 Content-Type 且配置显式设过时补）；
+/// <c>IAsyncEnumerable</c> 按块流式发送（长度未知）；基础类型直接取文本，不经序列化器；
+/// 结构化数据按 json / form-urlencoded（<see cref="FormBodyEncoder"/>）/ multipart（<see cref="MultipartBodyBuilder"/>）分派。
 /// </remarks>
 internal static class RequestBodyFactory
 {

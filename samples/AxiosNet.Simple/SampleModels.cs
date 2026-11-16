@@ -25,7 +25,7 @@ public sealed class ProfileDto
     /// <summary>用户名：PascalCase 属性名，用来验证自定义序列化器不改名也能对上契约。</summary>
     public string UserName { get; set; } = string.Empty;
 
-    /// <summary>年龄。</summary>
+    /// <summary>年龄，与 <see cref="User"/> 的同名字段对应。</summary>
     public int Age { get; set; }
 
     /// <summary>嵌套地址对象，与 <see cref="Address"/> 同形。</summary>
@@ -64,7 +64,7 @@ public sealed class BinaryOrder
     /// <summary>商品名（长度前缀 + UTF-8 字节）。</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>数量。</summary>
+    /// <summary>商品数量（二进制线格式的第二个 int）。</summary>
     public int Quantity { get; set; }
 
     /// <summary>金额（分）：线上按整数传，避免浮点误差。</summary>

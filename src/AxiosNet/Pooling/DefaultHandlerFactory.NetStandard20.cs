@@ -5,6 +5,14 @@ namespace AxiosNet.Pooling;
 
 internal static partial class DefaultHandlerFactory
 {
+    /// <summary>
+    /// 兼容资产的默认档 Handler：<see cref="HttpClientHandler"/>。连接级生命周期、h2 ping、建连超时等
+    /// 由 <see cref="HttpConnectionPool.ValidateOptions"/> 在兼容资产上拒绝非默认值，这里只映射两边都有的项。
+    /// </summary>
+    /// <param name="o">池选项（连接数上限、重定向、解压、头长度上限）。</param>
+    /// <param name="transport">出口设置（Cookie、代理、客户端证书）。</param>
+    /// <param name="cookieContainer">共享 Cookie 容器；<c>null</c> 且启用 Cookie 时新建一个。</param>
+    /// <returns>配置好的 Handler。</returns>
     private static HttpMessageHandler CreateCore(
         ConnectionPoolOptions o,
         ConnectionTransportOptions transport,

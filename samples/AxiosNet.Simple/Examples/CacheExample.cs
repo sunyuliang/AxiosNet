@@ -247,7 +247,7 @@ public sealed class CacheExample : IExample
         public ValueTask<bool> RemoveAsync(string key, CancellationToken cancellationToken)
             => new(_entries.Remove(key));
 
-        /// <summary>清空。</summary>
+        /// <summary>丢弃本存储里的全部记录。</summary>
         /// <param name="cancellationToken">取消令牌（内存实现用不到）。</param>
         /// <returns>完成的任务。</returns>
         public ValueTask ClearAsync(CancellationToken cancellationToken)
@@ -262,7 +262,7 @@ public sealed class CacheExample : IExample
             /// <summary>响应正文字节。</summary>
             public byte[]? Body { get; init; }
 
-            /// <summary>状态码。</summary>
+            /// <summary>HTTP 状态码。</summary>
             public int Status { get; init; }
 
             /// <summary>状态码文案。</summary>

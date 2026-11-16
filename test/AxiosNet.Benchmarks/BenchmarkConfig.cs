@@ -3,19 +3,7 @@
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 全项目统一的作业定义（3 预热 + 8 迭代，BDN 的 <c>DefaultJob</c> 是 6 + 15）。
-/// <para>
-/// 为什么刻意比 BDN 默认轻：本套基准完整一轮有 40 多行，DefaultJob 下要跑 50 分钟，
-/// 而「证明这次优化没退化」要求改动前后各跑一轮 —— 一个半小时的前置成本，最后一定是没人跑。
-/// 压到 8 次迭代后一轮约 10 分钟，前后对比才落得进日常流程。
-/// </para>
-/// <para>
-/// 精度上不会因此失守：判定的第一依据是 <c>Allocated</c>（确定性量，与迭代次数无关），
-/// 第二依据是同一次运行内的比值（同进程同窗口的比），第三才是 <c>Mean ± Error</c>。
-/// 8 次迭代下每行仍采样几十万次调用，<c>Error</c> 半宽通常在一个百分点量级。
-/// </para>
-/// <para>作业由 <see cref="Harness.BenchmarkLauncher"/> 独占：BDN 的 <c>--job</c> 是追加而非覆盖，</para>
-/// <para>放进程序集特性会让同一组基准跑两遍、两套迭代次数混进一张表。</para>
+/// 全项目统一的 BDN 作业定义：3 次预热 + 8 次迭代。判定依次看 Allocated、同一次运行内的比值，最后才是 Mean ± Error。
 /// </summary>
 internal static class BenchmarkConfig
 {

@@ -4,14 +4,13 @@ using AxiosNet.Telemetry;
 namespace AxiosNet.Retry;
 
 /// <summary>
-/// 全局重试预算：给任意 <see cref="IAxiosRetryPolicy"/> 套一层共享的令牌桶，限制**整个客户端实例**的重试速率。
+/// 全局重试预算：给任意 <see cref="IAxiosRetryPolicy"/> 套一层共享的令牌桶，限制整个客户端实例的重试速率。
 /// </summary>
 /// <remarks>
-/// 只拦重试不拦首发：内层策略说重试时才扣令牌，扣不到就放弃重试，把这次失败原样抛给调用方。
-/// 令牌桶按策略对象共享：挂在 <c>Defaults.Resilience.Retry.Policy</c> 上时本实例的所有请求共用一只桶。
-/// 线程安全，每次判定只在锁内做一次时间戳换算、不分配；<see cref="RefusedRetries"/> 与
-/// <see cref="OnBudgetExhausted"/> 用于本地观测，进程级指标见
-/// <c>axiosnet.client.retry.budget_exhausted</c>（无标签，受 <c>Observability.Capture</c> 控制）。
+/// 只拦重试不拦首发：内层策略说要重试时才扣令牌，扣不到就放弃重试，把失败原样抛给调用方。
+/// 令牌桶按策略对象共享，挂到 <c>Defaults.Resilience.Retry.Policy</c> 上时本实例所有请求共用一只桶。
+/// 线程安全、判定路径不分配；<see cref="RefusedRetries"/> 与 <see cref="OnBudgetExhausted"/> 供本地观测，
+/// 进程级指标为 <c>axiosnet.client.retry.budget_exhausted</c>（受 <c>Observability.Capture</c> 控制）。
 /// </remarks>
 /// <example>
 /// <code>

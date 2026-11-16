@@ -3,26 +3,13 @@ using AxiosNet.Pooling;
 namespace AxiosNet;
 
 /// <summary>
-/// 实例级选项：只在构造 <see cref="AxiosClient"/> 时生效，构造期固化，之后改不会重建任何资源。
+/// 实例级选项：决定连接层与闸门容量的形态，只在构造 <see cref="AxiosClient"/> 时生效。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 这些选项决定的是<b>连接层</b>与<b>闸门容量</b>的形态：重定向 / Cookie / 代理 / 凭据由连接层 Handler 执行，
-/// 在建池时按选项写进 Handler；在途上限决定并发闸门的容量，也在构造期定死。两者都无法在请求发出时改，
-/// 所以它们不在 <see cref="AxiosConfig"/> 上 —— 想写在单次请求里没有入口，编译期就拒绝。
-/// </para>
-/// <para>
-/// 需要在同一进程里用不同出口或不同并发上限，请建多个 <see cref="AxiosClient"/>：
-/// 连接池可以共享（构造参数 <c>pool</c>），每个客户端各自带自己的闸门与选项。
-/// </para>
-/// <para>
-/// 按请求可变的那一半仍在 <see cref="AxiosConfig"/> 上：<see cref="AxiosConfig.TransportSettings.Profile"/>（传输档）、
-/// <see cref="AxiosConfig.ConcurrencySettings.QueueTimeout"/>（排队等待上限）、<see cref="AxiosConfig.Timeout"/> 等。
-/// </para>
-/// <para>
-/// 构造 <see cref="AxiosClient"/> 时会给一份<b>副本</b>并在构造结束后<b>冻结</b>（<see cref="AxiosClient.Options"/>）：
-/// 再改它一律抛 <c>ERR_BAD_OPTION_VALUE</c>，而不是「改了没效果」—— 静默无效是这类配置最难查的失败方式。
-/// </para>
+/// 构造时取一份副本并冻结（见 <see cref="AxiosClient.Options"/>），再改一律抛 <c>ERR_BAD_OPTION_VALUE</c>。
+/// 按请求可变的项在 <see cref="AxiosConfig"/> 上：<see cref="AxiosConfig.TransportSettings.Profile"/>、
+/// <see cref="AxiosConfig.ConcurrencySettings.QueueTimeout"/>、<see cref="AxiosConfig.Timeout"/>。
+/// 同一进程要用不同出口或并发上限时建多个 <see cref="AxiosClient"/>，连接池可用构造参数共享。
 /// </remarks>
 public sealed class AxiosClientOptions
 {

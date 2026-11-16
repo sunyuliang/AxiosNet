@@ -124,18 +124,25 @@ public sealed partial class AxiosConfig
             }
         }
 
+        /// <summary><see cref="Capture"/> 是否被显式赋值过（含显式 <c>null</c>），合并层据此区分「未设置」与「设为空」。</summary>
         internal bool CaptureSet { get; private set; }
 
+        /// <summary><see cref="OnUploadProgress"/> 是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
         internal bool OnUploadProgressSet { get; private set; }
 
+        /// <summary><see cref="OnDownloadProgress"/> 是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
         internal bool OnDownloadProgressSet { get; private set; }
 
+        /// <summary><see cref="OnRawResponse"/> 是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
         internal bool OnRawResponseSet { get; private set; }
 
+        /// <summary><see cref="OnSendingRequest"/> 是否被显式赋值过（含显式 <c>null</c>），合并层用。</summary>
         internal bool OnSendingRequestSet { get; private set; }
 
+        /// <summary><see cref="TimeoutMessage"/> 是否被显式赋值过（含显式 <c>null</c>，表示清除实例默认文案），合并层用。</summary>
         internal bool TimeoutMessageSet { get; private set; }
 
+        /// <summary><see cref="CaptureRawResponseBody"/> 是否被显式赋值过（含显式 <c>false</c>，表示关掉实例默认值），合并层用。</summary>
         internal bool CaptureRawResponseBodySet { get; private set; }
 
         /// <summary>
@@ -144,6 +151,8 @@ public sealed partial class AxiosConfig
         /// </summary>
         internal void MergeFrom(ObservabilitySettings incoming)
         {
+            // 每项都是「查标记 → 抄值 → 抄标记」三步：标记位必须一起搬，
+            // 否则二次合并时这一项会被误判成「没设置」而丢掉实例默认值。
             if (incoming.CaptureSet)
             {
                 _capture = incoming._capture;

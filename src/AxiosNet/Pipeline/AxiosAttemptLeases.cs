@@ -22,7 +22,7 @@ internal sealed class AxiosAttemptLeases : IDisposable
     /// <summary>释放标记：重复 <see cref="Dispose"/> 只生效一次。</summary>
     private int _disposed;
 
-    /// <summary>合成一个节点。</summary>
+    /// <summary>在链表头挂一个租约。</summary>
     /// <param name="lease">本节点持有的租约。</param>
     /// <param name="next">更早登记的租约；<c>null</c> 表示没有更早的。</param>
     public AxiosAttemptLeases(IDisposable lease, AxiosAttemptLeases? next)
@@ -43,6 +43,7 @@ internal sealed class AxiosAttemptLeases : IDisposable
     /// </remarks>
     public void Dispose()
     {
+        // 原子置位：并发的第二次 Dispose 直接返回，保证每个租约只释放一次。
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
@@ -50,6 +51,7 @@ internal sealed class AxiosAttemptLeases : IDisposable
 
         List<Exception>? failures = null;
 
+        // 逆序沿链表释放（后取的先还）；单个失败只记录，不中断其余项。
         for (AxiosAttemptLeases? node = this; node is not null; node = node._next)
         {
             try

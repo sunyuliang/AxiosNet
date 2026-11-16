@@ -3,19 +3,11 @@ using System.Net.Http.Headers;
 namespace AxiosNet.Internal;
 
 /// <summary>
-/// 响应 <c>Content-Type</c> 的原始值读取与拆分：拿到的是头里的原始字符串，**媒体类型与字符集按需解析**，
-/// 且不构造 <see cref="MediaTypeHeaderValue"/>——那一步要为参数集合、参数对象与两个子串一并付费。
+/// 响应 <c>Content-Type</c> 的原始值读取与拆分：媒体类型与字符集按需解析，不构造 <see cref="MediaTypeHeaderValue"/>。
 /// </summary>
 /// <remarks>
-/// 拆分结果必须与 <see cref="MediaTypeHeaderValue.TryParse"/> **逐字一致**：媒体类型主值、字符集取值，
-/// 以及「解析不了 → 两者皆 null」三处都按 BCL 口径。所以只有**简单形态**（ASCII、无引号 / 转义 / 逗号、
-/// 每段都是 <c>name=value</c> 且名字与取值都是 token）才走快路径，其余一律回落 BCL 解析：
-/// 快路径省的是分配，不是语义。
-/// <para>
-/// 判据来自 <c>MediaTypeHeaderValue</c> 的语法：<c>type "/" subtype *( OWS ";" OWS parameter )</c>，
-/// <c>parameter = token "=" ( token / quoted-string )</c>。引号、转义、多值（逗号）这些形态快路径不接，
-/// 直接交给 BCL——它们在真实响应里极少，接进来只会把「语义等价」变成需要长期维护的证明题。
-/// </para>
+/// 拆分结果必须与 <see cref="MediaTypeHeaderValue.TryParse"/> 逐字一致（主值、字符集，以及解析不了时两者皆为 <c>null</c>）。
+/// 只有简单形态（ASCII、无引号 / 转义 / 逗号、每段 <c>name=value</c>）走快路径，其余一律回落 BCL 解析。
 /// </remarks>
 internal static class ContentTypeHeader
 {
@@ -253,13 +245,11 @@ internal static class ContentTypeHeader
     private static bool IsTokenChar(char c) => c < 128 && TokenChars[c];
 
     /// <summary>
-    /// 参数名比较：ASCII、大小写不敏感，按长度与逐字符比（<c>charset</c> 恒为 ASCII，不需要文化感知比较）。
+    /// 参数名比较：ASCII、大小写不敏感，按长度与逐字符比。
     /// </summary>
     /// <remarks>
-    /// 刻意不写成 <c>raw[start..end].Equals(name, StringComparison.OrdinalIgnoreCase)</c>：那个重载是
-    /// <c>MemoryExtensions</c> 上的**扩展方法**，接收者又是切片表达式时，netstandard2.0 目标上的重载解析
-    /// 取决于编译器与引用程序集，VS 会解析到静态的 <c>object.Equals(object, object)</c> 并报 CS0176。
-    /// 逐字符比没有这层绑定，三种目标框架上行为一致。
+    /// 不写成 <c>raw[start..end].Equals(name, StringComparison.OrdinalIgnoreCase)</c>：该重载在 netstandard2.0 目标上
+    /// 可能被解析到 <c>object.Equals</c> 并报 CS0176。逐字符比在三个目标框架上行为一致。
     /// </remarks>
     /// <param name="value">待比较的参数名段。</param>
     /// <param name="expected">期望的名字（ASCII 小写常量）。</param>

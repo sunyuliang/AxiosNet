@@ -296,6 +296,7 @@ public sealed class CompatBehaviorTests
 
     private sealed class NullHandler : HttpMessageHandler
     {
+        /// <summary>一律返回 200 空响应。</summary>
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
     }

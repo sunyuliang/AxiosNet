@@ -25,7 +25,7 @@ public sealed partial class AxiosDynamic : IDynamicMetaObjectProvider, IDictiona
     /// <summary>按槽位存值；扩容走整数组替换，永不原地改长度。</summary>
     private object?[] _values = Array.Empty<object?>();
 
-    /// <summary>创建空对象。</summary>
+    /// <summary>创建空对象：形状为空，首次赋值才建立形状缓存。</summary>
     public AxiosDynamic()
     {
     }

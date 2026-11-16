@@ -8,6 +8,7 @@ namespace AxiosNet.Metadata;
 /// </summary>
 public static class ValueFormatReader
 {
+    /// <summary>当前注册的读取器；<c>null</c> = 没有任何格式信息（内核默认状态）。读写都走 <see cref="Interlocked"/> / <see cref="Volatile"/>。</summary>
     private static Func<PropertyInfo, ValueFormat?>? _reader;
 
     /// <summary>

@@ -6,23 +6,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 热点一：请求全链路（真实回环 socket）。
-/// <para>
-/// <b>这一组回答的问题</b>：AxiosNet 在一条完整请求上比裸 <see cref="HttpClient"/> 贵多少？
-/// 与 <c>ConcurrencyPerformanceTests</c> 的 85% 能力线是同一条问题，但这里给的是带误差条的
-/// 单请求延迟与分配，而不是一个「多轮最好一轮是否过线」的布尔值。
-/// </para>
-/// <para>
-/// <b>读数方式</b>：BDN 的 <c>Ratio</c> 是<b>时间</b>比（相对 <c>HttpClient_GetString</c>），
-/// 所以「吞吐比 = 1 / Ratio」。注意它是<b>逐行顺序测</b>的：每个变体一个独立进程、独立时段，
-/// 消掉的是「换机器 / 换模型」的差异，消不掉「跑 A 时机器比跑 B 时热」—— 判定退化时看 <c>RatioSD</c>，
-/// 必要时跑两遍看比值稳不稳。
-/// </para>
-/// <para>
-/// <b>对照口径</b>：两侧 Handler 功能逐项对齐（见 <see cref="ComparableHttpClientHandler"/>），
-/// 服务器是回环直连的最小实现（见 <see cref="LoopbackHttpServer"/>），两边工作量对等：
-/// <c>HttpClient_GetString</c> 与 <c>AxiosNet_GetString</c> 都只把正文读成字符串，不做反序列化。
-/// </para>
+/// 请求全链路（真实回环 socket）：一条完整请求上比裸 <c>HttpClient</c> 贵多少，给的是带误差条的单请求延迟与分配。<c>Ratio</c> 是时间比，吞吐 = 1 / Ratio；判定退化时看 <c>RatioSD</c>。
 /// </summary>
 [Description("请求全链路（回环 socket）：HttpClient 基线 vs AxiosNet GET 字符串 / GET 强类型 / POST JSON")]
 [BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]

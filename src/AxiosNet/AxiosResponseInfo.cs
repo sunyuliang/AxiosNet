@@ -21,7 +21,7 @@ public sealed class AxiosResponseInfo
     /// <summary>解析出的媒体类型主值（首次读 <see cref="MediaType"/> / <see cref="CharSet"/> 时填）。</summary>
     private string? _mediaType;
 
-    /// <summary>解析出的字符集（同上）。</summary>
+    /// <summary>解析出的字符集；与媒体类型由同一次拆分得出。</summary>
     private string? _charSet;
 
     /// <summary>是否已经拆分过 <see cref="_rawContentType"/>（0/1）；并发首次读取可能重复拆分，但结果一致。</summary>

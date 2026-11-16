@@ -68,6 +68,11 @@ internal static class NetStandard20Extensions
     public static Task<TResult> WaitAsync<TResult>(this Task<TResult> task, TimeSpan timeout, CancellationToken cancellationToken)
         => WaitAsyncCore(task, timeout, cancellationToken);
 
+    /// <summary>无结果等待的实现：完成 / 超时 / 取消三方先到者决定结果，且不留继续跑到超时点的定时器。</summary>
+    /// <param name="task">被等待的任务。</param>
+    /// <param name="timeout">等待上限；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>等待完成的任务。</returns>
     private static async Task WaitAsyncCore(Task task, TimeSpan timeout, CancellationToken cancellationToken)
     {
         if (task.IsCompleted || (!cancellationToken.CanBeCanceled && timeout == Timeout.InfiniteTimeSpan))
@@ -115,6 +120,12 @@ internal static class NetStandard20Extensions
         await task.ConfigureAwait(false);
     }
 
+    /// <summary>带结果等待的实现：先按无结果版本等完（超时 / 取消在那里裁决），再取结果。</summary>
+    /// <param name="task">被等待的任务。</param>
+    /// <param name="timeout">等待上限；<see cref="Timeout.InfiniteTimeSpan"/> 表示不限。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <typeparam name="TResult">结果类型。</typeparam>
+    /// <returns>原任务的结果。</returns>
     private static async Task<TResult> WaitAsyncCore<TResult>(Task<TResult> task, TimeSpan timeout, CancellationToken cancellationToken)
     {
         await WaitAsyncCore((Task)task, timeout, cancellationToken).ConfigureAwait(false);
@@ -296,6 +307,14 @@ internal static class NetStandard20Extensions
         return WriteRentedAsync(stream, buffer, cancellationToken);
     }
 
+    /// <summary>
+    /// 内存不是数组段的兜底路径：借一块池化缓冲拷过去再写，写完立即归还。
+    /// 只在 <c>MemoryMarshal.TryGetArray</c> 失败时才走到。
+    /// </summary>
+    /// <param name="stream">目标流。</param>
+    /// <param name="buffer">待写字节。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>写完成的任务。</returns>
     private static async ValueTask WriteRentedAsync(Stream stream, ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         var rented = ArrayPool<byte>.Shared.Rent(buffer.Length);

@@ -92,11 +92,8 @@ public sealed class AxiosRequestFailedEvent
 
 /// <summary>
 /// <c>AxiosNet.AttemptStop</c> / <c>AxiosNet.AttemptFailed</c> 事件的载荷：一次尝试（单次发送）的结果。
-/// 只有链上装了 <see cref="Pipeline.Attempt.Audit"/> 时才会产生，且只覆盖真正到达终端的尝试
-/// （熔断拒绝、闸门排队超时与短路响应都不产生尝试事件）。
-/// 对冲的每条分支、备用端点的每个端点各一条事件；<see cref="EndpointIndex"/> 只区分端点，
-/// 同一端点下的对冲分支三项序号完全相同，无法靠字段区分。
-/// 被胜出者取消的败者不发失败事件。
+/// 只有链上装了 <see cref="Pipeline.Attempt.Audit"/> 时才产生，且只覆盖真正到达终端的尝试。
+/// 对冲每条分支、备用端点每个端点各一条事件；<see cref="EndpointIndex"/> 只区分端点。被胜出者取消的败者不发失败事件。
 /// </summary>
 public sealed class AxiosAttemptEvent
 {

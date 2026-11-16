@@ -6,18 +6,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 并发吞吐：把 <c>ConcurrencyPerformanceTests</c> 的「85% 能力线」换成可读的比值。
-/// <para>
-/// <b>为什么单独一个类</b>：<see cref="RequestPipelineBenchmarks"/> 测的是单请求延迟（一次一个），
-/// 这里测的是「8 条在飞请求时每请求摊到多少」——两者不是一回事，前者看 CPU 增量，后者看吞吐上限。
-/// BDN 的 <c>OperationsPerInvoke = 8</c> 让每次调用记为 8 个操作，于是 Mean 就是<b>每请求</b>成本，
-/// <c>Ratio</c> 就是「每请求时间比」，<b>吞吐比 = 1 / Ratio</b>。
-/// </para>
-/// <para>判定看比值 ± 误差是否跨过 1.0；跨进程 / 跨机器不可比。</para>
-/// <para>
-/// 并发数取 8：与 <c>ConcurrencyPerformanceTests</c> 保持一致（该机器 P 核逻辑线程数，
-/// in-flight 超过它之后两侧会被摊到不同性能的核上，比值反而失真）。
-/// </para>
+/// 并发吞吐：8 条在飞请求下每请求摊到的成本（<c>OperationsPerInvoke = 8</c>），吞吐比 = 1 / Ratio。判定看比值 ± 误差是否跨过 1.0；跨进程不可比。
 /// </summary>
 [Description("并发吞吐（8 在飞）：HttpClient 基线 vs AxiosNet，Mean 为每请求成本")]
 [BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]

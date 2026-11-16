@@ -14,13 +14,9 @@ internal static class ReflectionCache
     /// 缓存的目标条目上限：到这条线只是「记满」，继续吸收到 <see cref="ClearThreshold"/> 才整体清空。
     /// </summary>
     /// <remarks>
-    /// 为什么是「上限 + 清空」而不是 <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>：
-    /// <list type="bullet">
-    /// <item><c>ConditionalWeakTable</c> 在 <c>netstandard2.0</c> 上没有原子 <c>AddOrUpdate</c>，用到就得自己加锁，热路径不值得。</item>
-    /// <item>键得是 <see cref="PropertyInfo"/>，而反射 API 不保证同一属性每次返回同一个实例 —— 弱键会把命中率打没。</item>
-    /// </list>
-    /// 这里要解决的是「插件 / 可回收 <c>AssemblyLoadContext</c> 下字典无限长、<c>Unload()</c> 永不生效」，
-    /// 有上限就够了：清空后旧类型的强引用消失，程序集随即可回收（代价是一次重算，JIT 路径才会走到）。
+    /// 用「上限 + 清空」而不是 <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>：
+    /// 后者在 netstandard2.0 上没有原子 <c>AddOrUpdate</c>，且反射不保证同一属性返回同一个 <see cref="PropertyInfo"/> 实例。
+    /// 清空后旧类型的强引用消失，插件 / 可回收 <c>AssemblyLoadContext</c> 下的程序集即可回收。
     /// </remarks>
     private const int MaxEntries = 4096;
 

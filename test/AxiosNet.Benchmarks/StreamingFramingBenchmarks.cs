@@ -7,23 +7,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 热点五：流式响应分帧（NDJSON / SSE / JSON 数组）。
-/// <para>
-/// 被测路径：<see cref="ApiClient.RequestStreamAsync{TItem}"/> 拿流 → 字节级找帧边界 → 每帧交给序列化器 →
-/// <c>await foreach</c> 消费完。三种格式共用同一套「读块 / 压缩 / 上限 / 错误映射」，
-/// 差别只在边界怎么找：NDJSON 找 <c>0x0A</c>、SSE 找空行并剥 <c>data:</c>、JSON 数组靠
-/// <c>Utf8JsonReader</c> 增量定位顶层元素。
-/// </para>
-/// <para>
-/// <b>读法</b>：一次调用 = 一个完整流（含取流、分帧、逐帧反序列化、释放）。
-/// 三个 <c>Frames</c> 档位（10 / 100 / 1000）用来把成本拆成两部分：
-/// <c>10 → 1000</c> 的<b>斜率</b>是每帧成本，<c>Frames = 10</c> 那一行里剩下的固定部分才是取流开销。
-/// 单看一档数字无法区分「每帧变贵」和「取流变贵」，必须两档一起看。
-/// </para>
-/// <para>
-/// <c>Ratio</c> 相对同 <c>Frames</c> 的 NDJSON（最省的分帧方式），读作「这种格式贵几倍」。
-/// 三种格式的帧内容完全相同（同一份 <see cref="StreamFrame"/> JSON），因此比值只反映分帧路径本身。
-/// </para>
+/// 流式响应分帧（NDJSON / SSE / JSON 数组）：三种格式共用读块 / 压缩 / 上限 / 错误映射，差别只在边界怎么找。三个 <c>Frames</c> 档位把成本拆成每帧成本与取流固定开销；<c>Ratio</c> 相对同帧数的 NDJSON。
 /// </summary>
 [Description("流式分帧：NDJSON（基线）/ SSE / JSON 数组，10 与 100 与 1000 帧三档")]
 [BenchmarkGroup("纯 CPU（FakeHttpHandler，无网络）", "没有网络噪声，比值与 Allocated 都稳", Order = 2)]

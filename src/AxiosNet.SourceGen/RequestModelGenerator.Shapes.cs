@@ -10,9 +10,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace AxiosNet.SourceGen
 {
     /// <summary>
-    /// 对象形状发现：从请求模型、接口参数、Axios 调用点、<c>[AxiosShape]</c> 与匿名对象创建出发，
-    /// 递归展开成「类型 → 公共可读属性清单」，并烘焙成 <c>AxiosMetadata.RegisterGeneratedShapeFromSample</c> 调用。
-    /// 形状只描述事实（成员名 / 字段名 / 忽略标记 / 取值委托），展平语义仍由运行时决定。
+    /// 对象形状发现：从请求模型、接口参数、Axios 调用点、<c>[AxiosShape]</c> 与匿名对象出发，递归展开成
+    /// 「类型 → 公共可读属性清单」。形状只描述事实（成员名 / 字段名 / 忽略标记 / 取值委托），展平语义由运行时决定。
     /// </summary>
     public sealed partial class RequestModelGenerator
     {

@@ -56,9 +56,8 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 「明确要求 HTTP/3」时的前置护栏：只拦 <c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c>，
-    /// <c>RequestVersionOrLower</c> 的降级是正常路径；判据是本机能力 <see cref="Http3Support"/>。
-    /// netstandard2.0 兼容资产没有 h2 / h3 能力：只要 <c>version.Major &gt; 1</c> 就无条件拒绝，不看 policy。
+    /// HTTP/3 前置护栏：<c>RequestVersionExact</c> / <c>RequestVersionOrHigher</c> 且本机不支持 h3
+    /// （<see cref="Http3Support"/>）时拒绝；netstandard2.0 资产对 <c>Major &gt; 1</c> 一律拒绝。
     /// </summary>
     internal static void ValidateHttp3Request(Uri uri, Version version, HttpVersionPolicy policy, AxiosConfig config)
     {
@@ -466,6 +465,9 @@ public sealed partial class AxiosClient
             config);
     }
 
+    /// <summary>配置里是否已经有 <c>Authorization</c> 头（先看有没有头集合，避免为判定而分配一个空集合）。</summary>
+    /// <param name="config">待校验的配置。</param>
+    /// <returns>已有显式 <c>Authorization</c> 头时为 <c>true</c>。</returns>
     private static bool HasAuthorizationHeader(AxiosConfig config)
         => config.HasHeaders && config.Headers.Has(AuthorizationHeader.Name);
 

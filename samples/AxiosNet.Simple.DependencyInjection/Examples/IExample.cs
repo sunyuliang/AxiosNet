@@ -8,7 +8,7 @@ public interface IExample
     /// <summary>场景序号（同时用于菜单编号）。</summary>
     int Number { get; }
 
-    /// <summary>场景标题。</summary>
+    /// <summary>场景标题，用于菜单显示。</summary>
     string Title { get; }
 
     /// <summary>执行场景（baseUrl 为本地演示服务器地址）。</summary>

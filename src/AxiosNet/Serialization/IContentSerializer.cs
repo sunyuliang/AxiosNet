@@ -3,8 +3,8 @@ using AxiosNet.Internal;
 namespace AxiosNet.Serialization;
 
 /// <summary>
-/// 请求体 / 响应体的<b>格式编解码</b>抽象：JSON（默认）、XML、YAML、Protobuf、MessagePack 等都通过它接入，边界只有业务对象 ↔ 该格式的内容。
-/// 实现会被并发请求共享，必须无状态或线程安全；string / byte[] / Stream / 表单 / multipart / 基础类型都由库直接处理，不经过本接口。
+/// 请求体 / 响应体的格式编解码抽象：JSON（默认）、XML、YAML、Protobuf 等都通过它接入。
+/// 实现会被并发请求共享，必须无状态或线程安全；string / byte[] / Stream / 表单 / multipart / 基础类型由库直接处理，不经过本接口。
 /// </summary>
 /// <example>
 /// <code>
@@ -58,11 +58,9 @@ public interface IContentSerializer
     object? Deserialize(string text, Type type, AxiosConfig config);
 
     /// <summary>
-    /// 把该格式的<b>字节</b>反序列化为业务对象，不做文本解码。
-    /// 响应正文里的业务对象都从本入口进入：二进制正文原样交给序列化器，合法 UTF-8 的文本也直接按字节解析（省掉 UTF-16 中转）。
-    /// 正文不是合法 UTF-8 时库改调 <see cref="Deserialize(string, Type, AxiosConfig)"/>（坏字节已替换为 U+FFFD），
-    /// 与「先解码再解析」的旧路径一致，因此本入口不必处理非法 UTF-8。
-    /// 默认实现按响应字符集解码后转调文本入口，文本格式的序列化器无需实现本方法。
+    /// 把该格式的字节反序列化为业务对象，不做文本解码。
+    /// 二进制正文原样交给序列化器，合法 UTF-8 的文本也按字节解析；非法 UTF-8 时库改调文本入口（坏字节替换为 U+FFFD），
+    /// 因此本入口不必处理非法 UTF-8。默认实现按响应字符集解码后转调文本入口。
     /// </summary>
 #if NETSTANDARD2_0
     object? Deserialize(ReadOnlyMemory<byte> data, Type type, AxiosConfig config);

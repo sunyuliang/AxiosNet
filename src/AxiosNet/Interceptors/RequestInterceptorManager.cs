@@ -37,7 +37,7 @@ public sealed class RequestInterceptorManager
         }
     }
 
-    /// <summary>注册同步拦截器。</summary>
+    /// <summary>注册同步拦截器（内部包成已完成任务）。</summary>
     public int Use(
         Func<AxiosConfig, AxiosConfig> onFulfilled,
         Func<Exception, AxiosConfig>? onRejected = null)

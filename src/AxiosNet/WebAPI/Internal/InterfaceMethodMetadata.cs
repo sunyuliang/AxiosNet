@@ -5,8 +5,7 @@ namespace AxiosNet.WebAPI.Internal;
 
 /// <summary>
 /// 接口方法的绑定元数据：路由、参数绑定计划、授权、返回类型特化后的调用器；缓存键包含被代理的接口。
-/// 本文件是两条路径共用的部分（契约字段 + 绑定成配置 + 发送）：契约构建见 <c>InterfaceMethodMetadata.Contract.cs</c>，
-/// 反射路径见 <c>WebAPI/Reflection/InterfaceMethodMetadataJit.cs</c>。
+/// 契约构建与被代理的两条路径分别在 <c>InterfaceMethodMetadata.Contract.cs</c> 与 <c>WebAPI/Reflection/</c> 下。
 /// </summary>
 internal sealed partial class InterfaceMethodMetadata
 {

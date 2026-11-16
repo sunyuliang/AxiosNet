@@ -7,12 +7,7 @@ using BenchmarkDotNet.Toolchains.InProcess.Emit;
 namespace AxiosNet.Benchmarks.Harness;
 
 /// <summary>
-/// 跑一轮基准的唯一入口：解析作业与执行方式、把其余参数原样交给 BDN、跑完打印摘要。
-/// <para>
-/// 为什么统一走 <see cref="BenchmarkSwitcher"/> 而不是 <c>BenchmarkRunner.Run(type)</c>：只有前者认
-/// <c>--filter</c> / <c>--exporters</c> 这些命令行参数，菜单通道与脚本通道才能共用同一条路径。
-/// </para>
-/// <para><c>--job</c> 由这里解析并作为唯一作业来源，避免同一组基准被跑两遍。</para>
+/// 跑一轮基准的唯一入口：解析作业与执行方式、把其余参数原样交给 BDN、跑完打印摘要。统一走 <c>BenchmarkSwitcher</c> 才能共用 <c>--filter</c> / <c>--exporters</c>。
 /// </summary>
 internal static class BenchmarkLauncher
 {

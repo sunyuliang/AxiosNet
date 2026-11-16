@@ -6,14 +6,7 @@ using AxiosNet.Comparison.Models;
 namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
-/// 服务端基线：用裸 TCP + 预编码请求字节跑同一个端点，不经过任何 HTTP 客户端栈。
-/// <para>
-/// 它的作用有两个：一是给出「这台回环服务器本身能跑多快」（其它实现的天花板），
-/// 二是测量「服务端每请求倾斜多少分配」——分配是进程级的，客户端实现的净分配必须减掉这份固定开销才可比。
-/// </para>
-/// <para>
-/// 不做 HTTP 解析，只按响应头里的 <c>Content-Length</c> 把字节读满；没有流水线，一次一请求。
-/// </para>
+/// 服务端基线：裸 TCP + 预编码请求字节跑同一个端点，不经过 HTTP 客户端栈。它给出回环服务器自身的天花板，以及每请求倾斜多少分配。不做 HTTP 解析，只按 <c>Content-Length</c> 读满。
 /// </summary>
 internal sealed class RawSocketTarget : ITarget
 {

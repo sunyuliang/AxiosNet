@@ -7,18 +7,13 @@ namespace AxiosNet.Pipeline;
 public static partial class Attempt
 {
     /// <summary>
-    /// 备用端点：当前端点「用不了」时（网络错误 / 超时 / 连接池耗尽 / 熔断打开 / 5xx）换下一个端点重发，
-    /// 顺序即优先级；全部端点都失败才把第一条失败交给外层重试。
+    /// 备用端点：当前端点不可用时换下一个端点重发，顺序即优先级；全部端点都失败才把第一条失败交给外层重试。
     /// </summary>
     /// <remarks>
     /// 位置在 <see cref="Retry"/> 之内、<see cref="Hedging"/> 之外：每个端点各得一组对冲分支。
-    /// 换端点走 <see cref="AxiosAttemptContext.WithUri"/> 与 <see cref="AxiosAttemptContext.WithEndpointIndex"/>，
-    /// 连接租约、熔断计数维度与审计事件里的地址 / 端点序号都跟着新端点走；
-    /// 请求级 span 与本库的重试指标 / 重试事件仍按逻辑地址记（拿不到分支实际连的主机）。
-    /// 端点表为 <c>null</c> / 空时是纯直通；4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、
-    /// 配置 / 编程错误与取消都不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
-    /// 换端点要求正文能按顺序重放；跑不了当前 HTTP 版本的端点、以及拼出来就是当前地址的端点都直接跳过。
-    /// 流式响应只在响应头阶段能换端点。
+    /// 换端点时连接租约、熔断计数维度与审计事件的地址 / 端点序号跟着新端点走；请求级 span 与重试指标仍按逻辑地址记。
+    /// 端点表为空时纯直通；4xx、<c>ERR_QUEUE_TIMEOUT</c> / <c>ERR_QUEUE_FULL</c>、配置错误与取消不换端点，<c>ERR_CIRCUIT_OPEN</c> 换。
+    /// 要求正文能重放；跑不了当前 HTTP 版本、或拼出来就是当前地址的端点直接跳过。流式响应只在响应头阶段能换端点。
     /// </remarks>
     public static AxiosAttemptMiddleware Failover { get; } = next =>
     {
@@ -169,6 +164,8 @@ public static partial class Attempt
     {
         var total = endpoints.Count + 1;
         var anyCooling = false;
+
+        // 第一遍只判定「有没有必要重排」：全健康就走原顺序，不分配那个 int[]。
         for (var round = 0; round < total; round++)
         {
             if (!health.IsAvailable(EndpointKey(requestUri, endpoints, round)))
@@ -186,6 +183,8 @@ public static partial class Attempt
         var order = new int[total];
         var at = 0;
 
+        // 第二遍先放健康端点（保持原相对顺序），第三遍把冷却中的追加到末尾（同样保持原序）：
+        // 这样每一轮都先试可能成功的端点，冷却的仍然全部试过，只是排在后面。
         for (var round = 0; round < total; round++)
         {
             if (health.IsAvailable(EndpointKey(requestUri, endpoints, round)))

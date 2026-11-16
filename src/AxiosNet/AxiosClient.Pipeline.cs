@@ -499,10 +499,12 @@ public sealed partial class AxiosClient
     }
 
     /// <summary>
-    /// 阶段 5b —— 成型：拼出最终 URL、确定协议协商参数，并做 HTTP/3 的前置校验。
-    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>（netstandard2.0 兼容资产默认 1.1）；
-    /// 明文 http:// 不改写版本；强制 1.1 写 Version11，要 h3 写 Version30。
+    /// 阶段 5b —— 成型：拼出最终 URL、确定协议协商参数，并做 HTTP/3 前置校验。
     /// </summary>
+    /// <remarks>
+    /// 默认 HTTP/2 + <see cref="HttpVersionPolicy.RequestVersionOrLower"/>（netstandard2.0 资产默认 1.1）；
+    /// 明文 http:// 不改写版本，强制 1.1 写 Version11，要 h3 写 Version30。
+    /// </remarks>
     private static RequestPlan BuildRequestPlan(AxiosConfig config)
     {
         var uri = UrlBuilder.Build(config.BaseAddress, config.Url, config.Params, config.SerializationOrNull?.QueryEncoder, config: config);

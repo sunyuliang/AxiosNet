@@ -87,12 +87,9 @@ internal static class UrlBuilder
         {
             var uri = new Uri(pathAndQuery, UriKind.RelativeOrAbsolute);
 
-            // 长度闸门：.NET 10 起 Uri 取消了约 65519 字符的长度上限（官方 breaking change
-            // 「URI length limits removed」），同一个超长地址在 net6 / net8 上被 Uri 拒、在 net10 上构造成功——
-            // 对外契约会随运行时漂移（net10 上一条几十万字符的 URL 会真的变成一次请求）。
-            // 这里补一道与运行时无关的判定，边界取 net6 / net8 的实测值（65519 可用、65520 起抛），
-            // 三个运行时的表现因此一致：超长地址一律 ERR_INVALID_URL。
-            // 放在 new Uri 之后是刻意的：旧目标上 Uri 先抛，既有的 UriFormatException 归一化路径与覆盖都不受影响。
+            // 长度闸门：.NET 10 起 Uri 取消了约 65519 字符的上限，同一个超长地址会从「构造失败」变成一次真实请求。
+            // 边界取 net6 / net8 的实测值，三个运行时统一按 ERR_INVALID_URL 拒绝。
+            // 放在 new Uri 之后：旧目标上 Uri 先抛，既有的异常归一化路径不受影响。
             if (pathAndQuery.Length > MaxUrlLength)
             {
                 throw AxiosException.InvalidUrl(pathAndQuery, config);
@@ -149,9 +146,8 @@ internal static class UrlBuilder
     }
 
     /// <summary>
-    /// 对应 axios 的路径合并（base 当作目录前缀，不影响既有的斜杠折叠规则），但 base 的 query / fragment
-    /// 按 RFC 3986 §5.2.2 解析：它们不是路径字符，不能被拼进路径。<br/>
-    /// 规则：非空相对路径不继承 base 的 query；base 的 fragment 永不继承；引用自带的 query / fragment 保留。
+    /// 对应 axios 的路径合并（base 当作目录前缀），base 的 query / fragment 按 RFC 3986 §5.2.2 解析：
+    /// 非空相对路径不继承 base 的 query，base 的 fragment 永不继承，引用自带的 query / fragment 保留。
     /// </summary>
     private static string Combine(string? baseAddress, string? url)
     {
@@ -202,6 +198,9 @@ internal static class UrlBuilder
     }
 
     /// <summary>base 的组件拆分结果（已按 URI 规则解码成可安全再拼接的文本）。</summary>
+    /// <param name="Root">authority 部分（含 scheme，如 <c>https://host:8443</c>）。</param>
+    /// <param name="Path">原始绝对路径（按 URI 规则转义过；末尾斜杠由 <see cref="JoinPaths"/> 折叠）。</param>
+    /// <param name="Query">base 自带的查询串（不含前导 <c>?</c>）；没有时为 <c>null</c>。</param>
     private readonly record struct BaseComponents(string Root, string Path, string? Query);
 
     private static readonly ConcurrentDictionary<string, BaseComponents> BaseComponentCache = new(StringComparer.Ordinal);
@@ -342,23 +341,27 @@ internal static class UrlBuilder
 
             case Dictionary<string, object?> map:
             {
+                // 先按「假设一个都不需要替换」遍历；第一次真的遇到标记时才把整张表浅拷贝一份，
+                // 其余项直接从原表抄过去（顺序无关，拷贝只发生一次）。
                 Dictionary<string, object?>? copy = null;
                 foreach (var entry in map)
                 {
                     var unwrapped = UnwrapFormattedValues(entry.Value);
-                    if (!ReferenceEquals(unwrapped, entry.Value))
+                    if (copy is null)
                     {
-                        copy ??= new Dictionary<string, object?>(map.Count);
+                        if (ReferenceEquals(unwrapped, entry.Value))
+                        {
+                            continue;
+                        }
+
+                        copy = new Dictionary<string, object?>(map.Count);
                         foreach (var original in map)
                         {
-                            if (!copy.ContainsKey(original.Key))
-                            {
-                                copy[original.Key] = original.Value;
-                            }
+                            copy[original.Key] = original.Value;
                         }
                     }
 
-                    copy?[entry.Key] = unwrapped;
+                    copy[entry.Key] = unwrapped;
                 }
 
                 return copy ?? value;
@@ -370,12 +373,17 @@ internal static class UrlBuilder
                 for (var index = 0; index < list.Count; index++)
                 {
                     var unwrapped = UnwrapFormattedValues(list[index]);
-                    if (!ReferenceEquals(unwrapped, list[index]))
+                    if (copy is null)
                     {
-                        copy ??= new List<object?>(list);
+                        if (ReferenceEquals(unwrapped, list[index]))
+                        {
+                            continue;
+                        }
+
+                        copy = new List<object?>(list);
                     }
 
-                    copy?[index] = unwrapped;
+                    copy[index] = unwrapped;
                 }
 
                 return copy ?? value;

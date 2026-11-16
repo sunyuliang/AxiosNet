@@ -153,42 +153,13 @@ public static class AxiosTelemetry
     internal const string CircuitStateHalfOpen = "half_open";
 
     /// <summary>
-    /// 观测实现：默认写内置的 <see cref="ActivitySource"/> / <see cref="Meter"/> / <see cref="DiagnosticListener"/>。
-    /// 换成自己的实现即<b>整套</b>接管（内置那套同时停用，不是叠加）；设 <see cref="AxiosTelemetrySink.Off"/> 即彻底关掉。
+    /// 观测实现：默认写内置的 <see cref="ActivitySource"/> / <see cref="Meter"/> / <see cref="DiagnosticListener"/>；
+    /// 换成自己的实现即整套接管（内置那套同时停用），设 <see cref="AxiosTelemetrySink.Off"/> 即彻底关掉。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 进程级开关，**启动时设一次**。三类回调的派发口径不同：
-    /// </para>
-    /// <list type="bullet">
-    /// <item>
-    /// <b>观测句柄</b>（<see cref="IAxiosTelemetrySink.StartRequest"/> 交出的
-    /// <see cref="AxiosRequestTrace"/>）：<see cref="IAxiosTelemetrySink.StopRequest"/> /
-    /// <see cref="IAxiosTelemetrySink.SetRequestBodySize"/> 回到<b>创建它的那个实现</b>上，
-    /// 所以请求在途时替换不会把一条请求劈成两家（默认句柄 = 不观测，天然是空操作）。
-    /// 同理，<see cref="IAxiosTelemetrySink.RequestSucceeded"/> / <see cref="IAxiosTelemetrySink.RequestFailed"/>
-    /// 也派给「本次请求开始时认下的那个实现」：它们带着这条句柄，发给另一家等于让对方去解析别人格式的 <c>State</c>。
-    /// </item>
-    /// <item>
-    /// <b>成对水位</b>（<see cref="IAxiosTelemetrySink.EnterRequest"/> / <see cref="IAxiosTelemetrySink.ExitRequest"/>、
-    /// <see cref="IAxiosTelemetrySink.EnterLease"/> / <see cref="IAxiosTelemetrySink.ExitLease"/>、
-    /// <see cref="IAxiosTelemetrySink.EnterPool"/> / <see cref="IAxiosTelemetrySink.ExitPool"/>）按本属性的<b>当前值</b>派发：
-    /// 一对进出之间换过实现，就会「进的记在旧实现上、出的记在新实现上」，两边的水位一起错位
-    /// （租约与池的存活期可以长达整条流式响应，或者整个进程）。它们没有句柄可带，所以
-    /// <b>不要在还有在途请求 / 未归还租约时替换</b>；启动时设一次就不存在这个问题。
-    /// 请求级的 <see cref="IAxiosTelemetrySink.EnterRequest"/> / <see cref="IAxiosTelemetrySink.ExitRequest"/>
-    /// 例外：一次请求内的这一对一定落在同一个实现上（进入时认下，收尾时仍用它），所以只在「请求进行中换掉」
-    /// 的边界上会漏给新实现半条，不影响已有请求的配对。
-    /// </item>
-    /// <item>
-    /// <b>事件类</b>（缓存 / 重试 / 闸门 / 尝试审计…）按本属性的当前值派发：它们描述的是「此刻发生了什么」，
-    /// 换实现后新实现接着收剩余事件，符合「整套接管」的语义。
-    /// </item>
-    /// </list>
-    /// <para>
-    /// 库内派发都经 <see cref="Dispatch"/> 的护栏（见 <see cref="GuardedTelemetrySink"/>）：实现违约抛异常时
-    /// 只丢掉那一次观测，不会改写请求结果、也不会盖掉真正的失败原因。
-    /// </para>
+    /// 进程级开关，启动时设一次。请求在途时替换会让成对水位（Enter / Exit）记到两个实现上，因此不要在还有在途请求
+    /// 或未归还租约时替换。观测句柄与请求结果回调派给「请求开始时认下的实现」，事件类按当前值派发。
+    /// 派发都经护栏（见 <see cref="GuardedTelemetrySink"/>），实现抛异常只丢掉那一次观测。
     /// </remarks>
     /// <exception cref="ArgumentNullException">赋值为 <c>null</c>（要关掉请用 <see cref="AxiosTelemetrySink.Off"/>）。</exception>
     public static IAxiosTelemetrySink Sink

@@ -390,6 +390,13 @@ internal sealed class RequestModelMetadata
         return hasValue ? value : null;
     }
 
+    /// <summary>
+    /// 解析查询集合格式的两层声明（属性级 > 类型级），顺带校验枚举值合法；
+    /// 属性之间或属性与类之间取值不一致时报 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// </summary>
+    /// <param name="declaration">模型的声明快照（类型级 + 各属性级）。</param>
+    /// <param name="owner">报错用的模型名。</param>
+    /// <returns>生效的集合格式；两层都没声明时为 <c>null</c>（走默认 <c>Brackets</c>）。</returns>
     private static AxiosCollectionFormat? ResolveQueryCollectionFormat(RequestModelDeclaration declaration, string owner)
     {
         var hasTypeValue = declaration.QueryCollectionFormat is not null;
@@ -484,12 +491,24 @@ internal sealed class RequestModelMetadata
         return (true, first.Value);
     }
 
+    /// <summary>把「声明位置 = 取值」拼成一条可读清单，用于「多处声明不一致」的错误消息。</summary>
+    /// <param name="members">各属性的声明（取值 + <c>类型.成员</c> 定位文本）。</param>
+    /// <typeparam name="T">声明值的类型（字符串或枚举）。</typeparam>
+    /// <returns>形如 <c>A.P=0、A.Q=1</c> 的清单。</returns>
     private static string FormatDeclarations<T>(IReadOnlyList<(T Value, string Display)> members)
         => string.Join("、", members.Select(item => $"{item.Display}={FormatValue(item.Value)}"));
 
+    /// <summary>取值的展示文本：字符串加引号（否则看不出首尾空格），其余走 <c>ToString</c>，<c>null</c> 显示为 <c>null</c>。</summary>
+    /// <param name="value">要展示的声明值。</param>
+    /// <typeparam name="T">值的类型。</typeparam>
+    /// <returns>错误消息里用的文本。</returns>
     private static string FormatValue<T>(T value)
         => value is string text ? $"\"{text}\"" : value?.ToString() ?? "null";
 
+    /// <summary>校验集合格式声明落在已定义的枚举范围内：不在范围内说明声明写错了，直接报错而不是静默退回默认值。</summary>
+    /// <param name="format">声明值。</param>
+    /// <param name="owner">报错用的模型名。</param>
+    /// <param name="scope">声明位置（<c>类</c> 或 <c>属性 X</c>）。</param>
     private static void ValidateCollectionFormat(AxiosCollectionFormat format, string owner, string scope)
     {
         if (!Enum.IsDefined(typeof(AxiosCollectionFormat), format))
@@ -500,6 +519,10 @@ internal sealed class RequestModelMetadata
         }
     }
 
+    /// <summary>校验流式格式声明落在已定义的枚举范围内（<see cref="ValidateCollectionFormat"/> 的同类检查）。</summary>
+    /// <param name="format">声明值。</param>
+    /// <param name="owner">报错用的模型名。</param>
+    /// <param name="scope">声明位置（<c>类</c> 或 <c>属性 X</c>）。</param>
     private static void ValidateStreamFormat(AxiosStreamFormat format, string owner, string scope)
     {
         if (!Enum.IsDefined(typeof(AxiosStreamFormat), format))

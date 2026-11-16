@@ -12,7 +12,10 @@ namespace AxiosNet.Compat.Tests;
 [Trait("Category", "Evidence")]
 public sealed class ShimEvidenceTests
 {
+    /// <summary>测量用的缓冲区长度（64 KiB）。</summary>
     private const int BufferSize = 64 * 1024;
+
+    /// <summary>每个测量点的重复次数。</summary>
     private const int Iterations = 200;
 
     private readonly ITestOutputHelper _output;
@@ -150,8 +153,10 @@ public sealed class ShimEvidenceTests
         _output.WriteLine("WaitAsync：旧实现在取消后仍挂起直到内层任务完成；新实现立即抛 TaskCanceledException");
     }
 
+    /// <summary>上一版写法（A/B 基线）：丢掉取消令牌，原样返回内层任务。</summary>
     private static Task<bool> OldWaitAsyncIgnoringToken(Task<bool> task, CancellationToken cancellationToken) => task;
 
+    /// <summary>预热 3 次后测 <paramref name="iterations"/> 次的分配字节数。</summary>
     private static async Task<long> MeasureAsync(Func<Task> action, int iterations)
     {
         for (var i = 0; i < 3; i++)
@@ -168,6 +173,7 @@ public sealed class ShimEvidenceTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
+    /// <summary>同 <c>MeasureAsync</c>，同步版。</summary>
     private static long Measure(Action action, int iterations)
     {
         for (var i = 0; i < 3; i++)
@@ -184,6 +190,7 @@ public sealed class ShimEvidenceTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
+    /// <summary>测 <paramref name="iterations"/> 次的总耗时（ticks）。</summary>
     private static long MeasureTicks(Action action, int iterations)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -210,6 +217,7 @@ public sealed class ShimEvidenceTests
         return read;
     }
 
+    /// <summary>上一版写法（A/B 基线）：先 <c>ToArray</c> 再写，每次多分配一份正文。</summary>
     private static Task OldWriteAsync(Stream stream, ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         var bytes = buffer.ToArray();
@@ -235,23 +243,30 @@ public sealed class ShimEvidenceTests
             set => throw new NotSupportedException();
         }
 
+        /// <inheritdoc />
         public override void Flush()
         {
         }
 
+        /// <summary>永远读到 0 字节（流已到末尾）。</summary>
         public override int Read(byte[] buffer, int offset, int count) => 0;
 
+        /// <summary>复用已完成的零值任务，避免测量时把分配记到 shim 账上。</summary>
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             => Zero;
 
+        /// <summary>不支持定位。</summary>
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 
+        /// <summary>不支持改变长度。</summary>
         public override void SetLength(long value) => throw new NotSupportedException();
 
+        /// <summary>丢弃全部写入。</summary>
         public override void Write(byte[] buffer, int offset, int count)
         {
         }
 
+        /// <summary>立即完成，不落盘。</summary>
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             => Task.CompletedTask;
     }

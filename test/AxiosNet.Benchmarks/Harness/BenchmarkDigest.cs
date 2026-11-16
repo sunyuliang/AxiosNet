@@ -9,21 +9,7 @@ using Perfolizer.Mathematics.Common;
 namespace AxiosNet.Benchmarks.Harness;
 
 /// <summary>
-/// 结果摘要：把 BDN 的 <see cref="Summary"/> 重新排成一张能直接读的表。
-/// <para>
-/// <b>为什么不直接看 BDN 自己那张表</b>：它是给「全参数全列」用的，行序是 FastestToSlowest ——
-/// 多参数组里不同参数组合会交错，而每一行的比值只对<b>同参数组合</b>的基线成立，交错之后
-/// 「这一行是拿谁比出来的」就看不出来了。这里做三件事：
-/// </para>
-/// <list type="number">
-/// <item>按参数组合分组、组内按 Mean 升序，基线永远挨着它的变体；</item>
-/// <item><b>比值自己重算</b>（同参数组合 + <c>[Benchmark(Baseline = true)]</c>），不抄 BDN 的 Ratio 列 ——
-/// <item><b>比值自己重算</b>（同参数组合 + <c>[Benchmark(Baseline = true)]</c>），不抄 BDN 的 Ratio 列；</item>
-/// <item>时间列统一单位（整张表一个单位才好横向比），分配量按量级选 B/KB/MB。</item>
-/// </list>
-/// <para>
-/// 这里只<b>呈现</b>，不做判定：没有阈值、没有「通过 / 不通过」，与整个基准项目的定位一致。
-/// </para>
+/// 结果摘要表：按参数组合分组、组内按 Mean 升序，比值按同组基线重算（不抄 BDN 的 Ratio 列），时间与分配量统一单位。只呈现，不做判定。
 /// </summary>
 internal static class BenchmarkDigest
 {

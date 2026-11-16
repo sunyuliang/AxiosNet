@@ -18,7 +18,7 @@ internal sealed class SpecNode
         /// <summary>对象（字符串键 → 子节点）。</summary>
         Object,
 
-        /// <summary>数组。</summary>
+        /// <summary>JSON / YAML 数组（元素列表）。</summary>
         Array,
 
         /// <summary>字符串标量。</summary>
@@ -62,13 +62,13 @@ internal sealed class SpecNode
     /// <summary>创建布尔节点。</summary>
     public static SpecNode Bool(bool value) => new(Kind.Boolean, value);
 
-    /// <summary>是否对象。</summary>
+    /// <summary>种类为对象，子节点走 <c>Object</c> 或 <c>Properties</c>。</summary>
     public bool IsObject => _kind == Kind.Object;
 
-    /// <summary>是否数组。</summary>
+    /// <summary>种类为数组，元素走 <c>Items</c>。</summary>
     public bool IsArray => _kind == Kind.Array;
 
-    /// <summary>是否布尔。</summary>
+    /// <summary>种类为布尔，取值走 <c>AsBool</c>。</summary>
     public bool IsBoolean => _kind == Kind.Boolean;
 
     /// <summary>对象子节点；非对象返回空字典（调用方无需先判类型）。</summary>

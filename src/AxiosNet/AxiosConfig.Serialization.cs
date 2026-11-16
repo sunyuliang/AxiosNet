@@ -18,9 +18,8 @@ public sealed partial class AxiosConfig
 
         /// <summary>
         /// 按媒体类型登记的序列化器表（每个 <see cref="AxiosClient"/> 构造时保证有一份）。
-        /// 查找顺序固定为「按媒体类型精确登记 → 表内默认项」；未命中再到进程注册表（按媒体类型登记优先，<see cref="AxiosContent.Default"/> 兜底），最后内置 JSON。
-        /// 属实例级：库产出的配置（如回放 <see cref="AxiosResponse.Config"/>）合并时不带走来源实例的登记。
-        /// 按请求拿到的是实例那张表本身（同一引用），直接 <c>Register</c> 会改到实例；只在本次请求生效请 new 一张表再赋值。
+        /// 查找顺序：本表精确登记 → 表内默认项 → 进程注册表 → 内置 JSON。
+        /// 属实例级：库产出的配置合并时不带走来源实例的登记；按请求拿到的是同一张表，直接 <c>Register</c> 会改到实例。
         /// </summary>
         public ContentSerializerRegistry BodySerializers
         {
@@ -112,13 +111,12 @@ public sealed partial class AxiosConfig
         internal bool CollectionFormatSet { get; set; }
 
         /// <summary>
-        /// 实例级值格式化钩子：值转线上文本时调用（路径 / 查询 / 请求头（含头集合的字典值）/ 表单字段 / multipart 文本部件 / 裸标量正文），
-        /// 第二个参数是值所在的 <see cref="ValueTextChannel"/>，同一个钩子可以按位置给出不同文本（如请求头用 RFC 1123、查询串用 ISO 8601）。
-        /// 返回的字符串直接作为该值的线上文本（路径段与查询 / 表单值随后仍会被转义）；返回 <c>null</c> 表示本次不处理，回落到默认规则。
+        /// 实例级值格式化钩子：值转线上文本时按值所在位置（<see cref="ValueTextChannel"/>）调用，
+        /// 返回的字符串直接作为线上文本（路径段与查询 / 表单值随后仍会转义），<c>null</c> 表示回落默认规则。
         /// </summary>
         /// <remarks>
-        /// 设在 <see cref="AxiosClient.Defaults"/> 上对整个客户端生效；直接调用时也可在单次请求的配置里覆盖。
-        /// 回放 <see cref="AxiosResponse.Config"/> 时按实例级项处理：取目标实例的默认值，来源实例的钩子不跟过来。
+        /// 设在 <see cref="AxiosClient.Defaults"/> 上对整个客户端生效，也可在单次请求里覆盖。
+        /// 回放 <see cref="AxiosResponse.Config"/> 时取目标实例的默认值，来源实例的钩子不跟过来。
         /// </remarks>
         public Func<object?, ValueTextChannel, string?>? ValueText
         {
@@ -138,11 +136,19 @@ public sealed partial class AxiosConfig
 
         private sealed class ValueTextState
         {
+            /// <summary>值格式化钩子本体；<c>null</c> 表示回落到默认格式化规则。</summary>
             internal Func<object?, ValueTextChannel, string?>? ValueText;
+
+            /// <summary><see cref="ValueText"/> 是否被显式赋值过（含显式 <c>null</c>；该钩子没有「清除」语义，只用于合并判定）。</summary>
             internal bool ValueTextSet;
+
+            /// <summary>查询串编码钩子；不设置时用默认转义。</summary>
             internal Func<object?, string>? QueryEncoder;
+
+            /// <summary>表单字段名改写钩子（入参：前缀 / 字段名）；不设置时沿用原字段名。</summary>
             internal Func<string?, string, string>? FormFieldName;
 
+            /// <summary>按指针浅拷贝：三项委托都不可变，克隆出的状态可独立改写自身标记位。</summary>
             internal ValueTextState Clone() => (ValueTextState)MemberwiseClone();
         }
 
@@ -179,18 +185,24 @@ public sealed partial class AxiosConfig
 
         private SynchronizedList<Func<object?, AxiosConfig, object?>>? _transformResponse;
 
+        /// <summary>是否注册过请求变换（<see cref="TransformRequest"/> 非空且有项），管线据此跳过整段遍历。</summary>
         internal bool HasTransformRequest => _transformRequest is { Count: > 0 };
 
+        /// <summary>请求变换的读快照：每轮管线只取一次，遍历期间不持有列表锁；没有变换时为 <c>null</c>。</summary>
         internal Func<object?, AxiosConfig, object?>[]? TransformRequestSnapshot
             => _transformRequest is { Count: > 0 } ? _transformRequest.Snapshot() : null;
 
+        /// <summary>请求变换的项数，用于回调上下文与诊断展示（不分配快照）。</summary>
         internal int TransformRequestCount => _transformRequest?.Count ?? 0;
 
+        /// <summary>是否注册过响应变换（<see cref="TransformResponse"/> 非空且有项），管线据此跳过整段遍历。</summary>
         internal bool HasTransformResponse => _transformResponse is { Count: > 0 };
 
+        /// <summary>响应变换的读快照：同 <see cref="TransformRequestSnapshot"/>，取一次用一轮；没有变换时为 <c>null</c>。</summary>
         internal Func<object?, AxiosConfig, object?>[]? TransformResponseSnapshot
             => _transformResponse is { Count: > 0 } ? _transformResponse.Snapshot() : null;
 
+        /// <summary>响应变换的项数，用于回调上下文与诊断展示（不分配快照）。</summary>
         internal int TransformResponseCount => _transformResponse?.Count ?? 0;
 
         /// <summary>把 <paramref name="incoming"/> 里有值的项覆盖到本实例（合并层内部使用）。</summary>

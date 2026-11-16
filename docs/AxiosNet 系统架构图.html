@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AxiosNet 系统架构总览</title>
+<style>
+  :root{
+    --bg:#0a0c13;
+    --bg-soft:#0e1119;
+    --panel:#12151f;
+    --panel-2:#161a26;
+    --line:#242a3a;
+    --line-soft:#1c2130;
+    --text:#e7eaf3;
+    --text-2:#b9c0d2;
+    --muted:#7f889e;
+    --indigo:#8b8cf7;
+    --indigo-deep:#4c4fa8;
+    --violet:#b98cff;
+    --teal:#37c9a3;
+    --amber:#e3a63f;
+    --rose:#e2705a;
+    --sky:#4fa8e3;
+    --lime:#9ccf5a;
+    --mono:ui-monospace,SFMono-Regular,"Cascadia Code","Consolas","Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(90,96,220,.16), transparent 60%),
+      radial-gradient(900px 500px at 90% 0%, rgba(55,201,163,.09), transparent 55%),
+      var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    line-height:1.55;
+  }
+  .page{max-width:1320px;margin:0 auto;padding:34px 26px 70px}
+
+  /* ---------- header ---------- */
+  header.top{margin-bottom:26px}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--indigo);
+    border:1px solid rgba(139,140,247,.28);background:rgba(139,140,247,.07);
+    padding:4px 10px;border-radius:999px;margin-bottom:14px;
+  }
+  .eyebrow .pulse{width:6px;height:6px;border-radius:50%;background:var(--indigo);box-shadow:0 0 10px var(--indigo)}
+  h1{margin:0 0 8px;font-size:31px;font-weight:600;letter-spacing:-.4px}
+  h1 span{color:var(--muted);font-weight:400}
+  .lede{margin:0;max-width:820px;color:var(--text-2);font-size:14.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .chip{
+    font-size:12px;color:var(--text-2);
+    background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:5px 10px;
+  }
+  .chip b{color:var(--text);font-weight:600}
+  .chip.mono{font-family:var(--mono);font-size:11.5px}
+
+  /* ---------- nav ---------- */
+  nav.toc{
+    position:sticky;top:0;z-index:20;
+    display:flex;flex-wrap:wrap;gap:4px;
+    margin:24px 0 26px;padding:9px 10px;
+    background:rgba(10,12,19,.86);
+    backdrop-filter:blur(12px);
+    border:1px solid var(--line-soft);border-radius:12px;
+  }
+  nav.toc a{
+    font-size:12.5px;color:var(--muted);text-decoration:none;
+    padding:5px 10px;border-radius:7px;transition:.16s;
+  }
+  nav.toc a:hover{color:var(--text);background:var(--panel-2)}
+  nav.toc a.on{color:var(--text);background:rgba(139,140,247,.13);box-shadow:inset 0 0 0 1px rgba(139,140,247,.28)}
+  nav.toc a b{color:var(--indigo);font-weight:600;margin-right:5px;font-family:var(--mono);font-size:11px}
+  nav.toc a:focus-visible,section a:focus-visible{outline:2px solid var(--indigo);outline-offset:2px;border-radius:6px}
+
+  /* ---------- section ---------- */
+  section{margin:0 0 34px}
+  section[id]{scroll-margin-top:78px}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}
+  .sec-num{
+    font-family:var(--mono);font-size:12px;color:var(--indigo);
+    border:1px solid rgba(139,140,247,.3);border-radius:6px;padding:2px 7px;
+  }
+  h2{margin:0;font-size:18.5px;font-weight:600;letter-spacing:-.2px}
+  .sec-desc{margin:0 0 16px;color:var(--muted);font-size:13px;max-width:900px}
+  .sec-desc code,.mono{font-family:var(--mono);font-size:12px;color:var(--sky)}
+
+  /* ---------- layered stack ---------- */
+  .stack{display:flex;flex-direction:column;gap:0}
+  .layer{
+    position:relative;
+    border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    border-radius:12px;
+    background:linear-gradient(180deg,var(--panel-2),var(--panel));
+    padding:14px 16px 16px;
+  }
+  .layer-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .layer-tag{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    color:var(--accent);
+    border:1px solid var(--accent);
+    border-color:color-mix(in srgb,var(--accent) 42%,transparent);
+    background:rgba(255,255,255,.04);
+    background:color-mix(in srgb,var(--accent) 10%,transparent);
+    border-radius:5px;padding:2px 6px;
+  }
+  .layer-title{font-size:14px;font-weight:600}
+  .layer-note{font-size:11.5px;color:var(--muted)}
+  .layer-note code{font-family:var(--mono);color:var(--text-2);font-size:11px}
+  .cells{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+  .cell{
+    background:rgba(255,255,255,.026);
+    border:1px solid var(--line-soft);
+    border-radius:9px;padding:9px 11px;
+  }
+  .cell b{display:block;font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:3px}
+  .cell span{display:block;font-size:11.5px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
+  .cell .t{font-family:var(--mono);font-size:11px;color:var(--text-2)}
+  .cell span code{font-family:var(--mono);font-size:10.5px;color:var(--text-2)}
+  .flow-down{
+    height:26px;display:flex;align-items:center;justify-content:center;position:relative;
+  }
+  .flow-down::before{content:"";position:absolute;top:4px;bottom:9px;width:1px;background:var(--line)}
+  .flow-down::after{
+    content:"";position:absolute;bottom:3px;left:50%;transform:translateX(-50%);
+    border-top:6px solid var(--line);border-left:4.5px solid transparent;border-right:4.5px solid transparent;
+  }
+  .flow-down em{
+    position:absolute;left:50%;margin-left:12px;top:4px;
+    font-style:normal;font-size:11px;color:var(--muted);background:var(--bg);padding:0 6px;
+  }
+
+  /* ---------- pipeline timeline ---------- */
+  .timeline{position:relative;margin:0;padding:0 0 0 30px;list-style:none}
+  .timeline::before{
+    content:"";position:absolute;left:9px;top:8px;bottom:8px;width:1px;
+    background:linear-gradient(180deg,var(--indigo-deep),var(--line) 55%,var(--line-soft));
+  }
+  .step{position:relative;margin-bottom:9px}
+  .step::before{
+    content:"";position:absolute;left:-26px;top:13px;width:9px;height:9px;border-radius:50%;
+    background:var(--panel);border:1.5px solid var(--step,var(--indigo));
+  }
+  .step-card{
+    display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start;
+    background:var(--panel);border:1px solid var(--line-soft);border-radius:10px;
+    padding:10px 13px;
+  }
+  .step-no{
+    font-family:var(--mono);font-size:11px;color:var(--step,var(--indigo));
+    border:1px solid var(--step,var(--indigo));
+    border-color:color-mix(in srgb,var(--step,var(--indigo)) 38%,transparent);
+    border-radius:6px;text-align:center;padding:3px 0;margin-top:1px;
+    background:rgba(255,255,255,.035);
+    background:color-mix(in srgb,var(--step,var(--indigo)) 9%,transparent);
+  }
+  .step-body b{font-size:13px;font-weight:600}
+  .step-body b .type{font-family:var(--mono);font-size:11.5px;color:var(--text-2);font-weight:400;margin-left:7px}
+  .step-body p{margin:3px 0 0;font-size:12px;color:var(--muted)}
+  .step-body p code{font-family:var(--mono);font-size:11px;color:var(--sky)}
+  .branch{
+    margin-top:7px;display:inline-flex;align-items:center;gap:7px;
+    font-size:11.5px;color:var(--amber);
+    background:rgba(227,166,63,.07);border:1px dashed rgba(227,166,63,.35);
+    border-radius:7px;padding:4px 9px;
+  }
+  .branch b{color:#f3c983;font-weight:600}
+  .branch .arrow{color:var(--amber);opacity:.8}
+
+  /* ---------- onion ---------- */
+  .onion{
+    display:flex;flex-direction:column;gap:8px;
+    border:1px dashed var(--line);border-radius:12px;padding:12px;
+    background:linear-gradient(180deg,rgba(255,255,255,.018),transparent);
+  }
+  .ring{border:1px solid;border-radius:10px;padding:9px 10px 10px}
+  .ring-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+  .ring-name{font-family:var(--mono);font-size:12px;font-weight:600}
+  .ring-meta{font-size:11px;color:var(--muted)}
+  .ring-body{display:flex;flex-direction:column;gap:8px}
+  .r1{border-color:rgba(226,112,90,.45);background:rgba(226,112,90,.055)}
+  .r1 .ring-name{color:#f0917d}
+  .r2{border-color:rgba(227,166,63,.42);background:rgba(227,166,63,.05)}
+  .r2 .ring-name{color:#efc07a}
+  .r3{border-color:rgba(185,140,255,.4);background:rgba(185,140,255,.05)}
+  .r3 .ring-name{color:#cbabff}
+  .r4{border-color:rgba(79,168,227,.4);background:rgba(79,168,227,.045)}
+  .r4 .ring-name{color:#8cc8ee}
+  .r5{border-color:rgba(55,201,163,.4);background:rgba(55,201,163,.045)}
+  .r5 .ring-name{color:#6fd9bb}
+  .r6{border-color:rgba(156,207,90,.38);background:rgba(156,207,90,.045)}
+  .r6 .ring-name{color:#b7dd84}
+  .terminal{
+    border:1px solid var(--indigo-deep);border-radius:10px;
+    background:linear-gradient(180deg,rgba(76,79,168,.24),rgba(76,79,168,.1));
+    padding:12px 14px;
+  }
+  .terminal b{font-size:12.5px}
+  .terminal span{display:block;font-size:11.5px;color:var(--text-2);margin-top:3px}
+  .formula{
+    margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--text-2);
+    background:var(--bg-soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+    overflow-x:auto;white-space:nowrap;
+  }
+  .formula b{color:var(--indigo);font-weight:600}
+
+  /* ---------- generic panels ---------- */
+  .grid-2{display:grid;grid-template-columns:1.25fr .85fr;gap:14px}
+  .grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
+  .panel{
+    background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;padding:14px 15px;
+  }
+  .panel h3{margin:0 0 10px;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .panel h3 .badge{
+    font-family:var(--mono);font-size:10px;font-weight:400;color:var(--muted);
+    border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+  }
+  .panel p{margin:0 0 8px;font-size:12px;color:var(--muted)}
+  .panel p:last-child{margin-bottom:0}
+  .kv{display:flex;flex-direction:column;gap:7px;margin:0;padding:0;list-style:none}
+  .kv li{display:flex;gap:9px;font-size:12px;align-items:flex-start}
+  .kv .k{font-family:var(--mono);font-size:11px;color:var(--text-2);flex:none;min-width:112px}
+  .kv .v{color:var(--muted)}
+  .kv .v code{font-family:var(--mono);font-size:11px;color:var(--sky)}
+
+  /* pool chain */
+  .chain{display:flex;flex-direction:column;gap:6px}
+  .chain-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .node{
+    border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.028);
+    padding:7px 10px;font-size:12px;color:var(--text-2);min-width:0;max-width:100%;
+  }
+  .node b{color:var(--text);font-weight:600;font-size:12px}
+  .node .sub{display:block;font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:1px;overflow-wrap:anywhere}
+  .node.hl{border-color:rgba(55,201,163,.4);background:rgba(55,201,163,.06)}
+  .node.hl b{color:#7bdcc1}
+  .arw{color:var(--muted);font-size:12px;flex:none}
+
+  /* declarative paths */
+  .paths{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:4px}
+  .path{
+    border:1px solid var(--line-soft);border-radius:10px;padding:11px 12px;
+    background:rgba(255,255,255,.022);
+  }
+  .path .ph{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .path .ph .pdot{width:7px;height:7px;border-radius:50%;background:var(--pc,var(--indigo))}
+  .path .ph b{font-size:12.5px}
+  .path ul{margin:0;padding-left:16px;font-size:11.5px;color:var(--muted)}
+  .path ul li{margin-bottom:3px}
+  .path ul li code{font-family:var(--mono);font-size:10.5px;color:var(--text-2)}
+
+  /* test matrix */
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line-soft)}
+  th{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+  td code{font-family:var(--mono);font-size:11px;color:var(--text-2)}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);color:var(--text)}
+
+  footer{
+    margin-top:8px;padding-top:18px;border-top:1px solid var(--line-soft);
+    font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  }
+  .totop{
+    position:fixed;right:22px;bottom:22px;width:38px;height:38px;
+    border-radius:10px;border:1px solid var(--line);background:rgba(18,21,31,.92);
+    color:var(--text-2);font-size:15px;line-height:1;cursor:pointer;
+    opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;
+    backdrop-filter:blur(8px);z-index:30;
+  }
+  .totop.on{opacity:1;pointer-events:auto}
+  .totop:hover{color:var(--text);border-color:rgba(139,140,247,.5);transform:translateY(-1px)}
+
+  @media (max-width:900px){
+    .grid-2{grid-template-columns:1fr}
+    h1{font-size:24px}
+    nav.toc{position:static}
+    .panel{overflow-x:auto}
+    .panel table{min-width:400px}
+  }
+  @media print{
+    body{background:#fff;color:#111}
+    nav.toc{display:none}
+    .page{max-width:none;padding:0}
+    .layer,.panel,.step-card,.cell,.ring,.terminal,.path,.node,.formula,.branch,.onion{
+      background:#fff !important;border-color:#c9cfdb !important;
+    }
+    .cell b,.cell span,.step-body b,.step-body p,.panel p,.panel h3,.kv .v,.kv .k,
+    .sec-desc,.layer-note,.layer-title,.ring-meta,.ring-name,.path ul,.path ul li,
+    td,th,.branch,footer,.lede,.chip,h1,h2{color:#1a1f2b !important}
+    .step-body p code,.kv .v code,.sec-desc code,.formula b{color:#0b4f8a !important}
+    .step-no,.layer-tag{color:#2b3140 !important}
+    section{break-inside:avoid}
+    .totop{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="top">
+    <div class="eyebrow"><span class="pulse"></span>Architecture Overview</div>
+    <h1>AxiosNet 系统架构总览 <span>／ 全链路分层</span></h1>
+    <p class="lede">
+      axios 风格的 .NET HTTP 客户端。自上而下分五层：调用入口 → 请求管线 → 尝试管线（中间件链）→ 连接与传输 → 运行时资产。
+      序列化、缓存、遥测、错误模型横切各层。
+    </p>
+    <div class="chips">
+      <span class="chip">目标框架 <b>netstandard2.0 / net6.0 / net8.0</b></span>
+      <span class="chip">第三方依赖 <b>0</b></span>
+      <span class="chip mono">src 4 个工程 · test 6 个工程</span>
+      <span class="chip">声明式 <b>模型式 / 接口式 / OpenAPI</b></span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#layers"><b>01</b>分层总览</a>
+    <a href="#request"><b>02</b>请求管线</a>
+    <a href="#attempt"><b>03</b>尝试管线</a>
+    <a href="#transport"><b>04</b>连接与传输</a>
+    <a href="#declarative"><b>05</b>声明式客户端</a>
+    <a href="#crosscut"><b>06</b>横切能力</a>
+    <a href="#engineering"><b>07</b>工程与验证</a>
+  </nav>
+
+  <!-- ============ 01 ============ -->
+  <section id="layers">
+    <div class="sec-head"><span class="sec-num">01</span><h2>分层总览</h2></div>
+    <p class="sec-desc">从调用方写下的一行代码，到 socket 上发出的字节，一共穿过五层。每层只依赖下一层，横切能力挂在层侧。</p>
+
+    <div class="stack">
+
+      <div class="layer" style="--accent:#8b8cf7">
+        <div class="layer-head">
+          <span class="layer-tag">L1</span>
+          <span class="layer-title">调用入口 · 契约层</span>
+          <span class="layer-note">用户直接接触的 API 形态与设计期工具</span>
+        </div>
+        <div class="cells">
+          <div class="cell"><b>静态门面 <span class="t">Axios</span></b><span>默认配置、Create、GetUri、IsCancel / IsAxiosError</span></div>
+          <div class="cell"><b>客户端实例 <span class="t">AxiosClient</span></b><span>RequestAsync / Get / Post / PostForm / GetUri / Warmup，全异步 + CancellationToken</span></div>
+          <div class="cell"><b>声明式 <span class="t">ApiClient</span></b><span>模型式 IApiRequest&lt;T&gt; 与接口式双重形态；Create&lt;T&gt;()、RequestStreamAsync 流式读取</span></div>
+          <div class="cell"><b>依赖注入 <span class="t">.DependencyInjection</span></b><span>AddAxiosClient / AddApiClient（含命名站点 + IApiClientResolver）/ AddApiInterface</span></div>
+          <div class="cell"><b>设计期工具 <span class="t">AxiosNet.Cli</span></b><span>axiosnet-gen：OpenAPI / Swagger 解析、归一化、代码生成</span></div>
+          <div class="cell"><b>编译期生成 <span class="t">AxiosNet.SourceGen</span></b><span>接口代理烘焙 + 请求模型 + 形状元数据快照（AOT 友好）</span></div>
+        </div>
+      </div>
+
+      <div class="flow-down"><em>调用 · SendAsync</em></div>
+
+      <div class="layer" style="--accent:#4fa8e3">
+        <div class="layer-head">
+          <span class="layer-tag">L2</span>
+          <span class="layer-title">请求管线 · 一次请求</span>
+          <span class="layer-note"><code>AxiosClient.Pipeline / .Send / .Cache / .Validation</code>　状态机池化，入口即开始计总预算</span>
+        </div>
+        <div class="cells">
+          <div class="cell"><b>配置合并 <span class="t">AxiosConfig</span></b><span>顶层 + 六个分组：Transport / Serialization / Resilience / Limits / Observability / Caching</span></div>
+          <div class="cell"><b>拦截器 <span class="t">Interceptors</span></b><span>请求逆序、响应双向，可异步、可运行时增删</span></div>
+          <div class="cell"><b>凭据解析 <span class="t">ResolveCredentialAsync</span></b><span>凭据槽位（<code>AxiosCredential</code>）→ Authorization 头，请求内只解析一次</span></div>
+          <div class="cell"><b>响应缓存 <span class="t">AxiosCache</span></b><span>同键单飞、ETag / 304 条件复用、CacheRequestDirectives</span></div>
+          <div class="cell"><b>正文编码 <span class="t">RequestBodyFactory</span></b><span>只看 ContentType，不猜类型；JSON / 表单 / multipart / 流式 / 压缩</span></div>
+          <div class="cell"><b>响应解码 <span class="t">ResponseReader</span></b><span>Json / Text / ArrayBuffer / Stream / dynamic，流式接入 TrafficStreams</span></div>
+        </div>
+      </div>
+
+      <div class="flow-down"><em>一次尝试</em></div>
+
+      <div class="layer" style="--accent:#b98cff">
+        <div class="layer-head">
+          <span class="layer-tag">L3</span>
+          <span class="layer-title">尝试管线 · 中间件链</span>
+          <span class="layer-note"><code>Pipeline/</code>　不可变链，构造期编译一次；内置项恒在链上，按 <code>ctx.Config</code> 决定是否工作</span>
+        </div>
+        <div class="cells">
+          <div class="cell"><b>重试 <span class="t">Attempt.Retry</span></b><span>指数退避 / 抖动 / Retry-After / 幂等门禁 / 全局预算</span></div>
+          <div class="cell"><b>备用端点 <span class="t">Attempt.Failover</span></b><span>镜像重发，失败端点在客户端内跨请求冷却</span></div>
+          <div class="cell"><b>熔断 <span class="t">Attempt.Circuit</span></b><span>按 host:port 的 Closed / Open / HalfOpen，慢启动探测</span></div>
+          <div class="cell"><b>并发对冲 <span class="t">Attempt.Hedging</span></b><span>同请求多分支并发，先成功者胜出</span></div>
+          <div class="cell"><b>在途闸门 <span class="t">Attempt.Gate</span></b><span>MaxInFlight / MaxQueue / QueueTimeout，槽位兜底归还</span></div>
+          <div class="cell"><b>审计 <span class="t">Attempt.Audit</span></b><span>未订阅时只做一次开关判定，不建状态机、不分配</span></div>
+        </div>
+      </div>
+
+      <div class="flow-down"><em>终端发送</em></div>
+
+      <div class="layer" style="--accent:#37c9a3">
+        <div class="layer-head">
+          <span class="layer-tag">L4</span>
+          <span class="layer-title">连接与传输 · 池与 Handler</span>
+          <span class="layer-note"><code>Pooling/</code>　每 origin 一个调优 Handler；一条池多条出口（传输档）</span>
+        </div>
+        <div class="cells">
+          <div class="cell"><b>连接池 <span class="t">HttpConnectionPool</span></b><span>自建 or <code>GetOrCreate(key)</code> 共享；共享池不随客户端释放</span></div>
+          <div class="cell"><b>池节点 <span class="t">PooledEndpoint</span></b><span>按 origin 持有 Handler 与生效选项，预热只建节点不建连</span></div>
+          <div class="cell"><b>传输档 <span class="t">TransportProfile</span></b><span>按请求选代理 / 凭据 / 客户端证书 / Cookie 会话，连接互不干扰</span></div>
+          <div class="cell"><b>Handler 工厂 <span class="t">DefaultHandlerFactory</span></b><span>自建或注入 DelegatingHandler，也可完全接管</span></div>
+          <div class="cell"><b>HTTP 版本 <span class="t">Http3Support</span></b><span>默认 HTTP/2 可降级，支持 HTTP/3 与版本策略</span></div>
+          <div class="cell"><b>租约 <span class="t">PoolLease</span></b><span>借出 / 归还；流式成功时随正文转交 StreamOwner</span></div>
+        </div>
+      </div>
+
+      <div class="flow-down"><em>运行时资产</em></div>
+
+      <div class="layer" style="--accent:#e3a63f">
+        <div class="layer-head">
+          <span class="layer-tag">L5</span>
+          <span class="layer-title">运行时与兼容资产</span>
+          <span class="layer-note">同一份源码，三套编译资产；<code>#if</code> 分两类：TFM 版本判断与 netstandard2.0 资产分叉</span>
+        </div>
+        <div class="cells">
+          <div class="cell"><b>net8.0</b><span>IsAotCompatible，裁剪 / AOT 分析零警告</span></div>
+          <div class="cell"><b>net6.0</b><span>完整 BCL 检查，禁 net7+ API，SocketsHttpHandler</span></div>
+          <div class="cell"><b>netstandard2.0</b><span>功能子集：HttpClientHandler、默认 HTTP/1.1、仅 gzip、接口纯声明</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ 02 ============ -->
+  <section id="request">
+    <div class="sec-head"><span class="sec-num">02</span><h2>一次请求的完整管线</h2></div>
+    <p class="sec-desc">
+      固定顺序驱动，阶段编号与 <code>AxiosClient.Pipeline.cs</code> 的注释逐条对应。三条路径决定这条请求会不会真的出门：短路响应、缓存命中、校验直接抛错。
+    </p>
+
+    <ol class="timeline">
+      <li class="step" style="--step:#e2705a">
+        <div class="step-card">
+          <span class="step-no">00</span>
+          <div class="step-body">
+            <b>入口守卫 · 在途计数<span class="type">EnterInFlight</span></b>
+            <p>先复核释放标记，再自增 <code>_inFlight</code>。这个计数的用途是把 <code>Dispose()</code> 的资源释放推迟到最后一个请求结束，不是并发上限；位置在 <code>try</code> 之外，抛时名额还没占上。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#8b8cf7">
+        <div class="step-card">
+          <span class="step-no">01</span>
+          <div class="step-body">
+            <b>合并配置<span class="type">MergeEffectiveConfig</span></b>
+            <p><code>Defaults.Clone()</code> 与本次请求配置合并，得到本次唯一生效实例；已是合并产物则直接用。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#8b8cf7">
+        <div class="step-card">
+          <span class="step-no">02</span>
+          <div class="step-body">
+            <b>实例级选项校验<span class="type">ValidatePerRequestOptions</span></b>
+            <p>七项实例级选项（<code>Proxy</code> / <code>Credentials</code> / <code>WithCredentials</code> / <code>MaxRedirects</code> / <code>Pool</code> / <code>MaxInFlight</code> / <code>MaxQueue</code>）构造期已固化，写不进单次请求。这里只校验两条：传输档必须已登记、凭据来源与显式 <code>Authorization</code> 头不得并存。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#37c9a3">
+        <div class="step-card">
+          <span class="step-no">2.5</span>
+          <div class="step-body">
+            <b>凭据解析<span class="type">ResolveCredentialAsync</span></b>
+            <p>把凭据槽位（<code>AxiosCredential</code>）解析成 <code>Authorization</code> 头值；提供方自己写的头不算冲突，同一请求内不会被无谓调用第二次。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#b98cff">
+        <div class="step-card">
+          <span class="step-no">03</span>
+          <div class="step-body">
+            <b>请求拦截器<span class="type">InterceptRequestAsync</span></b>
+            <p>按注册逆序执行（与 axios 一致），可异步改写配置、URL、正文与头。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#b98cff">
+        <div class="step-card">
+          <span class="step-no">3.5</span>
+          <div class="step-body">
+            <b>冲突校验与补解析</b>
+            <p>判的是拦截器之后最终要发出的那份配置：显式头与槽位并存才报冲突；槽位被换掉则重新解析。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#4fa8e3">
+        <div class="step-card">
+          <span class="step-no">4a</span>
+          <div class="step-body">
+            <b>规范化<span class="type">ApplyAutoResponseType</span></b>
+            <p>泛型 <code>&lt;dynamic&gt;</code> / <code>&lt;object&gt;</code> 与 <code>Stream</code> 自动切换响应形态，只在未显式指定时生效。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#4fa8e3">
+        <div class="step-card">
+          <span class="step-no">4b</span>
+          <div class="step-body">
+            <b>范围校验<span class="type">ValidateRangeConfig</span></b>
+            <p>与「是否真的发出请求」无关，因此刻意排在短路之前。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#e3a63f">
+        <div class="step-card">
+          <span class="step-no">4c</span>
+          <div class="step-body">
+            <b>短路响应</b>
+            <p>配置了 <code>ShortCircuit</code> 就不发请求，直接交付现成响应（mock / 回放 / 预置缓存）。</p>
+            <div class="branch"><span class="arrow">↳</span><b>旁路</b>跳过并发闸门、编码、租约、发送、重试、熔断与遥测；反序列化、<code>transformResponse</code>、<code>validateStatus</code> 与响应拦截器照常执行</div>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#4fa8e3">
+        <div class="step-card">
+          <span class="step-no">4d</span>
+          <div class="step-body">
+            <b>闸门与截止点<span class="type">ResolveConcurrencyGate / TotalTimeoutBudget.Start</span></b>
+            <p>按需懒建并发闸门（没配 <code>MaxInFlight</code> 就不建，默认路径零分配）；总预算换算成绝对时间戳，各分支共享同一截止点。这一步只解析，真正占位在链内的 Gate 中间件。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#4fa8e3">
+        <div class="step-card">
+          <span class="step-no">5</span>
+          <div class="step-body">
+            <b>编码与成型<span class="type">5a transform · 5b plan · 5c template</span></b>
+            <p><code>transformRequest</code> → 最终 URL 与协议协商（含 HTTP/3 前置校验）→ 建请求模板（正文 + 头）。正文只准备一次、重试复用，进度与限速状态都挂在正文上。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#e3a63f">
+        <div class="step-card">
+          <span class="step-no">5.5</span>
+          <div class="step-body">
+            <b>缓存查询<span class="type">AxiosCache</span></b>
+            <p>按 URL 与身份取键。命中 2xx 直接返回；同键并发只发一次，跟随者等领导者结果；新鲜条目未命中时取带校验器的旧条目，把校验器写成条件头。</p>
+            <div class="branch"><span class="arrow">↳</span><b>旁路</b>命中、或跟随者拿到结果，都不发请求；请求侧 <code>no-store</code> / <code>no-cache</code> 则跳过查询（仍会尝试落库）</div>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#b98cff">
+        <div class="step-card">
+          <span class="step-no">6</span>
+          <div class="step-body">
+            <b>发送<span class="type">RunResponseInterceptorsAsync + AxiosAttemptPipeline</span></b>
+            <p>响应拦截器责任链包在外面，里面是尝试管线：重试 → 备用端点 → 熔断 → 对冲 → 闸门 → 审计 → 终端。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#37c9a3">
+        <div class="step-card">
+          <span class="step-no">6b</span>
+          <div class="step-body">
+            <b>后处理</b>
+            <p>状态码 → 异常；流式正文接计时流并转交所有权；条件请求 304 单独计为校验复用；领导者落库、放行跟随者；最后上报成功（span 覆盖到调用方真正拿到结果）。</p>
+          </div>
+        </div>
+      </li>
+      <li class="step" style="--step:#e2705a">
+        <div class="step-card">
+          <span class="step-no">收</span>
+          <div class="step-body">
+            <b>收尾<span class="type">finally</span></b>
+            <p>释放请求模板（可能是调用方的 <code>FileStream</code> / <code>FormFile</code>）；401 且走托管凭据时把正文交给声明式门面做一次性重放；在途计数最后归还。</p>
+          </div>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============ 03 ============ -->
+  <section id="attempt">
+    <div class="sec-head"><span class="sec-num">03</span><h2>尝试管线：六层中间件链</h2></div>
+    <p class="sec-desc">
+      一次尝试 = 一条可组合中间件链。位置即语义：越靠外，调用次数越少；越靠内，越贴近真实发送。真正的发送恒在最内层，不在可编排列表里，也换不掉。
+    </p>
+
+    <div class="onion">
+      <div class="ring r1">
+        <div class="ring-head"><span class="ring-name">Attempt.Retry</span><span class="ring-meta">最外层 · 每次重试重过一遍内层全部环节 · 最多 N+1 次</span></div>
+        <div class="ring-body">
+          <div class="ring r2">
+            <div class="ring-head"><span class="ring-name">Attempt.Failover</span><span class="ring-meta">每个端点各一次 · 失败端点跨请求冷却</span></div>
+            <div class="ring-body">
+              <div class="ring r3">
+                <div class="ring-head"><span class="ring-name">Attempt.Circuit</span><span class="ring-meta">按 host:port 计数 · 连续失败 + 滚动窗口失败率取「或」</span></div>
+                <div class="ring-body">
+                  <div class="ring r4">
+                    <div class="ring-head"><span class="ring-name">Attempt.Hedging</span><span class="ring-meta">并发分支 · 先成功者胜出</span></div>
+                    <div class="ring-body">
+                      <div class="ring r5">
+                        <div class="ring-head"><span class="ring-name">Attempt.Gate</span><span class="ring-meta">在途并发闸门 · 槽位由中间件自己兜底归还</span></div>
+                        <div class="ring-body">
+                          <div class="ring r6">
+                            <div class="ring-head"><span class="ring-name">Attempt.Audit</span><span class="ring-meta">紧贴终端 · 未订阅时零分配</span></div>
+                            <div class="ring-body">
+                              <div class="terminal">
+                                <b>Terminal · 一次真实发送</b>
+                                <span>取池租约 → 选定传输档 → Handler 发送 → 读状态与头 → 正文按需缓冲或流式转交</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="formula">
+      实际发送次数 = <b>(N+1)</b> × <b>(端点数+1)</b> × <b>(1 + MaxHedges)</b>　·　落在外层（每次请求一次）的自定义逻辑应改用响应拦截器
+    </div>
+
+    <div class="grid-3" style="margin-top:12px">
+      <div class="panel">
+        <h3>中间件编排规则</h3>
+        <ul class="kv">
+          <li><span class="k">Append</span><span class="v">追加到链尾，比审计更贴近终端，必须能并发执行</span></li>
+          <li><span class="k">InsertBefore</span><span class="v">锚点不能是链首 —— 插到最外层等于每次请求一次，会抛错</span></li>
+          <li><span class="k">Create</span><span class="v">整体重排；同一内置项出现两次会被拒绝</span></li>
+          <li><span class="k">固化</span><span class="v">链在客户端构造期编译一次并固化，请求内按 <code>ctx.Config</code> 分支</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>总预算 Deadline</h3>
+        <ul class="kv">
+          <li><span class="k">Timeout</span><span class="v">一次尝试的预算</span></li>
+          <li><span class="k">TotalTimeout</span><span class="v">整条请求（含排队、重试、对冲）</span></li>
+          <li><span class="k">实现</span><span class="v">入口换算成绝对时间戳随上下文传，各分支共享同一截止点</span></li>
+          <li><span class="k">流式</span><span class="v">读正文同样计入，等待被截断即到点</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>熔断判定</h3>
+        <ul class="kv">
+          <li><span class="k">两条规则</span><span class="v">连续失败次数、滚动窗口失败率，取「或」</span></li>
+          <li><span class="k">恢复期</span><span class="v">只认领到探测名额的请求，成功才逐步放开</span></li>
+          <li><span class="k">策略</span><span class="v"><code>IAxiosCircuitPolicy</code> 可替换，内置 CircuitBreaker 带准入票</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 04 ============ -->
+  <section id="transport">
+    <div class="sec-head"><span class="sec-num">04</span><h2>连接与传输：池、传输档、Handler</h2></div>
+    <p class="sec-desc">
+      每 origin 一条调优过的 Handler 共享长连接；一条池可挂多条出口。key 由调用方给，不做配置指纹 —— 同一个 key 再传一份不同配置直接抛错，而不是悄悄复用错的池。
+    </p>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>从租约到字节</h3>
+        <div class="chain">
+          <div class="chain-row">
+            <span class="node hl"><b>HttpConnectionPool</b><span class="sub">key / GetOrCreate / 统计</span></span>
+            <span class="arw">→</span>
+            <span class="node"><b>PooledEndpoint</b><span class="sub">per origin · 生效选项</span></span>
+            <span class="arw">→</span>
+            <span class="node"><b>TransportProfile</b><span class="sub">egress-a · 代理/证书/Cookie</span></span>
+          </div>
+          <div class="chain-row">
+            <span class="node"><b>HandlerFactory</b><span class="sub">自建 或 DelegatingHandler</span></span>
+            <span class="arw">→</span>
+            <span class="node"><b>SocketsHttpHandler</b><span class="sub">net6 / net8</span></span>
+            <span class="arw">→</span>
+            <span class="node hl"><b>DNS · TCP · TLS · HTTP/2 · HTTP/3</b><span class="sub">长连接复用</span></span>
+          </div>
+          <div class="chain-row">
+            <span class="node"><b>PoolLease</b><span class="sub">借出 → 归还</span></span>
+            <span class="arw">↔</span>
+            <span class="node"><b>StreamOwner</b><span class="sub">流式成功时接管租约</span></span>
+            <span class="arw">·</span>
+            <span class="node"><b>HttpClientHandler</b><span class="sub">netstandard2.0 资产</span></span>
+          </div>
+        </div>
+        <p style="margin-top:11px">预热只建 origin 节点与静态首用成本，不预先建连；池指标不带 host，用 span 定位。</p>
+      </div>
+
+      <div class="panel">
+        <h3>池选项要点</h3>
+        <ul class="kv">
+          <li><span class="k">MaxConnectionsPerServer</span><span class="v">每 origin 并发连接上限</span></li>
+          <li><span class="k">PooledConnectionLifetime</span><span class="v">连接寿命，配合 DNS 变更</span></li>
+          <li><span class="k">KeepAlivePing*</span><span class="v">三件套进 <code>SameOptions</code>，<code>Delay</code> 默认 <code>Infinite</code></span></li>
+          <li><span class="k">HandlerFactory</span><span class="v">替换传输层；默认工厂按 TFM 返回不同 Handler 类型</span></li>
+          <li><span class="k">AddTransport</span><span class="v">一条池声明多条出口，按请求选 <code>Transport.Profile</code></span></li>
+          <li><span class="k">所有权</span><span class="v">自建池<code>_ownsPool</code> 随客户端释放；注入或 <code>GetOrCreate</code> 共享的池不归客户端，由调用方 <code>Release</code></span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 05 ============ -->
+  <section id="declarative">
+    <div class="sec-head"><span class="sec-num">05</span><h2>声明式客户端：一份声明，三条通道</h2></div>
+    <p class="sec-desc">
+      用模型或接口描述请求，由 <code>ApiClient</code> 生成调用。运行时反射通道与编译期生成通道产出同一套元数据契约，因此可以逐类型迁移到 AOT。
+    </p>
+
+    <div class="panel" style="margin-bottom:12px">
+      <h3>声明形态 <span class="badge">WebAPI/</span></h3>
+      <div class="chain-row">
+        <span class="node"><b>模型式</b><span class="sub">[Get("users/{id}")] class GetUserRequest : IApiRequest&lt;User&gt;</span></span>
+        <span class="arw">或</span>
+        <span class="node"><b>接口式</b><span class="sub">[Get("users/{id}")] Task&lt;AxiosResponse&lt;User&gt;&gt; GetAsync([Path] int id)</span></span>
+        <span class="arw">→</span>
+        <span class="node hl"><b>ApiClient.Create&lt;T&gt;()</b><span class="sub">统一执行入口 → IAxiosClient</span></span>
+      </div>
+      <p style="margin-top:10px">特性集中在 <code>WebAPI/Attributes/</code>：HTTP 动词与路径、参数绑定、请求头、编码、部件、流式、鉴权、值格式化。</p>
+    </div>
+
+    <div class="paths">
+      <div class="path" style="--pc:#b98cff">
+        <div class="ph"><span class="pdot"></span><b>运行时反射（JIT）</b></div>
+        <ul>
+          <li><code>RequestModelDeclarationReader</code></li>
+          <li><code>InterfaceDeclarationReader</code> → <code>InterfaceBuilder</code></li>
+          <li>形状与访问器走 <code>Reflection/</code> + <code>ReflectionCache</code></li>
+          <li>未生成代理时回退 <code>DispatchProxy</code>（仅 JIT）；AOT 下 <code>Create&lt;T&gt;</code> 提前拒绝</li>
+        </ul>
+      </div>
+      <div class="path" style="--pc:#37c9a3">
+        <div class="ph"><span class="pdot"></span><b>编译期源生成（AOT）</b></div>
+        <ul>
+          <li><code>RequestModelGenerator</code> + <code>InterfaceEmitter</code></li>
+          <li>烘焙代理与形状快照，<code>ModuleInitializer</code> 注册</li>
+          <li><code>GeneratedMetadataRegistry</code> 命中即用烘焙元数据</li>
+          <li>与 <code>Reflection/</code> 对称：AOT 下整块反射可裁掉</li>
+        </ul>
+      </div>
+      <div class="path" style="--pc:#4fa8e3">
+        <div class="ph"><span class="pdot"></span><b>设计期 CLI</b></div>
+        <ul>
+          <li><code>SpecParser</code> → <code>SpecNormalizer</code> → <code>RefResolver</code></li>
+          <li><code>SchemaMapper</code> → <code>ApiModel</code> → <code>CSharpEmitter</code></li>
+          <li>支持 <code>--check</code>、<code>--dry-run</code> 与确定性输出</li>
+          <li>产物即上面两种声明形态的 C# 代码</li>
+        </ul>
+      </div>
+      <div class="path" style="--pc:#e3a63f">
+        <div class="ph"><span class="pdot"></span><b>共享元数据层</b></div>
+        <ul>
+          <li><code>AxiosMetadata</code> / <code>ShapeRegistry</code> / <code>ShapeBuilder</code></li>
+          <li><code>BindingPlan</code> 与值来源 <code>IValueSource</code></li>
+          <li><code>FormatRules</code> + <code>AxiosConfig.ValueFormatter</code></li>
+          <li>凭据：<code>ApiCredential</code> / <code>AccessTokenManager</code>（令牌缓存、单飞刷新）；401 重放由 <code>ApiClient</code> 做一次</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 06 ============ -->
+  <section id="crosscut">
+    <div class="sec-head"><span class="sec-num">06</span><h2>横切能力</h2></div>
+    <p class="sec-desc">不归属单一层，被各层共同调用。每张卡片对应一个可替换的抽象。</p>
+
+    <div class="grid-3">
+      <div class="panel">
+        <h3>序列化 <span class="badge">Serialization/</span></h3>
+        <p>唯一抽象 <code>IContentSerializer</code>：按媒体类型查表（精确 → 别名 → <code>+json</code> 结构化后缀），未命中回落表内默认项。</p>
+        <ul class="kv">
+          <li><span class="k">默认</span><span class="v"><code>SystemTextJsonSerializer</code></span></li>
+          <li><span class="k">内置</span><span class="v"><code>XmlContentSerializer</code></span></li>
+          <li><span class="k">注册</span><span class="v"><code>AxiosContent.Register</code> / <code>ContentSerializerRegistry</code></span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>缓存 <span class="badge">Cache/</span></h3>
+        <p>按 URL 与身份缓存 2xx 响应；同键并发只发一次；存储可替换。</p>
+        <ul class="kv">
+          <li><span class="k">存储</span><span class="v"><code>IAxiosCacheStore</code> / <code>MemoryCacheStore</code></span></li>
+          <li><span class="k">复用</span><span class="v"><code>IAxiosCacheRevalidationStore</code>、ETag / 304</span></li>
+          <li><span class="k">策略</span><span class="v">新鲜度模式 + 请求 / 响应指令 + <code>Cache-Control</code> 解析</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>可观测 <span class="badge">Telemetry/</span></h3>
+        <p>trace / metrics / events 三路，默认开启；无人订阅时零产出。</p>
+        <ul class="kv">
+          <li><span class="k">入口</span><span class="v"><code>AxiosTelemetry</code> + <code>GuardedTelemetrySink</code></span></li>
+          <li><span class="k">信号</span><span class="v">ActivitySource「AxiosNet」/ Meter / DiagnosticListener</span></li>
+          <li><span class="k">事件</span><span class="v"><code>AxiosRequestEvents</code>、尝试级审计事件</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>错误与取消 <span class="badge">根命名空间</span></h3>
+        <p>请求执行失败统一为 <code>AxiosException</code>，带稳定 <code>Code</code>；AOT 元数据缺失另抛专用异常。</p>
+        <ul class="kv">
+          <li><span class="k">分类</span><span class="v"><code>FailureClassifier</code> / <code>CancellationClassifier</code></span></li>
+          <li><span class="k">口径</span><span class="v">预算耗尽（未发出）不计熔断失败、不重试、不换端点</span></li>
+          <li><span class="k">判别</span><span class="v"><code>Axios.IsAxiosError</code> / <code>Axios.IsCancel</code></span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>元数据与形状 <span class="badge">Metadata/ + Reflection/</span></h3>
+        <p>对象形状（成员表、默认值、格式化规则）在生成期或首次使用期构建，之后冻结复用。</p>
+        <ul class="kv">
+          <li><span class="k">构建</span><span class="v"><code>ShapeBuilder</code> / <code>ObjectShapeBuilder</code> / <code>ShapeCache</code></span></li>
+          <li><span class="k">读取</span><span class="v"><code>ValueFormatReader</code> / <code>PreformattedValue</code></span></li>
+          <li><span class="k">反射</span><span class="v"><code>ObjectShapeReflection</code> / <code>JsonSerializerJit</code>（仅 JIT）</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>兼容层 <span class="badge">Compatibility/</span></h3>
+        <p>netstandard2.0 资产的功能子集由编译期分叉实现，现代资产不降级。</p>
+        <ul class="kv">
+          <li><span class="k">内容</span><span class="v">polyfill / global using 别名 / BCL 扩展 / 平台 helper</span></li>
+          <li><span class="k">差异</span><span class="v">HTTP/1.1、HttpClientHandler、仅 gzip、接口纯声明</span></li>
+          <li><span class="k">依赖</span><span class="v">9 个微软第一方 BCL 兼容包，NuGet 自动带入</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 07 ============ -->
+  <section id="engineering">
+    <div class="sec-head"><span class="sec-num">07</span><h2>工程与验证</h2></div>
+    <p class="sec-desc">四个可发布工程、六个测试与基准工程；示例项目按反射发现菜单项，新能力必须进示例。</p>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>工程矩阵</h3>
+        <table>
+          <thead><tr><th>工程</th><th>角色</th><th>目标</th></tr></thead>
+          <tbody>
+            <tr><td><code>AxiosNet</code></td><td>核心 + 声明式客户端</td><td class="num">3 TFM</td></tr>
+            <tr><td><code>AxiosNet.DependencyInjection</code></td><td>DI 扩展（独立包）</td><td class="num">3 TFM</td></tr>
+            <tr><td><code>AxiosNet.SourceGen</code></td><td>分析器 / 源生成器</td><td class="num">ns2.0</td></tr>
+            <tr><td><code>AxiosNet.Cli</code></td><td>设计期 dotnet tool</td><td class="num">net6 / net8</td></tr>
+            <tr><td><code>samples/</code></td><td>Simple / DI / Aot</td><td class="num">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h3>验证分层</h3>
+        <table>
+          <thead><tr><th>工程</th><th>覆盖</th></tr></thead>
+          <tbody>
+            <tr><td><code>AxiosNet.Tests</code></td><td>核心 + 声明式，目录即功能分类</td></tr>
+            <tr><td><code>…DependencyInjection.Tests</code></td><td>注册 / 解析 / 生命周期</td></tr>
+            <tr><td><code>…Cli.Tests</code></td><td>快照 / 生成代码编译 / 确定性与 <code>--check</code></td></tr>
+            <tr><td><code>…Compat.Tests</code></td><td>netstandard2.0 兼容资产</td></tr>
+            <tr><td><code>…Benchmarks</code></td><td>单实现分项成本（BDN）</td></tr>
+            <tr><td><code>…Comparison</code></td><td>跨实现 RPS / p99 / 分配（可选门禁）</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:10px">同一份源码在多个 TFM 各跑一遍；用例数与覆盖率随版本变化，看 README「构建与测试」的当次数字。</p>
+        <p>CI 另有 AOT 包消费 smoke（<code>eng/</code>）：以真实 NuGet 包在裁剪与 AOT 下跑通请求。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>AxiosNet · 架构总览 · 依据 <code style="font-family:var(--mono)">README.md</code> 与 <code style="font-family:var(--mono)">src/</code> 实际目录生成 · 核对于 2026-11-16</span>
+    <span>MIT License</span>
+  </footer>
+
+</div>
+<button class="totop" id="totop" type="button" aria-label="回到顶部" title="回到顶部">↑</button>
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var sections = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+  var button = document.getElementById('totop');
+  var tops = [];
+  var ticking = false;
+
+  function measure() {
+    tops = sections.map(function (s) {
+      return s ? s.getBoundingClientRect().top + window.scrollY : Number.MAX_VALUE;
+    });
+  }
+
+  function sync() {
+    ticking = false;
+    var line = window.scrollY + 120;
+    var active = -1;
+    for (var i = 0; i < tops.length; i++) {
+      if (tops[i] <= line) { active = i; }
+    }
+    for (var j = 0; j < links.length; j++) {
+      links[j].classList.toggle('on', j === active);
+    }
+    button.classList.toggle('on', window.scrollY > 600);
+  }
+
+  function onScroll() {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(sync); }
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', function () { measure(); onScroll(); });
+  button.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  measure();
+  sync();
+})();
+</script>
+</body>
+</html>

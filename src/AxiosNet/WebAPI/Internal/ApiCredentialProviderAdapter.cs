@@ -87,6 +87,10 @@ internal sealed class ApiCredentialProviderAdapter : IAxiosCredentialProvider
         return credential;
     }
 
+    /// <summary>提供方异步返回时的慢路径：等值、再走同一套落点应用（快路径在 <see cref="GetAsync"/> 里同步完成）。</summary>
+    /// <param name="pending">提供方返回的未完成凭据任务。</param>
+    /// <param name="config">本次发送的生效配置。</param>
+    /// <returns>交给内核的 <c>Authorization</c> 凭据；非头落点返回 <c>null</c>。</returns>
     private async ValueTask<AxiosCredential?> AwaitAsync(ValueTask<ApiCredential> pending, AxiosConfig config)
         => Apply(await pending.ConfigureAwait(false), config);
 
@@ -139,9 +143,16 @@ internal sealed class ApiCredentialProviderAdapter : IAxiosCredentialProvider
 /// </summary>
 internal sealed class ApiCredentialCache
 {
+    /// <summary>上一次令牌形态的映射结果（<c>Bearer</c> / <c>Basic</c>），供 <see cref="Bearer"/> 按值复用。</summary>
     private AxiosCredential? _bearer;
+
+    /// <summary>上一次完整头值形态的映射结果，供 <see cref="Header"/> 按值复用。</summary>
     private AxiosCredential? _header;
 
+    /// <summary>取「令牌 + scheme」的凭据映射：与上一次完全相同时复用同一实例，否则换新并替换缓存位。</summary>
+    /// <param name="token">令牌本体。</param>
+    /// <param name="scheme">显式认证方案；<c>null</c> 表示用默认 <c>Bearer</c>。</param>
+    /// <returns>不可变的凭据映射对象。</returns>
     internal AxiosCredential Bearer(string token, string? scheme)
     {
         var cached = Volatile.Read(ref _bearer);
@@ -155,6 +166,9 @@ internal sealed class ApiCredentialCache
         return credential;
     }
 
+    /// <summary>取「完整 Authorization 头值」的凭据映射：同值复用同一实例，否则换新并替换缓存位。</summary>
+    /// <param name="value">完整头值（如 <c>Bearer abc</c>）。</param>
+    /// <returns>不可变的凭据映射对象。</returns>
     internal AxiosCredential Header(string value)
     {
         var cached = Volatile.Read(ref _header);

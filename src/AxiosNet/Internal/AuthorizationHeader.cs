@@ -8,7 +8,7 @@ namespace AxiosNet.Internal;
 /// </summary>
 internal static class AuthorizationHeader
 {
-    /// <summary>头名。</summary>
+    /// <summary>标准头名 <c>Authorization</c>。</summary>
     internal const string Name = "Authorization";
 
     /// <summary>令牌形态：<c>{scheme} {token}</c>；scheme 为空时按 <c>Bearer</c>。</summary>

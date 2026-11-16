@@ -5,10 +5,7 @@ using Generated = AxiosNet.Simple.WebAPI.Generated;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 16. OpenAPI 导入：<c>axiosnet-gen</c> 读取 <c>WebAPI/demo.openapi.json</c>，默认生成每个操作一个
-/// <c>IApiRequest&lt;T&gt;</c> 请求模型（tag 分组 / 根级授权 / 表单登录 / multipart / SSE 与 JSON 数组流式），
-/// 调用跑的是 DemoApiServer 的真实路由；加 <c>--style interface</c> 则改为 <c>Create&lt;T&gt;()</c> 接口代理。
-/// 重新生成（仓库根目录执行）：<c>dotnet run --project src/AxiosNet.Cli -f net8.0 -- samples/AxiosNet.Simple/WebAPI/demo.openapi.json -o samples/AxiosNet.Simple/WebAPI/Generated -n AxiosNet.Simple.WebAPI.Generated --force</c>。
+/// 16. OpenAPI 导入：由 <c>axiosnet-gen</c> 读 <c>WebAPI/demo.openapi.json</c> 生成请求模型，调用跑的是 <c>DemoApiServer</c> 的真实路由。
 /// </summary>
 public sealed class OpenApiGeneratedExample : IExample
 {

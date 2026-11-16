@@ -7,24 +7,7 @@ using BenchmarkDotNet.Order;
 namespace AxiosNet.Benchmarks;
 
 /// <summary>
-/// 大正文 JSON 响应（真实回环 socket）。
-/// <para>
-/// <b>回答的问题</b>：同样 1 / 8 / 32MB 的 JSON，三种交付形态各自付几次载荷的分配，
-/// 库侧相对「裸 HttpClient + System.Text.Json」有没有多一次拷贝。字节路径已在
-/// <see cref="LargeBodyDownloadBenchmarks"/> 里按 1× 钉住；这里补的是 JSON 路径：
-/// <c>byte[]</c> 仍应是 1×，强类型是「1× 字节 + 对象图」，<c>JsonElement</c> 是「1× 字节 + 文档 + 克隆」。
-/// </para>
-/// <para>
-/// <b>基线选择</b>：<c>HttpClient_GetBytes</c> 只读字节，是「零处理」参照；<c>HttpClient_Typed</c> /
-/// <c>HttpClient_JsonElement</c> 用与库相同的 <see cref="JsonSerializerDefaults.Web"/> 和同样的
-/// <c>JsonDocument.Parse + RootElement.Clone</c> 算法，用来判断库侧相对裸 STJ 有没有额外成本。
-/// </para>
-/// <para>
-/// <b>读数方式</b>：主指标是 <c>Allocated / 载荷</c>（确定性量）。本机实测：<c>byte[]</c> = 1.00×；
-/// 强类型 ≈ 3.4×（对象图 + 字符串，随记录数线性）；<c>JsonElement</c> ≈ 4.1×（原始字节 + 文档 +
-/// 克隆 + 每 token 元数据，不是凭空的「3×」）。三种形态都随 <c>Megabytes</c> 线性增长才算正常——
-/// 某一档突然跳一个载荷量级，说明多了一次整串复制或 UTF-16 往返。
-/// </para>
+/// 大正文 JSON 响应（真实回环 socket）：1 / 8 / 32MB 的 JSON 在三种交付形态下各付几次载荷的分配。主指标是 Allocated / 载荷（byte[] ≈ 1.00×、强类型 ≈ 3.4×、<c>JsonElement</c> ≈ 4.1×），三种都应随 <c>Megabytes</c> 线性增长。
 /// </summary>
 [Description("大正文 JSON 响应（回环 socket）：1 / 8 / 32MB，字节 / 强类型 / JsonElement")]
 [BenchmarkGroup("回环 socket（数字含 TCP 往返与线程池调度）", "绝对值随机器负载摆，能下结论的是比值", Order = 1)]

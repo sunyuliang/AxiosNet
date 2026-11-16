@@ -221,10 +221,8 @@ public sealed partial class AxiosConfig
     internal bool ContentTypeSet { get; private set; }
 
     /// <summary>
-    /// 请求体压缩算法（默认 <c>null</c> = 不压缩；按请求显式赋 <c>null</c> 或 <see cref="AxiosCompression.None"/>
-    /// 都会关掉实例默认的压缩）：作用于按字节缓冲出来的正文（文本 / 二进制 / 表单），压缩后自动补 <c>Content-Encoding</c>。
-    /// 流式正文（<see cref="Stream"/>、<c>IAsyncEnumerable&lt;byte[]&gt;</c>）、调用方自带的 <see cref="HttpContent"/>
-    /// 与 multipart 正文不压缩（会直接报 <c>ERR_BAD_OPTION_VALUE</c>）。
+    /// 请求体压缩算法（默认 <c>null</c> = 不压缩），压缩后自动补 <c>Content-Encoding</c>；
+    /// 只作用于按字节缓冲的正文，流式正文 / 自带 <see cref="HttpContent"/> / multipart 会抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// </summary>
     public AxiosCompression? Compression
     {
@@ -244,9 +242,8 @@ public sealed partial class AxiosConfig
     private object? _data;
 
     /// <summary>
-    /// 对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码；string / byte[] / Stream / HttpContent 原样发送，
-    /// <c>IAsyncEnumerable&lt;byte[]&gt;</c> / <c>IAsyncEnumerable&lt;ReadOnlyMemory&lt;byte&gt;&gt;</c> 按块流式发送（长度未知）。
-    /// 合并按「是否赋值过」区分：不碰继承实例默认值，显式赋 <c>null</c> 发空正文。
+    /// 对应 axios data：请求体原始数据，按 <see cref="ContentType"/> 编码。
+    /// string / byte[] / Stream / HttpContent 原样发送，<c>IAsyncEnumerable</c> 按块流式发送（长度未知）。
     /// </summary>
     public object? Body
     {
@@ -267,11 +264,19 @@ public sealed partial class AxiosConfig
 
     private sealed class CacheState
     {
+        /// <summary>短路响应：本次请求不发出去，直接交付这份结果（见 <see cref="ShortCircuit"/>）。</summary>
         internal AxiosShortCircuit? ShortCircuit;
+
+        /// <summary>响应缓存实例：实例级共享，<see cref="Clone"/> 保留同一引用（见 <see cref="Caching"/>）。</summary>
         internal AxiosCache? Caching;
+
+        /// <summary>缓存命中 / 写入时是否连原始正文字节一起留存，供条件请求复用与排查。</summary>
         internal bool CacheCaptureRawBody;
+
+        /// <summary>条件请求用的旧条目（带 <c>ETag</c> / <c>Last-Modified</c> 的那份），命中 <c>304</c> 时用它交付正文。</summary>
         internal AxiosShortCircuit? RevalidationEntry;
 
+        /// <summary>按指针浅拷贝：四个引用 / 标记都可独立改写，克隆出的状态不共享可变字段。</summary>
         internal CacheState Clone() => (CacheState)MemberwiseClone();
     }
 
@@ -362,10 +367,10 @@ public sealed partial class AxiosConfig
     private TimeSpan _timeout;
 
     /// <summary>
-    /// 对应 axios timeout，零表示不超时；一次尝试的预算（建连 + 等待响应头 + 读取正文），重试 / 备用端点 / 对冲各复制一份，
-    /// 要限制整条逻辑请求用 <see cref="ResilienceSettings.TotalTimeout"/>。
-    /// 流式响应的正文也计入本预算；零值下正文不限时。负值抛 <see cref="AxiosException"/>（<c>ERR_BAD_OPTION_VALUE</c>）。
+    /// 对应 axios timeout：一次尝试的预算（建连 + 响应头 + 正文），零表示不超时，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 重试 / 备用端点 / 对冲各复制一份；整条请求的预算见 <see cref="ResilienceSettings.TotalTimeout"/>。
     /// </summary>
+    /// <remarks>流式响应的正文也计入本预算。</remarks>
     public TimeSpan Timeout
     {
         get => _timeout;
@@ -382,11 +387,10 @@ public sealed partial class AxiosConfig
     private TimeSpan? _totalTimeout;
 
     /// <summary>
-    /// 整条逻辑请求的总预算（<c>null</c> = 不设，默认）：从调用开始计时，<b>跨重试、备用端点与对冲分支共享</b>。
-    /// 每次尝试实际上限为 <c>min(Timeout, 剩余预算)</c>，剩余不足时该次尝试不发出并抛 <c>ECONNABORTED</c>；
-    /// <c>Zero</c> 与 <c>null</c> 等价，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 整条逻辑请求的总预算（<c>null</c> = 不设，默认），跨重试、备用端点与对冲分支共享。
+    /// 每次尝试上限为 <c>min(Timeout, 剩余预算)</c>，剩余不足时该次尝试不发出并抛 <c>ECONNABORTED</c>。
     /// </summary>
-    /// <remarks>排队时间与流式正文都在预算之内。</remarks>
+    /// <remarks>排队时间与流式正文都在预算之内；<c>Zero</c> 等同 <c>null</c>，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。</remarks>
     private bool _totalTimeoutSet;
 
     /// <summary>总预算的生效值（内部读取用，避免库内代码依赖已废弃的顶层属性）。</summary>
@@ -405,12 +409,22 @@ public sealed partial class AxiosConfig
 
     private sealed class AuthReplayState
     {
+        /// <summary>本次发送收尾不释放模板正文（401 重放要拿同一份内容再发一次，见 <see cref="RetainBodyContent"/>）。</summary>
         internal bool RetainBodyContent;
+
+        /// <summary>重放时复用的正文外壳：首次发送后仍持有的 <c>HttpContent</c>，只在重试路径上有值。</summary>
         internal HttpContent? RetainedReplayContent;
+
+        /// <summary>本次请求已解析出的 <c>Authorization</c> 头值，用于显式头冲突校验与重放前比对。</summary>
         internal string? ResolvedAuthorization;
+
+        /// <summary>凭据提供方落点写入的值（头 / 查询参数）：进响应缓存的键，避免不同凭据共用同一份缓存条目。</summary>
         internal string? ResolvedCredentialIdentity;
+
+        /// <summary>本次请求的凭据提供方（见 <see cref="InternalCredentialProvider"/>），401 时据此触发重取。</summary>
         internal IAxiosCredentialProvider? InternalCredentialProvider;
 
+        /// <summary>按指针浅拷贝：五个字段都可独立改写，克隆出的状态不共享可变项。</summary>
         internal AuthReplayState Clone() => (AuthReplayState)MemberwiseClone();
     }
 

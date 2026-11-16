@@ -13,7 +13,7 @@ public readonly struct AxiosAttemptResult
     {
     }
 
-    /// <summary>完整构造。</summary>
+    /// <summary>带所有权凭证构造：<paramref name="streamOwner"/> 非 null 时由结果接管释放责任。</summary>
     /// <param name="response">本次尝试得到的响应。</param>
     /// <param name="streamOwner">
     /// 流式正文的所有权凭证（<c>null</c> = 非流式，或流式但无需外部释放）。

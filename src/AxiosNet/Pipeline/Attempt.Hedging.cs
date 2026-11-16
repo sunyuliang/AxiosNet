@@ -8,16 +8,14 @@ namespace AxiosNet.Pipeline;
 public static partial class Attempt
 {
     /// <summary>
-    /// 对冲：首发之后按 <see cref="AxiosConfig.HedgingSettings.Delay"/> 的间隔再放出延迟副本，
-    /// 第一个成功结果胜出；其余分支取消并等它们真正收尾。所有分支都失败时把失败原样抛给外层的重试。
+    /// 对冲：首发之后按 <see cref="AxiosConfig.HedgingSettings.Delay"/> 的间隔再放出延迟副本，第一个成功结果胜出；
+    /// 其余分支取消并等它们收尾。全部失败时把失败原样抛给外层重试。
     /// </summary>
     /// <remarks>
     /// 位置在 <see cref="Retry"/>、<see cref="Failover"/>、<see cref="Circuit"/> 之内、<see cref="Gate"/> 之外：
-    /// 熔断看整组分支的最终结果，每条分支各过并发闸门、各占一个槽位 —— 开启对冲后占用的并发额度是
-    /// <c>1 + MaxHedges</c> 倍，<c>AxiosClientOptions.MaxInFlight</c> 要按此预留。
-    /// <c>Hedging.MaxHedges = 0</c> 时纯直通。流式响应、非幂等方法、正文不能并发重放、带上传 / 下载进度回调
-    /// 或限速的请求按单次发送处理。每条分支各执行一次 <c>transformResponse</c> 与响应侧回调（含落败分支）；
-    /// 响应拦截器在管线之外，仍只对胜出结果执行一次。
+    /// 熔断看整组分支的最终结果，每条分支各占一个并发槽位（额度是 <c>1 + MaxHedges</c> 倍）。
+    /// <c>MaxHedges = 0</c> 时纯直通。流式响应、非幂等方法、正文不能并发重放、带进度回调或限速的请求按单次发送。
+    /// 每条分支各执行一次 <c>transformResponse</c> 与响应侧回调；响应拦截器仍只对胜出结果执行一次。
     /// </remarks>
     public static AxiosAttemptMiddleware Hedging { get; } = next =>
     {

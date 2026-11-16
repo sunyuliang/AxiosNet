@@ -358,6 +358,9 @@ internal static class MultipartBodyBuilder
         // 数组沿用父名：同名重复部件。
         public string? ArrayItemName(string? prefix, int index) => prefix;
 
+        /// <summary>标量叶子加成同名文本部件（multipart 的数组语义是同名重复部件，见 <see cref="ArrayItemName"/>）。</summary>
+        /// <param name="name">部件名；<c>null</c> 时由 <see cref="RequireName"/> 报错。</param>
+        /// <param name="value">叶子值，按 multipart 通道格式化。</param>
         public void Leaf(string? name, JsonElement value)
             => _content.Add(
                 new StringContent(

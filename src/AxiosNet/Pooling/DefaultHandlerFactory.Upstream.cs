@@ -6,6 +6,14 @@ namespace AxiosNet.Pooling;
 
 internal static partial class DefaultHandlerFactory
 {
+    /// <summary>
+    /// net6+ 资产的默认档 Handler：<see cref="SocketsHttpHandler"/>。池选项逐项映射，
+    /// 连接寿命额外加抖动；SSL 只在与默认值不同时才构造 <see cref="SslClientAuthenticationOptions"/>。
+    /// </summary>
+    /// <param name="o">池选项（连接数、寿命、空闲、建连超时、h2 并发与 keep-alive ping、解压）。</param>
+    /// <param name="transport">出口设置（Cookie、代理、证书校验回调、SSL 协议版本与扩展钩子）。</param>
+    /// <param name="cookieContainer">共享 Cookie 容器；<c>null</c> 且启用 Cookie 时新建一个。</param>
+    /// <returns>配置好的 Handler。</returns>
     private static SocketsHttpHandler CreateCore(
         ConnectionPoolOptions o,
         ConnectionTransportOptions transport,

@@ -258,6 +258,12 @@ public sealed class HttpConnectionPool : IDisposable
         => value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan;
 
 #if NETSTANDARD2_0
+    /// <summary>
+    /// 兼容资产上「没有对应配置入口」的池选项统一报错：与其静默忽略，不如让调用方换目标框架或换 Handler。
+    /// </summary>
+    /// <param name="optionName">被拒绝的选项名（用于消息定位）。</param>
+    /// <param name="config">当前配置（可为 <c>null</c>，用于异常上下文）。</param>
+    /// <returns>可直接抛出的配置错误。</returns>
     private static AxiosException UnmappedOnCompatibilityAsset(string optionName, AxiosConfig? config)
         => AxiosException.InvalidOption(
             $"{optionName} 在 netstandard2.0 兼容资产上无法生效：该资产由 HttpClientHandler 承载，"

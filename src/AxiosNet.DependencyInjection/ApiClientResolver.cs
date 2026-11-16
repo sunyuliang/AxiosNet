@@ -268,7 +268,7 @@ internal static class HolderDisposal
         failure?.Throw();
     }
 
-    /// <summary>同上，异步释放版。</summary>
+    /// <summary>按顺序异步释放；某个失败不中断其余释放，异常留到最后抛出。</summary>
     public static async ValueTask DisposeAllAsync(IEnumerable<IAsyncDisposable> holders)
     {
         ExceptionDispatchInfo? failure = null;
