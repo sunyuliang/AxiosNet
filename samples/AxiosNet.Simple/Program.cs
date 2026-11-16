@@ -101,8 +101,8 @@ static async Task<bool> RunNamedAsync(string[] args, IReadOnlyList<SampleMenuIte
 }
 
 // 解析成菜单下标（1 起）；解析不到返回 -1。先认菜单编号，再认类名。
-// 这里刻意不按 IExample.Number 匹配：两套示例的编号分别是 1-39 与 1-17，全落在菜单编号
-// 1-56 之内，数字永远被第一段吃掉（声明式套件的 Number 5 与菜单第 5 项不是同一项），
+// 这里刻意不按 IExample.Number 匹配：两套示例的编号分别是 1-41 与 1-17，全落在菜单编号
+// 1-58 之内，数字永远被第一段吃掉（声明式套件的 Number 5 与菜单第 5 项不是同一项），
 // 所以「按示例自己声明的编号运行」不是一项能力，别在文档里承诺它。
 static int Resolve(string arg, IReadOnlyList<SampleMenuItem> items)
 {

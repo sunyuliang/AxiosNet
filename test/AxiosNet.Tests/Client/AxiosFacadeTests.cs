@@ -273,6 +273,28 @@ public sealed class AxiosFacadeTests
     }
 
     [Fact]
+    public void Facade_Warmup_PrewarmsDefaultClientBaseAddressOnce()
+    {
+        Axios.Reset();
+
+        try
+        {
+            Axios.Defaults.BaseAddress = "http://127.0.0.1:9206/";
+
+            // 本进程第一次预热：建节点但不建连。
+            Assert.True(Axios.Warmup());
+            Assert.Equal(1, Axios.DefaultClient.Pool!.GetStatistics().EndpointCount);
+
+            // 预热标记记在默认实例上：同一实例再调直接返回 false。
+            Assert.False(Axios.Warmup());
+        }
+        finally
+        {
+            Axios.Reset();
+        }
+    }
+
+    [Fact]
     public async Task Facade_Predicates_ClassifyErrorsLikeAxios()
     {
         await using var server = TestHttpServer.Start(_ => new TestResponse(404, Body: Encoding.UTF8.GetBytes("{}")));

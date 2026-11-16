@@ -54,6 +54,16 @@ public static class Axios
         previous?.Dispose();
     }
 
+    /// <summary>
+    /// 预热全局默认实例：静态首用与 <see cref="AxiosConfig.BaseAddress"/> 所属 origin 的池节点提前建好，
+    /// 不建立任何 TCP 连接。对应 <see cref="AxiosClient.Warmup"/>，返回本次是否真的做了预热。
+    /// </summary>
+    /// <remarks>
+    /// 进程启动后、第一条请求之前调用一次即可。预热标记记在默认实例上：重复调用直接返回 <c>false</c>；
+    /// <see cref="Reset"/> 换掉默认实例后标记随之重置，需要重新预热。
+    /// </remarks>
+    public static bool Warmup() => DefaultClient.Warmup();
+
     /// <summary>对应 axios.defaults。</summary>
     public static AxiosConfig Defaults => DefaultClient.Defaults;
 

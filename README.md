@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2725%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2583%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2739%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2597%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1046,6 +1046,35 @@ HttpConnectionPool.Release("orders");   // 摘除并优雅释放；此后同名�
   - 表里的池不归任何客户端所有，客户端 `Dispose` 不会关掉它，收尾用 `Release(key)`。
 - 想知道「池是不是被建太多了」看指标 `axiosnet.client.pool.active_pools`（存活池数）与 `.shared_pools`（命名池条目数）。
 
+#### 预热
+
+首条请求额外要付的固定成本（origin 节点里的 Handler 与 `HttpClient` 构造、JSON 选项与解码器的第一次使用）可以提前摊掉。预热**只建节点、不建连**：TCP 连接仍然在第一条真正的请求上建立。
+
+```csharp
+using AxiosNet.Pooling;
+
+// 1) 客户端预热：按 Defaults.BaseAddress 预建 origin 节点
+using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://api.example.com/" });
+client.Warmup();   // true：本次真的做了预热
+client.Warmup();   // false：同一个实例已经预热过
+
+// 2) 池级预热：明确指定 origin，可指定传输档
+using var pool = new HttpConnectionPool();
+pool.Prewarm(new Uri("https://api.example.com/"));                  // 默认档
+pool.Prewarm(new Uri("https://partner.example.com/"), "egress-a");  // 命名档（需已登记）
+
+// 3) 静态门面：预热全局默认实例
+Axios.Defaults.BaseAddress = "https://api.example.com/";
+Axios.Warmup();
+```
+
+- 预热标记记在**实例**上：同一实例重复调用直接返回 `false`；`Axios.Reset()` 换掉默认实例之后要重新预热。
+- 客户端预热的范围是「静态首用 + `BaseAddress` 所属 origin 的一个节点」：没配基地址、或注入自定义 Handler（不走池）时只做静态首用。
+- `BaseAddress` 不是绝对 URI 时 `Warmup()` 抛 `ERR_BAD_OPTION_VALUE`（基地址本来就是相对的、每条请求都用绝对 URL 时不要调它，或改用 `pool.Prewarm(uri)` 指定站点）。
+- 预热出来的就是普通池节点：同样受 `MaxEndpointCount` 与空闲驱逐约束，池 `Dispose()` 之后调用抛 `ObjectDisposedException`。
+- 预热覆盖的是库自己的固定成本；JIT 分层编译与建连仍在请求路径上（要连一条 TCP 请直接发一次真实请求）。
+- 静态首用包含全局 JSON 选项的第一次使用，而 STJ 在第一次使用时就冻结该实例：预热之后要改 `AxiosJson.Options` 请换一个新实例（与「已经发过 JSON 请求」的规则一致）。
+
 #### 传输档
 
 同一个池里挂多套出口（代理 / 凭据 / 客户端证书 / Cookie 会话），由请求自己选一套：
@@ -1270,6 +1299,7 @@ AxiosTelemetry.Sink = AxiosTelemetrySink.Off;   // 或者彻底关掉内置观�
 - `IsEnabled` 只管**请求级生命周期**（开句柄、成功 / 失败上报）；缓存命中、重试、闸门拒绝、池与租约这些事件不看它，覆写就收得到。要整体静音请用 `AxiosTelemetrySink.Off`。
 - 换掉之后 `AxiosTelemetry.ActivitySourceName` / `MeterName` / `DiagnosticListenerName` 那些订阅方式就不再有产出；`Observability.Capture` 是否生效也交给实现自己判（`IsEnabled` 收到的是本次请求的生效配置）。
 - **扩展方式**：跟着库升级只需重编译，但新版本可能给 `IAxiosTelemetrySink` 加成员（`netstandard2.0` 资产没有默认接口实现）。请派生 `AxiosTelemetrySink`（全空基类）而不是自己实现接口——基类补成员不会让你的实现编译失败。
+- 完整跑通的写法见示例 [`TelemetrySinkExample`](samples/AxiosNet.Simple/Examples/TelemetrySinkExample.cs)：请求级埋点、只收池事件、`Off` 静音、故意违约的实现，四种形态各跑一遍。
 
 ## 治理
 
@@ -2537,6 +2567,7 @@ AOT 下不可用的能力：
 | --- | --- | --- |
 | [连接池](#连接池) | 每个 origin 一条调优过的 Handler，共享长连接 | 默认自建；`new HttpConnectionPool(...)` 或 `HttpConnectionPool.GetOrCreate("key")` 可共享 |
 | [传输档](#传输档) | 一条池多条出口：按请求选代理 / 凭据 / 客户端证书 / Cookie 会话，各档连接与会话互不干扰 | `ConnectionPoolOptions.AddTransport("egress-a", ...)` + `c.Transport.Profile` |
+| [预热](#预热) | 把首条请求的固定成本（origin 节点里的 Handler、静态首用）提前摊掉，只建节点不建连 | `client.Warmup()` / `pool.Prewarm(new Uri(...))` |
 | [HTTP 版本](#http-版本) | 默认 HTTP/2 可降级，支持 HTTP/3 | `c.Transport.HttpVersion` |
 | [自定义 Handler](#自定义-handler) | 套 `DelegatingHandler`，或完全接管传输层 | `ConnectionPoolOptions.HandlerFactory` |
 | [依赖注入](#依赖注入) | 单例注册，多站点命名解析 | `AddAxiosClient(...)` / `AddApiClient(...)` |
@@ -2632,7 +2663,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 
 ### 示例项目
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **56 项**：
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) 是离线可运行的控制台示例，自带 `TcpListener` 演示服务器，共 **58 项**：
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -2641,11 +2672,11 @@ dotnet run --project samples/AxiosNet.Simple -- RetryExample        # 按类名�
 dotnet run --project samples/AxiosNet.Simple -- 12 33               # 按菜单编号顺序运行多个
 ```
 
-不带参数启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）；带参数则直接点名运行、结束即退出（任一失败退出码非 0），参数可以是菜单编号或类名（大小写不敏感）——想验证某一项能力时不必在 56 项菜单里找。
+不带参数启动后是交互菜单（反射列出全部示例，输入编号运行，`a` 跑全部，`q` 退出）；带参数则直接点名运行、结束即退出（任一失败退出码非 0），参数可以是菜单编号或类名（大小写不敏感）——想验证某一项能力时不必在 58 项菜单里找。
 
 | 套件 | 项数 | 覆盖 |
 | --- | ---: | --- |
-| 核心 | 39 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档、缓存身份键、响应对象上的正文 |
+| 核心 | 41 | 静态门面与 `Axios.Reset`、实例创建、JSON / 表单 / multipart、params、Basic Auth、dynamic 请求与响应、text / arraybuffer、拦截器、错误与取消、连接池、预热（`Warmup` / `Prewarm`）、上传下载、getUri 与大小限制、进度限速、自定义 Handler、序列化替换（Newtonsoft / XML / 二进制）、DNS 切换、Bearer 令牌、请求签名、弹性重试、全局重试预算、幂等键、HTTP/2·3、可观测性、可替换观测、熔断、短路响应、响应缓存、命名共享池、尝试管线、并发对冲与备用端点、排队上限与背压、传输档、缓存身份键、响应对象上的正文 |
 | 声明式 | 17 | GET 详情 / 列表、POST 创建、统一凭据扩展点与 `[AllowAnonymous]` / 本客户端自举取令牌、错误处理、全局日志、签名验签、流式响应（SSE / JSON 数组）、multipart 上传、单帧上限、接口级声明、接口级授权与校验、接口级 multipart、接口级流式、方法级编码（表单正文 / 查询集合格式）、值格式化（`[Format]` / `Serialization.ValueText` 优先级）、OpenAPI 导入（`axiosnet-gen` 默认生成请求模型，含 tag 分组 / 授权 / 表单 / multipart / 流式） |
 
 另有两个示例：
@@ -2667,11 +2698,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2525 / 2514 | `net8.0` / `net6.0` | 5039 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2539 / 2528 | `net8.0` / `net6.0` | 5067 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2725 / 2635** | | **5360** |
+| **合计** | **2739 / 2649** | | **5388** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
@@ -2779,7 +2810,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包，同为三目标；Compatibility/ 放本包的 polyfill）
 │  └─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
-├─ samples/                           # Simple（56 项）/ DI / Aot
+├─ samples/                           # Simple（58 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/
    ├─ AxiosNet.Tests/                  # 核心 + 声明式（目录 = 功能分类，见「构建与测试」）

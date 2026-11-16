@@ -517,6 +517,40 @@ public sealed class HttpConnectionPool : IDisposable
     /// <summary>从池中租用指定 URI 所属 origin 的连接节点。</summary>
     public PoolLease Lease(Uri requestUri) => Lease(requestUri, config: null);
 
+    /// <summary>
+    /// 预建 <paramref name="requestUri"/> 所属 origin 的池节点（Handler 与 HttpClient），<b>不建立任何 TCP 连接</b>：
+    /// 建连仍然发生在第一条真正的请求上。
+    /// </summary>
+    /// <param name="requestUri">绝对 URI；只用它的 scheme / host / port 决定 origin。</param>
+    /// <param name="transport">传输档名；<c>null</c> / 空串表示默认档，指定了未登记的档名抛 <c>ERR_BAD_OPTION_VALUE</c>。</param>
+    /// <remarks>
+    /// 给「首条请求要快」的场景用：Handler 构造与首个节点的发布是固定成本，提前摊掉它，请求就只剩建连与往返。
+    /// 幂等，可重复调用（节点已在时只是一次哈希查找）；节点同样受 <see cref="ConnectionPoolOptions.MaxEndpointCount"/>
+    /// 与空闲驱逐约束，池释放后调用抛 <see cref="ObjectDisposedException"/>。
+    /// </remarks>
+    public void Prewarm(Uri requestUri, string? transport = null)
+    {
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            throw new ObjectDisposedException(nameof(HttpConnectionPool));
+        }
+
+        if (requestUri is null)
+        {
+            throw new ArgumentNullException(nameof(requestUri));
+        }
+
+        if (!requestUri.IsAbsoluteUri)
+        {
+            throw AxiosException.InvalidOption(
+                $"Prewarm 需要绝对 URI（当前 '{requestUri}'）：origin 由 scheme / host / port 决定，"
+                + "相对地址无从判断要预建哪个节点。");
+        }
+
+        var profile = ResolveProfile(transport, config: null);
+        EnsureEndpoint(BuildOrigin(requestUri, profile), profile, config: null, out _);
+    }
+
     /// <summary>管道内部入口：携带请求配置，让池级错误也能指回调用方。</summary>
     internal PoolLease Lease(Uri requestUri, AxiosConfig? config)
     {
@@ -535,43 +569,7 @@ public sealed class HttpConnectionPool : IDisposable
 
         while (true)
         {
-            // 只有 GetOrAdd 胜出才为 true：驱动 EndpointReused 标签与新建指标，别改成「找不到就算新建」。
-            var createdNode = false;
-
-            // 稳态只做一次哈希查找。
-            if (!_endpoints.TryGetValue(origin, out var endpoint))
-            {
-                EnsureCapacity(origin, config);
-
-                // 创建 Handler 可能较慢（自定义工厂），放在锁外；发布前在锁内复核容器没被 ClearCookies 换掉。
-                var transport = profile.Length == 0 ? _defaultTransport : _transports[profile];
-                var cookies = GetCookies(profile);
-                var created = new PooledEndpoint(this, origin, _options, transport, cookies);
-                lock (_cookieSync)
-                {
-                    if (!ReferenceEquals(cookies, GetCookies(profile)))
-                    {
-                        // 用旧容器创建的节点作废（尚未发布、没有租约），重试时按新容器重建。
-                        created.Dispose();
-                        continue;
-                    }
-
-                    // 竞态下 GetOrAdd 只创建一次，落选的新建节点直接释放。
-                    endpoint = _endpoints.GetOrAdd(origin, created);
-                }
-
-                if (!ReferenceEquals(created, endpoint))
-                {
-                    created.Dispose();
-                }
-                else
-                {
-                    createdNode = true;
-
-                    // 节点创建事件：此刻没有持锁，可同步回调。
-                    AxiosTelemetry.Dispatch.RecordEndpointCreated();
-                }
-            }
+            var endpoint = EnsureEndpoint(origin, profile, config, out var createdNode);
 
             if (endpoint.TryAcquire())
             {
@@ -592,6 +590,64 @@ public sealed class HttpConnectionPool : IDisposable
 
             // 节点恰好在获取锁之前被驱逐：移除后重试，会新建节点。
             _endpoints.TryRemove(new KeyValuePair<OriginKey, PooledEndpoint>(origin, endpoint));
+        }
+    }
+
+    /// <summary>
+    /// 取 origin 对应的节点，没有就建一个（租约与预热共用这一条创建路径）：
+    /// 建节点不建连，Handler 的构造放在锁外。
+    /// </summary>
+    /// <param name="origin">节点 key。</param>
+    /// <param name="profile">已解析的传输档名。</param>
+    /// <param name="config">请求配置（池级错误指回调用方用）；预建节点时为 <c>null</c>。</param>
+    /// <param name="created"><c>true</c> 表示本次真的新建并发布了节点（用于 <c>EndpointReused</c> 标签与新建指标）。</param>
+    private PooledEndpoint EnsureEndpoint(OriginKey origin, string profile, AxiosConfig? config, out bool created)
+    {
+        created = false;
+
+        // 稳态只做一次哈希查找。
+        if (_endpoints.TryGetValue(origin, out var existing))
+        {
+            return existing;
+        }
+
+        EnsureCapacity(origin, config);
+
+        var transport = profile.Length == 0 ? _defaultTransport : _transports[profile];
+
+        // 只有 GetOrAdd 胜出才算新建：驱动 EndpointReused 标签与新建指标，别改成「找不到就算新建」。
+        while (true)
+        {
+            var cookies = GetCookies(profile);
+
+            // 创建 Handler 可能较慢（自定义工厂），放在锁外；发布前在锁内复核容器没被 ClearCookies 换掉。
+            var candidate = new PooledEndpoint(this, origin, _options, transport, cookies);
+            PooledEndpoint published;
+
+            lock (_cookieSync)
+            {
+                if (!ReferenceEquals(cookies, GetCookies(profile)))
+                {
+                    // 用旧容器创建的节点作废（尚未发布、没有租约），按新容器重建。
+                    candidate.Dispose();
+                    continue;
+                }
+
+                // 竞态下 GetOrAdd 只创建一次，落选的新建节点直接释放。
+                published = _endpoints.GetOrAdd(origin, candidate);
+            }
+
+            if (!ReferenceEquals(candidate, published))
+            {
+                candidate.Dispose();
+                return published;
+            }
+
+            created = true;
+
+            // 节点创建事件：此刻没有持锁，可同步回调。
+            AxiosTelemetry.Dispatch.RecordEndpointCreated();
+            return published;
         }
     }
 
@@ -852,10 +908,11 @@ public sealed class HttpConnectionPool : IDisposable
     /// 解析本次请求要用的传输档：未指定 = 默认档；指定了但池上没有登记 → <c>ERR_BAD_OPTION_VALUE</c>
     /// （静默回落默认档会把「以为走了专线」变成安全事故）。
     /// </summary>
-    private string ResolveProfile(AxiosConfig? config)
-    {
-        var requested = config?.ProfileOrNull;
+    private string ResolveProfile(AxiosConfig? config) => ResolveProfile(config?.ProfileOrNull, config);
 
+    /// <summary>按档名解析传输档（<c>null</c> / 空串 = 默认档，未登记 → <c>ERR_BAD_OPTION_VALUE</c>）：请求与预建节点共用。</summary>
+    private string ResolveProfile(string? requested, AxiosConfig? config)
+    {
         if (string.IsNullOrEmpty(requested))
         {
             return DefaultProfile;

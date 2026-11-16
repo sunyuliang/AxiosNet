@@ -1,10 +1,79 @@
 ﻿namespace AxiosNet;
 
-// AxiosClient 的释放与在途请求计数。
+using AxiosNet.Internal;
+
+// AxiosClient 的预热、释放与在途请求计数。
 public sealed partial class AxiosClient
 {
     // 释放后发起新请求的错误文案。
     private const string DisposedMessage = "AxiosClient 已释放，不能发起新请求";
+
+    // 预热标记（0/1）：每实例只做一次。
+    private int _warmedUp;
+
+    /// <summary>
+    /// 预热：把静态首用（JSON 选项校验与转换器、响应解码器、状态文案与媒体类型判定）与默认基地址所属 origin 的
+    /// 连接池节点（Handler 与 HttpClient）提前做好，<b>不建立任何 TCP 连接</b>。
+    /// </summary>
+    /// <returns>本次是否真的做了预热；该实例已经预热过时返回 <c>false</c>，不会重复执行。</returns>
+    /// <remarks>
+    /// 用法：实例建好、第一条业务请求之前调用一次。首条请求上那些与正文无关的固定成本被挪到这里，
+    /// 请求本身只剩建连与往返——建连仍然发生在第一条真正的请求上（预热不预连 TCP）。
+    /// 预热目标取 <see cref="Defaults"/> 上的 <see cref="AxiosConfig.BaseAddress"/>：
+    /// 没配基地址、或注入自定义 Handler（不走连接池）时只做静态首用；基地址不是绝对 URI 时抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 静态首用包含 JSON 选项的第一次使用，而 STJ 在第一次使用时就冻结该选项实例：预热之后要改全局 JSON 选项请换一个新的
+    /// <see cref="AxiosJson.Options"/> 实例（与「发过第一条 JSON 请求」之后的规则一致）。
+    /// </remarks>
+    public bool Warmup()
+    {
+        // 已释放的实例不做事：与请求同一口径，不漏裸 ObjectDisposedException。
+        if (Volatile.Read(ref _disposed) == 1)
+        {
+            throw DisposedError(Defaults);
+        }
+
+        if (Volatile.Read(ref _warmedUp) == 1)
+        {
+            return false;
+        }
+
+        // 先把预热目标解析出来：非法基地址要在置标记之前抛，否则后续调用会因为标记已置位而静默跳过。
+        var origin = ResolveWarmupOrigin();
+
+        // 并发竞争只让一条真的执行，其余按「已经预热过」返回。
+        if (Interlocked.Exchange(ref _warmedUp, 1) != 0)
+        {
+            return false;
+        }
+
+        StaticWarmup.Run();
+
+        // 注入 Handler 的实例没有池：除静态首用外无可预热。
+        if (origin is not null)
+        {
+            _pool?.Prewarm(origin, Defaults.ProfileOrNull);
+        }
+
+        return true;
+    }
+
+    /// <summary>预热目标：<see cref="AxiosConfig.BaseAddress"/> 解析出的绝对 URI；没有配置时为 <c>null</c>。</summary>
+    private Uri? ResolveWarmupOrigin()
+    {
+        if (Defaults.BaseAddress is not { Length: > 0 } baseAddress)
+        {
+            return null;
+        }
+
+        if (Uri.TryCreate(baseAddress, UriKind.Absolute, out var origin))
+        {
+            return origin;
+        }
+
+        throw AxiosException.InvalidOption(
+            $"Warmup() 只能用绝对基地址预建连接池节点（当前 BaseAddress = '{baseAddress}'）："
+            + "请写成 https://host[:port][/path] 的形式，或改用 Pool.Prewarm(new Uri(具体 origin)) 指定要预热的站点。", Defaults);
+    }
 
     /// <summary>最后一个在途请求结束时，补做 <see cref="Dispose"/> 推迟的资源释放。</summary>
     private void ReleaseInFlight()

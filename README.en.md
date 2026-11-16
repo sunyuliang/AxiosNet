@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2725%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2583%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2739%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2597%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -1045,6 +1045,35 @@ HttpConnectionPool.Release("orders");   // remove and shut down gracefully; the 
   - pools in the registry are owned by nobody — disposing a client does not close them, `Release(key)` does.
 - To see whether pools are being built too often, watch `axiosnet.client.pool.active_pools` (live pools) and `.shared_pools` (named registry entries).
 
+#### Warm-up
+
+The fixed cost the first request pays on top (constructing the origin node's handler and `HttpClient`, first use of the JSON options and the decoders) can be paid up front. Warm-up **builds the node only, never a connection**: the TCP connection is still established by the first real request.
+
+```csharp
+using AxiosNet.Pooling;
+
+// 1) Client warm-up: builds the origin node for Defaults.BaseAddress
+using var client = new AxiosClient(new AxiosConfig { BaseAddress = "https://api.example.com/" });
+client.Warmup();   // true: this call did the work
+client.Warmup();   // false: this instance was already warmed up
+
+// 2) Pool warm-up: name the origin explicitly, optionally a transport profile
+using var pool = new HttpConnectionPool();
+pool.Prewarm(new Uri("https://api.example.com/"));                  // default profile
+pool.Prewarm(new Uri("https://partner.example.com/"), "egress-a");  // named profile (must be registered)
+
+// 3) Static facade: warm the global default client
+Axios.Defaults.BaseAddress = "https://api.example.com/";
+Axios.Warmup();
+```
+
+- The warm-up flag lives on the **instance**: a second call on the same instance returns `false`; `Axios.Reset()` replaces the default instance, so warm up again afterwards.
+- A client warm-up covers "static first use + one node for the origin of `BaseAddress`": without a base address, or with an injected handler (no pool), only the static first use runs.
+- A `BaseAddress` that is not an absolute URI makes `Warmup()` throw `ERR_BAD_OPTION_VALUE` (skip it when the base address is deliberately relative and every request uses an absolute URL, or point at a site with `pool.Prewarm(uri)`).
+- A pre-built node is just a normal pool node: it obeys `MaxEndpointCount` and idle eviction, and calling after the pool is `Dispose()`d throws `ObjectDisposedException`.
+- Warm-up covers the library's own fixed costs; tiered JIT compilation and the connection are still on the request path (send one real request if you want a TCP connection established).
+- The static first use includes the first use of the global JSON options, and STJ freezes that instance on first use: after a warm-up, replace `AxiosJson.Options` with a new instance if you need different settings (the same rule as "a JSON request has already run").
+
 #### Transport profiles
 
 Attach several egresses (proxy / credentials / client certificate / cookie session) to one pool and let each request pick one:
@@ -1267,6 +1296,7 @@ AxiosTelemetry.Sink = AxiosTelemetrySink.Off;   // or switch the built-in pipeli
 - `IsEnabled` governs the **request-level lifecycle** only (opening the handle, success / failure reports); cache hits, retries, gate rejections, pool and lease events do not consult it — override them and they will be called. Use `AxiosTelemetrySink.Off` to silence everything.
 - Once replaced, subscribing through `AxiosTelemetry.ActivitySourceName` / `MeterName` / `DiagnosticListenerName` produces nothing; whether `Observability.Capture` is honoured is up to the implementation (`IsEnabled` receives the effective config for the request).
 - **Extending it**: upgrades are recompile-only, but a new version may add members to `IAxiosTelemetrySink` (the `netstandard2.0` asset has no default interface methods). Derive from `AxiosTelemetrySink` (all-no-op base class) rather than implementing the interface yourself — members added to the base class never break your build.
+- A worked version of all four shapes (request-level only, pool events only, `Off`, and a deliberately violating sink) is [`TelemetrySinkExample`](samples/AxiosNet.Simple/Examples/TelemetrySinkExample.cs).
 
 ## Resilience
 
@@ -2538,6 +2568,7 @@ Four groups; click a capability to jump to its section. Boundaries and edge case
 | --- | --- | --- |
 | [Connection pool](#connection-pool) | One tuned handler per origin, shared keep-alive connections | Built in; share via `new HttpConnectionPool(...)` or `HttpConnectionPool.GetOrCreate("key")` |
 | [HTTP versions](#http-versions) | HTTP/2 by default with downgrade, HTTP/3 supported | `c.Transport.HttpVersion` |
+| [Warm-up](#warm-up) | Pay the first request's fixed cost (the origin node's handler, static first use) up front — node only, no connection | `client.Warmup()` / `pool.Prewarm(new Uri(...))` |
 | [Custom handlers](#custom-handlers) | Wrap a `DelegatingHandler`, or take over the transport | `ConnectionPoolOptions.HandlerFactory` |
 | [Dependency injection](#dependency-injection) | Singleton registration, named multi-site resolution | `AddAxiosClient(...)` / `AddApiClient(...)` |
 | [Native AOT](#runtime-and-aot) | Declared `IsTrimmable` (trims with 0 warnings); `net8.0` target also sets `IsAotCompatible` (AOT analyzer 0 warnings); built-in request-model / interface-proxy source generator, no `TrimmerRootAssembly` needed | On by reference; configure `JsonSerializerContext` for serialization |
@@ -2632,7 +2663,7 @@ builder.Services.AddApiClient("b", "https://b.example.com", configure: c => c.Cr
 
 ### Samples
 
-[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **56 items**:
+[`samples/AxiosNet.Simple`](samples/AxiosNet.Simple) is an offline console sample with a built-in `TcpListener` demo server — **58 items**:
 
 ```bash
 dotnet run --project samples/AxiosNet.Simple
@@ -2641,11 +2672,11 @@ dotnet run --project samples/AxiosNet.Simple -- RetryExample        # run one sa
 dotnet run --project samples/AxiosNet.Simple -- 12 33               # run several by menu number
 ```
 
-With no arguments it opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit). With arguments it runs them and exits (non-zero exit code if any failed); an argument is a menu number or a class name (case-insensitive) — no need to hunt through 56 entries to check one capability.
+With no arguments it opens an interactive menu (reflection lists every sample; type a number to run, `a` for all, `q` to quit). With arguments it runs them and exits (non-zero exit code if any failed); an argument is a menu number or a class name (case-insensitive) — no need to hunt through 58 entries to check one capability.
 
 | Suite | Items | Coverage |
 | --- | ---: | --- |
-| Core | 39 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles, cache identity keys, raw body on the response object |
+| Core | 41 | Static facade and `Axios.Reset`, instance creation, JSON / form / multipart, params, Basic auth, dynamic requests and responses, text / arraybuffer, interceptors, errors and cancellation, connection pool, warm-up (`Warmup` / `Prewarm`), upload and download, getUri and size limits, progress and rate limiting, custom handler, serializer replacement (Newtonsoft / XML / binary), DNS refresh, bearer token, request signing, resilient retries, global retry budget, idempotency keys, HTTP/2·3, observability, replaceable telemetry, circuit breaker, short circuit, response cache, named shared pool, attempt pipeline, concurrent hedging and backup endpoints, queue cap and backpressure, transport profiles, cache identity keys, raw body on the response object |
 | Declarative | 17 | GET detail / list, POST create, the unified credential provider with `[AllowAnonymous]` / same-client token bootstrap, error handling, global logging, signing, streaming (SSE / JSON array), multipart upload, frame cap, interface declarations, interface authorization and validation, interface multipart, interface streaming, method-level encoding (form body / query collection format), value formatting (`[Format]` / `Serialization.ValueText` priority), OpenAPI import (`axiosnet-gen` emits request models by default: tag grouping / authorization / form / multipart / streaming) |
 
 Two more samples:
@@ -2667,11 +2698,11 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2525 / 2514 | `net8.0` / `net6.0` | 5039 |
+| `AxiosNet.Tests` (core + declarative) | 2539 / 2528 | `net8.0` / `net6.0` | 5067 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2725 / 2635** | | **5360** |
+| **Total** | **2739 / 2649** | | **5388** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
@@ -2779,7 +2810,7 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
 │  ├─ AxiosNet.DependencyInjection/   # DI extensions (separate package, tri-target too; Compatibility/ holds its polyfills)
 │  └─ AxiosNet.Cli/                   # design-time tool axiosnet-gen: OpenAPI / Swagger → declarative C# (see "OpenAPI import")
-├─ samples/                           # Simple (56 items) / DI / Aot
+├─ samples/                           # Simple (58 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/
    ├─ AxiosNet.Tests/                  # core + declarative (folders = feature groups, see "Build and test")

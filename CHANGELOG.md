@@ -10,6 +10,9 @@
 
 ### Added
 
+- 预热入口，用来摊掉首条请求的固定成本：`HttpConnectionPool.Prewarm(uri, transport?)` 预建指定 origin 的节点（Handler 与 `HttpClient`），`AxiosClient.Warmup()` / `Axios.Warmup()` 额外跑热静态首用（JSON 选项校验与转换器、响应解码器、状态文案与媒体类型判定）并按 `Defaults.BaseAddress` 预建节点。两者都**只建节点、不建连**——TCP 仍然由第一条真正的请求建立。
+  - 「预热过」记在**实例**上：`Warmup()` 第二次调用返回 `false` 且不再执行；`Axios.Reset()` 换掉默认实例后标记随之重置。`Prewarm` 幂等（节点已在时只是一次哈希查找），同样受 `MaxEndpointCount` 与空闲驱逐约束。
+  - `Warmup()` 的基地址必须是绝对 URI，否则抛 `ERR_BAD_OPTION_VALUE`（不静默跳过）；已释放的实例与请求同一口径抛 `ERR_CANCELED`，池已释放后 `Prewarm` 抛 `ObjectDisposedException`。
 - 观测实现可整套替换：新增 `IAxiosTelemetrySink`、`AxiosTelemetrySink`（全空实现的基类）与观测句柄 `AxiosRequestTrace`，赋 `AxiosTelemetry.Sink` 即接管 span / 指标 / 事件三路输出，内置那套**同时停用**（不是叠加）；赋 `AxiosTelemetrySink.Off` 则彻底关掉。此前 `AxiosTelemetry` 是静态类，包外只能按 `ActivitySource` / `Meter` 名字订阅再自行翻译，既接不进公司自己的管道，也关不掉内置的那套。默认行为不变（`Sink` 默认指向内置实现）。
   - 可替换实现是第三方代码，它违约抛异常时**只丢掉那一次观测，不改写请求结果**：派发统一经 `AxiosTelemetry.Dispatch` 的护栏，`finally` 里的收尾异常不再把一条 200 换成观测异常、也不再盖掉真正的失败原因；在途请求计数照常归零（否则 `Dispose()` 永远等不到 0，池与 Handler 一直不释放）——`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负。
   - `IsEnabled` 的管辖范围写明：只管请求级生命周期（开句柄 / 成功 / 失败上报），缓存、重试、闸门、池与租约这些事件不看它；要整体静音用 `AxiosTelemetrySink.Off`。
