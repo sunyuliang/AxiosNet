@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>AxiosNet.Simple</RootNamespace>
     <AssemblyName>AxiosNet.Simple</AssemblyName>
+    <LangVersion>12.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>

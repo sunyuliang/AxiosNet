@@ -248,60 +248,79 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 return null;
             }
 
-            // 整行先看原始字节：字段名比较与 data 行切片都不经过 UTF-16。
-            var span = _buffer.AsSpan(line.Offset, line.Length);
-
-            if (_format == AxiosStreamFormat.NewlineDelimitedJson)
+            var payload = HandlePayloadLine(line, out var done);
+            if (done)
             {
-                if (span.Length == 0)
-                {
-                    continue;
-                }
-
-                return FramePayload.FromBytes(_buffer.AsMemory(line.Offset, line.Length));
-            }
-
-            // SSE：空行结束一帧
-            if (span.Length == 0)
-            {
-                if (_frameLength == 0)
-                {
-                    // 心跳（`:` 注释）帧没有 data，跳过
-                    continue;
-                }
-
-                return TakeFrame();
-            }
-
-            if (span[0] == (byte)':')
-            {
-                // 注释 / 心跳
-                continue;
-            }
-
-            var colon = span.IndexOf((byte)':');
-            var field = colon < 0 ? span : span[..colon];
-            if (!IsAscii(field, "data"))
-            {
-                // event: / id: / retry: 等字段不进入数据流
-                continue;
-            }
-
-            var value = colon < 0 ? ReadOnlySpan<byte>.Empty : span[(colon + 1)..];
-            if (!value.IsEmpty && value[0] == (byte)' ')
-            {
-                value = value[1..];
-            }
-
-            AppendFrame(value);
-
-            // 上限按字节数，与 NDJSON 的缓冲区口径一致。
-            _frameBytes += line.ByteLength;
-            if (_frameBytes > _maxFrameBytes)
-            {
-                throw AxiosException.StreamFrameTooLarge(_config, _request, "SSE", _maxFrameBytes);
+                return payload;
             }
         }
+    }
+
+    /// <summary>按行格式解析一行原始字节。</summary>
+    /// <param name="line">本次读到的行在当前缓冲区的区间。</param>
+    /// <param name="done">该行是否终结了当前帧；为 <c>false</c> 时本行不产生帧，应继续读下一行。</param>
+    /// <returns>该行产生的帧；<paramref name="done"/> 为 <c>true</c> 时可能是 <c>null</c>（读到 <c>[DONE]</c>，流结束）。</returns>
+    private FramePayload? HandlePayloadLine(Line line, out bool done)
+    {
+        done = false;
+
+        // 整行先看原始字节：字段名比较与 data 行切片都不经过 UTF-16。
+        var span = _buffer.AsSpan(line.Offset, line.Length);
+
+        if (_format == AxiosStreamFormat.NewlineDelimitedJson)
+        {
+            if (span.Length == 0)
+            {
+                return null;
+            }
+
+            done = true;
+            return FramePayload.FromBytes(_buffer.AsMemory(line.Offset, line.Length));
+        }
+
+        // SSE：空行结束一帧
+        if (span.Length == 0)
+        {
+            if (_frameLength == 0)
+            {
+                // 心跳（`:` 注释）帧没有 data，跳过
+                return null;
+            }
+
+            done = true;
+            return TakeFrame();
+        }
+
+        if (span[0] == (byte)':')
+        {
+            // 注释 / 心跳
+            return null;
+        }
+
+        var colon = span.IndexOf((byte)':');
+        var field = colon < 0 ? span : span[..colon];
+        if (!IsAscii(field, "data"))
+        {
+            // event: / id: / retry: 等字段不进入数据流
+            return null;
+        }
+
+        var value = colon < 0 ? ReadOnlySpan<byte>.Empty : span[(colon + 1)..];
+        if (!value.IsEmpty && value[0] == (byte)' ')
+        {
+            value = value[1..];
+        }
+
+        AppendFrame(value);
+
+        // 上限按字节数，与 NDJSON 的缓冲区口径一致。
+        _frameBytes += line.ByteLength;
+        if (_frameBytes > _maxFrameBytes)
+        {
+            throw AxiosException.StreamFrameTooLarge(_config, _request, "SSE", _maxFrameBytes);
+        }
+
+        return null;
     }
 
     // 这一帧是不是结束哨兵（SSE 的 [DONE]）。
@@ -435,74 +454,16 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
                 throw AxiosException.StreamMalformed(_config, _request, "JSON array stream ended before its closing ']'", new JsonException("unexpected end of the JSON array stream"));
             }
 
-            var reader = new Utf8JsonReader(_buffer.AsSpan(_start, _end - _start), _eof, _readerState);
-
-            try
+            var payload = ScanArrayWindow();
+            if (payload is not null)
             {
-                while (reader.Read())
-                {
-                    var token = reader.TokenType;
-                    if (token == JsonTokenType.Comment)
-                    {
-                        // CommentHandling.Allow 时注释会作为 token 出现：它既不是元素，也不改变深度
-                        continue;
-                    }
-
-                    var depth = reader.CurrentDepth;
-
-                    if (!_arrayStarted)
-                    {
-                        if (token != JsonTokenType.StartArray || depth != 0)
-                        {
-                            // 顶层不是数组：直接点名期望什么
-                            throw AxiosException.StreamMalformed(_config, _request, $"JSON array stream must start with a top-level '[' but found {token}", new JsonException($"expected StartArray, got {token}"));
-                        }
-
-                        _arrayStarted = true;
-                        continue;
-                    }
-
-                    if (token == JsonTokenType.EndArray && depth == 0)
-                    {
-                        // 顶层数组收尾：立即结束，不等连接关闭，也不校验尾部空白 / 垃圾
-                        _readerState = reader.CurrentState;
-                        _start += (int)reader.BytesConsumed;
-                        _arrayEnded = true;
-                        return null;
-                    }
-
-                    if (!_inElement)
-                    {
-                        // 顶层数组的直接子项深度必为 1；TokenStartIndex 是相对窗口起点 _start 的偏移。
-                        _inElement = true;
-                        _elementStart = _start + (int)reader.TokenStartIndex;
-
-                        if (token != JsonTokenType.StartObject && token != JsonTokenType.StartArray)
-                        {
-                            // 标量元素（数字 / 字符串 / true / false / null）：一个 token 就是一帧
-                            return CompleteElement(reader);
-                        }
-
-                        continue;
-                    }
-
-                    if (depth == 1 && (token == JsonTokenType.EndObject || token == JsonTokenType.EndArray))
-                    {
-                        // 容器的收尾 token 与它的开括号同深度：回到 1 就说明元素本身结束了
-                        return CompleteElement(reader);
-                    }
-                }
-            }
-            catch (JsonException ex)
-            {
-                throw AxiosException.StreamMalformed(_config, _request, "JSON array stream is not valid JSON", ex);
+                return payload;
             }
 
-            // 缓冲区读完：先结算已消费字节再补读（spill 复制依赖压缩前的偏移）。
-            _readerState = reader.CurrentState;
-            var consumed = (int)reader.BytesConsumed;
-            SpillConsumed(consumed);
-            _start += consumed;
+            if (_arrayEnded)
+            {
+                return null;
+            }
 
             if (_eof)
             {
@@ -512,6 +473,81 @@ internal sealed class JsonStreamEnumerable<T> : IAsyncEnumerable<T>, IAsyncEnume
 
             await FillAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>在当前字节窗口里定位下一个顶层元素；窗口读完仍未定位到时把消费进度写回字段。</summary>
+    /// <returns>找到的元素；窗口耗尽或数组收尾时为 <c>null</c>，后者会把 <c>_arrayEnded</c> 置位。</returns>
+    private FramePayload? ScanArrayWindow()
+    {
+        var reader = new Utf8JsonReader(_buffer.AsSpan(_start, _end - _start), _eof, _readerState);
+
+        try
+        {
+            while (reader.Read())
+            {
+                var token = reader.TokenType;
+                if (token == JsonTokenType.Comment)
+                {
+                    // CommentHandling.Allow 时注释会作为 token 出现：它既不是元素，也不改变深度
+                    continue;
+                }
+
+                var depth = reader.CurrentDepth;
+
+                if (!_arrayStarted)
+                {
+                    if (token != JsonTokenType.StartArray || depth != 0)
+                    {
+                        // 顶层不是数组：直接点名期望什么
+                        throw AxiosException.StreamMalformed(_config, _request, $"JSON array stream must start with a top-level '[' but found {token}", new JsonException($"expected StartArray, got {token}"));
+                    }
+
+                    _arrayStarted = true;
+                    continue;
+                }
+
+                if (token == JsonTokenType.EndArray && depth == 0)
+                {
+                    // 顶层数组收尾：立即结束，不等连接关闭，也不校验尾部空白 / 垃圾
+                    _readerState = reader.CurrentState;
+                    _start += (int)reader.BytesConsumed;
+                    _arrayEnded = true;
+                    return null;
+                }
+
+                if (!_inElement)
+                {
+                    // 顶层数组的直接子项深度必为 1；TokenStartIndex 是相对窗口起点 _start 的偏移。
+                    _inElement = true;
+                    _elementStart = _start + (int)reader.TokenStartIndex;
+
+                    if (token != JsonTokenType.StartObject && token != JsonTokenType.StartArray)
+                    {
+                        // 标量元素（数字 / 字符串 / true / false / null）：一个 token 就是一帧
+                        return CompleteElement(reader);
+                    }
+
+                    continue;
+                }
+
+                if (depth == 1 && (token == JsonTokenType.EndObject || token == JsonTokenType.EndArray))
+                {
+                    // 容器的收尾 token 与它的开括号同深度：回到 1 就说明元素本身结束了
+                    return CompleteElement(reader);
+                }
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw AxiosException.StreamMalformed(_config, _request, "JSON array stream is not valid JSON", ex);
+        }
+
+        // 缓冲区读完：先结算已消费字节再补读（spill 复制依赖压缩前的偏移）。
+        _readerState = reader.CurrentState;
+        var consumed = (int)reader.BytesConsumed;
+        SpillConsumed(consumed);
+        _start += consumed;
+        return null;
     }
 
     /// <summary>元素收尾：切出它在字节流里的区间（通常直接把字节交给序列化器），重置元素状态。元素跨多次读取时把尾巴拼到 spill 上再交付。</summary>

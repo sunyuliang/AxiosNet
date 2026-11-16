@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2774%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2632%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2786%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2644%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -2696,13 +2696,15 @@ dotnet build AxiosNet.sln -c Release
 
 主库与 `AxiosNet.DependencyInjection` 各编译 `netstandard2.0` / `net6.0` / `net8.0` 三份资产；CLI、测试与示例项目仍是 `net6.0` / `net8.0` 双目标（它们不是运行时库）。
 
+仓库源码统一按 **C# 12** 编译：每个项目显式声明 `<LangVersion>12.0</LangVersion>`，语言版本不跟随本机 SDK 上浮。因此 .NET SDK **8.0 及以上**都能构建本仓库，无需固定某个 SDK 版本。
+
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2574 / 2563 | `net8.0` / `net6.0` | 5137 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2586 / 2575 | `net8.0` / `net6.0` | 5161 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2774 / 2684** | | **5458** |
+| **合计** | **2786 / 2696** | | **5482** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
@@ -2735,7 +2737,7 @@ bash eng/aot-package-smoke.sh
 | --- | --- |
 | `Client/` | 静态门面 `Axios`、实例选项与默认值、默认头、配置合并与六个配置分组 |
 | `Requests/` | URL 与 params、请求体（JSON / 表单 / multipart）、响应解析与缓冲、流式响应、超时取消、Content-Type 解析 |
-| `Governance/` | 并发闸门、进度回调与限速 |
+| `Governance/` | 并发闸门、进度回调与限速、注释规范体检（12 条机检） |
 | `Resilience/` | 重试策略与计时、总预算（`Resilience.TotalTimeout`）、熔断状态机、短路响应 |
 | `Caching/` | 响应缓存与单飞、条件请求（`ETag` / 304）与 `IAxiosCacheRevalidationStore`、`IAxiosCacheStore` 契约与自建存储、键规则与身份隔离、命中路径 |
 | `Serialization/` | `IContentSerializer` 契约与注册表、JSON 默认选项 |

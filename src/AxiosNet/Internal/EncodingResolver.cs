@@ -26,17 +26,17 @@ internal static class EncodingResolver
         }
 
         // 常见 charset 直接用内置实例。
-        if (trimmed.Equals(Utf8Name, StringComparison.OrdinalIgnoreCase))
+        if (SpanComparisons.EqualsIgnoreCase(trimmed, Utf8Name))
         {
             return Encoding.UTF8;
         }
 
-        if (trimmed.Equals(AsciiName, StringComparison.OrdinalIgnoreCase))
+        if (SpanComparisons.EqualsIgnoreCase(trimmed, AsciiName))
         {
             return Encoding.ASCII;
         }
 
-        if (trimmed.Equals(Latin1Name, StringComparison.OrdinalIgnoreCase))
+        if (SpanComparisons.EqualsIgnoreCase(trimmed, Latin1Name))
         {
             return PlatformCompat.Latin1;
         }

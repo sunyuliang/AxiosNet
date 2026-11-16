@@ -5,7 +5,7 @@
          不进 NuGet 包、不被 src/ 引用。主库仍是单目标 net6.0 + 零第三方运行时依赖，
          BenchmarkDotNet 只存在于本基准进程里。 -->
     <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Exe</OutputType>

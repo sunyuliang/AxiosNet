@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!-- CLI 只面向 net8.0（dotnet tool 基线），测试跟随 CLI，不再分双目标。 -->
     <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 

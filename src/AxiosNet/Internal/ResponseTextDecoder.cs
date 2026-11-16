@@ -59,7 +59,7 @@ internal static class ResponseTextDecoder
         }
 
         Span<byte> probe = stackalloc byte[16];
-        var written = encoding.GetBytes("A\n", probe);
+        var written = encoding.GetBytes("A\n".AsSpan(), probe);
         return written == 2 && probe[0] == (byte)'A' && probe[1] == (byte)'\n';
     }
 

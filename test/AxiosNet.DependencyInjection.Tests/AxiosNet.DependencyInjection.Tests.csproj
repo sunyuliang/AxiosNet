@@ -4,7 +4,7 @@
     <!-- 与另两个测试项目一致：net8.0;net6.0 双 TFM，验证同一份 lib/net6.0 扩展资产在两种运行时上的行为 -->
     <TargetFrameworks>net8.0;net6.0</TargetFrameworks>
     <!-- net6.0 默认 C# 10，测试里用了原始字符串字面量（C# 11），统一用最新语言版本 -->
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 

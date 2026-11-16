@@ -12,7 +12,7 @@
          netstandard2.0 目标额外引用 9 个微软第一方 BCL 兼容包（见下方条件 ItemGroup），这些依赖只进兼容资产。 -->
     <TargetFrameworks>netstandard2.0;net6.0;net8.0</TargetFrameworks>
     <!-- net6.0 默认 C# 10，显式用最新语言版本（测试项目同样如此） -->
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- 声明本程序集可被裁剪（消费方 PublishTrimmed / PublishAot 时按需裁剪），

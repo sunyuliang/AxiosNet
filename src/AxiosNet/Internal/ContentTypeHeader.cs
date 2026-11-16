@@ -212,7 +212,7 @@ internal static class ContentTypeHeader
             // 同名参数取第一个：与 BCL 的 NameValueHeaderValue.Find 一致。
             if (wantCharSet
                 && charSet is null
-                && EqualsAsciiIgnoreCase(raw[nameStart..nameEnd], CharSetParameter))
+                && SpanComparisons.EqualsIgnoreCase(raw[nameStart..nameEnd], CharSetParameter))
             {
                 charSet = raw[valueStart..valueEnd].ToString();
             }
@@ -243,39 +243,6 @@ internal static class ContentTypeHeader
 
     /// <summary>单个 token 字符（RFC 7230 <c>tchar</c>）；非 ASCII 一律不算。查表代替 16 个比较的短路链。</summary>
     private static bool IsTokenChar(char c) => c < 128 && TokenChars[c];
-
-    /// <summary>
-    /// 参数名比较：ASCII、大小写不敏感，按长度与逐字符比。
-    /// </summary>
-    /// <remarks>
-    /// 不写成 <c>raw[start..end].Equals(name, StringComparison.OrdinalIgnoreCase)</c>：该重载在 netstandard2.0 目标上
-    /// 可能被解析到 <c>object.Equals</c> 并报 CS0176。逐字符比在三个目标框架上行为一致。
-    /// </remarks>
-    /// <param name="value">待比较的参数名段。</param>
-    /// <param name="expected">期望的名字（ASCII 小写常量）。</param>
-    /// <returns>长度相同且逐字符 ASCII 大小写不敏感相等时为 <c>true</c>。</returns>
-    private static bool EqualsAsciiIgnoreCase(ReadOnlySpan<char> value, string expected)
-    {
-        if (value.Length != expected.Length)
-        {
-            return false;
-        }
-
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (ToLowerAscii(value[i]) != ToLowerAscii(expected[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /// <summary>ASCII 大写转小写；其它字符原样返回（非 ASCII 因此判不相等，与「参数名恒为 ASCII」一致）。</summary>
-    /// <param name="c">待转换字符。</param>
-    /// <returns>小写形式。</returns>
-    private static char ToLowerAscii(char c) => c is >= 'A' and <= 'Z' ? (char)(c + ('a' - 'A')) : c;
 
     /// <summary>ASCII 里哪些字符算 token：建一次，之后每个字符一次数组访问（快路径按字符扫描，这条链在热路径上）。</summary>
     private static readonly bool[] TokenChars = CreateTokenTable();

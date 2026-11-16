@@ -57,10 +57,10 @@ public sealed class CommentAuditTests
     public void CommentsHaveNoTodoMarkers() =>
         AssertClean(Cached.Value.TodoMarkers, "TODO / FIXME 标记");
 
-    /// <summary>源码行不超过 <see cref="CommentAudit.MaxLineChars"/> 字符。</summary>
+    /// <summary>带行内注释的行不超过 140 字符；纯代码长行不在本条范围内。</summary>
     [Fact]
-    public void SourceLinesStayWithinColumnLimit() =>
-        AssertClean(Cached.Value.LongLines, "超长行");
+    public void AnnotatedLinesStayWithinColumnLimit() =>
+        AssertClean(Cached.Value.LongLines, "带注释的超长行");
 
     /// <summary>注释不能是纯符号（分隔线除外）。</summary>
     [Fact]
@@ -80,7 +80,7 @@ public sealed class CommentAuditTests
         }
 
         var detail = string.Join("\n", hits.Take(20));
-        Assert.True(false, what + "：" + hits.Count + " 处（最多列 20 条）\n" + detail);
+        Assert.Fail(what + "：" + hits.Count + " 处（最多列 20 条）\n" + detail);
     }
 }
 
@@ -248,6 +248,11 @@ internal static class CommentAudit
     internal static CommentAuditReport Scan()
     {
         var files = LoadFiles(RepositoryRoot());
+        if (files.Count == 0)
+        {
+            throw new InvalidOperationException("没有扫到任何源文件，检查仓库根与 src / test / samples 目录。");
+        }
+
         var report = new CommentAuditReport();
 
         ScanMissingDocs(files, report.UndocumentedMembers);
@@ -867,8 +872,18 @@ internal static class CommentAudit
 
     private static void ScanBacktickedSymbols(List<SourceFile> files, List<string> hits)
     {
-        var corpus = string.Join("\n", files.Select(static file => string.Join("\n", file.Lines)));
-        var defined = IdentifierWord.Matches(corpus).Select(static match => match.Value).ToHashSet(StringComparer.Ordinal);
+        var corpus = new StringBuilder();
+        foreach (var file in files)
+        {
+            foreach (var line in file.Lines)
+            {
+                corpus.Append(SplitComment(line).Code).Append('\n');
+            }
+        }
+
+        var defined = IdentifierWord.Matches(corpus.ToString())
+            .Select(static match => match.Value)
+            .ToHashSet(StringComparer.Ordinal);
 
         foreach (var file in files)
         {

@@ -6,7 +6,7 @@
          本包是薄封装，三个目标编译同一份源码；唯一的条件编译是 Compatibility/ 下的
          ArgumentNullException.ThrowIfNull 别名，业务代码没有 #if。 -->
     <TargetFrameworks>netstandard2.0;net6.0;net8.0</TargetFrameworks>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

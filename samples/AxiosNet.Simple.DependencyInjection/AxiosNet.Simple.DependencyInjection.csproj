@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>AxiosNet.Simple.DependencyInjection</RootNamespace>
     <AssemblyName>AxiosNet.Simple.DependencyInjection</AssemblyName>
+    <LangVersion>12.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>

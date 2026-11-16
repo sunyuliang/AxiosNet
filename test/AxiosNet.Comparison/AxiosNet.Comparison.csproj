@@ -6,7 +6,7 @@
          会一并还原 Refit / RestSharp / Flurl。它不是产品资产，也要引第三方库，
          所以和 src/ 的「零第三方运行时依赖」隔离。 -->
     <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Exe</OutputType>

@@ -33,7 +33,7 @@ internal static class MediaTypes
 
     /// <summary>媒体类型主值是否等于 <paramref name="expected"/>（忽略参数、空白与大小写）；<paramref name="expected"/> 必须是主值本身。</summary>
     public static bool Is(string? mediaType, string expected)
-        => MainValue(mediaType).Equals(expected, StringComparison.OrdinalIgnoreCase);
+        => SpanComparisons.EqualsIgnoreCase(MainValue(mediaType), expected);
 
     /// <summary>是否为文本类媒体类型（<c>null</c> / 空视为文本）。</summary>
     public static bool IsTextual(string? mediaType)
@@ -45,24 +45,24 @@ internal static class MediaTypes
             return true;
         }
 
-        return main.StartsWith(TextPrefix, StringComparison.OrdinalIgnoreCase)
-            || main.EndsWith(JsonSuffix, StringComparison.OrdinalIgnoreCase)
-            || main.EndsWith(XmlSuffix, StringComparison.OrdinalIgnoreCase)
-            || main.EndsWith(YamlSuffix, StringComparison.OrdinalIgnoreCase)
+        return SpanComparisons.StartsWithIgnoreCase(main, TextPrefix)
+            || SpanComparisons.EndsWithIgnoreCase(main, JsonSuffix)
+            || SpanComparisons.EndsWithIgnoreCase(main, XmlSuffix)
+            || SpanComparisons.EndsWithIgnoreCase(main, YamlSuffix)
             || IsTextualApplicationType(main);
     }
 
     /// <summary>结构化文本的应用类型（<c>application/json</c>、<c>application/xml</c> 等）。</summary>
     private static bool IsTextualApplicationType(ReadOnlySpan<char> main)
-        => main.Equals(AxiosContentType.Json, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(AxiosContentType.Xml, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(AxiosContentType.FormUrlEncoded, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(JavaScript, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(Yaml, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(XYaml, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(Csv, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(GraphQl, StringComparison.OrdinalIgnoreCase)
-            || main.Equals(Sql, StringComparison.OrdinalIgnoreCase);
+        => SpanComparisons.EqualsIgnoreCase(main, AxiosContentType.Json)
+            || SpanComparisons.EqualsIgnoreCase(main, AxiosContentType.Xml)
+            || SpanComparisons.EqualsIgnoreCase(main, AxiosContentType.FormUrlEncoded)
+            || SpanComparisons.EqualsIgnoreCase(main, JavaScript)
+            || SpanComparisons.EqualsIgnoreCase(main, Yaml)
+            || SpanComparisons.EqualsIgnoreCase(main, XYaml)
+            || SpanComparisons.EqualsIgnoreCase(main, Csv)
+            || SpanComparisons.EqualsIgnoreCase(main, GraphQl)
+            || SpanComparisons.EqualsIgnoreCase(main, Sql);
 
     /// <summary>媒体类型主值（去掉参数与两端空白，不做分配）。</summary>
     private static ReadOnlySpan<char> MainValue(string? mediaType)

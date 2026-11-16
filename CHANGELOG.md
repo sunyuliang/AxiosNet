@@ -45,6 +45,7 @@
 - 请求体压缩不再多复制一份成品：压缩后直接引用缓冲区有效段（此前是 `MemoryStream.ToArray()`），压缩期间的峰值从「缓冲区 + 成品」两份降到一份。配置与线上字节不变。
 - `ApiClient.Create<T>()` / `Create(Type)` 的接口声明校验改走统一出口：接口定义非法（缺路由、多个正文、`[Part]` 未配 `[Multipart]`、`[Stream]` 用在非流式方法、参数重名…）现在抛 `AxiosException(ERR_BAD_OPTION_VALUE)`，原始异常在 `Cause`。此前是裸 `InvalidOperationException` —— 同一类「声明写错」，模型式 `catch (AxiosException)` 抓得住、接口式会漏。`AxiosAotMetadataException` 仍原样抛出。
 - 非 2xx 消息的请求上下文补齐到**全部**分支：`MaxRedirects = 0`（`ERR_BAD_REQUEST`）与重定向超限（`ERR_TOO_MANY_REDIRECTS`）此前只有状态码与调参提示，现在同样带方法 / URL / 尝试序号 —— 这两类正是开了换端点 / 对冲后最需要定位「打到哪个端点」的场合。
+- 仓库源码的语言版本固定为 **C# 12**（每个项目显式 `<LangVersion>12.0</LangVersion>`，此前是 `latest`）：此前源码里有依赖 C# 14 隐式 span 转换与 C# 13 `async` 内 `ref` 局部变量的写法，用 .NET SDK 8 / 9 或另一套 Roslyn 编译会失败。现在 .NET SDK 8.0 及以上都能构建。对外 API 与产物行为不变。
 
 
 ## [1.6.0] - 2026-11-13

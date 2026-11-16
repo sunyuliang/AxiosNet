@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!-- 源生成器只在编译期运行：netstandard2.0 是 Roslyn 组件的最低目标，消费方 TFM 不受限制。 -->
     <TargetFramework>netstandard2.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <IsRoslynComponent>true</IsRoslynComponent>

@@ -64,18 +64,18 @@ internal static class UrlBuilder
         }
         else if (target.Length == 0)
         {
-            pathAndQuery = SpanStringConcat.Concat(query, fragment);
+            pathAndQuery = SpanStringConcat.Concat(query.AsSpan(), fragment);
         }
         else if (target[^1] is '?' or '&')
         {
             // url 已以 ? / & 结尾时不能再补分隔符，否则会多出一个空参数。
-            pathAndQuery = SpanStringConcat.Concat(target, query, fragment);
+            pathAndQuery = SpanStringConcat.Concat(target, query.AsSpan(), fragment);
         }
         else
         {
             pathAndQuery = target.Contains('?')
-                ? SpanStringConcat.Concat(target, "&", query, fragment)
-                : SpanStringConcat.Concat(target, "?", query, fragment);
+                ? SpanStringConcat.Concat(target, "&".AsSpan(), query.AsSpan(), fragment)
+                : SpanStringConcat.Concat(target, "?".AsSpan(), query.AsSpan(), fragment);
         }
 
         if (UriCache.TryGetValue(pathAndQuery, out var cached))
@@ -176,7 +176,7 @@ internal static class UrlBuilder
         // base 必须是合法 http(s) 绝对地址才做组件解析；否则保留旧拼接，由 Build 统一报 ERR_INVALID_URL。
         if (!TryGetBaseComponents(baseAddress, out var baseUri))
         {
-            return SpanStringConcat.Concat(baseAddress.AsSpan().TrimEnd('/'), "/", url.AsSpan().TrimStart('/'));
+            return SpanStringConcat.Concat(baseAddress.AsSpan().TrimEnd('/'), "/".AsSpan(), url.AsSpan().TrimStart('/'));
         }
 
         SplitReference(url, out var relativePath, out var relativeQuery, out var fragment);
@@ -186,15 +186,15 @@ internal static class UrlBuilder
         if (relativePath.Length == 0)
         {
             var query = relativeQuery ?? baseUri.Query;
-            var tail = query is null ? fragment : SpanStringConcat.Concat("?", query, fragment);
-            return SpanStringConcat.Concat(baseUri.Root, baseUri.Path, tail);
+            var tail = query is null ? fragment : SpanStringConcat.Concat("?".AsSpan(), query.AsSpan(), fragment.AsSpan());
+            return SpanStringConcat.Concat(baseUri.Root.AsSpan(), baseUri.Path.AsSpan(), tail.AsSpan());
         }
 
         var joinedPath = JoinPaths(baseUri.Path, relativePath);
         var relativeTail = relativeQuery is null
             ? fragment
-            : SpanStringConcat.Concat("?", relativeQuery, fragment);
-        return SpanStringConcat.Concat(baseUri.Root, joinedPath, relativeTail);
+            : SpanStringConcat.Concat("?".AsSpan(), relativeQuery.AsSpan(), fragment.AsSpan());
+        return SpanStringConcat.Concat(baseUri.Root.AsSpan(), joinedPath.AsSpan(), relativeTail.AsSpan());
     }
 
     /// <summary>base 的组件拆分结果（已按 URI 规则解码成可安全再拼接的文本）。</summary>
@@ -252,13 +252,13 @@ internal static class UrlBuilder
         {
             // base 只有根斜杠：结果就是 "/" + 相对路径（相对路径本身以 '/' 开头时不再重复补）。
             return relativePath.StartsWith('/')
-                ? SpanStringConcat.Concat("/", trimmedRelative)
-                : SpanStringConcat.Concat("/", relativePath);
+                ? SpanStringConcat.Concat("/".AsSpan(), trimmedRelative)
+                : SpanStringConcat.Concat("/".AsSpan(), relativePath.AsSpan());
         }
 
         return trimmedRelative.Length == 0
-            ? SpanStringConcat.Concat(trimmedBase, "/")
-            : SpanStringConcat.Concat(trimmedBase, "/", trimmedRelative);
+            ? SpanStringConcat.Concat(trimmedBase, "/".AsSpan())
+            : SpanStringConcat.Concat(trimmedBase, "/".AsSpan(), trimmedRelative);
     }
 
     /// <summary>把相对引用拆成 path / query / fragment；query 为 null 表示引用里没有 '?'，fragment 保留前导 '#'。</summary>
