@@ -104,7 +104,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 分组的先后由 `[BenchmarkGroup(..., Order = n)]` 定：
 
 - 输入编号跑一组，跑完回到菜单；
-- `a` = 顺序跑全部（默认作业；不含大正文的 45 个基准约 8~9 分钟，加大正文三组会更久）；
+- `a` = 顺序跑全部（默认作业；不含大正文的 52 个基准约 9~10 分钟，加大正文三组会更久）；
 - `s` = 冒烟跑全部（`--job short`，3 轮，只确认跑得通）；
 - `m` = 在同进程 / 隔离之间切换（当前方式印在标题下方，每组摘要末尾也会标一次）；
 - `q` = 退出。
@@ -122,7 +122,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 摘要只**呈现**不判定：没有阈值、没有通过 / 不通过。判定口径仍是下面几节写的那些。
 
 
-## 十组基准
+## 十一组基准
 
 | 类 | 热点 | 基线 | 读什么 |
 | --- | --- | --- | --- |
@@ -130,6 +130,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `ConcurrentPipelineBenchmarks` | 8 条在飞时的每请求成本 | `HttpClient_Concurrent` | 同上；`Mean` 已经是每请求成本（`OperationsPerInvoke=8`） |
 | `ConfigMergeBenchmarks` | `MergeConfig` + 头合并 | `GetUri_NoMerge` | `Ratio - 1` = 把按请求补丁合到默认值上的增量 |
 | `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` 读写克隆 | 无（看绝对值） | `Allocated`：`Headers_Clone` 应恒为 24 B，`Headers_Set_Same` 应为 0 |
+| `TelemetryDispatchBenchmarks` | 观测派发的一次调用（池 / 租约每次事件） | 无（看绝对值与差值） | `ViaGuard − Direct` = 护栏那一跳；应恒为 0 分配、个位数 ns |
 | `FormEncodingBenchmarks` | 表单展平 + 百分号编码 | `PostForm_FlatAscii` | 倍数 = 「编码成本 / 基础成本」 |
 | `DynamicDeserializationBenchmarks` | `dynamic` 对象图构建 | `Typed` | `Ratio` = 比强类型贵几倍；`Dynamic_Wide` 看每节点成本 |
 | `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` | `Ratio` = 格式差；`Frames` 三档的**斜率** = 每帧成本 |
@@ -138,7 +139,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `LargeBodyJsonBenchmarks` | 大正文 JSON 响应（1 / 8 / 32MB：`byte[]` / 强类型 / `JsonElement`） | `HttpClient_GetBytes` | `Allocated / 载荷`：`byte[]` ≈ 1×；强类型 ≈ 3.4×；`JsonElement` ≈ 4.1×（文档 + 克隆 + token 元数据），三档线性 = 没有额外整串复制 |
 
 五组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `LargeBodyUpload` / `LargeBodyDownload` / `LargeBodyJson`）
-与五组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming`）
+与六组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming` / `TelemetryDispatch`）
 不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。大正文三组另有自己的口径：
 `Allocated` 是主轴（确定性量），耗时只用于「同量级 / 谁更快」的判断。
 
@@ -388,6 +389,33 @@ jq -r '.Benchmarks[] | [.Method, (.Parameters | if .=="" then "-" else . end),
 回归护栏在 `AxiosNet.Tests/Regression/AllocationTests.cs`：`JsonTypedResponse_PaysObjectGraphNotAnExtraCopy`
 （1MB，< 4×）与 `JsonElementResponse_PaysDocumentAndClone`（1MB，< 4.5×），任何一次「整串 UTF-16 往返 /
 额外复制」都会把比例推到门槛之上，省掉 `Clone` 的改法同样会撞线。
+
+## 观测派发开销实测（2026-11-16）
+
+同机（Intel Core Ultra 5 125H，Windows 10 22H2，.NET 8.0.31，Release，默认作业、**隔离**），
+`--filter '*TelemetryDispatch*'` 一轮 7 个用例。三个变体背后都是同一个内置实现
+（`GuardedTelemetrySink` 包着 `BuiltInTelemetrySink`），所以行间的差值是纯派发成本：
+
+| 变体 | Mean | Allocated |
+| --- | ---: | ---: |
+| `RecordLease_Direct`（接口直调内置实现） | 1.7 ns | 0 B |
+| `RecordLease_ViaProperty`（再读一次 `AxiosTelemetry.Sink`） | 1.7 ns | 0 B |
+| `RecordLease_ViaGuard`（再经护栏派发） | 4.9 ns | 0 B |
+| `TagPoolReuse_Direct` | 2.4 ns | 0 B |
+| `TagPoolReuse_ViaGuard` | 5.1 ns | 0 B |
+| `EnterLease_Direct` | 6.6 ns | 0 B |
+| `EnterLease_ViaGuard` | 5.1 ns | 0 B |
+
+- **护栏那一跳 ≈ +3 ns、0 分配**（多一次虚调用 + 一个空 `catch` 块）：一次请求里这类事件是个位数，
+  合计十几 ns，相对一次回环往返（~100 µs）是 0.01% 量级 —— 不值得为这点成本放掉
+  「观测实现抛异常不改写请求结果」。
+- **`volatile` 读不构成成本**：`ViaProperty` 与 `Direct` 同价（1.7 vs 1.7 ns）。
+- **`EnterLease` 两行是反的**（直调 6.6 > 经护栏 5.1）：每个用例一个独立进程，含一次 `Interlocked`
+  的用例跨进程能差 1.5 ns —— 这是本组的时间分辨率下限。护栏只会加、不会减，这一行当噪声读；
+  能读的是分配（恒 0）和另外两组同向的差值。
+- **这一组不能拿端到端数据代替**：同机两轮 `RequestPipeline` 的 `AxiosNet_GetString` 比值是
+  1.09 / 1.03、`PostJson` 是 1.24 / 2.14（第二轮 `Error` 占 `Mean` 37%），误差比要看的差值大一个量级。
+  要判断「派发变贵了」只能在这里量。
 
 ## 维护约定
 

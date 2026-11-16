@@ -5,7 +5,7 @@
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2725%20passed-success)](#构建与测试)
 [![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2583%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.7%25)-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -2675,7 +2675,7 @@ dotnet build AxiosNet.sln -c Release
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
-行覆盖率 **92.2%**、分支覆盖率 **87.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
+行覆盖率 **91.9%**、分支覆盖率 **87.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \
@@ -2735,6 +2735,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 | `ConcurrentPipelineBenchmarks` | 8 条在途时的每请求成本 | `HttpClient_Concurrent` |
 | `ConfigMergeBenchmarks` | `MergeConfig` / 请求头合并 | `GetUri_NoMerge` |
 | `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` 原语 | —（看绝对值） |
+| `TelemetryDispatchBenchmarks` | 观测派发（池 / 租约热路径的每次事件成本） | —（看绝对值与差值） |
 | `FormEncodingBenchmarks` | 表单展平 + 百分号编码 | `PostForm_FlatAscii` |
 | `DynamicDeserializationBenchmarks` | `dynamic` 反序列化 | `Typed` |
 | `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` |

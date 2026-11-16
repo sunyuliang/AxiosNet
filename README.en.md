@@ -5,7 +5,7 @@
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
 [![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2725%20passed-success)](#build-and-test)
 [![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2583%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.2%25_(branch_87.7%25)-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -2675,7 +2675,7 @@ The library and `AxiosNet.DependencyInjection` each compile three assets — `ne
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **92.2%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **91.9%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \
@@ -2735,6 +2735,7 @@ By default it runs **in-process** (no temp project, no rebuild). `--isolated` us
 | `ConcurrentPipelineBenchmarks` | Per-request cost with 8 in flight | `HttpClient_Concurrent` |
 | `ConfigMergeBenchmarks` | `MergeConfig` / header merging | `GetUri_NoMerge` |
 | `ConfigPrimitiveBenchmarks` | `AxiosConfig.Clone` / `AxiosHeaders` primitives | — (absolute values) |
+| `TelemetryDispatchBenchmarks` | Telemetry dispatch (per-event cost on the pool / lease hot path) | — (absolute values and deltas) |
 | `FormEncodingBenchmarks` | Form flattening + percent-encoding | `PostForm_FlatAscii` |
 | `DynamicDeserializationBenchmarks` | `dynamic` deserialization | `Typed` |
 | `StreamingFramingBenchmarks` | Streaming framing (NDJSON / SSE / JSON array) | `Ndjson` |
