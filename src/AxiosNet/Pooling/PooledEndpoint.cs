@@ -120,16 +120,19 @@ internal sealed class PooledEndpoint : IDisposable
 
             // 与 LastUsedTimestamp 的 Volatile.Read 配对：32 位平台上 64 位写入不加 Volatile 可能被读到半截。
             Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
-
-            // 进程级活跃租约水位（ObservableGauge 收集时读）。
-            AxiosTelemetry.Dispatch.EnterLease();
-            return true;
         }
+
+        // 进程级活跃租约水位（ObservableGauge 收集时读）：派发带异常捕获，放在临界区外。
+        AxiosTelemetry.Dispatch.EnterLease();
+        return true;
     }
 
     /// <summary>归还一条租约（必须与成功的 <see cref="TryAcquire"/> 配对，重复归还会抛错）。</summary>
     public void Release()
     {
+        // 时间戳与驱逐判定的读取无时序依赖：读到旧值只会让节点晚一轮被驱逐。
+        Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
+
         var retire = false;
         var released = false;
         lock (SyncRoot)
@@ -139,8 +142,6 @@ internal sealed class PooledEndpoint : IDisposable
                 ActiveLeases--;
                 released = true;
             }
-
-            Volatile.Write(ref _lastUsedTimestamp, Stopwatch.GetTimestamp());
 
             if (DisposeWhenIdle && ActiveLeases == 0 && !IsDisposed)
             {
