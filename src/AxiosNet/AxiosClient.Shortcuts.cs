@@ -277,11 +277,12 @@ public sealed partial class AxiosClient
         => Shortcut(url, method, configure, cancellationToken, data, AxiosContentType.MultipartFormData, bodyProvided: bodyProvided);
 
     /// <summary>按目标类型跑一次请求：预造强类型响应让管线就地填充；拦截器换掉响应对象时改走复制路径。</summary>
+    /// <remarks>直接消费管线的 <c>ValueTask</c>（只 await 一次）：经公开入口会多一次 <c>AsTask()</c>，每请求多造一个 <see cref="Task{TResult}"/>。</remarks>
     private async Task<AxiosResponse<T>> SendTypedAsync<T>(AxiosConfig config)
     {
         // 响应对象按目标类型预先造好，由管线就地填充。
         var typed = new AxiosResponse<T>();
-        var response = await SendAsync(config, typeof(T), typed).ConfigureAwait(false);
+        var response = await SendAsyncCore(config, typeof(T), typed).ConfigureAwait(false);
 
         // 拦截器换掉了响应对象：走复制这条路径。
         if (!ReferenceEquals(response, typed))

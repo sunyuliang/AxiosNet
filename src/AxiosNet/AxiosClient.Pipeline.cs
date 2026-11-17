@@ -22,8 +22,8 @@ public sealed partial class AxiosClient
 
     /// <summary>管线核心：与 <see cref="SendAsync"/> 同一条流程，状态机用池化 builder。</summary>
     /// <remarks>
-    /// <c>PoolingAsyncValueTaskMethodBuilder</c> 复用状态机盒；返回的 <c>ValueTask</c> 由 <c>AsTask()</c>
-    /// 一次性转成 Task 后交给调用方，池化源只被消费一次。
+    /// <c>PoolingAsyncValueTaskMethodBuilder</c> 复用状态机盒；返回的 <c>ValueTask</c> 只能消费一次：
+    /// 公开入口用 <c>AsTask()</c> 交给调用方，泛型入口直接 await。
     /// </remarks>
     // netstandard2.0 编译器不接受方法级 AsyncMethodBuilder（CS0592）：兼容资产上摘掉该特性，
     // 只改变 ValueTask 状态机的分配策略，不改变请求语义；net6.0 / net8.0 仍走池化 builder。

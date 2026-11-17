@@ -23,9 +23,9 @@ public sealed class RequestAllocationTests
     /// 改完热路径要跟着下调，不要放宽；两档差异来自 BCL 自身（net6 的请求 / 响应对象比 net8 多约 170 B）。
     /// </summary>
 #if NET6_0
-    private const long GetStringBudgetBytes = 1950;
+    private const long GetStringBudgetBytes = 1860;
 #else
-    private const long GetStringBudgetBytes = 1750;
+    private const long GetStringBudgetBytes = 1680;
 #endif
 
     /// <summary>
