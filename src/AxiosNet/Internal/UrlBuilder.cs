@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
@@ -417,108 +418,92 @@ internal static class ParamsSerializer
 
         try
         {
-            var pairs = new List<KeyValuePair<string, string>>(8);
-            var format = config?.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
+            var pairs = new QueryPairs();
+            try
+            {
+                var format = config?.SerializationOrNull?.CollectionFormat ?? AxiosCollectionFormat.Brackets;
 
-            // 实例级钩子：嵌套对象的叶子也要用同一份钩子，否则「查询里能格式化」只对顶层成立。
-            var formatter = config?.SerializationOrNull?.ValueText;
-            if (paramsObj is JsonElement rootElement)
-            {
-                // JsonElement 按 JSON 树展开，不走反射。
-                if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
-                    or JsonValueKind.True or JsonValueKind.False)
+                // 实例级钩子：嵌套对象的叶子也要用同一份钩子，否则「查询里能格式化」只对顶层成立。
+                var formatter = config?.SerializationOrNull?.ValueText;
+                if (paramsObj is JsonElement rootElement)
                 {
-                    throw InvalidParamsRoot(paramsObj, config);
-                }
-
-                AppendJsonElement(null, rootElement, pairs, format, formatter);
-            }
-            else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
-            {
-                // ExpandoObject（dynamic）等仅实现泛型字典的类型
-                foreach (var entry in stringKeyedDictionary)
-                {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
-                }
-            }
-            else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
-            {
-                // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
-                foreach (var entry in readOnlyDictionary)
-                {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
-                }
-            }
-            else if (paramsObj is IDictionary dictionary)
-            {
-                foreach (DictionaryEntry entry in dictionary)
-                {
-                    if (entry.Key is null)
+                    // JsonElement 按 JSON 树展开，不走反射。
+                    if (rootElement.ValueKind is JsonValueKind.String or JsonValueKind.Number
+                        or JsonValueKind.True or JsonValueKind.False)
                     {
-                        continue;
+                        throw InvalidParamsRoot(paramsObj, config);
                     }
 
-                    Append(EscapeKey(entry.Key.ToString()!), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
+                    AppendJsonElement(null, rootElement, ref pairs, format, formatter);
                 }
-            }
-            else if (QueryMap.CanEnumerate(paramsObj))
-            {
-                // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
-                foreach (var entry in QueryMap.Enumerate(paramsObj))
+                else if (paramsObj is IDictionary<string, object> stringKeyedDictionary)
                 {
-                    Append(EscapeKey(entry.Key), entry.Value, pairs, visited: null, format, memberFormat: null, formatter);
+                    // ExpandoObject（dynamic）等仅实现泛型字典的类型
+                    foreach (var entry in stringKeyedDictionary)
+                    {
+                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                    }
                 }
-            }
-            else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
-            {
-                // 根集合用下标作键（与表单展平一致）。
-                var index = 0;
-                foreach (var item in items)
+                else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
                 {
-                    Append("[" + index + "]", item, pairs, visited: null, format, memberFormat: null, formatter);
-                    index++;
+                    // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
+                    foreach (var entry in readOnlyDictionary)
+                    {
+                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                    }
                 }
-            }
-            else if (IsScalar(paramsObj))
-            {
-                // 标量没有可表达的键名，按非法根类型报错。
-                throw InvalidParamsRoot(paramsObj, config);
-            }
-            else
-            {
-                // 根对象：形状决定成员顺序与键名；query 展平不跳过 [JsonIgnore]（与表单不同）。
-                // 成员级格式化来自形状自身（与嵌套对象同一条规则），否则根对象上的 [Format] 会被静默忽略。
-                var shape = ShapeCache.Get(paramsObj.GetType());
-                foreach (var member in shape.Members)
+                else if (paramsObj is IDictionary dictionary)
                 {
-                    Append(member.EscapedName, member.GetValue(paramsObj), pairs, visited: null, format, member.Format, formatter);
+                    foreach (DictionaryEntry entry in dictionary)
+                    {
+                        if (entry.Key is null)
+                        {
+                            continue;
+                        }
+
+                        Append(EscapeKey(entry.Key.ToString()!), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                    }
                 }
-            }
-
-            // 容量一次算准再拼：避免 string.Join 的中间数组，也避免 StringBuilder 反复扩容。
-            if (pairs.Count == 0)
-            {
-                return string.Empty;
-            }
-
-            var capacity = pairs.Count * 2;
-            for (var i = 0; i < pairs.Count; i++)
-            {
-                capacity += pairs[i].Key.Length + pairs[i].Value.Length;
-            }
-
-            var query = new StringBuilder(capacity);
-            for (var i = 0; i < pairs.Count; i++)
-            {
-                if (i > 0)
+                else if (QueryMap.CanEnumerate(paramsObj))
                 {
-                    query.Append('&');
+                    // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
+                    foreach (var entry in QueryMap.Enumerate(paramsObj))
+                    {
+                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                    }
+                }
+                else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
+                {
+                    // 根集合用下标作键（与表单展平一致）。
+                    var index = 0;
+                    foreach (var item in items)
+                    {
+                        Append("[" + index + "]", item, ref pairs, visited: null, format, memberFormat: null, formatter);
+                        index++;
+                    }
+                }
+                else if (IsScalar(paramsObj))
+                {
+                    // 标量没有可表达的键名，按非法根类型报错。
+                    throw InvalidParamsRoot(paramsObj, config);
+                }
+                else
+                {
+                    // 根对象：形状决定成员顺序与键名；query 展平不跳过 [JsonIgnore]（与表单不同）。
+                    // 成员级格式化来自形状自身（与嵌套对象同一条规则），否则根对象上的 [Format] 会被静默忽略。
+                    var shape = ShapeCache.Get(paramsObj.GetType());
+                    foreach (var member in shape.Members)
+                    {
+                        Append(member.EscapedName, member.GetValue(paramsObj), ref pairs, visited: null, format, member.Format, formatter);
+                    }
                 }
 
-                query.Append(pairs[i].Key).Append('=').Append(pairs[i].Value);
+                return pairs.Build();
             }
-
-            return query.ToString();
+            finally
+            {
+                pairs.Dispose();
+            }
         }
         catch (DataCycleException ex)
         {
@@ -544,7 +529,7 @@ internal static class ParamsSerializer
     private static void Append(
         string prefix,
         object? value,
-        List<KeyValuePair<string, string>> pairs,
+        ref QueryPairs pairs,
         HashSet<object>? visited,
         AxiosCollectionFormat format,
         ValueFormat? memberFormat,
@@ -559,7 +544,7 @@ internal static class ParamsSerializer
         // 调用方已定型的文本：直接写入，不能再让格式化钩子对「文本」套第二遍。
         if (value is PreformattedValue formatted)
         {
-            pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(formatted.Text)));
+            pairs.Add(prefix, EscapeValue(formatted.Text));
             return;
         }
 
@@ -567,15 +552,15 @@ internal static class ParamsSerializer
         // 必须在 IEnumerable 分支之前：ArraySegment<byte> 同时实现 IEnumerable；Memory 族则不能被当作嵌套对象反射。
         if (ScalarTypes.IsBinaryType(value.GetType()))
         {
-            pairs.Add(new KeyValuePair<string, string>(
+            pairs.Add(
                 prefix,
-                EscapeValue(ValueText.Format(value, ValueTextChannel.Query, memberFormat, formatter)!)));
+                EscapeValue(ValueText.Format(value, ValueTextChannel.Query, memberFormat, formatter)!));
             return;
         }
 
         if (value is JsonElement element)
         {
-            AppendJsonElement(prefix, element, pairs, format, formatter);
+            AppendJsonElement(prefix, element, ref pairs, format, formatter);
             return;
         }
 
@@ -587,7 +572,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in stringKeyedNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -606,7 +591,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in readOnlyNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -629,7 +614,7 @@ internal static class ParamsSerializer
                         continue;
                     }
 
-                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -648,7 +633,7 @@ internal static class ParamsSerializer
             {
                 foreach (var entry in QueryMap.Enumerate(mapValue))
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -663,7 +648,7 @@ internal static class ParamsSerializer
         {
             if (format != AxiosCollectionFormat.Brackets)
             {
-                AppendCollection(prefix, enumerable, pairs, visited, format, memberFormat, formatter);
+                AppendCollection(prefix, enumerable, ref pairs, visited, format, memberFormat, formatter);
                 return;
             }
 
@@ -672,7 +657,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in enumerable)
                 {
-                    Append($"{prefix}[]", item, pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[]", item, ref pairs, visited, format, memberFormat, formatter);
                 }
             }
             finally
@@ -685,9 +670,9 @@ internal static class ParamsSerializer
 
         if (IsScalar(value))
         {
-            pairs.Add(new KeyValuePair<string, string>(
+            pairs.Add(
                 prefix,
-                EscapeValue(ValueText.Format(value, ValueTextChannel.Query, memberFormat, formatter)!)));
+                EscapeValue(ValueText.Format(value, ValueTextChannel.Query, memberFormat, formatter)!));
             return;
         }
 
@@ -699,7 +684,7 @@ internal static class ParamsSerializer
             foreach (var member in shape.Members)
             {
                 // 后缀（含转义）在形状里预计算，这里只需一次前缀拼接；成员级格式化来自形状自身。
-                Append(prefix + member.BracketSuffix, member.GetValue(value), pairs, visited, format, member.Format, formatter);
+                Append(prefix + member.BracketSuffix, member.GetValue(value), ref pairs, visited, format, member.Format, formatter);
             }
         }
         finally
@@ -715,7 +700,7 @@ internal static class ParamsSerializer
     private static void AppendCollection(
         string prefix,
         IEnumerable enumerable,
-        List<KeyValuePair<string, string>> pairs,
+        ref QueryPairs pairs,
         HashSet<object>? visited,
         AxiosCollectionFormat format,
         ValueFormat? memberFormat,
@@ -729,7 +714,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in enumerable)
                 {
-                    Append(prefix, item, pairs, visited, format, memberFormat, formatter);
+                    Append(prefix, item, ref pairs, visited, format, memberFormat, formatter);
                 }
 
                 return;
@@ -755,7 +740,7 @@ internal static class ParamsSerializer
                 {
                     foreach (var fallback in items)
                     {
-                        Append($"{prefix}[]", fallback, pairs, visited, format, memberFormat, formatter);
+                        Append($"{prefix}[]", fallback, ref pairs, visited, format, memberFormat, formatter);
                     }
 
                     return;
@@ -768,7 +753,7 @@ internal static class ParamsSerializer
 
             if (parts.Count > 0)
             {
-                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(string.Join(Separator(format), parts))));
+                pairs.Add(prefix, EscapeValue(string.Join(Separator(format), parts)));
             }
         }
         finally
@@ -790,7 +775,7 @@ internal static class ParamsSerializer
     private static void AppendJsonElement(
         string? prefix,
         JsonElement element,
-        List<KeyValuePair<string, string>> pairs,
+        ref QueryPairs pairs,
         AxiosCollectionFormat format,
         Func<object?, ValueTextChannel, string?>? formatter)
     {
@@ -799,7 +784,7 @@ internal static class ParamsSerializer
             case JsonValueKind.Object:
                 foreach (var property in element.EnumerateObject())
                 {
-                    AppendJsonElement(prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]", property.Value, pairs, format, formatter);
+                    AppendJsonElement(prefix is null ? EscapeKey(property.Name) : prefix + "[" + EscapeKey(property.Name) + "]", property.Value, ref pairs, format, formatter);
                 }
 
                 break;
@@ -808,14 +793,14 @@ internal static class ParamsSerializer
             {
                 if (format != AxiosCollectionFormat.Brackets)
                 {
-                    AppendJsonArray(prefix, element, pairs, format, formatter);
+                    AppendJsonArray(prefix, element, ref pairs, format, formatter);
                     break;
                 }
 
                 var index = 0;
                 foreach (var item in element.EnumerateArray())
                 {
-                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format, formatter);
+                    AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, ref pairs, format, formatter);
                     index++;
                 }
 
@@ -832,7 +817,7 @@ internal static class ParamsSerializer
                     break;
                 }
 
-                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(ValueText.JsonScalar(element, ValueTextChannel.Query, formatter))));
+                pairs.Add(prefix, EscapeValue(ValueText.JsonScalar(element, ValueTextChannel.Query, formatter)));
                 break;
 
             default:
@@ -847,7 +832,7 @@ internal static class ParamsSerializer
     private static void AppendJsonArray(
         string? prefix,
         JsonElement element,
-        List<KeyValuePair<string, string>> pairs,
+        ref QueryPairs pairs,
         AxiosCollectionFormat format,
         Func<object?, ValueTextChannel, string?>? formatter)
     {
@@ -857,7 +842,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in element.EnumerateArray())
                 {
-                    AppendJsonElement(prefix, item, pairs, format, formatter);
+                    AppendJsonElement(prefix, item, ref pairs, format, formatter);
                 }
 
                 return;
@@ -883,7 +868,7 @@ internal static class ParamsSerializer
 
             if (parts is { Count: > 0 })
             {
-                pairs.Add(new KeyValuePair<string, string>(prefix, EscapeValue(string.Join(Separator(format), parts))));
+                pairs.Add(prefix, EscapeValue(string.Join(Separator(format), parts)));
                 return;
             }
 
@@ -896,7 +881,7 @@ internal static class ParamsSerializer
         var index = 0;
         foreach (var item in element.EnumerateArray())
         {
-            AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, pairs, format, formatter);
+            AppendJsonElement(prefix is null ? "[" + index + "]" : prefix + "[]", item, ref pairs, format, formatter);
             index++;
         }
     }
@@ -912,9 +897,133 @@ internal static class ParamsSerializer
     /// 保持 <c>a[b]=v</c> 的可读形态。query 展平与形状预计算共用这一个入口。
     /// </summary>
     internal static string EscapeKey(string key)
-        => Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]");
+        => NeedsEscape(key) ? Uri.EscapeDataString(key).Replace("%5B", "[").Replace("%5D", "]") : key;
+
+    /// <summary>
+    /// 键是否需要转义：只有「字母 / 数字 / <c>-</c> <c>_</c> <c>.</c> / 方括号」直接放行，
+    /// 其余一律交给 BCL（免转义集合刻意取得比 <c>Uri.EscapeDataString</c> 更窄）。
+    /// </summary>
+    private static bool NeedsEscape(string key)
+    {
+        foreach (var c in key)
+        {
+            if (c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '-' or '_' or '.' or '[' or ']')
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
 
     // 值转义用标准 encodeURIComponent 规则（键那边会额外还原方括号）。
     private static string EscapeValue(string value)
         => Uri.EscapeDataString(value);
+
+    /// <summary>
+    /// 查询键值对的缓冲：数组租自 <see cref="ArrayPool{T}"/>（稳态不分配），按需翻倍，用完归还；
+    /// 拼成查询串时先算准容量，再逐段写进池化字符缓冲，只产出一份字符串。
+    /// </summary>
+    private struct QueryPairs : IDisposable
+    {
+        /// <summary>已租下的键值对数组；首次 <see cref="Add"/> 时才租。</summary>
+        private QueryPair[]? _items;
+
+        /// <summary>已收集的键值对数量。</summary>
+        public int Count { get; private set; }
+
+        /// <summary>追加一对（键与值都已转义）。</summary>
+        public void Add(string key, string value)
+        {
+            var items = _items;
+            if (items is null)
+            {
+                items = _items = ArrayPool<QueryPair>.Shared.Rent(8);
+            }
+            else if (Count == items.Length)
+            {
+                var bigger = ArrayPool<QueryPair>.Shared.Rent(items.Length * 2);
+                Array.Copy(items, bigger, Count);
+                ArrayPool<QueryPair>.Shared.Return(items, clearArray: true);
+                _items = items = bigger;
+            }
+
+            items[Count++] = new QueryPair(key, value);
+        }
+
+        /// <summary>拼成 <c>k=v&amp;k=v</c>；没有键值对时返回空串。</summary>
+        public readonly string Build()
+        {
+            if (Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var items = _items!;
+            var capacity = Count - 1;
+            for (var i = 0; i < Count; i++)
+            {
+                capacity += items[i].Key.Length + 1 + items[i].Value.Length;
+            }
+
+            var chars = ArrayPool<char>.Shared.Rent(capacity);
+            try
+            {
+                var position = 0;
+                for (var i = 0; i < Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        chars[position++] = '&';
+                    }
+
+                    position = Write(chars, position, items[i].Key);
+                    chars[position++] = '=';
+                    position = Write(chars, position, items[i].Value);
+                }
+
+                return new string(chars, 0, position);
+            }
+            finally
+            {
+                ArrayPool<char>.Shared.Return(chars);
+            }
+        }
+
+        /// <summary>把一段文本写进目标缓冲，返回写入后的位置。</summary>
+        private static int Write(char[] destination, int position, string text)
+        {
+            text.CopyTo(0, destination, position, text.Length);
+            return position + text.Length;
+        }
+
+        /// <summary>归还租下的数组并清空引用，避免池里长期持有业务数据。</summary>
+        public void Dispose()
+        {
+            var items = _items;
+            if (items is not null)
+            {
+                _items = null;
+                ArrayPool<QueryPair>.Shared.Return(items, clearArray: true);
+            }
+        }
+    }
+
+    /// <summary>查询串的一对键值；两个串都已转义。</summary>
+    private readonly struct QueryPair
+    {
+        public QueryPair(string key, string value)
+        {
+            Key = key;
+            Value = value;
+        }
+
+        /// <summary>已转义的键（其中的方括号保持原形）。</summary>
+        public string Key { get; }
+
+        /// <summary>已转义的值。</summary>
+        public string Value { get; }
+    }
 }

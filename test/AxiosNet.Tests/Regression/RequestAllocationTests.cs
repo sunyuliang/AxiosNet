@@ -29,6 +29,16 @@ public sealed class RequestAllocationTests
 #endif
 
     /// <summary>
+    /// 带 2 个 params 的每请求分配上界。查询串按「先算准容量、再写进池化缓冲」产出，门槛只用来抓
+    /// 「又回到攒中间集合 / 中间字符串」的写法；改完热路径要跟着下调，不要放宽。
+    /// </summary>
+#if NET6_0
+    private const long GetWithParamsBudgetBytes = 2150;
+#else
+    private const long GetWithParamsBudgetBytes = 1980;
+#endif
+
+    /// <summary>
     /// 当前构建是否执行分配断言：Debug 构建的 async 状态机以类分配，每请求数字比优化构建高一个量级，
     /// 只有优化构建的测量值可比。
     /// </summary>
@@ -103,6 +113,36 @@ public sealed class RequestAllocationTests
     private static bool DetectOptimizedBuild() =>
         typeof(RequestAllocationTests).Assembly.GetCustomAttribute<System.Diagnostics.DebuggableAttribute>()
             is not { IsJITOptimizerDisabled: true };
+
+    [Fact]
+    public void GetWithParams_StaysWithinPerRequestBudget()
+    {
+        using var client = new AxiosClient(
+            new AxiosConfig { BaseAddress = "http://units.test/" },
+            handler: new EmptyOkHandler(),
+            disposeHandler: true);
+
+        // 两个参数：一个数字、一个需要转义的值——查询串要算准容量再写一遍。
+        var query = new { page = 3, filter = "a b" };
+
+#pragma warning disable xUnit1031
+        void Get() => _ = client.GetAsync<string>("x", c => c.Params = query).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+        var allocated = MinimumBytes(100, Get);
+        _output.WriteLine($"GetAsync<string>（2 个 params）每请求分配 {allocated:N0} B");
+
+        if (!AssertsAllocations)
+        {
+            GC.KeepAlive(allocated);
+            return;
+        }
+
+        Assert.True(
+            allocated < GetWithParamsBudgetBytes,
+            $"带 2 个 params 的 GET 分配了 {allocated:N0} B，超出 {GetWithParamsBudgetBytes:N0} B 上界"
+            + "——参数序列化又在攒中间集合 / 中间字符串；若是有意优化，请连这条上界一起下调。");
+    }
 
     /// <summary>取多个测量窗口里的最小值：只看最干净的一轮，压掉并发与 GC 抖动。</summary>
     private static long MinimumBytes(int iterations, Action action, int windows = 3)

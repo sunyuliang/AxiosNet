@@ -4,7 +4,7 @@ namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
 /// 被测对象：AxiosNet 默认实例（连接池 + 默认配置，不做任何调优）。
-/// 与其它实现的差别正是「这一层管线」——同一回环服务器、同一负载、同一返回模型。
+/// 与其它实现的差别正是「这一层管线」——同一回环服务器、同一负载、同一份正文。
 /// </summary>
 internal sealed class AxiosNetTarget : ITarget
 {
