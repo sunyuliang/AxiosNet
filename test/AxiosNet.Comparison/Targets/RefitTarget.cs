@@ -32,10 +32,10 @@ internal sealed class RefitTarget : ITarget
 
     private sealed class Session(IUserApi api) : ITargetSession
     {
-        /// <summary>调生成的接口方法发一次 GET；返回 null 视为错误。</summary>
+        /// <summary>调生成的接口方法发一次 POST；返回 null 视为错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
-            var user = await api.GetUserAsync(cancellationToken).ConfigureAwait(false);
+            var user = await api.SaveUserAsync(Payloads.Request, cancellationToken).ConfigureAwait(false);
             if (user is null)
             {
                 throw new InvalidOperationException("Refit 返回 null（端点应返回 User JSON）。");
@@ -52,6 +52,7 @@ internal sealed class RefitTarget : ITarget
 /// <summary>Refit 的服务接口（source generator 在编译期实现）。</summary>
 internal interface IUserApi
 {
-    [Get("/" + Payloads.Route)]
-    Task<User> GetUserAsync(CancellationToken cancellationToken);
+    /// <summary>POST 一个 <see cref="User"/> 负载并读回 <see cref="User"/>（请求体由 <c>[Body]</c> 序列化）。</summary>
+    [Post("/" + Payloads.Route)]
+    Task<User> SaveUserAsync([Body] User user, CancellationToken cancellationToken);
 }

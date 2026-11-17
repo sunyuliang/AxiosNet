@@ -6,7 +6,8 @@ using AxiosNet.Comparison.Models;
 namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
-/// 服务端基线：裸 TCP + 预编码请求字节跑同一个端点，不经过 HTTP 客户端栈。它给出回环服务器自身的天花板，以及每请求倾斜多少分配。不做 HTTP 解析，只按 <c>Content-Length</c> 读满。
+/// 服务端基线：裸 TCP + 预编码请求字节跑同一个端点，不经过 HTTP 客户端栈、也不做序列化。
+/// 它给出回环服务器自身的天花板，以及每请求倾斜多少分配。不做 HTTP 解析，只按 <c>Content-Length</c> 读满。
 /// </summary>
 internal sealed class RawSocketTarget : ITarget
 {
@@ -17,8 +18,7 @@ internal sealed class RawSocketTarget : ITarget
     {
         var uri = new Uri(baseUrl);
         _endpoint = new IPEndPoint(IPAddress.Parse(uri.Host), uri.Port);
-        _request = Encoding.ASCII.GetBytes(
-            $"GET /{Payloads.Route} HTTP/1.1\r\nHost: {uri.Authority}\r\nConnection: keep-alive\r\n\r\n");
+        _request = EncodePost(uri.Authority);
     }
 
     public string Name => "RawSocket";
@@ -93,6 +93,24 @@ internal sealed class RawSocketTarget : ITarget
             _stream.Dispose();
             _client.Dispose();
         }
+    }
+
+    /// <summary>预编码一次 POST 请求：请求行 + 头 + 与 <see cref="Payloads.UserJson"/> 相同的正文，跑窗口时直接写出。</summary>
+    private static byte[] EncodePost(string authority)
+    {
+        var head = Encoding.ASCII.GetBytes(
+            $"POST /{Payloads.Route} HTTP/1.1\r\n"
+            + $"Host: {authority}\r\n"
+            + "Content-Type: application/json; charset=utf-8\r\n"
+            + $"Content-Length: {Payloads.UserJson.Length}\r\n"
+            + "Connection: keep-alive\r\n"
+            + "\r\n");
+
+        var body = Payloads.UserJson.ToArray();
+        var request = new byte[head.Length + body.Length];
+        Buffer.BlockCopy(head, 0, request, 0, head.Length);
+        Buffer.BlockCopy(body, 0, request, head.Length, body.Length);
+        return request;
     }
 
     /// <summary>从响应头算出整条响应长度：头尾 + <c>Content-Length</c>。头不完整或没有长度头时返回 false。</summary>

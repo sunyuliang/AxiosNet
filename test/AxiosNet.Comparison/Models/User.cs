@@ -3,9 +3,9 @@ using System.Text.Json.Serialization;
 namespace AxiosNet.Comparison.Models;
 
 /// <summary>
-/// 所有实现共用的返回模型。显式标注 <see cref="JsonPropertyNameAttribute"/>：
-/// 各库默认的 System.Text.Json 选项不完全一致（Web 默认大小写不敏感、裸 JsonSerializer 默认敏感），
-/// 统一按属性名绑定，避免「某个库解析失败」被当成性能差异。
+/// 所有实现共用的模型：POST 时作为请求体被序列化，响应再反序列化回同一类型。
+/// 属性上都标了 <see cref="JsonPropertyNameAttribute"/>，各库因此按同一组名字绑定，不会因为
+/// 默认 JsonSerializerOptions 的大小写策略不同被当成解析失败的性能差异。
 /// </summary>
 internal sealed class User
 {
@@ -26,12 +26,18 @@ internal sealed class User
     public string Role { get; set; } = string.Empty;
 }
 
-/// <summary>回环服务器返回的固定正文：与 <see cref="User"/> 逐字段对应。</summary>
+/// <summary>回环服务器读写的固定正文，以及与 <see cref="User"/> 对应的请求体实例。</summary>
 internal static class Payloads
 {
-    /// <summary>预编码好的正文字节：所有实现发同一串字节，序列化差异不会被算进网络与解析成本。</summary>
+    /// <summary>回环服务器返回的固定正文字节：所有实现收到同一串字节，解析成本的比较基准因此一致。</summary>
     public static ReadOnlySpan<byte> UserJson =>
         """{"id":1,"name":"axios-net","age":30,"role":"admin"}"""u8;
+
+    /// <summary>
+    /// POST 请求体：全部实现把同一个实例交给各自库序列化，正文与 <see cref="UserJson"/> 同字段
+    /// （裸 socket 基线不给库序列化，直接发 <see cref="UserJson"/>）。共享单个实例，避免把「每请求构造模型」的分配算进测量。
+    /// </summary>
+    public static readonly User Request = new() { Id = 1, Name = "axios-net", Age = 30, Role = "admin" };
 
     public const string Route = "api/users/1";
 }

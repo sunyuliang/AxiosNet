@@ -25,10 +25,12 @@ internal sealed class AxiosNetTarget : ITarget
 
     private sealed class Session(AxiosClient client) : ITargetSession
     {
-        /// <summary>发一次 GET 并读成 <c>User</c>；数据为空就抛出，让窗口统计记成错误。</summary>
+        /// <summary>发一次 POST（请求体在库内序列化）并把正文读成 <c>User</c>；数据为空就抛出，让窗口统计记成错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
-            var response = await client.GetAsync<User>(Payloads.Route, cancellationToken).ConfigureAwait(false);
+            var response = await client
+                .PostAsync<User>(Payloads.Route, Payloads.Request, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
             if (response.Data is null)
             {
                 throw new InvalidOperationException($"AxiosNet 返回空数据：status={response.Status}。");

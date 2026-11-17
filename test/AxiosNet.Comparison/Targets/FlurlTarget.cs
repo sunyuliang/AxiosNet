@@ -6,7 +6,7 @@ namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
 /// Flurl：单例 <see cref="FlurlClient"/>（Flurl 的连接复用挂在它持有的 HttpClient 上），
-/// 每请求 <c>Request(url).GetJsonAsync&lt;User&gt;()</c>。
+/// 每请求 <c>Request(url).PostJsonAsync(...).GetJsonAsync&lt;User&gt;()</c>。
 /// </summary>
 internal sealed class FlurlTarget : ITarget
 {
@@ -29,12 +29,14 @@ internal sealed class FlurlTarget : ITarget
 
     private sealed class Session(FlurlClient client, string url) : ITargetSession
     {
-        /// <summary>发一次 GET，用 Flurl 的 <c>GetJsonAsync</c> 读成 <c>User</c>；null 视为错误。</summary>
+        /// <summary>发一次 POST（<c>PostJsonAsync</c> 序列化请求体）再用 <c>GetJsonAsync</c> 读成 <c>User</c>；null 视为错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
-            var user = await client.Request(url)
-                .GetJsonAsync<User>(cancellationToken: cancellationToken)
+            // Flurl 4 的 PostJsonAsync 交回已缓冲的响应对象，JSON 绑定要再走一步 GetJsonAsync。
+            var response = await client.Request(url)
+                .PostJsonAsync(Payloads.Request, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+            var user = await response.GetJsonAsync<User>().ConfigureAwait(false);
             if (user is null)
             {
                 throw new InvalidOperationException("Flurl 返回 null（端点应返回 User JSON）。");

@@ -2781,7 +2781,7 @@ Reading guide and group details: [`test/AxiosNet.Benchmarks/README.md`](test/Axi
 
 For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison):
 
-- One loopback server, one load profile (8 concurrent × 1s × 10 rounds by default, with the implementation order rotated every round), comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV.
+- One loopback server, one load profile (8 concurrent × 2s × 6 rounds by default, with the implementation order rotated every round); every implementation serializes the same `User` payload with its idiomatic API and reads the model back, comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV.
 - Add `--min-ratio` / `--max-alloc-ratio` to use it as a regression gate; without thresholds it only reports, never judges.
 - The write-up with conclusions (features / performance / ergonomics plus selection advice) is [`docs/http-client-comparison.md`](docs/http-client-comparison.md).
 

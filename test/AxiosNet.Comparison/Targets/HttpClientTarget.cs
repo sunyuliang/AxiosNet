@@ -5,7 +5,7 @@ using AxiosNet.Comparison.Models;
 namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
-/// 基线：裸 <see cref="HttpClient"/> + <c>GetFromJsonAsync&lt;User&gt;</c>。
+/// 基线：裸 <see cref="HttpClient"/> + <c>PostAsJsonAsync</c> / <c>ReadFromJsonAsync</c>。
 /// Handler 用与 AxiosNet 默认连接池逐项对齐的那份（Cookies / Proxy / 连接数 / 超时全对齐），
 /// 否则测的是两个库的默认值差异而不是实现差异。
 /// </summary>
@@ -30,10 +30,12 @@ internal sealed class HttpClientTarget : ITarget
 
     private sealed class Session(HttpClient client, string url) : ITargetSession
     {
-        /// <summary>发一次 GET 并用 <c>GetFromJsonAsync</c> 读成 <c>User</c>；null 视为错误。</summary>
+        /// <summary>发一次 POST（<c>PostAsJsonAsync</c> 序列化请求体）再 <c>ReadFromJsonAsync</c> 读成 <c>User</c>；null 视为错误。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
-            var user = await client.GetFromJsonAsync<User>(url, cancellationToken).ConfigureAwait(false);
+            using var response = await client.PostAsJsonAsync(url, Payloads.Request, cancellationToken)
+                .ConfigureAwait(false);
+            var user = await response.Content.ReadFromJsonAsync<User>(cancellationToken).ConfigureAwait(false);
             if (user is null)
             {
                 throw new InvalidOperationException("HttpClient 返回 null（端点应返回 User JSON）。");

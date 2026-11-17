@@ -119,8 +119,8 @@ internal sealed class Options
 
             选项：
               --concurrency <n>        每实现的并发 worker 数（默认 8）
-              --duration <秒>          每轮测量窗口（默认 1）
-              --rounds <n>             测量轮数，每轮轮转实现顺序（默认 10）
+              --duration <秒>          每轮测量窗口（默认 2）
+              --rounds <n>             测量轮数，每轮轮转实现顺序（默认 6）
               --warmup <秒>            每实现预热窗口（默认 3）
               --cooldown <秒>          预热后等待分层编译（默认 2）
               --libs <a,b,...>         参与对比的实现（默认 HttpClient,Refit,RestSharp,Flurl,AxiosNet）
@@ -142,6 +142,7 @@ internal sealed class Options
 
             口径提示：
               · 每轮轮转实现顺序；预热后用 RawSocket 校准机器状态（最近 3 窗 RPS 极差 ≤ 15% 才开测）。
+              · 负载是「POST 一个 User 负载并读回」：延迟与分配都含请求体序列化与响应反序列化。
               · 分配是进程级（含同进程回环服务端），报告里的「净分配」已减掉 RawSocket 基线。
               · 汇总列是轮中位数；另附「离散度」表给出各轮最小~最大与 RPS 波动。
               · CPU 份额低于 --min-cpu-share 的行在表里带 *：该实现吞吐与比值不可判定。

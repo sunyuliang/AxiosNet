@@ -201,10 +201,10 @@ internal static class Report
         md.AppendLine();
         md.AppendLine($"- 时间：{started:yyyy-MM-dd HH:mm:ss zzz}");
         md.AppendLine($"- 环境：{environment}");
-        md.AppendLine($"- 负载：每实现 {concurrency} 并发 × {durationSeconds:0.#}s × {rounds} 轮（每轮轮转实现顺序），预热 {warmupSeconds:0.#}s；同一回环服务器、同一 `User` JSON。");
+        md.AppendLine($"- 负载：每实现 {concurrency} 并发 × {durationSeconds:0.#}s × {rounds} 轮（每轮轮转实现顺序），预热 {warmupSeconds:0.#}s；同一回环服务器、同一个 `User` 负载（POST 上送并读回）。");
         md.AppendLine("- 对齐：HttpClient / Refit / RestSharp / Flurl 注入与 AxiosNet 默认连接池逐项对齐的 `SocketsHttpHandler`；Refit 只走 source-generated 模式。");
         md.AppendLine($"- 分配是进程级口径（含同进程回环服务端；本次运行服务器共回复 {serverRequests:N0} 个请求）：`净分配` = 总分配 − RawSocket 行。");
-        md.AppendLine("- p50 / p99 为客户端观察值，含服务端处理、回环 RTT 与 JSON 反序列化；各列为轮中位数，各轮最小 ~ 最大见「离散度」节。");
+        md.AppendLine("- p50 / p99 为客户端观察值，含请求体序列化、服务端处理、回环 RTT 与 JSON 反序列化；各列为轮中位数，各轮最小 ~ 最大见「离散度」节。");
         md.AppendLine($"- CPU 列带 * 的行份额低于门槛 {FormatPercent(minCpuShare)}：该实现的吞吐与比值**不可判定**（机器未打满或外部负载抢核）。");
         md.AppendLine();
         md.AppendLine("| 实现 | RPS | p50 (µs) | p99 (µs) | max (µs) | 分配/请求 | 净分配/请求 | CPU | RPS vs HttpClient |");

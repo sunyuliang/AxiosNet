@@ -31,10 +31,10 @@ internal sealed class RestSharpTarget : ITarget
 
     private sealed class Session(RestClient client) : ITargetSession
     {
-        /// <summary>发一次 GET；非 2xx 或没有数据都视为错误，并带上状态码与错误消息。</summary>
+        /// <summary>发一次 POST（<c>AddJsonBody</c> 序列化请求体）；非 2xx 或没有数据都视为错误，并带上状态码与错误消息。</summary>
         public async Task SendAsync(CancellationToken cancellationToken)
         {
-            var request = new RestRequest(Payloads.Route);
+            var request = new RestRequest(Payloads.Route, Method.Post).AddJsonBody(Payloads.Request);
             var response = await client.ExecuteAsync<User>(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessful || response.Data is null)
             {

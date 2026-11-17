@@ -1,20 +1,7 @@
 namespace AxiosNet.Comparison.Targets;
 
 /// <summary>
-/// 测量场景：一次 GET 把响应正文读成什么。两个场景走同一条网络路径，
-/// 差别只在正文最终变成字符串还是 <c>User</c> 模型，相减即反序列化成本。
-/// </summary>
-internal enum ResponseKind
-{
-    /// <summary>正文只解码成字符串，不做反序列化（各库的「取原始文本」入口）。</summary>
-    String,
-
-    /// <summary>正文反序列化成 <c>User</c> 模型（各库的惯用 JSON 绑定入口）。</summary>
-    Json
-}
-
-/// <summary>
-/// 一个被测实现。只回答「怎么按指定场景发一次 GET 并交出正文」，负载、计时、采样都由 <c>LoadRunner</c> 统一做，
+/// 一个被测实现。只回答「怎么用本库的惯用写法发一次 POST 并读回正文」，负载、计时、采样都由 <c>LoadRunner</c> 统一做，
 /// 保证除被测库本身外没有任何一侧多干活。
 /// </summary>
 internal interface ITarget : IDisposable
@@ -32,6 +19,9 @@ internal interface ITarget : IDisposable
 /// <summary>单个 worker 的请求入口；<see cref="IDisposable"/> 用于释放该 worker 独占的连接。</summary>
 internal interface ITargetSession : IDisposable
 {
-    /// <summary>按 <paramref name="kind"/> 发一次 GET 并消费正文；正文不合预期时抛异常，由窗口统计记成错误。</summary>
-    Task SendAsync(ResponseKind kind, CancellationToken cancellationToken);
+    /// <summary>
+    /// 发一次 POST：把 <c>Payloads.Request</c> 序列化上送，再把响应正文反序列化成 <c>User</c>。
+    /// 正文不合预期时抛异常，由窗口统计记成错误。
+    /// </summary>
+    Task SendAsync(CancellationToken cancellationToken);
 }
