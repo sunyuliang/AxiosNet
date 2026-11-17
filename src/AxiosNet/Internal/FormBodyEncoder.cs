@@ -22,9 +22,10 @@ internal static class FormBodyEncoder
     {
         var pairs = new List<KeyValuePair<string, string>>(8);
         var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldName, config.SerializationOrNull?.ValueText);
+        var path = new ObjectPath();
         try
         {
-            CollectFormPairs(null, data, pairs, options, visited: null, memberFormat: null);
+            CollectFormPairs(null, data, pairs, options, ref path, memberFormat: null);
         }
         catch (DataCycleException ex)
         {
@@ -39,6 +40,10 @@ internal static class FormBodyEncoder
             // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE，流同样不能留到 GC。
             MultipartOwnership.DisposeOwned(data);
             throw AxiosException.InvalidOption(ex.Message, config, ex);
+        }
+        finally
+        {
+            path.Dispose();
         }
 
         // 正文是已转义的 ASCII 串，编码只影响转义映射。
@@ -83,7 +88,7 @@ internal static class FormBodyEncoder
         object? value,
         List<KeyValuePair<string, string>> pairs,
         FormFlattenOptions options,
-        HashSet<object>? visited,
+        ref ObjectPath path,
         ValueFormat? memberFormat)
     {
         switch (value)
@@ -128,7 +133,7 @@ internal static class FormBodyEncoder
             case IDictionary<string, object?> genericDictionary:
             {
                 // 含 ExpandoObject（dynamic）
-                visited = ObjectGraph.Enter(visited, genericDictionary);
+                path.Enter(genericDictionary);
                 try
                 {
                     foreach (var entry in genericDictionary)
@@ -138,13 +143,13 @@ internal static class FormBodyEncoder
                             entry.Value,
                             pairs,
                             options,
-                            visited,
+                            ref path,
                             memberFormat);
                     }
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, genericDictionary);
+                    path.Exit(genericDictionary);
                 }
 
                 return;
@@ -153,7 +158,7 @@ internal static class FormBodyEncoder
             // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
-                visited = ObjectGraph.Enter(visited, readOnlyDictionary);
+                path.Enter(readOnlyDictionary);
                 try
                 {
                     foreach (var entry in readOnlyDictionary)
@@ -163,13 +168,13 @@ internal static class FormBodyEncoder
                             entry.Value,
                             pairs,
                             options,
-                            visited,
+                            ref path,
                             memberFormat);
                     }
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, readOnlyDictionary);
+                    path.Exit(readOnlyDictionary);
                 }
 
                 return;
@@ -177,7 +182,7 @@ internal static class FormBodyEncoder
 
             case IDictionary dictionary:
             {
-                visited = ObjectGraph.Enter(visited, dictionary);
+                path.Enter(dictionary);
                 try
                 {
                     foreach (DictionaryEntry entry in dictionary)
@@ -192,13 +197,13 @@ internal static class FormBodyEncoder
                             entry.Value,
                             pairs,
                             options,
-                            visited,
+                            ref path,
                             memberFormat);
                     }
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, dictionary);
+                    path.Exit(dictionary);
                 }
 
                 return;
@@ -207,7 +212,7 @@ internal static class FormBodyEncoder
             // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
             case IEnumerable map when QueryMap.CanEnumerate(map):
             {
-                visited = ObjectGraph.Enter(visited, map);
+                path.Enter(map);
                 try
                 {
                     foreach (var entry in QueryMap.Enumerate(map))
@@ -217,13 +222,13 @@ internal static class FormBodyEncoder
                             entry.Value,
                             pairs,
                             options,
-                            visited,
+                            ref path,
                             memberFormat);
                     }
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, map);
+                    path.Exit(map);
                 }
 
                 return;
@@ -239,7 +244,7 @@ internal static class FormBodyEncoder
 
         if (value is IEnumerable enumerable)
         {
-            visited = ObjectGraph.Enter(visited, value);
+            path.Enter(value);
             try
             {
                 var index = 0;
@@ -247,19 +252,19 @@ internal static class FormBodyEncoder
                 {
                     // 根数组没有键名，用下标保证可还原；嵌套数组沿用 a[] 形式。
                     var name = prefix is null ? "[" + index + "]" : prefix + "[]";
-                    CollectFormPairs(name, item, pairs, options, visited, memberFormat);
+                    CollectFormPairs(name, item, pairs, options, ref path, memberFormat);
                     index++;
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, value);
+                path.Exit(value);
             }
 
             return;
         }
 
-        visited = ObjectGraph.Enter(visited, value);
+        path.Enter(value);
         try
         {
             var shape = ShapeCache.Get(type, prefix);
@@ -275,13 +280,13 @@ internal static class FormBodyEncoder
                     member.GetValue(value),
                     pairs,
                     options,
-                    visited,
+                    ref path,
                     member.Format);
             }
         }
         finally
         {
-            ObjectGraph.Exit(visited, value);
+            path.Exit(value);
         }
     }
 

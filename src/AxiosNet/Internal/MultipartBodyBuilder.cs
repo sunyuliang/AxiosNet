@@ -40,10 +40,11 @@ internal static class MultipartBodyBuilder
                 + "（RFC 2046：boundary 不超过 70 字符，且只含限定字符集；不指定时由库自动生成）。", config, ex);
         }
 
+        var path = new ObjectPath();
         try
         {
             // claimed：本次装配已经用掉的流（同一份流只能挂一个部件，见 ClaimStream）。
-            CollectParts(null, data, content, encoding, config, visited: null, claimed: new HashSet<Stream>(ReferenceEqualityComparer.Instance));
+            CollectParts(null, data, content, encoding, config, ref path, claimed: new HashSet<Stream>(ReferenceEqualityComparer.Instance));
             return content;
         }
         catch (Exception ex)
@@ -68,6 +69,10 @@ internal static class MultipartBodyBuilder
 
             throw;
         }
+        finally
+        {
+            path.Dispose();
+        }
     }
 
     /// <summary>按值形态把数据项装配进容器：文件类 → 文件部件，标量 → 文本字段，字典 / 集合 / POCO 递归展开。</summary>
@@ -77,7 +82,7 @@ internal static class MultipartBodyBuilder
         MultipartFormDataContent content,
         Encoding encoding,
         AxiosConfig config,
-        HashSet<object>? visited,
+        ref ObjectPath path,
         HashSet<Stream> claimed,
         FormPartOverride partOverride = default,
         ValueFormat? memberFormat = null)
@@ -163,7 +168,7 @@ internal static class MultipartBodyBuilder
                 // 含 ExpandoObject（dynamic）；调用方登记的覆盖按字段名随值一起下传
                 var overrides = (genericDictionary as FormData)?.Overrides;
                 var formats = (genericDictionary as FormData)?.Formats;
-                visited = ObjectGraph.Enter(visited, genericDictionary);
+                path.Enter(genericDictionary);
                 try
                 {
                     foreach (var entry in genericDictionary)
@@ -181,7 +186,7 @@ internal static class MultipartBodyBuilder
                             content,
                             encoding,
                             config,
-                            visited,
+                            ref path,
                             claimed,
                             entryOverride,
                             entryFormat);
@@ -189,7 +194,7 @@ internal static class MultipartBodyBuilder
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, genericDictionary);
+                    path.Exit(genericDictionary);
                 }
 
                 return;
@@ -198,7 +203,7 @@ internal static class MultipartBodyBuilder
             // 只实现 IReadOnlyDictionary 的字典要单独处理，不走 POCO 反射。
             case IReadOnlyDictionary<string, object?> readOnlyDictionary:
             {
-                visited = ObjectGraph.Enter(visited, readOnlyDictionary);
+                path.Enter(readOnlyDictionary);
                 try
                 {
                     foreach (var entry in readOnlyDictionary)
@@ -209,14 +214,14 @@ internal static class MultipartBodyBuilder
                             content,
                             encoding,
                             config,
-                            visited,
+                            ref path,
                             claimed,
                             memberFormat: memberFormat);
                     }
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, readOnlyDictionary);
+                    path.Exit(readOnlyDictionary);
                 }
 
                 return;
@@ -224,7 +229,7 @@ internal static class MultipartBodyBuilder
 
             case IDictionary dictionary:
             {
-                visited = ObjectGraph.Enter(visited, dictionary);
+                path.Enter(dictionary);
                 try
                 {
                     foreach (DictionaryEntry entry in dictionary)
@@ -240,14 +245,14 @@ internal static class MultipartBodyBuilder
                             content,
                             encoding,
                             config,
-                            visited,
+                            ref path,
                             claimed,
                             memberFormat: memberFormat);
                     }
                 }
                 finally
                 {
-                    ObjectGraph.Exit(visited, dictionary);
+                    path.Exit(dictionary);
                 }
 
                 return;
@@ -266,7 +271,7 @@ internal static class MultipartBodyBuilder
         // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
         if (value is IEnumerable mapValue && QueryMap.CanEnumerate(mapValue))
         {
-            visited = ObjectGraph.Enter(visited, mapValue);
+            path.Enter(mapValue);
             try
             {
                 foreach (var entry in QueryMap.Enumerate(mapValue))
@@ -277,14 +282,14 @@ internal static class MultipartBodyBuilder
                         content,
                         encoding,
                         config,
-                        visited,
+                        ref path,
                         claimed,
                         memberFormat: memberFormat);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, mapValue);
+                path.Exit(mapValue);
             }
 
             return;
@@ -292,25 +297,25 @@ internal static class MultipartBodyBuilder
 
         if (value is IEnumerable enumerable)
         {
-            visited = ObjectGraph.Enter(visited, value);
+            path.Enter(value);
             try
             {
                 foreach (var item in enumerable)
                 {
                     // 集合逐项应用同一份声明（同名重复部件）
-                    CollectParts(name, item, content, encoding, config, visited, claimed, partOverride, memberFormat);
+                    CollectParts(name, item, content, encoding, config, ref path, claimed, partOverride, memberFormat);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, value);
+                path.Exit(value);
             }
 
             return;
         }
 
         // 嵌套 POCO：成员清单来自对象形状，命名只看 [JsonPropertyName] 与属性名，忽略看 [JsonIgnore]。
-        visited = ObjectGraph.Enter(visited, value);
+        path.Enter(value);
         try
         {
             var shape = ShapeCache.Get(type, name);
@@ -327,14 +332,14 @@ internal static class MultipartBodyBuilder
                     content,
                     encoding,
                     config,
-                    visited,
+                    ref path,
                     claimed,
                     memberFormat: member.Format);
             }
         }
         finally
         {
-            ObjectGraph.Exit(visited, value);
+            path.Exit(value);
         }
     }
 

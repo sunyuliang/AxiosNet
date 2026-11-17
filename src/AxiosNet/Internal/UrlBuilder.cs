@@ -416,6 +416,7 @@ internal static class ParamsSerializer
             return UrlBuilder.NormalizeQuery(rawQuery);
         }
 
+        var path = new ObjectPath();
         try
         {
             var pairs = new QueryPairs();
@@ -441,7 +442,7 @@ internal static class ParamsSerializer
                     // ExpandoObject（dynamic）等仅实现泛型字典的类型
                     foreach (var entry in stringKeyedDictionary)
                     {
-                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, ref path, format, memberFormat: null, formatter);
                     }
                 }
                 else if (paramsObj is IReadOnlyDictionary<string, object> readOnlyDictionary)
@@ -449,7 +450,7 @@ internal static class ParamsSerializer
                     // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
                     foreach (var entry in readOnlyDictionary)
                     {
-                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, ref path, format, memberFormat: null, formatter);
                     }
                 }
                 else if (paramsObj is IDictionary dictionary)
@@ -461,7 +462,7 @@ internal static class ParamsSerializer
                             continue;
                         }
 
-                        Append(EscapeKey(entry.Key.ToString()!), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                        Append(EscapeKey(entry.Key.ToString()!), entry.Value, ref pairs, ref path, format, memberFormat: null, formatter);
                     }
                 }
                 else if (QueryMap.CanEnumerate(paramsObj))
@@ -469,7 +470,7 @@ internal static class ParamsSerializer
                     // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
                     foreach (var entry in QueryMap.Enumerate(paramsObj))
                     {
-                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, visited: null, format, memberFormat: null, formatter);
+                        Append(EscapeKey(entry.Key), entry.Value, ref pairs, ref path, format, memberFormat: null, formatter);
                     }
                 }
                 else if (paramsObj is not byte[] && paramsObj is IEnumerable items)
@@ -478,7 +479,7 @@ internal static class ParamsSerializer
                     var index = 0;
                     foreach (var item in items)
                     {
-                        Append("[" + index + "]", item, ref pairs, visited: null, format, memberFormat: null, formatter);
+                        Append("[" + index + "]", item, ref pairs, ref path, format, memberFormat: null, formatter);
                         index++;
                     }
                 }
@@ -494,7 +495,7 @@ internal static class ParamsSerializer
                     var shape = ShapeCache.Get(paramsObj.GetType());
                     foreach (var member in shape.Members)
                     {
-                        Append(member.EscapedName, member.GetValue(paramsObj), ref pairs, visited: null, format, member.Format, formatter);
+                        Append(member.EscapedName, member.GetValue(paramsObj), ref pairs, ref path, format, member.Format, formatter);
                     }
                 }
 
@@ -510,6 +511,10 @@ internal static class ParamsSerializer
             // 环检测：转成带配置的选项错误。
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
+        finally
+        {
+            path.Dispose();
+        }
     }
 
     /// <summary>非法根类型：统一成 <c>ERR_BAD_OPTION_VALUE</c>，并说明可用的形态。</summary>
@@ -522,7 +527,7 @@ internal static class ParamsSerializer
     /// <param name="prefix">已转义的键前缀。</param>
     /// <param name="value">待展平的值。</param>
     /// <param name="pairs">输出键值对。</param>
-    /// <param name="visited">环检测栈。</param>
+    /// <param name="path">环检测祖先链。</param>
     /// <param name="format">集合编码形态。</param>
     /// <param name="memberFormat">当前成员级格式化：只作用于标量叶子，集合逐元素继承，嵌套对象改用成员自己的声明。</param>
     /// <param name="formatter">实例级格式化钩子：标量叶子在成员声明缺失时生效（嵌套对象同样下传）。</param>
@@ -530,7 +535,7 @@ internal static class ParamsSerializer
         string prefix,
         object? value,
         ref QueryPairs pairs,
-        HashSet<object>? visited,
+        ref ObjectPath path,
         AxiosCollectionFormat format,
         ValueFormat? memberFormat,
         Func<object?, ValueTextChannel, string?>? formatter)
@@ -567,17 +572,17 @@ internal static class ParamsSerializer
         if (value is IDictionary<string, object> stringKeyedNested)
         {
             // 嵌套 ExpandoObject（dynamic）：prefix[key]=value
-            visited = ObjectGraph.Enter(visited, stringKeyedNested);
+            path.Enter(stringKeyedNested);
             try
             {
                 foreach (var entry in stringKeyedNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, ref path, format, memberFormat, formatter);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, stringKeyedNested);
+                path.Exit(stringKeyedNested);
             }
 
             return;
@@ -586,17 +591,17 @@ internal static class ParamsSerializer
         // 只实现 IReadOnlyDictionary 的字典：按键值对展开，不走 POCO 反射。
         if (value is IReadOnlyDictionary<string, object> readOnlyNested)
         {
-            visited = ObjectGraph.Enter(visited, readOnlyNested);
+            path.Enter(readOnlyNested);
             try
             {
                 foreach (var entry in readOnlyNested)
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, ref path, format, memberFormat, formatter);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, readOnlyNested);
+                path.Exit(readOnlyNested);
             }
 
             return;
@@ -604,7 +609,7 @@ internal static class ParamsSerializer
 
         if (value is IDictionary dict)
         {
-            visited = ObjectGraph.Enter(visited, dict);
+            path.Enter(dict);
             try
             {
                 foreach (DictionaryEntry entry in dict)
@@ -614,12 +619,12 @@ internal static class ParamsSerializer
                         continue;
                     }
 
-                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key.ToString()!)}]", entry.Value, ref pairs, ref path, format, memberFormat, formatter);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, dict);
+                path.Exit(dict);
             }
 
             return;
@@ -628,17 +633,17 @@ internal static class ParamsSerializer
         // 只实现 IDictionary<string,T> 的自定义字典（T 不是 object）或值类型字典：按键值对展开。
         if (value is IEnumerable mapValue && value is not string && value is not byte[] && QueryMap.CanEnumerate(mapValue))
         {
-            visited = ObjectGraph.Enter(visited, mapValue);
+            path.Enter(mapValue);
             try
             {
                 foreach (var entry in QueryMap.Enumerate(mapValue))
                 {
-                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[{EscapeKey(entry.Key)}]", entry.Value, ref pairs, ref path, format, memberFormat, formatter);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, mapValue);
+                path.Exit(mapValue);
             }
 
             return;
@@ -648,21 +653,21 @@ internal static class ParamsSerializer
         {
             if (format != AxiosCollectionFormat.Brackets)
             {
-                AppendCollection(prefix, enumerable, ref pairs, visited, format, memberFormat, formatter);
+                AppendCollection(prefix, enumerable, ref pairs, ref path, format, memberFormat, formatter);
                 return;
             }
 
-            visited = ObjectGraph.Enter(visited, value);
+            path.Enter(value);
             try
             {
                 foreach (var item in enumerable)
                 {
-                    Append($"{prefix}[]", item, ref pairs, visited, format, memberFormat, formatter);
+                    Append($"{prefix}[]", item, ref pairs, ref path, format, memberFormat, formatter);
                 }
             }
             finally
             {
-                ObjectGraph.Exit(visited, value);
+                path.Exit(value);
             }
 
             return;
@@ -677,19 +682,19 @@ internal static class ParamsSerializer
         }
 
         // 嵌套对象（匿名类型 / record / POCO）：形状决定成员，序列化为 prefix[prop]=value（不跳过 [JsonIgnore]）。
-        visited = ObjectGraph.Enter(visited, value);
+        path.Enter(value);
         try
         {
             var shape = ShapeCache.Get(value.GetType(), prefix);
             foreach (var member in shape.Members)
             {
                 // 后缀（含转义）在形状里预计算，这里只需一次前缀拼接；成员级格式化来自形状自身。
-                Append(prefix + member.BracketSuffix, member.GetValue(value), ref pairs, visited, format, member.Format, formatter);
+                Append(prefix + member.BracketSuffix, member.GetValue(value), ref pairs, ref path, format, member.Format, formatter);
             }
         }
         finally
         {
-            ObjectGraph.Exit(visited, value);
+            path.Exit(value);
         }
     }
 
@@ -701,12 +706,12 @@ internal static class ParamsSerializer
         string prefix,
         IEnumerable enumerable,
         ref QueryPairs pairs,
-        HashSet<object>? visited,
+        ref ObjectPath path,
         AxiosCollectionFormat format,
         ValueFormat? memberFormat,
         Func<object?, ValueTextChannel, string?>? formatter)
     {
-        visited = ObjectGraph.Enter(visited, enumerable);
+        path.Enter(enumerable);
         try
         {
             // Multi 直接流式枚举；其余分隔形态需物化一次（先判全标量，再拼接或回落）。
@@ -714,7 +719,7 @@ internal static class ParamsSerializer
             {
                 foreach (var item in enumerable)
                 {
-                    Append(prefix, item, ref pairs, visited, format, memberFormat, formatter);
+                    Append(prefix, item, ref pairs, ref path, format, memberFormat, formatter);
                 }
 
                 return;
@@ -740,7 +745,7 @@ internal static class ParamsSerializer
                 {
                     foreach (var fallback in items)
                     {
-                        Append($"{prefix}[]", fallback, ref pairs, visited, format, memberFormat, formatter);
+                        Append($"{prefix}[]", fallback, ref pairs, ref path, format, memberFormat, formatter);
                     }
 
                     return;
@@ -758,7 +763,7 @@ internal static class ParamsSerializer
         }
         finally
         {
-            ObjectGraph.Exit(visited, enumerable);
+            path.Exit(enumerable);
         }
     }
 

@@ -39,6 +39,16 @@ public sealed class RequestAllocationTests
 #endif
 
     /// <summary>
+    /// 带嵌套 params 的每请求分配上界。嵌套展平的祖先链按池化数组复用，门槛只用来抓
+    /// 「每层又新造一个环检测集合」的写法；改完热路径要跟着下调，不要放宽。
+    /// </summary>
+#if NET6_0
+    private const long GetWithNestedParamsBudgetBytes = 2470;
+#else
+    private const long GetWithNestedParamsBudgetBytes = 2300;
+#endif
+
+    /// <summary>
     /// 当前构建是否执行分配断言：Debug 构建的 async 状态机以类分配，每请求数字比优化构建高一个量级，
     /// 只有优化构建的测量值可比。
     /// </summary>
@@ -142,6 +152,36 @@ public sealed class RequestAllocationTests
             allocated < GetWithParamsBudgetBytes,
             $"带 2 个 params 的 GET 分配了 {allocated:N0} B，超出 {GetWithParamsBudgetBytes:N0} B 上界"
             + "——参数序列化又在攒中间集合 / 中间字符串；若是有意优化，请连这条上界一起下调。");
+    }
+
+    [Fact]
+    public void GetWithNestedParams_StaysWithinPerRequestBudget()
+    {
+        using var client = new AxiosClient(
+            new AxiosConfig { BaseAddress = "http://units.test/" },
+            handler: new EmptyOkHandler(),
+            disposeHandler: true);
+
+        // 两层嵌套：展平时要压两级祖先链（环检测），键名带方括号。
+        var query = new { filter = new { page = 3, tags = new[] { "a", "b" } } };
+
+#pragma warning disable xUnit1031
+        void Get() => _ = client.GetAsync<string>("x", c => c.Params = query).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+        var allocated = MinimumBytes(100, Get);
+        _output.WriteLine($"GetAsync<string>（嵌套 params）每请求分配 {allocated:N0} B");
+
+        if (!AssertsAllocations)
+        {
+            GC.KeepAlive(allocated);
+            return;
+        }
+
+        Assert.True(
+            allocated < GetWithNestedParamsBudgetBytes,
+            $"带嵌套 params 的 GET 分配了 {allocated:N0} B，超出 {GetWithNestedParamsBudgetBytes:N0} B 上界"
+            + "——嵌套展平又在每层新造环检测集合；若是有意优化，请连这条上界一起下调。");
     }
 
     /// <summary>取多个测量窗口里的最小值：只看最干净的一轮，压掉并发与 GC 抖动。</summary>
