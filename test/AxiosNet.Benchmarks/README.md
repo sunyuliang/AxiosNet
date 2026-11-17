@@ -122,7 +122,7 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 摘要只**呈现**不判定：没有阈值、没有通过 / 不通过。判定口径仍是下面几节写的那些。
 
 
-## 十二组基准
+## 十三组基准
 
 | 类 | 热点 | 基线 | 读什么 |
 | --- | --- | --- | --- |
@@ -135,11 +135,12 @@ Debug 宿主下 BDN 会拒绝运行（被测库是未优化 IL），同进程模
 | `FormEncodingBenchmarks` | 表单展平 + 百分号编码 | `PostForm_FlatAscii` | 倍数 = 「编码成本 / 基础成本」 |
 | `DynamicDeserializationBenchmarks` | `dynamic` 对象图构建 | `Typed` | `Ratio` = 比强类型贵几倍；`Dynamic_Wide` 看每节点成本 |
 | `StreamingFramingBenchmarks` | 流式分帧（NDJSON / SSE / JSON 数组） | `Ndjson` | `Ratio` = 格式差；`Frames` 三档的**斜率** = 每帧成本 |
+| `JsonUploadBenchmarks` | JSON 对象上送（100 / 2000 元素） | `HttpClient_PostJsonUtf8` | `Allocated / 载荷`：对象正文 ≈ 1.2× = 走字节出口；≈ 3× = 退回「先序列化成字符串再转字节」 |
 | `LargeBodyUploadBenchmarks` | 大正文上传（1 / 8 / 32MB：`byte[]` / `ReadOnlyMemory` / 流 / 异步序列） | `HttpClient_Upload_ByteArray` | `Allocated` 不随 `Megabytes` 涨 = 没有正文拷贝；三种 chunked 形态互相对照 |
 | `LargeBodyDownloadBenchmarks` | 大正文下载（1 / 8 / 32MB：缓冲成 `byte[]` vs 流式读完） | `HttpClient_Download_Buffered` | 缓冲下载 `Allocated` ≈ 1× 载荷（8MB 是预分配边界）；流式下载只有读缓冲 |
 | `LargeBodyJsonBenchmarks` | 大正文 JSON 响应（1 / 8 / 32MB：`byte[]` / 强类型 / `JsonElement`） | `HttpClient_GetBytes` | `Allocated / 载荷`：`byte[]` ≈ 1×；强类型 ≈ 3.4×；`JsonElement` ≈ 4.1×（文档 + 克隆 + token 元数据），三档线性 = 没有额外整串复制 |
 
-五组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `LargeBodyUpload` / `LargeBodyDownload` / `LargeBodyJson`）
+六组回环 socket 的（`RequestPipeline` / `ConcurrentPipeline` / `JsonUpload` / `LargeBodyUpload` / `LargeBodyDownload` / `LargeBodyJson`）
 与七组纯 CPU 的（`ConfigMerge` / `ConfigPrimitive` / `FormEncoding` / `DynamicDeserialization` / `StreamingFraming` / `TelemetryDispatch` / `ResponseContentType`）
 不要混在一个结论里用：前者的数字里有 TCP 往返与线程池调度，后者没有。大正文三组另有自己的口径：
 `Allocated` 是主轴（确定性量），耗时只用于「同量级 / 谁更快」的判断。

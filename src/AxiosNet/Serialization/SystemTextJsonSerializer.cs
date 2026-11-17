@@ -27,6 +27,9 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
     /// <summary><c>application/json</c>（与库的 <see cref="AxiosConfig.ContentType"/> 默认值一致）。</summary>
     public string? MediaType => AxiosContentType.Json;
 
+    /// <summary>序列化 <c>null</c> 的 UTF-8 形态（<c>null</c> 字面量），与文本入口的输出逐字相同。</summary>
+    private static readonly byte[] NullLiteralUtf8 = "null"u8.ToArray();
+
     /// <inheritdoc />
     public string Serialize(object? value, Type type, AxiosConfig config)
     {
@@ -46,11 +49,51 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         return SerializeCore(value, type, AxiosJson.GetOptions(config));
     }
 
-#if NETSTANDARD2_0
-    /// <summary>JSON 走文本出口，不提供二进制序列化；返回 <c>null</c> 让库改用 <see cref="Serialize(object, Type, AxiosConfig)"/>。</summary>
-    /// <remarks>显式实现而不是依赖接口默认方法：netstandard2.0 兼容资产不支持默认接口实现。</remarks>
-    public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config) => null;
-#endif
+    /// <summary>
+    /// JSON 的字节出口：直接产出 UTF-8 正文，不经文本中转。
+    /// </summary>
+    /// <remarks>
+    /// 生效编码不是 UTF-8 时返回 <c>null</c>（显式 <c>Serialization.TextEncoding</c>，或 <c>Content-Type</c>
+    /// 声明了非 UTF-8 的 charset）：那两种情况由文本入口负责编码与 charset 头。
+    /// 返回非 <c>null</c> 时正文完全由这份字节决定，<c>Content-Type</c> 与文本入口写出的一致。
+    /// </remarks>
+    public ReadOnlyMemory<byte>? SerializeToBytes(object? value, Type type, AxiosConfig config)
+    {
+        if (!EmitsUtf8(config))
+        {
+            return null;
+        }
+
+        if (value is null)
+        {
+            // 与文本入口同一套合法性判定，避免两条出口对「null + 非可空值类型」给出不同异常。
+            if (type.IsValueType && Nullable.GetUnderlyingType(type) is null)
+            {
+                throw new System.ArgumentNullException(nameof(value), $"类型 {type.FullName} 是非可空值类型，不能序列化 null。");
+            }
+
+            return NullLiteralUtf8;
+        }
+
+        return SerializeUtf8Core(value, type, AxiosJson.GetOptions(config));
+    }
+
+    /// <summary>
+    /// 正文是否一定按 UTF-8 产出：显式指定了 <c>Serialization.TextEncoding</c>，或 <c>Content-Type</c>
+    /// 声明了非 UTF-8 的 charset 时为 <c>false</c>。
+    /// </summary>
+    private static bool EmitsUtf8(AxiosConfig config)
+    {
+        // 显式编码由文本入口负责（连同 charset 头）：哪怕写的就是 UTF-8，也走文本路径保持一致。
+        if (config.SerializationOrNull?.TextEncoding is not null)
+        {
+            return false;
+        }
+
+        // 声明的 charset 优先于库默认值，非 UTF-8 时正文必须按它编码。
+        var declared = RequestContentType.ResolveCharset(config.ContentType, config);
+        return declared is null || declared.CodePage == Encoding.UTF8.CodePage;
+    }
 
     /// <inheritdoc />
     public object? Deserialize(string json, Type type, AxiosConfig config)
@@ -94,6 +137,19 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 #endif
         JsonSerializerJit.EnsureReflectionMetadata(type);
         return JsonSerializerJit.SerializeLegacy(value, type, options);
+    }
+
+    /// <summary>字节出口的 AOT / 反射分叉，与 <see cref="SerializeCore"/> 同一判据。</summary>
+    private static byte[] SerializeUtf8Core(object? value, Type type, JsonSerializerOptions options)
+    {
+#if NET8_0_OR_GREATER
+        if (options.TypeInfoResolver is not null)
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(value, Resolve(options, type));
+        }
+#endif
+        JsonSerializerJit.EnsureReflectionMetadata(type);
+        return JsonSerializerJit.SerializeUtf8Legacy(value, type, options);
     }
 
     /// <summary>唯一的 AOT / 反射分叉：有 <c>TypeInfoResolver</c> 才是 AOT 元数据路径。</summary>

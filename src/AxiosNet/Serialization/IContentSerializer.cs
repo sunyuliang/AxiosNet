@@ -41,7 +41,8 @@ public interface IContentSerializer
     string Serialize(object? value, Type type, AxiosConfig config);
 
     /// <summary>
-    /// 把业务对象序列化为该格式的<b>字节</b>（二进制格式的请求出口）；返回 <c>null</c>（默认）表示改用 <see cref="Serialize"/> 的文本。
+    /// 把业务对象序列化为该格式的<b>字节</b>：二进制格式的请求出口，以及正文本身就以 UTF-8 产出的文本格式（如 JSON）。
+    /// 返回 <c>null</c>（默认）表示改用 <see cref="Serialize"/> 的文本，由库按生效编码转成字节。
     /// 返回的内存会被直接交给请求内容，生命周期必须覆盖到整条请求结束。
     /// </summary>
 #if NETSTANDARD2_0

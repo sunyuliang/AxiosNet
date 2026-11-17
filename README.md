@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2786%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2644%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2789%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2647%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -938,7 +938,7 @@ http.Defaults.Serialization.BodySerializers.Register(AxiosContentType.Xml, XmlCo
 - 表对象是共享的：按请求拿到的 `c.Serialization.BodySerializers` 就是实例那张表，直接 `.Register(...)` 会改到实例，要只在本次请求生效请 new 一张表再赋值；同一个 `AxiosConfig` 交给多个客户端、或 `Defaults.Clone()` 时也共享同一张表。
 - 注册表属实例级：回放 `response.Config` 时注册表取目标实例的，来源实例的登记不会跟着走。
 
-**自定义格式**：实现 `IContentSerializer`（文本格式两个方法；二进制格式再加字节通道 `SerializeToBytes` / `Deserialize(ReadOnlyMemory<byte>)`；可选 `MediaType` 自报媒体类型）。
+**自定义格式**：实现 `IContentSerializer`（文本格式两个方法；正文能直接按 UTF-8 产出的格式——如 JSON——还可实现字节通道 `SerializeToBytes` 省掉一次文本中转，返回 `null` 表示改走文本；纯二进制格式两个方法都换成字节版 `SerializeToBytes` / `Deserialize(ReadOnlyMemory<byte>)`；可选 `MediaType` 自报媒体类型）。
 
 ```csharp
 public sealed class YamlSerializer : IContentSerializer
@@ -2700,11 +2700,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2586 / 2575 | `net8.0` / `net6.0` | 5161 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2589 / 2578 | `net8.0` / `net6.0` | 5167 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2786 / 2696** | | **5482** |
+| **合计** | **2789 / 2699** | | **5488** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 

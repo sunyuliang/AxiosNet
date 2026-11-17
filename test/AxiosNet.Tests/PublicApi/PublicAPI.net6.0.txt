@@ -508,6 +508,7 @@
   M:AxiosNet.Serialization.SystemTextJsonSerializer.Deserialize(System.ReadOnlyMemory`1<System.Byte>, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Serialization.SystemTextJsonSerializer.Deserialize(System.String, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Serialization.SystemTextJsonSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
+  M:AxiosNet.Serialization.SystemTextJsonSerializer.SerializeToBytes(System.Object, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Serialization.XmlContentSerializer.Deserialize(System.String, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Serialization.XmlContentSerializer.Serialize(System.Object, System.Type, AxiosNet.AxiosConfig)
   M:AxiosNet.Telemetry.AxiosRequestTrace.SetRequestBodySize(System.Nullable`1<System.Int64>)

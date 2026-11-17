@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2786%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2644%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2789%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2647%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -936,7 +936,7 @@ http.Defaults.Serialization.BodySerializers.Register(AxiosContentType.Xml, XmlCo
 - The table object is shared: the per-request `c.Serialization.BodySerializers` **is** the instance table, so calling `.Register(...)` on it changes the instance. To scope a registration to one request, assign a new table instead. Two clients constructed from the same `AxiosConfig`, or `Defaults.Clone()`, also share the same table.
 - The registry is instance-level: replaying `response.Config` uses the target instance's registry, never the source instance's registrations.
 
-**Custom formats**: implement `IContentSerializer` (two methods for text formats; binary formats add the byte channel `SerializeToBytes` / `Deserialize(ReadOnlyMemory<byte>)`; optional `MediaType` to advertise one).
+**Custom formats**: implement `IContentSerializer` (two methods for text formats; formats whose body is UTF-8 natively — JSON for one — can also implement the byte channel `SerializeToBytes` to skip a text round-trip, returning `null` to fall back to text; purely binary formats replace both methods with the byte versions `SerializeToBytes` / `Deserialize(ReadOnlyMemory<byte>)`; optional `MediaType` to advertise one).
 
 ```csharp
 public sealed class YamlSerializer : IContentSerializer
@@ -2700,11 +2700,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2586 / 2575 | `net8.0` / `net6.0` | 5161 |
+| `AxiosNet.Tests` (core + declarative) | 2589 / 2578 | `net8.0` / `net6.0` | 5167 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2786 / 2696** | | **5482** |
+| **Total** | **2789 / 2699** | | **5488** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
