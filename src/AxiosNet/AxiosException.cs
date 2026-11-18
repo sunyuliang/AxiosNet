@@ -479,6 +479,7 @@ public class AxiosException : Exception
     }
 
     /// <summary>只保留 scheme + host + port + path，剥掉 query / fragment / userinfo：异常消息默认进日志，不应泄露令牌或凭据。先剥敏感部分，再交给 <see cref="Truncate"/> 截断；相对 URI 无法解析组件时退回 <see cref="Uri.OriginalString"/>，保证异常路径不再抛。</summary>
+    /// <remarks>路径本身不脱敏：把凭据放进 path（如 <c>/api/token/{secret}</c>）的接口，消息里仍会原样出现该段。</remarks>
     private static string Sanitize(Uri uri)
         => uri.IsAbsoluteUri
             ? uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped)
