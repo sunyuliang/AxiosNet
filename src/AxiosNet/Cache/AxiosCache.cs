@@ -635,6 +635,12 @@ public sealed class AxiosCache
     /// <summary>登记一次发送：返回的实例要么是领导者（负责发送并落库），要么是等待同一结果的跟随者。</summary>
     internal AxiosCacheFlight Join(string key)
     {
+        // 快路径：已有在途发送时直接跟随，不必先造一个落选的领导者。
+        if (_flights.TryGetValue(key, out var running))
+        {
+            return new AxiosCacheFlight(running.Completion);
+        }
+
         var leader = new AxiosCacheFlight();
         var existing = _flights.GetOrAdd(key, leader);
 
