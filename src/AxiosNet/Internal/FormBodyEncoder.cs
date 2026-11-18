@@ -357,8 +357,9 @@ internal static class FormBodyEncoder
         var rented = ArrayPool<byte>.Shared.Rent(byteCount);
         try
         {
-            encoding.GetBytes(value.AsSpan(), rented);
-            var bytes = rented.AsSpan(0, byteCount);
+            // 以实际写入的字节数为准：池租到的缓冲不清零，多算出来的尾巴不能进转义。
+            var written = encoding.GetBytes(value.AsSpan(), rented);
+            var bytes = rented.AsSpan(0, written);
 
             // 容量一次算准：先数一遍需要转义的字节。
             var escaped = 0;
