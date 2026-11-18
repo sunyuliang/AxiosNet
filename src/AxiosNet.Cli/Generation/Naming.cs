@@ -47,11 +47,12 @@ internal static class Naming
         var builder = new StringBuilder(raw.Length);
         var chunk = new StringBuilder();
 
-        foreach (var c in raw)
+        // 按码位遍历：代理对（U+10000 以上，如 CJK 扩展 B 区的生僻字）本身是字母，必须整体保留。
+        foreach (var rune in raw.EnumerateRunes())
         {
-            if (char.IsLetterOrDigit(c))
+            if (Rune.IsLetterOrDigit(rune))
             {
-                chunk.Append(c);
+                chunk.Append(rune.ToString());
             }
             else
             {
@@ -67,10 +68,10 @@ internal static class Naming
         }
 
         var result = builder.ToString();
-        return char.IsDigit(result[0]) ? "_" + result : result;
+        return Rune.IsDigit(Rune.GetRuneAt(result, 0)) ? "_" + result : result;
     }
 
-    /// <summary>把累积的一段字母数字写入输出：首字母大写、其余保持原样，然后清空累积缓冲。</summary>
+    /// <summary>把累积的一段字母数字写入输出：首个码位大写、其余保持原样，然后清空累积缓冲。</summary>
     private static void Flush(StringBuilder chunk, StringBuilder target)
     {
         if (chunk.Length == 0)
@@ -78,11 +79,11 @@ internal static class Naming
             return;
         }
 
-        target.Append(char.ToUpperInvariant(chunk[0]));
-        if (chunk.Length > 1)
-        {
-            target.Append(chunk.ToString(), 1, chunk.Length - 1);
-        }
+        var text = chunk.ToString();
+        var first = Rune.GetRuneAt(text, 0);
+
+        target.Append(Rune.ToUpperInvariant(first).ToString());
+        target.Append(text, first.Utf16SequenceLength, text.Length - first.Utf16SequenceLength);
 
         chunk.Clear();
     }
@@ -90,9 +91,11 @@ internal static class Naming
     /// <summary>PascalCase 转 camelCase，并对 C# 关键字加 <c>@</c>。</summary>
     public static string Camel(string? raw)
     {
-        // Pascal 一定非空，取首个字符转小写即可得到 camelCase。
+        // Pascal 一定非空，取首个码位转小写即可得到 camelCase。
         var pascal = Pascal(raw);
-        var name = char.ToLowerInvariant(pascal[0]) + pascal[1..];
+        var first = Rune.GetRuneAt(pascal, 0);
+        var name = Rune.ToLowerInvariant(first).ToString() + pascal[first.Utf16SequenceLength..];
+
         return Escape(name);
     }
 
