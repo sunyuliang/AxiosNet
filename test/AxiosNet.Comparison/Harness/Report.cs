@@ -357,7 +357,7 @@ internal static class Report
 
         if (bytes < 1024 * 1024)
         {
-            return $"{bytes / 1024:N1} KB";
+            return $"{bytes / 1024:N2} KB";
         }
 
         return $"{bytes / (1024 * 1024):N2} MB";

@@ -312,7 +312,7 @@ internal static class ResponseReader
                 var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
                 data = WrapDownloadStream(
                     responseStream,
-                    ContentLengthHeader.ReadRaw(message.Content.Headers),
+                    message.Content.Headers.ContentLength,
                     request,
                     config);
             }
@@ -321,7 +321,7 @@ internal static class ResponseReader
                 Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
                 // 本次响应的声明长度：预检、进度流的期望总量与预分配容量共用这一份。
-                var declared = ContentLengthHeader.ReadRaw(message.Content.Headers);
+                var declared = message.Content.Headers.ContentLength;
                 var downloadStream = WrapDownloadStream(responseStream, declared, request, config);
                 byte[] bytes;
                 try
