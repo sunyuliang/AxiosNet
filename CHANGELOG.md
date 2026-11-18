@@ -6,7 +6,7 @@
 
 > **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
 
-## [Unreleased]
+## [1.7.1] - 2026-11-18
 
 ### Changed
 

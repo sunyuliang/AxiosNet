@@ -23,7 +23,7 @@ namespace AxiosNet.SourceGen
     public sealed partial class RequestModelGenerator : IIncrementalGenerator
     {
         internal const string GeneratorName = "AxiosNet.SourceGen";
-        internal const string GeneratorVersion = "1.7.0";
+        internal const string GeneratorVersion = "1.7.1";
 
         /// <summary>请求模型 / 接口代理类名的前缀上限（字符数）：超出的部分只由尾部 64 位哈希承担区分。</summary>
         internal const int MaxClassNamePrefix = 64;
