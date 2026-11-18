@@ -658,11 +658,9 @@ public sealed class AxiosCache
     // 先摘除再放行等待者：之后进来的请求要么重新发送、要么直接命中已落库的条目。
     private void RemoveFlight(string key, AxiosCacheFlight flight)
     {
-        // 先摘再放行：之后进来的请求要么新建一次发送，要么直接命中已落库的条目。
-        if (_flights.TryGetValue(key, out var current) && ReferenceEquals(current, flight))
-        {
-            _flights.TryRemove(key, out _);
-        }
+        // 按「键 + 实例」一并移除：期间若有新领导者上位，不会把它的登记摘掉。
+        ((ICollection<KeyValuePair<string, AxiosCacheFlight>>)_flights)
+            .Remove(new KeyValuePair<string, AxiosCacheFlight>(key, flight));
     }
 
     /// <summary>
