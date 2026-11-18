@@ -40,6 +40,39 @@ public sealed class StreamingTests
     }
 
     // ------------------------------------------------------------------
+    // JSON 数组：空数组与空元素的边界
+    // ------------------------------------------------------------------
+
+    /// <summary>空数组一律交付 0 个元素，不能因为「帧长度为 0」而卡在循环里。</summary>
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("[ ]")]
+    [InlineData("[\r\n\t ]")]
+    public async Task JsonArray_EmptyBody_ProducesNoElements(string body)
+    {
+        using var client = CreateClient(new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes(body) }));
+
+        var response = await client.RequestStreamAsync(new StreamRequest(), AxiosStreamFormat.JsonArray);
+        var items = await CollectAsync(response.Data!);
+
+        Assert.Empty(items);
+    }
+
+    /// <summary>空对象仍是元素：两个 <c>{}</c> 要交付两个帧，而不是被当成空帧跳过。</summary>
+    [Fact]
+    public async Task JsonArray_EmptyObjects_ProducesOneElementPerItem()
+    {
+        var body = Encoding.UTF8.GetBytes("[{},{}]");
+        using var client = CreateClient(new ScriptedStreamHandler(new[] { body }));
+
+        var response = await client.RequestStreamAsync(new StreamRequest(), AxiosStreamFormat.JsonArray);
+        var items = await CollectAsync(response.Data!);
+
+        Assert.Equal(2, items.Count);
+        Assert.All(items, item => Assert.Equal(0, item.N));
+    }
+
+    // ------------------------------------------------------------------
     // 显式 ResponseType：流式入口只在未显式设置时自动切到 Stream
     // ------------------------------------------------------------------
 
