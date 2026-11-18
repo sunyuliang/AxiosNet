@@ -580,12 +580,16 @@ public sealed partial class AxiosClient
 
                 // 长度已知时写进 span，未知则不写（同样走句柄派发，回到开观测的那个实现上；
                 // 句柄绕过派发层，所以这里要兜异常 —— 一行标签写不进去，不该让请求发不出去）。
-                try
+                // 只在本次请求真的在观测时上报。
+                if (telemetryTrace.IsActive)
                 {
-                    telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
+                    try
+                    {
+                        telemetryTrace.SetRequestBodySize(content.Headers.ContentLength);
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                    }
                 }
             }
 

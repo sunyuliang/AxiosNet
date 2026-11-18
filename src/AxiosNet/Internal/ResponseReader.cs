@@ -16,16 +16,19 @@ namespace AxiosNet.Internal;
 internal static class ResponseReader
 {
     /// <summary>
-    /// 下载侧包装：按 Content-Length 预检 maxContentLength，再按需套进度 / 限速 / 长度上限流；
+    /// 下载侧包装：按 <paramref name="declared"/> 预检 maxContentLength，再按需套进度 / 限速 / 长度上限流；
     /// 都不需要时原样返回。长度上限在流上生效，chunked 响应同样受约束。
     /// </summary>
+    /// <param name="stream">响应正文流。</param>
+    /// <param name="declared">响应头声明的正文长度（<c>null</c> = 未声明，如 chunked）。</param>
+    /// <param name="request">请求消息（错误上下文用）。</param>
+    /// <param name="config">本次请求的生效配置。</param>
     private static Stream WrapDownloadStream(
         Stream stream,
-        HttpResponseMessage message,
+        long? declared,
         HttpRequestMessage request,
         AxiosConfig config)
     {
-        var declared = message.Content.Headers.ContentLength;
         var limits = config.LimitsOrNull;
         var callbacks = config.ObservabilityOrNull;
 
@@ -307,13 +310,19 @@ internal static class ResponseReader
             if (config.ResponseType == ResponseType.Stream)
             {
                 var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-                data = WrapDownloadStream(responseStream, message, request, config);
+                data = WrapDownloadStream(
+                    responseStream,
+                    ContentLengthHeader.ReadRaw(message.Content.Headers),
+                    request,
+                    config);
             }
             else
             {
                 Stream responseStream = await message.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-                var downloadStream = WrapDownloadStream(responseStream, message, request, config);
-                var declared = message.Content.Headers.ContentLength;
+
+                // 本次响应的声明长度：预检、进度流的期望总量与预分配容量共用这一份。
+                var declared = ContentLengthHeader.ReadRaw(message.Content.Headers);
+                var downloadStream = WrapDownloadStream(responseStream, declared, request, config);
                 byte[] bytes;
                 try
                 {
