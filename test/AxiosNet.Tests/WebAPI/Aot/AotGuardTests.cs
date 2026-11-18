@@ -2,11 +2,9 @@
 using System.Dynamic;
 using System.Linq.Expressions;
 using System.Text;
-using AxiosNet.Internal;
 using AxiosNet.Metadata;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
-using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;

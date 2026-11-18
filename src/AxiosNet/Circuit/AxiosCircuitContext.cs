@@ -1,4 +1,3 @@
-using AxiosNet.Internal;
 
 namespace AxiosNet.Circuit;
 

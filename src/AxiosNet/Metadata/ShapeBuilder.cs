@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using AxiosNet.Internal;
 
 namespace AxiosNet.Metadata;
 

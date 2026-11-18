@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using AxiosNet.Metadata;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI.Metadata;
 

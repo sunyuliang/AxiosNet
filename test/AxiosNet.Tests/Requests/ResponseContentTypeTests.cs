@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text;
-using AxiosNet.Internal;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests.Requests;

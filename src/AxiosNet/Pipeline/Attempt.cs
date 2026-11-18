@@ -1,6 +1,5 @@
 using System.Runtime.ExceptionServices;
 using AxiosNet.Circuit;
-using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Telemetry;
 

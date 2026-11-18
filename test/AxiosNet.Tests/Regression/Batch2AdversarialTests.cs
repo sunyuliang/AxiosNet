@@ -1,5 +1,4 @@
 using System.Text;
-using AxiosNet.Internal;
 using AxiosNet.Tests.Infrastructure;
 
 namespace AxiosNet.Tests.Regression;

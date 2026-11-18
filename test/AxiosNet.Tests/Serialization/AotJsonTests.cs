@@ -1,10 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using AxiosNet.Internal;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Tests.Serialization;
 

@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text;
-using AxiosNet.Internal;
 using AxiosNet.Pooling;
 
 namespace AxiosNet.Compat.Tests;

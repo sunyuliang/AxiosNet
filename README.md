@@ -2793,12 +2793,13 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 .
 ├─ src/
 │  ├─ AxiosNet/                       # 类库（netstandard2.0 / net6.0 / net8.0 三目标）
-│  │  ├─ Axios.cs                     # 静态门面
-│  │  ├─ AxiosClient*.cs              # 实例 + 请求管线 + 快捷方法
-│  │  ├─ AxiosConfig*.cs              # 配置（顶层 + 六个分组）
-│  │  ├─ AxiosHeaders.cs              # 请求头
-│  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
-│  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs（顶层公共类型）
+│  │  ├─ Client/                      # Axios 静态门面 + AxiosClient 分部类 + 客户端选项
+│  │  │  ├─ Configuration/            # AxiosConfig 分部类与各分组设置
+│  │  │  ├─ Http/                     # 请求头 / URL / 内容 / 媒体类型 / 表单文件 / HTTP3
+│  │  │  ├─ Auth/                     # AxiosAuth / AxiosCredential
+│  │  │  ├─ Response/                 # AxiosResponse / AxiosResponseInfo / AxiosShortCircuit
+│  │  │  ├─ Errors/                   # AxiosException / AxiosErrorCode
+│  │  │  └─ Dynamic/                  # AxiosDynamic（动态访问）
 │  │  ├─ Compatibility/               # netstandard2.0 兼容层：编译期 polyfill / global using 别名 / BCL 扩展 / 平台 helper
 │  │  ├─ Cache/                       # AxiosCache（响应缓存 + 单飞）/ IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # 请求 / 响应拦截器
@@ -2809,9 +2810,15 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + 池选项 / 统计 + Handler 注入
 │  │  ├─ Metadata/                    # 生成元数据注册入口（对象形状 / 字典映射 / 冻结）+ 形状构建器
-│  │  ├─ WebAPI/                      # 声明式 API 客户端（可选扩展，可整体删除；Attributes/ 公开特性，Metadata/ 公开注册入口，Internal/ 共享契约，Reflection/ 仅 JIT）
+│  │  ├─ WebAPI/                      # 声明式 API 客户端（可选扩展，可整体删除；Attributes/ 公开特性，Metadata/ 公开注册入口，Internal/{Authorization,Binding,Metadata,Runtime}/ 共享契约，Reflection/ 仅 JIT）
 │  │  ├─ Reflection/                  # 对象形状与 STJ 的反射回退（只在 JIT 下可达，AOT 镜像里整块裁掉）
-│  │  └─ Internal/                    # URL、正文编码、响应读取、流量计量
+│  │  └─ Internal/                    # 内核实现（子目录 = 职责，命名空间 AxiosNet.Internal.*）
+│  │     ├─ Content/                  # 正文编码 / 表单 / multipart / 压缩
+│  │     ├─ Headers/                  # 请求头 / 媒体类型 / 内容类型解析
+│  │     ├─ Url/                      # URL 构建 / 查询参数
+│  │     ├─ Response/                 # 响应读取 / 响应流 / 状态文案
+│  │     ├─ Serialization/            # 对象形状 / JSON 展平 / 标量转换
+│  │     └─ Support/                  # 超时 / 并发闸门 / 取消分类 / 运行时辅助
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包，同为三目标；Compatibility/ 放本包的 polyfill）
 │  └─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
@@ -2826,6 +2833,8 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 ```
 
 公开特性统一收在 `WebAPI/Attributes/`（命名空间 `AxiosNet.WebAPI.Attributes`），其余公开类型留在 `WebAPI/` 根。
+
+`Client/` 及其下的 `Configuration/`、`Http/` 等目录只做文件归类，目录下的公开类型命名空间仍是 `AxiosNet`；`Internal/` 的子目录同时对应 `AxiosNet.Internal.*` 子命名空间。
 
 ## License
 

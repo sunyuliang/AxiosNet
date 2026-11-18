@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using System.Reflection;
 using System.Text;
 using AxiosNet.Cache;
-using AxiosNet.Internal;
 using AxiosNet.Metadata;
 using AxiosNet.Pooling;
 using AxiosNet.Tests.Infrastructure;

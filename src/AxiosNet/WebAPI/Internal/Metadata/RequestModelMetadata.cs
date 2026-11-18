@@ -1,0 +1,538 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
+using AxiosNet.Metadata;
+using AxiosNet.WebAPI.Attributes;
+using AxiosNet.WebAPI.Metadata;
+using AxiosNet.WebAPI.Reflection;
+
+namespace AxiosNet.WebAPI.Internal.Metadata;
+
+/// <summary>请求模型的绑定元数据（按模型类型缓存一份，构造期完成全部校验）。校验失败同样进入缓存，每次调用都抛同一份错误。</summary>
+internal sealed class RequestModelMetadata
+{
+    /// <summary>AOT 保留范围：模型类型的公开属性与实现的接口。<see cref="ApiClient"/> 的取元数据入口复用同一份标注。</summary>
+    internal const DynamicallyAccessedMemberTypes ModelMembers =
+        DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.Interfaces;
+
+    // 类型 → 构建好的元数据（注册后失效重建）。
+    private static readonly ConcurrentDictionary<Type, RequestModelMetadata> Cache = new();
+
+    static RequestModelMetadata()
+    {
+        // 能力切换（测试钩子）要同时丢掉这里按能力缓存的构建结果。
+        RuntimeSupport.CapabilityChanged += InvalidateAll;
+    }
+
+    private readonly string? _buildError;
+    private readonly Type? _missingMetadataType;
+    private readonly string _pathTemplate;
+    private readonly BindingPlan _plan;
+
+    private RequestModelMetadata(HttpMethod method, string pathTemplate, BindingPlan plan)
+    {
+        Method = method;
+        _pathTemplate = pathTemplate;
+        _plan = plan;
+    }
+
+    private RequestModelMetadata(string buildError)
+    {
+        _buildError = buildError;
+        _pathTemplate = string.Empty;
+        _plan = BindingPlan.Empty;
+    }
+
+    private RequestModelMetadata(Type missingMetadataType)
+    {
+        _missingMetadataType = missingMetadataType;
+        _pathTemplate = string.Empty;
+        _plan = BindingPlan.Empty;
+    }
+
+    /// <summary>本次请求的 HTTP 方法（来自路由特性；仅构建错误的缓存实例上为占位值，<see cref="Get"/> 会先抛错）。</summary>
+    public HttpMethod Method { get; } = null!;
+
+    /// <summary>授权策略（最近一层声明优先；都没标时为 <see cref="ApiAuthorizationMode.Inherit"/>）。</summary>
+    internal ApiAuthorization Authorization { get; init; } = ApiAuthorization.Inherit;
+
+    /// <summary>是否声明了 <see cref="MultipartAttribute"/>（请求体 = 模型自身装配的 multipart 表单）。</summary>
+    internal bool IsMultipart { get; init; }
+
+    /// <summary>类 / 属性级 <c>[BodyContentType]</c> 的生效值（已归一化）；null 表示没有声明。</summary>
+    internal string? ContentType { get; init; }
+
+    /// <summary>类 / 属性级 <c>[QueryCollectionFormat]</c> 的生效值；null 表示没有声明。</summary>
+    internal AxiosCollectionFormat? QueryCollectionFormat { get; init; }
+
+    /// <summary>类 / 属性级 <see cref="StreamAttribute"/> 是否出现；出现时 <see cref="StreamFormat"/> 为生效值。</summary>
+    internal bool HasStreamAttribute { get; init; }
+
+    /// <summary>流式响应帧格式的生效值；<see cref="HasStreamAttribute"/> 为 false 时无意义。</summary>
+    internal AxiosStreamFormat StreamFormat { get; init; }
+
+    /// <summary>multipart 部件绑定：未标注参数特性的属性默认参与（名字 = [JsonPropertyName] / 属性名），[Part] 可覆盖。</summary>
+    internal PartBinding[] PartBindings { get; init; } = [];
+
+    /// <summary>取（必要时构建并缓存）请求模型的绑定元数据；模型定义非法时抛 <see cref="InvalidOperationException"/>。</summary>
+    /// <param name="requestType">请求模型类型；标注要求 JIT 回退路径保留公开属性（生成路径不依赖反射）。</param>
+    public static RequestModelMetadata Get(
+        [DynamicallyAccessedMembers(ModelMembers)] Type requestType)
+    {
+        // 用捕获的 requestType（带标注）而不是工厂参数：缓存字典的 Type 键本身不携带裁剪标注。
+        var metadata = Cache.GetOrAdd(requestType, _ => Build(requestType));
+
+        if (metadata._missingMetadataType is { } missingType)
+        {
+            // 每次新建异常：同一条缓存可被并发请求共享，异常实例不能跨线程同时抛出。
+            throw AxiosAotMetadataException.MissingRequestModel(missingType);
+        }
+
+        if (metadata._buildError is not null)
+        {
+            throw new InvalidOperationException(metadata._buildError);
+        }
+
+        return metadata;
+    }
+
+    /// <summary>注册新声明后摘掉该类型的旧缓存：反射构建的结果不能压过之后的显式注册。</summary>
+    /// <param name="requestType">被注册的请求模型类型。</param>
+    internal static void Invalidate(Type requestType) => Cache.TryRemove(requestType, out _);
+
+    /// <summary>测试钩子：切换动态代码能力后清空全部缓存（JIT 构建的元数据与 AOT 结论不能混用）。</summary>
+    internal static void InvalidateAll() => Cache.Clear();
+
+    /// <summary>把路径模板里的 <c>{name}</c> 替换成属性值（URL 转义），返回最终请求 URL。</summary>
+    /// <param name="request">请求模型实例。</param>
+    /// <param name="formatter">URL 参数格式化钩子（返回 null 表示用默认规则），可为 null。</param>
+    public string ResolveUrl(object request, Func<object?, ValueTextChannel, string?>? formatter)
+        => _plan.ResolveUrl(_pathTemplate, request, formatter);
+
+    /// <summary>汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定 + 平铺的字典映射）；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
+    /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。</summary>
+    public Dictionary<string, object?>? ResolveQuery(object request, Func<object?, ValueTextChannel, string?>? formatter)
+        => _plan.ResolveQuery(request, formatter);
+
+    /// <summary>请求体的原始值：普通模型取 <see cref="BodyAttribute"/> 属性；multipart 模型返回装配好的声明式表单（全部属性为 <c>null</c> 时返回 <c>null</c>）。</summary>
+    /// <param name="request">请求模型实例。</param>
+    /// <param name="formatter">实例级格式化钩子；只作用于裸标量正文与部件文本。</param>
+    public object? ResolveBody(object request, Func<object?, ValueTextChannel, string?>? formatter)
+    {
+        if (!IsMultipart)
+        {
+            return _plan.ResolveBodyValue(request, formatter);
+        }
+
+        // 模型自身即表单：null 属性跳过（与 query / headers 的 null 规则一致）
+        var form = new FormData { SourceName = request.GetType().Name };
+
+        try
+        {
+            foreach (var binding in PartBindings)
+            {
+                var value = binding.Source.GetValue(request);
+                if (value is null)
+                {
+                    continue;
+                }
+
+                if (binding.Source.Format is { } format)
+                {
+                    form.Formats[binding.Name] = format;
+                }
+
+                // 声明覆盖与值分开登记，覆盖在装配时由 MultipartBodyBuilder 应用。
+                var partOverride = new FormPartOverride(binding.FileName, binding.ContentType, binding.HasExplicitName);
+                if (partOverride.Any)
+                {
+                    form.Overrides[binding.Name] = partOverride;
+                    form.Add(binding.Name, MultipartValues.MaterializeDeclaredCollection(value));
+                }
+                else
+                {
+                    form.Add(binding.Name, value);
+                }
+            }
+        }
+        catch
+        {
+            // 还没交给 MultipartBodyBuilder：已取得的流 / 内容必须就地释放，否则会随异常泄漏。
+            form.DisposeOwned();
+            throw;
+        }
+
+        // 全部属性为 null：没有可发的部件，按「无请求体」处理（与 [Body] 为 null 的行为一致）
+        return form.Count > 0 ? form : null;
+    }
+
+    /// <summary>把全部 <see cref="HeaderAttribute"/> 属性写进配置；没有任何头绑定时不动配置。头名 / 头值在配置构建期按 <see cref="AxiosHeaders.Set(string, string?)"/> 校验。</summary>
+    public void ApplyHeaders(object request, AxiosConfig config, Func<object?, ValueTextChannel, string?>? formatter)
+        => _plan.ApplyHeaders(request, config, formatter);
+
+    /// <summary>应用类级 <see cref="HeadersAttribute"/> 声明：值写入头，只有名字的声明摘除同名头。</summary>
+    public void ApplyStaticHeaders(AxiosConfig config) => _plan.ApplyStaticHeaders(config);
+
+    // 构建：声明优先（生成器 / 手工注册）→ JIT 反射 → AOT 显式失败
+
+    private static RequestModelMetadata Build(
+        [DynamicallyAccessedMembers(ModelMembers)] Type requestType)
+    {
+        try
+        {
+            if (GeneratedMetadataRegistry.TryGetRequestModel(requestType, out var declaration))
+            {
+                return BuildCore(declaration);
+            }
+
+            // 条件里必须是 RuntimeFeature.IsDynamicCodeSupported 本身：ILC 折成常量 false 后，这段反射实现才不可达并被裁掉。
+            if (!RuntimeSupport.ForceNoDynamicCode && RuntimeFeature.IsDynamicCodeSupported)
+            {
+                return BuildCore(RequestModelDeclarationReader.Read(requestType));
+            }
+
+            return new RequestModelMetadata(requestType);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
+        {
+            // 特性构造函数抛出的 ArgumentException / FormatException 连同校验错误一起缓存，统一从 Get() 抛出。
+            return new RequestModelMetadata(ex.Message);
+        }
+    }
+
+    /// <summary>构建契约：路由 → 类级静态头 → 属性绑定（multipart 部件）→ 默认 Body 推断 → 授权。</summary>
+    private static RequestModelMetadata BuildCore(RequestModelDeclaration declaration)
+    {
+        var modelName = declaration.ModelType.Name;
+
+        if (declaration.Error is { } registrationError)
+        {
+            throw new InvalidOperationException(registrationError);
+        }
+
+        if (string.IsNullOrWhiteSpace(declaration.MethodName) || string.IsNullOrWhiteSpace(declaration.Path))
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {modelName} 缺少路由特性：请在类上标注 [Get(\"...\")] / [Post(\"...\")] 等 HttpApiAttribute 子类。");
+        }
+
+        var method = DeclarationNormalization.HttpMethodFrom(declaration.MethodName);
+        var path = DeclarationNormalization.Path(declaration.Path);
+        var owner = $"请求模型 {modelName}";
+
+        // 类 / 属性两层的编码声明：属性级优先，但两层都显式声明且取值不同时直接报错，不静默取一个。
+        var contentType = ResolveContentType(declaration, owner);
+        var queryCollectionFormat = ResolveQueryCollectionFormat(declaration, owner);
+        var (hasStream, streamFormat) = ResolveStream(declaration, owner);
+
+        var accumulator = new BindingAccumulator(owner, "属性");
+
+        // multipart 部件绑定：模型声明 [Multipart] 时，模型自身即表单
+        var parts = new List<PartBinding>();
+        var seenPartNames = new HashSet<string>(StringComparer.Ordinal);
+        var isMultipart = declaration.Multipart;
+
+        // multipart 的正文由全部属性装配、媒体类型固定，声明 [BodyContentType] 无法生效。
+        if (isMultipart && contentType is not null)
+        {
+            throw new InvalidOperationException(
+                $"{owner} 同时声明了 [Multipart] 与 [BodyContentType]（\"{contentType}\"）："
+                + "multipart 的媒体类型固定为 multipart/form-data，两者互斥。");
+        }
+
+        accumulator.AddStaticHeaders(declaration.StaticHeaders);
+
+        foreach (var member in declaration.Members)
+        {
+            if (member.Ignore)
+            {
+                if (member.HasAnyBinding)
+                {
+                    throw new InvalidOperationException(
+                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
+                        + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
+                }
+
+                // 完全排除：不进任何绑定，也不算「未标注」（不阻断默认 Body 判定）
+                continue;
+            }
+
+            if (member.GetValue is null)
+            {
+                throw new InvalidOperationException(
+                    $"请求模型 {modelName}.{member.Name} 缺少取值实现：生成元数据不完整，请检查源生成器版本与包是否匹配。");
+            }
+
+            // 同一属性可同时绑定多处（路径 + 头 + 查询 + 请求体），按各处的 null 规则分别应用。
+            var source = new DelegateValueSource(
+                member.Name,
+                member.ValueType,
+                member.GetValue,
+                member.Description ?? $"{modelName}.{member.Name}",
+                member.Format);
+
+            if (member.Path)
+            {
+                accumulator.AddPath(source, member.PathName ?? string.Empty);
+            }
+
+            if (member.Header)
+            {
+                accumulator.AddHeader(source, member.HeaderName ?? string.Empty);
+            }
+
+            if (member.HeaderCollection)
+            {
+                accumulator.AddHeaderCollection(source);
+            }
+
+            if (member.Part)
+            {
+                if (!isMultipart)
+                {
+                    throw new InvalidOperationException(
+                        $"属性 {modelName}.{member.Name} 标注了 [Part]，但模型没有 [Multipart]：请在类上声明 [Multipart]。");
+                }
+
+                accumulator.ValidatePartFormat(source);
+
+                var display = $"{owner}.{member.Name}";
+                var explicitName = DeclarationNormalization.OptionalPartValue(member.PartName, display, nameof(PartAttribute.Name));
+
+                // 默认名走 [JsonPropertyName] / 属性名，与 builder 展平嵌套对象时的命名规则一致
+                var name = explicitName ?? member.FieldName;
+                if (!seenPartNames.Add(name))
+                {
+                    throw DuplicateBinding(declaration.ModelType, name, "Part");
+                }
+
+                parts.Add(new PartBinding(
+                    name,
+                    source,
+                    explicitName is not null,
+                    DeclarationNormalization.OptionalPartValue(member.PartFileName, display, nameof(PartAttribute.FileName)),
+                    DeclarationNormalization.OptionalPartValue(member.PartContentType, display, nameof(PartAttribute.ContentType))));
+            }
+
+            if (member.Body)
+            {
+                accumulator.AddBody(source);
+            }
+
+            if (!member.HasAnyBinding)
+            {
+                if (isMultipart)
+                {
+                    // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认 Body / Query 判定
+                    var partName = member.FieldName;
+                    if (!seenPartNames.Add(partName))
+                    {
+                        throw DuplicateBinding(declaration.ModelType, partName, "Part");
+                    }
+
+                    parts.Add(new PartBinding(partName, source, false, null, null));
+                    continue;
+                }
+
+                // 无标注 → 默认 Query（名字回退属性名）
+                accumulator.AddUnannotated(source);
+            }
+            else if (member.Query)
+            {
+                // 已有其他绑定的属性再显式 [Query]：追加一处查询绑定
+                accumulator.AddQuery(source, member.QueryName ?? string.Empty);
+            }
+        }
+
+        // multipart 与 [Body] 互斥：一个模型两种请求体形态属二义性
+        if (isMultipart && accumulator.HasBody)
+        {
+            throw new InvalidOperationException(
+                $"请求模型 {modelName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
+                + "multipart 模型的请求体由全部属性装配，两者互斥。");
+        }
+
+        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart);
+
+        return new RequestModelMetadata(method, path, plan)
+        {
+            Authorization = DeclarationNormalization.Authorization(declaration.AllowAnonymous, declaration.AuthorizeScheme, owner),
+            IsMultipart = isMultipart,
+            PartBindings = [.. parts],
+            ContentType = contentType,
+            QueryCollectionFormat = queryCollectionFormat,
+            HasStreamAttribute = hasStream,
+            StreamFormat = streamFormat
+        };
+    }
+
+    // ---- 类 / 属性两层编码声明的解析：属性级优先；两层都显式声明且取值不同 → ERR_BAD_OPTION_VALUE ----
+
+    private static string? ResolveContentType(RequestModelDeclaration declaration, string owner)
+    {
+        var typeValue = declaration.ContentType is null
+            ? (string?)null
+            : DeclarationNormalization.ContentType(declaration.ContentType);
+
+        var members = declaration.Members
+            .Where(member => !member.Ignore && member.ContentType is not null)
+            .Select(member => (Value: DeclarationNormalization.ContentType(member.ContentType), Display: $"{owner}.{member.Name}"))
+            .ToList();
+
+        var (hasValue, value) = ResolveEncodingDeclaration(
+            owner,
+            "BodyContentType",
+            typeValue is not null,
+            typeValue ?? string.Empty,
+            members.Select(item => (item.Value, item.Display)).ToList());
+
+        return hasValue ? value : null;
+    }
+
+    /// <summary>
+    /// 解析查询集合格式的两层声明（属性级 > 类型级），顺带校验枚举值合法；
+    /// 属性之间或属性与类之间取值不一致时报 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// </summary>
+    /// <param name="declaration">模型的声明快照（类型级 + 各属性级）。</param>
+    /// <param name="owner">报错用的模型名。</param>
+    /// <returns>生效的集合格式；两层都没声明时为 <c>null</c>（走默认 <c>Brackets</c>）。</returns>
+    private static AxiosCollectionFormat? ResolveQueryCollectionFormat(RequestModelDeclaration declaration, string owner)
+    {
+        var hasTypeValue = declaration.QueryCollectionFormat is not null;
+        var typeValue = declaration.QueryCollectionFormat ?? default;
+        if (hasTypeValue)
+        {
+            ValidateCollectionFormat(typeValue, owner, "类");
+        }
+
+        var members = declaration.Members
+            .Where(member => !member.Ignore && member.QueryCollectionFormat is not null)
+            .Select(member =>
+            {
+                var value = member.QueryCollectionFormat!.Value;
+                ValidateCollectionFormat(value, owner, $"属性 {member.Name}");
+                return (Value: value, Display: $"{owner}.{member.Name}");
+            })
+            .ToList();
+
+        var (hasValue, value) = ResolveEncodingDeclaration(
+            owner,
+            "QueryCollectionFormat",
+            hasTypeValue,
+            typeValue,
+            members);
+
+        return hasValue ? value : null;
+    }
+
+    private static (bool HasValue, AxiosStreamFormat Value) ResolveStream(RequestModelDeclaration declaration, string owner)
+    {
+        var hasTypeValue = declaration.HasStreamAttribute;
+        var typeValue = declaration.StreamFormat;
+        if (hasTypeValue)
+        {
+            ValidateStreamFormat(typeValue, owner, "类");
+        }
+
+        var members = declaration.Members
+            .Where(member => !member.Ignore && member.HasStreamAttribute)
+            .Select(member =>
+            {
+                ValidateStreamFormat(member.StreamFormat, owner, $"属性 {member.Name}");
+                return (Value: member.StreamFormat, Display: $"{owner}.{member.Name}");
+            })
+            .ToList();
+
+        var (hasValue, value) = ResolveEncodingDeclaration(
+            owner,
+            "Stream",
+            hasTypeValue,
+            typeValue,
+            members);
+
+        return (hasValue, value);
+    }
+
+    /// <summary>
+    /// 两层声明解析：属性级 > 类型级；多个属性都声明时必须一致；属性与类同时声明且取值不同 → <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 返回值可空表示两层都没有声明（调用方只在至少有声明时使用）。
+    /// </summary>
+    private static (bool HasValue, T Value) ResolveEncodingDeclaration<T>(
+        string owner,
+        string attributeName,
+        bool hasTypeValue,
+        T typeValue,
+        IReadOnlyList<(T Value, string Display)> members)
+    {
+        if (members.Count == 0)
+        {
+            return hasTypeValue ? (true, typeValue) : (false, default!);
+        }
+
+        var first = members[0];
+        for (var i = 1; i < members.Count; i++)
+        {
+            if (!EqualityComparer<T>.Default.Equals(first.Value, members[i].Value))
+            {
+                throw AxiosException.InvalidOption(
+                    $"{owner} 的 [{attributeName}] 在多个属性上声明了不同的值（{FormatDeclarations(members)}）："
+                    + "请只保留一处，或让所有声明一致。");
+            }
+        }
+
+        if (hasTypeValue && !EqualityComparer<T>.Default.Equals(typeValue, first.Value))
+        {
+            throw AxiosException.InvalidOption(
+                $"{owner} 的 [{attributeName}] 在类与属性上声明了不同的值（类：{FormatValue(typeValue)}，{first.Display}：{FormatValue(first.Value)}）："
+                + "两层声明必须一致，或只保留一层。");
+        }
+
+        return (true, first.Value);
+    }
+
+    /// <summary>把「声明位置 = 取值」拼成一条可读清单，用于「多处声明不一致」的错误消息。</summary>
+    /// <param name="members">各属性的声明（取值 + <c>类型.成员</c> 定位文本）。</param>
+    /// <typeparam name="T">声明值的类型（字符串或枚举）。</typeparam>
+    /// <returns>形如 <c>A.P=0、A.Q=1</c> 的清单。</returns>
+    private static string FormatDeclarations<T>(IReadOnlyList<(T Value, string Display)> members)
+        => string.Join("、", members.Select(item => $"{item.Display}={FormatValue(item.Value)}"));
+
+    /// <summary>取值的展示文本：字符串加引号（否则看不出首尾空格），其余走 <c>ToString</c>，<c>null</c> 显示为 <c>null</c>。</summary>
+    /// <param name="value">要展示的声明值。</param>
+    /// <typeparam name="T">值的类型。</typeparam>
+    /// <returns>错误消息里用的文本。</returns>
+    private static string FormatValue<T>(T value)
+        => value is string text ? $"\"{text}\"" : value?.ToString() ?? "null";
+
+    /// <summary>校验集合格式声明落在已定义的枚举范围内：不在范围内说明声明写错了，直接报错而不是静默退回默认值。</summary>
+    /// <param name="format">声明值。</param>
+    /// <param name="owner">报错用的模型名。</param>
+    /// <param name="scope">声明位置（<c>类</c> 或 <c>属性 X</c>）。</param>
+    private static void ValidateCollectionFormat(AxiosCollectionFormat format, string owner, string scope)
+    {
+        if (!Enum.IsDefined(typeof(AxiosCollectionFormat), format))
+        {
+            throw new InvalidOperationException(
+                $"{owner}（{scope}）的 [QueryCollectionFormat] 值 {format} 不是已定义的 AxiosCollectionFormat："
+                + "只能是 Brackets / Multi / Csv / Ssv / Tsv / Pipes。");
+        }
+    }
+
+    /// <summary>校验流式格式声明落在已定义的枚举范围内（<see cref="ValidateCollectionFormat"/> 的同类检查）。</summary>
+    /// <param name="format">声明值。</param>
+    /// <param name="owner">报错用的模型名。</param>
+    /// <param name="scope">声明位置（<c>类</c> 或 <c>属性 X</c>）。</param>
+    private static void ValidateStreamFormat(AxiosStreamFormat format, string owner, string scope)
+    {
+        if (!Enum.IsDefined(typeof(AxiosStreamFormat), format))
+        {
+            throw new InvalidOperationException(
+                $"{owner}（{scope}）的 [Stream] 值 {format} 不是已定义的 AxiosStreamFormat："
+                + "只能是 NewlineDelimitedJson / ServerSentEvents / JsonArray。");
+        }
+    }
+
+    /// <summary>同名绑定冲突的错误：说明同名参数要合并成同一个属性。</summary>
+    private static InvalidOperationException DuplicateBinding(Type requestType, string name, string kind)
+        => new($"请求模型 {requestType.Name} 有多个 {kind} 绑定使用了同名 \"{name}\"：同名参数请合并为一个属性（集合值走 AxiosNet 的数组规则）。");
+}

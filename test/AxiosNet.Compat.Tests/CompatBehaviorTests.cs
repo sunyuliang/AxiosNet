@@ -5,7 +5,6 @@ using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using AxiosNet.Internal;
 using AxiosNet.Pooling;
 
 namespace AxiosNet.Compat.Tests;

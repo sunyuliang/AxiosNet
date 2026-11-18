@@ -1,4 +1,3 @@
-using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Tests.Infrastructure;
 

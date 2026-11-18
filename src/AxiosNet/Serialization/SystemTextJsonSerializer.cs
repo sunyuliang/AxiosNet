@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
 using System.Text;
-using AxiosNet.Internal;
 using AxiosNet.Metadata;
 using AxiosNet.Reflection;
 

@@ -1,5 +1,4 @@
 using System.Runtime.ExceptionServices;
-using AxiosNet.Internal;
 using AxiosNet.Retry;
 
 namespace AxiosNet.Pipeline;

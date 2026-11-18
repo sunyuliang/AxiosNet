@@ -141,7 +141,7 @@ internal static class CommentAudit
     /// <summary>源生成器烘焙进程序集的元数据载体，属性名即语义。</summary>
     private static readonly HashSet<string> ExemptFiles = new(StringComparer.Ordinal)
     {
-        "src/AxiosNet/WebAPI/Internal/MetadataDeclarations.cs",
+        "src/AxiosNet/WebAPI/Internal/Metadata/MetadataDeclarations.cs",
     };
 
     private static readonly HashSet<string> ModifierWords = new(StringComparer.Ordinal)

@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
-using AxiosNet.Internal;
 using AxiosNet.Reflection;
 
 namespace AxiosNet.Metadata;

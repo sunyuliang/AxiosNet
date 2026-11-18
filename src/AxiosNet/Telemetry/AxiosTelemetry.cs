@@ -3,7 +3,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using AxiosNet.Circuit;
-using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Retry;
 

@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using AxiosNet.Internal;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 

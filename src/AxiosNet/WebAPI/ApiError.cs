@@ -1,5 +1,4 @@
 using System.Text.Json;
-using AxiosNet.Internal;
 
 namespace AxiosNet.WebAPI;
 

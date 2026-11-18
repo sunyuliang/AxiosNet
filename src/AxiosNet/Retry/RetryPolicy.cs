@@ -1,5 +1,4 @@
 using System.Globalization;
-using AxiosNet.Internal;
 
 namespace AxiosNet.Retry;
 

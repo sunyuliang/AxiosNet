@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI.Reflection;
 

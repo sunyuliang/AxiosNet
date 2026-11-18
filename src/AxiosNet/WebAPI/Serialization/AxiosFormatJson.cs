@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using AxiosNet.Internal;
 using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Reflection;

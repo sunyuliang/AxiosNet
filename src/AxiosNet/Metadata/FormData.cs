@@ -37,9 +37,9 @@ public sealed class FormData : Dictionary<string, object?>
 #endif
 
     /// <summary>回收本容器里已取得的流与内容（装配中途失败时用），单个部件释放失败不影响其余项。</summary>
-    public void DisposeOwned() => AxiosNet.Internal.MultipartOwnership.DisposeOwned(Values);
+    public void DisposeOwned() => AxiosNet.Internal.Content.MultipartOwnership.DisposeOwned(Values);
 
     /// <summary>回收一组表单值里已取得的流与内容（例如迭代中途失败时）；单个部件释放失败不影响其余项。</summary>
     public static void DisposeOwnedValues(IEnumerable<object?> values)
-        => AxiosNet.Internal.MultipartOwnership.DisposeOwned(values);
+        => AxiosNet.Internal.Content.MultipartOwnership.DisposeOwned(values);
 }

@@ -5,7 +5,6 @@ using AxiosNet.Tests.Infrastructure;
 using AxiosNet.Tests.Resilience;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.Tests.WebAPI;
 

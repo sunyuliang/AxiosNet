@@ -1,12 +1,10 @@
 
 using AxiosNet.Cache;
-using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
-using AxiosNet.WebAPI.Internal;
 using System.Buffers;
 using System.Diagnostics;
 using System.Net;

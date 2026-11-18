@@ -2793,12 +2793,13 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 .
 ├─ src/
 │  ├─ AxiosNet/                       # library (tri-target netstandard2.0 / net6.0 / net8.0)
-│  │  ├─ Axios.cs                     # static facade
-│  │  ├─ AxiosClient*.cs              # instance + request pipeline + shortcuts
-│  │  ├─ AxiosConfig*.cs              # configuration (top level + six groups)
-│  │  ├─ AxiosHeaders.cs              # request headers
-│  │  ├─ AxiosResponse.cs / AxiosException.cs / AxiosErrorCode.cs / AxiosShortCircuit.cs
-│  │  ├─ AxiosDynamic.cs / AxiosContent.cs / AxiosJson.cs / FormFile.cs (top-level public types)
+│  │  ├─ Client/                      # Axios static facade + AxiosClient partials + client options
+│  │  │  ├─ Configuration/            # AxiosConfig partials and per-group settings
+│  │  │  ├─ Http/                     # headers / URL / content / media types / form files / HTTP3
+│  │  │  ├─ Auth/                     # AxiosAuth / AxiosCredential
+│  │  │  ├─ Response/                 # AxiosResponse / AxiosResponseInfo / AxiosShortCircuit
+│  │  │  ├─ Errors/                   # AxiosException / AxiosErrorCode
+│  │  │  └─ Dynamic/                  # AxiosDynamic (dynamic access)
 │  │  ├─ Compatibility/               # netstandard2.0 shims: compile-time polyfills / global using aliases / BCL extensions / platform helpers
 │  │  ├─ Cache/                       # AxiosCache (response cache + single flight) / IAxiosCacheStore / MemoryCacheStore
 │  │  ├─ Interceptors/                # request / response interceptors
@@ -2809,9 +2810,15 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │  ├─ Telemetry/                   # ActivitySource / Meter / DiagnosticListener
 │  │  ├─ Pooling/                     # HttpConnectionPool + options / statistics + handler injection
 │  │  ├─ Metadata/                    # metadata registration entry points (object shapes / dictionary maps / freeze) + shape builders
-│  │  ├─ WebAPI/                      # declarative API client (optional extension, removable as a whole; Attributes/ = public attributes, Metadata/ = public registration entry points, Internal/ = shared contract, Reflection/ = JIT-only)
+│  │  ├─ WebAPI/                      # declarative API client (optional extension, removable as a whole; Attributes/ = public attributes, Metadata/ = public registration entry points, Internal/{Authorization,Binding,Metadata,Runtime}/ = shared contract, Reflection/ = JIT-only)
 │  │  ├─ Reflection/                  # object-shape and STJ reflection fallbacks (JIT-only, trimmed away entirely under AOT)
-│  │  └─ Internal/                    # URL, body encoding, response reading, traffic metering
+│  │  └─ Internal/                    # core implementation (subfolders = responsibilities, namespaces AxiosNet.Internal.*)
+│  │     ├─ Content/                  # body encoding / forms / multipart / compression
+│  │     ├─ Headers/                  # headers / media types / content-type parsing
+│  │     ├─ Url/                      # URL building / query parameters
+│  │     ├─ Response/                 # response reading / response streams / status text
+│  │     ├─ Serialization/            # object shapes / JSON flattening / scalar conversion
+│  │     └─ Support/                  # timeouts / concurrency gate / cancellation / runtime helpers
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
 │  ├─ AxiosNet.DependencyInjection/   # DI extensions (separate package, tri-target too; Compatibility/ holds its polyfills)
 │  └─ AxiosNet.Cli/                   # design-time tool axiosnet-gen: OpenAPI / Swagger → declarative C# (see "OpenAPI import")
@@ -2826,6 +2833,8 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 ```
 
 Public attributes all live under `WebAPI/Attributes/` (namespace `AxiosNet.WebAPI.Attributes`); other public types stay at the `WebAPI/` root.
+
+`Client/` and its subfolders such as `Configuration/` and `Http/` only group files: public types in them keep the `AxiosNet` namespace. Each `Internal/` subfolder maps to an `AxiosNet.Internal.*` sub-namespace.
 
 ## License
 

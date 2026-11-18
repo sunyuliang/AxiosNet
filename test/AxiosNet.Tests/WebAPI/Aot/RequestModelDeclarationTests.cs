@@ -1,6 +1,5 @@
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
-using AxiosNet.WebAPI.Internal;
 using AxiosNet.WebAPI.Metadata;
 
 namespace AxiosNet.Tests.WebAPI.Aot;

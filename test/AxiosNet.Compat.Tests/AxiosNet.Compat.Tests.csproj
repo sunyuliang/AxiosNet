@@ -31,6 +31,13 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <!-- Internal 内核按职责拆分命名空间，测试直接导入内部实现做细粒度验证。 -->
+    <Using Include="AxiosNet.Internal.Content" />
+    <Using Include="AxiosNet.Internal.Headers" />
+    <Using Include="AxiosNet.Internal.Response" />
+    <Using Include="AxiosNet.Internal.Serialization" />
+    <Using Include="AxiosNet.Internal.Support" />
+    <Using Include="AxiosNet.Internal.Url" />
   </ItemGroup>
 
   <ItemGroup>

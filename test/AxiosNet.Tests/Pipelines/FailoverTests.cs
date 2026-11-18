@@ -3,7 +3,6 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using AxiosNet.Circuit;
-using AxiosNet.Internal;
 using AxiosNet.Pipeline;
 using AxiosNet.Pooling;
 using AxiosNet.Retry;

@@ -1,7 +1,6 @@
 
 using AxiosNet.Cache;
 using AxiosNet.Circuit;
-using AxiosNet.Internal;
 using AxiosNet.Pooling;
 using AxiosNet.Retry;
 using AxiosNet.Telemetry;

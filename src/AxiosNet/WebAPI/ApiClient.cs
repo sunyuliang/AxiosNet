@@ -1,9 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
-using AxiosNet.Internal;
 using AxiosNet.Metadata;
 using AxiosNet.Retry;
 using AxiosNet.WebAPI.Attributes;
-using AxiosNet.WebAPI.Internal;
 
 namespace AxiosNet.WebAPI;
 

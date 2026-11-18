@@ -1,5 +1,4 @@
-﻿using AxiosNet.Internal;
-
+﻿
 namespace AxiosNet.Tests.Requests;
 
 /// <summary>

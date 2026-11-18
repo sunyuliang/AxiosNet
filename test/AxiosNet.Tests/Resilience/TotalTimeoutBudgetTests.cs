@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using AxiosNet.Internal;
 
 namespace AxiosNet.Tests.Resilience;
 

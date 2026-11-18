@@ -1,5 +1,4 @@
 
-using AxiosNet.Internal;
 using AxiosNet.Retry;
 using AxiosNet.Tests.Infrastructure;
 using System.Diagnostics;
