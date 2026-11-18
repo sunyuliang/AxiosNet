@@ -50,16 +50,13 @@ namespace AxiosNet.SourceGen
         /// <summary>类型匹配后转发给 <see cref="Equals(EquatableArray{T})"/>。</summary>
         public override bool Equals(object? obj) => obj is EquatableArray<T> other && Equals(other);
 
-        /// <summary>按 17/31 顺序累积；底层是默认数组时返回 0（<c>default</c> 与 <see cref="Empty"/> 相等，哈希不同是已知取舍）。</summary>
+        /// <summary>按 17/31 顺序累积；底层是默认数组时按空数组计算，与 <see cref="Equals(EquatableArray{T})"/> 的判定一致。</summary>
         public override int GetHashCode()
         {
-            if (_items.IsDefault)
-            {
-                return 0;
-            }
+            var items = _items.IsDefault ? ImmutableArray<T>.Empty : _items;
 
             var hash = 17;
-            foreach (var item in _items)
+            foreach (var item in items)
             {
                 hash = (hash * 31) + item.GetHashCode();
             }
