@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2789%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2647%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2796%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2653%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -2700,11 +2700,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2589 / 2578 | `net8.0` / `net6.0` | 5167 |
+| `AxiosNet.Tests` (core + declarative) | 2595 / 2584 | `net8.0` / `net6.0` | 5179 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
-| `AxiosNet.Cli.Tests` (OpenAPI generation) | 74 | `net8.0` | 74 |
+| `AxiosNet.Cli.Tests` (OpenAPI generation) | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2789 / 2699** | | **5488** |
+| **Total** | **2796 / 2705** | | **5501** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 

@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2789%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2647%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2796%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2653%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -2700,11 +2700,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2589 / 2578 | `net8.0` / `net6.0` | 5167 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2595 / 2584 | `net8.0` / `net6.0` | 5179 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
-| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 74 | `net8.0` | 74 |
+| `AxiosNet.Cli.Tests`（OpenAPI 生成） | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2789 / 2699** | | **5488** |
+| **合计** | **2796 / 2705** | | **5501** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
