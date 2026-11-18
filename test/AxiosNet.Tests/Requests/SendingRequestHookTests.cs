@@ -143,6 +143,10 @@ public sealed class SendingRequestHookTests
         Assert.Equal(2, requests.Count);
         Assert.Equal("v", requests[0].Headers["X-Body-Sign"]);
         Assert.Equal("v", requests[1].Headers["X-Body-Sign"]);
+
+        // 正文归模板：第二次尝试重放的是同一份序列化结果，不是被第一次尝试释放掉的空正文。
+        Assert.Equal("{\"name\":\"x\"}", Encoding.UTF8.GetString(requests[0].Body));
+        Assert.Equal("{\"name\":\"x\"}", Encoding.UTF8.GetString(requests[1].Body));
     }
 
     [Fact]

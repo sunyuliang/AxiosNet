@@ -7,6 +7,10 @@ namespace AxiosNet.Internal;
 /// <c>OnSendingRequest</c> 改写 <c>request.Content.Headers</c> 时只影响这一个外壳，
 /// 不会污染模板正文（后续重试）或其它对冲分支共享的那一份。
 /// </summary>
+/// <remarks>
+/// 本类不拥有内层正文：<see cref="IDisposable.Dispose"/> 只清理自己的缓冲，不释放构造时传入的内容。
+/// 内层归创建它的模板（重试 / 换端点 / 对冲分支还要重复读），释放它会让后续尝试在序列化正文时失败。
+/// </remarks>
 internal sealed class HeaderIsolatedContent : HttpContent
 {
     private readonly HttpContent _inner;

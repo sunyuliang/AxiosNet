@@ -142,7 +142,6 @@ public sealed partial class AxiosClient
 
         // 发送前钩子的专用副本：钩子改写只作用于本次发送，不会留在模板上被后续尝试复制。
         HttpRequestMessage? hookedRequest = null;
-        HttpContent? templateContent = null;
 
         try
         {
@@ -155,15 +154,18 @@ public sealed partial class AxiosClient
             {
                 // 模板会被后续重试 / 换端点 / 对冲反复复制（且第一次尝试就是模板本身），
                 // 钩子的改写因此落在独占副本上：一次发送一份头，重试各自签名不会互相污染。
-                templateContent = request.Content;
+                var templateContent = request.Content;
                 hookedRequest = Attempt.CloneRequest(request);
                 request = hookedRequest;
 
                 // 正文对象是共享的（复制请求只复制头），因此 request.Content.Headers 也是共享的：
                 // 用一层头隔离外壳再交给钩子，钩子对内容头的改写才不会叠到下一次尝试 / 另一条对冲分支上。
+                // 外壳不拥有正文，摘掉引用或随副本释放都不影响模板（见 HeaderIsolatedContent 的契约）。
+                HttpContent? wrappedContent = null;
                 if (templateContent is not null)
                 {
-                    request.Content = new HeaderIsolatedContent(templateContent);
+                    wrappedContent = new HeaderIsolatedContent(templateContent);
+                    request.Content = wrappedContent;
                 }
 
                 try
@@ -180,8 +182,8 @@ public sealed partial class AxiosClient
                         config, request, nameof(AxiosConfig.ObservabilitySettings.OnSendingRequest), ex, upload: true);
                 }
 
-                // 模板的长度上限检查在钩子之前：钩子把正文换得更大时，这里对已知长度再判一次。
-                if (!ReferenceEquals(request.Content, templateContent)
+                // 模板的长度上限检查在钩子之前：钩子把正文换成另一份时，这里对替换后的已知长度再判一次。
+                if (!ReferenceEquals(request.Content, wrappedContent)
                     && config.LimitsOrNull?.MaxRequestBytes is long maxBody
                     && request.Content?.Headers.ContentLength is long replacementLength
                     && replacementLength > maxBody)
@@ -271,16 +273,8 @@ public sealed partial class AxiosClient
             // 租约在所有失败路径上都归还；流式成功路径已把它转交给正文流（leases = null）。
             leases?.Dispose();
 
-            // 副本只释放自己：正文仍归模板（重试还要用），钩子换掉的正文随副本释放。
-            if (hookedRequest is not null)
-            {
-                if (ReferenceEquals(hookedRequest.Content, templateContent))
-                {
-                    hookedRequest.Content = null;
-                }
-
-                hookedRequest.Dispose();
-            }
+            // 副本只释放自己：正文仍归模板（重试还要用），头隔离外壳不拥有正文。
+            hookedRequest?.Dispose();
         }
     }
 
