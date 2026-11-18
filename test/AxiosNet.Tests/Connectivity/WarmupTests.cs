@@ -163,13 +163,19 @@ public sealed class WarmupTests
         using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:9206/" }, pool: pool);
 
         // 占掉唯一的节点名额：预热必须新建第二个 origin 节点，容量不足。
-        using var lease = pool.Lease(new Uri("http://127.0.0.1:9207/"));
+        var lease = pool.Lease(new Uri("http://127.0.0.1:9207/"));
 
         var error = Assert.Throws<AxiosException>(() => client.Warmup());
         Assert.Equal(AxiosException.ErrPoolExhausted, error.Code);
 
         // 标记不能被这次失败污染：再调仍然明确报错，而不是静默返回 false。
         Assert.Throws<AxiosException>(() => client.Warmup());
+
+        // 容量恢复后必须真的能预热成功：回滚的是「已完成」标记，不是把实例焊死成永久失败态。
+        lease.Dispose();
+        pool.Clear();
+        Assert.True(client.Warmup());
+        Assert.False(client.Warmup());
     }
 
     [Fact]

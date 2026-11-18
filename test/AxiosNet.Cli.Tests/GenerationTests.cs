@@ -1071,11 +1071,11 @@ public sealed class GenerationTests
     }
 
     /// <summary>
-    /// 代理对（U+10000 以上）的字母要按码位判定，不能当分隔符丢掉：
-    /// CJK 扩展 B 区这类「一个字占两个 UTF-16 单元」的字段名必须留在标识符里。
+    /// BMP 外的字母（U+10000 以上，如 CJK 扩展 B 区的生僻字）要转义成 <c>_uXXXXX</c> 再进标识符：
+    /// C# 只接受 BMP 码位，直接写代理对会让生成的模型编译不过（CS1056），原文仍由 <c>JsonPropertyName</c> 保住。
     /// </summary>
     [Fact]
-    public void AstralPlaneLetters_AreKeptInIdentifiers()
+    public void AstralPlaneLetters_AreEscapedIntoLegalIdentifiers()
     {
         // 用转义而不是字面量，避免测试源码自身的编码影响断言。
         const string astral = "\U00020000";
@@ -1108,9 +1108,12 @@ public sealed class GenerationTests
         using var run = CliHarness.RunText(spec, ".json");
         var models = run.Read("Models.g.cs");
 
-        // 标识符本身保留该码位，而不是退化成分隔符后的保底名。
-        Assert.Contains("public string? " + astral + " { get; set; }", models);
+        // 成员名是合法标识符（码位转义），原文留在特性里，序列化行为不变。
+        Assert.Contains("public string? _u20000 { get; set; }", models);
         Assert.Contains("[JsonPropertyName(\"" + astral + "\")]", models);
+
+        // 成员声明处不能再出现裸代理对（特性里的字符串实参保留原文是必要条件）。
+        Assert.DoesNotContain("public string? " + astral, models);
     }
 
     /// <summary>JSON Pointer 里的数组下标必须能解析（如 #/paths/~1a/get/parameters/0），越界返回 null。</summary>

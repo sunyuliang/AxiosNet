@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2796%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2653%20passed-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2800%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2657%20passed-success)](#build-and-test)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -614,6 +614,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 ```
 
 When a status is rejected (4xx / 5xx) or the body fails to parse, `Message` appends a response-body snippet (at most 512 characters, newlines folded to spaces), so logging `ex.Message` alone still shows the server's reason. Use `ex.ResponseBody` (same as `ex.Response.RawText`) for the full text; `ToJson()` exposes it as `responseBody`.
+
+The URL inside `Message` keeps only `scheme` + host + port + path: query / fragment / userinfo are always stripped, while **path segments themselves are not redacted** — an endpoint that carries a credential in the path (for example `/api/token/{secret}`) shows up verbatim, so logs for those endpoints need their own redaction.
 
 > **Declaration-time and run-time errors are reported separately.** When the **declaration itself** is ill-formed — a route attribute is missing (e.g. `[Get]`), a `{id}` path placeholder has no matching `[Path]` (placeholder unbound), more than one request body is declared, and so on — on a model or on an interface alike, it throws `AxiosException` (`ERR_BAD_OPTION_VALUE`) with the original exception in `Cause`; the source generator already lifts two of those to compile time (`AXA016` / `AXA017`). A well-formed declaration that merely fails to **read or format a value at runtime** (a `null` path value, a throwing formatter, …) throws `AxiosException` with `ERR_BAD_REQUEST`. A single `catch (AxiosException)` covers both; the only other exit is missing AOT metadata (`AxiosAotMetadataException`).
 
@@ -2700,11 +2702,11 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2595 / 2584 | `net8.0` / `net6.0` | 5179 |
+| `AxiosNet.Tests` (core + declarative) | 2599 / 2588 | `net8.0` / `net6.0` | 5187 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2796 / 2705** | | **5501** |
+| **Total** | **2800 / 2709** | | **5509** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
@@ -2781,7 +2783,7 @@ Reading guide and group details: [`test/AxiosNet.Benchmarks/README.md`](test/Axi
 
 For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison):
 
-- One loopback server, one load profile (8 concurrent × 2s × 6 rounds by default, with the implementation order rotated every round); every implementation serializes the same `User` payload with its idiomatic API and reads the model back, comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency and per-request allocations, printed as a console table and exported to Markdown / CSV.
+- One loopback server, one load profile (8 concurrent × 2s × 6 rounds by default, with the implementation order rotated every round); every implementation serializes the same `User` payload with its idiomatic API and reads the model back, comparing plain `HttpClient` / Refit / RestSharp / Flurl / AxiosNet on RPS, p50 / p99 / max latency, per-request allocations and per-request CPU cost, printed as a console table and exported to Markdown / CSV.
 - Add `--min-ratio` / `--max-alloc-ratio` to use it as a regression gate; without thresholds it only reports, never judges.
 - The write-up with conclusions (features / performance / ergonomics plus selection advice) is [`docs/http-client-comparison.md`](docs/http-client-comparison.md).
 

@@ -17,6 +17,7 @@ internal sealed class TargetSummary
         MaxMicroseconds = Statistics.Median(windows.Select(w => w.MaxMicroseconds));
         AllocatedBytesPerRequest = Statistics.Median(windows.Select(w => w.AllocatedBytesPerRequest));
         CpuShare = Statistics.Median(windows.Select(w => w.CpuShare));
+        CpuMicrosecondsPerRequest = Statistics.Median(windows.Select(w => w.CpuMicrosecondsPerRequest));
         Completed = windows.Sum(w => w.Completed);
         Errors = windows.Sum(w => w.Errors);
         SamplesDropped = windows.Sum(w => w.SamplesDropped);
@@ -24,6 +25,7 @@ internal sealed class TargetSummary
         (P50Min, P50Max) = Range(windows, w => w.P50Microseconds);
         (AllocatedMin, AllocatedMax) = Range(windows, w => w.AllocatedBytesPerRequest);
         (CpuShareMin, CpuShareMax) = Range(windows, w => w.CpuShare);
+        (CpuMicrosMin, CpuMicrosMax) = Range(windows, w => w.CpuMicrosecondsPerRequest);
     }
 
     /// <summary>逐窗口的最小/最大值；空窗口（不会发生，轮数下限是 1）按 0 兜底。</summary>
@@ -57,6 +59,12 @@ internal sealed class TargetSummary
     /// <summary>进程 CPU 时间 / 窗口墙上时间；>100% 表示多核并行，用于判断是否已经打满机器。</summary>
     public double CpuShare { get; }
 
+    /// <summary>进程 CPU 时间 / 完成请求数，微秒；含同进程回环服务端的固定开销。</summary>
+    public double CpuMicrosecondsPerRequest { get; }
+
+    /// <summary>减掉 <see cref="RawSocket"/> 基线后的客户端净 CPU 时间 / 请求，微秒（噪声偏负时按 0 显示）。</summary>
+    public double NetCpuMicrosecondsPerRequest { get; set; }
+
     /// <summary>全部轮次完成请求数之和（窗口内数据，不含预热与校准）。</summary>
     public long Completed { get; }
 
@@ -89,6 +97,12 @@ internal sealed class TargetSummary
 
     /// <inheritdoc cref="CpuShareMin" />
     public double CpuShareMax { get; }
+
+    /// <summary>各轮「CPU µs/请求」的最小 / 最大值。</summary>
+    public double CpuMicrosMin { get; }
+
+    /// <inheritdoc cref="CpuMicrosMin" />
+    public double CpuMicrosMax { get; }
 }
 
 /// <summary>全部实现 + 服务端基线。</summary>
@@ -107,6 +121,8 @@ internal sealed class SummarySet
         {
             target.NetAllocatedBytesPerRequest =
                 Math.Max(0, target.AllocatedBytesPerRequest - Baseline.AllocatedBytesPerRequest);
+            target.NetCpuMicrosecondsPerRequest =
+                Math.Max(0, target.CpuMicrosecondsPerRequest - Baseline.CpuMicrosecondsPerRequest);
         }
     }
 
@@ -130,7 +146,7 @@ internal static class Report
     public static string ConsoleTable(SummarySet set, double minCpuShare)
     {
         string[] headers =
-            ["实现", "RPS", "p50 (µs)", "p99 (µs)", "max (µs)", "分配/请求", "净分配/请求", "CPU", "vs HttpClient"];
+            ["实现", "RPS", "p50 (µs)", "p99 (µs)", "max (µs)", "分配/请求", "净分配/请求", "CPU", "CPU µs/请求", "净 CPU µs/请求", "vs HttpClient"];
 
         var rows = new List<string[]>();
         foreach (var summary in set.Targets)
@@ -149,6 +165,8 @@ internal static class Report
                 FormatBytes(summary.AllocatedBytesPerRequest),
                 FormatBytes(summary.NetAllocatedBytesPerRequest),
                 FormatCpuShare(summary, minCpuShare),
+                summary.CpuMicrosecondsPerRequest.ToString("N0", CultureInfo.InvariantCulture),
+                summary.NetCpuMicrosecondsPerRequest.ToString("N0", CultureInfo.InvariantCulture),
                 ratio
             ]);
         }
@@ -165,7 +183,7 @@ internal static class Report
     /// <summary>离散度表：每列的轮最小 ~ 最大与 RPS 相对波动，补上「只有中位数」看不到的抖动幅度。</summary>
     public static string ConsoleSpreadTable(SummarySet set)
     {
-        string[] headers = ["实现", "RPS 最小 ~ 最大", "RPS 波动", "分配/请求 最小 ~ 最大", "p50 (µs) 最小 ~ 最大", "CPU 最小 ~ 最大"];
+        string[] headers = ["实现", "RPS 最小 ~ 最大", "RPS 波动", "分配/请求 最小 ~ 最大", "p50 (µs) 最小 ~ 最大", "CPU 最小 ~ 最大", "CPU µs/请求 最小 ~ 最大"];
 
         var rows = new List<string[]>();
         foreach (var summary in set.Targets)
@@ -177,7 +195,8 @@ internal static class Report
                 FormatHalfRange(summary.RpsMin, summary.RpsMax, summary.Rps),
                 FormatRange(summary.AllocatedMin, summary.AllocatedMax, FormatBytes),
                 FormatRange(summary.P50Min, summary.P50Max, v => v.ToString("N0", CultureInfo.InvariantCulture)),
-                FormatRange(summary.CpuShareMin, summary.CpuShareMax, v => FormatPercent(v))
+                FormatRange(summary.CpuShareMin, summary.CpuShareMax, v => FormatPercent(v)),
+                FormatRange(summary.CpuMicrosMin, summary.CpuMicrosMax, v => v.ToString("N0", CultureInfo.InvariantCulture))
             ]);
         }
 
@@ -204,11 +223,12 @@ internal static class Report
         md.AppendLine($"- 负载：每实现 {concurrency} 并发 × {durationSeconds:0.#}s × {rounds} 轮（每轮轮转实现顺序），预热 {warmupSeconds:0.#}s；同一回环服务器、同一个 `User` 负载（POST 上送并读回）。");
         md.AppendLine("- 对齐：HttpClient / Refit / RestSharp / Flurl 注入与 AxiosNet 默认连接池逐项对齐的 `SocketsHttpHandler`；Refit 只走 source-generated 模式。");
         md.AppendLine($"- 分配是进程级口径（含同进程回环服务端；本次运行服务器共回复 {serverRequests:N0} 个请求）：`净分配` = 总分配 − RawSocket 行。");
+        md.AppendLine("- `CPU µs/请求` = 窗口内进程 CPU 时间 ÷ 完成请求数（同样含同进程服务端）：`净 CPU` = 该值 − RawSocket 行。它衡量每请求的机器成本，不是吞吐。");
         md.AppendLine("- p50 / p99 为客户端观察值，含请求体序列化、服务端处理、回环 RTT 与 JSON 反序列化；各列为轮中位数，各轮最小 ~ 最大见「离散度」节。");
         md.AppendLine($"- CPU 列带 * 的行份额低于门槛 {FormatPercent(minCpuShare)}：该实现的吞吐与比值**不可判定**（机器未打满或外部负载抢核）。");
         md.AppendLine();
-        md.AppendLine("| 实现 | RPS | p50 (µs) | p99 (µs) | max (µs) | 分配/请求 | 净分配/请求 | CPU | RPS vs HttpClient |");
-        md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+        md.AppendLine("| 实现 | RPS | p50 (µs) | p99 (µs) | max (µs) | 分配/请求 | 净分配/请求 | CPU | CPU µs/请求 | 净 CPU µs/请求 | RPS vs HttpClient |");
+        md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 
         foreach (var summary in set.Targets)
         {
@@ -220,7 +240,8 @@ internal static class Report
                 $"| {summary.Target.Name} | {summary.Rps:N0} | {summary.P50Microseconds:N0} | "
                 + $"{summary.P99Microseconds:N0} | {summary.MaxMicroseconds:N0} | "
                 + $"{FormatBytes(summary.AllocatedBytesPerRequest)} | "
-                + $"{FormatBytes(summary.NetAllocatedBytesPerRequest)} | {FormatCpuShare(summary, minCpuShare)} | {ratio} |");
+                + $"{FormatBytes(summary.NetAllocatedBytesPerRequest)} | {FormatCpuShare(summary, minCpuShare)} | "
+                + $"{summary.CpuMicrosecondsPerRequest:N0} | {summary.NetCpuMicrosecondsPerRequest:N0} | {ratio} |");
         }
 
         if (minCpuShare > 0)
@@ -245,8 +266,8 @@ internal static class Report
         md.AppendLine();
         md.AppendLine("## 离散度（各轮最小 ~ 最大）");
         md.AppendLine();
-        md.AppendLine("| 实现 | RPS | RPS 波动 | 分配/请求 | p50 (µs) | CPU |");
-        md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: |");
+        md.AppendLine("| 实现 | RPS | RPS 波动 | 分配/请求 | p50 (µs) | CPU | CPU µs/请求 |");
+        md.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
         foreach (var summary in set.Targets)
         {
             md.AppendLine(
@@ -254,7 +275,8 @@ internal static class Report
                 + $"{FormatHalfRange(summary.RpsMin, summary.RpsMax, summary.Rps)} | "
                 + $"{FormatBytes(summary.AllocatedMin)} ~ {FormatBytes(summary.AllocatedMax)} | "
                 + $"{summary.P50Min:N0} ~ {summary.P50Max:N0} | "
-                + $"{FormatPercent(summary.CpuShareMin)} ~ {FormatPercent(summary.CpuShareMax)} |");
+                + $"{FormatPercent(summary.CpuShareMin)} ~ {FormatPercent(summary.CpuShareMax)} | "
+                + $"{summary.CpuMicrosMin:N0} ~ {summary.CpuMicrosMax:N0} |");
         }
 
         md.AppendLine();
@@ -299,7 +321,7 @@ internal static class Report
     public static string BuildCsv(SummarySet set)
     {
         var csv = new StringBuilder();
-        csv.AppendLine("target,round,seconds,completed,errors,rps,p50_us,p99_us,max_us,allocated_bytes_per_request,cpu_share");
+        csv.AppendLine("target,round,seconds,completed,errors,rps,p50_us,p99_us,max_us,allocated_bytes_per_request,cpu_share,cpu_us_per_request");
 
         foreach (var summary in set.Targets)
         {
@@ -316,7 +338,8 @@ internal static class Report
                     .Append(window.P99Microseconds.ToString("0.##", CultureInfo.InvariantCulture)).Append(',')
                     .Append(window.MaxMicroseconds.ToString("0.##", CultureInfo.InvariantCulture)).Append(',')
                     .Append(window.AllocatedBytesPerRequest.ToString("0.#", CultureInfo.InvariantCulture)).Append(',')
-                    .Append(window.CpuShare.ToString("0.####", CultureInfo.InvariantCulture))
+                    .Append(window.CpuShare.ToString("0.####", CultureInfo.InvariantCulture)).Append(',')
+                    .Append(window.CpuMicrosecondsPerRequest.ToString("0.#", CultureInfo.InvariantCulture))
                     .AppendLine();
             }
         }

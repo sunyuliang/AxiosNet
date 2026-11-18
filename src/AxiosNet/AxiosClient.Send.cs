@@ -182,8 +182,15 @@ public sealed partial class AxiosClient
                         config, request, nameof(AxiosConfig.ObservabilitySettings.OnSendingRequest), ex, upload: true);
                 }
 
+                // 钩子换掉了正文：头隔离外壳已无人引用，单独释放（它不拥有内层正文，摘掉不影响模板）。
+                var contentReplaced = !ReferenceEquals(request.Content, wrappedContent);
+                if (contentReplaced)
+                {
+                    wrappedContent?.Dispose();
+                }
+
                 // 模板的长度上限检查在钩子之前：钩子把正文换成另一份时，这里对替换后的已知长度再判一次。
-                if (!ReferenceEquals(request.Content, wrappedContent)
+                if (contentReplaced
                     && config.LimitsOrNull?.MaxRequestBytes is long maxBody
                     && request.Content?.Headers.ContentLength is long replacementLength
                     && replacementLength > maxBody)

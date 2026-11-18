@@ -8,8 +8,8 @@ namespace AxiosNet.Internal;
 /// 不会污染模板正文（后续重试）或其它对冲分支共享的那一份。
 /// </summary>
 /// <remarks>
-/// 本类不拥有内层正文：<see cref="IDisposable.Dispose"/> 只清理自己的缓冲，不释放构造时传入的内容。
-/// 内层归创建它的模板（重试 / 换端点 / 对冲分支还要重复读），释放它会让后续尝试在序列化正文时失败。
+/// 本类不拥有内层正文：不覆写 <see cref="IDisposable.Dispose"/>，因此释放外壳不会释放构造时传入的内容。
+/// 内层归创建它的模板所有（重试 / 换端点 / 对冲分支共享同一份）。
 /// </remarks>
 internal sealed class HeaderIsolatedContent : HttpContent
 {

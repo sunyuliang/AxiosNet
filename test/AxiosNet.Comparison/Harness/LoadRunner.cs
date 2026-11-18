@@ -145,9 +145,8 @@ internal sealed class LoadRunner
         var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
 
         process.Refresh();
-        var cpuShare = (process.TotalProcessorTime - cpuBefore).TotalSeconds
-            / seconds
-            / Environment.ProcessorCount;
+        var cpuSeconds = (process.TotalProcessorTime - cpuBefore).TotalSeconds;
+        var cpuShare = cpuSeconds / seconds / Environment.ProcessorCount;
 
         var completed = 0L;
         foreach (var count in counts)
@@ -178,6 +177,7 @@ internal sealed class LoadRunner
             PercentileMicroseconds(all, recorded, 1.0),
             completed > 0 ? (double)allocated / completed : 0,
             cpuShare,
+            completed > 0 ? cpuSeconds * 1_000_000.0 / completed : 0,
             (int)(completed - recorded));
     }
 
@@ -215,6 +215,7 @@ internal sealed class LoadRunner
 /// <param name="MaxMicroseconds">最大延迟，单位微秒。</param>
 /// <param name="AllocatedBytesPerRequest">每请求分摊的托管分配字节数。</param>
 /// <param name="CpuShare">该窗口占用的 CPU 时间与墙钟之比再除以核数（1.0 = 占满全部逻辑核）。</param>
+/// <param name="CpuMicrosecondsPerRequest">每请求分摊的进程 CPU 时间，微秒；含同进程回环服务端。</param>
 /// <param name="SamplesDropped">超出采样预算而没进延迟统计的请求数（只影响分位精度，不影响吞吐与分配）。</param>
 internal readonly record struct WindowResult(
     string Target,
@@ -228,4 +229,5 @@ internal readonly record struct WindowResult(
     double MaxMicroseconds,
     double AllocatedBytesPerRequest,
     double CpuShare,
+    double CpuMicrosecondsPerRequest,
     int SamplesDropped);

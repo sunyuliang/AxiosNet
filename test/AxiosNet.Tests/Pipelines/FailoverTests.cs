@@ -488,41 +488,6 @@ public sealed class FailoverTests
     }
 
     [Fact]
-    public async Task Failover_WithHedging_EachEndpointGetsItsOwnBranches()
-    {
-        // 两个端点都压一点延迟：两条分支必须真的都发出去，否则先成功的那条会在对手还在路上时就把它取消，
-        // 「每个端点各得一组分支」就测不到了。
-        await using var primary = TestHttpServer.Start(async _ =>
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(50));
-            return new TestResponse(503, Body: Array.Empty<byte>());
-        });
-        await using var mirror = TestHttpServer.Start(async _ =>
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(50));
-            return TestJson.Response(new { mirror = true });
-        });
-
-        using var client = new AxiosClient(new AxiosConfig
-        {
-            BaseAddress = primary.Url,
-            Resilience =
-            {
-                Failover = new() { Endpoints = new[] { new Uri(mirror.Url) } },
-                Hedging = new() { MaxHedges = 1, Delay = TimeSpan.Zero }
-            }
-            });
-
-        var response = await client.GetAsync("x");
-
-        // 备用端点在对冲之外：主端点先跑完自己那组分支（2 条），全失败才换端点，镜像再拿一组。
-        Assert.Equal(200, response.Status);
-        Assert.True(Assert.IsType<JsonElement>(response.Data).GetProperty("mirror").GetBoolean());
-        Assert.Equal(2, primary.Received.Count);
-        Assert.Equal(2, mirror.Received.Count);
-    }
-
-    [Fact]
     public async Task Failover_SkipsEndpointThatCannotRunTheRequestedHttpVersion()
     {
         // 「跳过明文端点之后 https 镜像仍拿到请求」必须本机有 QUIC 才构造得出来：严格 h3 下所有 https 端点

@@ -483,6 +483,39 @@ public sealed class ClientInstanceTests
         Assert.Equal(AxiosException.ErrCanceled, ex.Code);
     }
 
+    [Fact]
+    public void Dispose_SharedPool_DoesNotCloseThePool()
+    {
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions { MaxEndpointCount = 2 });
+        var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:9208/" }, pool: pool);
+
+        client.Warmup();
+        Assert.Equal(1, pool.GetStatistics().EndpointCount);
+
+        client.Dispose();
+
+        // 共享池不归实例所有：释放实例只是不再用它，节点与租约入口都照常。
+        Assert.Equal(1, pool.GetStatistics().EndpointCount);
+        using var lease = pool.Lease(new Uri("http://127.0.0.1:9209/"));
+        Assert.NotNull(lease);
+    }
+
+    [Fact]
+    public void Dispose_OwnedPool_ClosesItImmediately()
+    {
+        var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:9210/" });
+        var pool = client.Pool!;
+
+        client.Warmup();
+        Assert.Equal(1, pool.GetStatistics().EndpointCount);
+
+        // 自建池没有在途请求：释放立即关闭，节点清空、租约入口关闭。
+        client.Dispose();
+
+        Assert.Equal(0, pool.GetStatistics().EndpointCount);
+        Assert.Throws<ObjectDisposedException>(() => pool.Lease(new Uri("http://127.0.0.1:9211/")));
+    }
+
     // ------------------------------------------------------------------
     // 实例级选项只有构造期一个入口：不存在「按请求复述」这条路
     // ------------------------------------------------------------------

@@ -25,8 +25,11 @@ namespace AxiosNet.SourceGen
         internal const string GeneratorName = "AxiosNet.SourceGen";
         internal const string GeneratorVersion = "1.7.0";
 
-        /// <summary>生成类名前缀的最大字符数：闭合泛型的显示名可以很长，截断后由 64 位哈希保证唯一。</summary>
+        /// <summary>请求模型 / 接口代理类名的前缀上限（字符数）：超出的部分只由尾部 64 位哈希承担区分。</summary>
         internal const int MaxClassNamePrefix = 64;
+
+        /// <summary>对象形状类名的前缀上限（字符数），与 <see cref="MaxClassNamePrefix"/> 各自独立。</summary>
+        internal const int MaxShapeClassNamePrefix = 48;
 
         /// <summary>生成器入口：请求模型、接口代理、对象形状、启动期校验与 DI 注册扩展各自独立成管线。</summary>
         public void Initialize(IncrementalGeneratorInitializationContext context)

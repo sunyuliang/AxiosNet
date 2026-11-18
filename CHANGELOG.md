@@ -6,12 +6,27 @@
 
 > **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
 
+## [Unreleased]
+
+### Changed
+
+- `Warmup()` 预热失败后不再永久置「已预热」：静态首用或 `HttpConnectionPool.Prewarm` 抛异常时回滚实例标记，下一次调用重新尝试。此前失败一次之后每次调用都静默返回 `false`，调用方既拿不到重试机会、也看不到失败原因（`WarmupTests` 已固化「容量恢复后能预热成功」）。
+- 源生成器的类名与 hint 名换形态：哈希从 32 位改成 64 位（16 位十六进制），请求模型与接口代理的前缀截到 64 字符、对象形状截到 48 字符。32 位哈希在类型名多时有撞车余地，撞了就是 `AddSource` 抛 `ArgumentException`——用户看到的是「生成器崩溃」而不是「我的类型名冲突」。把生成产物提交进版本库的用户会看到一次全量重命名。
+- OpenAPI 生成器：字段名里的 BMP 外字母（如 CJK 扩展 B 区）转义成 `_uXXXXX` 再进标识符。C# 标识符只接受 BMP 码位，直接写代理对会让生成的模型编译不过（CS1056）；字段原名仍由 `JsonPropertyName` 保留，序列化行为不变。
+- 单飞（`SingleFlight`）的跟随者直接跟随在途的那一轮，不再先创建一个注定落选的领导者；在途登记改为按「键 + 实例」移除，换任期间不会摘掉新上位的领导者。
+
+### Fixed
+
+- `OnSendingRequest` 钩子把正文换成另一份时，头隔离外壳不再无人释放；钩子对内容头的改写也不会叠到下一次尝试或另一条对冲分支上（正文所有权现在是显式契约，由 `SendingRequestHookTests` 守着重试重放）。
+- 表单百分号编码按 `Encoding.GetBytes` 实际写入的字节数切片，不再按预算的字节数。
+- 增量生成管线的值相等数组：`default` 实例与 `Empty` 现在哈希一致（此前两者相等但哈希不同，等于每次编译都判「变了」）。
+
 ## [1.7.0] - 2026-11-17
 
 ### Added
 
 - 预热入口，用来摊掉首条请求的固定成本：`HttpConnectionPool.Prewarm(uri, transport?)` 预建指定 origin 的节点（Handler 与 `HttpClient`），`AxiosClient.Warmup()` / `Axios.Warmup()` 额外跑热静态首用（JSON 选项校验与转换器、响应解码器、状态文案与媒体类型判定）并按 `Defaults.BaseAddress` 预建节点。两者都**只建节点、不建连**——TCP 仍然由第一条真正的请求建立。
-  - 「预热过」记在**实例**上：`Warmup()` 第二次调用返回 `false` 且不再执行；`Axios.Reset()` 换掉默认实例后标记随之重置。`Prewarm` 幂等（节点已在时只是一次哈希查找），同样受 `MaxEndpointCount` 与空闲驱逐约束。
+  - 「预热过」记在**实例**上：`Warmup()` 第二次调用返回 `false` 且不再执行；`Axios.Reset()` 换掉默认实例后标记随之重置。`Prewarm` 幂等（节点已在时只是一次哈希查找），同样受 `MaxEndpointCount` 与空闲驱逐约束。（`Unreleased` 起：预热抛异常会回滚标记，下一次调用重新尝试。）
   - `Warmup()` 的基地址必须是绝对 URI，否则抛 `ERR_BAD_OPTION_VALUE`（不静默跳过）；已释放的实例与请求同一口径抛 `ERR_CANCELED`，池已释放后 `Prewarm` 抛 `ObjectDisposedException`。
 - 观测实现可整套替换：新增 `IAxiosTelemetrySink`、`AxiosTelemetrySink`（全空实现的基类）与观测句柄 `AxiosRequestTrace`，赋 `AxiosTelemetry.Sink` 即接管 span / 指标 / 事件三路输出，内置那套**同时停用**（不是叠加）；赋 `AxiosTelemetrySink.Off` 则彻底关掉。此前 `AxiosTelemetry` 是静态类，包外只能按 `ActivitySource` / `Meter` 名字订阅再自行翻译，既接不进公司自己的管道，也关不掉内置的那套。默认行为不变（`Sink` 默认指向内置实现）。
   - 可替换实现是第三方代码，它违约抛异常时**只丢掉那一次观测，不改写请求结果**：派发统一经 `AxiosTelemetry.Dispatch` 的护栏，`finally` 里的收尾异常不再把一条 200 换成观测异常、也不再盖掉真正的失败原因；在途请求计数照常归零（否则 `Dispose()` 永远等不到 0，池与 Handler 一直不释放）——`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负。
@@ -39,7 +54,7 @@
 
 - 响应 `Content-Type` 改为**按需解析**：装配响应时只留原始头值（不复制字符串、不构造 `MediaTypeHeaderValue`），媒体类型与字符集在第一次读 `Config.Response.MediaType` / `CharSet`、或正文转换真正用到它们时才拆一次并缓存；引号、转义、多值等形态回落 BCL 解析，结果与 `MediaTypeHeaderValue.TryParse` 逐字一致。字节（`byte[]` / `arraybuffer`）与流式响应一次都不解析，`Content-Type` 缺失 / 非法的判定口径不变。要读正文的响应仍需主值与字符集两段子串（文本、标量、强类型业务对象都一样：UTF-8 字节判定要看字符集），省下的是每条响应一整个媒体类型对象图（256 B；要读正文时换成 88 B 子串）。对外契约不变。
 - 快捷方法的 `data` 位置现在拦住「放错位置的参数」：把 `AxiosConfig` 传进 `data` 抛 `ERR_BAD_OPTION_VALUE`（消息指路 `RequestAsync(config)`），与原有的 `CancellationToken` 护栏同一口径。此前 `object? data` 会把配置对象当正文：静态门面 `Axios.GetAsync(url, config)`（门面没有 `(url, config)` 形态）与表单动词 `PostFormAsync(url, config)` 都能编译，结果要么把配置序列化进正文，要么退化成 `ERR_BAD_REQUEST`「正文序列化失败」——错误码与真实原因无关，而同一行代码在 `AxiosClient` 上走的却是配置形态。**重载数量不变**：把 `(url, config)` 或 `(url, ct)` 删掉会让这两类错用从「明确报错」退化成「静默把配置 / 令牌当正文发出去」，护栏只能加在现有重载内部，不靠删重载来消除歧义。
-- `AxiosException.Message` 对非 2xx 响应追加请求方法与 URL（默认剥 query / userinfo / fragment）与尝试序号，便于开了重试 / 换端点 / 对冲后定位打到哪个端点、第几次尝试；前缀 `Request failed with status code {status}` 保持不变。
+- `AxiosException.Message` 对非 2xx 响应追加请求方法与 URL（默认剥 query / userinfo / fragment）与尝试序号，便于开了重试 / 换端点 / 对冲后定位打到哪个端点、第几次尝试；前缀 `Request failed with status code {status}` 保持不变。路径段本身不脱敏，凭据放在 path 里的接口需自行脱敏（见 README「错误处理」）。
 - 声明式装配失败的消息补上「哪一步、哪个字段」：`Request could not be built from 'UserRequest' (query parameter 'UserRequest.Page'): ...`。此前路径 / 查询 / 请求头取值或格式化抛错时只有一句底层消息，`targetName` 只到模型名；现在字典映射还带上键名（如 `UserRequest.Extra[boom]`）。错误码仍是 `ERR_BAD_REQUEST`，`Cause` 仍是该字段上真正抛出的原始异常，未多包一层。
 - 请求模型**声明非法**改走统一出口：`ApiClient.RequestAsync` / `GetUri` / `RequestStreamAsync` 现在抛 `AxiosException(ERR_BAD_OPTION_VALUE)`，原始异常在 `Cause`。此前是裸 `InvalidOperationException`（且发生在 `BuildConfig` 之前，不受绑定错误那条出口保护），`catch (AxiosException)` 抓不到。`AxiosAotMetadataException` 例外，仍原样抛出（专供「源生成器没启用」，调用方可能专门捕获）。
 - 请求体压缩不再多复制一份成品：压缩后直接引用缓冲区有效段（此前是 `MemoryStream.ToArray()`），压缩期间的峰值从「缓冲区 + 成品」两份降到一份。配置与线上字节不变。

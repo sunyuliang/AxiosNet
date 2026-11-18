@@ -47,12 +47,12 @@ internal static class Naming
         var builder = new StringBuilder(raw.Length);
         var chunk = new StringBuilder();
 
-        // 按码位遍历：代理对（U+10000 以上，如 CJK 扩展 B 区的生僻字）本身是字母，必须整体保留。
+        // 按码位遍历：代理对不会被拆成两个 UTF-16 单元、各算一次分隔符。
         foreach (var rune in raw.EnumerateRunes())
         {
             if (Rune.IsLetterOrDigit(rune))
             {
-                chunk.Append(rune.ToString());
+                AppendLetter(chunk, rune);
             }
             else
             {
@@ -68,10 +68,27 @@ internal static class Naming
         }
 
         var result = builder.ToString();
-        return Rune.IsDigit(Rune.GetRuneAt(result, 0)) ? "_" + result : result;
+        return char.IsDigit(result[0]) ? "_" + result : result;
     }
 
-    /// <summary>把累积的一段字母数字写入输出：首个码位大写、其余保持原样，然后清空累积缓冲。</summary>
+    /// <summary>
+    /// 把一个字母 / 数字附加到当前块：BMP 内原样附加，BMP 外写成 <c>_u</c> + <c>X4</c> 格式的十六进制码位（如 <c>_u20000</c>）。
+    /// </summary>
+    /// <param name="chunk">当前累积的字母数字块。</param>
+    /// <param name="rune">待附加的码位。</param>
+    /// <remarks>C# 标识符只接受 BMP 码位；同一码位每次得到同一个名字，原文仍由调用方另行保留。</remarks>
+    private static void AppendLetter(StringBuilder chunk, Rune rune)
+    {
+        if (rune.IsBmp)
+        {
+            chunk.Append((char)rune.Value);
+            return;
+        }
+
+        chunk.Append("_u").Append(rune.Value.ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>把累积的一段字母数字写入输出：首字符大写、其余保持原样，然后清空累积缓冲。</summary>
     private static void Flush(StringBuilder chunk, StringBuilder target)
     {
         if (chunk.Length == 0)
@@ -80,10 +97,11 @@ internal static class Naming
         }
 
         var text = chunk.ToString();
-        var first = Rune.GetRuneAt(text, 0);
-
-        target.Append(Rune.ToUpperInvariant(first).ToString());
-        target.Append(text, first.Utf16SequenceLength, text.Length - first.Utf16SequenceLength);
+        target.Append(char.ToUpperInvariant(text[0]));
+        if (text.Length > 1)
+        {
+            target.Append(text, 1, text.Length - 1);
+        }
 
         chunk.Clear();
     }
@@ -91,11 +109,9 @@ internal static class Naming
     /// <summary>PascalCase 转 camelCase，并对 C# 关键字加 <c>@</c>。</summary>
     public static string Camel(string? raw)
     {
-        // Pascal 一定非空，取首个码位转小写即可得到 camelCase。
+        // Pascal 一定非空且只含 BMP 字符，取首字符转小写即可得到 camelCase。
         var pascal = Pascal(raw);
-        var first = Rune.GetRuneAt(pascal, 0);
-        var name = Rune.ToLowerInvariant(first).ToString() + pascal[first.Utf16SequenceLength..];
-
+        var name = char.ToLowerInvariant(pascal[0]) + pascal[1..];
         return Escape(name);
     }
 
@@ -103,7 +119,7 @@ internal static class Naming
     public static string Escape(string identifier)
         => Keywords.Contains(identifier) ? "@" + identifier : identifier;
 
-    /// <summary>判断是否是不加转义的合法 C# 标识符（非关键字、首字符为字母或下划线、后续仅字母数字下划线）。</summary>
+    /// <summary>判断是否是不加转义的合法 C# 标识符（非关键字、首字符为字母或下划线、后续仅字母数字下划线；按 UTF-16 单元判定，代理对不算字母）。</summary>
     public static bool IsIdentifier(string value)
     {
         if (value.Length == 0 || Keywords.Contains(value))

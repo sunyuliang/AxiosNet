@@ -3,8 +3,8 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2796%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2653%20passed-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2800%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2657%20passed-success)](#构建与测试)
 [![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -616,6 +616,8 @@ if (Axios.IsAxiosError(ex) && !Axios.IsCancel(ex)) { /* ... */ }
 ```
 
 状态码被拒绝（4xx / 5xx）或正文解析失败时，`Message` 会附上响应正文片段（最多 512 字符，换行折成空格）：只打 `ex.Message` 也能看到服务端给出的原因。完整原文用 `ex.ResponseBody`（等价于 `ex.Response.RawText`）；`ToJson()` 里对应 `responseBody`。
+
+`Message` 里的 URL 只保留 `scheme` + host + port + path：query / fragment / userinfo 一律剥掉，**路径段本身不脱敏**——把凭据写进 path 的接口（如 `/api/token/{secret}`）会原样出现在消息里，这类接口的日志需要自己再脱敏。
 
 > **声明期错误与运行期错误分开归口**。声明**本身**非法——缺少路由特性（如 `[Get]`）、路径占位符 `{id}` 找不到对应的 `[Path]`（占位符未绑定）、一个请求里声明了多个请求体等——无论写在模型上还是接口上，都抛 `AxiosException`（`ERR_BAD_OPTION_VALUE`），原始异常在 `Cause`；源生成器已对其中两类提前到编译期（`AXA016` / `AXA017`）。声明合法、只是**运行时取值 / 格式化失败**（路径值为 `null`、格式化函数抛错等）按 `ERR_BAD_REQUEST` 抛 `AxiosException`。`catch (AxiosException)` 一处即可覆盖，唯一的另一条出口是 AOT 元数据缺失（`AxiosAotMetadataException`）。
 
@@ -2700,11 +2702,11 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2595 / 2584 | `net8.0` / `net6.0` | 5179 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2599 / 2588 | `net8.0` / `net6.0` | 5187 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2796 / 2705** | | **5501** |
+| **合计** | **2800 / 2709** | | **5509** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
@@ -2781,7 +2783,7 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 
 跨实现横向对比见 [`test/AxiosNet.Comparison`](test/AxiosNet.Comparison)：
 
-- 同一回环服务器、同一负载（默认 8 并发 × 2s × 6 轮、每轮轮转顺序），各实现用惯用 API 把同一个 `User` 负载序列化上送并读回，对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max 与每请求分配，输出控制台表 + Markdown / CSV 报告。
+- 同一回环服务器、同一负载（默认 8 并发 × 2s × 6 轮、每轮轮转顺序），各实现用惯用 API 把同一个 `User` 负载序列化上送并读回，对比裸 `HttpClient` / Refit / RestSharp / Flurl / AxiosNet 的 RPS、p50 / p99 / max、每请求分配与每请求 CPU 成本，输出控制台表 + Markdown / CSV 报告。
 - 加 `--min-ratio` / `--max-alloc-ratio` 可当回归门禁；不设阈值时只出数字、不判定。
 - 结论版（功能 / 性能 / 易用性 + 选型建议）见 [`docs/http-client-comparison.md`](docs/http-client-comparison.md)。
 

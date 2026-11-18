@@ -82,9 +82,9 @@ public sealed partial class AxiosClient : IDisposable, IAsyncDisposable
 
     /// <summary>本实例的连接池；注入自定义 <see cref="HttpMessageHandler"/> 时为 <c>null</c>。</summary>
     /// <remarks>
-    /// 实例释放后本属性仍返回该池对象，但它已关闭：<see cref="HttpConnectionPool.GetStatistics"/> 报告 0 个节点，
-    /// <c>Lease</c> / <c>Prewarm</c> 抛 <see cref="ObjectDisposedException"/>。
-    /// 「没有池」只用 <c>null</c> 表达（注入 Handler 的形态），释放与否请用本实例的请求入口判断。
+    /// 「没有池」只用 <c>null</c> 表达（注入 Handler 的形态）；实例释放不会把本属性置 <c>null</c>，池是否已关闭看归属：
+    /// 传入的共享池不归本实例所有（释放本实例不关闭它），自建的池在有在途请求时把关闭推迟到最后一个请求结束。
+    /// 已关闭的池：<see cref="HttpConnectionPool.GetStatistics"/> 报 0 个节点，<c>Lease</c> / <c>Prewarm</c> 抛 <see cref="ObjectDisposedException"/>。
     /// </remarks>
     public HttpConnectionPool? Pool => _pool;
 

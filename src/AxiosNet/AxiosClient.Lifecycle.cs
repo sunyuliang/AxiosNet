@@ -8,7 +8,7 @@ public sealed partial class AxiosClient
     // 释放后发起新请求的错误文案。
     private const string DisposedMessage = "AxiosClient 已释放，不能发起新请求";
 
-    // 预热标记（0/1）：每实例只做一次。
+    // 预热标记（0/1）：1 = 已完成；预热抛异常时回退 0，让下一次调用重新尝试。
     private int _warmedUp;
 
     /// <summary>
@@ -19,6 +19,8 @@ public sealed partial class AxiosClient
     /// <remarks>
     /// 实例建好后、第一条业务请求之前调用一次。预热目标取 <see cref="Defaults"/> 的 <see cref="AxiosConfig.BaseAddress"/>；
     /// 没配基地址或注入自定义 Handler 时只做静态首用；基地址不是绝对 URI 时抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 预热抛异常时不置「已完成」：异常照常外抛，下一次调用重新尝试；成功之后恒返回 <c>false</c>。
+    /// 并发竞争只有一条真的执行，其余按「已经预热过」返回。
     /// 预热会冻结全局 JSON 选项实例，之后要改请换一个新的 <see cref="AxiosJson.Options"/>。
     /// </remarks>
     public bool Warmup()

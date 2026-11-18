@@ -724,6 +724,67 @@ public sealed class InterfaceGeneratorTests
     private static object CreateInstance(Assembly assembly, string typeName, params object?[] constructorArguments)
         => Activator.CreateInstance(assembly.GetType(typeName, throwOnError: true)!, constructorArguments)!;
 
+    /// <summary>
+    /// 类名前缀截断 + 64 位哈希：两个只在前缀之后才不同的超长接口名必须各得一个唯一类名与 hint 名，并一起编译通过。
+    /// </summary>
+    /// <remarks>
+    /// 截断在 <c>MaxClassNamePrefix</c>（64 字符）处切，若哈希只取 32 位或干脆没有，这两个接口会撞同一 hint，
+    /// <c>AddSource</c> 直接抛 <c>ArgumentException</c>，表现为「生成器崩溃」而非编译错误。
+    /// </remarks>
+    [Fact]
+    public void LongInterfaceNames_DifferingOnlyAfterTruncation_GetDistinctProxies()
+    {
+        var ns = UniqueNamespace();
+        var (result, diagnostics, output) = RunGenerator(LongNameInterfaces.Replace("__NS__", ns));
+
+        Assert.Empty(diagnostics);
+
+        const string hintPrefix = "AxiosNet.InterfaceProxy.";
+        const string hintSuffix = ".g.cs";
+        var classNames = ProxySources(result)
+            .Select(source => source.HintName[hintPrefix.Length..^hintSuffix.Length])
+            .ToArray();
+
+        Assert.Equal(2, classNames.Length);
+        Assert.Equal(2, classNames.Distinct(StringComparer.Ordinal).Count());
+
+        foreach (var className in classNames)
+        {
+            // 结构固定为 __AxiosProxy_<前缀>_<16 位十六进制哈希>：哈希占满 16 位，前缀不超过上限。
+            var body = className["__AxiosProxy_".Length..];
+            var separator = body.LastIndexOf('_');
+            Assert.Equal(16, body.Length - separator - 1);
+            Assert.InRange(separator, 0, 64);
+        }
+
+        // 两个代理都能真正发射并加载（撞 hint 的形态到不了这一步）。
+        var assembly = LoadEmitted(output);
+        Assert.NotNull(assembly.GetType(ns + ".IApiWithAVeryLongNameThatKeepsGoingAndGoingAlpha", throwOnError: false));
+        Assert.NotNull(assembly.GetType(ns + ".IApiWithAVeryLongNameThatKeepsGoingAndGoingBeta", throwOnError: false));
+    }
+
+    private const string LongNameInterfaces = """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using AxiosNet;
+        using AxiosNet.WebAPI;
+        using AxiosNet.WebAPI.Attributes;
+
+        namespace __NS__;
+
+        public interface IApiWithAVeryLongNameThatKeepsGoingAndGoingAlpha
+        {
+            [Get("alpha")]
+            Task<string> GetAsync(CancellationToken cancellationToken = default);
+        }
+
+        public interface IApiWithAVeryLongNameThatKeepsGoingAndGoingBeta
+        {
+            [Get("beta")]
+            Task<string> GetAsync(CancellationToken cancellationToken = default);
+        }
+        """;
+
     private static Assembly LoadEmitted(Compilation output)
     {
         var assembly = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(EmitToBytes(output)));

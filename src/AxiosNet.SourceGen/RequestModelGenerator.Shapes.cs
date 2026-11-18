@@ -810,13 +810,13 @@ namespace AxiosNet.SourceGen
                 return false;
             }
 
-            // 由形状 key 拼合法类名：只留字母数字、总长截到 48，避免生成超长标识符。
+            // 由形状 key 拼合法类名：只留字母数字、前缀截到 MaxShapeClassNamePrefix，尾部拼 64 位哈希。
             private static string BuildShapeClassName(string key)
             {
                 var builder = new System.Text.StringBuilder();
                 foreach (var character in key)
                 {
-                    if (builder.Length >= 48)
+                    if (builder.Length >= MaxShapeClassNamePrefix)
                     {
                         break;
                     }

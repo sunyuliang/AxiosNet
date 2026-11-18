@@ -29,6 +29,10 @@ public sealed class TelemetryGuardTests
             var target = map.TargetMethods[i];
             var arguments = contract.GetParameters().Select(DefaultArgument).ToArray();
 
+            // 目标方法必须真的是护栏自己声明的：接口默认实现（DIM）会绕过护栏，而桩不会抛异常，
+            // 只断言「没逃出异常」会把这种缺漏放过去。
+            Assert.Equal(typeof(GuardedTelemetrySink), target.DeclaringType);
+
             try
             {
                 target.Invoke(guarded, arguments);
@@ -38,6 +42,9 @@ public sealed class TelemetryGuardTests
                 escaped.Add($"{contract.Name}（{ex.InnerException?.GetType().Name}）");
             }
         }
+
+        // 枚举基数：配对不全（新成员没进护栏）时上面的循环会少跑一项，这里的等式把它变成失败。
+        Assert.Equal(typeof(IAxiosTelemetrySink).GetMethods().Length, map.InterfaceMethods.Length);
 
         Assert.True(
             escaped.Count == 0,

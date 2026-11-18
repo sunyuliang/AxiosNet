@@ -43,17 +43,22 @@ public sealed class StreamingTests
     // JSON 数组：空数组与空元素的边界
     // ------------------------------------------------------------------
 
-    /// <summary>空数组一律交付 0 个元素，不能因为「帧长度为 0」而卡在循环里。</summary>
+    /// <summary>空数组一律交付 0 个元素，不能因为「帧长度为 0」而卡在循环里；含把 <c>[</c> 与 <c>]</c> 拆到两次读取的分块形态。</summary>
     [Theory]
-    [InlineData("[]")]
-    [InlineData("[ ]")]
-    [InlineData("[\r\n\t ]")]
-    public async Task JsonArray_EmptyBody_ProducesNoElements(string body)
+    [InlineData("[]", false)]
+    [InlineData("[ ]", false)]
+    [InlineData("[\r\n\t ]", false)]
+    [InlineData("[]", true)]
+    public async Task JsonArray_EmptyBody_ProducesNoElements(string body, bool splitChunks)
     {
-        using var client = CreateClient(new ScriptedStreamHandler(new[] { Encoding.UTF8.GetBytes(body) }));
+        var payload = Encoding.UTF8.GetBytes(body);
+        var chunks = splitChunks ? new[] { payload[..1], payload[1..] } : new[] { payload };
+        using var client = CreateClient(new ScriptedStreamHandler(chunks));
 
         var response = await client.RequestStreamAsync(new StreamRequest(), AxiosStreamFormat.JsonArray);
-        var items = await CollectAsync(response.Data!);
+
+        // 卡住的回归形态是「永远枚举不完」：不加超时只会把整个测试进程拖到 CI 超时，拿不到失败点。
+        var items = await CollectAsync(response.Data!).WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Empty(items);
     }
