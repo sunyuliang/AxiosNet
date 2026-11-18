@@ -25,6 +25,9 @@ namespace AxiosNet.SourceGen
         internal const string GeneratorName = "AxiosNet.SourceGen";
         internal const string GeneratorVersion = "1.7.0";
 
+        /// <summary>生成类名前缀的最大字符数：闭合泛型的显示名可以很长，截断后由 64 位哈希保证唯一。</summary>
+        internal const int MaxClassNamePrefix = 64;
+
         /// <summary>生成器入口：请求模型、接口代理、对象形状、启动期校验与 DI 注册扩展各自独立成管线。</summary>
         public void Initialize(IncrementalGeneratorInitializationContext context)
         {
@@ -1176,27 +1179,33 @@ namespace AxiosNet.SourceGen
             return new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable());
         }
 
-        // 类型显示名 → 合法类名：非字母数字一律换成下划线。
+        // 类型显示名 → 合法类名：非字母数字一律换成下划线，前缀截到固定长度控制文件名长度，尾部拼 64 位哈希区分同前缀类型。
         private static string BuildClassName(INamedTypeSymbol symbol)
         {
-            var builder = new StringBuilder();
-            foreach (var character in symbol.ToDisplayString())
+            var display = symbol.ToDisplayString();
+            var builder = new StringBuilder(display.Length);
+            foreach (var character in display)
             {
+                if (builder.Length >= MaxClassNamePrefix)
+                {
+                    break;
+                }
+
                 builder.Append(char.IsLetterOrDigit(character) || character == '_' ? character : '_');
             }
 
-            var hash = Fnv1a(symbol.ToDisplayString());
-            return "__AxiosRequestModel_" + builder + "_" + hash.ToString("x8");
+            var hash = Fnv1a(display);
+            return "__AxiosRequestModel_" + builder + "_" + hash.ToString("x16");
         }
 
-        // FNV-1a 32 位哈希：给类名拼稳定后缀，同名不同命名空间不会撞车。
-        private static uint Fnv1a(string value)
+        // FNV-1a 64 位哈希：给类名拼稳定后缀，同名不同命名空间不会撞车。
+        private static ulong Fnv1a(string value)
         {
-            var hash = 2166136261u;
+            var hash = 14695981039346656037UL;
             foreach (var character in value)
             {
                 hash ^= character;
-                hash *= 16777619u;
+                hash *= 1099511628211UL;
             }
 
             return hash;

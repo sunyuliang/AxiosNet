@@ -1020,18 +1020,23 @@ namespace AxiosNet.SourceGen
         private static AttributeData? FindAttribute(IMethodSymbol method, INamedTypeSymbol? attributeType)
             => FindAttribute(method.GetAttributes(), attributeType);
 
-        // 接口全名 → 代理类名：把命名空间分隔符与泛型符号都换成下划线，避免生成非法标识符。
+        // 接口全名 → 代理类名：把命名空间分隔符与泛型符号都换成下划线，前缀截到固定长度，尾部拼 64 位哈希区分同前缀类型。
         private static string BuildInterfaceClassName(INamedTypeSymbol symbol)
         {
             var display = symbol.ToDisplayString();
             var builder = new StringBuilder(display.Length);
             foreach (var character in display)
             {
+                if (builder.Length >= MaxClassNamePrefix)
+                {
+                    break;
+                }
+
                 builder.Append(char.IsLetterOrDigit(character) || character == '_' ? character : '_');
             }
 
             var hash = Fnv1a(symbol.ToDisplayString(TypeFormats.FullyQualified));
-            return "__AxiosProxy_" + builder + "_" + hash.ToString("x8");
+            return "__AxiosProxy_" + builder + "_" + hash.ToString("x16");
         }
 
         /// <summary>接口（含闭合泛型的类型实参）是否仍含未替换的类型参数。</summary>

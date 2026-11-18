@@ -824,7 +824,7 @@ namespace AxiosNet.SourceGen
                     builder.Append(char.IsLetterOrDigit(character) || character == '_' ? character : '_');
                 }
 
-                return "__AxiosShape_" + builder + "_" + Fnv1a(key).ToString("x8");
+                return "__AxiosShape_" + builder + "_" + Fnv1a(key).ToString("x16");
             }
         }
 
