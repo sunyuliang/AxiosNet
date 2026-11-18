@@ -157,6 +157,22 @@ public sealed class WarmupTests
     }
 
     [Fact]
+    public void Warmup_PoolPrewarmFails_KeepsInstanceUnwarmed()
+    {
+        using var pool = new HttpConnectionPool(new ConnectionPoolOptions { MaxEndpointCount = 1 });
+        using var client = new AxiosClient(new AxiosConfig { BaseAddress = "http://127.0.0.1:9206/" }, pool: pool);
+
+        // 占掉唯一的节点名额：预热必须新建第二个 origin 节点，容量不足。
+        using var lease = pool.Lease(new Uri("http://127.0.0.1:9207/"));
+
+        var error = Assert.Throws<AxiosException>(() => client.Warmup());
+        Assert.Equal(AxiosException.ErrPoolExhausted, error.Code);
+
+        // 标记不能被这次失败污染：再调仍然明确报错，而不是静默返回 false。
+        Assert.Throws<AxiosException>(() => client.Warmup());
+    }
+
+    [Fact]
     public void Warmup_WithInjectedHandler_SkipsPoolPrewarm()
     {
         using var handler = new NoopHandler();

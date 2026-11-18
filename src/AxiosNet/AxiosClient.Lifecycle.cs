@@ -43,12 +43,21 @@ public sealed partial class AxiosClient
             return false;
         }
 
-        StaticWarmup.Run();
-
-        // 注入 Handler 的实例没有池：除静态首用外无可预热。
-        if (origin is not null)
+        try
         {
-            _pool?.Prewarm(origin, Defaults.ProfileOrNull);
+            StaticWarmup.Run();
+
+            // 注入 Handler 的实例没有池：除静态首用外无可预热。
+            if (origin is not null)
+            {
+                _pool?.Prewarm(origin, Defaults.ProfileOrNull);
+            }
+        }
+        catch
+        {
+            // 预热未完成：标记退回「未执行」，下一次调用重新尝试。
+            Volatile.Write(ref _warmedUp, 0);
+            throw;
         }
 
         return true;
