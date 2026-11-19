@@ -64,11 +64,11 @@ OpenAPI 代码生成 + 遥测**五层，这也是功能表里差距的来源。
 
 | 实现 | 在本仓库基准里的用法 |
 | --- | --- |
+| **AxiosNet** | 默认 `AxiosClient` + `PostAsync<User>(route, model)`（连接池 + 默认配置，不做任何调优） |
 | HttpClient | `PostAsJsonAsync` + `ReadFromJsonAsync<User>`（基线） |
 | Refit | `RestService.ForGenerated<IUserApi>` + `[Body] User`（只走源生成，不走反射回退） |
 | RestSharp | 单例 `RestClient` + 每请求新建 `RestRequest` + `AddJsonBody` + `ExecuteAsync<User>` |
 | Flurl | 单例 `FlurlClient` + `Request(url).PostJsonAsync(...).GetJsonAsync<User>()` |
-| AxiosNet | 默认 `AxiosClient` + `PostAsync<User>(route, model)`（连接池 + 默认配置，不做任何调优） |
 | RawSocket | 裸 TCP 发预编码 POST（**服务端基线**，不是被对比的客户端） |
 
 > 四个第三方实现与 AxiosNet 都注入了同一份「与 AxiosNet 默认连接池逐项对齐」的
@@ -78,55 +78,58 @@ OpenAPI 代码生成 + 遥测**五层，这也是功能表里差距的来源。
 
 ## 三、功能对比
 
+> 以下三张能力表统一按「能力 | **AxiosNet** | HttpClient | Refit | RestSharp | Flurl」排列：
+> **第 2 列固定为 AxiosNet（本库）**，加粗表示该能力由库内置，其余列为对照实现。
+
 ### 3.1 请求能力
 
-| 能力 | HttpClient | Refit | RestSharp | Flurl | AxiosNet |
+| 能力 | **AxiosNet** | HttpClient | Refit | RestSharp | Flurl |
 | --- | --- | --- | --- | --- | --- |
-| 强类型反序列化 | `GetFromJsonAsync<T>` | 接口返回类型 | `ExecuteAsync<T>` | `GetJsonAsync<T>` | `GetAsync<T>` |
-| 原文 / `dynamic` / `JsonElement` | 需自己处理 | 需自己处理 | 需自己处理 | 需自己处理 | 四种形态内置 |
-| 声明式端点 | 无 | **接口 + 特性**（源生成/反射两档） | 无 | 无 | **模型式 + 接口式** |
-| OpenAPI 导入生成客户端 | 无 | 无（需第三方 Refitter） | 无 | 无 | **内置 `axiosnet-gen`** |
-| 只拼 URL（不发请求） | 手写 | 无 | 无 | URL 构建器 | `GetUri(...)` |
-| 查询参数对象化 | 手写 | `[Query]` / 参数展开 | `AddQueryParameter` | `SetQueryParams` | `Params`（对象/字典/集合） |
-| multipart 表单 + 文件 | 手写 | 支持 | 支持 | 支持 | `PostFormAsync` / `FormFile` |
-| 流式请求体（边算边发） | 需自定义 `HttpContent` | 有限 | 有限 | 有限 | `IAsyncEnumerable<byte[]>` / 内存块 |
-| 流式响应分帧（SSE / NDJSON / JSON 数组） | 需自己读流 | 返回 `Stream` 自行处理 | 返回流自行处理 | 返回流自行处理 | `RequestStreamAsync<T>` 内置三种格式 |
-| 上传/下载进度 | 需自定义 | 无 | 有进度事件 | 无 | 回调内置 |
-| 字节限速 / 体积上限 | 无 | 无 | 无 | 无 | `Limits.MaxRate` / 大小上限 |
-| 请求体压缩（gzip/deflate/br） | 手写 | 无 | 无 | 无 | `RequestCompression` |
-| 统一凭据扩展点 + 令牌缓存 / 提前刷新 / 401 重放 | 无 | 部分（授权头） | 部分（OAuth 助手） | 无 | `IApiCredentialProvider` / `AccessTokenManager` |
-| 声明式鉴权（`[Authorize]` / `[AllowAnonymous]` + 401 自动重放） | 无 | 无 | 无 | 无 | 模型 / 接口级特性 + `ApiClient.CredentialProvider` |
+| 强类型反序列化 | `GetAsync<T>` | `GetFromJsonAsync<T>` | 接口返回类型 | `ExecuteAsync<T>` | `GetJsonAsync<T>` |
+| 原文 / `dynamic` / `JsonElement` | **四种形态内置** | 需自己处理 | 需自己处理 | 需自己处理 | 需自己处理 |
+| 声明式端点 | **模型式 + 接口式** | 无 | 接口 + 特性（源生成/反射两档） | 无 | 无 |
+| OpenAPI 导入生成客户端 | **内置 `axiosnet-gen`** | 无 | 无（需第三方 Refitter） | 无 | 无 |
+| 只拼 URL（不发请求） | `GetUri(...)` | 手写 | 无 | 无 | URL 构建器 |
+| 查询参数对象化 | `Params`（对象/字典/集合） | 手写 | `[Query]` / 参数展开 | `AddQueryParameter` | `SetQueryParams` |
+| multipart 表单 + 文件 | `PostFormAsync` / `FormFile` | 手写 | 支持 | 支持 | 支持 |
+| 流式请求体（边算边发） | `IAsyncEnumerable<byte[]>` / 内存块 | 需自定义 `HttpContent` | 有限 | 有限 | 有限 |
+| 流式响应分帧（SSE / NDJSON / JSON 数组） | `RequestStreamAsync<T>` 内置三种格式 | 需自己读流 | 返回 `Stream` 自行处理 | 返回流自行处理 | 返回流自行处理 |
+| 上传/下载进度 | **回调内置** | 需自定义 | 无 | 有进度事件 | 无 |
+| 字节限速 / 体积上限 | `Limits.MaxRate` / 大小上限 | 无 | 无 | 无 | 无 |
+| 请求体压缩（gzip/deflate/br） | `RequestCompression` | 手写 | 无 | 无 | 无 |
+| 统一凭据扩展点 + 令牌缓存 / 提前刷新 / 401 重放 | `IApiCredentialProvider` / `AccessTokenManager` | 无 | 部分（授权头） | 部分（OAuth 助手） | 无 |
+| 声明式鉴权（`[Authorize]` / `[AllowAnonymous]` + 401 自动重放） | 模型 / 接口级特性 + `ApiClient.CredentialProvider` | 无 | 无 | 无 | 无 |
 
 ### 3.2 弹性与治理（本表是差距最大的一块）
 
-| 能力 | HttpClient | Refit | RestSharp | Flurl | AxiosNet |
+| 能力 | **AxiosNet** | HttpClient | Refit | RestSharp | Flurl |
 | --- | --- | --- | --- | --- | --- |
-| 重试（退避/抖动/`Retry-After`） | 需 Polly | 需 Polly | 无内置 | 无内置 | **内置策略** |
-| 全局重试预算 | 需自写 | 需自写 | 无 | 无 | **`RetryBudgetPolicy`** |
-| 熔断（Closed/Open/HalfOpen） | 需 Polly | 需 Polly | 无 | 无 | **内置状态机** |
-| 并发对冲（Hedging） | 无 | 无 | 无 | 无 | **内置** |
-| 备用端点 / 端点健康记忆 | 自写 | 自写 | 自写 | 自写 | **内置** |
-| 幂等键（重试/换端共用） | 自写 | 自写 | 自写 | 自写 | **内置** |
-| 在途并发闸门 + 排队上限 | 自写 | 自写 | 自写 | 自写 | **内置** |
-| 响应缓存 + 单飞 + 条件复用 | 需缓存库 | 需缓存库 | 需缓存库 | 需缓存库 | **内置** |
-| 短路响应（mock / 回放） | 自写 | 自写 | 自写 | 自写 | **内置** |
-| 单次预算 vs 整条请求预算分离 | 只有 `Timeout` | 继承 HttpClient | 有超时 | 有超时 | `Timeout` + `TotalTimeout` |
+| 重试（退避/抖动/`Retry-After`） | **内置策略** | 需 Polly | 需 Polly | 无内置 | 无内置 |
+| 全局重试预算 | **`RetryBudgetPolicy`** | 需自写 | 需自写 | 无 | 无 |
+| 熔断（Closed/Open/HalfOpen） | **内置状态机** | 需 Polly | 需 Polly | 无 | 无 |
+| 并发对冲（Hedging） | **内置** | 无 | 无 | 无 | 无 |
+| 备用端点 / 端点健康记忆 | **内置** | 自写 | 自写 | 自写 | 自写 |
+| 幂等键（重试/换端共用） | **内置** | 自写 | 自写 | 自写 | 自写 |
+| 在途并发闸门 + 排队上限 | **内置** | 自写 | 自写 | 自写 | 自写 |
+| 响应缓存 + 单飞 + 条件复用 | **内置** | 需缓存库 | 需缓存库 | 需缓存库 | 需缓存库 |
+| 短路响应（mock / 回放） | **内置** | 自写 | 自写 | 自写 | 自写 |
+| 单次预算 vs 整条请求预算分离 | `Timeout` + `TotalTimeout` | 只有 `Timeout` | 继承 HttpClient | 有超时 | 有超时 |
 
 > 「需 Polly」指需要额外引入第三方弹性库并把它装进 `DelegatingHandler` 链；这本身是可行方案，
 > 但它是**另一个包 + 另一套配置模型**，与本表里「同一次配置调用里就能写」不是一回事。
 
 ### 3.3 连接、观测与工程化
 
-| 能力 | HttpClient | Refit | RestSharp | Flurl | AxiosNet |
+| 能力 | **AxiosNet** | HttpClient | Refit | RestSharp | Flurl |
 | --- | --- | --- | --- | --- | --- |
-| 连接池复用 | `SocketsHttpHandler` | 继承 | 继承 | 继承 | 按 origin 自建池，可命名共享 |
-| 多出口（代理/凭据/证书/Cookie 会话分档） | 多 Handler 手写 | 多 Handler 手写 | 有限 | 有限 | **传输档 `Transport`** |
-| HTTP/2 / HTTP/3 | 支持 | 支持 | 通过底层 | 通过底层 | 支持，可降级 |
-| DI 注册 | `IHttpClientFactory` | `Refit.HttpClientFactory` | 手写 | 手写 | `AddAxiosClient` / `AddApiClient` |
-| 遥测 | 内置 `HttpClient` 事件 | 继承 | 继承 | 继承 | **`ActivitySource` + `Meter` + `DiagnosticListener`，尝试级事件** |
-| 统一错误模型 | `HttpRequestException` 等 | `ApiException` | `RestResponse` 状态 | `FlurlHttpException` | `AxiosException` + 稳定 `Code` |
-| Native AOT / 裁剪 | 原生支持 | 源生成支持 | 反射较重，需配置 | 反射较重，需配置 | `IsTrimmable` / `IsAotCompatible`，生成器烘焙 |
-| 第三方运行时依赖 | 0（BCL） | 1 个包 | 1 个包 | 2 个包 | **0（net6/net8 资产只用 BCL）** |
+| 连接池复用 | 按 origin 自建池，可命名共享 | `SocketsHttpHandler` | 继承 | 继承 | 继承 |
+| 多出口（代理/凭据/证书/Cookie 会话分档） | **传输档 `Transport`** | 多 Handler 手写 | 多 Handler 手写 | 有限 | 有限 |
+| HTTP/2 / HTTP/3 | 支持，可降级 | 支持 | 支持 | 通过底层 | 通过底层 |
+| DI 注册 | `AddAxiosClient` / `AddApiClient` | `IHttpClientFactory` | `Refit.HttpClientFactory` | 手写 | 手写 |
+| 遥测 | **`ActivitySource` + `Meter` + `DiagnosticListener`，尝试级事件** | 内置 `HttpClient` 事件 | 继承 | 继承 | 继承 |
+| 统一错误模型 | `AxiosException` + 稳定 `Code` | `HttpRequestException` 等 | `ApiException` | `RestResponse` 状态 | `FlurlHttpException` |
+| Native AOT / 裁剪 | `IsTrimmable` / `IsAotCompatible`，生成器烘焙 | 原生支持 | 源生成支持 | 反射较重，需配置 | 反射较重，需配置 |
+| 第三方运行时依赖 | **0（net6/net8 资产只用 BCL）** | 0（BCL） | 1 个包 | 1 个包 | 2 个包 |
 
 > AxiosNet 的 `netstandard2.0` 兼容资产为 .NET Framework 4.7.2+ / .NET Core 2.0+ 兜底，
 > 该资产额外引用 9 个微软第一方 BCL 兼容包；`net6.0` / `net8.0` 资产为零第三方运行时依赖。
@@ -389,22 +392,22 @@ var response = await http.GetAsync<List<User>>("users", c =>
 
 | 实现 | 需要做什么 |
 | --- | --- |
+| **AxiosNet** | 同一个配置对象里写 `c.Resilience.Retry.Policy`、`c.Resilience.Circuit.Policy`、`client.Defaults.Caching`，一条请求全部生效 |
 | HttpClient | 引入 Polly（或 `Microsoft.Extensions.Http.Resilience`），组一条 `DelegatingHandler` 链，再单独接缓存库；配置分散在三处 |
 | Refit | 同上，Polly 挂在传给 `RestService.For` 的 `HttpClient` 上；Refit 自身不提供 |
 | RestSharp | 自己在循环里重试，熔断与缓存全自写 |
 | Flurl | 同上；事件钩子（`OnError`/`OnResponse`）能做记录，但不等于弹性策略 |
-| AxiosNet | 同一个配置对象里写 `c.Resilience.Retry.Policy`、`c.Resilience.Circuit.Policy`、`client.Defaults.Caching`，一条请求全部生效 |
 
-定性评价（**是判断，不是测量**）：
+定性评价（**是判断，不是测量**；同样第 2 列为 AxiosNet）：
 
-| 维度 | HttpClient | Refit | RestSharp | Flurl | AxiosNet |
+| 维度 | **AxiosNet** | HttpClient | Refit | RestSharp | Flurl |
 | --- | --- | --- | --- | --- | --- |
-| 上手成本 | 低（人人会） | 中（要写接口） | 中（Client/Request 两件套） | **低（一行链式）** | 低（与 axios 同构） |
-| 端点多时的可维护性 | 低（模板代码多） | **高（接口集中）** | 中 | 中（URL 字符串散落） | **高（模型/接口 + OpenAPI 生成）** |
-| 类型安全 | 中 | **高** | 中 | 中（字符串 URL） | **高** |
-| 治理能力的组织方式 | 分散（Handler 链 + 第三方） | 分散 | 分散/自写 | 分散 | **集中（配置对象）** |
-| 排障可观测性 | 中（HttpClient 事件） | 中 | 中 | 中 | **高（尝试级事件 + trace/metrics）** |
-| 生态与资料 | **最广** | 广 | 广（老项目多） | 中 | 新（本仓库文档即主要资料） |
+| 上手成本 | 低（与 axios 同构） | 低（人人会） | 中（要写接口） | 中（Client/Request 两件套） | **低（一行链式）** |
+| 端点多时的可维护性 | **高（模型/接口 + OpenAPI 生成）** | 低（模板代码多） | **高（接口集中）** | 中 | 中（URL 字符串散落） |
+| 类型安全 | **高** | 中 | **高** | 中 | 中（字符串 URL） |
+| 治理能力的组织方式 | **集中（配置对象）** | 分散（Handler 链 + 第三方） | 分散 | 分散/自写 | 分散 |
+| 排障可观测性 | **高（尝试级事件 + trace/metrics）** | 中（HttpClient 事件） | 中 | 中 | 中 |
+| 生态与资料 | 新（本仓库文档即主要资料） | **最广** | 广 | 广（老项目多） | 中 |
 
 ---
 
