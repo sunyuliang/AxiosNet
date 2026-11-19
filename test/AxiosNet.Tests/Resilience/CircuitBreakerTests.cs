@@ -411,11 +411,16 @@ public sealed class CircuitBreakerTests
     public async Task HalfOpen_HungProbe_RecoversAfterWatchdogReopens()
     {
         var calls = 0;
+
+        // 探测挂多久由用例控制：服务端停在 TCS 上，直到所有断言做完才放行。
+        // 用真实延迟（如 Task.Delay(2000)）就是在和调度赛跑 —— CI 上一旦这段等待被拉长到超过探测自身的延迟，
+        // B 的成功会先落地把熔断闭合，C 反而被放行，Assert.Throws 就失败了。
+        var releaseSlow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = TestHttpServer.Start(async request =>
         {
             if (request.Path == "/slow")
             {
-                await Task.Delay(2000);
+                await releaseSlow.Task;
                 return TestJson.Response(new { ok = true });
             }
 
@@ -465,6 +470,7 @@ public sealed class CircuitBreakerTests
         Assert.Equal(2, server.Received.Count);
 
         // B 迟到的成功属于上一轮：不改台账
+        releaseSlow.SetResult();
         var late = await slow;
         Assert.Equal(200, late.Status);
         Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));

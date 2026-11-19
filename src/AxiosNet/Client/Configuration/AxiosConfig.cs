@@ -363,10 +363,11 @@ public sealed partial class AxiosConfig
         }
     }
 
-    private TimeSpan _timeout;
+    private TimeSpan _timeout = TimeSpan.FromSeconds(100);
 
     /// <summary>
-    /// 对应 axios timeout：一次尝试的预算（建连 + 响应头 + 正文），零表示不超时，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
+    /// 对应 axios timeout：一次尝试的预算（建连 + 响应头 + 正文），默认 100 秒（与 <see cref="HttpClient.Timeout"/> 一致），
+    /// 零表示不超时，负值抛 <c>ERR_BAD_OPTION_VALUE</c>。
     /// 重试 / 备用端点 / 对冲各复制一份；整条请求的预算见 <see cref="ResilienceSettings.TotalTimeout"/>。
     /// </summary>
     /// <remarks>流式响应的正文也计入本预算。</remarks>

@@ -88,15 +88,15 @@ Production code should use an **instance client**: hold it long-lived, with one 
 using var http = Axios.Create(c =>
 {
     c.BaseAddress = "https://api.example.com/";
-    c.Timeout = TimeSpan.FromSeconds(10);   // always set this in production; see the warning below
+    c.Timeout = TimeSpan.FromSeconds(10);   // defaults to 100s (same as HttpClient); override as needed
 });
 var user = (await http.GetAsync<User>("users/1")).Data!;
 ```
 
-> **`Timeout` defaults to `TimeSpan.Zero`, i.e. no timeout**, unlike `HttpClient.Timeout` (default 100s). A .NET server has no host-level cap, so:
-> - with no timeout set, an unresponsive downstream leaves the request **hanging forever (no error code at all)**, with connections and queued requests piling up;
+> **`Timeout` defaults to 100 seconds**, matching `HttpClient.Timeout`; set it to `TimeSpan.Zero` to disable. A .NET server has no host-level cap, so with the timeout disabled:
+> - an unresponsive downstream leaves the request **hanging forever (no error code at all)**, with connections and queued requests piling up;
 > - in multi-origin / failover scenarios, once the number of distinct origins reaches `MaxEndpointCount` (1024 by default, can be lowered) the pool's origin nodes are exhausted and the failure finally surfaces as `ERR_POOL_EXHAUSTED` — the code points at the pool, but the root cause is the missing timeout;
-> - set `Timeout` explicitly, or use `Resilience.TotalTimeout` to cap the whole request's budget.
+> - long-lived streams (SSE, large downloads) need the timeout disabled; exit via a cancellation token instead.
 
 Once endpoints are grouped, the declarative client offers two parallel ways, and **model-based is the default recommendation**: pass a request model directly, or hand an interface to `Create<T>()`. Both share the same client and the same binding / authorization / validation rules (see [Model-based API](#model-based-api) / [Interface-based API](#interface-based-api)).
 
@@ -419,7 +419,7 @@ var task = client.GetAsync("slow", cancellationToken: cts.Token);
 cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
-- `Timeout` is the budget of a **single attempt** (connect + headers + body), default `Zero` meaning no timeout; capped at ~49.7 days, larger values clamp instead of throwing.
+- `Timeout` is the budget of a **single attempt** (connect + headers + body), defaulting to 100 seconds (same as `HttpClient.Timeout`); `Zero` means no timeout; capped at ~49.7 days, larger values clamp instead of throwing.
 - `Resilience.TotalTimeout` is the budget of the **whole logical request** (from the call, including interceptors, queueing, backoff and hedge branches). `Timeout` is copied per retry / endpoint / hedge; `Resilience.TotalTimeout` is a single shared deadline, and each attempt gets `min(Timeout, remaining)`.
 - Timeouts throw `ECONNABORTED` (message overridable via `Observability.TimeoutMessage`), cancellation throws `ERR_CANCELED`; the original `OperationCanceledException` is kept in `Cause`. Buffered and streaming reads share the same exit.
 - **`ResponseType.Stream` cancellation also throws `ERR_CANCELED`**: cancelling a stream read — a caller-supplied token passed to `ReadAsync` / `CopyToAsync` / `Read` on `Response.Data`, or the request token (method argument / `config.CancellationToken`) — always surfaces as an `AxiosException` with `ERR_CANCELED` (the original OCE stays in `Cause`); timeouts remain `ECONNABORTED`. The classification order stays fixed at `Caller → Canceled → Timeout → None`; it only decides attribution and the error code, and no path throws a raw OCE anymore. **Do not use `catch (OperationCanceledException)` to detect stream-read cancellation** — check `AxiosException.Code`.
@@ -440,7 +440,7 @@ await client.GetAsync("orders/scan", c =>
 - **A budget-clamped timeout stops right there**: its limit already came from the remaining budget, so the leftover at the deadline (less than one timer tick) cannot carry a meaningful attempt. The call reports the exhausted budget instead of spending that leftover on another send. Likewise, when a backoff cannot fit in the remaining budget the retry does not wait it out — the token is refunded and the exhausted budget is reported immediately.
 - Queueing **counts** against `Resilience.TotalTimeout` (it does not count against `Timeout`): the budget measures what the caller actually waits.
 - When the remaining budget is tighter than `Resilience.Concurrency.QueueTimeout`, the **queue wait itself is cut at the budget** and fails with `ECONNABORTED` rather than `ERR_QUEUE_TIMEOUT` (the error names the real constraint). This also holds when `QueueTimeout` is unset (wait forever).
-- **Streaming bodies count too**: body reads use the remaining budget (already clamped by `Resilience.TotalTimeout`), so a body that runs past it fails with `ECONNABORTED`. For long-lived streams (SSE, large downloads) leave `Timeout` / `Resilience.TotalTimeout` unset and exit via a cancellation token.
+- **Streaming bodies count too**: body reads use the remaining budget (already clamped by `Resilience.TotalTimeout`), so a body that runs past it fails with `ECONNABORTED`. For long-lived streams (SSE, large downloads) set `Timeout` to `Zero` and leave `Resilience.TotalTimeout` unset; exit via a cancellation token.
 - `Resilience.TotalTimeout = null` means no whole-request budget (default); `Zero` is synonymous with `null`; negative throws `ERR_BAD_OPTION_VALUE`; setting `null` per request clears an instance-level default.
 
 ### Progress, rate and size limits
@@ -678,7 +678,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `ContentType` | `application/json` | Decides how `Body` is encoded |
 | `Body` | `null` | Request body |
 | `Compression` | `null` (off) | Compress the body: `Gzip` / `Deflate` / `Brotli`; `None` overrides an instance default |
-| `Timeout` | `Zero` (no timeout) | Per-attempt budget (connect + headers + body) |
+| `Timeout` | 100 s (`Zero` = no timeout) | Per-attempt budget (connect + headers + body) |
 | `ResponseType` | `Json` | `Json` / `Text` / `ArrayBuffer` / `Stream` / `Dynamic` |
 | `CancellationToken` | `default` | External cancellation |
 | `Response` | `null` | Readable during the response phase (status / headers / media type) |

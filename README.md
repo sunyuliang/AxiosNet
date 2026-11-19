@@ -88,15 +88,15 @@ var user=(await Axios.GetAsync<User>("https://api.example.com/users/1")).Data!;
 using var http = Axios.Create(c =>
 {
     c.BaseAddress = "https://api.example.com/";
-    c.Timeout = TimeSpan.FromSeconds(10);   // 生产环境务必显式设置，见下方警示
+    c.Timeout = TimeSpan.FromSeconds(10);   // 默认 100 秒（与 HttpClient 一致），按需覆盖
 });
 var user = (await http.GetAsync<User>("users/1")).Data!;
 ```
 
-> **`Timeout` 默认是 `TimeSpan.Zero`（永不超时）**，与 `HttpClient.Timeout`（默认 100 秒）不同。服务端没有宿主超时兜底，需要注意：
+> **`Timeout` 默认 100 秒**，与 `HttpClient.Timeout` 一致；设为 `TimeSpan.Zero` 可关闭超时。服务端没有宿主超时兜底，关闭后需要注意：
 > - 下游一直不响应时，请求会**永久挂住**（没有任何错误码），连接与排队持续堆积；
 > - 多 origin / 换端点场景中，distinct origin 数达到 `MaxEndpointCount`（默认 1024，可调小）会占满池的 origin 节点，最终以 `ERR_POOL_EXHAUSTED` 暴露——错误码指向池，根因仍是没设超时；
-> - 请显式设置 `Timeout`，或用 `Resilience.TotalTimeout` 限定整条请求的总预算。
+> - 长连接（SSE / 大文件下载）需要关闭超时，请改用取消令牌退出。
 
 端点成组时，声明式有两种并列写法，**模型式是默认推荐**：把请求写成模型直接传，或把端点写成接口交给 `Create<T>()`。两条路径共用同一个客户端与同一套绑定 / 授权 / 校验规则（详见[模型式 API](#模型式-api) / [接口式 API](#接口式-api)）。
 
@@ -421,7 +421,7 @@ var task = client.GetAsync("slow", cancellationToken: cts.Token);
 cts.CancelAfter(TimeSpan.FromSeconds(1));
 ```
 
-- `Timeout` 是**单次尝试**的预算（建连 + 等响应头 + 读正文），默认 `Zero` 表示不超时；上限约 49.7 天，超出收敛到上限。
+- `Timeout` 是**单次尝试**的预算（建连 + 等响应头 + 读正文），默认 100 秒（与 `HttpClient.Timeout` 一致），`Zero` 表示不超时；上限约 49.7 天，超出收敛到上限。
 - `Resilience.TotalTimeout` 是**整条逻辑请求**的预算（从调用开始，含拦截器、排队、重试等待、对冲分支）：`Timeout` 会被重试 / 备用端点 / 对冲各自复制一份，`Resilience.TotalTimeout` 只有一份，每次尝试实际拿到 `min(Timeout, 剩余)`。
 - 超时抛 `ECONNABORTED`（消息可用 `Observability.TimeoutMessage` 覆盖），取消抛 `ERR_CANCELED`，原始 `OperationCanceledException` 留在 `Cause`；普通请求与流式读取同一出口。
 - **`ResponseType.Stream` 取消同样抛 `ERR_CANCELED`**：直接对 `Response.Data` 流调用 `ReadAsync` / `CopyToAsync` / `Read` 并传入自己的令牌，或请求令牌（方法参数 / `config.CancellationToken`）取消，最终交给调用方的都是带 `ERR_CANCELED` 的 `AxiosException`（原始 OCE 留在 `Cause`）；超时仍为 `ECONNABORTED`。归属判定顺序固定为 `Caller → Canceled → Timeout → None`，只影响归属与错误码，不再有任何一路原样抛出 OCE。**不要用 `catch (OperationCanceledException)` 判断流读取消**，请检查 `AxiosException.Code`。
@@ -442,7 +442,7 @@ await client.GetAsync("orders/scan", c =>
 - **被预算压小的那次超时到点即收手**：上限本来就取自剩余总预算，到点时剩下的零头（不足一个计时器 tick）已经发不出任何有意义的尝试，因此直接报「预算耗尽」而不是拿这点余额再发一次；同理，退避睡不完剩余预算时也不白等，立刻退回令牌并报耗尽。
 - 排队时间**计入** `Resilience.TotalTimeout`（`Timeout` 则不计排队）——总预算量的是调用方感知的时长。
 - 剩余预算比 `Resilience.Concurrency.QueueTimeout` 更紧时，**排队等待会被剩余预算截断**，失败码是 `ECONNABORTED` 而不是 `ERR_QUEUE_TIMEOUT`（报错要指向真正的约束）；`QueueTimeout` 为空（一直等）时同样受这条约束。
-- **流式正文也在预算之内**：正文读取沿用被预算压小后的剩余额度，读到一半到点即 `ECONNABORTED`；长连接（SSE / 大文件下载）不要设 `Timeout` / `Resilience.TotalTimeout`，改用取消令牌退出。
+- **流式正文也在预算之内**：正文读取沿用被预算压小后的剩余额度，读到一半到点即 `ECONNABORTED`；长连接（SSE / 大文件下载）请把 `Timeout` 设为 `Zero` 且不要设 `Resilience.TotalTimeout`，改用取消令牌退出。
 - `Resilience.TotalTimeout = null` 不设总预算（默认），`Zero` 与 `null` 同义，负值 `ERR_BAD_OPTION_VALUE`；按请求显式写 `null` 可以关掉实例默认的总预算。
 
 ### 进度、限速与大小上限
@@ -682,7 +682,7 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 | `ContentType` | `application/json` | 决定 `Body` 的编码方式 |
 | `Body` | `null` | 请求体 |
 | `Compression` | `null`（不压缩） | 请求体压缩：`Gzip` / `Deflate` / `Brotli`，`None` 覆盖实例默认 |
-| `Timeout` | `Zero`（不超时） | 单次尝试的预算（建连 + 响应头 + 正文） |
+| `Timeout` | 100 秒（`Zero` 不超时） | 单次尝试的预算（建连 + 响应头 + 正文） |
 | `ResponseType` | `Json` | `Json` / `Text` / `ArrayBuffer` / `Stream` / `Dynamic` |
 | `CancellationToken` | `default` | 外部取消 |
 | `Response` | `null` | 响应阶段可读（状态码 / 头 / 媒体类型） |
