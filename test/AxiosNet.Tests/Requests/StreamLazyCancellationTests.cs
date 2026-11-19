@@ -14,14 +14,17 @@ namespace AxiosNet.Tests.Requests;
 /// </remarks>
 public sealed class StreamLazyCancellationTests
 {
-    /// <summary>无超时预算 + 不可取消令牌：不建任何 CTS，底层拿到的就是 <see cref="CancellationToken.None"/>。</summary>
+    /// <summary>
+    /// 无超时预算 + 不可取消令牌：不建任何 CTS，底层拿到的就是 <see cref="CancellationToken.None"/>。
+    /// 默认 <see cref="AxiosConfig.Timeout"/> 是 100 秒，所以这里显式置零，才能测到「一个取消来源都没有」的边界。
+    /// </summary>
     [Fact]
     public async Task NoTimeoutNoExternalToken_HandsNonCancelableToken()
     {
         var content = new RecordingContent(1024);
         using var client = new AxiosClient(handler: new RecordingHandler(content));
 
-        var response = await client.GetAsync<Stream>("http://probe.invalid/big");
+        var response = await client.GetAsync<Stream>("http://probe.invalid/big", c => c.Timeout = TimeSpan.Zero);
         await using var stream = response.Data!;
 
         var total = await ReadAllAsync(stream);

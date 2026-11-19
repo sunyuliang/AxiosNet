@@ -21,11 +21,12 @@ public sealed class RequestAllocationTests
     /// <summary>
     /// 每请求分配上界（`GetAsync&lt;string&gt;`，stub handler，空正文）。门槛只用来抓「又多了几个每请求对象」，
     /// 改完热路径要跟着下调，不要放宽；两档差异来自 BCL 自身（net6 的请求 / 响应对象比 net8 多约 170 B）。
+    /// 默认 <see cref="AxiosConfig.Timeout"/> = 100 秒，所以每次尝试会建一个计时 CTS（实测约 368 B），已计入上界。
     /// </summary>
 #if NET6_0
-    private const long GetStringBudgetBytes = 1860;
+    private const long GetStringBudgetBytes = 2228;
 #else
-    private const long GetStringBudgetBytes = 1680;
+    private const long GetStringBudgetBytes = 2048;
 #endif
 
     /// <summary>
@@ -33,9 +34,9 @@ public sealed class RequestAllocationTests
     /// 「又回到攒中间集合 / 中间字符串」的写法；改完热路径要跟着下调，不要放宽。
     /// </summary>
 #if NET6_0
-    private const long GetWithParamsBudgetBytes = 2150;
+    private const long GetWithParamsBudgetBytes = 2518;
 #else
-    private const long GetWithParamsBudgetBytes = 1980;
+    private const long GetWithParamsBudgetBytes = 2348;
 #endif
 
     /// <summary>
@@ -43,9 +44,9 @@ public sealed class RequestAllocationTests
     /// 「每层又新造一个环检测集合」的写法；改完热路径要跟着下调，不要放宽。
     /// </summary>
 #if NET6_0
-    private const long GetWithNestedParamsBudgetBytes = 2470;
+    private const long GetWithNestedParamsBudgetBytes = 2838;
 #else
-    private const long GetWithNestedParamsBudgetBytes = 2300;
+    private const long GetWithNestedParamsBudgetBytes = 2668;
 #endif
 
     /// <summary>

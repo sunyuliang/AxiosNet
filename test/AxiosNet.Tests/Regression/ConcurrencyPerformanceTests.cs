@@ -10,29 +10,34 @@ namespace AxiosNet.Tests.Regression;
 /// <summary>
 /// 并发吞吐下限：与 <c>HttpClient</c> 的配对比值。
 /// <para>
-/// 判定口径（为什么不是「中位 ≥ 85%」）：本用例的噪声是<b>单侧向下</b>的 —— 核调度、功耗策略、并行集合抢 CPU
-/// 都只会把某一轮压低，不会凭空抬高两侧的比值。所以「最好一轮」才接近被测库的真实能力，中位只用来拦整体退化：
-/// 两者一条判能力、一条判趋势，都不拿单轮抖动当回归（HEAD 基线实测中位 79.8%~83.9%，5 跑 3 失败，
-/// 而同期最好一轮稳定在 88% 以上 —— 原口径测的是机器，不是代码）。
+/// 判定口径：本用例的噪声是<b>单侧向下</b>的 —— 核调度、功耗策略、并行集合抢 CPU
+/// 都只会把某一轮压低，不会凭空抬高两侧的比值。所以「最好一轮」接近被测库的真实能力，中位用来拦整体退化；
+/// 两者都卡同一条硬下限（Release 85% / Debug 75%），不拿单轮抖动当回归。
 /// </para>
 /// <para>
 /// <b>自适应预热、独占进程、排在整套用例之前</b>：判的是配对比值，两侧的编译状态就必须可比 ——
 /// <c>HttpClient</c> 在共享框架里是 ReadyToRun，进程一起来就是优化代码；本库是普通 IL，要先跑 Tier0、
 /// 再等分层编译换成 Tier1 + PGO。这层爬坡按时钟推进：机器越慢越忙，固定时长的预热里换掉的比例越少，
-/// 测到的就是编译进度而不是代码（同机同构建实测前两轮 84.1% / 83.2%，第 3 轮才到 92.4%）。
+/// 测到的就是编译进度而不是代码（同机同构建实测前两轮仍停在爬坡段平台，第 3 轮才进入稳态）。
 /// 所以预热不拍固定秒数，而是按「配对比值进入稳定带」自适应收敛；另外它独占进程、排在整套用例之前
 /// 逐 TFM 串行（见 build-nuget.yml）。
 /// </para>
 /// <para>
-/// <b>判不了就不判</b>：进程没拿到它要的 CPU 时，比值既证明不了快也证明不了慢。同一台机器、同一份代码实测：
-/// 进程吃到 50%~56% 的 CPU 时比值稳定在 77%~87%；被挤到 30%~32% 时比值在 54%~90% 之间乱跳（跨度比整条能力线还宽）。
-/// 所以「没达标」时先看 <see cref="JudgeableCpuShare"/>：够不着就只把数字打出来、不做断言（达标本来就不用解释）。
+/// <b>CPU 份额只做诊断，不参与折算</b>：<see cref="PairResult.CpuShare"/> 是整个进程（两侧客户端 + 同进程服务端）
+/// 的占用，不是某一侧的。两侧在同一窗口、同一 CPU 预算下并行，原始配对比值已经把 CPU 竞争算进去了；
+/// 再按进程份额放大，等于假设「CPU 紧张只伤 AxiosNet、HttpClient 不吃 CPU」，会算出 120%+ 这种不可能的结果。
+/// 所以判定直接用原始比值卡硬下限（Release 85% / Debug 75%），CPU 份额只随报告打印，用于判断这一轮是否被外部负载挤压。
+/// </para>
+/// <para>
+/// <b>判不了就不判</b>：进程没拿到它要的 CPU 时，比值既证明不了快也证明不了慢（整套用例一起跑时实测只有 24% 的
+/// CPU 份额，最好一轮从独占时的 93% 掉到 75%）。所以「没达标」时先看 <see cref="JudgeableCpuShare"/> 与预热是否收敛：
+/// 够不着就只把数字打出来、不做断言；达标本来就不用解释。真回归交给 CI 的独占进程判定（见 build-nuget.yml）。
 /// </para>
 /// </summary>
 [Collection(PerformanceCollection.Name)]
 public sealed class ConcurrencyPerformanceTests
 {
-    /// <summary>Debug 也跑，但只拦灾难性回退（能力线 70%、地板 60%）。</summary>
+    /// <summary>Debug 也跑：Release 硬下限 85%，Debug 硬下限 75%（能力线与中位同一口径）。</summary>
     [Fact]
     public async Task AxiosNet_ConcurrentThroughput_ReachesMinimumRatioOfHttpClient()
     {
@@ -71,7 +76,8 @@ public sealed class ConcurrencyPerformanceTests
             cpuShares.Add(result.CpuShare);
             log.Add(
                 $"  第 {round} 轮：AxiosNet {result.AxiosRps:N0} req/s，"
-                + $"HttpClient {result.HttpRps:N0} req/s，比值 {ratio:P1}，CPU 占用 {result.CpuShare:P0}");
+                + $"HttpClient {result.HttpRps:N0} req/s，比值 {ratio:P1}，"
+                + $"整进程 CPU 占用 {result.CpuShare:P0}");
         }
 
         var medianRatio = Median(ratios);
@@ -89,8 +95,9 @@ public sealed class ConcurrencyPerformanceTests
         _output.WriteLine($"  {DescribeEnvironment()}");
         _output.WriteLine(
             $"  配对比值 最好 {bestRatio:P1} / 中位 {medianRatio:P1} / 最差 {ratios.Min():P1}"
-            + $"（{build} 能力线 {AbilityRatio:P0} 判最好一轮，中位地板 {MedianFloorRatio:P0}）"
-            + (IsOptimizedBuild ? string.Empty : " —— Debug 下被测库是未优化 IL，这批数字不可与 Release 并列比较"));
+            + $"（整进程 CPU 份额中位 {medianCpuShare:P0}，仅作诊断）"
+            + $"—— {build} 硬下限 {AbilityRatio:P0}，能力线与中位同一口径"
+            + (IsOptimizedBuild ? string.Empty : "；Debug 下被测库是未优化 IL，这批数字不可与 Release 并列比较"));
 
         Assert.True(
             failedRequests == 0,
@@ -115,7 +122,7 @@ public sealed class ConcurrencyPerformanceTests
         Assert.True(
             bestRatio >= AbilityRatio,
             $"并发吞吐未达到 HttpClient 的 {AbilityRatio:P0}（{Rounds} 轮最好一轮 {bestRatio:P1}，"
-            + $"中位 {medianRatio:P1} / 最差 {ratios.Min():P1}）。"
+            + $"中位 {medianRatio:P1} / 最差 {ratios.Min():P1}，整进程 CPU 份额中位 {medianCpuShare:P0}）。"
             + $"配置 [{build}]：每侧 {Concurrency} 并发 × {Window.TotalSeconds:0.#}s × {Rounds} 轮，"
             + $"预热 {warmup.Windows} 个窗口，两侧 handler 功能逐项对齐、服务器回环直连、无请求体。"
             + Environment.NewLine + report
@@ -124,7 +131,7 @@ public sealed class ConcurrencyPerformanceTests
             + "排查方向：热路径新增了反射 / 每请求白分配 / 同步等待 / 重复配置合并。"
             + (IsOptimizedBuild
                 ? string.Empty
-                : Environment.NewLine + "注意：Debug 下被测库是未优化 IL，85% 能力线只在 Release 下成立。"));
+                : Environment.NewLine + "注意：Debug 下被测库是未优化 IL，75% 能力线是该配置下的硬下限。"));
 
         // ② 趋势：中位低于地板说明「每一轮都慢」，不是某一轮被抢了 CPU。这条拦住「靠一轮侥幸过线」，
         //    也把「整体退化 10 个点」和「某轮抖动 10 个点」分开报。
@@ -148,8 +155,8 @@ public sealed class ConcurrencyPerformanceTests
     private static readonly TimeSpan WarmupWindow = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// 最少预热窗数：Tier0 平台期与稳态在单窗上分不出来 —— 实测前两轮比值可以一直平在 84.1% / 83.2%，
-    /// 第 3 轮才跳到 92.4%。只跑 2~3 个窗口会把平台期误判成「已稳态」，4 秒足够跨过去。
+    /// 最少预热窗数：Tier0 平台期与稳态在单窗上分不出来 —— 实测前两轮比值可以一直平在爬坡段的平台，
+    /// 之后才跳到稳态。只跑 2~3 个窗口会把平台期误判成「已稳态」，4 秒足够跨过去。
     /// </summary>
     private const int MinWarmupWindows = 4;
 
@@ -175,10 +182,10 @@ public sealed class ConcurrencyPerformanceTests
     private const int Rounds = 5;
 
     /// <summary>
-    /// 能力线：判定用 <b>最好一轮</b>。AxiosNet 吞吐 ≥ HttpClient 的 85%（Release），Debug 放宽到 70%。
+    /// 能力线：判定用 <b>最好一轮</b>。Release 必须 ≥ HttpClient 的 85%，Debug 75%。
     /// </summary>
 #if DEBUG
-    private const double AbilityRatio = 0.70;
+    private const double AbilityRatio = 0.75;
 
 #else
     private const double AbilityRatio = 0.85;
@@ -186,18 +193,18 @@ public sealed class ConcurrencyPerformanceTests
 #endif
 
     /// <summary>
-    /// 中位地板：判定用 <b>中位数</b>。低于它说明过半轮次都没跑到 —— 整体退化，不是单轮噪声。
-    /// 取值比能力线低 10 个点：留给「两侧交替下线」的固有偏差（同一轮里两侧的核位置并不完全对称）。
+    /// 中位地板：判定用 <b>中位数</b>，与能力线同一硬下限（Release 85% / Debug 75%）。
+    /// 低于它说明过半轮次都没跑到 —— 整体退化，不是单轮噪声。
     /// </summary>
 #if DEBUG
-    private const double MedianFloorRatio = 0.60;
+    private const double MedianFloorRatio = 0.75;
 
 #else
-    private const double MedianFloorRatio = 0.75;
+    private const double MedianFloorRatio = 0.85;
 
 #endif
 
-    /// <summary>被测库是否经过优化（Release）；Debug 下只拦灾难性回退。</summary>
+    /// <summary>被测库是否经过优化（Release）；Debug 用 75% 硬下限。</summary>
 #if DEBUG
     private const bool IsOptimizedBuild = false;
 
@@ -206,17 +213,17 @@ public sealed class ConcurrencyPerformanceTests
 
 #endif
 
-    /// <summary>
-    /// 判定门槛：判定轮里本进程实际吃到的 CPU 占比（占全部核，取中位）不得低于 42%。
-    /// 实测（18 核 / Debug / 每侧 8 并发）：进程吃满自己要的那份时是 50%~56%，比值稳定在 77%~87%；
-    /// 被前序用例和并行负载挤到 30%~32% 时，同一份代码的比值在 54%~90% 之间乱跳 —— 那个区间里量不出快慢。
-    /// 门槛取在两组实测中间，离两边各留 8~10 个点。
-    /// </summary>
-    private const double JudgeableCpuShare = 0.42;
-
     private readonly ITestOutputHelper _output;
 
     public ConcurrencyPerformanceTests(ITestOutputHelper output) => _output = output;
+
+    /// <summary>
+    /// 判定门槛：判定轮里本进程实际吃到的 CPU 占比（占全部核，取中位）不得低于 35%。
+    /// 实测（18 核 / Release / 每侧 8 并发）：独占时 41%~43%，比值稳定在 89%~93%；
+    /// 整套用例一起跑被挤到 24% 时，同一份代码的比值掉到 63%~75% —— 那个区间里量不出快慢。
+    /// 门槛取在两组实测中间。
+    /// </summary>
+    private const double JudgeableCpuShare = 0.35;
 
     /// <summary>与 AxiosNet 默认连接池逐项对齐的 Handler：否则测的是两个库的默认值差异。</summary>
     private static SocketsHttpHandler CreateComparableHandler()
