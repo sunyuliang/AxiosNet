@@ -86,7 +86,7 @@ OpenAPI 代码生成 + 遥测**五层，这也是功能表里差距的来源。
 | 能力 | **AxiosNet** | HttpClient | Refit | RestSharp | Flurl |
 | --- | --- | --- | --- | --- | --- |
 | 强类型反序列化 | `GetAsync<T>` | `GetFromJsonAsync<T>` | 接口返回类型 | `ExecuteAsync<T>` | `GetJsonAsync<T>` |
-| 原文 / `dynamic` / `JsonElement` | **四种形态内置** | 需自己处理 | 需自己处理 | 需自己处理 | 需自己处理 |
+| 原文 / `dynamic` / `JsonElement` | **`string` / `dynamic` / `JsonElement` / `byte[]` 均有对应重载** | 需自己处理 | 需自己处理 | 需自己处理 | 需自己处理 |
 | 声明式端点 | **模型式 + 接口式** | 无 | 接口 + 特性（源生成/反射两档） | 无 | 无 |
 | OpenAPI 导入生成客户端 | **内置 `axiosnet-gen`** | 无 | 无（需第三方 Refitter） | 无 | 无 |
 | 只拼 URL（不发请求） | `GetUri(...)` | 手写 | 无 | 无 | URL 构建器 |
@@ -94,9 +94,9 @@ OpenAPI 代码生成 + 遥测**五层，这也是功能表里差距的来源。
 | multipart 表单 + 文件 | `PostFormAsync` / `FormFile` | 手写 | 支持 | 支持 | 支持 |
 | 流式请求体（边算边发） | `IAsyncEnumerable<byte[]>` / 内存块 | 需自定义 `HttpContent` | 有限 | 有限 | 有限 |
 | 流式响应分帧（SSE / NDJSON / JSON 数组） | `RequestStreamAsync<T>` 内置三种格式 | 需自己读流 | 返回 `Stream` 自行处理 | 返回流自行处理 | 返回流自行处理 |
-| 上传/下载进度 | **回调内置** | 需自定义 | 无 | 有进度事件 | 无 |
-| 字节限速 / 体积上限 | `Limits.MaxRate` / 大小上限 | 无 | 无 | 无 | 无 |
-| 请求体压缩（gzip/deflate/br） | `RequestCompression` | 手写 | 无 | 无 | 无 |
+| 上传/下载进度 | **回调内置** | 需自定义 | 无 | 无 | 无 |
+| 字节限速 / 体积上限 | `Transport.MaxRate` / `Limits.MaxRequestBytes`、`MaxResponseBytes` | 无 | 无 | 无 | 无 |
+| 请求体压缩（gzip/deflate/br） | `Compression = AxiosCompression.*` | 手写 | 无 | 无 | 无 |
 | 统一凭据扩展点 + 令牌缓存 / 提前刷新 / 401 重放 | `IApiCredentialProvider` / `AccessTokenManager` | 无 | 部分（授权头） | 部分（OAuth 助手） | 无 |
 | 声明式鉴权（`[Authorize]` / `[AllowAnonymous]` + 401 自动重放） | 模型 / 接口级特性 + `ApiClient.CredentialProvider` | 无 | 无 | 无 | 无 |
 
@@ -128,12 +128,11 @@ OpenAPI 代码生成 + 遥测**五层，这也是功能表里差距的来源。
 | DI 注册 | `AddAxiosClient` / `AddApiClient` | `IHttpClientFactory` | `Refit.HttpClientFactory` | 手写 | 手写 |
 | 遥测 | **`ActivitySource` + `Meter` + `DiagnosticListener`，尝试级事件** | 内置 `HttpClient` 事件 | 继承 | 继承 | 继承 |
 | 统一错误模型 | `AxiosException` + 稳定 `Code` | `HttpRequestException` 等 | `ApiException` | `RestResponse` 状态 | `FlurlHttpException` |
-| Native AOT / 裁剪 | `IsTrimmable` / `IsAotCompatible`，生成器烘焙 | 原生支持 | 源生成支持 | 反射较重，需配置 | 反射较重，需配置 |
-| 第三方运行时依赖 | **0（net6/net8 资产只用 BCL）** | 0（BCL） | 1 个包 | 1 个包 | 2 个包 |
+| Native AOT / 裁剪 | **`IsTrimmable` + `IsAotCompatible`；模型 / 接口 / 形状由内置源生成器烘焙** | 原生支持 | 源生成模式（`ForGenerated`）支持；反射模式不适配 AOT | 反射较重，需配置 | 反射较重，需配置 |
+| 额外运行时包（net8.0） | **0（仅 BCL）** | 0（BCL） | 2（`ReactiveUI.Primitives`、`System.Net.ServerSentEvents`） | **0** | 1（`Flurl`） |
 
-> AxiosNet 的 `netstandard2.0` 兼容资产为 .NET Framework 4.7.2+ / .NET Core 2.0+ 兜底，
-> 该资产额外引用 9 个微软第一方 BCL 兼容包；`net6.0` / `net8.0` 资产为零第三方运行时依赖。
-> Refit/Flurl 还各自带源生成器或子包，未重复计。
+> 包数按 `project.assets.json` 中 net8.0 的直接依赖计（不含测试与 DI 扩展包）。
+> AxiosNet 的 `netstandard2.0` 兼容资产另引 9 个微软第一方 BCL 补位包；`net6.0` / `net8.0` 资产不引第三方包。
 
 ---
 

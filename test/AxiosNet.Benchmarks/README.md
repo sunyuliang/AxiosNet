@@ -24,7 +24,7 @@ AxiosNet 的量化性能基线：只度量、不判定——没有门槛、没�
 | 约束 | 原因 |
 | --- | --- |
 | 单目标 `net8.0`、`OutputType=Exe` | BDN 需要一个具体宿主运行时；基准不是产品资产 |
-| `IsPackable=false`、不被 `src/` 引用 | 不进 NuGet 包，不改动主库「单目标 `net6.0` + 零第三方运行时依赖」的约定 |
+| `IsPackable=false`、不被 `src/` 引用 | 不进 NuGet 包，不改动主库「三目标 `netstandard2.0` / `net6.0` / `net8.0` + net6/net8 零第三方运行时依赖」的约定 |
 | 不引用 `test/AxiosNet.Tests` | 回环服务器在本项目内独立实现（`Infrastructure/LoopbackHttpServer.cs`），避免测试基建重构悄悄改变基准口径 |
 | 不进 CI | 基准对机器状态敏感，共享 runner 上的数字没有参考价值；在专用机器或本机运行 |
 | 基准类不能 `sealed` | BDN 会派生基准类来拦截调用，`sealed` 直接报校验错误 |
