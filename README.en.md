@@ -10,7 +10,7 @@
 
 [简体中文](README.md) | **English**
 
-An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://github.com/axios/axios), and on top of that it adds what server-side code actually needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming responses, an in-flight concurrency gate, a declarative API client (model-based / interface-based / OpenAPI import), and OpenTelemetry instrumentation.
+An axios-style HTTP client for .NET whose request API mirrors JS [axios](https://github.com/axios/axios). Beyond the basics of an HTTP client, it provides the governance and engineering features server-side code needs: an origin-scoped connection pool, retries, a circuit breaker, concurrent hedging, backup endpoints, streaming in both directions, an in-flight concurrency gate, a declarative API client (model-based / interface-based / OpenAPI import), and OpenTelemetry instrumentation.
 
 | Item | Value |
 | --- | --- |
@@ -28,7 +28,7 @@ An axios-style HTTP client for .NET. The request API mirrors JS [axios](https://
 
 | Group | Sections |
 | --- | --- |
-| Getting started | [Install](#install) · [Quick start](#quick-start) · [Common tasks](#common-tasks) |
+| Getting started | [Install](#install) · [Quick start](#quick-start) · [Common tasks](#common-tasks) · [Comparison with other HTTP clients](docs/http-client-comparison.md) |
 | Requests and responses | [Body and ContentType (JSON default)](#body-and-contenttype-json-default) · [Query parameters](#query-parameters) · [Forms and uploads](#forms-and-uploads) · [Streaming request bodies](#streaming-request-bodies) · [Response types and downloads](#response-types-and-downloads) · [Streaming responses](#streaming-responses) · [Request body compression](#request-body-compression) · [Timeouts and cancellation](#timeouts-and-cancellation) · [Progress, rate and size limits](#progress-rate-and-size-limits) · [Sending-request hook (signing / final request)](#sending-request-hook-signing--final-request) · [Raw response bytes](#raw-response-bytes) · [Methods and URLs](#methods-and-urls) · [In-flight concurrency cap](#in-flight-concurrency-cap) |
 | Errors and configuration | [Errors](#errors) · [Configuration](#configuration) ([Configuration reference](#configuration-reference) / [Clients](#clients) / [Interceptors](#interceptors) / [Data transforms and serialization](#data-transforms-and-serialization) / [Connections and transport](#connections-and-transport) / [Observability](#observability)) |
 | Resilience and cache | [Resilience](#resilience) ([Retries](#retries) / [Circuit breaker](#circuit-breaker) / [Concurrent hedging](#concurrent-hedging) / [Backup endpoints](#backup-endpoints) / [Idempotency keys](#idempotency-keys) / [Attempt pipeline](#attempt-pipeline) / [Short circuit](#short-circuit)) · [Caching](#caching) |
@@ -43,15 +43,12 @@ Pick an entry point:
 | First use | [Install](#install) → [Quick start](#quick-start) → [Capability map](#capability-map) |
 | Running on .NET Framework / .NET Core 2.x / 3.x | [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) |
 | Migrating from axios | [axios comparison](#axios-comparison) → intentional differences → [Quick start](#quick-start) |
+| Choosing a client: compare with other .NET HTTP clients | [Comparison with other HTTP clients](docs/http-client-comparison.md) |
 | Look up one option | [Configuration reference](#configuration-reference) |
 | Server-side resilience | [Resilience](#resilience) |
 | Troubleshoot production | [Errors](#errors) → [Observability](#observability) |
 
 ## Install
-
-> Upgrading from 1.x: see [breaking changes in 1.5](docs/breaking-changes-1.5.en.md) for renames and tightened behavior.
-
-> Runtime baseline: the modern assets cover .NET 6 and later; the compatibility asset covers .NET Framework 4.7.2+, .NET Core 2.0+ (including 3.1) and .NET 5. NuGet picks the asset automatically. .NET Core 1.0 / 1.1 only supports up to `netstandard1.6` and is out of scope; see [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) for the capability boundaries.
 
 ```bash
 dotnet add package AxiosNet                       # core client + declarative API client (one package)
@@ -61,6 +58,10 @@ dotnet tool install -g AxiosNet.Cli               # optional: generate clients f
 ```
 
 Referencing the source tree: `dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj`
+
+**Runtime baseline**: the modern assets cover .NET 6 and later; the compatibility asset covers .NET Framework 4.7.2+, .NET Core 2.0+ (including 3.1) and .NET 5. NuGet picks the asset automatically. .NET Core 1.0 / 1.1 only supports up to `netstandard1.6` and is out of scope; see [.NET Standard 2.0 compatibility asset](#net-standard-20-compatibility-asset) for the capability boundaries.
+
+**Upgrading from 1.x**: see [breaking changes in 1.5](docs/breaking-changes-1.5.en.md) for renames and tightened behavior.
 
 ## Quick start
 
@@ -81,7 +82,7 @@ var user=(await Axios.GetAsync<User>("https://api.example.com/users/1")).Data!;
 
 ```
 
-Production code should use an **instance client**: hold it long-lived, with one set of defaults and one connection pool. **One instance per site — never create one per request** (creating per request degrades into the classic `new HttpClient()` trap; see [Clients](#clients)):
+Production code should use an **instance client**: hold it long-lived, with one set of defaults and one connection pool. **One instance per site — never create one per request** (see [Clients](#clients) for the reason):
 
 ```csharp
 using var http = Axios.Create(c =>
@@ -92,7 +93,10 @@ using var http = Axios.Create(c =>
 var user = (await http.GetAsync<User>("users/1")).Data!;
 ```
 
-> **Note: `Timeout` defaults to `TimeSpan.Zero`, i.e. no timeout**, unlike `HttpClient.Timeout` (default 100s). A browser caps request time via its host, but a .NET server does not — with no timeout set, an unresponsive downstream leaves the request **hanging forever (no error code at all)**, with connections and queued requests piling up; in multi-origin / failover scenarios, once the number of **distinct origins reaches `MaxEndpointCount` (1024 by default, can be lowered)** it also exhausts the pool's origin nodes and finally surfaces as `ERR_POOL_EXHAUSTED` — the code points at the pool, but the root cause is still a missing timeout. In server scenarios always set `Timeout` explicitly, or use `Resilience.TotalTimeout` to cap the whole request's budget.
+> **`Timeout` defaults to `TimeSpan.Zero`, i.e. no timeout**, unlike `HttpClient.Timeout` (default 100s). A .NET server has no host-level cap, so:
+> - with no timeout set, an unresponsive downstream leaves the request **hanging forever (no error code at all)**, with connections and queued requests piling up;
+> - in multi-origin / failover scenarios, once the number of distinct origins reaches `MaxEndpointCount` (1024 by default, can be lowered) the pool's origin nodes are exhausted and the failure finally surfaces as `ERR_POOL_EXHAUSTED` — the code points at the pool, but the root cause is the missing timeout;
+> - set `Timeout` explicitly, or use `Resilience.TotalTimeout` to cap the whole request's budget.
 
 Once endpoints are grouped, the declarative client offers two parallel ways, and **model-based is the default recommendation**: pass a request model directly, or hand an interface to `Create<T>()`. Both share the same client and the same binding / authorization / validation rules (see [Model-based API](#model-based-api) / [Interface-based API](#interface-based-api)).
 
@@ -137,8 +141,10 @@ Five concepts:
 | Client | `Axios` / `AxiosClient` | Process-wide default instance + instance clients, and the declarative entry point |
 | Request | `AxiosConfig` | One request; the top-level leaves |
 | Response | `AxiosResponse<T>` | Status, headers and the parsed body |
-| Error | `AxiosException` | Single exit for every request-execution failure, with a stable `Code`; declaration-time errors (an ill-formed model / interface) land here too: `ERR_BAD_OPTION_VALUE`, original exception in `Cause`. The one exception is missing AOT metadata: `AxiosAotMetadataException` exists for "generator not enabled" and is deliberately not folded into it |
+| Error | `AxiosException` | Single exit for every request-execution failure, with a stable `Code`; declaration-time errors (an ill-formed model / interface) land here too: `ERR_BAD_OPTION_VALUE`, original exception in `Cause`. Missing AOT metadata is the one exception and throws `AxiosAotMetadataException` |
 | Endpoint | `IApiRequest<T>` / interfaces | Optional extension: describe an endpoint as a model or interface |
+
+`AxiosAotMetadataException` means the source generator is not enabled and is not folded into `AxiosException`; every other request failure is caught as `AxiosException`.
 
 The generic argument decides what `Data` is:
 
@@ -187,7 +193,7 @@ Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `O
 > - `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` take `data` as an **optional parameter with a default**: `PostAsync("orders")` is exactly `PostAsync("orders", data: null)`, so it **drops** `Defaults.Body` and sends an empty body. To send the default body along, use `PostAsync("orders", new AxiosConfig { ... })` (that config never touches `Body`, so the merge inherits it) or go through `RequestAsync`.
 > - `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` have a separate **no-`data`** overload: `DeleteAsync("orders/1")` does not mean "no body this time" and therefore inherits `Defaults.Body`; write `DeleteAsync("orders/1", data: null)` to send an empty one.
 >
-> This trips people up mostly when instance defaults and per-request overrides are mixed; see [instance defaults vs. per-request](#clients).
+> Mixing instance defaults with per-request overrides: see [instance defaults vs. per-request](#clients).
 
 **Four overload shapes, one per need** (the same set for every verb, on both `AxiosClient` and `Axios`):
 
@@ -199,7 +205,7 @@ Constants: `AxiosContentType.Json` / `FormUrlEncoded` / `MultipartFormData` / `O
 | Only a cancellation token | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
 
 - The last three parameters (`data` / `configure` / `cancellationToken`) all have defaults, so `GetAsync(url)` is enough; `GetAsync(url, ct)` is the **explicit-token** shape, so a token is never mistaken for a body.
-- To send one request with a **pre-built config**, use `RequestAsync(config)` (available on both the client and the static facade; the config carries its own url / method). On the instance, `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` additionally take `(url, config)`: the url / method arguments override the same fields in the config, and **your object is never mutated in place**. The form verbs (`PostFormAsync` etc.) deliberately have no such shape — their whole point is to set the form `ContentType`; use `RequestAsync` when you have a config.
+- To send one request with a **pre-built config**, use `RequestAsync(config)` (available on both the client and the static facade; the config carries its own url / method). On the instance, `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` additionally take `(url, config)`: the url / method arguments override the same fields in the config, and **your object is never mutated in place**. The form verbs (`PostFormAsync` etc.) have no such shape; they exist to set the form `ContentType`, so use `RequestAsync` when you have a config.
 - Putting an `AxiosConfig` or a `CancellationToken` into the `data` position throws `ERR_BAD_OPTION_VALUE` right away and tells you where to go: `object? data` accepts anything, so without the guard it would either **send your config / token as the body** or degrade into a "body serialization failed" message that has nothing to do with the real mistake.
 
 ### Query parameters
@@ -1114,7 +1120,7 @@ using var tenantClient = new AxiosClient(
 - **Selecting a named profile disables the default profile's proxy, and the default profile may not set one**: the actual handler only takes that profile's `Proxy` / `Credentials`. If the default profile still sets either, the request throws `ERR_BAD_OPTION_VALUE` before sending (same rule as the other two-layer egress entries) instead of ignoring it silently.
 - **Pool-level policy is not split per profile**: connection limit, connection lifetime, idle eviction, decompression, redirects, HTTP/2 and pings still come from `ConnectionPoolOptions` — they describe *how to use a connection*, not *where it comes from*. The limit itself applies **per handler**, and each profile gets its own handler, so N profiles can reach `N × MaxConnectionsPerServer` connections in total (split the budget yourself if you need one shared ceiling).
 - **One node per profile per origin**: its own handler, its own TCP connections, its own cookie container (`pool.GetCookies("name")`). So `MaxEndpointCount` counts **origin × profile**, and `GetStatistics().Endpoints[i].Transport` tells you which node belongs to which profile.
-- **An unregistered profile fails loudly**: `c.Transport.Profile = "missing"` throws `ERR_BAD_OPTION_VALUE` before anything is sent (the message lists registered profiles). Silently falling back to the default profile would turn "I thought this went through the dedicated line" into a security incident.
+- **An unregistered profile fails loudly**: `c.Transport.Profile = "missing"` throws `ERR_BAD_OPTION_VALUE` before anything is sent (the message lists registered profiles). Silently falling back to the default profile would turn an assumed dedicated egress into a security incident.
 - **Profiles are inert with an injected handler**: that path has no pool, so a non-empty profile name also throws `ERR_BAD_OPTION_VALUE`; use a pool with `AddTransport`, or route inside your own handler.
 - **A profile's own `HandlerFactory` wins over the pool-level one**: the factory sees `ctx.Profile` / `ctx.Transport` and can return a different transport per profile; `ctx.CreateDefaultHandler()` automatically carries that profile's egress settings.
 - **Named shared pools compare the profile table**: a second `GetOrCreate` on the same key with a different name set or different reference members throws `ERR_BAD_OPTION_VALUE` (same rule as the other options).
@@ -2514,8 +2520,6 @@ To lock metadata down at the end of startup, call the hidden `AxiosMetadata.Free
 **Known limitation**: inside a collectible `AssemblyLoadContext` (plugin hot reload), the second registration is silently dropped and the proxy factory still points at the assembly loaded by the first one — do not rely on the registry refreshing itself when a plugin is reloaded; use a separate process, or cross a fresh `AssemblyLoadContext` boundary after unloading.
 
 ## Reference
-
-> Configuration renames and behavior tightening when upgrading from 1.x to 1.5: see [1.5 breaking changes](docs/breaking-changes-1.5.en.md).
 
 ### Capability map
 

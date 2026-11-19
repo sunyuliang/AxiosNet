@@ -1,6 +1,6 @@
 # AxiosNet.Comparison
 
-跨实现横向基准：**同一台回环服务器、同一份负载、同一个返回模型**，对比
+跨实现横向基准：同一台回环服务器、同一份负载、同一个返回模型，对比以下实现。
 
 | 实现 | 用法 |
 | --- | --- |
@@ -11,29 +11,28 @@
 | AxiosNet | 默认 `AxiosClient` + `PostAsync<User>(route, model)`（连接池 + 默认配置，不做任何调优） |
 | RawSocket | 裸 TCP 发预编码 POST（**服务端基线**，不是被对比的客户端） |
 
-每个实现都走各自**惯用 API** 完成「把同一个 `User` 负载序列化上送 → 把响应 JSON 读成 `User`」，负载、计时、采样全部由同一个
-`LoadRunner` 做，保证除被测库本身外没有任何一侧多干活。
+每个实现都用各自**惯用 API** 完成「把同一个 `User` 负载序列化上送 → 把响应 JSON 读成 `User`」。负载、计时、采样全部由同一个
+`LoadRunner` 执行，除被测库本身外，任何一侧都不额外承担工作。
 
-它回答三个问题：
+输出四项指标：
 
-- **RPS**：同一窗口内谁跑得快、相对 `HttpClient` 是多少；
+- **RPS**：同一窗口内各实现的吞吐，以及相对 `HttpClient` 的比例；
 - **p50 / p99 / max**：客户端观察延迟（含服务端处理、回环 RTT 与反序列化）；
 - **分配**：进程级每请求分配，以及减掉服务端基线后的**客户端净分配**；
 - **CPU 成本**：每请求分摊的进程 CPU 时间（µs/请求），以及减掉服务端基线后的客户端净成本。**是成本口径，不是吞吐**。
 
-输出控制台表，同时把 Markdown + CSV 写到 `--out` 目录，便于归档、写进提交信息或对外宣传。
+控制台打印表格，同时把 Markdown + CSV 写到 `--out` 目录，用于归档、写入提交信息或对外发布。
 
-## 为什么单独一个工程
+## 项目定位
 
 - **不引用 `test/AxiosNet.Tests`**：这是量化工具，不是断言用例。回环服务器
   `test/AxiosNet.Tests/Infrastructure/PerfHttpServer.cs` 与 Handler 对齐
   `test/AxiosNet.Benchmarks/Infrastructure/ComparableHttpClientHandler.cs` 都以 `<Compile Include>`
-  **链接源码**（不复制）—— 口径与 `ConcurrencyPerformanceTests` 必须能互相印证，任何一边改了基建都会同时反映到这里。
-- **不进 CI、不被 `dotnet test` 收集**（`IsTestProject=false`）：数字不可断言，共享 runner 上更没意义。
-  它在 `AxiosNet.sln` 里只为 IDE 能直接打开运行，因此 `dotnet build AxiosNet.sln` 会一并还原
-  Refit / RestSharp / Flurl；CI 只按 `TEST_PROJECTS` 构建测试工程，不受影响。
-  需要门禁时在本地/专用机器上用 `--min-ratio` 跑（见下）。
-- 与 `test/AxiosNet.Benchmarks`（BenchmarkDotNet）分工不同：那边是**单实现的分项成本**（合并 / 编码 /
+  **链接源码**（不复制），保证与 `ConcurrencyPerformanceTests` 使用同一份口径，任一侧修改基建都会同步反映到这里。
+- **不进 CI、不被 `dotnet test` 收集**（`IsTestProject=false`）：数字不可断言，共享 runner 上没有参考价值。
+  项目保留在 `AxiosNet.sln` 中，便于 IDE 直接打开运行；`dotnet build AxiosNet.sln` 会一并还原
+  Refit / RestSharp / Flurl，CI 只按 `TEST_PROJECTS` 构建测试工程。需要门禁时在本地或专用机器上用 `--min-ratio` 运行（见下）。
+- **与 `test/AxiosNet.Benchmarks` 分工不同**：那边是**单实现的分项成本**（合并 / 编码 /
   反序列化 / 分帧），这里是**跨实现的端到端对照**。两边的绝对值不可互换。
 
 ## 测量口径
@@ -55,7 +54,7 @@
 对齐细节：
 
 - `HttpClient` / `Refit` / `RestSharp` / `Flurl` 全部注入与 AxiosNet 默认连接池逐项对齐的
-  `SocketsHttpHandler`（Cookies / Proxy / 连接数 / 超时 / 解压一致），否则测的是默认值差异。
+  `SocketsHttpHandler`（Cookies / Proxy / 连接数 / 超时 / 解压一致），避免把默认值差异当成实现差异。
 - 返回模型显式标 `[JsonPropertyName]`，避免各库默认 `JsonSerializerOptions` 的大小写策略不同导致「某库解析失败」
   被当成性能差异。
 - Refit 只走 source-generated 的 `ForGenerated`；`RestService.For<T>` 的反射回退路径是另一档，不混谈。
@@ -96,56 +95,57 @@ dotnet run -c Release -- --min-ratio 0.85 --max-alloc-ratio 2 --tag nightly
 
 退出码：`0` 正常；`1` 门禁未通过；`2` 存在失败请求（数字不可信）；`3` 参数错误。
 
-**务必 `-c Release`**：工程本身 `Optimize=true`（Debug 也是优化 IL），但 Release 才是要归档的口径。
+必须用 `-c Release`：工程本身 `Optimize=true`（Debug 也是优化 IL），但 Release 才是要归档的口径。
 
 ## 输出
 
 控制台：
 
 ```
-实现           RPS  p50 (μs)  p99 (μs)  max (μs)  分配/请求  净分配/请求  CPU  vs HttpClient
---------------------------------------------------------------------------------------------
-HttpClient  58,173       125       239    15,946     3.7 KB       3.6 KB  52%              —
-Refit       54,424       131       326    16,289     4.6 KB       4.4 KB  54%          93.6%
-RestSharp   34,569       165     2,321    16,264    31.5 KB      31.4 KB  43%          59.4%
-Flurl       49,451       140       434    18,118     6.0 KB       5.9 KB  47%          85.0%
-AxiosNet    54,267       128       313    21,177     5.1 KB       5.0 KB  53%          93.3%
-RawSocket   73,859        98       222    16,316      131 B          0 B  49%         127.0%
+实现           RPS  p50 (μs)  p99 (μs)  max (μs)  分配/请求  净分配/请求  CPU  CPU µs/请求  净 CPU µs/请求  vs HttpClient
+-------------------------------------------------------------------------------------------------------------------------
+HttpClient  51,154       144       279    15,950    4.48 KB      4.23 KB  53%          187              58              —
+Refit       45,181       161       317    17,322    5.93 KB      5.68 KB  53%          212              83          88.3%
+RestSharp   27,684       210     2,587    17,895   32.94 KB     32.69 KB  45%          300             172          54.1%
+Flurl       42,739       168       352    16,721    8.38 KB      8.12 KB  53%          225              97          83.5%
+AxiosNet    47,372       156       294    16,096    4.58 KB      4.32 KB  58%          223              95          92.6%
+RawSocket   64,931       116       226    18,304      262 B          0 B  46%          128               0         126.9%
 ```
 
-（2026-10-30 的一次运行，**当时口径还是 GET**，表里也还没有之后新增的 `CPU µs/请求` / `净 CPU µs/请求` 两列；
-这一次校准未收敛，绝对值偏低，看同一窗口内的比值。现行口径改为 POST，绝对值与分配都会相应上移。）
+（2026-11-19 18:27 的第三次运行，口径为 POST。当天连续三次独立运行（每次 8 并发 × 2s × 6 轮）中，
+AxiosNet / HttpClient 的 RPS 比分别为 91.7% / 89.7% / 92.6%，净分配稳定在 4.31 ~ 4.32 KB；
+三次运行的全部实现 CPU 份额均 ≥ 42%，表中无需「不可判定」标记。单轮数据与离散度见各次运行生成的 Markdown 报告。）
 
 文件：
 
 - `results/comparison-<时间戳>.md`：完整口径 + 汇总表 + CPU 份额门槛判定 + 离散度（各轮最小 ~ 最大）+ 每轮原始 RPS；
 - `results/comparison-<时间戳>.csv`：一行一个 `(实现, 轮次)`，便于画图或做趋势对比。
 
-## 怎么读这些数字
+## 如何读数
 
 - **看比值，不看绝对值**：同一台机先后两次运行，绝对 RPS 可以差一倍（功耗策略、P/E 核、后台负载）；
   同一窗口内的相对关系才是可比的。跨版本比较请用同一个 `--tag` 口径、同样的机器状态。
 - **p99 对 GC 极敏感**：每请求分配越高的实现，窗口内 Gen2 越多，p99 与 max 会被 GC 暂停拉长
-  （表中 RestSharp 的高分配与毫秒级 p99 是同一件事的两个侧面。用不经过 socket 的伪 Handler 单独复测，
-  `ExecuteAsync<User>` 单次约 29.4 KB（29,402 B），与表格里的净分配（31.4 KB）同一量级 ——
-  高分配来自 RestSharp 自身，不是服务端或适配器带进来的）。
+  （表中 RestSharp 的高分配与毫秒级 p99 是同一现象的两个侧面。用不经过 socket 的伪 Handler 单独复测，
+  `ExecuteAsync<User>` 单次约 29.4 KB（29,402 B），与表格里的净分配（32.7 KB）同一量级 ——
+  高分配来自 RestSharp 自身，不是服务端或适配器带入的）。
 - **分配是进程级口径**：「净分配」减掉了 RawSocket 基线（服务端 + 裸 socket 客户端的成本），
-  仍含各实现自己的 HttpClient 栈开销；不要把这里的数字与 BenchmarkDotNet 的单操作分配直接对比。
-- **CPU 是整进程**（含同进程服务端）：它只用来判断「这一窗测得可信不可信」，不是实现自身的 CPU 成本。
+  仍含各实现自己的 HttpClient 栈开销；不要与 BenchmarkDotNet 的单操作分配直接对比。
+- **CPU 是整进程**（含同进程服务端）：只用于判断「这一窗测得可信不可信」，不是实现自身的 CPU 成本。
   默认门槛 **42%**（`--min-cpu-share`，与 `ConcurrencyPerformanceTests` 的约定一致）：低于门槛的行在表里带 `*`，
   该实现的吞吐与比值**不可判定**，RPS 门禁会跳过而不是判负。
-- **`CPU µs/请求` 是成本列，不是吞吐列**：它答「每请求烧掉多少机器」，与 `RPS` 答「每秒出多少请求」是两件事，
+- **`CPU µs/请求` 是成本列，不是吞吐列**：它回答「每请求消耗多少机器时间」，与 `RPS` 回答「每秒出多少请求」是两件事，
   两者都要看。减掉 RawSocket 行剩下的才是客户端自身成本，但它是两个大数相减（回环服务端占去大部分），
-  相对误差比 `净分配` 大，看量级不看小数点。
+  相对误差比 `净分配` 大，看量级即可。
 - **不要用 `RPS ÷ CPU` 当主指标**：固定并发下 `RPS ≈ 并发 ÷ p50`，窗口受延迟而非 CPU 限制（CPU 份额常在 50% 上下），
   除以 CPU 等于假设「CPU 线性换吞吐」，在这个区间不成立；分母还含同进程服务端，与实现无关。
-  真要回答「同样资源谁更能打」，把 `--concurrency` 推到 CPU 份额接近 100% 再比 RPS。
+  要回答「同等资源下谁性能更高」，把 `--concurrency` 推到 CPU 份额接近 100% 再比 RPS。
 - **看中位数，也看离散度**：汇总列是轮中位数；控制台与 Markdown 另附「离散度」表（各轮最小 ~ 最大、RPS 相对波动）。
   波动大（例如 RPS ±10% 以上）时，任何单次比值结论都要打折扣。
 - **RawSocket 行不是客户端**：它是这台回环服务器的上限与固定成本；若某个客户端接近它，说明瓶颈已转移到服务器，
   该实现的 RPS 被低估。
 
-## 已知边界（刻意不改）
+## 范围与边界
 
 - 只测 HTTP/1.1 明文回环「POST 一个 51 B 的 JSON 负载并读回同一个模型」；TLS、HTTP/2、大正文上传、流式响应都不在范围内
   （大正文看 `test/AxiosNet.Benchmarks`）。

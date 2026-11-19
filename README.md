@@ -10,7 +10,7 @@
 
 **简体中文** | [English](README.en.md)
 
-axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com/axios/axios)，并补齐服务端真正需要的部分：按 origin 复用的连接池、重试、熔断、并发对冲、备用端点、流式响应、在途并发闸门、声明式 API 客户端（模型式 / 接口式 / OpenAPI 导入）、OpenTelemetry 观测点。
+axios 风格的 .NET HTTP 客户端，API 写法对齐 JS [axios](https://github.com/axios/axios)。除 HTTP 客户端的基础能力外，还提供服务端常用的治理与工程化能力：按 origin 复用的连接池、重试、熔断、并发对冲、备用端点、流式收发、在途并发闸门、声明式 API 客户端（模型式 / 接口式 / OpenAPI 导入）、OpenTelemetry 观测点。
 
 | 项 | 值 |
 | --- | --- |
@@ -28,7 +28,7 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 
 | 分组 | 章节 |
 | --- | --- |
-| 入门 | [安装](#安装) · [快速上手](#快速上手) · [常用任务](#常用任务) |
+| 入门 | [安装](#安装) · [快速上手](#快速上手) · [常用任务](#常用任务) · [与其它 HTTP 组件对比](docs/http-client-comparison.md) |
 | 请求与响应 | [请求体与 ContentType（JSON 默认）](#请求体与-contenttypejson-默认) · [查询参数 params](#查询参数-params) · [表单与文件上传](#表单与文件上传) · [流式请求体](#流式请求体) · [响应类型与下载](#响应类型与下载) · [流式响应](#流式响应) · [请求体压缩](#请求体压缩) · [超时与取消](#超时与取消) · [进度、限速与大小上限](#进度限速与大小上限) · [发送前钩子（签名 / 最终请求）](#发送前钩子签名--最终请求) · [原始响应字节](#原始响应字节) · [方法与 URL](#方法与-url) · [在途并发上限](#在途并发上限) |
 | 错误与配置 | [错误处理](#错误处理) · [配置](#配置)（[配置速查](#配置速查) / [客户端](#客户端) / [拦截器](#拦截器) / [数据转换与序列化](#数据转换与序列化) / [连接与传输](#连接与传输) / [可观测性](#可观测性)） |
 | 治理与缓存 | [治理](#治理)（[重试](#重试) / [熔断](#熔断) / [并发对冲](#并发对冲) / [备用端点](#备用端点) / [幂等键](#幂等键) / [尝试管线](#尝试管线) / [短路响应](#短路响应)） · [缓存](#缓存) |
@@ -43,15 +43,12 @@ axios 风格的 .NET HTTP 客户端。写法对齐 JS [axios](https://github.com
 | 第一次使用 | [安装](#安装) → [快速上手](#快速上手) → [能力地图](#能力地图) |
 | 在 .NET Framework / .NET Core 2.x / 3.x 上使用 | [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产) |
 | 从 axios 迁移 | [与 axios 对照](#与-axios-对照) → 有意差异 → [快速上手](#快速上手) |
+| 选型：与其它 .NET HTTP 组件比较 | [与其它 HTTP 组件对比](docs/http-client-comparison.md) |
 | 只查某个选项 | [配置速查](#配置速查) |
 | 做服务端治理 | [治理](#治理) |
 | 排查线上问题 | [错误处理](#错误处理) → [可观测性](#可观测性) |
 
 ## 安装
-
-> 从 1.x 升级：字段改名与行为收紧见 [1.5 破坏性变更](docs/breaking-changes-1.5.md)。
-
-> 运行时基线：现代资产覆盖 .NET 6 及以上；兼容资产覆盖 .NET Framework 4.7.2+、.NET Core 2.0+（含 3.1）与 .NET 5。NuGet 自动选资产，无需任何配置。.NET Core 1.0 / 1.1 只支持到 `netstandard1.6`，不在支持范围内；能力边界见 [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产)。
 
 ```bash
 dotnet add package AxiosNet                       # 核心客户端 + 声明式 API 客户端（同一包）
@@ -61,6 +58,10 @@ dotnet tool install -g AxiosNet.Cli               # 可选：从 OpenAPI 生成�
 ```
 
 引用本仓库源码：`dotnet add your-app.csproj reference src/AxiosNet/AxiosNet.csproj`
+
+**运行时基线**：现代资产覆盖 .NET 6 及以上；兼容资产覆盖 .NET Framework 4.7.2+、.NET Core 2.0+（含 3.1）与 .NET 5。NuGet 自动选资产，无需配置。.NET Core 1.0 / 1.1 只支持到 `netstandard1.6`，不在支持范围内；能力边界见 [.NET Standard 2.0 兼容资产](#net-standard-20-兼容资产)。
+
+**从 1.x 升级**：字段改名与行为收紧见 [1.5 破坏性变更](docs/breaking-changes-1.5.md)。
 
 ## 快速上手
 
@@ -81,7 +82,7 @@ var user=(await Axios.GetAsync<User>("https://api.example.com/users/1")).Data!;
 
 ```
 
-生产代码推荐用**实例客户端**：长生命周期持有，一套默认值 + 一条连接池。**一个站点一个实例，不要按请求新建**（按请求新建等于退化成 `new HttpClient()` 那个经典坑，详见[客户端](#客户端)）：
+生产代码推荐用**实例客户端**：长生命周期持有，一套默认值 + 一条连接池。**一个站点一个实例，不要按请求新建**（原因见[客户端](#客户端)）：
 
 ```csharp
 using var http = Axios.Create(c =>
@@ -92,7 +93,10 @@ using var http = Axios.Create(c =>
 var user = (await http.GetAsync<User>("users/1")).Data!;
 ```
 
-> **注意：`Timeout` 默认是 `TimeSpan.Zero`，即永不超时**，与 `HttpClient.Timeout`（默认 100 秒）不同。浏览器请求有宿主超时兜底，.NET 服务端没有——不设超时时，下游一直不响应会让请求**永久挂住（没有任何错误码）**，连接与排队持续堆积；在多 origin / 换端点场景，当 **distinct origin 数达到 `MaxEndpointCount`（默认 1024，可调小）** 时会占满池的 origin 节点，最终以 `ERR_POOL_EXHAUSTED` 暴露——错误码指向池，根因仍是没设超时。服务端场景请始终显式设置 `Timeout`，或用 `Resilience.TotalTimeout` 兜住整条请求的总预算。
+> **`Timeout` 默认是 `TimeSpan.Zero`（永不超时）**，与 `HttpClient.Timeout`（默认 100 秒）不同。服务端没有宿主超时兜底，需要注意：
+> - 下游一直不响应时，请求会**永久挂住**（没有任何错误码），连接与排队持续堆积；
+> - 多 origin / 换端点场景中，distinct origin 数达到 `MaxEndpointCount`（默认 1024，可调小）会占满池的 origin 节点，最终以 `ERR_POOL_EXHAUSTED` 暴露——错误码指向池，根因仍是没设超时；
+> - 请显式设置 `Timeout`，或用 `Resilience.TotalTimeout` 限定整条请求的总预算。
 
 端点成组时，声明式有两种并列写法，**模型式是默认推荐**：把请求写成模型直接传，或把端点写成接口交给 `Create<T>()`。两条路径共用同一个客户端与同一套绑定 / 授权 / 校验规则（详见[模型式 API](#模型式-api) / [接口式 API](#接口式-api)）。
 
@@ -137,8 +141,10 @@ var user = (await api.GetAsync(5)).Data!;                                      /
 | Client | `Axios` / `AxiosClient` | 进程默认实例 + 实例客户端，同时是声明式入口 |
 | Request | `AxiosConfig` | 一次请求，顶层叶子 |
 | Response | `AxiosResponse<T>` | 状态码、响应头与已解析的正文 |
-| Error | `AxiosException` | 请求执行失败的统一出口，带稳定 `Code`；声明期错误（模型 / 接口声明非法）也走这里：`ERR_BAD_OPTION_VALUE`，原始异常在 `Cause`。唯一例外是 AOT 元数据缺失：`AxiosAotMetadataException` 专供「源生成器没启用」，故意不并入本类型 |
+| Error | `AxiosException` | 请求执行失败的统一出口，带稳定 `Code`；声明期错误（模型 / 接口声明非法）也走这里：`ERR_BAD_OPTION_VALUE`，原始异常在 `Cause`。AOT 元数据缺失是唯一例外，抛 `AxiosAotMetadataException` |
 | Endpoint | `IApiRequest<T>` / 接口 | 可选扩展概念：把端点写成模型或接口 |
+
+`AxiosAotMetadataException` 表示源生成器未启用，不并入 `AxiosException`；其余请求失败都按 `AxiosException` 捕获。
 
 返回形态由泛型参数决定：
 
@@ -187,7 +193,7 @@ await http.DeleteAsync("users/1", new { reason = "duplicated" });
 > - `PostAsync` / `PutAsync` / `PatchAsync` / `PostFormAsync` / `PutFormAsync` 的 `data` 是**有默认值的可选参数**：`PostAsync("orders")` 与 `PostAsync("orders", data: null)` 完全等价，都会**摘掉**实例上的 `Defaults.Body` 并发出空正文。想连默认正文一起发，请用 `PostAsync("orders", new AxiosConfig { ... })`（那份配置没碰 `Body`，合并时才继承默认值），或直接用通用入口 `RequestAsync`。
 > - `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` 另有**不带 `data`** 的重载：`DeleteAsync("orders/1")` 不表达「本次没有正文」，会继承 `Defaults.Body`；要发空正文得写 `DeleteAsync("orders/1", data: null)`。
 >
-> 混用实例默认值与单次请求时最容易踩到，详见[实例默认值 vs 单次请求](#客户端)。
+> 混用实例默认值与单次请求时的差异，详见[实例默认值 vs 单次请求](#客户端)。
 
 **同名重载一共四种形态，选哪个看你要什么**（十个动词都是这一套，`AxiosClient` 与 `Axios` 一致）：
 
@@ -199,7 +205,7 @@ await http.DeleteAsync("users/1", new { reason = "duplicated" });
 | 只传取消令牌 | `GetAsync(url, ct)` | `AxiosResponse` / `AxiosResponse<T>` |
 
 - 后三个参数（`data` / `configure` / `cancellationToken`）都有默认值，`GetAsync(url)` 就能发；`GetAsync(url, ct)` 是**显式令牌**形态，令牌不会被当成正文。
-- 用**预先造好的配置**发一次请求：`RequestAsync(config)`（实例与静态门面都有，config 自己带 url / method）。实例的 `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` 另有 `(url, config)` 形态，会用参数上的 url / method 覆盖配置里的同名项、**不就地改调用方的对象**；表单动词（`PostFormAsync` 等）没有这一形态 —— 它存在的意义就是替你设表单 `ContentType`，用配置形态请直接 `RequestAsync`。
+- 用**预先造好的配置**发一次请求：`RequestAsync(config)`（实例与静态门面都有，config 自己带 url / method）。实例的 `GetAsync` / `DeleteAsync` / `HeadAsync` / `OptionsAsync` / `PostAsync` / `PutAsync` / `PatchAsync` 另有 `(url, config)` 形态，会用参数上的 url / method 覆盖配置里的同名项、**不就地改调用方的对象**；表单动词（`PostFormAsync` 等）没有这一形态；它们的作用是设置表单 `ContentType`，需要配置形态时直接用 `RequestAsync`。
 - 把 `AxiosConfig` 或 `CancellationToken` 放到 `data` 位置会立刻抛 `ERR_BAD_OPTION_VALUE` 并指路：`object? data` 能吞下一切，不拦就会「把配置 / 令牌当正文发出去」，或者退化成一句与真实原因无关的「正文序列化失败」。
 
 ### 查询参数 params
@@ -658,7 +664,9 @@ await client.GetAsync("maybe-404", c => c.ValidateStatus = s => s is >= 200 and 
 
 ## 配置
 
-`AxiosConfig` 顶层是请求本身（13 个可配置叶子），其余按领域收进六个分组：`Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。连同顶层共 7 组、71 个叶子（13 + 3 + 9 + 19 + 10 + 7 + 10）；每个叶子只有一份存储、一份注释、一个入口，实例默认值与按请求覆盖写同一组属性。
+`AxiosConfig` 顶层是请求本身（13 个可配置叶子），其余按领域收进六个分组：`Limits` / `Serialization` / `Resilience` / `Transport` / `Observability` / `Caching`。连同顶层共 7 组、71 个叶子（13 + 3 + 9 + 19 + 10 + 7 + 10）。
+
+每个叶子只有一份存储、一份注释、一个入口；实例默认值与按请求覆盖写同一组属性。
 
 ### 配置速查
 
@@ -2513,8 +2521,6 @@ AOT 下不可用的能力：
 **已知限制**：在可卸载 `AssemblyLoadContext`（插件热重载）里，第二次注册会被静默丢弃，代理工厂仍指向先注册那次加载的程序集——重载插件时不要依赖注册表自动换新，改用独立的进程或卸载后重新进入新的 `AssemblyLoadContext` 边界。
 
 ## 参考
-
-> 从 1.x 升级到 1.5 的配置改名与行为收紧，见 [1.5 破坏性变更](docs/breaking-changes-1.5.md)。
 
 ### 能力地图
 

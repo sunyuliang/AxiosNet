@@ -2,7 +2,9 @@
 
 [简体中文](#依赖注入扩展) | [English](#dependency-injection-extensions)
 
-**.NET 依赖注入扩展 for [AxiosNet](https://www.nuget.org/packages/AxiosNet)（含包内声明式客户端，命名空间 `AxiosNet.WebAPI`）** — `AddAxiosClient` / `AddApiClient` 把客户端注册为单例，连接池、拦截器与实例默认值随容器生命周期共享。除 AxiosNet 主包外只依赖微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`。本包与主包同步提供 `lib/netstandard2.0` 资产，覆盖 .NET Framework 4.7.2+ / .NET Core 2.0+（该资产随主包带入微软第一方 BCL 兼容包，详见文末「Runtime support」）。
+**.NET 依赖注入扩展（`AxiosNet.DependencyInjection`）** — 为 [AxiosNet](https://www.nuget.org/packages/AxiosNet)（含包内声明式客户端，命名空间 `AxiosNet.WebAPI`）提供 `AddAxiosClient` / `AddApiClient` 注册。客户端按单例注册，连接池、拦截器与实例默认值随容器生命周期共享。
+
+运行时依赖只有微软第一方 `Microsoft.Extensions.DependencyInjection.Abstractions`；与主包同步提供 `lib/netstandard2.0` 资产，覆盖 .NET Framework 4.7.2+ / .NET Core 2.0+（该资产随主包带入微软第一方 BCL 兼容包，见文末「运行时支持」）。
 
 ## 依赖注入扩展
 
@@ -136,6 +138,10 @@ builder.Services.AddApiClient("https://api.example.com");
 - **生命周期归容器**：`using` 掉注入的客户端不会释放共享实例；单例随容器退出统一释放（自建模式与命名站点经内部持有项/解析器释放连接池）
 - **门面模式缺注册**：容器中没有 `AxiosClient` 时解析 `ApiClient` 抛 `InvalidOperationException`（与注册顺序无关）
 - 完整可运行示例见仓库 `samples/AxiosNet.Simple.DependencyInjection`（Generic Host，六个场景跑真实 HTTP 往返：核心单例 / 自建 / 门面 / 容器授权 / 命名多站点 / 键名服务）
+
+### 运行时支持
+
+三目标 `netstandard2.0` / `net6.0` / `net8.0`。.NET 6 / 7 / 8 / 9 / 10 / 11 取 `lib/net6.0` / `lib/net8.0`，无第三方运行时依赖；.NET Framework 4.7.2+ / .NET Core 2.0+ / .NET 5 取 `lib/netstandard2.0` 兼容资产，由 AxiosNet 主包带入微软第一方 BCL 兼容包。三个资产上的 DI 扩展 API 一致。.NET Core 1.0 / 1.1 不在支持范围内（最高只支持 `netstandard1.6`）。
 
 ## Dependency injection extensions
 
