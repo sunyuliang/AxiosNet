@@ -1480,6 +1480,71 @@ public sealed class CircuitBreakerTests
         Assert.False(breaker.ShouldAllow(ContextFor("api.example.com")));
     }
 
+    /// <summary>窗口失败率达标的那次结果恰好是成功时也打开熔断。</summary>
+    [Fact]
+    public void FailureRate_TripsWhenSuccessCompletesMinimumSamples()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 100,
+            WindowSize = 10,
+            MinimumSamples = 10,
+            FailureRateThreshold = 0.5,
+            BreakDuration = LongBreak
+        };
+        const string host = "rate-trips-on-success.example.com";
+
+        // 交替失败 / 成功：4 败 4 成（样本 8 < 10），再 1 败（样本 9）都不开；
+        // 第 10 个样本是成功，但此时窗口 5 败 / 10 样本已达阈值，应立刻打开。
+        for (var i = 0; i < 4; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(FailedContext(host));
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(ContextFor(host));
+        }
+
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(FailedContext(host));
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+
+        Assert.True(breaker.ShouldAllow(ContextFor(host)));
+        breaker.Record(ContextFor(host));
+        Assert.Equal(AxiosCircuitState.Open, breaker.GetState(host));
+    }
+
+    /// <summary>成功处凑样本时失败率未达标则不打开。</summary>
+    [Fact]
+    public void FailureRate_BelowThresholdOnSuccess_DoesNotTrip()
+    {
+        var breaker = new CircuitBreaker
+        {
+            FailureThreshold = 100,
+            WindowSize = 10,
+            MinimumSamples = 10,
+            FailureRateThreshold = 0.5,
+            BreakDuration = LongBreak
+        };
+        const string host = "rate-below-on-success.example.com";
+
+        // 先 2 败、再 8 成：第 10 个样本是成功，窗口 2 败 / 10 样本 = 20% < 50%，不打开。
+        for (var i = 0; i < 2; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(FailedContext(host));
+        }
+
+        for (var i = 0; i < 8; i++)
+        {
+            Assert.True(breaker.ShouldAllow(ContextFor(host)));
+            breaker.Record(ContextFor(host));
+        }
+
+        Assert.Equal(AxiosCircuitState.Closed, breaker.GetState(host));
+    }
+
     private static AxiosCircuitContext ContextFor(string host)
         => new(host, new Uri("https://" + host + "/orders"));
 

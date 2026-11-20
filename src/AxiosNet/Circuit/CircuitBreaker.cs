@@ -341,7 +341,7 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
         Notify(transition);
     }
 
-    /// <summary>成功：连续失败归零；闭合态记进窗口，半开态推进慢启动进度。</summary>
+    /// <summary>成功：连续失败归零；闭合态记窗口并按失败率判定，半开态推进慢启动进度。</summary>
     private AxiosCircuitTransition RecordSuccess(HostState host)
     {
         // 「连续失败」在成功处归零（窗口不清零：滚动窗口靠覆盖自然衰减）。
@@ -354,6 +354,11 @@ public sealed class CircuitBreaker : IAxiosCircuitPolicy
 
             case AxiosCircuitState.Closed:
                 host.PushWindow(success: true, WindowSize);
+                if (host.WindowTrips(MinimumSamples, FailureRateThreshold))
+                {
+                    return Reopen(host);
+                }
+
                 return default;
 
             default:
