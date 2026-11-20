@@ -241,10 +241,17 @@ public sealed class InterfaceParameterBuilder
         return _owner;
     }
 
-    /// <summary><c>[Body]</c>。</summary>
+    /// <summary><c>[Body]</c>：参数作为请求体对象的一个键（可多个）。</summary>
     public InterfaceMethodBuilder Body()
     {
         _parameter.Body = true;
+        return _owner;
+    }
+
+    /// <summary><c>[RootBody]</c>：参数作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
+    public InterfaceMethodBuilder RootBody()
+    {
+        _parameter.RootBody = true;
         return _owner;
     }
 

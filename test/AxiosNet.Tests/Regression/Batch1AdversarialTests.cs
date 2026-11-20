@@ -809,7 +809,7 @@ public sealed class Batch1ConcurrentPostRequest : IApiRequest<Person>
 {
     [Header("X-Id")] public string? Id { get; set; }
 
-    [Body] public Batch1Payload? Payload { get; set; }
+    [RootBody] public Batch1Payload? Payload { get; set; }
 }
 
 public sealed record Batch1Payload(string Id, string Data);

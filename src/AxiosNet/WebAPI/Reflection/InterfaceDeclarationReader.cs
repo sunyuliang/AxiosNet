@@ -113,6 +113,7 @@ internal static class InterfaceDeclarationReader
 
             declaration.HeaderCollection = parameter.GetCustomAttribute<HeaderCollectionAttribute>() is not null;
             declaration.Body = parameter.GetCustomAttribute<BodyAttribute>() is not null;
+            declaration.RootBody = parameter.GetCustomAttribute<RootBodyAttribute>() is not null;
             declaration.Ignore = parameter.GetCustomAttribute<ApiIgnoreAttribute>() is not null;
 
             if (parameter.GetCustomAttribute<FormatAttribute>() is { } format)

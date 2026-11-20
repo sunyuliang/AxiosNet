@@ -47,7 +47,8 @@ public sealed class AuthorizationExample : IExample
         // 1) 登录模型标了 [AllowAnonymous]：整条授权链路跳过（提供方不会被调用），也不带 Authorization 头
         var login = await client.RequestAsync(new LoginRequest
         {
-            Credentials = new LoginPayload("alice", "wonderland")
+            Username = "alice",
+            Password = "wonderland"
         });
 
         Console.WriteLine($"  登录（[AllowAnonymous]）-> token = {login.Data!.Token}");
@@ -121,7 +122,8 @@ public sealed class AuthorizationExample : IExample
         {
             var result = await selfHosted!.RequestAsync(new LoginRequest
             {
-                Credentials = new LoginPayload("alice", "wonderland")
+                Username = "alice",
+                Password = "wonderland"
             }, cancellationToken: ct);
             Interlocked.Increment(ref logins);
             return new AccessToken(result.Data!.Token, DateTimeOffset.UtcNow.AddSeconds(result.Data.ExpiresIn));

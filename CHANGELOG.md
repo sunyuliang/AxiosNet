@@ -6,6 +6,19 @@
 
 > **说明：本文件从 `1.5.0` 起建立，此前版本未追述。** 更早的历史（`1.4.x` 及以前）请以 git 提交历史为准；`1.x → 1.5` 的完整迁移对照见 [`docs/breaking-changes-1.5.md`](docs/breaking-changes-1.5.md)（英文：[`docs/breaking-changes-1.5.en.md`](docs/breaking-changes-1.5.en.md)）。每个条目只记录能从版本 tag 与对应提交中取证的改动。
 
+## [Unreleased]
+
+### Changed (Breaking)
+
+- 声明式 API 的默认参数绑定改为**只看 HTTP 方法、不看成员类型**：
+  - POST / PUT / PATCH 上的全部未标注属性 / 参数按键名聚合成**一个对象**作为请求体；1 个成员也加壳（`{ "page": 2 }`）。键名 `[JsonPropertyName]` 优先，否则成员名（接口式为参数名），JSON 再套 `PropertyNamingPolicy`（默认 camelCase）；多个成员键名重复在构建期报错。此前只有「恰好 1 个非标量成员」才被推断为正文，且正文是该值本身、不加壳。
+  - GET / HEAD / OPTIONS / DELETE 及其它方法上的未标注成员保持 Query（与是否标注 `[RootBody]` 无关）；显式 `[RootBody]` 独占正文时原样发送、不加壳。
+  - `[Body]` 的语义改为「聚合正文里的一个键」：可标注多个，可与 `[Query]` / `[Header]` / `[Path]` 同用，重复键在构建期报错；任何 HTTP 方法上都强制进正文。
+  - 新的 `[RootBody]` 承接原来 `[Body]` 的整份正文语义：独占正文时原样发送；与 `[Body]` / 未标注成员（以及其它 `[RootBody]`）一起时合并到同一层（`[RootBody]` 结构化值展开属性、其余值按键写入，`[Body]` / 未标注成员按键写入），重复键报错。与 `[Multipart]` 互斥。旧的 `[Body]` 原始正文写法需迁移为 `[RootBody]`。
+  - 排除默认正文：`[Query]` 把成员拉回查询串，`[Header]` / `[HeaderCollection]` / `[Path]` 换通道，`[ApiIgnore]` 完全不发。
+  - 默认正文支持 JSON 与 `application/x-www-form-urlencoded`；multipart 请改用 `[Multipart]`，XML / 自定义序列化器请给成员显式标 `[RootBody]`（否则构建期给出明确错误）。
+  - net6.0 的 System.Text.Json 不支持 `DateOnly` / `TimeOnly`：默认正文包含这类成员时会像显式 `[RootBody]` 一样在序列化阶段报错。
+
 ## [1.7.1] - 2026-11-18
 
 ### Changed
@@ -31,7 +44,7 @@
 - 观测实现可整套替换：新增 `IAxiosTelemetrySink`、`AxiosTelemetrySink`（全空实现的基类）与观测句柄 `AxiosRequestTrace`，赋 `AxiosTelemetry.Sink` 即接管 span / 指标 / 事件三路输出，内置那套**同时停用**（不是叠加）；赋 `AxiosTelemetrySink.Off` 则彻底关掉。此前 `AxiosTelemetry` 是静态类，包外只能按 `ActivitySource` / `Meter` 名字订阅再自行翻译，既接不进公司自己的管道，也关不掉内置的那套。默认行为不变（`Sink` 默认指向内置实现）。
   - 可替换实现是第三方代码，它违约抛异常时**只丢掉那一次观测，不改写请求结果**：派发统一经 `AxiosTelemetry.Dispatch` 的护栏，`finally` 里的收尾异常不再把一条 200 换成观测异常、也不再盖掉真正的失败原因；在途请求计数照常归零（否则 `Dispose()` 永远等不到 0，池与 Handler 一直不释放）——`EnterRequest` 抛了就不补 `ExitRequest`，水位不会变负。
   - `IsEnabled` 的管辖范围写明：只管请求级生命周期（开句柄 / 成功 / 失败上报），缓存、重试、闸门、池与租约这些事件不看它；要整体静音用 `AxiosTelemetrySink.Off`。
-- 源生成器新增两条编译期诊断：`AXA016`（路由模板里的 `{name}` 没有任何成员用 `[Path]` 绑定，名字比对大小写不敏感）与 `AXA017`（多个成员显式标了 `[Body]`）。二者此前只在运行期由绑定构建器报错。
+- 源生成器新增两条编译期诊断：`AXA016`（路由模板里的 `{name}` 没有任何成员用 `[Path]` 绑定，名字比对大小写不敏感）与 `AXA017`（`[RootBody]` 与 `[Multipart]` 同用）。二者此前只在运行期由绑定构建器报错。
 - 缓存条目可导出与重建：新增 `AxiosShortCircuit.Restore(...)`，供自定义 `IAxiosCacheStore` 从自己的存储格式重建条目；新增只读视图 `MultiValueHeaderValues` / `CachedAt` / `CachedAge`，用于把多值响应头、落库时刻与落库龄期写进自己的存储格式。此前这三项在包外读写不到，自建 Redis / 共享缓存会静默丢失多条 `Set-Cookie` / `Vary` 的全部值、`ETag` / `Last-Modified` 的优先来源，以及 `Age` 的推进。
 - 新增 `AxiosResponse<T>.DataOrThrow()`：正文为空时抛 `AxiosException(ERR_BAD_RESPONSE)`（消息带期望的类型名，异常带 `Config` / `Response`），用于替代 `Data!` —— 后者遇到空正文会退化成不带请求上下文的 `NullReferenceException`。空正文合法时继续用 `Data`。
 - 反射缓存（对象形状 / 属性元数据）新增条目上限：条目数达到 `ClearThreshold`（目标上限的 2 倍：形状 4096 条、属性元数据 8192 条）时整体清空。此前这两份缓存以 `Type` / `PropertyInfo` 为强引用键、没有任何上限，插件或可回收 `AssemblyLoadContext` 场景下会把已卸载程序集的类型一直挂在字典里，`Unload()` 永不生效。阈值取 2 倍而不是目标上限本身，是为了避开「工作集略超上限 → 每来一个新条目就清一次表 → 之后每条都要重新反射构建」的稳态重算：一次清空的 O(n) 摊到随后再插入的 n 条上，摊还约为每插入一次。清空后旧类型的强引用消失，程序集随即可回收。

@@ -359,7 +359,7 @@ internal sealed class CSharpEmitter
         {
             members.Add(RequestProperty(
                 body.Description,
-                "[Body]",
+                "[RootBody]",
                 body.Type,
                 Naming.Unique(Naming.Pascal(body.BodyName), usedNames),
                 !body.Required || body.Type.Nullable));
@@ -537,7 +537,7 @@ internal sealed class CSharpEmitter
         }
         else if (operation.RequestBody is { } body)
         {
-            yield return "[Body] "
+            yield return "[RootBody] "
                          + FormatType(body.Type, !body.Required || body.Type.Nullable)
                          + " "
                          + body.BodyName;

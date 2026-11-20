@@ -171,13 +171,13 @@ namespace AxiosNet.SourceGen
             helpLinkUri: HelpLink);
 
         /// <summary>
-        /// 多个成员显式标注 <c>[Body]</c>：一次请求只能有一个正文。
-        /// 只查「显式 <c>[Body]</c> 多于一个」，「未标注属性默认当正文」的歧义留给运行期构建器（规则更细，静态判断易误报）。
+        /// 请求体声明冲突：<c>[RootBody]</c> 与 <c>[Multipart]</c> 同用。
+        /// <c>[RootBody]</c> 与 <c>[Body]</c> / 未标注成员会合并到同一层，不算冲突。
         /// </summary>
         public static readonly DiagnosticDescriptor MultipleBodyMembers = new DiagnosticDescriptor(
             "AXA017",
-            "多个成员标注了 [Body]",
-            "{0} 有 {1} 个成员标注了 [Body]（{2}）：一次请求只能有一个请求体。",
+            "请求体声明冲突",
+            "{0} 的请求体声明冲突：{1}",
             Category,
             DiagnosticSeverity.Error,
             isEnabledByDefault: true,

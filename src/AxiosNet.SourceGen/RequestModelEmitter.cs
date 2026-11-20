@@ -169,6 +169,11 @@ namespace AxiosNet.SourceGen
                     builder.AppendLine("                        m.Body();");
                 }
 
+                if (binding.RootBody)
+                {
+                    builder.AppendLine("                        m.RootBody();");
+                }
+
                 if (binding.Part)
                 {
                     if (binding.PartName is null && binding.PartFileName is null && binding.PartContentType is null)

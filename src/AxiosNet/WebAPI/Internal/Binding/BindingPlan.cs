@@ -1,4 +1,5 @@
 using System.Collections;
+using AxiosNet.Internal.Content;
 using AxiosNet.Metadata;
 using AxiosNet.WebAPI.Attributes;
 
@@ -19,7 +20,8 @@ internal sealed class BindingPlan
         [],
         [],
         [],
-        null);
+        [],
+        []);
 
     private readonly (string Token, IValueSource Source)[] _pathTokens;
     private readonly (string Name, IValueSource Source)[] _queryBindings;
@@ -30,7 +32,11 @@ internal sealed class BindingPlan
     /// <summary>声明级静态头：Value 为 null 表示删除该头。</summary>
     private readonly (string Name, string? Value)[] _staticHeaders;
 
-    private readonly IValueSource? _body;
+    /// <summary>显式 <c>[RootBody]</c>：整个请求体的来源；多个时合并到同一层。</summary>
+    private readonly (string Name, bool NameFromAttribute, IValueSource Source)[] _rootBodies;
+
+    /// <summary>按对象键聚合的正文（显式 [Body] + body 方法上的未标注成员）：空数组表示没有。</summary>
+    private readonly (string Name, bool NameFromAttribute, IValueSource Source)[] _bodyMembers;
 
     internal BindingPlan(
         (string Token, IValueSource Source)[] pathTokens,
@@ -39,7 +45,8 @@ internal sealed class BindingPlan
         (string Name, IValueSource Source)[] headerBindings,
         IValueSource[] headerCollections,
         (string Name, string? Value)[] staticHeaders,
-        IValueSource? body)
+        (string Name, bool NameFromAttribute, IValueSource Source)[] rootBodies,
+        (string Name, bool NameFromAttribute, IValueSource Source)[] bodyMembers)
     {
         _pathTokens = pathTokens;
         _queryBindings = queryBindings;
@@ -47,26 +54,64 @@ internal sealed class BindingPlan
         _headerBindings = headerBindings;
         _headerCollections = headerCollections;
         _staticHeaders = staticHeaders;
-        _body = body;
+        _rootBodies = rootBodies;
+        _bodyMembers = bodyMembers;
     }
 
-    /// <summary>是否已绑定请求正文（正文只能有一个）。</summary>
-    public bool HasBody => _body is not null;
+    /// <summary>是否已绑定请求正文（显式 [RootBody]，或至少一个按键名聚合的正文成员）。</summary>
+    public bool HasBody => _rootBodies.Length > 0 || _bodyMembers.Length > 0;
 
     /// <summary>正文的定位名（错误消息用）。</summary>
-    public string? BodyName => _body?.Name;
+    public string? BodyName => _rootBodies.Length > 0
+        ? _rootBodies[0].Source.Name
+        : (_bodyMembers.Length > 0 ? _bodyMembers[0].Source.Name : null);
 
     /// <summary>
-    /// 请求体的原始值（普通声明取 <see cref="BodyAttribute"/> 绑定的来源）。
-    /// 标量 + 成员级格式化 / 实例钩子时返回 <see cref="PreformattedValue"/>，让正文工厂按标量正文处理而不是当字符串透传；
-    /// 钩子返回 <c>null</c>（本次不处理）时封存通道默认文本，正文工厂便不会再问它第二遍。
-    /// 二进制正文只在真的产出文本时封存，否则保持原始字节。
+    /// 请求体原始值：只有一个正文来源且为 <see cref="RootBodyAttribute"/> 时不加壳；
+    /// 其余情况合并成一层——<c>[Body]</c> / 未标注成员按键写入，<c>[RootBody]</c> 结构化值展开属性、标量按键写入。
     /// </summary>
     /// <param name="target">请求模型实例或方法参数数组。</param>
     /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
     public object? ResolveBodyValue(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
-        var value = _body?.GetValue(target);
+        // 合并正文：显式 [Body] / 未标注成员按键名写入；[RootBody] 结构化值展开、标量按键写入。
+        // 键名冲突由序列化阶段统一校验（对象的属性名要到运行时才知道）。
+        if (_bodyMembers.Length > 0 || _rootBodies.Length > 1)
+        {
+            var aggregate = new AggregateBodyMember[_bodyMembers.Length + _rootBodies.Length];
+            var index = 0;
+            foreach (var member in _bodyMembers)
+            {
+                aggregate[index++] = new AggregateBodyMember(
+                    member.Name,
+                    member.Source.GetValue(target),
+                    member.Source.ValueType,
+                    member.NameFromAttribute,
+                    member.Source.Format);
+            }
+
+            foreach (var member in _rootBodies)
+            {
+                aggregate[index++] = new AggregateBodyMember(
+                    member.Name,
+                    member.Source.GetValue(target),
+                    member.Source.ValueType,
+                    member.NameFromAttribute,
+                    member.Source.Format,
+                    spread: !ScalarTypes.IsScalarBodyType(member.Source.ValueType));
+            }
+
+            return new AggregateBody(aggregate);
+        }
+
+        if (_rootBodies.Length == 0)
+        {
+            return null;
+        }
+
+        // 单个 [RootBody]：保持原样正文（任何序列化器、任何编码都能用）。
+        var source = _rootBodies[0].Source;
+        var value = source.GetValue(target);
         if (value is null || !ScalarTypes.IsScalarBodyType(value.GetType()))
         {
             return value;
@@ -74,7 +119,7 @@ internal sealed class BindingPlan
 
         // 只有两层声明真的产出文本时才改成文本正文：二进制正文的默认形态是原始字节，
         // 不能因为配置了「对其它类型生效、对 byte[] 返回 null」的实例钩子就退化成 base64 文本。
-        if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, _body!.Format, formatter) is { } text)
+        if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, source.Format, formatter) is { } text)
         {
             return new PreformattedValue(text);
         }

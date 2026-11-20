@@ -79,7 +79,7 @@ internal sealed partial class InterfaceMethodMetadata
                 if (parameter.HasAnyBinding)
                 {
                     throw new InvalidOperationException(
-                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
+                        $"参数 {interfaceType.Name}.{methodName}.{parameter.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body / RootBody）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
@@ -134,9 +134,14 @@ internal sealed partial class InterfaceMethodMetadata
                     DeclarationNormalization.OptionalPartValue(parameter.PartContentType, display, nameof(PartAttribute.ContentType))));
             }
 
+            if (parameter.RootBody)
+            {
+                accumulator.AddRootBody(source, parameter.Name, nameFromAttribute: false);
+            }
+
             if (parameter.Body)
             {
-                accumulator.AddBody(source);
+                accumulator.AddBody(source, parameter.Name, nameFromAttribute: false);
             }
 
             if (!parameter.HasAnyBinding)
@@ -152,7 +157,8 @@ internal sealed partial class InterfaceMethodMetadata
                     continue;
                 }
 
-                accumulator.AddUnannotated(source);
+                // 无标注：默认通道由 HTTP 方法决定；聚合正文的键名即参数名（接口参数没有 [JsonPropertyName]）。
+                accumulator.AddUnannotated(source, parameter.Name, nameFromAttribute: false);
             }
             else if (parameter.Query)
             {
@@ -163,7 +169,7 @@ internal sealed partial class InterfaceMethodMetadata
         if (isMultipart && accumulator.HasBody)
         {
             throw new InvalidOperationException(
-                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
+                $"接口 {interfaceType.Name} 的 {methodName} 同时声明了 [Multipart] 与 {accumulator.BodyKind}（{accumulator.BodyName}）："
                 + "multipart 方法的请求体由全部参数装配，两者互斥。");
         }
 

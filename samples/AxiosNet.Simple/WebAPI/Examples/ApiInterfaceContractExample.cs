@@ -65,7 +65,7 @@ public interface IAnonymousAuthApi
 {
     [Post("api/auth/login")]
     Task<AxiosResponse<TokenResult>> LoginAsync(
-        [Body] LoginPayload credentials,
+        [RootBody] LoginPayload credentials,
         CancellationToken cancellationToken = default);
 }
 

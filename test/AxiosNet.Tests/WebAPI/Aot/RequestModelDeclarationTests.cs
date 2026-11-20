@@ -1,4 +1,5 @@
 using AxiosNet.Tests.Infrastructure;
+using AxiosNet.Internal.Content;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Metadata;
 
@@ -162,12 +163,16 @@ public sealed class RequestModelDeclarationTests
     }
 
     [Fact]
-    public void DefaultBodyDeclaration_MovesSolePayloadOutOfQuery()
+    public void DefaultBodyDeclaration_AggregatesSolePayloadIntoObject()
     {
         var request = new DeclaredDefaultBodyRequest { Payload = new Person("n", 1) };
         var metadata = RequestModelMetadata.Get(typeof(DeclaredDefaultBodyRequest));
 
-        Assert.Same(request.Payload, metadata.ResolveBody(request, formatter: null));
+        // 单个未标注成员也加壳：键 = 成员名（生成器写入的 FieldName），值 = 成员值。
+        var body = Assert.IsType<AggregateBody>(metadata.ResolveBody(request, formatter: null));
+        var member = Assert.Single(body.Members);
+        Assert.Equal("Payload", member.Name);
+        Assert.Same(request.Payload, member.Value);
         Assert.Null(metadata.ResolveQuery(request, formatter: null));
     }
 

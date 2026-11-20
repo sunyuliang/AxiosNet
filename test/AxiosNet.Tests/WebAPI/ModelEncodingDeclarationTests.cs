@@ -150,7 +150,7 @@ public sealed class ModelEncodingDeclarationTests
     [BodyContentType("text/plain")]
     private sealed class ClassBodyModel : IApiRequest<string>
     {
-        [Body]
+        [RootBody]
         public string? Payload { get; set; }
     }
 
@@ -171,7 +171,7 @@ public sealed class ModelEncodingDeclarationTests
     [Post("property-body")]
     private sealed class PropertyBodyModel : IApiRequest<string>
     {
-        [Body]
+        [RootBody]
         [BodyContentType("application/json")]
         public string? Payload { get; set; }
     }
@@ -205,7 +205,7 @@ public sealed class ModelEncodingDeclarationTests
     [BodyContentType("application/json")]
     private sealed class ConflictingBodyModel : IApiRequest<string>
     {
-        [Body]
+        [RootBody]
         [BodyContentType("text/plain")]
         public string? Payload { get; set; }
     }

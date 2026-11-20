@@ -1,6 +1,10 @@
+using System.Collections;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
 using System.Text;
+using AxiosNet.Internal.Content;
+using AxiosNet.Internal.Serialization;
+using AxiosNet.Internal.Url;
 using AxiosNet.Metadata;
 using AxiosNet.Reflection;
 
@@ -75,6 +79,182 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         }
 
         return SerializeUtf8Core(value, type, AxiosJson.GetOptions(config));
+    }
+
+    /// <summary>默认正文（未标注成员按键名聚合）的字节出口：始终按 UTF-8 写出一个 JSON 对象。</summary>
+    internal static byte[] SerializeAggregate(AggregateBody body, AxiosConfig config)
+    {
+        var options = AxiosJson.GetOptions(config);
+        var writerOptions = new JsonWriterOptions
+        {
+            Encoder = options.Encoder,
+            Indented = options.WriteIndented
+        };
+
+        using var buffer = new MemoryStream(256);
+        using (var writer = new Utf8JsonWriter(buffer, writerOptions))
+        {
+            writer.WriteStartObject();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var member in body.Members)
+            {
+                if (member.Spread)
+                {
+                    WriteSpread(writer, member, options, config, names);
+                    continue;
+                }
+
+                var name = ResolveAggregateName(member, options);
+                EnsureUniqueName(names, name, config);
+                writer.WritePropertyName(name);
+                WriteAggregateValue(writer, member, options, config);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>聚合正文的字节出口：生效编码不是 UTF-8 时返回 <c>null</c>，由文本入口负责编码与 charset 头。</summary>
+    internal static ReadOnlyMemory<byte>? SerializeAggregateToBytes(AggregateBody body, AxiosConfig config)
+        => EmitsUtf8(config) ? SerializeAggregate(body, config) : null;
+
+    /// <summary>聚合正文的文本出口（非 UTF-8 编码时由正文工厂按生效编码重新编码）。</summary>
+    internal static string SerializeAggregateText(AggregateBody body, AxiosConfig config)
+        => Encoding.UTF8.GetString(SerializeAggregate(body, config));
+
+    /// <summary>多个 [RootBody] 的展开：JSON 对象把属性铺到当前层，其它形态（标量 / 数组等）按键写入。</summary>
+    private static void WriteSpread(
+        Utf8JsonWriter writer,
+        AggregateBodyMember member,
+        JsonSerializerOptions options,
+        AxiosConfig config,
+        HashSet<string> names)
+    {
+        if (member.Value is null)
+        {
+            return;
+        }
+
+        // 先按声明类型序列化一次，再判断根是对象还是其它 JSON 形态。
+        using var buffer = new MemoryStream(128);
+        using (var inner = new Utf8JsonWriter(buffer))
+        {
+            SerializeAggregateMember(inner, member.Value, member.ValueType, options);
+        }
+
+        using var document = JsonDocument.Parse(buffer.ToArray());
+        var root = document.RootElement;
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            var name = ResolveAggregateName(member, options);
+            EnsureUniqueName(names, name, config);
+            writer.WritePropertyName(name);
+            root.WriteTo(writer);
+            return;
+        }
+
+        foreach (var property in root.EnumerateObject())
+        {
+            EnsureUniqueName(names, property.Name, config);
+            writer.WritePropertyName(property.Name);
+            property.Value.WriteTo(writer);
+        }
+    }
+
+    /// <summary>合并到同一层后的键名必须唯一：重复即报错，避免 JSON 对象里出现两个同名属性。</summary>
+    private static void EnsureUniqueName(HashSet<string> names, string name, AxiosConfig config)
+    {
+        if (!names.Add(name))
+        {
+            throw AxiosException.InvalidOption(
+                $"请求体合并后出现重复键 \"{name}\"：请改名，或把 [RootBody] 换成 [Body] 包成独立键。", config);
+        }
+    }
+
+    /// <summary>聚合正文的键名：显式 [JsonPropertyName] 原样；否则套生效的命名策略（默认 Web 的 camelCase）。</summary>
+    private static string ResolveAggregateName(AggregateBodyMember member, JsonSerializerOptions options)
+        => member.NameFromAttribute || options.PropertyNamingPolicy is null
+            ? member.Name
+            : options.PropertyNamingPolicy.ConvertName(member.Name);
+
+    /// <summary>写一个成员值：null 原样、成员级 [Format] 转文本、其余按声明类型交 STJ。</summary>
+    private static void WriteAggregateValue(
+        Utf8JsonWriter writer,
+        AggregateBodyMember member,
+        JsonSerializerOptions options,
+        AxiosConfig config)
+    {
+        if (member.Value is null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+
+        if (member.Format is { } format && TryWriteFormatted(writer, member.Value, format, config))
+        {
+            return;
+        }
+
+        SerializeAggregateMember(writer, member.Value, member.ValueType, options);
+    }
+
+    /// <summary>成员级 [Format] 的 JSON 形态：标量 / 二进制 → 字符串，集合 → 字符串数组；字典与结构化对象交给序列化器。</summary>
+    private static bool TryWriteFormatted(
+        Utf8JsonWriter writer,
+        object value,
+        ValueFormat format,
+        AxiosConfig config)
+    {
+        var formatter = config.SerializationOrNull?.ValueText;
+
+        if (value is string || ScalarTypes.IsScalarType(value.GetType()) || ScalarTypes.IsBinaryType(value.GetType()))
+        {
+            writer.WriteStringValue(ValueText.Format(value, ValueTextChannel.ScalarBody, format, formatter));
+            return true;
+        }
+
+        if (value is IEnumerable enumerable && !QueryMap.CanEnumerate(value))
+        {
+            writer.WriteStartArray();
+            foreach (var item in enumerable)
+            {
+                if (item is null)
+                {
+                    writer.WriteNullValue();
+                    continue;
+                }
+
+                writer.WriteStringValue(ValueText.Format(item, ValueTextChannel.ScalarBody, format, formatter));
+            }
+
+            writer.WriteEndArray();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>按声明类型写入聚合正文的成员值：AOT 走 <c>JsonTypeInfo</c>，JIT 回退反射重载。</summary>
+    private static void SerializeAggregateMember(Utf8JsonWriter writer, object? value, Type type, JsonSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+
+#if NET8_0_OR_GREATER
+        if (options.TypeInfoResolver is not null)
+        {
+            JsonSerializer.Serialize(writer, value, Resolve(options, type));
+            return;
+        }
+#endif
+        JsonSerializerJit.EnsureReflectionMetadata(type);
+        JsonSerializerJit.SerializeToWriterLegacy(writer, value, type, options);
     }
 
     /// <summary>

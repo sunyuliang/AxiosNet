@@ -125,6 +125,10 @@ internal static class RequestBodyFactory
 
             case IAsyncEnumerable<ReadOnlyMemory<byte>> chunks:
                 return CreateStreaming(AsyncEnumerableBodyContent.FromMemoryChunks(chunks), mediaType, config);
+
+            // 声明式 API 的默认正文：未标注成员按键名聚合成的对象，按 Content-Type 选 JSON / 表单。
+            case AggregateBody aggregate:
+                return CreateAggregate(aggregate, config, mediaType, encoding, appendCharset);
         }
 
         // 其余 IAsyncEnumerable<T> 不能当正文，直接拦下。
@@ -179,6 +183,58 @@ internal static class RequestBodyFactory
 
         RequestContentType.Set(content, mediaType, config);
         return content;
+    }
+
+    /// <summary>
+    /// 默认正文的分派：form-urlencoded 展平；JSON 由 <see cref="SystemTextJsonSerializer"/> 按成员声明类型写出；
+    /// multipart 与其它序列化器第一阶段明确报错，提示改用 [Multipart] / 显式 [RootBody]。
+    /// </summary>
+    private static HttpContent CreateAggregate(
+        AggregateBody body,
+        AxiosConfig config,
+        string mediaType,
+        Encoding encoding,
+        bool appendCharset)
+    {
+        if (MediaTypes.Is(mediaType, AxiosConfig.FormUrlEncodedContentType))
+        {
+            return FormBodyEncoder.CreateAggregate(body, config, mediaType, encoding, appendCharset);
+        }
+
+        if (MediaTypes.Is(mediaType, MultipartMediaType))
+        {
+            throw AxiosException.InvalidOption(
+                "默认 Body（未标注成员按键名聚合）不能按 multipart 发送："
+                + "请给请求模型标注 [Multipart] 由库组装表单，或给需要发送的成员显式标注 [RootBody]。", config);
+        }
+
+        var serializer = AxiosContent.Get(config, mediaType);
+        if (!ReferenceEquals(serializer, SystemTextJsonSerializer.Instance))
+        {
+            throw AxiosException.InvalidOption(
+                "默认 Body（未标注成员按键名聚合）只支持 JSON 与 application/x-www-form-urlencoded："
+                + $"当前生效的序列化器是 {serializer.GetType().Name}。"
+                + "请给需要发送的成员显式标注 [RootBody]（原样交给该序列化器），或改用 JSON。", config);
+        }
+
+        if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
+        {
+            mediaType = declared.Trim();
+        }
+
+        if (SystemTextJsonSerializer.SerializeAggregateToBytes(body, config) is { } bytes)
+        {
+            return CreateBinary(bytes, mediaType, config);
+        }
+
+        var text = CreateText(
+            SystemTextJsonSerializer.SerializeAggregateText(body, config),
+            mediaType,
+            encoding,
+            appendCharset,
+            config);
+        ValidateDeclaredCharset(text, config, encoding);
+        return text;
     }
 
     /// <summary>结构化数据的分派：form-urlencoded / multipart 走专用编码器，其余交给序列化器（标量直接取文本）。</summary>

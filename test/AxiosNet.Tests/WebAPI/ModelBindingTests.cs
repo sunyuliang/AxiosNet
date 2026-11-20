@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text;
 
 namespace AxiosNet.Tests.WebAPI;
@@ -46,27 +47,36 @@ public sealed class ModelBindingTests
     }
 
     // ===============================================================
-    // Bug 7：IsScalarType 清单漂移，DateOnly / Uri 被静默当成请求体
+    // 默认通道只看 HTTP 方法：POST 上的未标注成员一律进聚合正文（与类型无关）
     // ===============================================================
 
     [Fact]
-    public async Task PostModel_SingleDateOnlyProperty_BindsQueryNotBody()
+    public async Task PostModel_SingleDateOnlyProperty_BindsBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
 
-        await client.RequestAsync(new DateOnlyBodyCandidateRequest { When = new DateOnly(2026, 10, 22) });
+        var request = new DateOnlyBodyCandidateRequest { When = new DateOnly(2026, 10, 22) };
+
+#if NET8_0_OR_GREATER
+        await client.RequestAsync(request);
 
         var received = Assert.Single(server.Received);
 
-        // DateOnly 走独立分支的 ISO 短日期（2026-10-22）；
-        // 要点是路由去向：查询参数而非请求体。
-        Assert.Equal("When=2026-10-22", received.Query);
-        Assert.Empty(received.Body);
+        // 标量也按成员键聚合：{ "when": "2026-10-22" }
+        Assert.Null(received.Query);
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("2026-10-22", json.GetProperty("when").GetString());
+#else
+        // net6.0 的 System.Text.Json 不支持 DateOnly：聚合正文按序列化器能力报错（显式 [RootBody] 同）。
+        var error = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(request));
+        Assert.Contains("DateOnly", error.ToString());
+        Assert.Empty(server.Received);
+#endif
     }
 
     [Fact]
-    public async Task PostModel_SingleUriProperty_BindsQueryNotBody()
+    public async Task PostModel_SingleUriProperty_BindsBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
         using var client = new ApiClient(server.Url);
@@ -74,8 +84,9 @@ public sealed class ModelBindingTests
         await client.RequestAsync(new UriBodyCandidateRequest { Callback = new Uri("http://example.com/hook") });
 
         var received = Assert.Single(server.Received);
-        Assert.Contains("Callback=", received.Query);
-        Assert.Empty(received.Body);
+        Assert.Null(received.Query);
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("http://example.com/hook", json.GetProperty("callback").GetString());
     }
 
     [Fact]
@@ -89,6 +100,140 @@ public sealed class ModelBindingTests
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/reports/2026-10-22", received.Path);
+    }
+
+    [Fact]
+    public async Task PostModel_BodyAttribute_AddsKeyAndCoexistsWithQuery()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new BodyKeyRequest { Token = "t", Page = 2, Name = "n" });
+
+        var received = Assert.Single(server.Received);
+
+        // [Body] 是聚合正文里的一个键，不是原样正文；未标注成员照常并入同一个对象。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("t", json.GetProperty("token").GetString());
+        Assert.Equal(2, json.GetProperty("page").GetInt32());
+        Assert.Equal("n", json.GetProperty("name").GetString());
+
+        // 同一成员可同时进 Query（[Body] 与 [Query] 正交）。
+        Assert.Contains("page=2", received.Query);
+    }
+
+    [Fact]
+    public async Task GetModel_BodyAttribute_StillProducesBody()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new GetWithBodyRequest { Token = "t", Page = 3 });
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("GET", received.Method);
+
+        // 显式 [Body] 在任何方法上都进正文；其余未标注成员保持 Query。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("t", json.GetProperty("token").GetString());
+        Assert.Contains("Page=3", received.Query);
+    }
+
+    [Fact]
+    public async Task PostModel_SingleRootBody_IsRawAndUnwrapped()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new RawRootBodyRequest { Payload = new Person("n", 1) });
+
+        var received = Assert.Single(server.Received);
+
+        // 唯一的正文来源是 [RootBody]：原样发送，不加键壳。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("n", json.GetProperty("name").GetString());
+        Assert.Equal(1, json.GetProperty("age").GetInt32());
+        Assert.False(json.TryGetProperty("payload", out _));
+        Assert.Null(received.Query);
+    }
+
+    [Fact]
+    public async Task PostModel_RootBodyWithUnannotatedMember_MergesIntoBody_ExplicitQueryStaysQuery()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new RootBodyWithQueryRequest
+        {
+            Payload = new Person("n", 1),
+            Tag = "x",
+            Page = 4
+        });
+
+        var received = Assert.Single(server.Received);
+
+        // 默认通道只由方法决定：POST 上未标注成员仍进正文，与 [RootBody] 展开的属性合并到同一层。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("n", json.GetProperty("name").GetString());
+        Assert.Equal(1, json.GetProperty("age").GetInt32());
+        Assert.Equal(4, json.GetProperty("page").GetInt32());
+
+        // 显式 [Query] 不受影响。
+        Assert.Contains("tag=x", received.Query);
+        Assert.DoesNotContain("Page=4", received.Query);
+    }
+
+    [Fact]
+    public async Task PostModel_BodyAndRootBody_MergeIntoOneLayer()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new BodyAndRootBodyRequest
+        {
+            Payload = new Person("n", 1),
+            Extra = new Person("m", 2)
+        });
+
+        var received = Assert.Single(server.Received);
+
+        // [Body] 按键写入，[RootBody] 展开属性，两者在同一个对象里。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("n", json.GetProperty("payload").GetProperty("name").GetString());
+        Assert.Equal(1, json.GetProperty("payload").GetProperty("age").GetInt32());
+        Assert.Equal("m", json.GetProperty("name").GetString());
+        Assert.Equal(2, json.GetProperty("age").GetInt32());
+    }
+
+    [Fact]
+    public async Task PostModel_MultipleRootBodies_AreMergedIntoOneLayer()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new MergedRootBodyRequest());
+
+        var received = Assert.Single(server.Received);
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+
+        // 结构化值展开属性，标量按键写入，顺序保持声明顺序。
+        Assert.Equal(1, json.GetProperty("a").GetInt32());
+        Assert.Equal(1, json.GetProperty("u1").GetInt32());
+        Assert.Equal(2, json.GetProperty("u2").GetInt32());
+        Assert.Equal(2, json.GetProperty("c").GetInt32());
+    }
+
+    [Fact]
+    public async Task PostModel_MultipleRootBodies_DuplicateSpreadKey_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new DuplicateMergedRootBodyRequest()));
+
+        Assert.Contains("[RootBody]", ex.Message);
+        Assert.Contains("重复键", ex.Message);
     }
 
     // ------------------------------------------------------------------
@@ -210,10 +355,10 @@ public sealed class ModelBindingTests
         Assert.Equal("/records/3", received.Path);
     }
 
-    // ---- 默认 Body 边界 ----
+    // ---- 默认正文边界：成员值为 null 也发送对象 ----
 
     [Fact]
-    public async Task Post_DefaultBodyNullValue_NoBodySent()
+    public async Task Post_DefaultBodyNullValue_SendsNullMember()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
@@ -223,22 +368,24 @@ public sealed class ModelBindingTests
 
         var received = Assert.Single(server.Received);
         Assert.Equal("POST", received.Method);
-        Assert.Empty(received.Body); // 默认 Body 属性为 null：不发请求体
+
+        // 有未标注成员就发对象，值为 null 也保留键
+        Assert.Equal("{\"payload\":null}", Encoding.UTF8.GetString(received.Body));
         Assert.Null(received.Query);
     }
 
     [Fact]
-    public async Task Post_UnannotatedScalarArray_DefaultsToJsonArrayBody()
+    public async Task Post_UnannotatedScalarArray_WrapsInObjectBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var client = CreateClient(server);
 
-        // int[] 非标量 → 默认整个数组作为 JSON 请求体（钉死该语义：要发查询参数请显式 [Query]）
+        // 数组也按成员键聚合：{ "tags": [1, 2, 3] }（要发查询参数请显式 [Query]）
         await client.RequestAsync(new ScalarArrayDefaultBodyRequest { Tags = [1, 2, 3] });
 
         var received = Assert.Single(server.Received);
-        Assert.Equal("[1,2,3]", Encoding.UTF8.GetString(received.Body));
+        Assert.Equal("{\"tags\":[1,2,3]}", Encoding.UTF8.GetString(received.Body));
         Assert.Null(received.Query);
     }
 
@@ -252,7 +399,7 @@ public sealed class ModelBindingTests
         await client.RequestAsync(new FormBodyRequest { Payload = new UserPayload("carol", 25) });
 
         var received = Assert.Single(server.Received);
-        // [Body] 的编码规则与核心包 data 一致：ContentType 改表单就走键值对编码
+        // [RootBody] 的编码规则与核心包 data 一致：ContentType 改表单就走键值对编码
         Assert.Equal("application/x-www-form-urlencoded", received.Headers["Content-Type"]);
         Assert.Contains("Name=carol", Encoding.UTF8.GetString(received.Body));
     }
@@ -374,7 +521,7 @@ public sealed class ModelBindingTests
         await client.RequestAsync(new DirectHttpApiPostRequest { Payload = new Person("iris", 28) });
 
         var received = Assert.Single(server.Received);
-        // 归一化后的 POST 参与默认 Body 判定：唯一未标注非标量属性进请求体
+        // 归一化后的 POST 参与默认正文：未标注属性按键名聚合进对象
         Assert.Equal("POST", received.Method);
         Assert.Contains("iris", Encoding.UTF8.GetString(received.Body));
         Assert.Null(received.Query);
@@ -652,7 +799,7 @@ public sealed class ModelBindingTests
         Assert.Equal(404, ex.Status);
     }
 
-    // ---- 默认 Body：POST/PUT/PATCH + 恰好一个未标注的非标量属性 ----
+    // ---- 默认正文：POST/PUT/PATCH 上全部未标注成员按键名聚合成一个对象 ----
 
     [Fact]
     public async Task Post_SingleUnannotatedComplexProperty_DefaultsToBody()
@@ -671,7 +818,7 @@ public sealed class ModelBindingTests
         var received = Assert.Single(server.Received);
         Assert.Equal("application/json", received.Headers["Content-Type"].Split(';')[0]);
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("carol", json.GetProperty("name").GetString());
+        Assert.Equal("carol", json.GetProperty("payload").GetProperty("name").GetString());
         Assert.Null(received.Query); // 没有任何查询参数
     }
 
@@ -694,25 +841,26 @@ public sealed class ModelBindingTests
         Assert.Equal("PUT", received.Method);
         Assert.Equal("/items/7", received.Path);
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("dave", json.GetProperty("name").GetString());
+        Assert.Equal("dave", json.GetProperty("payload").GetProperty("name").GetString());
     }
 
     [Fact]
-    public async Task Post_SingleUnannotatedScalarProperty_StaysQuery()
+    public async Task Post_SingleUnannotatedScalarProperty_BecomesBodyMember()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
         using var client = CreateClient_ApiClientRequest(server);
 
-        await client.RequestAsync(new ScalarDefaultStaysQueryRequest { Page = 3 });
+        await client.RequestAsync(new ScalarDefaultBodyRequest { Page = 3 });
 
         var received = Assert.Single(server.Received);
-        Assert.Equal("Page=3", received.Query); // 标量护栏：不静默变请求体
-        Assert.Empty(received.Body);
+        // 1 个未标注成员也加壳：{ "page": 3 }
+        Assert.Equal("{\"page\":3}", Encoding.UTF8.GetString(received.Body));
+        Assert.Null(received.Query);
     }
 
     [Fact]
-    public async Task Post_TwoUnannotatedProperties_BothStayQuery()
+    public async Task Post_TwoUnannotatedProperties_AggregateIntoBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
 
@@ -721,10 +869,32 @@ public sealed class ModelBindingTests
         await client.RequestAsync(new TwoUnannotatedRequest { Page = 2, Payload = new Person("eve", 31) });
 
         var received = Assert.Single(server.Received);
-        // 多个未标注属性时歧义，全部维持 Query（复杂对象走 a[b]=v 嵌套规则）
-        Assert.Contains("Page=2", received.Query);
-        Assert.Contains("Payload[Name]=eve", Uri.UnescapeDataString(received.Query ?? ""));
-        Assert.Empty(received.Body);
+        // 多个未标注属性 → 同一个对象 body，键 = 属性名（camelCase）
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal(2, json.GetProperty("page").GetInt32());
+        Assert.Equal("eve", json.GetProperty("payload").GetProperty("name").GetString());
+        Assert.Null(received.Query);
+    }
+
+    [Fact]
+    public async Task Post_AggregateBody_WithFormContentType_FlattensMembers()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+
+        using var client = CreateClient_ApiClientRequest(server);
+
+        await client.RequestAsync(
+            new TwoUnannotatedRequest { Page = 2, Payload = new Person("eve", 31) },
+            config => config.ContentType = AxiosConfig.FormUrlEncodedContentType);
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("application/x-www-form-urlencoded", received.Headers["Content-Type"]);
+
+        // 表单形态的聚合正文：成员键作为根级字段，嵌套规则与普通对象一致。
+        var form = Uri.UnescapeDataString(Encoding.UTF8.GetString(received.Body));
+        Assert.Contains("Page=2", form);
+        Assert.Contains("Payload[Name]=eve", form);
+        Assert.Null(received.Query);
     }
 
     [Fact]
@@ -743,10 +913,10 @@ public sealed class ModelBindingTests
         Assert.Equal(200, response.Status);
 
         var received = Assert.Single(server.Received);
-        // 显式 [Query] 不算「未标注」：唯一未标注属性仍享受默认 Body
+        // 显式 [Query] 不算「未标注」：唯一未标注属性仍进聚合正文
         Assert.Contains("page=4", received.Query);
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("frank", json.GetProperty("name").GetString());
+        Assert.Equal("frank", json.GetProperty("payload").GetProperty("name").GetString());
     }
 
     [Fact]
@@ -796,9 +966,9 @@ public sealed class ModelBindingTests
         Assert.Equal(200, response.Status);
 
         var received = Assert.Single(server.Received);
-        // 被忽略的属性不算「未标注」：Payload 仍享受默认 Body，InternalState 任何地方都不出现
+        // 被忽略的属性不算「未标注」：Payload 仍进聚合正文，InternalState 任何地方都不出现
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("hank", json.GetProperty("name").GetString());
+        Assert.Equal("hank", json.GetProperty("payload").GetProperty("name").GetString());
         Assert.Null(received.Query);
         Assert.DoesNotContain("should-not-appear", Encoding.UTF8.GetString(received.Body));
         Assert.DoesNotContain("should-not-appear", received.Query ?? "");
@@ -907,11 +1077,11 @@ public sealed class ModelBindingTests
     }
 
     // ------------------------------------------------------------------
-    // B1：未标注的平铺字典在 POST 上不能被默认 Body 吞掉
+    // B1：未标注的平铺字典在 POST 上按成员键聚合进默认 Body
     // ------------------------------------------------------------------
 
     [Fact]
-    public async Task B1_UnannotatedFlatMap_OnPost_StaysInQuery()
+    public async Task B1_UnannotatedFlatMap_OnPost_BecomesBodyMember()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("alice", 1)));
         using var client = new ApiClient(server.Url);
@@ -927,10 +1097,12 @@ public sealed class ModelBindingTests
 
         var received = Assert.Single(server.Received);
         Assert.Equal("/search", received.Path);
-        Assert.NotNull(received.Query);
-        Assert.Contains("tag=x", received.Query);
-        Assert.Contains("page=2", received.Query);
-        Assert.Empty(received.Body);
+        // 平铺字典在 POST 上不再展开进查询串，而是作为名为 filters 的成员：
+        // { "filters": { "tag": "x", "page": "2" } }
+        Assert.Null(received.Query);
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("x", json.GetProperty("filters").GetProperty("tag").GetString());
+        Assert.Equal("2", json.GetProperty("filters").GetProperty("page").GetString());
     }
 
     // ------------------------------------------------------------------
@@ -1052,6 +1224,88 @@ public sealed class ModelBindingTests
 
         [Query("Filters")]
         public string? Label { get; set; }
+    }
+
+    [Post("items")]
+    private sealed class BodyKeyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public string Token { get; set; } = string.Empty;
+
+        [Body, Query("page")]
+        public int Page { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    [Get("items")]
+    private sealed class GetWithBodyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public string Token { get; set; } = string.Empty;
+
+        public int Page { get; set; }
+    }
+
+    [Post("items")]
+    private sealed class RootBodyWithQueryRequest : IApiRequest<Person>
+    {
+        [RootBody]
+        public Person Payload { get; set; } = null!;
+
+        [Query("tag")]
+        public string? Tag { get; set; }
+
+        public int Page { get; set; }
+    }
+
+    [Post("items")]
+    private sealed class RawRootBodyRequest : IApiRequest<Person>
+    {
+        [RootBody]
+        public Person Payload { get; set; } = null!;
+    }
+
+    [Post("items")]
+    private sealed class BodyAndRootBodyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public Person Payload { get; set; } = null!;
+
+        [RootBody]
+        public Person Extra { get; set; } = null!;
+    }
+
+    [Post("items")]
+    private sealed class MergedRootBodyRequest : IApiRequest<Person>
+    {
+        [RootBody]
+        public int A { get; set; } = 1;
+
+        [RootBody]
+        public MergeSlice Slice { get; set; } = new();
+
+        [RootBody]
+        public int C { get; set; } = 2;
+    }
+
+    [Post("items")]
+    private sealed class DuplicateMergedRootBodyRequest : IApiRequest<Person>
+    {
+        [RootBody]
+        public MergeSlice First { get; set; } = new();
+
+        [RootBody]
+        public MergeSlice Second { get; set; } = new();
+    }
+
+    private sealed class MergeSlice
+    {
+        [JsonPropertyName("u1")]
+        public int U1 { get; set; } = 1;
+
+        [JsonPropertyName("u2")]
+        public int U2 { get; set; } = 2;
     }
 
 

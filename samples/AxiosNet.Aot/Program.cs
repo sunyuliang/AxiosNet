@@ -261,7 +261,7 @@ internal sealed class GetPersonRequest : IApiRequest<Person>
 [Authorize]
 internal sealed class CreatePersonRequest : IApiRequest<Person>
 {
-    [Body]
+    [RootBody]
     public Person? Person { get; set; }
 
     [Query("notify")]
@@ -443,7 +443,7 @@ internal interface IPersonApi
 
     [Post("persons")]
     [Authorize]
-    Task SaveAsync([Body] Person person, [Query("notify")] bool notify, CancellationToken cancellationToken);
+    Task SaveAsync([RootBody] Person person, [Query("notify")] bool notify, CancellationToken cancellationToken);
 }
 
 // 闭合泛型接口：代理在 Create<IFeedApi<Person>>() 调用点生成（接口声明本身只提示 AXA011）。

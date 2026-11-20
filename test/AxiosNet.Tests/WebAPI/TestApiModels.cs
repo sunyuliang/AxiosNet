@@ -31,14 +31,21 @@ public sealed class ListUsersRequest : IApiRequest<Person[]>
 [Post("users")]
 public sealed class CreateUserRequest : IApiRequest<Person>
 {
-    [Body]
+    [RootBody]
     public Person Person { get; set; } = null!;
+}
+
+/// <summary>与接口侧未标注参数对照：POST 上未标注的 Payload 走聚合默认正文。</summary>
+[Post("users")]
+public sealed class CreateUserDefaultBodyRequest : IApiRequest<Person>
+{
+    public Person Payload { get; set; } = null!;
 }
 
 [Post("users/empty")]
 public sealed class NullBodyRequest : IApiRequest<Person>
 {
-    [Body]
+    [RootBody]
     public Person? Person { get; set; }
 }
 
@@ -57,7 +64,7 @@ public sealed class PingRequest : IApiRequest<object>
 [Post("login")]
 public sealed class LoginRequest : IApiRequest<string>
 {
-    [Body]
+    [RootBody]
     public Person? Credentials { get; set; }
 }
 
@@ -102,12 +109,12 @@ public sealed class AbsoluteUrlRequest : IApiRequest<Person>
     public int Port { get; set; }
 }
 
-// ---- 默认 Body（POST/PUT/PATCH + 恰好一个未标注的非标量属性）----
+// ---- 默认 Body（POST/PUT/PATCH：全部未标注成员按键名聚合成一个对象）----
 
 [Post("orders")]
 public sealed class DefaultBodyRequest : IApiRequest<Person>
 {
-    /// <summary>未标注：单负载模型，默认按 Body 绑定（无需 [Body]）。</summary>
+    /// <summary>未标注：POST 上默认进聚合正文，键为属性名（payload），无需 [Body]。</summary>
     public Person Payload { get; set; } = null!;
 }
 
@@ -117,21 +124,21 @@ public sealed class PutDefaultBodyRequest : IApiRequest<Person>
     [Path]
     public int Id { get; set; }
 
-    /// <summary>未标注：PUT 同样享受默认 Body。</summary>
+    /// <summary>未标注：PUT 同样进聚合正文。</summary>
     public Person Payload { get; set; } = null!;
 }
 
 [Post("search/scalar")]
-public sealed class ScalarDefaultStaysQueryRequest : IApiRequest<Person>
+public sealed class ScalarDefaultBodyRequest : IApiRequest<Person>
 {
-    /// <summary>未标注标量：标量护栏生效，保持 Query，不静默变请求体。</summary>
+    /// <summary>未标注标量：同样按键名聚合进正文（1 个成员也加壳）。</summary>
     public int Page { get; set; }
 }
 
 [Post("search/mixed")]
 public sealed class TwoUnannotatedRequest : IApiRequest<Person>
 {
-    /// <summary>未标注：多个未标注属性时歧义，全部维持 Query。</summary>
+    /// <summary>未标注：多个成员合成同一个对象正文。</summary>
     public int Page { get; set; }
 
     public Person? Payload { get; set; }
@@ -140,7 +147,7 @@ public sealed class TwoUnannotatedRequest : IApiRequest<Person>
 [Post("search/explicit-query")]
 public sealed class ExplicitQueryThenDefaultBodyRequest : IApiRequest<Person>
 {
-    /// <summary>显式 [Query] 不算「未标注」：剩下的唯一未标注属性仍享受默认 Body。</summary>
+    /// <summary>显式 [Query] 不进正文：剩下的未标注属性仍进聚合正文。</summary>
     [Query("page")]
     public int Page { get; set; }
 
@@ -153,7 +160,7 @@ public sealed class DeleteDefaultStaysQueryRequest : IApiRequest<Person>
     [Path]
     public int Id { get; set; }
 
-    /// <summary>未标注：DELETE 不参与默认 Body，维持 Query。</summary>
+    /// <summary>未标注：DELETE 不参与默认正文，维持 Query。</summary>
     public Person? Payload { get; set; }
 }
 
@@ -172,7 +179,7 @@ public sealed class IgnoredQueryRequest : IApiRequest<Person>
 [Post("reports")]
 public sealed class IgnoredDoesNotBlockDefaultBodyRequest : IApiRequest<Person>
 {
-    /// <summary>被忽略的属性不算「未标注」：剩下的唯一未标注属性仍享受默认 Body。</summary>
+    /// <summary>被忽略的属性不算「未标注」：剩下的未标注属性仍进聚合正文。</summary>
     [ApiIgnore]
     public string? InternalState { get; set; }
 
@@ -214,7 +221,7 @@ public sealed class PathBodyHeaderRequest : IApiRequest<Person>
     /// <summary>同一标量值：路径占位符 + 请求头 + 请求体三处并存（标量体按 AxiosNet 规则走原始文本）。</summary>
     [Path("orderId")]
     [Header("X-Order-Id")]
-    [Body]
+    [RootBody]
     public long OrderId { get; set; }
 }
 
@@ -223,7 +230,7 @@ public sealed class QueryBodyRequest : IApiRequest<Person>
 {
     /// <summary>复杂对象：进请求体（序列化器处理）+ 进查询串（嵌套规则）；不能进路径/头（标量护栏）。</summary>
     [Query("reportId")]
-    [Body]
+    [RootBody]
     public ReportPayload Report { get; set; } = null!;
 }
 
@@ -270,7 +277,7 @@ public sealed class DuplicateCaseVariantRequest : IApiRequest<object>
     public int Id { get; set; }
 }
 
-/// <summary>默认 Body + null 值：不发请求体。</summary>
+/// <summary>默认正文 + null 值：仍发送对象，成员值为 null。</summary>
 [Post("reports/null")]
 public sealed class DefaultBodyNullRequest : IApiRequest<Person>
 {
@@ -284,11 +291,11 @@ public sealed class ScalarArrayDefaultBodyRequest : IApiRequest<Person>
     public int[]? Tags { get; set; }
 }
 
-/// <summary>[Body] + Configure 改 ContentType：编码规则与核心包 data 一致（表单）。</summary>
+/// <summary>[RootBody] + Configure 改 ContentType：编码规则与核心包 data 一致（表单）。</summary>
 [Post("form")]
 public sealed class FormBodyRequest : ApiRequest<Person>
 {
-    [Body]
+    [RootBody]
     public UserPayload Payload { get; set; } = null!;
 
     protected override void Configure(AxiosConfig config)

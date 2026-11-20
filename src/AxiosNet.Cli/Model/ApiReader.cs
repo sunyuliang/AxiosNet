@@ -1473,10 +1473,10 @@ internal sealed class ApiReader
     /// <summary>请求体的媒体类型大类，决定生成哪种绑定形态。</summary>
     private enum MediaKind
     {
-        /// <summary>JSON 请求体（<c>[Body]</c>）。</summary>
+        /// <summary>JSON 请求体（<c>[RootBody]</c>）。</summary>
         Json,
 
-        /// <summary>application/x-www-form-urlencoded 表单（仍按 <c>[Body]</c>）。</summary>
+        /// <summary>application/x-www-form-urlencoded 表单（仍按 <c>[RootBody]</c>）。</summary>
         Form,
 
         /// <summary>multipart/form-data，展开成多个 <c>[Part]</c>。</summary>

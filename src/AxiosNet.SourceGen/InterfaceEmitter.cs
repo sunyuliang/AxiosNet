@@ -301,6 +301,11 @@ namespace AxiosNet.SourceGen
                         builder.AppendLine("                        .Body()");
                     }
 
+                    if (parameter.RootBody)
+                    {
+                        builder.AppendLine("                        .RootBody()");
+                    }
+
                     if (parameter.Part)
                     {
                         if (parameter.PartName is null && parameter.PartFileName is null && parameter.PartContentType is null)
@@ -325,6 +330,7 @@ namespace AxiosNet.SourceGen
                         && !parameter.Header
                         && !parameter.HeaderCollection
                         && !parameter.Body
+                        && !parameter.RootBody
                         && !parameter.Part)
                     {
                         builder.AppendLine("                        .Unannotated()");

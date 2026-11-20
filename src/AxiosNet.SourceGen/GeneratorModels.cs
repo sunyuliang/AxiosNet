@@ -19,7 +19,8 @@ namespace AxiosNet.SourceGen
     /// <param name="Header">是否作为请求头写出。</param>
     /// <param name="HeaderName">请求头名；null 表示沿用字段名。</param>
     /// <param name="HeaderCollection">整个成员当成一个多值头（集合元素逐项写入同一头）。</param>
-    /// <param name="Body">是否作为请求体内容（每次请求只能有一个）。</param>
+    /// <param name="Body">是否作为请求体对象的一个键（可多个）。</param>
+    /// <param name="RootBody">是否作为正文来源（独占时原样发送，与其它正文成员一起时合并到同一层）。</param>
     /// <param name="Part">是否作为 <c>multipart/form-data</c> 的一个部件。</param>
     /// <param name="PartName">部件名；null 表示沿用字段名。</param>
     /// <param name="PartFileName">文件部件的文件名，仅文件流 / 字节内容有意义。</param>
@@ -33,6 +34,7 @@ namespace AxiosNet.SourceGen
         string? HeaderName,
         bool HeaderCollection,
         bool Body,
+        bool RootBody,
         bool Part,
         string? PartName,
         string? PartFileName,
@@ -121,7 +123,8 @@ namespace AxiosNet.SourceGen
     /// <param name="Header">是否作为请求头写出。</param>
     /// <param name="HeaderName">请求头名；null 表示沿用参数名。</param>
     /// <param name="HeaderCollection">整个参数当成一个多值头。</param>
-    /// <param name="Body">是否作为请求体内容。</param>
+    /// <param name="Body">是否作为请求体对象的一个键（可多个）。</param>
+    /// <param name="RootBody">是否作为正文来源（独占时原样发送，与其它正文成员一起时合并到同一层）。</param>
     /// <param name="Part">是否作为 <c>multipart/form-data</c> 的一个部件。</param>
     /// <param name="PartName">部件名；null 表示沿用参数名。</param>
     /// <param name="PartFileName">文件部件的文件名。</param>
@@ -141,6 +144,7 @@ namespace AxiosNet.SourceGen
         string? HeaderName,
         bool HeaderCollection,
         bool Body,
+        bool RootBody,
         bool Part,
         string? PartName,
         string? PartFileName,

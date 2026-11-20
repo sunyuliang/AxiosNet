@@ -5,7 +5,7 @@ namespace AxiosNet.Simple.WebAPI;
 
 // =====================================================================
 // 请求模型：路由写在类上（[Get] / [Post] / ...），参数绑定写在属性上
-// （[Path] / [Query] / [Header] / [Body]），IApiRequest<TResponse> 的泛型即返回类型。
+// （[Path] / [Query] / [Header] / [Body] / [RootBody]），IApiRequest<TResponse> 的泛型即返回类型。
 // =====================================================================
 
 /// <summary>GET /api/users/{id}：路径段绑定。</summary>
@@ -25,13 +25,15 @@ public sealed class ListUsersRequest : IApiRequest<UserProfile[]>
     public int[]? Ids { get; set; }
 }
 
-/// <summary>POST /api/users：Payload 作为 JSON 请求体，Configure 钩子给每个请求加 X-Trace 头（服务器原样回显）。</summary>
+/// <summary>POST /api/users：正文成员直接写在请求类上（POST 默认聚合为 JSON 对象），Configure 钩子给每个请求加 X-Trace 头。</summary>
 [Post("api/users")]
 public sealed class CreateUserRequest : ApiRequest<CreatedUser>
 {
-    /// <summary>请求正文：带 <c>[Body]</c> 的成员按 JSON 写进正文，其余成员按特性走查询串 / 头。</summary>
-    [Body]
-    public UserPayload Payload { get; set; } = null!;
+    /// <summary>用户名：未标注特性，POST 上默认进聚合正文（键名 name）。</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>年龄：未标注特性，同上进聚合正文。</summary>
+    public int Age { get; set; }
 
     /// <summary>给每个请求加一个可追踪的 <c>X-Trace</c> 头：服务器原样回显，用于验证钩子真的执行了。</summary>
     protected override void Configure(AxiosConfig config)
@@ -45,8 +47,11 @@ public sealed class CreateUserRequest : ApiRequest<CreatedUser>
 [AllowAnonymous]
 public sealed class LoginRequest : IApiRequest<TokenResult>
 {
-    [Body]
-    public LoginPayload Credentials { get; set; } = null!;
+    /// <summary>登录用户名：未标注特性，POST 默认正文成员。</summary>
+    public string Username { get; set; } = string.Empty;
+
+    /// <summary>明文密码（仅示例用）：未标注特性，POST 默认正文成员。</summary>
+    public string Password { get; set; } = string.Empty;
 }
 
 /// <summary>GET /api/secure/profile：受保护端点，客户端自动拼 <c>Authorization: Bearer {token}</c>。</summary>
@@ -99,7 +104,8 @@ public sealed class GetMissingUserRequest : IApiRequest<UserProfile>
 [Post("api/signed/echo")]
 public sealed class SignedEchoRequest : IApiRequest<SignedEchoResult>
 {
-    [Body]
+    /// <summary>请求正文：签名序列化器不支持默认聚合正文，整个对象标 <c>[RootBody]</c> 原样交给它。</summary>
+    [RootBody]
     public UserPayload Payload { get; set; } = null!;
 }
 
@@ -182,12 +188,12 @@ public sealed record UserProfile(long Id, string Name, int Age, string Role);
 /// <param name="Trace">客户端 <c>X-Trace</c> 头的回显。</param>
 public sealed record CreatedUser(long Id, string Name, int Age, string Role, string Trace);
 
-/// <summary>创建用户的请求体形状。</summary>
+/// <summary>创建用户的请求体形状：接口式方法用它做强类型参数。</summary>
 /// <param name="Name">用户名。</param>
 /// <param name="Age">年龄。</param>
 public sealed record UserPayload(string Name, int Age);
 
-/// <summary>登录请求体（明文密码，仅示例用）。</summary>
+/// <summary>登录请求体（明文密码，仅示例用）：接口式方法用它做强类型参数。</summary>
 /// <param name="Username">用户名。</param>
 /// <param name="Password">明文密码。</param>
 public sealed record LoginPayload(string Username, string Password);

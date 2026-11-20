@@ -381,7 +381,10 @@ public sealed class DemoApiServer : IDisposable
     /// <summary>创建用户：解析请求体，并把 <c>X-Trace</c> 原样回显——证明请求模型 Configure 钩子写的头真的到了服务器。</summary>
     private static string CreateUserJson(IReadOnlyDictionary<string, string> headers, byte[] body)
     {
-        var payload = JsonSerializer.Deserialize<UserPayload>(body, BodyOptions);
+        // 同一端点兼容两种声明式写法：模型式默认正文发裸对象，接口式未标注参数发 { "payload": {...} }。
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement.TryGetProperty("payload", out var wrapped) ? wrapped : document.RootElement;
+        var payload = root.Deserialize<UserPayload>(BodyOptions);
 
         // 把 X-Trace 一并回显：证明请求模型 Configure 钩子里写的头真实到达了服务器
         var trace = headers.GetValueOrDefault("x-trace", "none");

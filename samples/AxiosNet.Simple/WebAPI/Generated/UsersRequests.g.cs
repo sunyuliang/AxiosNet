@@ -38,7 +38,7 @@ public sealed class ListUsersRequest : ApiRequest<User[]>
 [Authorize]
 public sealed class CreateUserRequest : ApiRequest<CreatedUser>
 {
-    [Body]
+    [RootBody]
     public NewUser Body { get; set; } = default!;
 }
 

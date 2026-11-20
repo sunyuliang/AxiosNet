@@ -244,7 +244,7 @@ internal sealed class ApiParameter
     public string? Description { get; set; }
 }
 
-/// <summary>请求体声明：媒体类型、绑定形态（单个 <c>[Body]</c> 或多个 <c>[Part]</c>）。</summary>
+/// <summary>请求体声明：媒体类型、绑定形态（单个 <c>[RootBody]</c> 或多个 <c>[Part]</c>）。</summary>
 internal sealed class ApiRequestBody
 {
     /// <summary>请求体的媒体类型（已去掉参数，如 <c>application/json</c>）。</summary>

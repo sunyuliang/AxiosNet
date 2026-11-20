@@ -19,7 +19,7 @@ namespace AxiosNet.Simple.WebAPI.Generated;
 [AllowAnonymous]
 public sealed class LoginRequest : ApiRequest<TokenResult>
 {
-    [Body]
+    [RootBody]
     public LoginPayload Body { get; set; } = default!;
 }
 
@@ -28,7 +28,7 @@ public sealed class LoginRequest : ApiRequest<TokenResult>
 [AllowAnonymous]
 public sealed class LoginFormRequest : ApiRequest<LoginFormResult>
 {
-    [Body]
+    [RootBody]
     public LoginPayload Body { get; set; } = default!;
 
     protected override void Configure(AxiosConfig config)

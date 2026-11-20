@@ -16,10 +16,13 @@ internal sealed class BindingAccumulator
     private readonly List<(string Name, IValueSource Source)> _queryMaps = [];
     private readonly List<(string Name, IValueSource Source)> _headers = [];
     private readonly List<IValueSource> _headerCollections = [];
-    private readonly List<IValueSource> _unannotated = [];
+    // 未标注成员：默认通道由 Build 按 HTTP 方法决定（body 方法 → 聚合正文，其余 → Query）。
+    private readonly List<(IValueSource Source, string FieldName, bool NameFromAttribute)> _unannotated = [];
     private readonly List<(string Name, string? Value)> _staticHeaders = [];
-    // 正文来源：构建期只允许一个，重复声明直接报错。
-    private IValueSource? _body;
+    // 显式 [Body]：作为请求体对象的键，可多个；键名重复在构建期报错。
+    private readonly List<(string Name, bool NameFromAttribute, IValueSource Source)> _bodyMembers = [];
+    // 显式 [RootBody]：整个请求体；多个时把各自的值合并成一层（结构化对象展开属性）。
+    private readonly List<(string Name, bool NameFromAttribute, IValueSource Source)> _rootBodies = [];
 
     private readonly HashSet<string> _pathNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _queryNames = new(StringComparer.Ordinal);
@@ -33,11 +36,16 @@ internal sealed class BindingAccumulator
         _memberKind = memberKind;
     }
 
-    /// <summary>是否已绑定请求正文（正文只能有一个）。</summary>
-    public bool HasBody => _body is not null;
+    /// <summary>是否已绑定请求正文（显式 [RootBody] 或至少一个 [Body] 成员）。</summary>
+    public bool HasBody => _rootBodies.Count > 0 || _bodyMembers.Count > 0;
 
     /// <summary>正文的定位名（错误消息用）。</summary>
-    public string? BodyName => _body?.Name;
+    public string? BodyName => _rootBodies.Count > 0
+        ? _rootBodies[0].Source.Name
+        : (_bodyMembers.Count > 0 ? _bodyMembers[0].Source.Name : null);
+
+    /// <summary>正文形态的特性名（错误消息用）：<c>[RootBody]</c> 或 <c>[Body]</c>。</summary>
+    public string BodyKind => _rootBodies.Count > 0 ? "[RootBody]" : "[Body]";
 
     /// <summary>路径绑定：占位符名称大小写不敏感去重，值必须是标量（<see cref="Build"/> 时校验）。</summary>
     public void AddPath(IValueSource source, string explicitName)
@@ -93,8 +101,11 @@ internal sealed class BindingAccumulator
         _headerCollections.Add(source);
     }
 
-    /// <summary>请求体唯一：重复的 <see cref="BodyAttribute"/> 绑定在构建期报错。</summary>
-    public void AddBody(IValueSource source)
+    /// <summary><see cref="BodyAttribute"/>：登记为请求体对象的一个键；键名重复在 <see cref="Build"/> 报错。</summary>
+    /// <param name="source">取值来源。</param>
+    /// <param name="fieldName">键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
+    /// <param name="nameFromAttribute">键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
+    public void AddBody(IValueSource source, string fieldName, bool nameFromAttribute)
     {
         if (source.Format is not null)
         {
@@ -109,20 +120,39 @@ internal sealed class BindingAccumulator
             EnsureFormat(source, "Body");
         }
 
-        if (_body is not null)
-        {
-            throw new InvalidOperationException(
-                $"{_owner} 有多个 [Body] {_memberKind}（{_body.Name} 与 {source.Name}）：一个请求最多一个请求体。");
-        }
-
-        _body = source;
+        _bodyMembers.Add((string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName, nameFromAttribute, source));
     }
 
-    /// <summary>未标注任何参数特性的成员：默认 Query；字符串键字典未命名时平铺。</summary>
-    public void AddUnannotated(IValueSource source)
+    /// <summary><see cref="RootBodyAttribute"/>：整个请求体的一个来源；多个时合并到同一层。</summary>
+    /// <param name="source">取值来源。</param>
+    /// <param name="fieldName">标量贡献的键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
+    /// <param name="nameFromAttribute">键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
+    public void AddRootBody(IValueSource source, string fieldName, bool nameFromAttribute)
+    {
+        if (source.Format is not null)
+        {
+            if (!ScalarTypes.IsScalarBodyType(source.ValueType))
+            {
+                throw new InvalidOperationException(
+                    $"{_owner} 的{_memberKind} {source.Name} 同时标注了 [Format] 与 [RootBody]，但类型 {source.ValueType.Name} 是结构化对象："
+                    + "结构化正文内部的格式化归序列化器（JsonConverter / XmlElement 等），库不进入文档内部改写。"
+                    + "要让 JSON 文档内部也按 [Format] 输出，请额外用 AxiosJsonFormat.ApplyTo 包装 JsonSerializerOptions。");
+            }
+
+            EnsureFormat(source, "RootBody");
+        }
+
+        _rootBodies.Add((string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName, nameFromAttribute, source));
+    }
+
+    /// <summary>未标注任何参数特性的成员：先按 Query 登记；Build 时 body 方法（且无 [RootBody]）会整体改道成聚合正文。</summary>
+    /// <param name="source">取值来源。</param>
+    /// <param name="fieldName">聚合正文的键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
+    /// <param name="nameFromAttribute">键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
+    public void AddUnannotated(IValueSource source, string fieldName, bool nameFromAttribute)
     {
         EnsureFormat(source, "Query");
-        _unannotated.Add(source);
+        _unannotated.Add((source, string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName, nameFromAttribute));
 
         if (QueryMap.IsMapType(source.ValueType))
         {
@@ -131,13 +161,8 @@ internal sealed class BindingAccumulator
             return;
         }
 
-        var name = ResolveName(string.Empty, source.Name);
-        if (!_queryNames.Add(name))
-        {
-            throw DuplicateBinding(name, "Query");
-        }
-
-        _queries.Add((name, source));
+        // 同名冲突留到 Build 再判：这些成员可能整体改道去聚合正文，提前报错会误伤合法声明。
+        _queries.Add((ResolveName(string.Empty, source.Name), source));
     }
 
     /// <summary>显式 <see cref="QueryAttribute"/> 绑定：字典 + 未显式命名 → 平铺，显式命名保留嵌套（?name[key]=v）。</summary>
@@ -193,21 +218,51 @@ internal sealed class BindingAccumulator
         }
     }
 
-    /// <summary>完成校验并生成计划：默认 Body 推断 → 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
+    /// <summary>完成校验并生成计划：正文归并（RootBody / Body + 未标注）→ 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
     public BindingPlan Build(HttpMethod method, string pathTemplate, bool allowDefaultBody)
     {
-        // 默认 Body：body 方法 + 恰好一个未标注成员 + 非标量 / 非平铺字典 → 该成员即请求体。
-        if (_body is null
-            && allowDefaultBody
-            && _unannotated.Count == 1
-            && IsBodyMethod(method)
-            && !ScalarTypes.IsScalarType(_unannotated[0].ValueType)
-            && !QueryMap.IsMapType(_unannotated[0].ValueType))
+        (string Name, bool NameFromAttribute, IValueSource Source)[] bodyMembers = [];
+
+        // 显式 [Body] 在任何方法上都进正文；body 方法上的未标注成员只看方法就并入正文，
+        // 不因是否已有 [RootBody] 而改道 Query——默认通道只由 HTTP 方法决定。
+        var members = new List<(string Name, bool NameFromAttribute, IValueSource Source)>(_bodyMembers);
+
+        if (allowDefaultBody && _unannotated.Count > 0 && IsBodyMethod(method))
         {
-            _body = _unannotated[0];
-            _queries.RemoveAll(q => ReferenceEquals(q.Source, _body));
-            _queryMaps.RemoveAll(q => ReferenceEquals(q.Source, _body));
+            foreach (var member in _unannotated)
+            {
+                members.Add((member.FieldName, member.NameFromAttribute, member.Source));
+            }
+
+            // 改道去正文的成员不再出现在查询串里。
+            _queries.RemoveAll(q => _unannotated.Any(m => ReferenceEquals(m.Source, q.Source)));
+            _queryMaps.RemoveAll(m => _unannotated.Any(u => ReferenceEquals(u.Source, m.Source)));
         }
+
+        // 显式正文键与标量 [RootBody] 的键名在构建期就能确定，统一查重；
+        // 结构化 [RootBody] 的属性名要等序列化才知道，留给运行期合并时校验。
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in members)
+        {
+            if (!names.Add(member.Name))
+            {
+                throw new InvalidOperationException(
+                    $"{_owner} 有多个{_memberKind}的请求体键名都是 \"{member.Name}\"："
+                    + "合并后的请求体对象不能有重复键。");
+            }
+        }
+
+        foreach (var member in _rootBodies)
+        {
+            if (ScalarTypes.IsScalarBodyType(member.Source.ValueType) && !names.Add(member.Name))
+            {
+                throw new InvalidOperationException(
+                    $"{_owner} 有多个 [RootBody] / [Body] {_memberKind}的键名都是 \"{member.Name}\"："
+                    + "合并到同一层后的请求体不能有重复键。");
+            }
+        }
+
+        bodyMembers = [.. members];
 
         // 平铺映射不再走具名查询绑定：同一成员只能有一种形态
         if (_queryMaps.Count > 0)
@@ -215,6 +270,7 @@ internal sealed class BindingAccumulator
             _queries.RemoveAll(q => _queryMaps.Any(m => ReferenceEquals(m.Source, q.Source)));
         }
 
+        ValidateQueryNames();
         var pathTokens = ValidatePathTemplate(pathTemplate);
         ValidateScalarBindings();
 
@@ -225,7 +281,26 @@ internal sealed class BindingAccumulator
             [.. _headers],
             [.. _headerCollections],
             [.. _staticHeaders],
-            _body);
+            [.. _rootBodies],
+            bodyMembers);
+    }
+
+    /// <summary>延迟的查询重名校验：未标注成员可能与显式 [Query] 撞名，改道结论确定后才能判。</summary>
+    private void ValidateQueryNames()
+    {
+        if (_queries.Count < 2)
+        {
+            return;
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (name, _) in _queries)
+        {
+            if (!names.Add(name))
+            {
+                throw DuplicateBinding(name, "Query");
+            }
+        }
     }
 
     /// <summary>路径模板与 [Path] 绑定一一核对：模板占位符必须有绑定、绑定也必须出现在模板里；返回模板顺序的替换表。</summary>

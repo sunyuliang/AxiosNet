@@ -1,6 +1,6 @@
 namespace AxiosNet.WebAPI.Attributes;
 
-/// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / HeaderCollection / Part / Body 同用直接报错。</summary>
+/// <summary>把属性 / 参数从绑定中完全排除：不进路径、不进查询串、不进请求头、也不作为请求体。与 Path / Query / Header / HeaderCollection / Part / Body / RootBody 同用直接报错。</summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class ApiIgnoreAttribute : Attribute
 {
@@ -56,11 +56,20 @@ public sealed class HeaderAttribute : Attribute
 }
 
 /// <summary>
-/// 把属性 / 参数值作为请求体发送（序列化规则与 <c>data</c> 一致）。
-/// 编码格式由 <see cref="AxiosConfig.ContentType"/> 决定，含 <see cref="FormFile"/> 时须显式设为 <c>multipart/form-data</c>；
-/// 每份声明最多一个，值为 <c>null</c> 时不发送。单负载声明可省略本特性（默认绑定规则见模型文档）。
+/// 把属性 / 参数值作为请求体对象的一个键发送：正文为 <c>{ "键": 值 }</c>，可与 <see cref="QueryAttribute"/> / <see cref="HeaderAttribute"/> / <see cref="PathAttribute"/> 同用。
+/// 键名取 <c>[JsonPropertyName]</c>，否则成员名（再套 JSON 命名策略）；可标注多个，重复键在构建期报错。
 /// </summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class BodyAttribute : Attribute
+{
+}
+
+/// <summary>
+/// 把属性 / 参数值并入请求体：单独占据正文时原样发送（不加壳），与 <see cref="BodyAttribute"/> / 未标注成员同时存在时合并到同一层
+/// （结构化值展开属性，其余值按键写入，重复键报错）。与 <see cref="MultipartAttribute"/> 互斥。
+/// 编码格式由 <see cref="AxiosConfig.ContentType"/> 决定，含 <see cref="FormFile"/> 时须显式设为 <c>multipart/form-data</c>。
+/// </summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
+public sealed class RootBodyAttribute : Attribute
 {
 }

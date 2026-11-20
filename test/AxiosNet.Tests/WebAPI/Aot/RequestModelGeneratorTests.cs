@@ -228,13 +228,13 @@ public sealed class RequestModelGeneratorTests
     }
 
     /// <summary>
-    /// AXA016 / AXA017：两条「声明自相矛盾」的编译期检查 —— 占位符没人绑、多个显式 <c>[Body]</c>。
+    /// AXA016 / AXA017：两条「声明自相矛盾」的编译期检查 —— 占位符没人绑、<c>[RootBody]</c> 与 <c>[Multipart]</c> 同用。
     /// </summary>
     /// <remarks>
-    /// 这两条在运行期由 <c>BindingAccumulator</c> 也会报，但那是「跑起来才知道」。声明式层的期望是写错就编译不过，所以钉住这个提前量。
+    /// 这两条在运行期也会由元数据构建器报出，但那是「跑起来才知道」。声明式层的期望是写错就编译不过，所以钉住这个提前量。
     /// </remarks>
     [Fact]
-    public void Generator_ReportsMissingPathBindingAndMultipleBodies()
+    public void Generator_ReportsMissingPathBindingAndBodyConflict()
     {
         var ns = UniqueNamespace();
         var source = """
@@ -256,11 +256,12 @@ public sealed class RequestModelGeneratorTests
             }
 
             [Post("probe")]
+            [Multipart]
             public sealed class TwoBodyModel : IApiRequest<Person>
             {
-                [Body] public string? First { get; set; }
+                [RootBody] public string? First { get; set; }
 
-                [Body] public string? Second { get; set; }
+                [Part] public string? Second { get; set; }
             }
 
             // 反例：约束式花括号不是占位符 —— 运行期对该模板报的是「含无法识别的花括号」，
@@ -309,11 +310,12 @@ public sealed class RequestModelGeneratorTests
             diagnostics,
             static d => d.Id == "AXA016" && d.GetMessage().Contains("BoundPathModel", StringComparison.Ordinal));
 
-        var multipleBodies = diagnostics.Single(static d => d.Id == "AXA017");
-        Assert.Equal(DiagnosticSeverity.Error, multipleBodies.Severity);
-        Assert.Contains("TwoBodyModel", multipleBodies.GetMessage());
-        Assert.Contains("First", multipleBodies.GetMessage());
-        Assert.Contains("Second", multipleBodies.GetMessage());
+        var bodyConflict = diagnostics.Single(static d => d.Id == "AXA017");
+        Assert.Equal(DiagnosticSeverity.Error, bodyConflict.Severity);
+        Assert.Contains("TwoBodyModel", bodyConflict.GetMessage());
+        Assert.Contains("First", bodyConflict.GetMessage());
+        Assert.Contains("[Multipart]", bodyConflict.GetMessage());
+        Assert.Contains("互斥", bodyConflict.GetMessage());
     }
 
     [Fact]
@@ -926,7 +928,7 @@ public sealed class RequestModelGeneratorTests
                 Task<AxiosResponse<SnapshotItem>> GetAsync([Path] int id, CancellationToken cancellationToken);
 
                 [Post("items")]
-                Task<SnapshotItem?> CreateAsync([Body] SnapshotItem item, CancellationToken cancellationToken);
+                Task<SnapshotItem?> CreateAsync([RootBody] SnapshotItem item, CancellationToken cancellationToken);
             }
         }
         """;
@@ -1095,7 +1097,7 @@ public sealed class RequestModelGeneratorTests
         public class EncodingModel : IApiRequest<string>
         {
             // 两层同值：允许，属性级是实际读取到的来源。
-            [Body]
+            [RootBody]
             [BodyContentType("application/json")]
             public string? Payload { get; set; }
 
@@ -1121,7 +1123,7 @@ public sealed class RequestModelGeneratorTests
         [BodyContentType("application/json")]
         public class ConflictModel : IApiRequest<string>
         {
-            [Body]
+            [RootBody]
             [BodyContentType("text/plain")]
             public string? Payload { get; set; }
         }

@@ -733,7 +733,7 @@ public sealed class FormatAttributeTests
         [Query]
         public DateTime When { get; set; }
 
-        [Body]
+        [RootBody]
         public int Count { get; set; }
 
         [Header("X-Probe")]
@@ -787,7 +787,7 @@ public sealed class FormatAttributeTests
     [Post("raw")]
     private sealed class FormattedScalarBodyRequest : IApiRequest<Person>
     {
-        [Body, Format("yyyy-MM-dd HH:mm")]
+        [RootBody, Format("yyyy-MM-dd HH:mm")]
         public DateTime At { get; set; }
     }
 
@@ -797,7 +797,7 @@ public sealed class FormatAttributeTests
         [Header("X-Trace")]
         public int Trace { get; set; }
 
-        [Body]
+        [RootBody]
         public DateTime At { get; set; }
     }
 
@@ -805,14 +805,14 @@ public sealed class FormatAttributeTests
     private sealed class FormattedBytesBodyRequest : IApiRequest<Person>
     {
         // byte[] 不是「标量」，但它是合法的裸标量正文形态（默认走 base64，可换成任意编码）。
-        [Body, Format(typeof(FormatHelpers), nameof(FormatHelpers.Hex))]
+        [RootBody, Format(typeof(FormatHelpers), nameof(FormatHelpers.Hex))]
         public byte[] Data { get; set; } = [];
     }
 
     [Post("body")]
     private sealed class FormatWithStructuredBodyRequest : IApiRequest<Person>
     {
-        [Body, Format("yyyy-MM-dd")]
+        [RootBody, Format("yyyy-MM-dd")]
         public Person Payload { get; set; } = new("x", 1);
     }
 
@@ -963,7 +963,7 @@ public sealed class FormatAttributeTests
     {
         [Post("form")]
         [BodyContentType(AxiosConfig.FormUrlEncodedContentType)]
-        Task<AxiosResponse<Person>> SubmitAsync([Body] FormPayload payload, CancellationToken cancellationToken = default);
+        Task<AxiosResponse<Person>> SubmitAsync([RootBody] FormPayload payload, CancellationToken cancellationToken = default);
     }
 
     public interface IFormatMultipartApi
@@ -980,7 +980,7 @@ public sealed class FormatAttributeTests
     {
         [Post("body")]
         Task<AxiosResponse<Person>> SubmitAsync(
-            [Body, Format("yyyy-MM-dd")] Person payload,
+            [RootBody, Format("yyyy-MM-dd")] Person payload,
             CancellationToken cancellationToken = default);
     }
 
@@ -988,7 +988,7 @@ public sealed class FormatAttributeTests
     {
         [Post("body")]
         Task<AxiosResponse<Person>> SubmitAsync(
-            [Body, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] string payload,
+            [RootBody, Format(typeof(FormatHelpers), nameof(FormatHelpers.Throwing))] string payload,
             CancellationToken cancellationToken = default);
     }
 

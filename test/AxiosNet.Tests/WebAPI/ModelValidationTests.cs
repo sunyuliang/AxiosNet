@@ -100,13 +100,22 @@ public sealed class ModelValidationTests
     }
 
     [Fact]
-    public void TwoBodyProperties_AreRejected()
+    public void DuplicateRootBodyScalarKeys_AreRejected()
     {
         var ex = Assert.Throws<AxiosException>(
-            () => CreateClient_ApiClientModelValidation().GetUri(new TwoBodiesRequest()));
+            () => CreateClient_ApiClientModelValidation().GetUri(new DuplicateRootBodyKeysRequest()));
 
-        Assert.Contains("[Body]", ex.Message);
-        Assert.Contains("一个请求最多一个请求体", ex.Message);
+        Assert.Contains("[RootBody]", ex.Message);
+        Assert.Contains("重复键", ex.Message);
+    }
+
+    [Fact]
+    public void DuplicateBodyKeys_AreRejected()
+    {
+        var ex = Assert.Throws<AxiosException>(
+            () => CreateClient_ApiClientModelValidation().GetUri(new DuplicateBodyKeysRequest()));
+
+        Assert.Contains("重复键", ex.Message);
     }
 
     [Fact]
@@ -264,12 +273,22 @@ public sealed class ModelValidationTests
     }
 
     [Post("items")]
-    public sealed class TwoBodiesRequest : IApiRequest<object>
+    public sealed class DuplicateRootBodyKeysRequest : IApiRequest<object>
     {
-        [Body]
+        [RootBody, JsonPropertyName("value")]
+        public int First { get; set; }
+
+        [RootBody, JsonPropertyName("value")]
+        public int Second { get; set; }
+    }
+
+    [Post("probe")]
+    public sealed class DuplicateBodyKeysRequest : IApiRequest<object>
+    {
+        [Body, JsonPropertyName("value")]
         public object? First { get; set; }
 
-        [Body]
+        [Body, JsonPropertyName("value")]
         public object? Second { get; set; }
     }
 

@@ -46,9 +46,46 @@ public sealed class InterfaceTests
         Assert.Equal("/users", received.Path);
         Assert.Equal("application/json", received.Headers["Content-Type"]);
 
+        // 未标注参数按键名聚合：{ "payload": { "name": "alice", "age": 18 } }
         var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
-        Assert.Equal("alice", json.GetProperty("name").GetString());
-        Assert.Equal(18, json.GetProperty("age").GetInt32());
+        Assert.Equal("alice", json.GetProperty("payload").GetProperty("name").GetString());
+        Assert.Equal(18, json.GetProperty("payload").GetProperty("age").GetInt32());
+    }
+
+    [Fact]
+    public async Task Post_RootBodyAndBody_MergeIntoOneLayer()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = CreateClient(server);
+
+        await client.Create<IMultipleBodyApi>().PostAsync(new Person("n", 1), new Person("m", 2));
+
+        var received = Assert.Single(server.Received);
+
+        // [Body] 参数按键写入，[RootBody] 参数展开属性，两者在同一个对象里。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("n", json.GetProperty("name").GetString());
+        Assert.Equal(1, json.GetProperty("age").GetInt32());
+        Assert.Equal("m", json.GetProperty("second").GetProperty("name").GetString());
+        Assert.Equal(2, json.GetProperty("second").GetProperty("age").GetInt32());
+    }
+
+    [Fact]
+    public async Task Post_RootBodyWithUnannotatedParam_MergesIntoBody()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = CreateClient(server);
+
+        await client.Create<IMultipleBodyApi>().PostUnannotatedAsync(new Person("n", 1), "t");
+
+        var received = Assert.Single(server.Received);
+
+        // 默认通道只看方法：POST 上未标注参数进正文，与 [RootBody] 展开的属性合并。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("n", json.GetProperty("name").GetString());
+        Assert.Equal(1, json.GetProperty("age").GetInt32());
+        Assert.Equal("t", json.GetProperty("tag").GetString());
+        Assert.Null(received.Query);
     }
 
     [Fact]
@@ -189,7 +226,6 @@ public sealed class InterfaceTests
     {
         var errors = ApiClient.ValidateInterfaces(
             typeof(IMissingRouteApi),
-            typeof(IMultipleBodyApi),
             typeof(IWrongReturnApi),
             typeof(IStreamWithoutMultipartApi),
             typeof(IMultipartWithBodyApi),
@@ -197,7 +233,7 @@ public sealed class InterfaceTests
             typeof(IInvalidStreamFormatApi));
 
         Assert.Contains(errors, error => error.Contains("缺少路由特性"));
-        Assert.Contains(errors, error => error.Contains("[Body]"));
+        Assert.Contains(errors, error => error.Contains("[RootBody]"));
         Assert.Contains(errors, error => error.Contains("Task<AxiosResponse<T>>"));
         Assert.Contains(errors, error => error.Contains("[Part]") && error.Contains("[Multipart]"));
         Assert.Contains(errors, error => error.Contains("互斥"));
@@ -207,7 +243,8 @@ public sealed class InterfaceTests
             typeof(IUserApi),
             typeof(IUploadApi),
             typeof(IStreamApi),
-            typeof(IStreamingApi)));
+            typeof(IStreamingApi),
+            typeof(IMultipleBodyApi)));
     }
 
     // ------------------------------------------------------------------
@@ -328,7 +365,8 @@ public sealed class InterfaceTests
         using var interfaceClient = CreateClient(interfaceServer);
 
         var payload = new Person("alice", 18);
-        await modelClient.RequestAsync(new CreateUserRequest { Person = payload });
+        // 模型侧重在未标注 Payload 上，接口侧靠未标注参数：两边都走聚合默认正文。
+        await modelClient.RequestAsync(new CreateUserDefaultBodyRequest { Payload = payload });
         await interfaceClient.Create<IUserApi>().CreateAsync(payload);
 
         var model = Assert.Single(modelServer.Received);

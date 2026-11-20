@@ -109,12 +109,12 @@ internal sealed class RequestModelMetadata
     public string ResolveUrl(object request, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ResolveUrl(_pathTemplate, request, formatter);
 
-    /// <summary>汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 未标注属性的默认绑定 + 平铺的字典映射）；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
+    /// <summary>汇总全部查询参数（显式 <see cref="QueryAttribute"/> + 非 body 方法上未标注属性的默认绑定 + 平铺的字典映射）；没有参数或值全为 <c>null</c> 时返回 <c>null</c>。
     /// 调用方拿到 <c>null</c> 时不要写进配置：合并层把显式 null 当作摘掉实例默认值。</summary>
     public Dictionary<string, object?>? ResolveQuery(object request, Func<object?, ValueTextChannel, string?>? formatter)
         => _plan.ResolveQuery(request, formatter);
 
-    /// <summary>请求体的原始值：普通模型取 <see cref="BodyAttribute"/> 属性；multipart 模型返回装配好的声明式表单（全部属性为 <c>null</c> 时返回 <c>null</c>）。</summary>
+    /// <summary>请求体的原始值：显式 <see cref="BodyAttribute"/> 取该属性；POST / PUT / PATCH 返回未标注属性聚合的对象；multipart 模型返回装配好的声明式表单（全部属性为 <c>null</c> 时返回 <c>null</c>）。</summary>
     /// <param name="request">请求模型实例。</param>
     /// <param name="formatter">实例级格式化钩子；只作用于裸标量正文与部件文本。</param>
     public object? ResolveBody(object request, Func<object?, ValueTextChannel, string?>? formatter)
@@ -162,7 +162,7 @@ internal sealed class RequestModelMetadata
             throw;
         }
 
-        // 全部属性为 null：没有可发的部件，按「无请求体」处理（与 [Body] 为 null 的行为一致）
+        // 全部属性为 null：没有可发的部件，按「无请求体」处理（与 [RootBody] 为 null 的行为一致）
         return form.Count > 0 ? form : null;
     }
 
@@ -200,7 +200,7 @@ internal sealed class RequestModelMetadata
         }
     }
 
-    /// <summary>构建契约：路由 → 类级静态头 → 属性绑定（multipart 部件）→ 默认 Body 推断 → 授权。</summary>
+    /// <summary>构建契约：路由 → 类级静态头 → 属性绑定（multipart 部件）→ 默认通道（聚合 Body / Query）→ 授权。</summary>
     private static RequestModelMetadata BuildCore(RequestModelDeclaration declaration)
     {
         var modelName = declaration.ModelType.Name;
@@ -249,11 +249,11 @@ internal sealed class RequestModelMetadata
                 if (member.HasAnyBinding)
                 {
                     throw new InvalidOperationException(
-                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
+                        $"属性 {modelName}.{member.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body / RootBody）："
                         + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。");
                 }
 
-                // 完全排除：不进任何绑定，也不算「未标注」（不阻断默认 Body 判定）
+                // 完全排除：不进任何绑定，也不算「未标注」（不参与默认通道判定）
                 continue;
             }
 
@@ -314,16 +314,21 @@ internal sealed class RequestModelMetadata
                     DeclarationNormalization.OptionalPartValue(member.PartContentType, display, nameof(PartAttribute.ContentType))));
             }
 
+            if (member.RootBody)
+            {
+                accumulator.AddRootBody(source, member.FieldName, member.FieldName != member.Name);
+            }
+
             if (member.Body)
             {
-                accumulator.AddBody(source);
+                accumulator.AddBody(source, member.FieldName, member.FieldName != member.Name);
             }
 
             if (!member.HasAnyBinding)
             {
                 if (isMultipart)
                 {
-                    // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认 Body / Query 判定
+                    // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认通道判定
                     var partName = member.FieldName;
                     if (!seenPartNames.Add(partName))
                     {
@@ -334,8 +339,9 @@ internal sealed class RequestModelMetadata
                     continue;
                 }
 
-                // 无标注 → 默认 Query（名字回退属性名）
-                accumulator.AddUnannotated(source);
+                // 无标注：默认通道由 HTTP 方法决定（body 方法 → 按键名聚合的对象；其余 → Query）。
+                // 键名优先 [JsonPropertyName]，否则属性名；显式改名不再套 JSON 命名策略。
+                accumulator.AddUnannotated(source, member.FieldName, member.FieldName != member.Name);
             }
             else if (member.Query)
             {
@@ -344,11 +350,11 @@ internal sealed class RequestModelMetadata
             }
         }
 
-        // multipart 与 [Body] 互斥：一个模型两种请求体形态属二义性
+        // multipart 与 [Body] / [RootBody] 互斥：一个模型两种请求体形态属二义性
         if (isMultipart && accumulator.HasBody)
         {
             throw new InvalidOperationException(
-                $"请求模型 {modelName} 同时声明了 [Multipart] 与 [Body]（{accumulator.BodyName}）："
+                $"请求模型 {modelName} 同时声明了 [Multipart] 与 {accumulator.BodyKind}（{accumulator.BodyName}）："
                 + "multipart 模型的请求体由全部属性装配，两者互斥。");
         }
 

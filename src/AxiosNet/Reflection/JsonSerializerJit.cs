@@ -46,6 +46,18 @@ internal static class JsonSerializerJit
     public static object? DeserializeUtf8Legacy(ReadOnlySpan<byte> utf8Json, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize(utf8Json, type, options);
 
+    /// <summary>同一分支的「写进现有 Utf8JsonWriter」入口（聚合正文按成员逐个写出）。</summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026",
+        Justification = "仅在未配置 TypeInfoResolver 且 STJ 反射回退开启（JIT）时可达；AOT 下已在 EnsureReflectionMetadata 提前拒绝。")]
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "同上：AOT 下反射被配置关闭，不会走到该重载。")]
+    public static void SerializeToWriterLegacy(Utf8JsonWriter writer, object? value, Type type, JsonSerializerOptions options)
+        => JsonSerializer.Serialize(writer, value, type, options);
+
     /// <summary>同一分支的 UTF-8 字节序列化入口（省一次文本中转）。</summary>
     [UnconditionalSuppressMessage(
         "Trimming",

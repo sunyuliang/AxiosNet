@@ -46,7 +46,7 @@ namespace AxiosNet.Generated
                         .ReturnsResponse(typeof(global::AxiosNet.SnapshotProbe.SnapshotItem));
                     b.Method("CreateAsync", "POST", "items")
                         .Parameter(0, "item", typeof(global::AxiosNet.SnapshotProbe.SnapshotItem))
-                        .Body()
+                        .RootBody()
                         .Parameter(1, "cancellationToken", typeof(global::System.Threading.CancellationToken))
                         .Unannotated()
                         .ReturnsData(typeof(global::AxiosNet.SnapshotProbe.SnapshotItem));

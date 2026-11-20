@@ -3,7 +3,7 @@ using AxiosNet.WebAPI;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 3. 请求体：[Body] 整个 Payload 走 JSON；模型 Configure 钩子加的 X-Trace 头被服务器回显。
+/// 3. 请求体：POST 上未标注成员默认聚合成 JSON 正文；模型 Configure 钩子加的 X-Trace 头被服务器回显。
 /// </summary>
 public sealed class CreateUserExample : IExample
 {
@@ -12,9 +12,9 @@ public sealed class CreateUserExample : IExample
 
     public int Number => 3;
 
-    public string Title => "POST 创建：[Body] 请求体 + 模型 Configure 钩子（X-Trace 回显验证）";
+    public string Title => "POST 创建：默认聚合正文 + 模型 Configure 钩子（X-Trace 回显验证）";
 
-    /// <summary>示例入口：POST 创建：[Body] 请求体 + 模型 Configure 钩子（X-Trace 回显验证）。</summary>
+    /// <summary>示例入口：POST 创建：默认聚合正文 + 模型 Configure 钩子（X-Trace 回显验证）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
@@ -24,7 +24,8 @@ public sealed class CreateUserExample : IExample
 
         var response = await client.RequestAsync(new CreateUserRequest
         {
-            Payload = new UserPayload("carol", 25)
+            Name = "carol",
+            Age = 25
         });
 
         Console.WriteLine($"  {response.Status} {response.StatusText}");

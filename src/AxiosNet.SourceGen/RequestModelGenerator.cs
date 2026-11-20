@@ -272,10 +272,10 @@ namespace AxiosNet.SourceGen
 
             diagnostics.AddRange(memberDiags);
 
-            // 两条「声明自相矛盾」的检查：放在成员都解析完之后，因为它们要看绑定结果。
-            CheckDeclarationConsistency(symbol, routePath!, members, location, diagnostics);
-
             var (multipart, allowAnonymous, authorizeScheme) = ReadDeclarationLevelAttributes(symbol, wellKnown, location, diagnostics);
+
+            // 「声明自相矛盾」的检查：放在成员都解析完之后，因为它们要看绑定结果。
+            CheckDeclarationConsistency(symbol, routePath!, members, multipart, location, diagnostics);
             var encoding = ReadEncodingDeclarations(symbol, wellKnown);
 
             return new RequestModelInfo(
@@ -299,22 +299,25 @@ namespace AxiosNet.SourceGen
         }
 
         /// <summary>
-        /// 两条「声明自相矛盾」的编译期检查：路由占位符没有 <c>[Path]</c> 绑定（AXA016）、多个成员显式 <c>[Body]</c>（AXA017）。
+        /// 「声明自相矛盾」的编译期检查：路由占位符没有 <c>[Path]</c> 绑定（AXA016）、正文声明冲突（AXA017）。
         /// </summary>
         /// <remarks>
-        /// 这两条在运行期由绑定构建器也会报（<c>BindingAccumulator</c>），但那是<b>跑起来才知道</b>；
+        /// 这些在运行期由绑定构建器也会报（<c>BindingAccumulator</c>），但那是<b>跑起来才知道</b>；
         /// 声明式层的用户期望是「写错就编译不过」，所以在这里提前。
-        /// 刻意只查「显式 <c>[Body]</c> 多于一个」：「未标注属性默认当正文」的歧义规则更细（<c>[ApiIgnore]</c> / 唯一未标注 / 显式覆盖），静态判断容易误报，留给运行期。
+        /// 只查显式正文特性的冲突（<c>[RootBody]</c> 与 <c>[Multipart]</c> 同用；<c>[RootBody]</c> 与 <c>[Body]</c> / 未标注成员会合并，不算冲突），
+        /// 「未标注属性默认当正文」的规则更细，静态判断容易误报，留给运行期。
         /// </remarks>
         /// <param name="symbol">请求模型类型。</param>
         /// <param name="routePath">路由模板（已从特性取出的路径部分）。</param>
         /// <param name="members">已解析的成员。</param>
+        /// <param name="multipart">类型是否声明了 <c>[Multipart]</c>。</param>
         /// <param name="location">诊断位置。</param>
         /// <param name="diagnostics">诊断收集器。</param>
         private static void CheckDeclarationConsistency(
             INamedTypeSymbol symbol,
             string routePath,
             ImmutableArray<RequestMemberInfo>.Builder members,
+            bool multipart,
             Location location,
             ImmutableArray<DiagnosticInfo>.Builder diagnostics)
         {
@@ -329,29 +332,31 @@ namespace AxiosNet.SourceGen
                 }
             }
 
-            var bodies = new List<string>();
+            var rootBodies = new List<string>();
             foreach (var member in members)
             {
                 foreach (var binding in member.Bindings)
                 {
-                    if (binding.Body)
+                    if (binding.RootBody)
                     {
-                        bodies.Add(member.Description);
-                        break;
+                        rootBodies.Add(member.Description);
                     }
                 }
             }
 
-            if (bodies.Count > 1)
+            // [RootBody] 与 [Body] / 未标注成员可以合并到同一层，不再是冲突；
+            // 只有 multipart 的请求体由部件装配，不能同时声明 [RootBody]。
+            string? conflict = null;
+            if (rootBodies.Count > 0 && multipart)
+            {
+                conflict = $"[RootBody]（{string.Join(" / ", rootBodies)}）与 [Multipart] 互斥：multipart 的请求体由全部属性装配。";
+            }
+
+            if (conflict is not null)
             {
                 diagnostics.Add(new DiagnosticInfo(
                     Diagnostics.MultipleBodyMembers,
-                    ToEquatable(new[]
-                    {
-                        "请求模型 " + symbol.Name,
-                        bodies.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        string.Join(" / ", bodies)
-                    }),
+                    ToEquatable(new[] { "请求模型 " + symbol.Name, conflict }),
                     location));
             }
         }
@@ -508,7 +513,7 @@ namespace AxiosNet.SourceGen
             if (ignored && ownBindingCount > 0)
             {
                 var message =
-                    $"属性 {model.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body）："
+                    $"属性 {model.Name}.{property.Name} 同时标注了 [ApiIgnore] 与参数特性（Path / Query / Header / HeaderCollection / Part / Body / RootBody）："
                     + "[ApiIgnore] 的语义是「完全不绑定」，两者同用是二义性。";
 
                 diagnostics.Add(new DiagnosticInfo(
@@ -553,9 +558,11 @@ namespace AxiosNet.SourceGen
             var header = Find(property, wellKnown.Header, inherit);
             var headerCollection = Find(property, wellKnown.HeaderCollection, inherit);
             var body = Find(property, wellKnown.Body, inherit);
+            var rootBody = Find(property, wellKnown.RootBody, inherit);
             var part = Find(property, wellKnown.Part, inherit);
 
-            if (path is null && query is null && header is null && headerCollection is null && body is null && part is null)
+            if (path is null && query is null && header is null && headerCollection is null
+                && body is null && rootBody is null && part is null)
             {
                 return null;
             }
@@ -588,6 +595,7 @@ namespace AxiosNet.SourceGen
                 header is null ? null : GetStringArgument(header, 0),
                 headerCollection is not null,
                 body is not null,
+                rootBody is not null,
                 part is not null,
                 partName,
                 partFileName,
@@ -1139,7 +1147,8 @@ namespace AxiosNet.SourceGen
                     || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Header)
                     || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.HeaderCollection)
                     || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Part)
-                    || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Body))
+                    || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.Body)
+                    || SymbolEqualityComparer.Default.Equals(attribute.AttributeClass, wellKnown.RootBody))
                 {
                     count++;
                 }
@@ -1236,6 +1245,7 @@ namespace AxiosNet.SourceGen
             Header = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeaderAttribute");
             HeaderCollection = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.HeaderCollectionAttribute");
             Body = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.BodyAttribute");
+            RootBody = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.RootBodyAttribute");
             Part = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.PartAttribute");
             ApiIgnore = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute");
             Format = compilation.GetTypeByMetadataName("AxiosNet.WebAPI.Attributes.FormatAttribute");
@@ -1286,8 +1296,11 @@ namespace AxiosNet.SourceGen
         /// <summary><c>[HeaderCollection]</c>：整个字典 / 集合进请求头。</summary>
         public INamedTypeSymbol? HeaderCollection { get; }
 
-        /// <summary><c>[Body]</c>：成员作为请求正文。</summary>
+        /// <summary><c>[Body]</c>：成员作为请求体对象的一个键。</summary>
         public INamedTypeSymbol? Body { get; }
+
+        /// <summary><c>[RootBody]</c>：成员作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
+        public INamedTypeSymbol? RootBody { get; }
 
         /// <summary><c>[Part]</c>：成员作为一个 multipart 部件。</summary>
         public INamedTypeSymbol? Part { get; }

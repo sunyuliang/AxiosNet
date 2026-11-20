@@ -144,11 +144,11 @@ public interface IEncodingApi
 {
     [Post("form")]
     [BodyContentType("application/x-www-form-urlencoded")]
-    Task<AxiosResponse<Person>> SubmitFormAsync([Body] FormPayload payload);
+    Task<AxiosResponse<Person>> SubmitFormAsync([RootBody] FormPayload payload);
 
     [Post("form-utf8")]
     [BodyContentType("application/x-www-form-urlencoded; charset=utf-8")]
-    Task<AxiosResponse<Person>> SubmitFormUtf8Async([Body] FormPayload payload);
+    Task<AxiosResponse<Person>> SubmitFormUtf8Async([RootBody] FormPayload payload);
 
     [Get("search-multi")]
     [QueryCollectionFormat(AxiosCollectionFormat.Multi)]
@@ -184,10 +184,10 @@ public interface IEncodingLeakApi
 {
     [Post("form")]
     [BodyContentType("application/x-www-form-urlencoded")]
-    Task<AxiosResponse<Person>> SubmitFormAsync([Body] FormPayload payload);
+    Task<AxiosResponse<Person>> SubmitFormAsync([RootBody] FormPayload payload);
 
     [Post("json")]
-    Task<AxiosResponse<Person>> SubmitJsonAsync([Body] FormPayload payload);
+    Task<AxiosResponse<Person>> SubmitJsonAsync([RootBody] FormPayload payload);
 }
 
 public interface IBaseEncodingApi
@@ -198,7 +198,7 @@ public interface IBaseEncodingApi
 
     [Post("base-form")]
     [BodyContentType("application/x-www-form-urlencoded")]
-    Task<AxiosResponse<Person>> BaseSubmitAsync([Body] FormPayload payload);
+    Task<AxiosResponse<Person>> BaseSubmitAsync([RootBody] FormPayload payload);
 }
 
 public interface IDerivedEncodingApi : IBaseEncodingApi

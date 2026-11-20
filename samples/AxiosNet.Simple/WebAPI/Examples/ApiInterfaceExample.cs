@@ -4,7 +4,7 @@ using AxiosNet.WebAPI.Attributes;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 11. 接口级声明：路由写在方法上，[Path] / [Query] / [Header] / [Body] 写在参数上，
+/// 11. 接口级声明：路由写在方法上，[Path] / [Query] / [Header] / [RootBody] 写在参数上，
 /// <c>Create&lt;T&gt;()</c> 直接得到可用代理。
 /// </summary>
 public sealed class ApiInterfaceExample : IExample
@@ -23,7 +23,7 @@ public sealed class ApiInterfaceExample : IExample
 
         var client = _client ??= new ApiClient(context.BaseUrl);
 
-        // 一个接口 = 一组端点；代理按接口方法声明解析路由、绑定参数、推断默认 Body
+        // 一个接口 = 一组端点；代理按接口方法声明解析路由、绑定参数，并按 HTTP 方法决定默认通道（聚合 Body / Query）
         var api = client.Create<IUsersApi>();
 
         // 1) Path + 两个可选绑定（Query / Header）；接口上的 [Headers] 每个请求都带
@@ -35,10 +35,10 @@ public sealed class ApiInterfaceExample : IExample
         var page = await api.ListAsync([1, 2], role: "admin");
         Console.WriteLine($"  GET  /api/users?ids[]=1&ids[]=2&role=admin -> {page.Status} {ExampleConsole.Pretty(page.Data)}");
 
-        // 3) POST 的单个未标注非标量参数默认作为 JSON 请求体（无需 [Body]）
+        // 3) POST 的未标注参数按键名聚合成对象正文：{ "payload": { "name": "carol", "age": 25 } }（无需 [Body]）
         var created = await api.CreateAsync(new UserPayload("carol", 25), trace: "iface-create");
         Console.WriteLine($"  POST /api/users -> {created.Status} {ExampleConsole.Pretty(created.Data)}");
-        Console.WriteLine($"    默认 Body 推断生效，服务器回显 X-Trace = {created.Data!.Trace}");
+        Console.WriteLine($"    默认通道生效（聚合 Body），服务器回显 X-Trace = {created.Data!.Trace}");
     }
 
     /// <summary>读请求消息上的某个头；没有请求消息时返回 <c>none</c>。</summary>

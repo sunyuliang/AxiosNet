@@ -164,6 +164,11 @@ internal static class RequestModelDeclarationReader
             member.Body = true;
         }
 
+        if (property.GetCustomAttribute<RootBodyAttribute>(inherit) is not null)
+        {
+            member.RootBody = true;
+        }
+
         if (property.GetCustomAttribute<BodyContentTypeAttribute>(inherit) is { } contentType)
         {
             member.ContentType = contentType.ContentType;
@@ -195,7 +200,8 @@ internal static class RequestModelDeclarationReader
             + (property.GetCustomAttribute<HeaderAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<HeaderCollectionAttribute>(inherit: false) is not null ? 1 : 0)
             + (property.GetCustomAttribute<PartAttribute>(inherit: false) is not null ? 1 : 0)
-            + (property.GetCustomAttribute<BodyAttribute>(inherit: false) is not null ? 1 : 0);
+            + (property.GetCustomAttribute<BodyAttribute>(inherit: false) is not null ? 1 : 0)
+            + (property.GetCustomAttribute<RootBodyAttribute>(inherit: false) is not null ? 1 : 0);
 
     /// <summary>类型自身在前的继承链（不包含 <see cref="object"/>）。</summary>
     private static List<Type> BuildInheritanceChain(

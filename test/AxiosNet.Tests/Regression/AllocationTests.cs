@@ -434,7 +434,7 @@ public sealed class AllocationTests
     [Authorize]
     private sealed class ContentBodyRequest : IApiRequest<object>
     {
-        [Body]
+        [RootBody]
         public HttpContent? Payload { get; set; }
     }
 

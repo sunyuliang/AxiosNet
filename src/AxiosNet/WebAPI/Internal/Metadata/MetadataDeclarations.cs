@@ -94,7 +94,11 @@ internal sealed class RequestModelMemberDeclaration
 
     public bool HeaderCollection { get; set; }
 
+    /// <summary><c>[Body]</c>：作为请求体对象的一个键（可多个）。</summary>
     public bool Body { get; set; }
+
+    /// <summary><c>[RootBody]</c>：作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
+    public bool RootBody { get; set; }
 
     public bool Part { get; set; }
 
@@ -105,7 +109,7 @@ internal sealed class RequestModelMemberDeclaration
     public string? PartContentType { get; set; }
 
     /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
-    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
+    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || RootBody || Part;
 }
 
 /// <summary>接口级声明的声明数据（全部方法的声明 + 接口级授权 / 静态头）。</summary>
@@ -202,7 +206,11 @@ internal sealed class InterfaceParameterDeclaration
 
     public bool HeaderCollection { get; set; }
 
+    /// <summary><c>[Body]</c>：作为请求体对象的一个键（可多个）。</summary>
     public bool Body { get; set; }
+
+    /// <summary><c>[RootBody]</c>：作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
+    public bool RootBody { get; set; }
 
     public bool Part { get; set; }
 
@@ -213,5 +221,5 @@ internal sealed class InterfaceParameterDeclaration
     public string? PartContentType { get; set; }
 
     /// <summary>是否至少命中一个绑定目标；一个都没有说明是误标，构建期报错。</summary>
-    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || Part;
+    public bool HasAnyBinding => Path || Query || Header || HeaderCollection || Body || RootBody || Part;
 }

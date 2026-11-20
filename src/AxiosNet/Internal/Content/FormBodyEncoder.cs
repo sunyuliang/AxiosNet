@@ -46,6 +46,97 @@ internal static class FormBodyEncoder
             path.Dispose();
         }
 
+        return Finish(pairs, config, mediaType, encoding, appendCharset);
+    }
+
+    /// <summary>默认正文的 urlencoded 形态：每个聚合成员按自己的键名展平（嵌套规则与普通对象一致）。</summary>
+    public static HttpContent CreateAggregate(
+        AggregateBody body,
+        AxiosConfig config,
+        string mediaType,
+        Encoding encoding,
+        bool appendCharset)
+    {
+        var pairs = new List<KeyValuePair<string, string>>(Math.Max(4, body.Members.Length));
+        var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldName, config.SerializationOrNull?.ValueText);
+        var path = new ObjectPath();
+        var topNames = new List<string>(body.Members.Length);
+        try
+        {
+            foreach (var member in body.Members)
+            {
+                if (member.Spread)
+                {
+                    // 多个 [RootBody]：结构化值的字段直接铺到根级。
+                    var start = pairs.Count;
+                    CollectFormPairs(null, member.Value, pairs, options, ref path, member.Format);
+                    for (var i = start; i < pairs.Count; i++)
+                    {
+                        topNames.Add(TopLevelName(pairs[i].Key));
+                    }
+
+                    continue;
+                }
+
+                // 聚合正文的键即成员键名，直接作为根级前缀；成员级 [Format] 照常生效。
+                var name = BodyFields.CombineName(options.NameSelector, null, member.Name);
+                topNames.Add(name);
+                CollectFormPairs(name, member.Value, pairs, options, ref path, member.Format);
+            }
+        }
+        catch (DataCycleException ex)
+        {
+            DisposeAggregateMembers(body);
+            throw AxiosException.InvalidOption(ex.Message, config, ex);
+        }
+        catch (UnsupportedFormValueException ex)
+        {
+            DisposeAggregateMembers(body);
+            throw AxiosException.InvalidOption(ex.Message, config, ex);
+        }
+        finally
+        {
+            path.Dispose();
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in topNames)
+        {
+            if (!seen.Add(name))
+            {
+                DisposeAggregateMembers(body);
+                throw AxiosException.InvalidOption(
+                    $"请求体合并后出现重复键 \"{name}\"：请改名，或把 [RootBody] 换成 [Body] 包成独立键。", config);
+            }
+        }
+
+        return Finish(pairs, config, mediaType, encoding, appendCharset);
+    }
+
+    /// <summary>表单键的根级名字：<c>a[b]</c> 取 <c>a</c>；根数组等没有前缀时用原键。</summary>
+    private static string TopLevelName(string key)
+    {
+        var bracket = key.IndexOf('[');
+        return bracket <= 0 ? key : key[..bracket];
+    }
+
+    /// <summary>聚合正文不再产出时回收成员里的流 / FormFile（与普通正文的异常路径同一契约）。</summary>
+    private static void DisposeAggregateMembers(AggregateBody body)
+    {
+        foreach (var member in body.Members)
+        {
+            MultipartOwnership.DisposeOwned(member.Value);
+        }
+    }
+
+    /// <summary>把已展平的键值对落成压缩 / charset 就绪的正文。</summary>
+    private static HttpContent Finish(
+        List<KeyValuePair<string, string>> pairs,
+        AxiosConfig config,
+        string mediaType,
+        Encoding encoding,
+        bool appendCharset)
+    {
         // 正文是已转义的 ASCII 串，编码只影响转义映射。
         var body = BuildBody(pairs);
 
