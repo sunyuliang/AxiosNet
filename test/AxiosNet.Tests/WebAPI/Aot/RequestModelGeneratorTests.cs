@@ -563,6 +563,7 @@ public sealed class RequestModelGeneratorTests
     {
         Assert.Equal(expected.Name, actual.Name);
         Assert.Equal(expected.FieldName, actual.FieldName);
+        Assert.Equal(expected.NameFromAttribute, actual.NameFromAttribute);
         Assert.Same(expected.ValueType, actual.ValueType);
         Assert.Equal(expected.Description, actual.Description);
         Assert.Equal(expected.Ignore, actual.Ignore);
@@ -577,6 +578,7 @@ public sealed class RequestModelGeneratorTests
         Assert.Equal(NormalizeOptionalName(expected.HeaderName), NormalizeOptionalName(actual.HeaderName));
         Assert.Equal(expected.HeaderCollection, actual.HeaderCollection);
         Assert.Equal(expected.Body, actual.Body);
+        Assert.Equal(NormalizeOptionalName(expected.BodyName), NormalizeOptionalName(actual.BodyName));
         Assert.Equal(expected.Part, actual.Part);
         Assert.Equal(expected.PartName, actual.PartName);
         Assert.Equal(expected.PartFileName, actual.PartFileName);
@@ -868,6 +870,18 @@ public sealed class RequestModelGeneratorTests
         Assert.Equal(File.ReadAllText(path).Replace("\r\n", "\n"), actual);
     }
 
+    /// <summary>显式正文键名（<c>[Body("名")]</c>）在反射声明与生成声明里必须逐字段一致。</summary>
+    [Fact]
+    public void BodyName_SurvivesBothPaths()
+    {
+        var ns = UniqueNamespace();
+        var (_, diagnostics, output) = RunGenerator(SnapshotModels.Replace("__NS__", ns));
+        Assert.Empty(diagnostics);
+
+        var assembly = LoadEmitted(output);
+        AssertSameDeclaration(assembly, ns + ".SnapshotRequest");
+    }
+
     private static string SnapshotText(GeneratorDriverRunResult result)
     {
         var builder = new StringBuilder();
@@ -920,6 +934,9 @@ public sealed class RequestModelGeneratorTests
 
                 [Header("X-Token")]
                 public string? Token { get; set; }
+
+                [Body("tag_name")]
+                public string? Tag { get; set; }
             }
 
             public interface ISnapshotApi
@@ -928,7 +945,7 @@ public sealed class RequestModelGeneratorTests
                 Task<AxiosResponse<SnapshotItem>> GetAsync([Path] int id, CancellationToken cancellationToken);
 
                 [Post("items")]
-                Task<SnapshotItem?> CreateAsync([RootBody] SnapshotItem item, CancellationToken cancellationToken);
+                Task<SnapshotItem?> CreateAsync([RootBody] SnapshotItem item, [Body("tag_name")] string? tag, CancellationToken cancellationToken);
             }
         }
         """;

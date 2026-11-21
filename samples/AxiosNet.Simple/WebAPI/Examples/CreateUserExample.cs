@@ -3,7 +3,8 @@ using AxiosNet.WebAPI;
 namespace AxiosNet.Simple.WebAPI.Examples;
 
 /// <summary>
-/// 3. 请求体：POST 上未标注成员默认聚合成 JSON 正文；模型 Configure 钩子加的 X-Trace 头被服务器回显。
+/// 3. 请求体：POST 上成员默认聚合成 JSON 正文；<c>[Body("user_name")]</c> 显式指定键名、不再套 camelCase；
+/// 模型 Configure 钩子加的 X-Trace 头被服务器回显。
 /// </summary>
 public sealed class CreateUserExample : IExample
 {
@@ -12,9 +13,9 @@ public sealed class CreateUserExample : IExample
 
     public int Number => 3;
 
-    public string Title => "POST 创建：默认聚合正文 + 模型 Configure 钩子（X-Trace 回显验证）";
+    public string Title => "POST 创建：默认聚合正文 + [Body(\"user_name\")] 显式键名 + Configure 钩子（X-Trace 回显验证）";
 
-    /// <summary>示例入口：POST 创建：默认聚合正文 + 模型 Configure 钩子（X-Trace 回显验证）。</summary>
+    /// <summary>示例入口：POST 创建：默认聚合正文 + [Body("user_name")] 显式键名 + Configure 钩子（X-Trace 回显验证）。</summary>
     public async Task RunAsync(ExampleContext context)
     {
         ExampleConsole.Section(Number, Title);
@@ -28,6 +29,7 @@ public sealed class CreateUserExample : IExample
             Age = 25
         });
 
+        Console.WriteLine("  正文键：user_name（[Body(\"user_name\")] 显式命名，原样发送）、age（成员名套 camelCase）");
         Console.WriteLine($"  {response.Status} {response.StatusText}");
         var created = response.Data!;
         Console.WriteLine($"  Data = {ExampleConsole.Pretty(created)}");

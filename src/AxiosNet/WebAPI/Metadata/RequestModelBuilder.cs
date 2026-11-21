@@ -155,10 +155,13 @@ public sealed class RequestModelMemberBuilder
         _member = member;
     }
 
-    /// <summary>表单 / multipart 的字段名（默认与成员名相同；生成器写入 <c>[JsonPropertyName]</c> 时调用）。</summary>
-    public RequestModelMemberBuilder FieldName(string fieldName)
+    /// <summary>字段名：聚合正文的键名兜底值，同时是表单 / multipart 的默认部件名。</summary>
+    /// <param name="fieldName">字段名；空白回退成员名。</param>
+    /// <param name="nameFromAttribute">该名字是否已显式确定（true 则聚合正文不再套 JSON 命名策略）；默认 <c>true</c>，调用即视为显式命名。</param>
+    public RequestModelMemberBuilder FieldName(string fieldName, bool nameFromAttribute = true)
     {
         _member.FieldName = fieldName;
+        _member.NameFromAttribute = nameFromAttribute;
         return this;
     }
 
@@ -224,10 +227,11 @@ public sealed class RequestModelMemberBuilder
         return _owner;
     }
 
-    /// <summary><c>[Body]</c>：成员作为请求体对象的一个键（可多个）。</summary>
-    public RequestModelBuilder Body()
+    /// <summary><c>[Body]</c>：成员作为请求体对象的一个键（可多个）；省略名字时用成员名。</summary>
+    public RequestModelBuilder Body(string? name = null)
     {
         _member.Body = true;
+        _member.BodyName = name;
         return _owner;
     }
 

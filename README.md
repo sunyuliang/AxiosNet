@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2866%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2721%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2877%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2732%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.7%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -273,7 +273,7 @@ multipart.Add(new StringContent("alice"), "name");
 await http.PostAsync("upload", multipart);          // 原样透传，保留自带头与边界
 ```
 
-- 字段名取属性名 / 字典键（识别 `[JsonPropertyName]` / `[JsonIgnore]`），嵌套写 `meta[author]`，集合展开成同名重复部件；规则可用 `Serialization.FormFieldName` 改。
+- 字段名取属性名 / 字典键（识别 `[JsonPropertyName]` / `[JsonIgnore]`），嵌套写 `meta[author]`，集合展开成同名重复部件；规则可用 `Serialization.FormFieldName` 改。该规则接管表单通道的全部字段名，`[Body("名")]` 的显式名字也会经过它（JSON 通道对显式名字原样直出，两者口径不同）。
 - 根节点是文件数组时没有键名，用 `FormFile.FieldName` 指定。
 - 部件随请求释放（成功 / 异常 / 取消都 `Dispose`）；要复用请先读成 `byte[]`。
 - 同一个 `FormFile` / `Stream` 只能挂一个部件：流是单向读的，第一个部件读完后游标在末尾，第二个只会发出 0 字节，装配时直接报 `ERR_BAD_OPTION_VALUE`。
@@ -1710,16 +1710,16 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | 静态头 | `[Headers]`（类 / 接口 / 接口方法） | `"Name: Value"`；只写名字表示删除该头（同名 `[Header]` 属性 / 参数仍会把它写回来）；方法级覆盖接口级同名项 |
 | 表单 | `[Multipart]` + `[Part]` | 模型自身即表单；`[Part]` 覆盖字段名 / 文件名 / 部件类型 |
 | 请求体（顶层） | `[RootBody]` | 并入正文；独占时即整个正文；与 `[Body]` / 未标注成员一起时合并到同一层；单个值 `null` 不发请求体 |
-| 请求体（键） | `[Body]` | 作为聚合正文的一个键，可多个；与 `[Query]` / `[Header]` / `[Path]` 同用 |
+| 请求体（键） | `[Body]` / `[Body("名")]` | 作为聚合正文的一个键，可多个；显式名字压过 `[JsonPropertyName]`；与 `[Query]` / `[Header]` / `[Path]` 同用 |
 | 值格式化 | `[Format]`（属性 / 参数） | 格式串或静态函数；集合逐元素、字典逐值（见[值格式化](#值格式化)） |
 | 编码 | `[BodyContentType]` / `[QueryCollectionFormat]` / `[Stream]`（类 / 属性） | 属性级覆盖类级；两处都显式声明且值不同报 `ERR_BAD_OPTION_VALUE`；`[Multipart]` 与 `[BodyContentType]` 互斥 |
 | 排除 | `[ApiIgnore]` | 完全不绑定 |
 
 - 默认通道只看 HTTP 方法，不看类型：POST / PUT / PATCH 上的全部未标注成员按键名聚合成**一个对象**作为请求体（1 个成员也加壳，`{ "page": 2 }`）；GET / HEAD / OPTIONS / DELETE 及其它方法上的未标注成员绑 Query。
-- 聚合 Body 的键名：`[JsonPropertyName]` 优先，否则属性名（接口式为参数名）；JSON 再套 `PropertyNamingPolicy`（默认 Web 的 camelCase）。多个成员键名重复在构建期报错。
+- 聚合 Body 的键名：`[Body("名")]` 优先，其次 `[JsonPropertyName]`，否则属性名（接口式为参数名）；只有最后一种才套 `PropertyNamingPolicy`（默认 Web 的 camelCase），显式名字原样使用。多个成员键名重复在构建期报错。
 - 正文合并只看来源：`[Body]` 与未标注成员按键写入同一层，`[RootBody]` 结构化值展开属性、标量按键写入。只有一个正文来源（单个 `[RootBody]`）时原样发送、不加壳；出现第二个正文来源就统一合并，合并后重复键报错、键顺序＝声明顺序。`[RootBody]` 与 `[Multipart]` 在构建期报错；合并后的正文也装不下文件部件（`Stream` / `FormFile` / `HttpContent` 成员）——这种写法同样在构建期报错，请改用 `[Multipart]`，或让它作为唯一的 `[RootBody]` 原样发送。
 - 模型式请求不需要为正文再造一个 `Payload` 子类：正文成员直接写在请求类上即可（POST / PUT / PATCH 默认进正文，无需 `[Body]`）；接口式方法则必然有一个强类型参数。
-- 显式 `[Body]` 把成员强制并入聚合正文（任何 HTTP 方法都生效），可多个；键名规则同上，重复键在构建期报错。同一成员可同时标 `[Query]` / `[Header]` / `[Path]`，值会分别进入对应通道。
+- 显式 `[Body]` 把成员强制并入聚合正文（任何 HTTP 方法都生效），可多个；可写成 `[Body("user_name")]` 指定键名，重复键在构建期报错。同一成员可同时标 `[Query]` / `[Header]` / `[Path]`，值会分别进入对应通道。
 - 想排除默认 Body：用 `[Query]` 把成员拉回查询串，`[Header]` / `[HeaderCollection]` / `[Path]` 换通道，`[ApiIgnore]` 完全不发。
 - 默认 Body 支持 JSON 与 `application/x-www-form-urlencoded`；multipart 请标注 `[Multipart]`，其它序列化器（XML / 自定义）请显式标 `[RootBody]`，否则构建期给出明确错误。
 - 没有正文成员（也未标 `[RootBody]`）时不发请求体；有正文成员时即使值全为 `null` 也发送对象（键保留、值为 `null`）。
@@ -2721,15 +2721,15 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2665 / 2652 | `net8.0` / `net6.0` | 5317 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2676 / 2663 | `net8.0` / `net6.0` | 5339 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2866 / 2773** | | **5639** |
+| **合计** | **2877 / 2784** | | **5661** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
-行覆盖率 **92.1%**、分支覆盖率 **87.6%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
+行覆盖率 **92.1%**、分支覆盖率 **87.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

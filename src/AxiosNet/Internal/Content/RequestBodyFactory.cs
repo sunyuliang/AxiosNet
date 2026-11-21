@@ -214,7 +214,8 @@ internal static class RequestBodyFactory
             throw AxiosException.InvalidOption(
                 "默认 Body（未标注成员按键名聚合）只支持 JSON 与 application/x-www-form-urlencoded："
                 + $"当前生效的序列化器是 {serializer.GetType().Name}。"
-                + "请给需要发送的成员显式标注 [RootBody]（原样交给该序列化器），或改用 JSON。", config);
+                + "[Body(\"名\")] 只改键名、不改变通道支持；"
+                + "请给需要发送的成员显式标注 [RootBody]（原样交给该序列化器，命名用 [XmlElement] 等该序列化器认可的写法），或改用 JSON。", config);
         }
 
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))

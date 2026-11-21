@@ -384,7 +384,12 @@ public sealed class DemoApiServer : IDisposable
         // 同一端点兼容两种声明式写法：模型式默认正文发裸对象，接口式未标注参数发 { "payload": {...} }。
         using var document = JsonDocument.Parse(body);
         var root = document.RootElement.TryGetProperty("payload", out var wrapped) ? wrapped : document.RootElement;
-        var payload = root.Deserialize<UserPayload>(BodyOptions);
+        var payload = root.TryGetProperty("user_name", out var renamed)
+            // 模型式示例用 [Body("user_name")] 显式命名；接口式示例仍发 name，两种写法都接受
+            ? new UserPayload(
+                renamed.GetString() ?? string.Empty,
+                root.TryGetProperty("age", out var age) ? age.GetInt32() : 0)
+            : root.Deserialize<UserPayload>(BodyOptions);
 
         // 把 X-Trace 一并回显：证明请求模型 Configure 钩子里写的头真实到达了服务器
         var trace = headers.GetValueOrDefault("x-trace", "none");

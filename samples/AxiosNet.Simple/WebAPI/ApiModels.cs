@@ -29,7 +29,8 @@ public sealed class ListUsersRequest : IApiRequest<UserProfile[]>
 [Post("api/users")]
 public sealed class CreateUserRequest : ApiRequest<CreatedUser>
 {
-    /// <summary>用户名：未标注特性，POST 上默认进聚合正文（键名 name）。</summary>
+    /// <summary>用户名：<c>[Body("user_name")]</c> 显式键名，线上就是 <c>user_name</c>，不再套 JSON 命名策略。</summary>
+    [Body("user_name")]
     public string Name { get; set; } = string.Empty;
 
     /// <summary>年龄：未标注特性，同上进聚合正文。</summary>

@@ -65,7 +65,7 @@
   C:AxiosNet.WebAPI.Attributes.AllowAnonymousAttribute()
   C:AxiosNet.WebAPI.Attributes.ApiIgnoreAttribute()
   C:AxiosNet.WebAPI.Attributes.AuthorizeAttribute(System.String)
-  C:AxiosNet.WebAPI.Attributes.BodyAttribute()
+  C:AxiosNet.WebAPI.Attributes.BodyAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.DeleteAttribute(System.String)
   C:AxiosNet.WebAPI.Attributes.FormatAttribute(System.String)
@@ -641,7 +641,7 @@
   M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendStreamAsync`1(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken, AxiosNet.AxiosStreamFormat)
   M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendUntypedAsync(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken)
   M:AxiosNet.WebAPI.Metadata.InterfaceMethodRuntime.SendVoidAsync(AxiosNet.WebAPI.ApiClient, System.Object[], System.Threading.CancellationToken)
-  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Body()
+  M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Body(System.String)
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Format(AxiosNet.Metadata.ValueFormat)
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.Header(System.String)
   M:AxiosNet.WebAPI.Metadata.InterfaceParameterBuilder.HeaderCollection()
@@ -663,9 +663,9 @@
   M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Route(System.String, System.String)
   M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.StaticHeaders(System.String[])
   M:AxiosNet.WebAPI.Metadata.RequestModelBuilder.Stream(AxiosNet.AxiosStreamFormat)
-  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Body()
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Body(System.String)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.ContentType(System.String)
-  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.FieldName(System.String)
+  M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.FieldName(System.String, System.Boolean)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Format(AxiosNet.Metadata.ValueFormat)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.Header(System.String)
   M:AxiosNet.WebAPI.Metadata.RequestModelMemberBuilder.HeaderCollection()
@@ -1078,6 +1078,7 @@
   P:AxiosNet.WebAPI.ApiInterfaceInvocation.InterfaceType:get
   P:AxiosNet.WebAPI.ApiInterfaceInvocation.MethodName:get
   P:AxiosNet.WebAPI.Attributes.AuthorizeAttribute.Scheme:get
+  P:AxiosNet.WebAPI.Attributes.BodyAttribute.Name:get
   P:AxiosNet.WebAPI.Attributes.BodyContentTypeAttribute.ContentType:get
   P:AxiosNet.WebAPI.Attributes.FormatAttribute.Format:get
   P:AxiosNet.WebAPI.Attributes.FormatAttribute.FormatterMethod:get

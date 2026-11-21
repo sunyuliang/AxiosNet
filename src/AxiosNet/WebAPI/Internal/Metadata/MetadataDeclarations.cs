@@ -56,6 +56,9 @@ internal sealed class RequestModelMemberDeclaration
     /// <summary>表单 / multipart 的默认字段名（[JsonPropertyName] 或属性名）；[Part] 未显式命名时用它。</summary>
     public string FieldName { get; set; } = string.Empty;
 
+    /// <summary><see cref="FieldName"/> 是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</summary>
+    public bool NameFromAttribute { get; set; }
+
     // 类型与取值委托：构建期从属性元数据填好，绑定时只按位置取值。
     public Type ValueType { get; set; } = typeof(object);
 
@@ -96,6 +99,9 @@ internal sealed class RequestModelMemberDeclaration
 
     /// <summary><c>[Body]</c>：作为请求体对象的一个键（可多个）。</summary>
     public bool Body { get; set; }
+
+    /// <summary><c>[Body]</c> 显式声明的键名；null 表示未声明，按 <see cref="FieldName"/> 取名。</summary>
+    public string? BodyName { get; set; }
 
     /// <summary><c>[RootBody]</c>：作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
     public bool RootBody { get; set; }
@@ -208,6 +214,9 @@ internal sealed class InterfaceParameterDeclaration
 
     /// <summary><c>[Body]</c>：作为请求体对象的一个键（可多个）。</summary>
     public bool Body { get; set; }
+
+    /// <summary><c>[Body]</c> 显式声明的键名；null 表示未声明，按参数名取名。</summary>
+    public string? BodyName { get; set; }
 
     /// <summary><c>[RootBody]</c>：作为正文来源（独占时原样发送，否则与其它正文成员合并）。</summary>
     public bool RootBody { get; set; }

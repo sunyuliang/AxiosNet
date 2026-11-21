@@ -479,10 +479,10 @@ internal readonly struct BodyEntry
     /// <summary>声明序号（三类来源共用一个自增计数）。</summary>
     public int Order { get; }
 
-    /// <summary>键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</summary>
+    /// <summary>键名（<c>[Body("名")]</c> &gt; <c>[JsonPropertyName]</c> &gt; 成员名）。</summary>
     public string Name { get; }
 
-    /// <summary>键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</summary>
+    /// <summary>键名是否已显式指定（<c>[Body("名")]</c> / <c>[JsonPropertyName]</c>）；是则不套 JSON 命名策略。</summary>
     public bool NameFromAttribute { get; }
 
     /// <summary>取值来源。</summary>

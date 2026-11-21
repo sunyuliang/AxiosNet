@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2866%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2721%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2877%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2732%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.7%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -273,7 +273,7 @@ multipart.Add(new StringContent("alice"), "name");
 await http.PostAsync("upload", multipart);          // passed through with its own headers and boundary
 ```
 
-- Field names come from property names / dictionary keys (respects `[JsonPropertyName]` / `[JsonIgnore]`); nesting becomes `meta[author]`, collections expand into repeated parts of the same name. Override the rule with `Serialization.FormFieldName`.
+- Field names come from property names / dictionary keys (respects `[JsonPropertyName]` / `[JsonIgnore]`); nesting becomes `meta[author]`, collections expand into repeated parts of the same name. Override the rule with `Serialization.FormFieldName` — it owns every form field name, including explicit `[Body("name")]` names (the JSON channel emits explicit names verbatim, so the two channels differ here).
 - A root-level file array has no key: set `FormFile.FieldName`.
 - Parts are disposed with the request (success / error / cancellation); read into `byte[]` first if you need to reuse them.
 - One `FormFile` / `Stream` can feed one part only: a stream reads forward once, so the second part would emit 0 bytes — assembly fails with `ERR_BAD_OPTION_VALUE`.
@@ -1706,16 +1706,16 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 | Static headers | `[Headers]` (class / interface / interface method) | `"Name: Value"`; name only means remove that header (a same-name `[Header]` property / parameter still writes it back); method level overrides interface level |
 | Form | `[Multipart]` + `[Part]` | The model itself is the form; `[Part]` overrides field name / filename / part type |
 | Body (top level) | `[RootBody]` | Contributes to the body; the whole body when it is the only source; merges into one layer with `[Body]` / undecorated members; a single `null` sends no body |
-| Body (key) | `[Body]` | One key in the aggregated body; repeatable; combines with `[Query]` / `[Header]` / `[Path]` |
+| Body (key) | `[Body]` / `[Body("name")]` | One key in the aggregated body; repeatable; an explicit name wins over `[JsonPropertyName]`; combines with `[Query]` / `[Header]` / `[Path]` |
 | Value formatting | `[Format]` (property / parameter) | Format string or static method; per element for collections, per value for dictionaries (see [Value formatting](#value-formatting)) |
 | Encoding | `[BodyContentType]` / `[QueryCollectionFormat]` / `[Stream]` (class / property) | Property level overrides class level; two explicit declarations with different values throw `ERR_BAD_OPTION_VALUE`; `[Multipart]` and `[BodyContentType]` are mutually exclusive |
 | Skip | `[ApiIgnore]` | Not bound at all |
 
 - **Default channel depends only on the HTTP method, never on the member type**: every undecorated member on POST / PUT / PATCH is aggregated into **one object** body keyed by member name (even a single member is wrapped, `{ "page": 2 }`); undecorated members on GET / HEAD / OPTIONS / DELETE and custom methods go to the query.
-- Aggregated body keys: `[JsonPropertyName]` first, otherwise the property name (the parameter name for interfaces); JSON then applies `PropertyNamingPolicy` (camelCase by default). Duplicate keys fail at build time.
+- Aggregated body keys: `[Body("name")]` first, then `[JsonPropertyName]`, otherwise the property name (the parameter name for interfaces); only the last one goes through `PropertyNamingPolicy` (camelCase by default), explicit names are used verbatim. Duplicate keys fail at build time.
 - Body merging depends only on the sources: `[Body]` and undecorated members are written under their keys in the same layer, while `[RootBody]` spreads structured values and writes scalar values under their key. A single body source (one `[RootBody]`) is sent as-is, unwrapped; as soon as a second source appears everything merges into one layer, where duplicate keys fail and key order follows declaration order. `[RootBody]` + `[Multipart]` fails at build time, and so does a merged body that would have to carry a file part (a `Stream` / `FormFile` / `HttpContent` member) — use `[Multipart]` instead, or keep it as the single `[RootBody]` and send it as-is.
 - Model-style requests do not need a separate `Payload` class just for the body: put the body members directly on the request class (POST / PUT / PATCH are body by default, so no `[Body]` is needed); interface-style methods necessarily take one strongly typed parameter.
-- An explicit `[Body]` forces the member into the aggregated body on any HTTP method; repeatable, same key rules, duplicate keys fail at build time. The same member may also carry `[Query]` / `[Header]` / `[Path]`, and its value is applied to each channel.
+- An explicit `[Body]` forces the member into the aggregated body on any HTTP method; repeatable, and `[Body("user_name")]` sets the key name directly; duplicate keys fail at build time. The same member may also carry `[Query]` / `[Header]` / `[Path]`, and its value is applied to each channel.
 - To opt out of the aggregated body: `[Query]` pulls a member back to the query, `[Header]` / `[HeaderCollection]` / `[Path]` change the channel, `[ApiIgnore]` sends nothing.
 - The aggregated body supports JSON and `application/x-www-form-urlencoded`; use `[Multipart]` for multipart and mark members with `[RootBody]` for XML / custom serializers (otherwise a clear build-time error is raised).
 - With zero undecorated members no body is sent; with at least one, an object is sent even when every value is `null` (keys are kept).
@@ -2719,15 +2719,15 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2665 / 2652 | `net8.0` / `net6.0` | 5317 |
+| `AxiosNet.Tests` (core + declarative) | 2676 / 2663 | `net8.0` / `net6.0` | 5339 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2866 / 2773** | | **5639** |
+| **Total** | **2877 / 2784** | | **5661** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **92.1%**, branch coverage **87.6%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **92.1%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

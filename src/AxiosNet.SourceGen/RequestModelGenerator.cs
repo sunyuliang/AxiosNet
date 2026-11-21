@@ -522,11 +522,16 @@ namespace AxiosNet.SourceGen
                     GetLocation(property)));
             }
 
-            var fieldName = FindInOverrideChain(property, wellKnown.JsonPropertyName) is { } jsonName
-                && jsonName.ConstructorArguments.Length == 1
-                && jsonName.ConstructorArguments[0].Value is string name
-                    ? name
-                    : property.Name;
+            // 字段名与「是否显式命名」必须同时得出：空串名字也原样使用，不能靠事后字符串比较反推。
+            string? explicitFieldName = null;
+            if (FindInOverrideChain(property, wellKnown.JsonPropertyName) is { ConstructorArguments.Length: 1 } jsonName
+                && jsonName.ConstructorArguments[0].Value is string jsonNameValue)
+            {
+                explicitFieldName = jsonNameValue;
+            }
+
+            var fieldName = explicitFieldName ?? property.Name;
+            var nameFromAttribute = explicitFieldName is not null;
 
             var formatExpression = BuildFormatExpression(
                 FindInOverrideChain(property, wellKnown.Format),
@@ -537,6 +542,7 @@ namespace AxiosNet.SourceGen
             return new RequestMemberInfo(
                 property.Name,
                 fieldName,
+                nameFromAttribute,
                 // 与反射的 DeclaringType.Name 一致：泛型类型带 arity（Base`1），非泛型就是简单名。
                 $"{property.ContainingType.MetadataName}.{property.Name}",
                 "typeof(" + TypeFormats.Display(property.Type) + ")",
@@ -595,6 +601,7 @@ namespace AxiosNet.SourceGen
                 header is null ? null : GetStringArgument(header, 0),
                 headerCollection is not null,
                 body is not null,
+                body is null ? null : GetStringArgument(body, 0),
                 rootBody is not null,
                 part is not null,
                 partName,

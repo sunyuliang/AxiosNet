@@ -57,11 +57,21 @@ public sealed class HeaderAttribute : Attribute
 
 /// <summary>
 /// 把属性 / 参数值作为请求体对象的一个键发送：正文为 <c>{ "键": 值 }</c>，可与 <see cref="QueryAttribute"/> / <see cref="HeaderAttribute"/> / <see cref="PathAttribute"/> 同用。
-/// 键名取 <c>[JsonPropertyName]</c>，否则成员名（再套 JSON 命名策略）；可标注多个，重复键在构建期报错。
+/// 可标注多个，重复键在构建期报错。
 /// </summary>
+/// <remarks>键名优先级：<see cref="Name"/> &gt; <c>[JsonPropertyName]</c> &gt; 成员名；未显式命名时套生效的 JSON 命名策略。</remarks>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class BodyAttribute : Attribute
 {
+    /// <summary>正文键名；空白表示回退 <c>[JsonPropertyName]</c> 或成员名。</summary>
+    public string Name { get; }
+
+    /// <summary>绑定到正文的一个键。</summary>
+    /// <param name="name">键名；省略或空白时取 <c>[JsonPropertyName]</c>，再回退属性名 / 参数名。</param>
+    public BodyAttribute(string name = "")
+    {
+        Name = name;
+    }
 }
 
 /// <summary>

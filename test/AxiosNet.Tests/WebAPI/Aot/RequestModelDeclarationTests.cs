@@ -1,7 +1,10 @@
+using System.Text.Json.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.Internal.Content;
 using AxiosNet.WebAPI;
+using AxiosNet.WebAPI.Attributes;
 using AxiosNet.WebAPI.Metadata;
+using AxiosNet.WebAPI.Reflection;
 
 namespace AxiosNet.Tests.WebAPI.Aot;
 
@@ -145,6 +148,41 @@ public sealed class RequestModelDeclarationTests
     }
 
     [Fact]
+    public void DeclaredSameNameJsonProperty_KeepsNameAndMarksItExplicit()
+    {
+        var declaration = RequestModelDeclarationReader.Read(typeof(DeclaredSameNameJsonPropertyRequest));
+        var member = Assert.Single(declaration.Members);
+
+        // 名字与属性名相同也仍是显式命名：不能靠字符串比较反推，否则会被命名策略再转一次。
+        Assert.Equal("Tag", member.FieldName);
+        Assert.True(member.NameFromAttribute);
+    }
+
+    [Fact]
+    public void DeclaredBodyName_IsReadAndKeepsItsOwnExplicitness()
+    {
+        var declaration = RequestModelDeclarationReader.Read(typeof(DeclaredBodyNameRequest));
+        var member = Assert.Single(declaration.Members);
+
+        Assert.True(member.Body);
+        Assert.Equal("user_name", member.BodyName);
+
+        // 名字来自 [Body("名")] 而不是 [JsonPropertyName]：两者在装配时各管一段，不能互相冒充。
+        Assert.False(member.NameFromAttribute);
+    }
+
+    [Fact]
+    public void DeclaredNullJsonPropertyName_FallsBackToPropertyName()
+    {
+        var declaration = RequestModelDeclarationReader.Read(typeof(DeclaredNullJsonPropertyRequest));
+        var member = Assert.Single(declaration.Members);
+
+        // 取不到名字就不算显式命名（与生成器同判据），否则 JIT 与 AOT 会发不同键名。
+        Assert.Equal("Tag", member.FieldName);
+        Assert.False(member.NameFromAttribute);
+    }
+
+    [Fact]
     public void MultipartDeclaration_BindsExplicitAndDefaultParts()
     {
         var metadata = RequestModelMetadata.Get(typeof(DeclaredMultipartRequest));
@@ -273,6 +311,27 @@ public sealed class DeclaredBlankStaticHeaderRequest;
 public sealed class DeclaredBadStaticHeaderRequest;
 
 public sealed class DeclaredDuplicatePathRequest;
+
+[Post("declared/same-name-json")]
+public sealed class DeclaredSameNameJsonPropertyRequest
+{
+    [JsonPropertyName("Tag")]
+    public string Tag { get; set; } = "t";
+}
+
+[Post("declared/body-name")]
+public sealed class DeclaredBodyNameRequest
+{
+    [Body("user_name")]
+    public string UserName { get; set; } = "n";
+}
+
+[Post("declared/null-json-name")]
+public sealed class DeclaredNullJsonPropertyRequest
+{
+    [JsonPropertyName(null!)]
+    public string Tag { get; set; } = "t";
+}
 
 public sealed class DeclaredIgnoreConflictRequest
 {

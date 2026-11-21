@@ -316,12 +316,18 @@ internal sealed class RequestModelMetadata
 
             if (member.RootBody)
             {
-                accumulator.AddRootBody(source, member.FieldName, member.FieldName != member.Name);
+                accumulator.AddRootBody(source, member.FieldName, member.NameFromAttribute);
             }
 
             if (member.Body)
             {
-                accumulator.AddBody(source, member.FieldName, member.FieldName != member.Name);
+                // 键名优先级：[Body("名")] > [JsonPropertyName] > 属性名；显式名字不再套 JSON 命名策略。
+                var explicitBodyName = string.IsNullOrWhiteSpace(member.BodyName) ? null : member.BodyName!.Trim();
+                accumulator.AddBody(
+                    source,
+                    member.FieldName,
+                    explicitBodyName,
+                    nameFromAttribute: explicitBodyName is not null || member.NameFromAttribute);
             }
 
             if (!member.HasAnyBinding)
@@ -341,7 +347,7 @@ internal sealed class RequestModelMetadata
 
                 // 无标注：默认通道由 HTTP 方法决定（body 方法 → 按键名聚合的对象；其余 → Query）。
                 // 键名优先 [JsonPropertyName]，否则属性名；显式改名不再套 JSON 命名策略。
-                accumulator.AddUnannotated(source, member.FieldName, member.FieldName != member.Name);
+                accumulator.AddUnannotated(source, member.FieldName, member.NameFromAttribute);
             }
             else if (member.Query)
             {

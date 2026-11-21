@@ -567,7 +567,7 @@ namespace AxiosNet.SourceGen
                                 TypeFormats.Display(parameter.Type),
                                 $"{symbol.Name}.{method.Name}.{ParameterName(parameter)}",
                                 null,
-                                false, false, null, false, null, false, null, false, false, false, false, null, null, null));
+                                false, false, null, false, null, false, null, false, false, null, false, false, null, null, null));
                             continue;
                         }
 
@@ -642,6 +642,7 @@ namespace AxiosNet.SourceGen
             var query = FindAttribute(attributes, wellKnown.Query);
             var header = FindAttribute(attributes, wellKnown.Header);
             var part = FindAttribute(attributes, wellKnown.Part);
+            var body = FindAttribute(attributes, wellKnown.Body);
             var rootBody = FindAttribute(attributes, wellKnown.RootBody);
             var ignore = FindAttribute(attributes, wellKnown.ApiIgnore) is not null;
 
@@ -684,7 +685,8 @@ namespace AxiosNet.SourceGen
                 header is not null,
                 header is null ? null : GetStringArgument(header, 0),
                 FindAttribute(attributes, wellKnown.HeaderCollection) is not null,
-                FindAttribute(attributes, wellKnown.Body) is not null,
+                body is not null,
+                body is null ? null : GetStringArgument(body, 0),
                 rootBody is not null,
                 part is not null,
                 part is null ? null : GetStringArgument(part, 0),

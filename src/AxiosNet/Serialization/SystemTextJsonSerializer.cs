@@ -96,7 +96,10 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         using (var writer = new Utf8JsonWriter(buffer, writerOptions))
         {
             writer.WriteStartObject();
-            var names = new HashSet<string>(StringComparer.Ordinal);
+            // 单成员且不展开时不可能出现重复键，省掉这一份集合。
+            var names = body.Members.Length > 1 || (body.Members.Length == 1 && body.Members[0].Spread)
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : null;
             foreach (var member in body.Members)
             {
                 if (member.Spread)
@@ -123,7 +126,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         AggregateBodyMember member,
         JsonSerializerOptions options,
         AxiosConfig config,
-        HashSet<string> names)
+        HashSet<string>? names)
     {
         if (member.Value is null)
         {
@@ -157,7 +160,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         }
     }
 
-    /// <summary>聚合正文的键名：显式 [JsonPropertyName] 原样；否则套生效的命名策略（默认 Web 的 camelCase）。</summary>
+    /// <summary>聚合正文的键名：显式名字（<c>[Body("名")]</c> / <c>[JsonPropertyName]</c>）原样；否则套生效的命名策略（默认 Web 的 camelCase）。</summary>
     private static string ResolveAggregateName(AggregateBodyMember member, JsonSerializerOptions options)
         => member.NameFromAttribute || options.PropertyNamingPolicy is null
             ? member.Name

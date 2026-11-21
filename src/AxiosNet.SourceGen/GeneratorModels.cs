@@ -20,6 +20,7 @@ namespace AxiosNet.SourceGen
     /// <param name="HeaderName">请求头名；null 表示沿用字段名。</param>
     /// <param name="HeaderCollection">整个成员当成一个多值头（集合元素逐项写入同一头）。</param>
     /// <param name="Body">是否作为请求体对象的一个键（可多个）。</param>
+    /// <param name="BodyName"><c>[Body("名")]</c> 显式键名；null 表示沿用字段名。</param>
     /// <param name="RootBody">是否作为正文来源（独占时原样发送，与其它正文成员一起时合并到同一层）。</param>
     /// <param name="Part">是否作为 <c>multipart/form-data</c> 的一个部件。</param>
     /// <param name="PartName">部件名；null 表示沿用字段名。</param>
@@ -34,6 +35,7 @@ namespace AxiosNet.SourceGen
         string? HeaderName,
         bool HeaderCollection,
         bool Body,
+        string? BodyName,
         bool RootBody,
         bool Part,
         string? PartName,
@@ -43,6 +45,7 @@ namespace AxiosNet.SourceGen
     /// <summary>请求模型的一个属性（已按反射语义解析：override 继承、[ApiIgnore]、[JsonPropertyName]）。</summary>
     /// <param name="Name">CLR 属性名，元数据里的成员键。</param>
     /// <param name="FieldName">展平后使用的字段名（<c>[JsonPropertyName]</c> 优先，否则属性名）。</param>
+    /// <param name="NameFromAttribute">字段名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
     /// <param name="Description">错误消息里的定位文本（<c>声明类型.成员名</c>），与反射侧 <c>DeclaringType.Name</c> 口径一致。</param>
     /// <param name="TypeOfExpression"><c>typeof(…)</c> 的源码文本，直接拼进生成代码。</param>
     /// <param name="GetterExpression">直接取值的静态 lambda 文本；运行期不碰 <c>PropertyInfo</c>。</param>
@@ -56,6 +59,7 @@ namespace AxiosNet.SourceGen
     internal sealed record RequestMemberInfo(
         string Name,
         string FieldName,
+        bool NameFromAttribute,
         string Description,
         string TypeOfExpression,
         string GetterExpression,
@@ -123,7 +127,7 @@ namespace AxiosNet.SourceGen
     /// <param name="Header">是否作为请求头写出。</param>
     /// <param name="HeaderName">请求头名；null 表示沿用参数名。</param>
     /// <param name="HeaderCollection">整个参数当成一个多值头。</param>
-    /// <param name="Body">是否作为请求体对象的一个键（可多个）。</param>
+    /// <param name="Body">是否作为请求体对象的一个键（可多个）。</param><param name="BodyName"><c>[Body("名")]</c> 显式键名；null 沿用参数名。</param>
     /// <param name="RootBody">是否作为正文来源（独占时原样发送，与其它正文成员一起时合并到同一层）。</param>
     /// <param name="Part">是否作为 <c>multipart/form-data</c> 的一个部件。</param>
     /// <param name="PartName">部件名；null 表示沿用参数名。</param>
@@ -144,6 +148,7 @@ namespace AxiosNet.SourceGen
         string? HeaderName,
         bool HeaderCollection,
         bool Body,
+        string? BodyName,
         bool RootBody,
         bool Part,
         string? PartName,

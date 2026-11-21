@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Text.Json.Serialization;
 using AxiosNet.Reflection;
 using AxiosNet.WebAPI.Attributes;
 
@@ -89,6 +90,8 @@ internal static class RequestModelDeclarationReader
             {
                 Name = property.Name,
                 FieldName = ReflectionCache.GetFieldName(property),
+                // 与源生成器同判据：只有确实取到名字才算显式命名；[JsonPropertyName(null)] 按未命名处理。
+                NameFromAttribute = property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name is not null,
                 ValueType = property.PropertyType,
                 GetValue = target => PropertyAccessor.GetValue(property, target),
                 Description = $"{property.DeclaringType?.Name ?? requestType.Name}.{property.Name}"
@@ -159,9 +162,10 @@ internal static class RequestModelDeclarationReader
             member.PartContentType = part.ContentType;
         }
 
-        if (property.GetCustomAttribute<BodyAttribute>(inherit) is not null)
+        if (property.GetCustomAttribute<BodyAttribute>(inherit) is { } body)
         {
             member.Body = true;
+            member.BodyName = body.Name;
         }
 
         if (property.GetCustomAttribute<RootBodyAttribute>(inherit) is not null)

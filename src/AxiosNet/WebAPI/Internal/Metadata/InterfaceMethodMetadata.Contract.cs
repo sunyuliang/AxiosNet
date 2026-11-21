@@ -141,7 +141,9 @@ internal sealed partial class InterfaceMethodMetadata
 
             if (parameter.Body)
             {
-                accumulator.AddBody(source, parameter.Name, nameFromAttribute: false);
+                // 接口参数没有 [JsonPropertyName]：键名只取 [Body("名")] 或参数名。
+                var explicitBodyName = string.IsNullOrWhiteSpace(parameter.BodyName) ? null : parameter.BodyName!.Trim();
+                accumulator.AddBody(source, parameter.Name, explicitBodyName, nameFromAttribute: explicitBodyName is not null);
             }
 
             if (!parameter.HasAnyBinding)

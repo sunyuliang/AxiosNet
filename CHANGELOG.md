@@ -8,10 +8,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- `[Body("名")]`：显式指定聚合正文的键名，优先级高于 `[JsonPropertyName]`；省略或空白时回退 `[JsonPropertyName]`、再回退成员名。`[RootBody]` 不接受名字（它描述的是整个正文，不是某一个键）。
+
 ### Changed (Breaking)
 
+- 声明式元数据的公开签名（源码兼容、二进制不兼容，重编译即可）：
+  - `BodyAttribute()` → `BodyAttribute(string name = "")`，并新增只读属性 `Name`；
+  - `InterfaceParameterBuilder.Body()` / `RequestModelMemberBuilder.Body()` → `Body(string? name = null)`；
+  - `RequestModelMemberBuilder.FieldName(string)` → `FieldName(string, bool nameFromAttribute = true)`：显式调用即视为显式命名，聚合正文不再套命名策略（此前按「字段名与成员名是否相同」推断）。
 - 声明式 API 的默认参数绑定改为**只看 HTTP 方法、不看成员类型**：
-  - POST / PUT / PATCH 上的全部未标注属性 / 参数按键名聚合成**一个对象**作为请求体；1 个成员也加壳（`{ "page": 2 }`）。键名 `[JsonPropertyName]` 优先，否则成员名（接口式为参数名），JSON 再套 `PropertyNamingPolicy`（默认 camelCase）；多个成员键名重复在构建期报错。此前只有「恰好 1 个非标量成员」才被推断为正文，且正文是该值本身、不加壳。
+  - POST / PUT / PATCH 上的全部未标注属性 / 参数按键名聚合成**一个对象**作为请求体；1 个成员也加壳（`{ "page": 2 }`）。键名 `[Body("名")]` 优先，其次 `[JsonPropertyName]`，否则成员名（接口式为参数名）；只有成员名才套 `PropertyNamingPolicy`（默认 camelCase）；多个成员键名重复在构建期报错。此前只有「恰好 1 个非标量成员」才被推断为正文，且正文是该值本身、不加壳。
   - GET / HEAD / OPTIONS / DELETE 及其它方法上的未标注成员保持 Query（与是否标注 `[RootBody]` 无关）；显式 `[RootBody]` 独占正文时原样发送、不加壳。
   - `[Body]` 的语义改为「聚合正文里的一个键」：可标注多个，可与 `[Query]` / `[Header]` / `[Path]` 同用，重复键在构建期报错；任何 HTTP 方法上都强制进正文。
   - 新的 `[RootBody]` 承接原来 `[Body]` 的整份正文语义：独占正文时原样发送；与 `[Body]` / 未标注成员（以及其它 `[RootBody]`）一起时合并到同一层（`[RootBody]` 结构化值展开属性、其余值按键写入，`[Body]` / 未标注成员按键写入），重复键报错。与 `[Multipart]` 互斥。旧的 `[Body]` 原始正文写法需迁移为 `[RootBody]`。
@@ -28,6 +36,10 @@
 - 表单形态的合并正文按**线上形态**（百分号编码之后）比较键名：非 ASCII 键名不再绕过重复键检查、把两个同名键发出去。
 - 合并正文装配失败时，错误消息给的是键名而不是内部类型名，并按 `FormFile` 契约回收成员里的流 / 文件内容。
 - 合并成对象的正文装不下文件部件：`Stream` / `FormFile` / `HttpContent` 成员一旦需要合并到同一层就在构建期报错并指向 `[Multipart]`（此前直到序列化阶段才失败）。
+- 显式声明的键名不再被 JSON 命名策略二次改写：`[JsonPropertyName("Id")]` 与属性名完全相同时，此前会被转成 `id`，与响应侧（同一特性按 `Id` 反序列化）不一致；`[Body]` / `[RootBody]` / 未标注成员三条通路现在统一按「声明来自特性」判定，不再靠「字段名 != 成员名」的字符串比较反推。
+- `[Body]` 与 `[RootBody]` 标在同一个成员上时在构建期报错：此前会把这个值同时展开一次、再按键写一次，正文翻倍且可能自相矛盾。
+- 仅大小写不同的正文键在构建期报错：此前两个键都会发出去，而多数 JSON 反序列化默认大小写不敏感，后者会静默覆盖前者。
+- `[JsonPropertyName(null)]` 在 JIT 与 AOT 下判定一致：此前反射侧按「特性存在」、生成器按「取到名字」判定是否显式命名，同一个模型在两种宿主下会发出不同键名。
 
 ## [1.7.1] - 2026-11-18
 

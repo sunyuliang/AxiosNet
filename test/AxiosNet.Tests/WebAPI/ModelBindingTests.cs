@@ -251,6 +251,86 @@ public sealed class ModelBindingTests
     }
 
     [Fact]
+    public async Task PostModel_BodyName_OverridesJsonPropertyName_AndSkipsNamingPolicy()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new BodyNameRequest());
+
+        var received = Assert.Single(server.Received);
+
+        // user_name 压过 [JsonPropertyName]；UserId 原样保留（显式名字不套 camelCase）。
+        Assert.Equal("{\"user_name\":\"n\",\"UserId\":2}", Encoding.UTF8.GetString(received.Body));
+    }
+
+    [Fact]
+    public async Task PostModel_BodyName_BlankFallsBackToJsonPropertyName()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new BlankBodyNameRequest());
+
+        var received = Assert.Single(server.Received);
+        Assert.Equal("{\"jp\":1}", Encoding.UTF8.GetString(received.Body));
+    }
+
+    [Fact]
+    public async Task PostModel_BodyName_DuplicateKey_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new DuplicateBodyNameRequest()));
+
+        Assert.Contains("重复键", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_BodyAndRootBody_OnSameMember_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // 同一份值既展开又按键写一次，正文会翻倍且可能自相矛盾。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new BodyAndRootBodySameMemberRequest()));
+
+        Assert.Contains("[Body]", ex.Message);
+        Assert.Contains("[RootBody]", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_BodyNamesDifferingOnlyInCase_AreRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new CaseDifferingBodyNameRequest()));
+
+        Assert.Contains("仅大小写不同", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_JsonPropertyName_SameAsPropertyName_IsNotRecased()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // 显式 [Body] 通路与未标注默认正文通路各一条：名字与属性名完全相同时也必须保留原样。
+        await client.RequestAsync(new BodySameNameJsonPropertyRequest());
+        await client.RequestAsync(new UnannotatedSameNameJsonPropertyRequest());
+
+        Assert.Collection(
+            server.Received,
+            first => Assert.Equal("{\"Tag\":\"t\"}", Encoding.UTF8.GetString(first.Body)),
+            second => Assert.Equal("{\"Tag\":\"t\"}", Encoding.UTF8.GetString(second.Body)));
+    }
+
+    [Fact]
     public async Task PostModel_AggregateBody_FormDuplicateKey_IsRejected()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
@@ -1390,6 +1470,68 @@ public sealed class ModelBindingTests
 
         [JsonPropertyName("d")]
         public int Fourth { get; set; } = 4;
+    }
+
+    [Post("items")]
+    private sealed class BodyNameRequest : IApiRequest<Person>
+    {
+        [Body("user_name")]
+        [JsonPropertyName("ignored")]
+        public string UserName { get; set; } = "n";
+
+        [Body("UserId")]
+        public int Id { get; set; } = 2;
+    }
+
+    [Post("items")]
+    private sealed class BlankBodyNameRequest : IApiRequest<Person>
+    {
+        [Body("")]
+        [JsonPropertyName("jp")]
+        public int Value { get; set; } = 1;
+    }
+
+    [Post("items")]
+    private sealed class DuplicateBodyNameRequest : IApiRequest<Person>
+    {
+        [Body("same")]
+        public int First { get; set; } = 1;
+
+        [Body("same")]
+        public int Second { get; set; } = 2;
+    }
+
+    [Post("items")]
+    private sealed class BodyAndRootBodySameMemberRequest : IApiRequest<Person>
+    {
+        [Body]
+        [RootBody]
+        public Person Payload { get; set; } = new("p", 1);
+    }
+
+    [Post("items")]
+    private sealed class CaseDifferingBodyNameRequest : IApiRequest<Person>
+    {
+        [Body("Tag")]
+        public string First { get; set; } = "a";
+
+        [Body("tag")]
+        public string Second { get; set; } = "b";
+    }
+
+    [Post("items")]
+    private sealed class BodySameNameJsonPropertyRequest : IApiRequest<Person>
+    {
+        [Body]
+        [JsonPropertyName("Tag")]
+        public string Tag { get; set; } = "t";
+    }
+
+    [Post("items")]
+    private sealed class UnannotatedSameNameJsonPropertyRequest : IApiRequest<Person>
+    {
+        [JsonPropertyName("Tag")]
+        public string Tag { get; set; } = "t";
     }
 
     [Post("items")]

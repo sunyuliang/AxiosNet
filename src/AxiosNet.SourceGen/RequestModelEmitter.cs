@@ -109,7 +109,11 @@ namespace AxiosNet.SourceGen
                 .Append(member.GetterExpression)
                 .AppendLine(", static m =>");
             builder.AppendLine("                    {");
-            builder.Append("                        m.FieldName(").Append(Literal(member.FieldName)).AppendLine(");");
+            // 只有显式命名（[JsonPropertyName]）才需要写出字段名；未显式时默认值就是成员名，且参与命名策略。
+            if (member.NameFromAttribute)
+            {
+                builder.Append("                        m.FieldName(").Append(Literal(member.FieldName)).AppendLine(");");
+            }
 
             if (member.ContentType is not null)
             {
@@ -166,7 +170,7 @@ namespace AxiosNet.SourceGen
 
                 if (binding.Body)
                 {
-                    builder.AppendLine("                        m.Body();");
+                    EmitOptionalName(builder, "Body", binding.BodyName);
                 }
 
                 if (binding.RootBody)

@@ -109,6 +109,13 @@ public interface IMultipleBodyApi
         [RootBody] Person payload,
         string? tag = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>合法：[Body] 显式名字压过参数名。</summary>
+    [Post("z")]
+    Task<AxiosResponse<Person>> PostNamedBodyAsync(
+        [RootBody] Person payload,
+        [Body("tag_name")] string? tag = null,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IWrongReturnApi

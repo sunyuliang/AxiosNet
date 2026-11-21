@@ -106,9 +106,10 @@ internal sealed class BindingAccumulator
 
     /// <summary><see cref="BodyAttribute"/>：登记为请求体对象的一个键；键名重复在 <see cref="Build"/> 报错。</summary>
     /// <param name="source">取值来源。</param>
-    /// <param name="fieldName">键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
-    /// <param name="nameFromAttribute">键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</param>
-    public void AddBody(IValueSource source, string fieldName, bool nameFromAttribute)
+    /// <param name="fieldName">回退键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</param>
+    /// <param name="explicitName"><c>[Body]</c> 显式声明的键名；null 或空白表示回退 <paramref name="fieldName"/>。</param>
+    /// <param name="nameFromAttribute">键名是否已显式确定（是则不套 JSON 命名策略）。</param>
+    public void AddBody(IValueSource source, string fieldName, string? explicitName, bool nameFromAttribute)
     {
         if (source.Format is not null)
         {
@@ -123,7 +124,7 @@ internal sealed class BindingAccumulator
             EnsureFormat(source, "Body");
         }
 
-        _bodyMembers.Add((_bodyOrder++, string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName, nameFromAttribute, source));
+        _bodyMembers.Add((_bodyOrder++, ResolveName(explicitName ?? string.Empty, string.IsNullOrWhiteSpace(fieldName) ? source.Name : fieldName), nameFromAttribute, source));
     }
 
     /// <summary><see cref="RootBodyAttribute"/>：整个请求体的一个来源；多个时合并到同一层。</summary>
@@ -221,9 +222,11 @@ internal sealed class BindingAccumulator
         }
     }
 
-    /// <summary>完成校验并生成计划：正文归并（RootBody / Body + 未标注）→ 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
+    /// <summary>完成校验并生成计划：正文来源互斥 → 正文归并（RootBody / Body + 未标注）→ 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
     public BindingPlan Build(HttpMethod method, string pathTemplate, bool allowDefaultBody)
     {
+        ValidateBodySources();
+
         // 显式 [Body] 在任何方法上都进正文；body 方法上的未标注成员只看方法就并入正文，
         // 不因是否已有 [RootBody] 而改道 Query——默认通道只由 HTTP 方法决定。
         var entries = new List<BodyEntry>(_bodyMembers.Count + _unannotated.Count + _rootBodies.Count);
@@ -280,12 +283,30 @@ internal sealed class BindingAccumulator
             [.. entries]);
     }
 
+    /// <summary>同一个值不能既作为正文的一个键、又作为整份正文：两条通路会各自写一次。</summary>
+    private void ValidateBodySources()
+    {
+        foreach (var member in _bodyMembers)
+        {
+            foreach (var root in _rootBodies)
+            {
+                if (ReferenceEquals(root.Source, member.Source))
+                {
+                    throw new InvalidOperationException(
+                        $"{_owner} 的{_memberKind} {member.Source.Name} 同时标注了 [Body] 与 [RootBody]："
+                        + "同一个值要么作为正文的一个键，要么作为整份正文，不能两者都是。");
+                }
+            }
+        }
+    }
+
     /// <summary>正文合并的构建期校验：同层键名唯一、聚合正文装不下文件部件。</summary>
     /// <param name="entries">按声明顺序排好的正文来源。</param>
     private void ValidateBodyEntries(List<BodyEntry> entries)
     {
         // 结构化 [RootBody] 的属性名要等序列化才知道，这里只查能确定的键（[Body] / 未标注 / 标量 [RootBody]）。
         var names = new HashSet<string>(StringComparer.Ordinal);
+        var caseInsensitiveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
         {
             if (entry.IsRootBody && entry.Spread)
@@ -298,6 +319,13 @@ internal sealed class BindingAccumulator
                 throw new InvalidOperationException(
                     $"{_owner} 有多个{_memberKind}的正文键名都是 \"{entry.Name}\"：合并到同一层后不能有重复键。"
                     + "请改名，或把 [RootBody] 换成 [Body] 包成独立键。");
+            }
+
+            if (!caseInsensitiveNames.Add(entry.Name))
+            {
+                throw new InvalidOperationException(
+                    $"{_owner} 的正文键名 \"{entry.Name}\" 与另一个键仅大小写不同："
+                    + "多数 JSON 反序列化默认大小写不敏感，两个键会落到同一个成员上、后者覆盖前者。请改名。");
             }
         }
 

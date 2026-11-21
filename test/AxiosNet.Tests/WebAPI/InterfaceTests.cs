@@ -71,6 +71,23 @@ public sealed class InterfaceTests
     }
 
     [Fact]
+    public async Task Post_BodyWithExplicitName_UsesThatKey()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = CreateClient(server);
+
+        await client.Create<IMultipleBodyApi>().PostNamedBodyAsync(new Person("n", 1), "t");
+
+        var received = Assert.Single(server.Received);
+
+        // 接口参数没有 [JsonPropertyName]：键名只取 [Body("名")]，否则参数名。
+        var json = JsonSerializer.Deserialize<JsonElement>(received.Body);
+        Assert.Equal("n", json.GetProperty("name").GetString());
+        Assert.Equal("t", json.GetProperty("tag_name").GetString());
+        Assert.False(json.TryGetProperty("tag", out _));
+    }
+
+    [Fact]
     public async Task Post_RootBodyWithUnannotatedParam_MergesIntoBody()
     {
         await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));

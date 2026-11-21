@@ -298,7 +298,7 @@ namespace AxiosNet.SourceGen
 
                     if (parameter.Body)
                     {
-                        builder.AppendLine("                        .Body()");
+                        builder.Append("                        .Body(").Append(OptionalLiteral(parameter.BodyName)).AppendLine(")");
                     }
 
                     if (parameter.RootBody)

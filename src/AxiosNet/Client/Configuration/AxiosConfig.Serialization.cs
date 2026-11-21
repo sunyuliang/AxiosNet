@@ -74,6 +74,7 @@ public sealed partial class AxiosConfig
         }
 
         /// <summary>表单 / multipart 字段名生成规则：参数为（父级前缀，键名），默认 <c>prefix[key]</c>；表单不走序列化器，这是字段命名的唯一入口。</summary>
+        /// <remarks>该规则接管表单通道的全部字段名，包括 <c>[Body("名")]</c> / <c>[JsonPropertyName]</c> 给出的显式名字（JSON 通道对显式名字原样直出，两者口径不同）。</remarks>
         public Func<string?, string, string>? FormFieldName
         {
             get => _valueTextState?.FormFieldName;

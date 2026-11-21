@@ -23,8 +23,8 @@ namespace AxiosNet.Generated
         global::System.Threading.Tasks.Task<global::AxiosNet.AxiosResponse<global::AxiosNet.SnapshotProbe.SnapshotItem>> global::AxiosNet.SnapshotProbe.ISnapshotApi.GetAsync(int p0, global::System.Threading.CancellationToken p1)
             => __method0.SendResponseAsync<global::AxiosNet.SnapshotProbe.SnapshotItem>(_client, new object[] { p0, p1 }, p1);
 
-        global::System.Threading.Tasks.Task<global::AxiosNet.SnapshotProbe.SnapshotItem> global::AxiosNet.SnapshotProbe.ISnapshotApi.CreateAsync(global::AxiosNet.SnapshotProbe.SnapshotItem p0, global::System.Threading.CancellationToken p1)
-            => __method1.SendDataAsync<global::AxiosNet.SnapshotProbe.SnapshotItem>(_client, new object[] { p0, p1 }, p1);
+        global::System.Threading.Tasks.Task<global::AxiosNet.SnapshotProbe.SnapshotItem> global::AxiosNet.SnapshotProbe.ISnapshotApi.CreateAsync(global::AxiosNet.SnapshotProbe.SnapshotItem p0, string p1, global::System.Threading.CancellationToken p2)
+            => __method1.SendDataAsync<global::AxiosNet.SnapshotProbe.SnapshotItem>(_client, new object[] { p0, p1, p2 }, p2);
     }
 
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("AxiosNet.SourceGen", "1.7.1")]
@@ -47,7 +47,9 @@ namespace AxiosNet.Generated
                     b.Method("CreateAsync", "POST", "items")
                         .Parameter(0, "item", typeof(global::AxiosNet.SnapshotProbe.SnapshotItem))
                         .RootBody()
-                        .Parameter(1, "cancellationToken", typeof(global::System.Threading.CancellationToken))
+                        .Parameter(1, "tag", typeof(string))
+                        .Body("tag_name")
+                        .Parameter(2, "cancellationToken", typeof(global::System.Threading.CancellationToken))
                         .Unannotated()
                         .ReturnsData(typeof(global::AxiosNet.SnapshotProbe.SnapshotItem));
                 });
@@ -76,19 +78,20 @@ namespace AxiosNet.Generated
                     b.ImplementsApiRequest();
                     b.Member("Id", typeof(int), static o => ((global::AxiosNet.SnapshotProbe.SnapshotRequest)o).Id, static m =>
                     {
-                        m.FieldName("Id");
                         m.Path();
                     }, "SnapshotRequest.Id");
                     b.Member("Search", typeof(string), static o => ((global::AxiosNet.SnapshotProbe.SnapshotRequest)o).Search, static m =>
                     {
-                        m.FieldName("Search");
                         m.Query("q");
                     }, "SnapshotRequest.Search");
                     b.Member("Token", typeof(string), static o => ((global::AxiosNet.SnapshotProbe.SnapshotRequest)o).Token, static m =>
                     {
-                        m.FieldName("Token");
                         m.Header("X-Token");
                     }, "SnapshotRequest.Token");
+                    b.Member("Tag", typeof(string), static o => ((global::AxiosNet.SnapshotProbe.SnapshotRequest)o).Tag, static m =>
+                    {
+                        m.Body("tag_name");
+                    }, "SnapshotRequest.Tag");
                 });
         }
     }
@@ -137,6 +140,7 @@ namespace AxiosNet.Generated
                     b.Member("Id", "Id", false, static x => (object)((global::AxiosNet.SnapshotProbe.SnapshotRequest)x).Id);
                     b.Member("Search", "Search", false, static x => (object)((global::AxiosNet.SnapshotProbe.SnapshotRequest)x).Search);
                     b.Member("Token", "Token", false, static x => (object)((global::AxiosNet.SnapshotProbe.SnapshotRequest)x).Token);
+                    b.Member("Tag", "Tag", false, static x => (object)((global::AxiosNet.SnapshotProbe.SnapshotRequest)x).Tag);
                 });
         }
     }

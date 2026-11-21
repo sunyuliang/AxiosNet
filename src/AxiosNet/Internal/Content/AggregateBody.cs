@@ -52,7 +52,7 @@ internal readonly struct AggregateBodyMember
         Spread = spread;
     }
 
-    /// <summary>JSON / 表单里的键名（[JsonPropertyName] 优先，否则成员名）。</summary>
+    /// <summary>JSON / 表单里的键名（<c>[Body("名")]</c> &gt; <c>[JsonPropertyName]</c> &gt; 成员名）。</summary>
     public string Name { get; }
 
     /// <summary>成员的原始值；<c>null</c> 在 JSON 里照样输出 <c>null</c>。</summary>
@@ -61,7 +61,7 @@ internal readonly struct AggregateBodyMember
     /// <summary>成员的声明类型：AOT 下按它解析 <c>JsonTypeInfo</c>，避免合成字典缺元数据。</summary>
     public Type ValueType { get; }
 
-    /// <summary>键名是否来自 <c>[JsonPropertyName]</c>（是则不套 <c>PropertyNamingPolicy</c>）。</summary>
+    /// <summary>键名是否已显式指定（<c>[Body("名")]</c> / <c>[JsonPropertyName]</c>）；是则不套 <c>PropertyNamingPolicy</c>。</summary>
     public bool NameFromAttribute { get; }
 
     /// <summary>成员级 <c>[Format]</c>；<c>null</c> 表示走通道默认。</summary>
