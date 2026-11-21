@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using System.Text;
+using System.Text.RegularExpressions;
 using AxiosNet.Metadata;
 using AxiosNet.SourceGen;
 using AxiosNet.WebAPI.Metadata;
@@ -842,7 +843,7 @@ public sealed class RequestModelGeneratorTests
 
     /// <summary>
     /// 生成器快照：把一次编译产出的全部源码逐字节钉住。生成代码是对外契约（用户会读它、发布说明会引用它），
-    /// 改动就该出现在 diff 里，而不是悄悄变了没人发现。
+    /// 改动就该出现在 diff 里，而不是悄悄变了没人发现。<c>[GeneratedCode]</c> 里的生成器版本比对前归一成 <c>&lt;version&gt;</c>。
     /// 更新基线：<c>AXIOS_UPDATE_SNAPSHOTS=1 dotnet test --filter GeneratedSources_MatchSnapshot</c>
     /// </summary>
     [Fact]
@@ -893,8 +894,15 @@ public sealed class RequestModelGeneratorTests
 
         // 统一成 LF：基线文件在 Windows 上会被 core.autocrlf 转成 CRLF，比对前两边都得归一，
         // 否则用例只在「谁的换行恰好一致」时通过。
-        return builder.ToString().Replace("\r\n", "\n");
+        var text = builder.ToString().Replace("\r\n", "\n");
+
+        // [GeneratedCode] 的生成器版本归一成占位符：基线只钉生成内容，不钉版本号。
+        return GeneratedCodeVersionPattern.Replace(text, "\"AxiosNet.SourceGen\", \"<version>\"");
     }
+
+    /// <summary>匹配 <c>[GeneratedCode("AxiosNet.SourceGen", "版本")]</c> 里的版本实参。</summary>
+    private static readonly Regex GeneratedCodeVersionPattern =
+        new("\"AxiosNet.SourceGen\", \"[^\"]*\"", RegexOptions.Compiled);
 
     private static string SnapshotPath()
     {

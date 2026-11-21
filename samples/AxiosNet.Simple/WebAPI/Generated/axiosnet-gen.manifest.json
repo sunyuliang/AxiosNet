@@ -1,5 +1,5 @@
 {
-  "generator": "axiosnet-gen/1.7.1",
+  "generator": "axiosnet-gen/1.7.2",
   "files": [
     "AuthRequests.g.cs",
     "FilesRequests.g.cs",

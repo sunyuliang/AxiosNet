@@ -10,7 +10,7 @@ namespace AxiosNet.Cli;
 /// <summary>命令行主流程：读文档 → 归一化 → 读成 IR → 生成 → 落地 → 报告。</summary>
 internal static class OpenApiGenerator
 {
-    /// <summary>工具版本：取程序集 InformationalVersion，并去掉 SourceLink 追加的 <c>+commit</c> 后缀；取不到时退回程序集版本或 <c>1.7.1</c>。</summary>
+    /// <summary>工具版本：取程序集 InformationalVersion，并去掉 SourceLink 追加的 <c>+commit</c> 后缀；取不到时退回程序集版本，仍取不到为 <c>0.0.0</c>。</summary>
     public static string Version
     {
         get
@@ -23,7 +23,7 @@ internal static class OpenApiGenerator
                 return plus >= 0 ? informational[..plus] : informational;
             }
 
-            return assembly.GetName().Version?.ToString(3) ?? "1.7.1";
+            return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
         }
     }
 
@@ -61,7 +61,7 @@ internal static class OpenApiGenerator
         }
 
         // 5) 排版：IR → 确定性的 C# 源码文件列表。
-        var emitter = new CSharpEmitter(spec, options, version);
+        var emitter = new CSharpEmitter(spec, options);
         var files = emitter.Emit().ToList();
 
         // --report 会写文件：路径与生成产物（含清单）撞名时先拦下来，
