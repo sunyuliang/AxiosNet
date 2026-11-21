@@ -97,8 +97,9 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         {
             writer.WriteStartObject();
             // 单成员且不展开时不可能出现重复键，省掉这一份集合。
+            // 大小写不敏感：JSON 反序列化默认如此，仅大小写不同的两个键会落到同一个成员上。
             var names = body.Members.Length > 1 || (body.Members.Length == 1 && body.Members[0].Spread)
-                ? new HashSet<string>(StringComparer.Ordinal)
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 : null;
             foreach (var member in body.Members)
             {
@@ -109,7 +110,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
                 }
 
                 var name = ResolveAggregateName(member, options);
-                AggregateKeys.EnsureUnique(names, name, config);
+                AggregateKeys.EnsureUnique(names, name, config, ignoreCase: true);
                 writer.WritePropertyName(name);
                 WriteAggregateValue(writer, member, options, config);
             }
@@ -146,7 +147,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         if (root.ValueKind != JsonValueKind.Object)
         {
             var name = ResolveAggregateName(member, options);
-            AggregateKeys.EnsureUnique(names, name, config);
+            AggregateKeys.EnsureUnique(names, name, config, ignoreCase: true);
             writer.WritePropertyName(name);
             root.WriteTo(writer);
             return;
@@ -154,7 +155,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
         foreach (var property in root.EnumerateObject())
         {
-            AggregateKeys.EnsureUnique(names, property.Name, config);
+            AggregateKeys.EnsureUnique(names, property.Name, config, ignoreCase: true);
             writer.WritePropertyName(property.Name);
             property.Value.WriteTo(writer);
         }

@@ -204,7 +204,7 @@ internal sealed partial class InterfaceMethodMetadata
                 $"接口 {interfaceType.Name} 的 {methodName} 的 [QueryCollectionFormat] 集合格式值 {(int)collectionFormat} 无效：请使用 AxiosCollectionFormat 的已定义值。");
         }
 
-        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart);
+        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart, contentType);
 
         var shape = declaration.ReturnShape;
         if (shape == InterfaceReturnShape.Unsupported)

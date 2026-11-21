@@ -63,11 +63,11 @@ public sealed class HeaderAttribute : Attribute
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, Inherited = true, AllowMultiple = false)]
 public sealed class BodyAttribute : Attribute
 {
-    /// <summary>正文键名；空白表示回退 <c>[JsonPropertyName]</c> 或成员名。</summary>
+    /// <summary>正文键名；空白或 <c>null</c> 表示回退 <c>[JsonPropertyName]</c> 或成员名。</summary>
     public string Name { get; }
 
     /// <summary>绑定到正文的一个键。</summary>
-    /// <param name="name">键名；省略或空白时取 <c>[JsonPropertyName]</c>，再回退属性名 / 参数名。</param>
+    /// <param name="name">键名；省略、空白或 <c>null</c> 时取 <c>[JsonPropertyName]</c>，再回退属性名 / 参数名。</param>
     public BodyAttribute(string name = "")
     {
         Name = name;

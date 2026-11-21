@@ -300,7 +300,7 @@ internal sealed class RequestModelMetadata
                 var explicitName = DeclarationNormalization.OptionalPartValue(member.PartName, display, nameof(PartAttribute.Name));
 
                 // 默认名走 [JsonPropertyName] / 属性名，与 builder 展平嵌套对象时的命名规则一致
-                var name = explicitName ?? member.FieldName;
+                var name = explicitName ?? DefaultPartName(member);
                 if (!seenPartNames.Add(name))
                 {
                     throw DuplicateBinding(declaration.ModelType, name, "Part");
@@ -335,7 +335,7 @@ internal sealed class RequestModelMetadata
                 if (isMultipart)
                 {
                     // multipart 模型：无标注属性默认按部件绑定（名字 = [JsonPropertyName] 或属性名），不参与默认通道判定
-                    var partName = member.FieldName;
+                    var partName = DefaultPartName(member);
                     if (!seenPartNames.Add(partName))
                     {
                         throw DuplicateBinding(declaration.ModelType, partName, "Part");
@@ -364,7 +364,7 @@ internal sealed class RequestModelMetadata
                 + "multipart 模型的请求体由全部属性装配，两者互斥。");
         }
 
-        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart);
+        var plan = accumulator.Build(method, path, allowDefaultBody: !isMultipart, contentType);
 
         return new RequestModelMetadata(method, path, plan)
         {
@@ -377,6 +377,10 @@ internal sealed class RequestModelMetadata
             StreamFormat = streamFormat
         };
     }
+
+    /// <summary>部件的默认名：<c>[JsonPropertyName]</c> / 字段名，空白时回退属性名（部件名不能为空）。</summary>
+    private static string DefaultPartName(RequestModelMemberDeclaration member)
+        => string.IsNullOrWhiteSpace(member.FieldName) ? member.Name : member.FieldName;
 
     // ---- 类 / 属性两层编码声明的解析：属性级优先；两层都显式声明且取值不同 → ERR_BAD_OPTION_VALUE ----
 

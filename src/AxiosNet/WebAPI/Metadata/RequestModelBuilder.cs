@@ -156,12 +156,13 @@ public sealed class RequestModelMemberBuilder
     }
 
     /// <summary>字段名：聚合正文的键名兜底值，同时是表单 / multipart 的默认部件名。</summary>
-    /// <param name="fieldName">字段名；空白回退成员名。</param>
+    /// <param name="fieldName">字段名；空白回退成员名（此时按未命名处理，聚合正文仍套 JSON 命名策略）。</param>
     /// <param name="nameFromAttribute">该名字是否已显式确定（true 则聚合正文不再套 JSON 命名策略）；默认 <c>true</c>，调用即视为显式命名。</param>
     public RequestModelMemberBuilder FieldName(string fieldName, bool nameFromAttribute = true)
     {
-        _member.FieldName = fieldName;
-        _member.NameFromAttribute = nameFromAttribute;
+        var blank = string.IsNullOrWhiteSpace(fieldName);
+        _member.FieldName = blank ? _member.Name : fieldName;
+        _member.NameFromAttribute = nameFromAttribute && !blank;
         return this;
     }
 

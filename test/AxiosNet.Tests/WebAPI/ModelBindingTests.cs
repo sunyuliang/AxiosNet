@@ -4,6 +4,7 @@ using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 using AxiosNet.WebAPI;
 using AxiosNet.WebAPI.Attributes;
+using AxiosNet.WebAPI.Metadata;
 using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Net;
@@ -312,6 +313,84 @@ public sealed class ModelBindingTests
 
         Assert.Contains("仅大小写不同", ex.Message);
         Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_FormBodyNamesDifferingOnlyInCase_AreSent()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // 表单键名的大小写由接收端解释：库只按同名判重，不再拦「仅大小写不同」。
+        await client.RequestAsync(new CaseDifferingFormBodyNameRequest());
+
+        var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
+        Assert.Equal("a=1&A=2", body);
+    }
+
+    [Fact]
+    public async Task Post_FormInterfaceBodyNamesDifferingOnlyInCase_AreSent()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // 接口路径与请求模型共用同一个构建器，通道判定必须同样生效。
+        await client.Create<ICaseDifferingFormBodyApi>().SubmitAsync("1", "2");
+
+        var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
+        Assert.Equal("a=1&A=2", body);
+    }
+
+    [Fact]
+    public async Task PostModel_SpreadRootBodies_NamesDifferingOnlyInCase_AreRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // 两个 [RootBody] 各自类型内部合法，展开到同一层后才撞：JSON 通道按大小写不敏感判重。
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new TwoSpreadCaseDifferingRequest()));
+
+        Assert.Contains("仅大小写不同也算重复", ex.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_EmptyJsonPropertyName_PartFallsBackToPropertyName()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new EmptyJsonPropertyNamePartRequest());
+
+        var body = Encoding.UTF8.GetString(Assert.Single(server.Received).Body);
+        Assert.Contains("name=Value", body);
+        Assert.DoesNotContain("name=\"\"", body);
+    }
+
+    [Fact]
+    public async Task PostModel_ExplicitBody_WithMultipartContentType_MessageNamesExplicitKey()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url, defaults =>
+            defaults.ContentType = "multipart/form-data; boundary=xyz");
+
+        var ex = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(new SingleExplicitBodyRequest()));
+
+        // 显式 [Body("x")] 不是「未标注成员」，报错不能这么说。
+        Assert.Contains("合并正文", ex.Message);
+        Assert.Contains("[Body] 按键名写入", ex.Message);
+        Assert.DoesNotContain("默认 Body（未标注成员按键名聚合）", ex.Message);
+    }
+
+    [Fact]
+    public void RequestModelBuilder_BlankFieldName_FallsBackToMemberName()
+    {
+        var builder = new RequestModelBuilder(typeof(BlankFieldNameSample));
+        builder.Member("Value", typeof(string), static _ => null).FieldName("  ");
+
+        var member = Assert.Single(builder.Declaration.Members);
+        Assert.Equal("Value", member.FieldName);
+        Assert.False(member.NameFromAttribute);
     }
 
     [Fact]
@@ -1507,6 +1586,65 @@ public sealed class ModelBindingTests
         [Body]
         [RootBody]
         public Person Payload { get; set; } = new("p", 1);
+    }
+
+    [Post("form")]
+    [BodyContentType("application/x-www-form-urlencoded")]
+    private sealed class CaseDifferingFormBodyNameRequest : IApiRequest<Person>
+    {
+        [Body("a")]
+        public string Lower { get; set; } = "1";
+
+        [Body("A")]
+        public string Upper { get; set; } = "2";
+    }
+
+    private sealed class UpperTagPart
+    {
+        [JsonPropertyName("Tag")]
+        public string Value { get; set; } = "u";
+    }
+
+    private sealed class LowerTagPart
+    {
+        [JsonPropertyName("tag")]
+        public string Value { get; set; } = "l";
+    }
+
+    [Post("items")]
+    private sealed class TwoSpreadCaseDifferingRequest : IApiRequest<Person>
+    {
+        [RootBody]
+        public UpperTagPart First { get; set; } = new();
+
+        [RootBody]
+        public LowerTagPart Second { get; set; } = new();
+    }
+
+    [Multipart]
+    [Post("upload")]
+    private sealed class EmptyJsonPropertyNamePartRequest : IApiRequest<Person>
+    {
+        [JsonPropertyName("")]
+        public string Value { get; set; } = "x";
+    }
+
+    [Post("items")]
+    private sealed class SingleExplicitBodyRequest : IApiRequest<Person>
+    {
+        [Body("x")]
+        public string Value { get; set; } = "v";
+    }
+
+    private sealed class BlankFieldNameSample
+    {
+    }
+
+    public interface ICaseDifferingFormBodyApi
+    {
+        [Post("form")]
+        [BodyContentType("application/x-www-form-urlencoded")]
+        Task<AxiosResponse<Person>> SubmitAsync([Body("a")] string lower, [Body("A")] string upper);
     }
 
     [Post("items")]

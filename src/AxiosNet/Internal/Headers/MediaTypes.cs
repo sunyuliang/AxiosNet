@@ -35,6 +35,15 @@ internal static class MediaTypes
     public static bool Is(string? mediaType, string expected)
         => SpanComparisons.EqualsIgnoreCase(MainValue(mediaType), expected);
 
+    /// <summary>是否为 JSON 通道（<c>application/json</c> 或 <c>+json</c> 后缀）；<c>null</c> / 空白表示库默认的 JSON。</summary>
+    public static bool IsJson(string? mediaType)
+    {
+        var main = MainValue(mediaType);
+        return main.Length == 0
+            || SpanComparisons.EqualsIgnoreCase(main, AxiosContentType.Json)
+            || SpanComparisons.EndsWithIgnoreCase(main, JsonSuffix);
+    }
+
     /// <summary>是否为文本类媒体类型（<c>null</c> / 空视为文本）。</summary>
     public static bool IsTextual(string? mediaType)
     {

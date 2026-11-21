@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using AxiosNet.Internal.Headers;
 using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.WebAPI.Internal.Binding;
@@ -223,7 +224,11 @@ internal sealed class BindingAccumulator
     }
 
     /// <summary>完成校验并生成计划：正文来源互斥 → 正文归并（RootBody / Body + 未标注）→ 平铺映射去重 → 路径模板核对 → 标量护栏。</summary>
-    public BindingPlan Build(HttpMethod method, string pathTemplate, bool allowDefaultBody)
+    /// <param name="method">约定的 HTTP 方法。</param>
+    /// <param name="pathTemplate">路径模板。</param>
+    /// <param name="allowDefaultBody">是否允许未标注成员改道成聚合正文（multipart 模型为 <c>false</c>）。</param>
+    /// <param name="contentType">正文媒体类型；<c>null</c> 表示未声明，按库默认的 JSON 处理。</param>
+    public BindingPlan Build(HttpMethod method, string pathTemplate, bool allowDefaultBody, string? contentType)
     {
         ValidateBodySources();
 
@@ -261,7 +266,7 @@ internal sealed class BindingAccumulator
 
         // 声明顺序即输出顺序：三类来源按声明序号合并（[Body] 与 [RootBody] 混排也保持原顺序）。
         entries.Sort(static (left, right) => left.Order.CompareTo(right.Order));
-        ValidateBodyEntries(entries);
+        ValidateBodyEntries(entries, guardCaseInsensitive: MediaTypes.IsJson(contentType));
 
         // 平铺映射不再走具名查询绑定：同一成员只能有一种形态
         if (_queryMaps.Count > 0)
@@ -302,11 +307,12 @@ internal sealed class BindingAccumulator
 
     /// <summary>正文合并的构建期校验：同层键名唯一、聚合正文装不下文件部件。</summary>
     /// <param name="entries">按声明顺序排好的正文来源。</param>
-    private void ValidateBodyEntries(List<BodyEntry> entries)
+    /// <param name="guardCaseInsensitive">是否额外拒绝仅大小写不同的键名（只对 JSON 通道成立）。</param>
+    private void ValidateBodyEntries(List<BodyEntry> entries, bool guardCaseInsensitive)
     {
         // 结构化 [RootBody] 的属性名要等序列化才知道，这里只查能确定的键（[Body] / 未标注 / 标量 [RootBody]）。
         var names = new HashSet<string>(StringComparer.Ordinal);
-        var caseInsensitiveNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var caseInsensitiveNames = guardCaseInsensitive ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
         foreach (var entry in entries)
         {
             if (entry.IsRootBody && entry.Spread)
@@ -321,7 +327,7 @@ internal sealed class BindingAccumulator
                     + "请改名，或把 [RootBody] 换成 [Body] 包成独立键。");
             }
 
-            if (!caseInsensitiveNames.Add(entry.Name))
+            if (caseInsensitiveNames is not null && !caseInsensitiveNames.Add(entry.Name))
             {
                 throw new InvalidOperationException(
                     $"{_owner} 的正文键名 \"{entry.Name}\" 与另一个键仅大小写不同："
@@ -342,7 +348,7 @@ internal sealed class BindingAccumulator
             {
                 throw new InvalidOperationException(
                     $"{_owner} 的{_memberKind} {entry.Source.Name} 是 {entry.Source.ValueType.Name}："
-                    + "默认正文（按键名聚合）装不下文件部件，请改用 [Multipart] 由库组装表单，"
+                    + "合并正文（按键名聚合）装不下文件部件，请改用 [Multipart] 由库组装表单，"
                     + "或把它作为唯一的 [RootBody] 原样发送。");
             }
         }

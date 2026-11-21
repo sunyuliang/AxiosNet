@@ -204,18 +204,18 @@ internal static class RequestBodyFactory
         if (MediaTypes.Is(mediaType, MultipartMediaType))
         {
             throw AxiosException.InvalidOption(
-                "默认 Body（未标注成员按键名聚合）不能按 multipart 发送："
-                + "请给请求模型标注 [Multipart] 由库组装表单，或给需要发送的成员显式标注 [RootBody]。", config);
+                "合并正文（[Body] 按键名写入 / 未标注成员按键名聚合）不能按 multipart 发送："
+                + "请给请求模型标注 [Multipart] 由库组装表单，或把需要发送的成员改成 [RootBody]。", config);
         }
 
         var serializer = AxiosContent.Get(config, mediaType);
         if (!ReferenceEquals(serializer, SystemTextJsonSerializer.Instance))
         {
             throw AxiosException.InvalidOption(
-                "默认 Body（未标注成员按键名聚合）只支持 JSON 与 application/x-www-form-urlencoded："
+                "合并正文（[Body] 按键名写入 / 未标注成员按键名聚合）只支持 JSON 与 application/x-www-form-urlencoded："
                 + $"当前生效的序列化器是 {serializer.GetType().Name}。"
                 + "[Body(\"名\")] 只改键名、不改变通道支持；"
-                + "请给需要发送的成员显式标注 [RootBody]（原样交给该序列化器，命名用 [XmlElement] 等该序列化器认可的写法），或改用 JSON。", config);
+                + "请把需要发送的成员改成 [RootBody]（原样交给该序列化器，命名用 [XmlElement] 等该序列化器认可的写法），或改用 JSON。", config);
         }
 
         if (!config.ContentTypeSet && serializer.MediaType is { } declared && !string.IsNullOrWhiteSpace(declared))
