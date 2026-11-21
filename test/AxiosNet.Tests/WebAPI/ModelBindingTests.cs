@@ -236,6 +236,74 @@ public sealed class ModelBindingTests
         Assert.Contains("重复键", ex.Message);
     }
 
+    [Fact]
+    public async Task PostModel_MixedBodyAndRootBody_KeepsDeclarationOrder()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        await client.RequestAsync(new MixedOrderRequest());
+
+        var received = Assert.Single(server.Received);
+
+        // 三类来源按声明顺序输出（改名前 [Body] 会被整段提前，顺序就乱了）。
+        Assert.Equal("{\"a\":1,\"b\":2,\"c\":3,\"d\":4}", Encoding.UTF8.GetString(received.Body));
+    }
+
+    [Fact]
+    public async Task PostModel_AggregateBody_FormDuplicateKey_IsRejected()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // ASCII 键名：具名成员与展开属性同名 → 构建/运行期都能判出来
+        var ascii = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(
+            new AsciiDuplicateKeyRequest(),
+            config => config.ContentType = AxiosConfig.FormUrlEncodedContentType));
+
+        Assert.Contains("重复键", ascii.Message);
+        Assert.Empty(server.Received);
+
+        // 非 ASCII 键名：表单通道按线上（编码后）形态比较，同样必须拦下，不能把两个同名键发出去
+        var cjk = await Assert.ThrowsAsync<AxiosException>(() => client.RequestAsync(
+            new CjkDuplicateKeyRequest(),
+            config => config.ContentType = AxiosConfig.FormUrlEncodedContentType));
+
+        Assert.Contains("重复键", cjk.Message);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public async Task PostModel_AggregateBody_SerializationFailure_NamesKeysAndDisposesOwnedStream()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("n", 1)));
+        using var client = new ApiClient(server.Url);
+
+        // 声明类型是 object：构建期判不出是流，直到序列化才发现 → 报错文案要给键名而不是内部类型名，且流要回收
+        var stream = new DisposeTrackingStream();
+        var ex = await Assert.ThrowsAsync<AxiosException>(
+            () => client.RequestAsync(new RuntimeStreamBodyRequest { Data = stream }));
+
+        Assert.Contains("默认正文", ex.Message);
+        Assert.DoesNotContain(nameof(AxiosNet.Internal.Content.AggregateBody), ex.Message);
+        Assert.True(stream.Disposed);
+        Assert.Empty(server.Received);
+    }
+
+    [Fact]
+    public void PostModel_AggregateBody_CannotCarryFileParts_IsRejectedAtBuild()
+    {
+        using var client = new ApiClient("http://127.0.0.1:1/");
+
+        // 合并成对象后文件部件没有线上形态：构建期就拦下，不留到序列化时才炸。
+        var stream = Assert.ThrowsAny<AxiosException>(() => client.GetUri(new BodyStreamRequest()));
+        Assert.Contains("[Multipart]", stream.Message, StringComparison.Ordinal);
+        Assert.Contains("[RootBody]", stream.Message, StringComparison.Ordinal);
+
+        var file = Assert.ThrowsAny<AxiosException>(() => client.GetUri(new BodyFormFileRequest()));
+        Assert.Contains("[Multipart]", file.Message, StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------
     // 2) 声明式头绑定的 fail-fast（异常类型沿用 AxiosHeaders.Set 的公开契约）
     // ------------------------------------------------------------------
@@ -1306,6 +1374,87 @@ public sealed class ModelBindingTests
 
         [JsonPropertyName("u2")]
         public int U2 { get; set; } = 2;
+    }
+
+    [Post("items")]
+    private sealed class MixedOrderRequest : IApiRequest<Person>
+    {
+        [RootBody, JsonPropertyName("a")]
+        public int First { get; set; } = 1;
+
+        [Body, JsonPropertyName("b")]
+        public int Second { get; set; } = 2;
+
+        [RootBody, JsonPropertyName("c")]
+        public int Third { get; set; } = 3;
+
+        [JsonPropertyName("d")]
+        public int Fourth { get; set; } = 4;
+    }
+
+    [Post("items")]
+    private sealed class AsciiDuplicateKeyRequest : IApiRequest<Person>
+    {
+        [Body, JsonPropertyName("value")]
+        public string Name { get; set; } = "body";
+
+        [RootBody]
+        public AsciiSlice Slice { get; set; } = new();
+    }
+
+    private sealed class AsciiSlice
+    {
+        [JsonPropertyName("value")]
+        public string Tag { get; set; } = "spread";
+    }
+
+    [Post("items")]
+    private sealed class CjkDuplicateKeyRequest : IApiRequest<Person>
+    {
+        [Body, JsonPropertyName("名称")]
+        public string Name { get; set; } = "body";
+
+        [RootBody]
+        public CjkSlice Slice { get; set; } = new();
+    }
+
+    private sealed class CjkSlice
+    {
+        [JsonPropertyName("名称")]
+        public string Tag { get; set; } = "spread";
+    }
+
+    [Post("items")]
+    private sealed class RuntimeStreamBodyRequest : IApiRequest<Person>
+    {
+        [Body]
+        public object? Data { get; set; }
+    }
+
+    [Post("items")]
+    private sealed class BodyStreamRequest : IApiRequest<Person>
+    {
+        [Body]
+        public Stream? Data { get; set; }
+    }
+
+    [Post("items")]
+    private sealed class BodyFormFileRequest : IApiRequest<Person>
+    {
+        [Body]
+        public FormFile? File { get; set; }
+    }
+
+    /// <summary>记录是否被释放的流：验证正文产出失败时成员里的流会按 FormFile 契约回收。</summary>
+    private sealed class DisposeTrackingStream : MemoryStream
+    {
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
     }
 
 

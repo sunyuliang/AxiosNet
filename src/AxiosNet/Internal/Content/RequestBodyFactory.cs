@@ -222,19 +222,29 @@ internal static class RequestBodyFactory
             mediaType = declared.Trim();
         }
 
-        if (SystemTextJsonSerializer.SerializeAggregateToBytes(body, config) is { } bytes)
+        try
         {
-            return CreateBinary(bytes, mediaType, config);
-        }
+            // UTF-8 直接出字节：省一次文本中转；其它编码由文本入口负责编码与 charset 头。
+            if (SystemTextJsonSerializer.EmitsUtf8(config))
+            {
+                return CreateBinary(SystemTextJsonSerializer.SerializeAggregate(body, config), mediaType, config);
+            }
 
-        var text = CreateText(
-            SystemTextJsonSerializer.SerializeAggregateText(body, config),
-            mediaType,
-            encoding,
-            appendCharset,
-            config);
-        ValidateDeclaredCharset(text, config, encoding);
-        return text;
+            var text = CreateText(
+                Encoding.UTF8.GetString(SystemTextJsonSerializer.SerializeAggregate(body, config)),
+                mediaType,
+                encoding,
+                appendCharset,
+                config);
+            ValidateDeclaredCharset(text, config, encoding);
+            return text;
+        }
+        catch
+        {
+            // 正文不再产出：成员里的流 / 文件内容按 FormFile 契约回收（与表单通道的异常路径同一口径）。
+            body.DisposeOwned();
+            throw;
+        }
     }
 
     /// <summary>结构化数据的分派：form-urlencoded / multipart 走专用编码器，其余交给序列化器（标量直接取文本）。</summary>

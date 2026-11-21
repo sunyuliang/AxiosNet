@@ -415,6 +415,75 @@ public sealed class FormatAttributeTests
     }
 
     // ------------------------------------------------------------------
+    // 默认正文（按键名聚合）：成员没有 [Format] 时也走实例钩子
+    // ------------------------------------------------------------------
+
+    /// <summary>聚合正文的成员与裸标量正文同一条值文本规则：没有 <c>[Format]</c> 就走实例钩子。</summary>
+    [Fact]
+    public async Task AggregateBody_WithoutMemberFormat_UsesInstanceHook()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.Serialization.ValueText = (value, _) => value switch
+        {
+            int number => "p" + number.ToString(CultureInfo.InvariantCulture),
+            DateTime date => date.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+            _ => null
+        };
+
+        await client.RequestAsync(new HookedAggregateRequest
+        {
+            Count = 7,
+            When = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc)
+        });
+
+        // 钩子产出的文本进 JSON 字符串（不是数字 / 不是 STJ 默认的 ISO 时间）。
+        Assert.Equal(
+            """{"count":"p7","when":"20240102"}""",
+            Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
+    }
+
+    /// <summary>成员声明仍然压过钩子：整条正文都有 <c>[Format]</c> 时钩子一次都不会被问到。</summary>
+    [Fact]
+    public async Task AggregateBody_MemberFormat_WinsOverHook()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        var seen = new List<ValueTextChannel>();
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.Serialization.ValueText = (_, channel) =>
+        {
+            seen.Add(channel);
+            return "hook";
+        };
+
+        await client.RequestAsync(new FormattedAggregateRequest
+        {
+            When = new DateTime(2024, 1, 2, 1, 2, 3, DateTimeKind.Utc)
+        });
+
+        Assert.Equal(
+            """{"when":"2024-01-02"}""",
+            Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
+        Assert.Empty(seen);
+    }
+
+    /// <summary>集合成员逐元素问钩子；钩子不处理的元素按声明类型写出，既不能整列字符串化也不能丢。</summary>
+    [Fact]
+    public async Task AggregateBody_CollectionMember_AppliesHookPerElement()
+    {
+        await using var server = TestHttpServer.Start(_ => TestJson.Response(new Person("ok", 1)));
+        using var client = new ApiClient(server.Url);
+        client.Axios.Defaults.Serialization.ValueText = (value, _) =>
+            value is int number && number % 2 == 1 ? "p" + number.ToString(CultureInfo.InvariantCulture) : null;
+
+        await client.RequestAsync(new HookedCollectionAggregateRequest { Codes = [1, 2, 3] });
+
+        Assert.Equal(
+            """{"codes":["p1",2,"p3"]}""",
+            Encoding.UTF8.GetString(Assert.Single(server.Received).Body));
+    }
+
+    // ------------------------------------------------------------------
     // 构建期报错：不适用的组合不留到运行期
     // ------------------------------------------------------------------
 
@@ -799,6 +868,31 @@ public sealed class FormatAttributeTests
 
         [RootBody]
         public DateTime At { get; set; }
+    }
+
+    // 聚合正文（多个正文来源合并成一层）：成员没有 [Format]，值文本只能来自实例钩子。
+    [Post("aggregate")]
+    private sealed class HookedAggregateRequest : IApiRequest<Person>
+    {
+        [Body]
+        public int Count { get; set; }
+
+        [Body]
+        public DateTime When { get; set; }
+    }
+
+    [Post("aggregate")]
+    private sealed class FormattedAggregateRequest : IApiRequest<Person>
+    {
+        [Body, Format("yyyy-MM-dd")]
+        public DateTime When { get; set; }
+    }
+
+    [Post("aggregate")]
+    private sealed class HookedCollectionAggregateRequest : IApiRequest<Person>
+    {
+        [Body]
+        public int[] Codes { get; set; } = [];
     }
 
     [Post("raw-bytes")]

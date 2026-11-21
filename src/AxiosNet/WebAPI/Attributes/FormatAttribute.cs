@@ -3,13 +3,13 @@ using AxiosNet.Metadata;
 namespace AxiosNet.WebAPI.Attributes;
 
 /// <summary>
-/// 成员级值格式化：作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文。
+/// 成员级值格式化：作用于路径 / 查询 / 请求头 / 表单 / multipart 文本部件 / 裸标量正文 / 聚合正文的成员。
 /// 优先级高于实例级 <see cref="AxiosConfig.SerializationSettings.ValueText"/>；结构化正文内部归序列化器。
 /// </summary>
 /// <remarks>
 /// 两种形态互斥：格式串走 <see cref="IFormattable"/>（不变文化），格式化函数走静态方法
 /// <c>public static string? M(object? value, ValueTextChannel channel)</c>（返回 <c>null</c> 回落默认）。
-/// 集合 / 字典上逐元素应用；元素不是标量、与结构化 <c>[Body]</c> 同用、用在文件部件上都在构建期报错。
+/// 集合 / 字典上逐元素应用；元素不是标量、与结构化 <c>[Body]</c> / <c>[RootBody]</c> 同用、用在文件部件上都在构建期报错。
 /// </remarks>
 /// <example>
 /// <code>

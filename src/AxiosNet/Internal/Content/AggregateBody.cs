@@ -3,7 +3,7 @@ using AxiosNet.Metadata;
 namespace AxiosNet.Internal.Content;
 
 /// <summary>
-/// 声明式 API 的默认请求体：把未标注成员按键名聚合成一个对象（声明顺序即输出顺序）。
+/// 声明式 API 的默认请求体：把正文成员按键名聚合成一个对象（成员顺序＝声明顺序）。
 /// 由 <c>BindingPlan</c> 在运行期装配，<see cref="RequestBodyFactory"/> 按 Content-Type 选择 JSON / 表单编码。
 /// </summary>
 internal sealed class AggregateBody
@@ -15,6 +15,22 @@ internal sealed class AggregateBody
 
     /// <summary>按声明顺序排列的成员。</summary>
     public AggregateBodyMember[] Members { get; }
+
+    /// <summary>序列化失败时用的来源描述（正文错误消息里的「from ...」）：首个成员名 + 成员数，不暴露内部类型名。</summary>
+    public string SourceName => Members.Length == 0
+        ? "默认正文"
+        : (Members.Length == 1
+            ? $"默认正文（{Members[0].Name}）"
+            : $"默认正文（{Members[0].Name} 等 {Members.Length} 个键）");
+
+    /// <summary>正文不再产出时回收成员里的流 / 文件内容（与 <see cref="FormData.DisposeOwned"/> 同一契约）。</summary>
+    public void DisposeOwned()
+    {
+        foreach (var member in Members)
+        {
+            MultipartOwnership.DisposeOwned(member.Value);
+        }
+    }
 }
 
 /// <summary>聚合正文的一个成员：键名 + 值 + 声明类型（序列化时按声明类型取元数据）。</summary>

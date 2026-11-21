@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
 using System.Text;
@@ -105,7 +106,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
                 }
 
                 var name = ResolveAggregateName(member, options);
-                EnsureUniqueName(names, name, config);
+                AggregateKeys.EnsureUnique(names, name, config);
                 writer.WritePropertyName(name);
                 WriteAggregateValue(writer, member, options, config);
             }
@@ -115,14 +116,6 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
         return buffer.ToArray();
     }
-
-    /// <summary>聚合正文的字节出口：生效编码不是 UTF-8 时返回 <c>null</c>，由文本入口负责编码与 charset 头。</summary>
-    internal static ReadOnlyMemory<byte>? SerializeAggregateToBytes(AggregateBody body, AxiosConfig config)
-        => EmitsUtf8(config) ? SerializeAggregate(body, config) : null;
-
-    /// <summary>聚合正文的文本出口（非 UTF-8 编码时由正文工厂按生效编码重新编码）。</summary>
-    internal static string SerializeAggregateText(AggregateBody body, AxiosConfig config)
-        => Encoding.UTF8.GetString(SerializeAggregate(body, config));
 
     /// <summary>多个 [RootBody] 的展开：JSON 对象把属性铺到当前层，其它形态（标量 / 数组等）按键写入。</summary>
     private static void WriteSpread(
@@ -150,7 +143,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         if (root.ValueKind != JsonValueKind.Object)
         {
             var name = ResolveAggregateName(member, options);
-            EnsureUniqueName(names, name, config);
+            AggregateKeys.EnsureUnique(names, name, config);
             writer.WritePropertyName(name);
             root.WriteTo(writer);
             return;
@@ -158,19 +151,9 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 
         foreach (var property in root.EnumerateObject())
         {
-            EnsureUniqueName(names, property.Name, config);
+            AggregateKeys.EnsureUnique(names, property.Name, config);
             writer.WritePropertyName(property.Name);
             property.Value.WriteTo(writer);
-        }
-    }
-
-    /// <summary>合并到同一层后的键名必须唯一：重复即报错，避免 JSON 对象里出现两个同名属性。</summary>
-    private static void EnsureUniqueName(HashSet<string> names, string name, AxiosConfig config)
-    {
-        if (!names.Add(name))
-        {
-            throw AxiosException.InvalidOption(
-                $"请求体合并后出现重复键 \"{name}\"：请改名，或把 [RootBody] 换成 [Body] 包成独立键。", config);
         }
     }
 
@@ -180,7 +163,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             ? member.Name
             : options.PropertyNamingPolicy.ConvertName(member.Name);
 
-    /// <summary>写一个成员值：null 原样、成员级 [Format] 转文本、其余按声明类型交 STJ。</summary>
+    /// <summary>写一个成员值：null 原样、成员级 [Format] / 实例钩子转文本、其余按声明类型交 STJ。</summary>
     private static void WriteAggregateValue(
         Utf8JsonWriter writer,
         AggregateBodyMember member,
@@ -193,7 +176,7 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
             return;
         }
 
-        if (member.Format is { } format && TryWriteFormatted(writer, member.Value, format, config))
+        if (TryWriteFormatted(writer, member.Value, member.Format, options, config))
         {
             return;
         }
@@ -201,40 +184,66 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
         SerializeAggregateMember(writer, member.Value, member.ValueType, options);
     }
 
-    /// <summary>成员级 [Format] 的 JSON 形态：标量 / 二进制 → 字符串，集合 → 字符串数组；字典与结构化对象交给序列化器。</summary>
+    /// <summary>
+    /// 成员级 <c>[Format]</c> 与实例钩子（<see cref="AxiosConfig.SerializationSettings.ValueText"/>）的 JSON 形态：
+    /// 标量 / 二进制 → 字符串，集合 → 字符串数组；两层都没处理（或字典 / 结构化对象）时返回 <c>false</c> 交给序列化器。
+    /// </summary>
     private static bool TryWriteFormatted(
         Utf8JsonWriter writer,
         object value,
-        ValueFormat format,
+        ValueFormat? format,
+        JsonSerializerOptions options,
         AxiosConfig config)
     {
         var formatter = config.SerializationOrNull?.ValueText;
+        if (format is null && formatter is null)
+        {
+            return false;
+        }
 
         if (value is string || ScalarTypes.IsScalarType(value.GetType()) || ScalarTypes.IsBinaryType(value.GetType()))
         {
-            writer.WriteStringValue(ValueText.Format(value, ValueTextChannel.ScalarBody, format, formatter));
-            return true;
-        }
-
-        if (value is IEnumerable enumerable && !QueryMap.CanEnumerate(value))
-        {
-            writer.WriteStartArray();
-            foreach (var item in enumerable)
+            if (ValueText.TryCustomFormat(value, ValueTextChannel.ScalarBody, format, formatter) is not { } text)
             {
-                if (item is null)
-                {
-                    writer.WriteNullValue();
-                    continue;
-                }
-
-                writer.WriteStringValue(ValueText.Format(item, ValueTextChannel.ScalarBody, format, formatter));
+                return false;
             }
 
-            writer.WriteEndArray();
+            writer.WriteStringValue(text);
             return true;
         }
 
-        return false;
+        if (value is not IEnumerable enumerable || QueryMap.CanEnumerate(value))
+        {
+            return false;
+        }
+
+        // 集合：成员级 [Format] 逐元素格式化整列；只有实例钩子时逐个元素问，没命中的元素按原类型写出。
+        writer.WriteStartArray();
+        foreach (var item in enumerable)
+        {
+            if (item is null)
+            {
+                writer.WriteNullValue();
+                continue;
+            }
+
+            if (format is not null)
+            {
+                writer.WriteStringValue(ValueText.Format(item, ValueTextChannel.ScalarBody, format, formatter));
+                continue;
+            }
+
+            if (ValueText.TryCustomFormat(item, ValueTextChannel.ScalarBody, memberFormat: null, formatter) is { } text)
+            {
+                writer.WriteStringValue(text);
+                continue;
+            }
+
+            SerializeAggregateMember(writer, item, item.GetType(), options);
+        }
+
+        writer.WriteEndArray();
+        return true;
     }
 
     /// <summary>按声明类型写入聚合正文的成员值：AOT 走 <c>JsonTypeInfo</c>，JIT 回退反射重载。</summary>
@@ -249,19 +258,95 @@ public sealed class SystemTextJsonSerializer : IContentSerializer
 #if NET8_0_OR_GREATER
         if (options.TypeInfoResolver is not null)
         {
-            JsonSerializer.Serialize(writer, value, Resolve(options, type));
-            return;
+            // 成员类型没进 AOT 图（如接口式标量参数）时不必失败：标量按 STJ 默认形态直接写出。
+            JsonTypeInfo? info = null;
+            try
+            {
+                info = Resolve(options, type);
+            }
+            catch (NotSupportedException)
+            {
+                // 交给下面的标量出口；结构化类型走不过去时由末尾统一报缺元数据。
+            }
+
+            if (info is not null)
+            {
+                JsonSerializer.Serialize(writer, value, info);
+                return;
+            }
+
+            if (TryWriteScalar(writer, value))
+            {
+                return;
+            }
+
+            throw new NotSupportedException(AxiosAotMetadataException.MissingJsonPropertyInfo(type).Message);
         }
 #endif
         JsonSerializerJit.EnsureReflectionMetadata(type);
         JsonSerializerJit.SerializeToWriterLegacy(writer, value, type, options);
     }
 
+    /// <summary>缺 <c>JsonTypeInfo</c> 时的标量出口：写法与 STJ 默认转换器一致，不需要任何元数据。</summary>
+    private static bool TryWriteScalar(Utf8JsonWriter writer, object value)
+    {
+        switch (value)
+        {
+            case string text:
+                writer.WriteStringValue(text);
+                return true;
+            case bool flag:
+                writer.WriteBooleanValue(flag);
+                return true;
+            case char character:
+                writer.WriteStringValue(character.ToString());
+                return true;
+            case sbyte or byte or short or ushort or int or uint:
+                writer.WriteNumberValue(Convert.ToInt64(value, CultureInfo.InvariantCulture));
+                return true;
+            case long number:
+                writer.WriteNumberValue(number);
+                return true;
+            case ulong number:
+                writer.WriteNumberValue(number);
+                return true;
+            case float number:
+                writer.WriteNumberValue(number);
+                return true;
+            case double number:
+                writer.WriteNumberValue(number);
+                return true;
+            case decimal number:
+                writer.WriteNumberValue(number);
+                return true;
+            case Guid guid:
+                writer.WriteStringValue(guid);
+                return true;
+            case DateTime time:
+                writer.WriteStringValue(time);
+                return true;
+            case DateTimeOffset time:
+                writer.WriteStringValue(time);
+                return true;
+            case TimeSpan span:
+                writer.WriteStringValue(span.ToString("c", CultureInfo.InvariantCulture));
+                return true;
+            case Uri uri:
+                writer.WriteStringValue(uri.OriginalString);
+                return true;
+            case Enum enumeration:
+                writer.WriteNumberValue(Convert.ToInt64(enumeration, CultureInfo.InvariantCulture));
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /// <summary>
     /// 正文是否一定按 UTF-8 产出：显式指定了 <c>Serialization.TextEncoding</c>，或 <c>Content-Type</c>
-    /// 声明了非 UTF-8 的 charset 时为 <c>false</c>。
+    /// 声明了非 UTF-8 的 charset 时为 <c>false</c>（由正文工厂改走文本入口）。
     /// </summary>
-    private static bool EmitsUtf8(AxiosConfig config)
+    internal static bool EmitsUtf8(AxiosConfig config)
     {
         // 显式编码由文本入口负责（连同 charset 头）：哪怕写的就是 UTF-8，也走文本路径保持一致。
         if (config.SerializationOrNull?.TextEncoding is not null)

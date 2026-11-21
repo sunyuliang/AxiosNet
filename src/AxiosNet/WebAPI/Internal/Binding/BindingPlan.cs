@@ -20,7 +20,6 @@ internal sealed class BindingPlan
         [],
         [],
         [],
-        [],
         []);
 
     private readonly (string Token, IValueSource Source)[] _pathTokens;
@@ -32,11 +31,8 @@ internal sealed class BindingPlan
     /// <summary>声明级静态头：Value 为 null 表示删除该头。</summary>
     private readonly (string Name, string? Value)[] _staticHeaders;
 
-    /// <summary>显式 <c>[RootBody]</c>：整个请求体的来源；多个时合并到同一层。</summary>
-    private readonly (string Name, bool NameFromAttribute, IValueSource Source)[] _rootBodies;
-
-    /// <summary>按对象键聚合的正文（显式 [Body] + body 方法上的未标注成员）：空数组表示没有。</summary>
-    private readonly (string Name, bool NameFromAttribute, IValueSource Source)[] _bodyMembers;
+    /// <summary>正文来源：按声明顺序排列（空数组表示没有请求体）。</summary>
+    private readonly BodyEntry[] _bodyEntries;
 
     internal BindingPlan(
         (string Token, IValueSource Source)[] pathTokens,
@@ -45,8 +41,7 @@ internal sealed class BindingPlan
         (string Name, IValueSource Source)[] headerBindings,
         IValueSource[] headerCollections,
         (string Name, string? Value)[] staticHeaders,
-        (string Name, bool NameFromAttribute, IValueSource Source)[] rootBodies,
-        (string Name, bool NameFromAttribute, IValueSource Source)[] bodyMembers)
+        BodyEntry[] bodyEntries)
     {
         _pathTokens = pathTokens;
         _queryBindings = queryBindings;
@@ -54,17 +49,8 @@ internal sealed class BindingPlan
         _headerBindings = headerBindings;
         _headerCollections = headerCollections;
         _staticHeaders = staticHeaders;
-        _rootBodies = rootBodies;
-        _bodyMembers = bodyMembers;
+        _bodyEntries = bodyEntries;
     }
-
-    /// <summary>是否已绑定请求正文（显式 [RootBody]，或至少一个按键名聚合的正文成员）。</summary>
-    public bool HasBody => _rootBodies.Length > 0 || _bodyMembers.Length > 0;
-
-    /// <summary>正文的定位名（错误消息用）。</summary>
-    public string? BodyName => _rootBodies.Length > 0
-        ? _rootBodies[0].Source.Name
-        : (_bodyMembers.Length > 0 ? _bodyMembers[0].Source.Name : null);
 
     /// <summary>
     /// 请求体原始值：只有一个正文来源且为 <see cref="RootBodyAttribute"/> 时不加壳；
@@ -74,43 +60,33 @@ internal sealed class BindingPlan
     /// <param name="formatter">实例级格式化钩子；<c>null</c> 表示不处理。</param>
     public object? ResolveBodyValue(object target, Func<object?, ValueTextChannel, string?>? formatter)
     {
-        // 合并正文：显式 [Body] / 未标注成员按键名写入；[RootBody] 结构化值展开、标量按键写入。
-        // 键名冲突由序列化阶段统一校验（对象的属性名要到运行时才知道）。
-        if (_bodyMembers.Length > 0 || _rootBodies.Length > 1)
-        {
-            var aggregate = new AggregateBodyMember[_bodyMembers.Length + _rootBodies.Length];
-            var index = 0;
-            foreach (var member in _bodyMembers)
-            {
-                aggregate[index++] = new AggregateBodyMember(
-                    member.Name,
-                    member.Source.GetValue(target),
-                    member.Source.ValueType,
-                    member.NameFromAttribute,
-                    member.Source.Format);
-            }
-
-            foreach (var member in _rootBodies)
-            {
-                aggregate[index++] = new AggregateBodyMember(
-                    member.Name,
-                    member.Source.GetValue(target),
-                    member.Source.ValueType,
-                    member.NameFromAttribute,
-                    member.Source.Format,
-                    spread: !ScalarTypes.IsScalarBodyType(member.Source.ValueType));
-            }
-
-            return new AggregateBody(aggregate);
-        }
-
-        if (_rootBodies.Length == 0)
+        if (_bodyEntries.Length == 0)
         {
             return null;
         }
 
         // 单个 [RootBody]：保持原样正文（任何序列化器、任何编码都能用）。
-        var source = _rootBodies[0].Source;
+        if (_bodyEntries.Length > 1 || !_bodyEntries[0].IsRootBody)
+        {
+            // 合并正文：显式 [Body] / 未标注成员按键名写入；[RootBody] 结构化值展开、标量按键写入。
+            // 键名冲突由序列化阶段统一校验（对象的属性名要到运行时才知道）。
+            var aggregate = new AggregateBodyMember[_bodyEntries.Length];
+            for (var index = 0; index < _bodyEntries.Length; index++)
+            {
+                var entry = _bodyEntries[index];
+                aggregate[index] = new AggregateBodyMember(
+                    entry.Name,
+                    entry.Source.GetValue(target),
+                    entry.Source.ValueType,
+                    entry.NameFromAttribute,
+                    entry.Source.Format,
+                    entry.Spread);
+            }
+
+            return new AggregateBody(aggregate);
+        }
+
+        var source = _bodyEntries[0].Source;
         var value = source.GetValue(target);
         if (value is null || !ScalarTypes.IsScalarBodyType(value.GetType()))
         {
@@ -482,4 +458,39 @@ internal sealed class BindingPlan
 
         return false;
     }
+}
+
+/// <summary>
+/// 正文的一个来源：显式 <c>[Body]</c> / body 方法上的未标注成员（按键写入），或 <c>[RootBody]</c>（结构化值展开属性）。
+/// 顺序即声明顺序，正文按此顺序输出。
+/// </summary>
+internal readonly struct BodyEntry
+{
+    public BodyEntry(int order, string name, bool nameFromAttribute, IValueSource source, bool isRootBody, bool spread)
+    {
+        Order = order;
+        Name = name;
+        NameFromAttribute = nameFromAttribute;
+        Source = source;
+        IsRootBody = isRootBody;
+        Spread = spread;
+    }
+
+    /// <summary>声明序号（三类来源共用一个自增计数）。</summary>
+    public int Order { get; }
+
+    /// <summary>键名（<c>[JsonPropertyName]</c> 优先，否则成员名）。</summary>
+    public string Name { get; }
+
+    /// <summary>键名是否来自 <c>[JsonPropertyName]</c>（是则不套 JSON 命名策略）。</summary>
+    public bool NameFromAttribute { get; }
+
+    /// <summary>取值来源。</summary>
+    public IValueSource Source { get; }
+
+    /// <summary>是否来自 <c>[RootBody]</c>：独占正文时原样发送，不加壳。</summary>
+    public bool IsRootBody { get; }
+
+    /// <summary>是否把结构化值的属性展开到当前层（只有结构化 <c>[RootBody]</c> 成立）。</summary>
+    public bool Spread { get; }
 }

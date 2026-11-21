@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2800%20passed-success)](#构建与测试)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2657%20passed-success)](#构建与测试)
-[![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#构建与测试)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2866%20passed-success)](#构建与测试)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2721%20passed-success)](#构建与测试)
+[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#构建与测试)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **简体中文** | [English](README.en.md)
@@ -1717,7 +1717,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 
 - 默认通道只看 HTTP 方法，不看类型：POST / PUT / PATCH 上的全部未标注成员按键名聚合成**一个对象**作为请求体（1 个成员也加壳，`{ "page": 2 }`）；GET / HEAD / OPTIONS / DELETE 及其它方法上的未标注成员绑 Query。
 - 聚合 Body 的键名：`[JsonPropertyName]` 优先，否则属性名（接口式为参数名）；JSON 再套 `PropertyNamingPolicy`（默认 Web 的 camelCase）。多个成员键名重复在构建期报错。
-- 正文合并只看来源：`[Body]` 与未标注成员按键写入同一层，`[RootBody]` 结构化值展开属性、标量按键写入。只有一个正文来源（单个 `[RootBody]`）时原样发送、不加壳；出现第二个正文来源就统一合并，合并后重复键报错。`[RootBody]` 与 `[Multipart]` 在构建期报错。
+- 正文合并只看来源：`[Body]` 与未标注成员按键写入同一层，`[RootBody]` 结构化值展开属性、标量按键写入。只有一个正文来源（单个 `[RootBody]`）时原样发送、不加壳；出现第二个正文来源就统一合并，合并后重复键报错、键顺序＝声明顺序。`[RootBody]` 与 `[Multipart]` 在构建期报错；合并后的正文也装不下文件部件（`Stream` / `FormFile` / `HttpContent` 成员）——这种写法同样在构建期报错，请改用 `[Multipart]`，或让它作为唯一的 `[RootBody]` 原样发送。
 - 模型式请求不需要为正文再造一个 `Payload` 子类：正文成员直接写在请求类上即可（POST / PUT / PATCH 默认进正文，无需 `[Body]`）；接口式方法则必然有一个强类型参数。
 - 显式 `[Body]` 把成员强制并入聚合正文（任何 HTTP 方法都生效），可多个；键名规则同上，重复键在构建期报错。同一成员可同时标 `[Query]` / `[Header]` / `[Path]`，值会分别进入对应通道。
 - 想排除默认 Body：用 `[Query]` 把成员拉回查询串，`[Header]` / `[HeaderCollection]` / `[Path]` 换通道，`[ApiIgnore]` 完全不发。
@@ -1930,6 +1930,7 @@ var client = new ApiClient(url, c =>
   - 请求头集合（`[HeaderCollection]`）的字典值逐项经过钩子（通道 `Header`），与单值 `[Header]` 同一口径；`[Format]` 仍不能标在该成员上（值本就是字符串，构建期报错）。
 - **成员函数也拿得到通道**：`[Format(typeof(Formats), nameof(Formats.Money))]` 指向的静态方法签名固定为 `public static string? Money(object? value, ValueTextChannel channel)`，第二个参数是该成员所在的通道；不关心通道就写成 `_` 丢弃，没有「只写一个参数」的形态。
   - 裸标量正文（`data` 本身是标量）含 `byte[]` 等二进制形态：只有声明 / 钩子真的产出文本时才改成文本正文，否则按原始字节发送，钩子返回 `null` 不会触发 base64。
+  - 聚合正文（`{"a":1,"b":2}`）的成员与裸标量正文同一通道（`ScalarBody`）：成员没有 `[Format]` 时照样问钩子；集合成员逐元素问，钩子不处理的元素按声明类型写出。
   - 直接调用（`PostAsync(url, data)`）的裸标量同样过钩子；但 `data` 是 `string` / `byte[]` / `Stream` / 字节块时属于「原样正文」，没有「值 → 文本」这一步，钩子不参与。
   - 查询里的嵌套对象 / 字典 / `JsonElement` 树按叶子应用：成员声明优先，其次实例钩子。
 - **集合与字典**：标在集合上逐元素应用，标在字典上逐值应用（键不动）。字典上的声明不做构建期类型校验——值类型运行期才知道。
@@ -2720,15 +2721,15 @@ dotnet build AxiosNet.sln -c Release
 
 | 测试项目 | 用例数 | 目标框架 | 执行次数 |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests`（核心 + 声明式） | 2599 / 2588 | `net8.0` / `net6.0` | 5187 |
+| `AxiosNet.Tests`（核心 + 声明式） | 2665 / 2652 | `net8.0` / `net6.0` | 5317 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests`（OpenAPI 生成） | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests`（netstandard2.0 兼容资产） | 57 / 52 | `net8.0` / `net472` | 109 |
-| **合计** | **2800 / 2709** | | **5509** |
+| **合计** | **2866 / 2773** | | **5639** |
 
 表里每格是「同一份源码在两个 TFM 上各跑一遍」的用例数，斜杠两侧不是「总数 / 通过数」。
 
-行覆盖率 **91.9%**、分支覆盖率 **87.7%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
+行覆盖率 **92.1%**、分支覆盖率 **87.6%**（`AxiosNet.Tests` / net8.0，`--collect:"XPlat Code Coverage"`，排除性能与分配类用例）：
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

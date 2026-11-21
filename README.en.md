@@ -3,9 +3,9 @@
 [![.NET](https://img.shields.io/badge/.NET-6%2B%20%7C%20Framework%204.7.2%2B-512BD4?logo=.net)](https://dotnet.microsoft.com/)
 [![netstandard](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4)](https://learn.microsoft.com/dotnet/standard/net-standard)
 [![nuget](https://img.shields.io/badge/nuget-AxiosNet?logo=nuget)](https://www.nuget.org/packages/AxiosNet)
-[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2800%20passed-success)](#build-and-test)
-[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2657%20passed-success)](#build-and-test)
-[![coverage](https://img.shields.io/badge/coverage-91.9%25_(branch_87.7%25)-success)](#build-and-test)
+[![tests net8.0](https://img.shields.io/badge/tests%20net8.0-2866%20passed-success)](#build-and-test)
+[![tests net6.0](https://img.shields.io/badge/tests%20net6.0-2721%20passed-success)](#build-and-test)
+[![coverage](https://img.shields.io/badge/coverage-92.1%25_(branch_87.6%25)-success)](#build-and-test)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [简体中文](README.md) | **English**
@@ -1713,7 +1713,7 @@ string url = client.GetUri(new GetUserRequest { Id = 5 });                     /
 
 - **Default channel depends only on the HTTP method, never on the member type**: every undecorated member on POST / PUT / PATCH is aggregated into **one object** body keyed by member name (even a single member is wrapped, `{ "page": 2 }`); undecorated members on GET / HEAD / OPTIONS / DELETE and custom methods go to the query.
 - Aggregated body keys: `[JsonPropertyName]` first, otherwise the property name (the parameter name for interfaces); JSON then applies `PropertyNamingPolicy` (camelCase by default). Duplicate keys fail at build time.
-- Body merging depends only on the sources: `[Body]` and undecorated members are written under their keys in the same layer, while `[RootBody]` spreads structured values and writes scalar values under their key. A single body source (one `[RootBody]`) is sent as-is, unwrapped; as soon as a second source appears everything merges into one layer, and duplicate keys fail. `[RootBody]` + `[Multipart]` fails at build time.
+- Body merging depends only on the sources: `[Body]` and undecorated members are written under their keys in the same layer, while `[RootBody]` spreads structured values and writes scalar values under their key. A single body source (one `[RootBody]`) is sent as-is, unwrapped; as soon as a second source appears everything merges into one layer, where duplicate keys fail and key order follows declaration order. `[RootBody]` + `[Multipart]` fails at build time, and so does a merged body that would have to carry a file part (a `Stream` / `FormFile` / `HttpContent` member) — use `[Multipart]` instead, or keep it as the single `[RootBody]` and send it as-is.
 - Model-style requests do not need a separate `Payload` class just for the body: put the body members directly on the request class (POST / PUT / PATCH are body by default, so no `[Body]` is needed); interface-style methods necessarily take one strongly typed parameter.
 - An explicit `[Body]` forces the member into the aggregated body on any HTTP method; repeatable, same key rules, duplicate keys fail at build time. The same member may also carry `[Query]` / `[Header]` / `[Path]`, and its value is applied to each channel.
 - To opt out of the aggregated body: `[Query]` pulls a member back to the query, `[Header]` / `[HeaderCollection]` / `[Path]` change the channel, `[ApiIgnore]` sends nothing.
@@ -1926,6 +1926,7 @@ var client = new ApiClient(url, c =>
   - A header collection (`[HeaderCollection]`) applies the hook per dictionary value (channel `Header`), exactly like a single `[Header]`; `[Format]` still cannot be put on that member (the values are already strings — build-time error).
 - **Member formatters get the channel too**: the static method behind `[Format(typeof(Formats), nameof(Formats.Money))]` has a fixed signature of `public static string? Money(object? value, ValueTextChannel channel)`; the second argument is the channel that member is written through. Discard it as `_` when you do not care — there is no one-parameter form.
   - The raw scalar body means `data` itself is a scalar, binary forms such as `byte[]` included: a binary body only becomes a text body when the declaration / hook actually produces text, otherwise it is sent as raw bytes, and a hook returning `null` never triggers base64.
+  - Members of an aggregated body (`{"a":1,"b":2}`) share the raw scalar body's channel (`ScalarBody`): a member without `[Format]` still asks the hook; collection members ask it per element, and elements the hook declines are written as their declared type.
   - A raw scalar body on a direct call (`PostAsync(url, data)`) goes through the hook too; but when `data` is a `string` / `byte[]` / `Stream` / byte chunks it is a "verbatim body" — there is no value-to-text step, so the hook does not take part.
   - Nested objects, dictionaries and `JsonElement` trees inside the query apply it per leaf: member declaration first, then the instance hook.
 - **Collections and dictionaries**: on a collection it applies per element, on a dictionary per value (keys untouched). Declarations on dictionaries skip the build-time type check — the value type is only known at runtime.
@@ -2718,15 +2719,15 @@ Sources compile as **C# 12**: every project declares `<LangVersion>12.0</LangVer
 
 | Test project | Cases | Frameworks | Executions |
 | --- | ---: | --- | ---: |
-| `AxiosNet.Tests` (core + declarative) | 2599 / 2588 | `net8.0` / `net6.0` | 5187 |
+| `AxiosNet.Tests` (core + declarative) | 2665 / 2652 | `net8.0` / `net6.0` | 5317 |
 | `AxiosNet.DependencyInjection.Tests` | 69 | `net8.0` / `net6.0` | 138 |
 | `AxiosNet.Cli.Tests` (OpenAPI generation) | 75 | `net8.0` | 75 |
 | `AxiosNet.Compat.Tests` (netstandard2.0 compat asset) | 57 / 52 | `net8.0` / `net472` | 109 |
-| **Total** | **2800 / 2709** | | **5509** |
+| **Total** | **2866 / 2773** | | **5639** |
 
 Each cell counts the cases run on that TFM from the same sources — the two sides of the slash are not "total / passed".
 
-Line coverage **91.9%**, branch coverage **87.7%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
+Line coverage **92.1%**, branch coverage **87.6%** (`AxiosNet.Tests` / net8.0, via `--collect:"XPlat Code Coverage"`, excluding the perf and allocation suites):
 
 ```bash
 dotnet test test/AxiosNet.Tests/AxiosNet.Tests.csproj -f net8.0 --collect:"XPlat Code Coverage" \

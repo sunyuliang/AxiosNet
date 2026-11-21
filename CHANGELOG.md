@@ -19,6 +19,16 @@
   - 默认正文支持 JSON 与 `application/x-www-form-urlencoded`；multipart 请改用 `[Multipart]`，XML / 自定义序列化器请给成员显式标 `[RootBody]`（否则构建期给出明确错误）。
   - net6.0 的 System.Text.Json 不支持 `DateOnly` / `TimeOnly`：默认正文包含这类成员时会像显式 `[RootBody]` 一样在序列化阶段报错。
 
+### Fixed
+
+- 声明式默认正文（`[Body]` / 未标注成员 / 多个 `[RootBody]` 合并出来的那个对象）的行为校准：
+  - 键顺序＝声明顺序，`[Body]` 不再被整段提前到 `[RootBody]` 之前；
+  - 成员没有 `[Format]` 时照样走实例钩子 `Serialization.ValueText`，集合成员逐元素问钩子、钩子不处理的元素按声明类型写出；
+  - AOT 下成员类型没进 `JsonTypeInfo` 图时，标量按 System.Text.Json 默认形态写出，只有结构化类型才报缺元数据（`decimal` 之类的标量成员不再整条请求失败）。
+- 表单形态的合并正文按**线上形态**（百分号编码之后）比较键名：非 ASCII 键名不再绕过重复键检查、把两个同名键发出去。
+- 合并正文装配失败时，错误消息给的是键名而不是内部类型名，并按 `FormFile` 契约回收成员里的流 / 文件内容。
+- 合并成对象的正文装不下文件部件：`Stream` / `FormFile` / `HttpContent` 成员一旦需要合并到同一层就在构建期报错并指向 `[Multipart]`（此前直到序列化阶段才失败）。
+
 ## [1.7.1] - 2026-11-18
 
 ### Changed

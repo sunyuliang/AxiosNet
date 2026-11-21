@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AxiosNet.Internal.Content;
 using AxiosNet.Serialization;
 using AxiosNet.Tests.Infrastructure;
 
@@ -154,6 +155,43 @@ public sealed class AotJsonTests
         {
             RuntimeSupport.ForceNoDynamicCode = false;
         }
+    }
+
+    /// <summary>
+    /// 默认正文的成员按声明类型取元数据，取不到时标量仍按 STJ 默认形态写出：
+    /// 聚合正文不能因为某个标量类型没进 AOT 图就整条请求失败。
+    /// </summary>
+    [Fact]
+    public void AggregateBody_ScalarMemberWithoutMetadata_WritesScalarDirectly()
+    {
+        var body = new AggregateBody([
+            new AggregateBodyMember("total", 12.5m, typeof(decimal), nameFromAttribute: false, format: null),
+            new AggregateBodyMember(
+                "when",
+                new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+                typeof(DateTime),
+                nameFromAttribute: false,
+                format: null)
+        ]);
+
+        var json = Encoding.UTF8.GetString(SystemTextJsonSerializer.SerializeAggregate(body, ContextConfig()));
+
+        Assert.Equal("""{"total":12.5,"when":"2024-01-02T00:00:00Z"}""", json);
+    }
+
+    /// <summary>结构化成员才是真的缺元数据：报错要点出类型，不能把「写不出来」演成空对象。</summary>
+    [Fact]
+    public void AggregateBody_StructuredMemberWithoutMetadata_ReportsMissingMetadata()
+    {
+        var body = new AggregateBody([
+            new AggregateBodyMember("item", new AotUnregistered("x"), typeof(AotUnregistered), nameFromAttribute: false, format: null)
+        ]);
+
+        var error = Assert.Throws<NotSupportedException>(
+            () => SystemTextJsonSerializer.SerializeAggregate(body, ContextConfig()));
+
+        Assert.Contains(nameof(AotUnregistered), error.Message);
+        Assert.Contains("JsonSerializable", error.Message);
     }
 #endif
 

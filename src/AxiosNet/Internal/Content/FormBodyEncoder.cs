@@ -20,33 +20,13 @@ internal static class FormBodyEncoder
         Encoding encoding,
         bool appendCharset)
     {
-        var pairs = new List<KeyValuePair<string, string>>(8);
-        var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldName, config.SerializationOrNull?.ValueText);
-        var path = new ObjectPath();
-        try
-        {
-            CollectFormPairs(null, data, pairs, options, ref path, memberFormat: null);
-        }
-        catch (DataCycleException ex)
-        {
-            // 正文不再产出：数据里的流 / FormFile 按 FormFile 契约（异常时 Dispose）一并回收。
-            MultipartOwnership.DisposeOwned(data);
+        // 单个结构化数据＝一个铺到根级的成员：与聚合正文同一条展平路径。
+        // 不做键名去重：对象属性天然唯一，重复只能来自展平后的同名字段（<c>[JsonPropertyName]</c> 冲突），
+        // 那是调用方数据本身的问题，不归「合并正文」这条规则管。
+        AggregateBodyMember[] members =
+            [new AggregateBodyMember(string.Empty, data, data.GetType(), nameFromAttribute: false, format: null, spread: true)];
 
-            // 环检测：转成带配置的选项错误。
-            throw AxiosException.InvalidOption(ex.Message, config, ex);
-        }
-        catch (UnsupportedFormValueException ex)
-        {
-            // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE，流同样不能留到 GC。
-            MultipartOwnership.DisposeOwned(data);
-            throw AxiosException.InvalidOption(ex.Message, config, ex);
-        }
-        finally
-        {
-            path.Dispose();
-        }
-
-        return Finish(pairs, config, mediaType, encoding, appendCharset);
+        return CreateCore(members, guardDuplicateKeys: false, config, mediaType, encoding, appendCharset);
     }
 
     /// <summary>默认正文的 urlencoded 形态：每个聚合成员按自己的键名展平（嵌套规则与普通对象一致）。</summary>
@@ -56,23 +36,37 @@ internal static class FormBodyEncoder
         string mediaType,
         Encoding encoding,
         bool appendCharset)
+        => CreateCore(body.Members, guardDuplicateKeys: true, config, mediaType, encoding, appendCharset);
+
+    /// <summary>展平一组正文成员；<paramref name="guardDuplicateKeys"/> 为 <c>true</c> 时校验同层键名唯一。</summary>
+    private static HttpContent CreateCore(
+        AggregateBodyMember[] members,
+        bool guardDuplicateKeys,
+        AxiosConfig config,
+        string mediaType,
+        Encoding encoding,
+        bool appendCharset)
     {
-        var pairs = new List<KeyValuePair<string, string>>(Math.Max(4, body.Members.Length));
+        var pairs = new List<KeyValuePair<string, string>>(Math.Max(4, members.Length));
         var options = new FormFlattenOptions(encoding, config.SerializationOrNull?.FormFieldName, config.SerializationOrNull?.ValueText);
         var path = new ObjectPath();
-        var topNames = new List<string>(body.Members.Length);
+        // 键名一律按线上形态（已百分号编码）登记：铺开的成员产出的是编码后的键，两侧必须同形态才比得出来。
+        List<string>? topNames = guardDuplicateKeys ? new List<string>(members.Length) : null;
         try
         {
-            foreach (var member in body.Members)
+            foreach (var member in members)
             {
                 if (member.Spread)
                 {
-                    // 多个 [RootBody]：结构化值的字段直接铺到根级。
+                    // 多个 [RootBody] / 单个结构化正文：结构化值的字段直接铺到根级。
                     var start = pairs.Count;
                     CollectFormPairs(null, member.Value, pairs, options, ref path, member.Format);
-                    for (var i = start; i < pairs.Count; i++)
+                    if (topNames is not null)
                     {
-                        topNames.Add(TopLevelName(pairs[i].Key));
+                        for (var i = start; i < pairs.Count; i++)
+                        {
+                            topNames.Add(TopLevelName(pairs[i].Key));
+                        }
                     }
 
                     continue;
@@ -80,18 +74,20 @@ internal static class FormBodyEncoder
 
                 // 聚合正文的键即成员键名，直接作为根级前缀；成员级 [Format] 照常生效。
                 var name = BodyFields.CombineName(options.NameSelector, null, member.Name);
-                topNames.Add(name);
+                topNames?.Add(EncodeKey(name, encoding));
                 CollectFormPairs(name, member.Value, pairs, options, ref path, member.Format);
             }
         }
         catch (DataCycleException ex)
         {
-            DisposeAggregateMembers(body);
+            // 正文不再产出：数据里的流 / FormFile 按 FormFile 契约（异常时 Dispose）一并回收。
+            DisposeMembers(members);
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
         catch (UnsupportedFormValueException ex)
         {
-            DisposeAggregateMembers(body);
+            // 表单装不下文件部件：归 ERR_BAD_OPTION_VALUE，流同样不能留到 GC。
+            DisposeMembers(members);
             throw AxiosException.InvalidOption(ex.Message, config, ex);
         }
         finally
@@ -99,14 +95,21 @@ internal static class FormBodyEncoder
             path.Dispose();
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in topNames)
+        if (topNames is not null)
         {
-            if (!seen.Add(name))
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            try
             {
-                DisposeAggregateMembers(body);
-                throw AxiosException.InvalidOption(
-                    $"请求体合并后出现重复键 \"{name}\"：请改名，或把 [RootBody] 换成 [Body] 包成独立键。", config);
+                foreach (var name in topNames)
+                {
+                    AggregateKeys.EnsureUnique(seen, name, config);
+                }
+            }
+            catch (AxiosException)
+            {
+                // 重复键同样不产出正文：成员里的流要在这里回收。
+                DisposeMembers(members);
+                throw;
             }
         }
 
@@ -120,10 +123,10 @@ internal static class FormBodyEncoder
         return bracket <= 0 ? key : key[..bracket];
     }
 
-    /// <summary>聚合正文不再产出时回收成员里的流 / FormFile（与普通正文的异常路径同一契约）。</summary>
-    private static void DisposeAggregateMembers(AggregateBody body)
+    /// <summary>正文不再产出时回收成员里的流 / FormFile（与普通正文的异常路径同一契约）。</summary>
+    private static void DisposeMembers(AggregateBodyMember[] members)
     {
-        foreach (var member in body.Members)
+        foreach (var member in members)
         {
             MultipartOwnership.DisposeOwned(member.Value);
         }

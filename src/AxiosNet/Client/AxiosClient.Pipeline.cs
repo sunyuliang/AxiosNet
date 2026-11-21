@@ -547,13 +547,16 @@ public sealed partial class AxiosClient
             }
             catch (Exception ex) when (ex is not AxiosException and not OperationCanceledException)
             {
-                // 序列化失败走统一错误模型，带来源名称的表单容器报该名称。
+                // 序列化失败走统一错误模型，带来源名称的表单容器 / 聚合正文报该名称（不暴露内部类型名）。
                 throw AxiosException.BadRequestPayload(
                     config,
                     template,
-                    config.Body is FormData declared
-                        ? declared.SourceName ?? declared.GetType().Name
-                        : config.Body?.GetType().Name ?? "null",
+                    config.Body switch
+                    {
+                        FormData declared => declared.SourceName ?? declared.GetType().Name,
+                        AggregateBody aggregate => aggregate.SourceName,
+                        _ => config.Body?.GetType().Name ?? "null"
+                    },
                     ex);
             }
 
