@@ -48,6 +48,9 @@ internal sealed class ApiReader
     /// <summary>类型映射器，在分组与操作命名确定后创建。</summary>
     private SchemaMapper? _mapper;
 
+    /// <summary>类型映射器的取值入口：未创建就取值说明读取顺序有误（必须先确定分组与命名）。</summary>
+    private SchemaMapper Mapper => _mapper ?? throw new InvalidOperationException("类型映射器尚未创建：读取顺序有误。");
+
     /// <summary>构造读取器；root 必须是已归一化为 OpenAPI 3 的文档。</summary>
     public ApiReader(SpecNode root, CliOptions options, WarningCollector warnings)
     {
@@ -90,7 +93,7 @@ internal sealed class ApiReader
         }
 
         FinalizeGroups();
-        _spec.Types.AddRange(_mapper.Types);
+        _spec.Types.AddRange(Mapper.Types);
         _spec.Warnings.AddRange(_warnings.Items);
 
         // 全部操作都被跳过（例如参数结构无法表达）时同样视为失败；警告已由调用方在异常前打印出来。
@@ -603,7 +606,7 @@ internal sealed class ApiReader
             return false;
         }
 
-        var type = _mapper!.Map(
+        var type = Mapper.Map(
             schema, model.Name + Naming.Pascal(wireName), $"{location} path {wireName}");
 
         if (parameter["required"]?.AsBool() == false)
@@ -633,7 +636,7 @@ internal sealed class ApiReader
         List<string> queryFormats,
         string location)
     {
-        var type = _mapper!.Map(
+        var type = Mapper.Map(
             ParameterSchema(parameter), model.Name + Naming.Pascal(wireName), $"{location} query {wireName}");
 
         var style = parameter["style"]?.AsString();
@@ -696,7 +699,7 @@ internal sealed class ApiReader
             return false;
         }
 
-        var type = _mapper!.Map(
+        var type = Mapper.Map(
             schema, model.Name + Naming.Pascal(wireName), $"{location} header {wireName}");
 
         model.Parameters.Add(new ApiParameter
@@ -948,7 +951,7 @@ internal sealed class ApiReader
         {
             case MediaKind.Multipart:
                 result.MediaType = "multipart/form-data";
-                if (!_mapper!.TryDescribeObject(schema, $"{location} multipart", out var properties))
+                if (!Mapper.TryDescribeObject(schema, $"{location} multipart", out var properties))
                 {
                     _warnings.Add("MULTIPART_UNSUPPORTED", location, "multipart 请求体不是对象 schema，无法展开为部件。");
                     unsupported = true;
@@ -958,7 +961,7 @@ internal sealed class ApiReader
                 result.IsMultipart = true;
                 foreach (var property in properties)
                 {
-                    var type = _mapper.Map(
+                    var type = Mapper.Map(
                         property.Schema,
                         model.Name + Naming.Pascal(property.WireName),
                         $"{location} part {property.WireName}");
@@ -993,7 +996,7 @@ internal sealed class ApiReader
 
             case MediaKind.Form:
                 result.MediaType = "application/x-www-form-urlencoded";
-                result.Type = _mapper!.Map(schema, model.Name + "Form", $"{location} request");
+                result.Type = Mapper.Map(schema, model.Name + "Form", $"{location} request");
                 result.BodyName = Naming.Unique("body", usedNames);
                 return result;
 
@@ -1015,14 +1018,14 @@ internal sealed class ApiReader
                 // 但 Content-Type 必须按声明发送，不能一律写成 application/json。
                 result.Type = schema is null
                     ? TypeRef.JsonElement
-                    : _mapper!.Map(schema, BodyTypeName(model), $"{location} request");
+                    : Mapper.Map(schema, BodyTypeName(model), $"{location} request");
                 result.BodyName = Naming.Unique("body", usedNames);
                 return result;
 
             default:
                 result.Type = schema is null
                     ? TypeRef.JsonElement
-                    : _mapper!.Map(schema, BodyTypeName(model), $"{location} request");
+                    : Mapper.Map(schema, BodyTypeName(model), $"{location} request");
                 result.BodyName = Naming.Unique("body", usedNames);
                 return result;
         }
@@ -1167,7 +1170,7 @@ internal sealed class ApiReader
 
             model.ReturnType = schema is null
                 ? TypeRef.JsonElement
-                : _mapper!.Map(schema, model.Name + "Item", $"{location} response");
+                : Mapper.Map(schema, model.Name + "Item", $"{location} response");
             return;
         }
 
@@ -1185,7 +1188,7 @@ internal sealed class ApiReader
                 }
                 else
                 {
-                    model.ReturnType = _mapper!.Map(schema, model.Name + "Response", $"{location} response");
+                    model.ReturnType = Mapper.Map(schema, model.Name + "Response", $"{location} response");
                 }
 
                 break;
