@@ -2840,7 +2840,8 @@ dotnet run -c Release --project test/AxiosNet.Benchmarks -- --filter '*' --isola
 │  │     └─ Support/                  # 超时 / 并发闸门 / 取消分类 / 运行时辅助
 │  ├─ AxiosNet.SourceGen/             # 源生成器（netstandard2.0 分析器）：与 Reflection/ 对称的生成期路径
 │  ├─ AxiosNet.DependencyInjection/   # DI 扩展（独立包，同为三目标；Compatibility/ 放本包的 polyfill）
-│  └─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
+│  ├─ AxiosNet.Cli/                   # 设计期工具 axiosnet-gen：OpenAPI / Swagger → 声明式 C#（见「从 OpenAPI 导入」）
+│  └─ Shared/                         # 三个项目共用的源文件（路径占位符文法 PathGrammar）
 ├─ samples/                           # Simple（58 项）/ DI / Aot
 ├─ eng/                               # CI 脚本（AOT 包消费 smoke，见「Native AOT 验证」）
 └─ test/

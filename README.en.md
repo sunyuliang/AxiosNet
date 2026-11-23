@@ -2838,7 +2838,8 @@ For a cross-implementation comparison see [`test/AxiosNet.Comparison`](test/Axio
 │  │     └─ Support/                  # timeouts / concurrency gate / cancellation / runtime helpers
 │  ├─ AxiosNet.SourceGen/             # source generator (netstandard2.0 analyzer): the build-time mirror of Reflection/
 │  ├─ AxiosNet.DependencyInjection/   # DI extensions (separate package, tri-target too; Compatibility/ holds its polyfills)
-│  └─ AxiosNet.Cli/                   # design-time tool axiosnet-gen: OpenAPI / Swagger → declarative C# (see "OpenAPI import")
+│  ├─ AxiosNet.Cli/                   # design-time tool axiosnet-gen: OpenAPI / Swagger → declarative C# (see "OpenAPI import")
+│  └─ Shared/                         # source files shared by three projects (path placeholder grammar)
 ├─ samples/                           # Simple (58 items) / DI / Aot
 ├─ eng/                               # CI scripts (AOT package-consumer smoke, see "Native AOT verification")
 └─ test/

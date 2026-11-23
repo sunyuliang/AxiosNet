@@ -134,4 +134,9 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 路径占位符文法与运行期 / 源生成器 / CLI 共用同一份源文件，避免三处各写一份文法。 -->
+    <Compile Include="..\Shared\PathGrammar.cs" Link="Shared\PathGrammar.cs" />
+  </ItemGroup>
+
 </Project>

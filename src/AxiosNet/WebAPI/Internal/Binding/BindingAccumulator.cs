@@ -2,6 +2,7 @@ using System.IO;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using AxiosNet.Internal.Headers;
+using AxiosNet.Internal.Spec;
 using AxiosNet.WebAPI.Attributes;
 
 namespace AxiosNet.WebAPI.Internal.Binding;
@@ -571,5 +572,5 @@ internal sealed class BindingAccumulator
         => string.IsNullOrWhiteSpace(explicitName) ? fallback : explicitName.Trim();
 
     /// <summary>路径占位符：字母/下划线开头，字母/数字/下划线组成。</summary>
-    private static readonly Regex PathTokenRegex = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.CultureInvariant);
+    private static readonly Regex PathTokenRegex = new(PathGrammar.Placeholder, RegexOptions.CultureInvariant);
 }

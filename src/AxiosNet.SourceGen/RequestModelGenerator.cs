@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using AxiosNet.Internal.Spec;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -366,7 +367,7 @@ namespace AxiosNet.SourceGen
 
         /// <summary>取出路由模板里的占位符名（<c>{id}</c> → <c>id</c>），跳过 <c>{{</c> 转义、空名与非标识符内容。</summary>
         /// <remarks>
-        /// 文法必须与运行期 <c>BindingAccumulator.PathTokenRegex</c> 一致。不匹配的花括号在这里跳过而不是当成占位符，
+        /// 文法取自与运行期共用的 <see cref="PathGrammar"/>。不匹配的花括号在这里跳过而不是当成占位符，
         /// 否则 <c>{id:int}</c> 这类模板会报出误导性的「没有成员标注 [Path]」，交给运行期诊断更准确。
         /// </remarks>
         /// <param name="template">路由模板。</param>
@@ -403,22 +404,21 @@ namespace AxiosNet.SourceGen
             }
         }
 
-        /// <summary>模板里这两朵花括号之间是否是一个运行期认得的占位符名（<c>[A-Za-z_][A-Za-z0-9_]*</c>）。</summary>
+        /// <summary>模板里这两朵花括号之间是否是一个运行期认得的占位符名（<see cref="PathGrammar"/>）。</summary>
         /// <param name="template">路由模板。</param>
         /// <param name="start">名字起点。</param>
         /// <param name="length">名字长度。</param>
         /// <returns>合法返回 <c>true</c>；空名 / 约束表达式等非法形态返回 <c>false</c>。</returns>
         private static bool IsPlaceholderName(string template, int start, int length)
         {
-            if (length == 0 || !IsNameStart(template[start]))
+            if (length == 0 || !PathGrammar.IsNameStart(template[start]))
             {
                 return false;
             }
 
             for (var i = start + 1; i < start + length; i++)
             {
-                var c = template[i];
-                if (!IsNameStart(c) && !(c >= '0' && c <= '9'))
+                if (!PathGrammar.IsNameChar(template[i]))
                 {
                     return false;
                 }
@@ -426,11 +426,6 @@ namespace AxiosNet.SourceGen
 
             return true;
         }
-
-        /// <summary>占位符名的首字符集合：ASCII 字母或下划线。</summary>
-        /// <param name="c">待判定字符。</param>
-        /// <returns>合法返回 <c>true</c>。</returns>
-        private static bool IsNameStart(char c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
 
         /// <summary>是否有成员用 <c>[Path]</c> 绑定了这个占位符。</summary>
         /// <remarks>

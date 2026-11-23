@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using AxiosNet.Cli.Generation;
 using AxiosNet.Cli.Spec;
+using AxiosNet.Internal.Spec;
 
 namespace AxiosNet.Cli.Model;
 
@@ -12,8 +13,8 @@ internal sealed class ApiReader
     /// <summary>OpenAPI path item 下的 HTTP 方法键（小写），同时决定遍历顺序。</summary>
     private static readonly string[] Verbs = { "get", "put", "post", "delete", "options", "head", "patch", "trace" };
 
-    /// <summary>路径模板占位符：与运行时的识别规则完全一致（字母 / 下划线开头，字母 / 数字 / 下划线组成）。</summary>
-    private static readonly Regex PathPlaceholderPattern = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.CultureInvariant);
+    /// <summary>路径模板占位符：文法取自与运行期共用的 <see cref="PathGrammar"/>。</summary>
+    private static readonly Regex PathPlaceholderPattern = new(PathGrammar.Placeholder, RegexOptions.CultureInvariant);
 
     /// <summary>由客户端 / 框架托管的请求头：声明成参数会破坏请求构造，读取时直接跳过。</summary>
     private static readonly HashSet<string> ManagedHeaders = new(StringComparer.OrdinalIgnoreCase)
