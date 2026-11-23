@@ -24,7 +24,7 @@ public sealed class BindingErrorsTests
     [Fact]
     public void Run_Value_ReturnsTheResult_WhenBindingSucceeds()
     {
-        Assert.Equal(42, BindingErrors.Run(new AxiosConfig(), "Probe", () => 42));
+        Assert.Equal(42, BindingErrors.Run(new AxiosConfig(), "Probe", 0, static _ => 42));
     }
 
     /// <summary>普通异常（用户格式化函数抛的任意类型）→ <c>ERR_BAD_REQUEST</c>，原始异常进 <c>Cause</c>。</summary>
@@ -34,7 +34,7 @@ public sealed class BindingErrorsTests
         var original = new FormatException("格式炸了");
 
         var ex = Assert.ThrowsAny<AxiosException>(
-            () => BindingErrors.Run(new AxiosConfig(), "Probe", () => Throwing<int>(original)));
+            () => BindingErrors.Run(new AxiosConfig(), "Probe", original, static ex => Throwing<int>(ex)));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Same(original, ex.Cause);
@@ -53,7 +53,7 @@ public sealed class BindingErrorsTests
         var constructionFailure = AxiosException.RequestConstructionFailed(new AxiosConfig(), original);
 
         var ex = Assert.ThrowsAny<AxiosException>(
-            () => BindingErrors.Run(new AxiosConfig(), "Probe", () => Throwing<int>(constructionFailure)));
+            () => BindingErrors.Run(new AxiosConfig(), "Probe", constructionFailure, static ex => Throwing<int>(ex)));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Same(original, ex.Cause);
@@ -67,7 +67,7 @@ public sealed class BindingErrorsTests
         var unrelated = AxiosException.Canceled(new AxiosConfig(), request: null);
 
         var ex = Assert.ThrowsAny<AxiosException>(
-            () => BindingErrors.Run(new AxiosConfig(), "Probe", () => Throwing<int>(unrelated)));
+            () => BindingErrors.Run(new AxiosConfig(), "Probe", unrelated, static ex => Throwing<int>(ex)));
 
         Assert.Same(unrelated, ex);
     }
@@ -79,7 +79,7 @@ public sealed class BindingErrorsTests
         var canceled = new OperationCanceledException();
 
         var ex = Assert.Throws<OperationCanceledException>(
-            () => BindingErrors.Run(new AxiosConfig(), "Probe", () => Throwing<int>(canceled)));
+            () => BindingErrors.Run(new AxiosConfig(), "Probe", canceled, static ex => Throwing<int>(ex)));
 
         Assert.Same(canceled, ex);
     }
@@ -91,7 +91,7 @@ public sealed class BindingErrorsTests
         var original = new FormatException("头写不进去");
 
         var ex = Assert.ThrowsAny<AxiosException>(
-            () => BindingErrors.Run(new AxiosConfig(), "Probe", () => ThrowingVoid(original)));
+            () => BindingErrors.Run(new AxiosConfig(), "Probe", original, static ex => ThrowingVoid(ex)));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Same(original, ex.Cause);
@@ -108,7 +108,7 @@ public sealed class BindingErrorsTests
         var member = new BindingMemberException(BindingChannel.Query, "UserRequest.Age", original);
 
         var ex = Assert.ThrowsAny<AxiosException>(
-            () => BindingErrors.Run(new AxiosConfig(), "UserRequest", () => Throwing<int>(member)));
+            () => BindingErrors.Run(new AxiosConfig(), "UserRequest", member, static ex => Throwing<int>(ex)));
 
         Assert.Equal(AxiosException.ErrBadRequest, ex.Code);
         Assert.Same(original, ex.Cause);

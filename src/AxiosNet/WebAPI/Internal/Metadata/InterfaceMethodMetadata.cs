@@ -11,6 +11,9 @@ internal sealed partial class InterfaceMethodMetadata
     private readonly string? _buildError;
     private readonly Type? _interfaceType;
     private readonly string? _methodName;
+
+    /// <summary>错误消息与 multipart 来源名共用的定位文本（<c>接口名.方法名</c>），构造期拼一次。</summary>
+    private readonly string _target = string.Empty;
     private readonly HttpMethod? _method;
     private readonly string? _pathTemplate;
     private readonly BindingPlan? _plan;
@@ -58,6 +61,7 @@ internal sealed partial class InterfaceMethodMetadata
         _partBindings = partBindings;
         _invoker = invoker;
         _fault = fault;
+        _target = interfaceType.Name + "." + methodName;
     }
 
     /// <summary>声明里的方法名（生成代理用它校验索引是否与注册声明一致）。</summary>
@@ -82,7 +86,6 @@ internal sealed partial class InterfaceMethodMetadata
     private AxiosConfig BuildConfig(ApiClient client, object?[] args)
     {
         var formatter = client.Axios.Defaults.Serialization.ValueText;
-        var target = $"{_interfaceType!.Name}.{_methodName}";
         var config = new AxiosConfig
         {
             Method = _method!,
@@ -90,16 +93,29 @@ internal sealed partial class InterfaceMethodMetadata
         };
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
-        config.Url = BindingErrors.Run(config, target, () => _plan!.ResolveUrl(_pathTemplate!, args, formatter));
+        // 各步骤以状态元组传参，静态 lambda 无捕获。
+        config.Url = BindingErrors.Run(
+            config,
+            _target,
+            (_plan, _pathTemplate, args, formatter),
+            static state => state._plan!.ResolveUrl(state._pathTemplate!, state.args, state.formatter));
 
-        if (BindingErrors.Run(config, target, () => _plan!.ResolveQuery(args, formatter)) is { } query)
+        if (BindingErrors.Run(
+                config,
+                _target,
+                (_plan, args, formatter),
+                static state => state._plan!.ResolveQuery(state.args, state.formatter)) is { } query)
         {
             config.Params = query;
         }
 
         if (_isMultipart)
         {
-            if (BindingErrors.Run(config, target, () => ResolveMultipartBody(args)) is { } resolved)
+            if (BindingErrors.Run(
+                    config,
+                    _target,
+                    (@this: this, args),
+                    static state => state.@this.ResolveMultipartBody(state.args)) is { } resolved)
             {
                 config.Body = resolved;
             }
@@ -110,7 +126,11 @@ internal sealed partial class InterfaceMethodMetadata
                 config.ContentType = AxiosContentType.MultipartFormData;
             }
         }
-        else if (BindingErrors.Run(config, target, () => _plan!.ResolveBodyValue(args, formatter)) is { } body)
+        else if (BindingErrors.Run(
+                     config,
+                     _target,
+                     (_plan, args, formatter),
+                     static state => state._plan!.ResolveBodyValue(state.args, state.formatter)) is { } body)
         {
             config.Body = body;
         }
@@ -127,8 +147,17 @@ internal sealed partial class InterfaceMethodMetadata
         }
 
         // 声明级静态头先写，参数上的 [Header] / [HeaderCollection] 覆盖同名项
-        BindingErrors.Run(config, target, () => _plan!.ApplyStaticHeaders(config));
-        BindingErrors.Run(config, target, () => _plan!.ApplyHeaders(args, config, formatter));
+        BindingErrors.Run(
+            config,
+            _target,
+            (_plan, config),
+            static state => state._plan!.ApplyStaticHeaders(state.config));
+
+        BindingErrors.Run(
+            config,
+            _target,
+            (_plan, args, config, formatter),
+            static state => state._plan!.ApplyHeaders(state.args, state.config, state.formatter));
 
         return config;
     }
@@ -136,7 +165,7 @@ internal sealed partial class InterfaceMethodMetadata
     /// <summary>接口方法的 multipart 请求体：参数即表单，全部参数为 null 时不发送请求体（与请求模型一致）。</summary>
     private object? ResolveMultipartBody(object?[] args)
     {
-        var form = new FormData { SourceName = $"{_interfaceType!.Name}.{_methodName}" };
+        var form = new FormData { SourceName = _target };
 
         try
         {
@@ -175,8 +204,8 @@ internal sealed partial class InterfaceMethodMetadata
         return form.Count > 0 ? form : null;
     }
 
-    /// <summary>调用前准备：写入调用方取消令牌、组装调用上下文并跑授权。</summary>
-    private Task<ApiInterfaceInvocation> PrepareAsync(
+    /// <summary>调用前准备：写入调用方取消令牌、组装调用上下文并跑授权（同步完成，不包 Task）。</summary>
+    private ApiInterfaceInvocation Prepare(
         ApiClient client,
         object?[] args,
         AxiosConfig config,
@@ -192,14 +221,14 @@ internal sealed partial class InterfaceMethodMetadata
 
         invocation.Auth = client.ApplyAuthorization(_authorization, invocation, config);
 
-        return Task.FromResult(invocation);
+        return invocation;
     }
 
     /// <summary><c>Task&lt;AxiosResponse&lt;T&gt;&gt;</c>：交付完整响应（生成代理经 <c>InterfaceMethodRuntime</c> 直接调用）。</summary>
     internal async Task<AxiosResponse<T>> SendResponseAsync<T>(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var config = BuildConfig(client, args);
-        var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
+        var invocation = Prepare(client, args, config, cancellationToken);
 
         return await client.SendAsync<T>(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
     }
@@ -208,7 +237,7 @@ internal sealed partial class InterfaceMethodMetadata
     internal async Task<AxiosResponse> SendUntypedAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var config = BuildConfig(client, args);
-        var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
+        var invocation = Prepare(client, args, config, cancellationToken);
 
         return await client.SendUntypedAsync(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
     }
@@ -224,7 +253,7 @@ internal sealed partial class InterfaceMethodMetadata
     internal async Task SendVoidAsync(ApiClient client, object?[] args, CancellationToken cancellationToken)
     {
         var config = BuildConfig(client, args);
-        var invocation = await PrepareAsync(client, args, config, cancellationToken).ConfigureAwait(false);
+        var invocation = Prepare(client, args, config, cancellationToken);
 
         await client.SendWithoutBodyAsync(invocation, config, invocation.Auth, cancellationToken).ConfigureAwait(false);
     }

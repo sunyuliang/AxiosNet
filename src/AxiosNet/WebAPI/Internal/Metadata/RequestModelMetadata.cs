@@ -80,7 +80,11 @@ internal sealed class RequestModelMetadata
         [DynamicallyAccessedMembers(ModelMembers)] Type requestType)
     {
         // 用捕获的 requestType（带标注）而不是工厂参数：缓存字典的 Type 键本身不携带裁剪标注。
-        var metadata = Cache.GetOrAdd(requestType, _ => Build(requestType));
+        // 命中路径先 TryGetValue，未命中才构造工厂委托。
+        if (!Cache.TryGetValue(requestType, out var metadata))
+        {
+            metadata = Cache.GetOrAdd(requestType, _ => Build(requestType));
+        }
 
         if (metadata._missingMetadataType is { } missingType)
         {

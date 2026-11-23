@@ -126,7 +126,11 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(request);
         var metadata = AcquireMetadata(request.GetType());
         var config = BuildConfig(metadata, request, configure: null, cancellationToken: default);
-        return BindingErrors.Run(config, request.GetType().Name, () => Axios.GetUri(config));
+        return BindingErrors.Run(
+            config,
+            request.GetType().Name,
+            (client: Axios, config),
+            static state => state.client.GetUri(state.config));
     }
 
     /// <summary>
@@ -176,22 +180,44 @@ public sealed partial class ApiClient : IDisposable, IAsyncDisposable
         };
 
         // 声明式装配失败统一归 ERR_BAD_REQUEST（路径 / 查询 / 头 / 正文同口径）。
-        config.Url = BindingErrors.Run(config, target, () => metadata.ResolveUrl(request, formatter));
+        // 各步骤以状态元组传参，静态 lambda 无捕获。
+        config.Url = BindingErrors.Run(
+            config,
+            target,
+            (metadata, request, formatter),
+            static state => state.metadata.ResolveUrl(state.request, state.formatter));
 
         // 没有查询参数时不写：合并层把显式 null 当成摘掉实例默认值。
-        if (BindingErrors.Run(config, target, () => metadata.ResolveQuery(request, formatter)) is { } query)
+        if (BindingErrors.Run(
+                config,
+                target,
+                (metadata, request, formatter),
+                static state => state.metadata.ResolveQuery(state.request, state.formatter)) is { } query)
         {
             config.Params = query;
         }
 
-        if (BindingErrors.Run(config, target, () => metadata.ResolveBody(request, formatter)) is { } body)
+        if (BindingErrors.Run(
+                config,
+                target,
+                (metadata, request, formatter),
+                static state => state.metadata.ResolveBody(state.request, state.formatter)) is { } body)
         {
             config.Body = body;
         }
 
         // 类级静态头先写，属性上的 [Header] / [HeaderCollection] 覆盖同名项
-        BindingErrors.Run(config, target, () => metadata.ApplyStaticHeaders(config));
-        BindingErrors.Run(config, target, () => metadata.ApplyHeaders(request, config, formatter));
+        BindingErrors.Run(
+            config,
+            target,
+            (metadata, config),
+            static state => state.metadata.ApplyStaticHeaders(state.config));
+
+        BindingErrors.Run(
+            config,
+            target,
+            (metadata, request, config, formatter),
+            static state => state.metadata.ApplyHeaders(state.request, state.config, state.formatter));
 
         // 类 / 属性级编码声明是「默认值」：先落地，随后 IApiRequestConfigurable.Configure 与调用方 configure 仍可覆盖。
         if (metadata.ContentType is { } declaredContentType)

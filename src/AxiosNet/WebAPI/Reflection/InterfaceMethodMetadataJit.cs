@@ -25,7 +25,11 @@ internal static class InterfaceMethodMetadataJit
         [DynamicallyAccessedMembers(InterfaceMembers)] Type interfaceType,
         MethodInfo method)
     {
-        var metadata = Cache.GetOrAdd((interfaceType, method), key => BuildReflection(key.Interface, key.Method, createRuntime: true));
+        // 命中路径先 TryGetValue，未命中才构造工厂委托。
+        if (!Cache.TryGetValue((interfaceType, method), out var metadata))
+        {
+            metadata = Cache.GetOrAdd((interfaceType, method), key => BuildReflection(key.Interface, key.Method, createRuntime: true));
+        }
 
         if (metadata.BuildError is not null)
         {
